@@ -70,6 +70,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createRouter } = require('./src/platform/router');
         const { createMediaPortalRouter } = require('./src/requests/media-portal');
         const { createMediaCenterRouter } = require('./src/platform/media-center');
+        const { createMediaCenterActionsRouter } = require('./src/platform/media-center-actions');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
@@ -88,6 +89,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlanLibrariesRouter());
         this.use(createMediaCenterRouter());
+        this.use(createMediaCenterActionsRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminActivityRouter());
         this.use(createAdminCustomer360Router());
