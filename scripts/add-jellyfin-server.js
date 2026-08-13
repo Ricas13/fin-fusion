@@ -1,7 +1,7 @@
 'use strict';
 
 require('dotenv').config();
-const { encryptString } = require('../src/crypto');
+const { encryptWithEnv } = require('../src/security/purpose-crypto');
 const { query, getPool } = require('../src/db');
 
 async function main() {
@@ -20,7 +20,8 @@ async function main() {
                       public_url=EXCLUDED.public_url,api_key_encrypted=EXCLUDED.api_key_encrypted,
                       max_users=EXCLUDED.max_users,updated_at=NOW()
         RETURNING id,name,slug,server_class,base_url,public_url,max_users
-    `, [name, slug, serverClass, baseUrl.replace(/\/+$/, ''), publicUrl === '-' ? null : publicUrl, encryptString(apiKey), maxUsers]);
+    `, [name, slug, serverClass, baseUrl.replace(/\/+$/, ''), publicUrl === '-' ? null : publicUrl,
+        encryptWithEnv(apiKey, 'JELLYFIN_ENCRYPTION_KEY', 'jf1'), maxUsers]);
 
     console.log(JSON.stringify(result.rows[0], null, 2));
 }
