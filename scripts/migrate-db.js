@@ -21,6 +21,17 @@ async function main() {
         }
 
         const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
+        const ownsTransaction = /^\s*BEGIN\s*;/i.test(sql) && /COMMIT\s*;\s*$/i.test(sql);
+
+        if (ownsTransaction) {
+            // Historical migrations already contain BEGIN/COMMIT. Running another
+            // transaction around them can commit the outer transaction early.
+            await pool.query(sql);
+            await pool.query('INSERT INTO schema_migrations(filename) VALUES($1)', [filename]);
+            console.log(`applied ${filename}`);
+            continue;
+        }
+
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
