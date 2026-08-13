@@ -1,0 +1,42 @@
+name: Refresh dependency lockfile
+
+on:
+  push:
+    branches: ['agent/security-production-foundation']
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/security-production-foundation
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Refresh lockfile and apply compatible audit fixes
+        run: |
+          npm install --package-lock-only
+          npm audit fix --package-lock-only
+          npm ci
+          npm run check
+          npm audit --omit=dev --audit-level=high
+
+      - name: Commit refreshed lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'Lockfile already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'Refresh dependency lockfile'
+          git push origin HEAD:agent/security-production-foundation
