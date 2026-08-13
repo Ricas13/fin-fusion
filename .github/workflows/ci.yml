@@ -43,8 +43,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Syntax checks
+      - name: Legacy and platform syntax checks
         run: npm run check
+
+      - name: Activity worker syntax checks
+        run: |
+          node --check src/jellyfin/activity.js
+          node --check scripts/activity-worker.js
 
       - name: Apply database migrations
         run: npm run db:migrate
@@ -56,10 +61,30 @@ jobs:
           (async () => {
             const plans = await query('SELECT code FROM plans ORDER BY sort_order, code');
             if (plans.rowCount < 4) throw new Error('Expected seeded plans');
-            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs");
-            if (!tables.rows[0].payment_customers || !tables.rows[0].provisioning_runs) throw new Error('Phase 3 schema missing');
+            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs, to_regclass('public.active_playback_sessions') AS active_playback_sessions, to_regclass('public.playback_history') AS playback_history, to_regclass('public.stream_policy_events') AS stream_policy_events");
+            for (const [name, value] of Object.entries(tables.rows[0])) {
+              if (!value) throw new Error(`Required table missing: ${name}`);
+            }
             console.log('Schema smoke test passed:', plans.rows.map(p => p.code).join(', '));
           })().finally(() => getPool().end());
+          NODE
+
+      - name: Security default smoke test
+        run: |
+          node - <<'NODE'
+          const activity = require('./src/jellyfin/activity');
+          delete process.env.STREAM_POLICY_MODE;
+          delete process.env.STREAM_POLICY_ENFORCEMENT_ACK;
+          let cfg = activity.config();
+          if (cfg.effectiveMode !== 'observe') throw new Error('Default activity mode must be observe');
+          process.env.STREAM_POLICY_MODE = 'enforce';
+          cfg = activity.config();
+          if (cfg.effectiveMode !== 'observe') throw new Error('Enforcement must remain disabled without acknowledgement');
+          process.env.STREAM_POLICY_ENFORCEMENT_ACK = activity.ENFORCEMENT_ACK;
+          cfg = activity.config();
+          if (cfg.effectiveMode !== 'enforce') throw new Error('Explicit acknowledgement should enable enforcement');
+          if (cfg.confirmationsRequired < 2) throw new Error('At least two confirmations are required');
+          console.log('Security defaults verified');
           NODE
 
       - name: Customer platform smoke test
