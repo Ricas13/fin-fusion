@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>User · <%= siteName %></title>
+  <link rel="stylesheet" href="/css/platform-shell.css">
+</head>
+<body>
+<div class="appShell">
+  <aside class="sideNav">
+    <div class="brand"><%= siteName %></div>
+    <div class="navSection">Server</div>
+    <a class="navItem" href="/admin">Dashboard</a>
+    <a class="navItem" href="/admin/activity">Activity</a>
+    <a class="navItem active" href="/admin/users">Users</a>
+    <a class="navItem" href="/admin/servers">Servers</a>
+    <span class="navItem disabled">Libraries</span>
+    <div class="navSection">Business</div>
+    <span class="navItem disabled">Plans</span><span class="navItem disabled">Payments</span><span class="navItem disabled">Resellers</span><span class="navItem disabled">Requests</span>
+    <div class="navSection">System</div>
+    <span class="navItem disabled">Notifications</span><a class="navItem" href="/admin/security">Security</a><span class="navItem disabled">Settings</span>
+  </aside>
+  <main class="mainPane">
+    <header class="topBar"><div>Administration</div><a class="muted" href="/admin/users">← Back to Users</a></header>
+    <div class="content">
+      <div class="pageHeader"><h1><%= customer.display_name || customer.login_username || customer.email || 'Managed customer' %></h1><div class="muted"><%= customer.email || customer.login_username || 'Reseller-managed customer' %></div></div>
+      <% if (message) { %><div class="notice success"><%= message %></div><% } %>
+      <% if (error) { %><div class="notice error"><%= error %></div><% } %>
+
+      <div class="metrics">
+        <div class="metric"><div class="metricLabel">Portal</div><div class="metricValue small"><%= customer.login_username ? (customer.login_active === false ? 'Disabled' : 'Enabled') : 'None' %></div></div>
+        <div class="metric"><div class="metricLabel">Subscriptions</div><div class="metricValue"><%= subscriptions.length %></div></div>
+        <div class="metric"><div class="metricLabel">Jellyfin accounts</div><div class="metricValue"><%= accounts.length %></div></div>
+        <div class="metric"><div class="metricLabel">Reseller</div><div class="metricValue small"><%= customer.reseller_username || 'Direct' %></div></div>
+        <div class="metric"><div class="metricLabel">Last site login</div><div class="metricValue small"><%= customer.last_login_at ? new Date(customer.last_login_at).toLocaleDateString() : '—' %></div></div>
+        <div class="metric"><div class="metricLabel">Email verification</div><div class="metricValue small"><%= customer.email_verified_at ? 'Verified' : (customer.login_username ? 'Pending / not required' : 'N/A') %></div></div>
+      </div>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Jellyfin accounts</h2><span class="muted">credentials are never displayed</span></div>
+        <% if (!accounts.length) { %><div class="empty">No Jellyfin account has been provisioned yet.</div><% } else { %>
+        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Username</th><th>Server</th><th>Health</th><th>Status</th><th>Last activity</th><th>Policy sync</th></tr></thead><tbody>
+          <% accounts.forEach(function(a){ %><tr><td class="mediaTitle"><%= a.jellyfin_username %></td><td><%= a.server_name %><div class="subText"><%= a.server_class %></div></td><td><span class="pill <%= a.health_status==='healthy'?'good':(a.health_status==='offline'?'bad':'warn') %>"><%= a.health_status %></span></td><td><span class="pill <%= a.disabled?'bad':'good' %>"><%= a.disabled?'Disabled':'Enabled' %></span></td><td><%= a.last_activity_at ? new Date(a.last_activity_at).toLocaleString() : '—' %></td><td><%= a.last_policy_sync ? new Date(a.last_policy_sync).toLocaleString() : '—' %></td></tr><% }) %>
+        </tbody></table></div>
+        <% } %>
+      </section>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Subscriptions</h2><span class="muted">most recent 25</span></div>
+        <% if (!subscriptions.length) { %><div class="empty">No subscriptions recorded.</div><% } else { %>
+        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Plan</th><th>Status</th><th>Source</th><th>Streams</th><th>Started</th><th>Period end</th></tr></thead><tbody>
+          <% subscriptions.forEach(function(s){ %><tr><td><div class="mediaTitle"><%= s.plan_name %></div><div class="subText"><%= s.plan_code %> · <%= s.server_class %></div></td><td><span class="pill <%= ['active','trialing'].includes(s.status)?'good':(s.status==='past_due'?'warn':'') %>"><%= s.status %></span></td><td><%= s.source %></td><td><%= s.streams %></td><td><%= new Date(s.starts_at).toLocaleString() %></td><td><%= new Date(s.current_period_end).toLocaleString() %></td></tr><% }) %>
+        </tbody></table></div>
+        <% } %>
+      </section>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Safe reconciliation</h2><span class="muted">second factor required</span></div>
+        <div class="formPanel">
+          <p class="muted">Re-read the current subscription and make Jellyfin access match it. This can provision an account, reapply policy, or disable obsolete access. It does not alter billing.</p>
+          <form method="post" action="/admin/users/<%= customer.id %>/reconcile" class="compactAction">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="formGroup narrow"><label for="code">Authenticator or recovery code</label><input class="input" id="code" name="code" autocomplete="one-time-code" required></div>
+            <button class="button" type="submit">Reconcile Jellyfin access</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Provisioning history</h2><span class="muted">most recent 20</span></div>
+        <% if (!runs.length) { %><div class="empty">No provisioning runs recorded.</div><% } else { %><div class="tableWrap"><table class="dataTable"><thead><tr><th>Started</th><th>Action</th><th>Status</th><th>Completed</th></tr></thead><tbody><% runs.forEach(function(r){ %><tr><td><%= new Date(r.started_at).toLocaleString() %></td><td><%= r.action %></td><td><span class="pill <%= r.status==='succeeded'?'good':(r.status==='failed'?'bad':'warn') %>"><%= r.status %></span></td><td><%= r.completed_at ? new Date(r.completed_at).toLocaleString() : '—' %></td></tr><% }) %></tbody></table></div><% } %>
+      </section>
+    </div>
+  </main>
+</div>
+</body>
+</html>
