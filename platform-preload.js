@@ -40,12 +40,8 @@ function startJobs() {
         try {
             const expired = await expireSubscriptionsAndReconcile();
             const active = await reconcileActiveEntitlements();
-            if (expired || active.failed) {
-                console.log(`Entitlement job: expired=${expired}, active=${active.succeeded}/${active.total}, failed=${active.failed}`);
-            }
-        } catch (error) {
-            console.error('Entitlement job failed:', error.message);
-        }
+            if (expired || active.failed) console.log(`Entitlement job: expired=${expired}, active=${active.succeeded}/${active.total}, failed=${active.failed}`);
+        } catch (error) { console.error('Entitlement job failed:', error.message); }
     };
 
     const runHealth = async () => {
@@ -53,16 +49,13 @@ function startJobs() {
             const results = await healthcheckAllServers();
             const offline = results.filter(r => !r.ok);
             if (offline.length) console.warn(`Jellyfin health check: ${offline.length}/${results.length} server(s) unavailable`);
-        } catch (error) {
-            console.error('Jellyfin health job failed:', error.message);
-        }
+        } catch (error) { console.error('Jellyfin health job failed:', error.message); }
     };
 
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     initialEntitlement.unref?.();
     initialHealth.unref?.();
-
     const entitlementTimer = setInterval(runEntitlements, Number(process.env.ENTITLEMENT_JOB_INTERVAL_MS || 5 * 60 * 1000));
     const healthTimer = setInterval(runHealth, Number(process.env.SERVER_HEALTH_INTERVAL_MS || 2 * 60 * 1000));
     entitlementTimer.unref?.();
@@ -91,6 +84,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
         const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
         const { createAdminActivityRouter } = require('./src/platform/admin-activity');
+        const { createAdminCustomer360Router } = require('./src/platform/admin-customer-360');
         const { createAdminUsersRouter } = require('./src/platform/admin-users');
         const { createAdminServersRouter } = require('./src/platform/admin-servers');
         this.use(customerLoginThrottle);
@@ -100,6 +94,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminPlanLibrariesRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminActivityRouter());
+        this.use(createAdminCustomer360Router());
         this.use(createAdminUsersRouter());
         this.use(createAdminServersRouter());
         this.use(createRouter());
