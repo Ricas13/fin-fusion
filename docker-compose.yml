@@ -11,6 +11,41 @@ services:
       - "127.0.0.1:3030:3030"
     volumes:
       - ./db:/app/db
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  activity-worker:
+    build: .
+    container_name: steam-fusion-activity
+    restart: unless-stopped
+    command: ["node", "scripts/activity-worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?set DATA_ENCRYPTION_KEY in .env}
+      DB_POOL_SIZE: ${ACTIVITY_DB_POOL_SIZE:-3}
+      DB_SSL: ${DB_SSL:-false}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
+      STREAM_POLICY_MODE: ${STREAM_POLICY_MODE:-observe}
+      STREAM_POLICY_POLL_SECONDS: ${STREAM_POLICY_POLL_SECONDS:-30}
+      STREAM_POLICY_ACTIVE_WINDOW_SECONDS: ${STREAM_POLICY_ACTIVE_WINDOW_SECONDS:-120}
+      STREAM_POLICY_GRACE_SECONDS: ${STREAM_POLICY_GRACE_SECONDS:-45}
+      STREAM_POLICY_CONFIRMATIONS: ${STREAM_POLICY_CONFIRMATIONS:-2}
+      STREAM_POLICY_COUNT_PAUSED: ${STREAM_POLICY_COUNT_PAUSED:-false}
+      STREAM_POLICY_ENFORCEMENT_ACK: ${STREAM_POLICY_ENFORCEMENT_ACK:-}
+      ACTIVITY_RETENTION_DAYS: ${ACTIVITY_RETENTION_DAYS:-90}
+      POLICY_EVENT_RETENTION_DAYS: ${POLICY_EVENT_RETENTION_DAYS:-365}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   postgres:
     image: postgres:17-alpine
