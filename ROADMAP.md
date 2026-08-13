@@ -1,6 +1,10 @@
 # Steam Fusion / CAPTAiNFiN Roadmap
 
-This fork keeps the useful Steam Fusion reseller workflow while turning it into a production-grade multi-server platform.
+This fork keeps the useful Steam Fusion reseller workflow while turning it into a production-grade, self-hosted multi-server platform.
+
+**Product target:** feature parity with Streams Manager for the Jellyfin workflows required to retire the existing Streams Manager instance, while retaining and expanding Steam Fusion's reseller functionality.
+
+See [`STREAMS_MANAGER_PARITY.md`](STREAMS_MANAGER_PARITY.md) for the canonical parity checklist and cutover definition. If this roadmap and the parity document differ, the parity document defines the product feature target.
 
 ## Phase 1 — Security and production foundation
 
@@ -18,94 +22,184 @@ This fork keeps the useful Steam Fusion reseller workflow while turning it into 
 
 ## Phase 2 — Durable platform architecture
 
-- [ ] PostgreSQL data model and migrations
-- [ ] Redis-compatible session and rate-limit storage
-- [ ] Docker image and production Compose stack
-- [ ] Structured audit log for admin/reseller/security actions
-- [ ] Transaction-safe credit ledger
+- [x] PostgreSQL data model and migrations
+- [x] Persistent PostgreSQL-backed session storage
+- [x] Docker image and production Compose stack
+- [x] Structured audit-log schema for admin/reseller/security actions
+- [x] Transaction-safe reseller credit/subscription service foundation
+- [x] Encrypted secret-storage primitive
+- [x] Provider-neutral payment-event/idempotency schema
+- [x] Legacy JSON migration/import path
 - [ ] Backup/restore tooling with encryption support
+- [ ] Persistent distributed rate-limit storage
+- [ ] Background job queue / failed-job handling
 
 ## Phase 3 — Multi-server support
 
+- [x] Multi-server database/registry foundation
 - [ ] Manage multiple Jellyfin servers from the admin UI
-- [ ] Per-server URL, API key and health status
+- [ ] Per-server URL, encrypted API key and health status
 - [ ] Assign clients/resellers/plans to a server or server pool
 - [ ] Premium and Free server classes
-- [ ] Server capacity/health-aware account placement
+- [ ] Server capacity/health/location-aware account placement
 - [ ] Controlled client migration between servers
 - [ ] Per-server policy templates for streams, downloads and transcoding
+- [ ] Continuous user/server/library reconciliation
 
 ## Phase 4 — Plans and subscription lifecycle
 
-- [ ] Configurable plans instead of hard-coded month extensions
-- [ ] Trial, monthly, 6-month and annual terms
+- [x] Database-backed plan/subscription models
+- [x] Seed current trial/monthly/6-month/yearly CAPTAiNFiN plans
+- [ ] Configurable plans in admin UI
+- [ ] Plan library groups
+- [ ] Trial, one-time and recurring terms
+- [ ] Hour-level duration support
 - [ ] Per-plan concurrent-stream allowance
-- [ ] Per-plan download/transcoding policy
+- [ ] Per-plan download/transcoding/4K policy
+- [ ] Add-on products
+- [ ] Inactive/grandfathered plans
 - [ ] Grace periods and renewal reminders
 - [ ] Reseller pricing/credit costs per plan
 - [ ] Idempotent expiry/reactivation jobs
+- [ ] Automatic Jellyfin provisioning and policy reconciliation
 
-## Phase 5 — Payments
+## Phase 5 — Streams Manager replacement payments
 
-- [ ] Provider abstraction
-- [ ] Stripe integration
+- [x] Provider-neutral payment abstraction/schema
+- [ ] Stripe Billing + Checkout Sessions
+- [ ] Stripe Customer Portal
 - [ ] PayPal integration
+- [ ] Square integration
+- [ ] SumUp integration
+- [ ] Plisio/crypto integration
+- [ ] Per-gateway enable/disable
 - [ ] Webhook signature verification and idempotency
+- [ ] One-time/pay-as-you-go purchases
+- [ ] Recurring subscriptions
+- [ ] Transaction synchronization/reconciliation
+- [ ] Unmatched-payment queue and manual matching
+- [ ] Manual payment entry
 - [ ] Automatic reseller credit purchases
-- [ ] Automatic client subscription extension
-- [ ] Payment/credit reconciliation
+- [ ] Automatic customer subscription activation/extension
 - [ ] Refund and chargeback state handling
+- [ ] Discount codes
 
-## Phase 6 — Notifications
+## Phase 6 — Registration, self-service and identity
+
+- [ ] Separate site-login identity from Jellyfin identity
+- [ ] Public/invite-only registration
+- [ ] Email verification
+- [ ] Password reset
+- [ ] Customer profile/account portal
+- [ ] Subscription/payment history
+- [ ] Change/extend subscription
+- [ ] Pending invites and bulk invitations
+- [ ] Referral-code registration
+- [ ] Linked/household users
+- [ ] Merge/replacement user workflow
+- [ ] TOTP two-factor authentication
+- [ ] Recovery codes
+- [ ] Session/device management
+
+## Phase 7 — Notifications and reminders
 
 - [x] Telegram support inherited from Steam Fusion
 - [ ] Email notifications
+- [ ] Discord notifications
 - [ ] WhatsApp notifications
-- [ ] Notification templates
+- [ ] Notification templates by event
+- [ ] Per-event channel enable/disable
 - [ ] Per-user notification preferences
-- [ ] Expiry/renewal/low-credit/payment notifications
+- [ ] Configurable payment reminders
+- [ ] Expiry/renewal/access/payment/violation notifications
 - [ ] Delivery history and failure retry
+- [ ] Mass contact/broadcast messaging
 
-## Phase 7 — Usage statistics and reports
+## Phase 8 — Usage, enforcement and reports
 
 - [ ] Jellyfin playback/session ingestion
+- [ ] Streaming activity log
+- [ ] Download activity log
 - [ ] Active streams by server/reseller/client
+- [ ] Per-plan concurrent-stream enforcement
+- [ ] Stop violating sessions and notify user
+- [ ] Download entitlement enforcement
+- [ ] Weekly download limits
+- [ ] Download time restrictions
+- [ ] Transcoding policy enforcement
+- [ ] 4K policy enforcement
+- [ ] Device/session limits
 - [ ] Bandwidth and playback reporting
-- [ ] Last activity and account utilisation
 - [ ] Direct-play/transcode reporting
 - [ ] Reseller sales/renewal/credit reports
 - [ ] CSV export
-- [ ] Admin dashboard trends
+- [ ] Admin dashboard trends and revenue projections
 
-## Phase 8 — Identity and access
+## Phase 9 — Libraries and media integrations
 
-- [ ] TOTP two-factor authentication for admins
-- [ ] Optional/required TOTP for resellers
-- [ ] Recovery codes
-- [ ] Session/device management
-- [ ] Password-change workflow
-- [ ] Account lockout/security event history
-- [ ] Granular admin/reseller roles
+- [ ] Library import/synchronization
+- [ ] Library groups/types
+- [ ] Hide libraries from sharing
+- [ ] Attach multiple library groups to plans
+- [ ] Overseerr integration
+- [ ] Ombi integration
+- [ ] Petio integration
+- [ ] Discord role synchronization
+- [ ] Radarr/Sonarr-native request workflow
+- [ ] User-request media refresh/scan
+- [ ] Admin library/folder refresh
+- [ ] Subtitle upload where safe/appropriate
 
-## Phase 9 — Content requests
+## Phase 10 — Content requests
 
 The original project already contains a basic content-request workflow. The fork will expand it rather than rebuilding it from scratch.
 
 - [x] Basic reseller request and admin response
+- [ ] Customer request portal
 - [ ] Request type/status/priority
 - [ ] Duplicate detection
-- [ ] Radarr/Sonarr integration
-- [ ] Automatic status updates
 - [ ] Search-before-request flow
-- [ ] Per-reseller/request limits
+- [ ] Per-reseller/customer request limits
+- [ ] Automatic status updates
 - [ ] Notification on fulfilment
 
-## Phase 10 — CAPTAiNFiN product layer
+## Phase 11 — Admin operations and RBAC
+
+- [ ] Full customer detail page
+- [ ] Unmatched payments panel
+- [ ] Events/errors panel
+- [ ] Pending invites panel
+- [ ] Mass contact
+- [ ] Custom FAQ management
+- [ ] Custom administrator roles
+- [ ] Support/read-only/operator roles
+- [ ] Privileged-role 2FA enforcement
+- [ ] Per-action audit history
+
+## Phase 12 — White label / CAPTAiNFiN product layer
 
 - [ ] CAPTAiNFiN branding/theme
-- [ ] Integration boundary for existing customer/subscription tooling
+- [ ] Custom domain
+- [ ] Logo and wallpaper
+- [ ] Home/pricing/subscription/library-statistics custom content
+- [ ] Custom theme
+- [ ] Custom FAQ
+- [ ] Responsive/PWA customer portal
 - [ ] Premium/Free plan mapping
 - [ ] Reseller portal onboarding
 - [ ] Admin operations dashboard
 - [ ] Import existing Jellyfin users safely
+- [ ] Import Streams Manager customer/subscription data
 - [ ] Production migration/runbook
+- [ ] Shadow-mode parity verification before cutover
+
+## Phase 13 — Reseller enhancements
+
+- [x] Resellers, regular credits and trial credits inherited from Steam Fusion
+- [x] Reseller-owned customers
+- [ ] Reseller-specific plan catalogue
+- [ ] Wholesale price/credit cost per plan
+- [ ] Stripe/PayPal reseller credit purchase
+- [ ] Reseller sales/renewal analytics
+- [ ] Reseller notification preferences
+- [ ] Optional reseller white-label branding

@@ -1,18 +1,22 @@
 {
   "name": "steam-fusion",
-  "version": "1.0.0",
-  "description": "Jellyfin reseller management platform",
+  "version": "1.1.0",
+  "description": "Jellyfin reseller and subscription management platform",
   "main": "secure-start.js",
   "scripts": {
-    "start": "node secure-start.js",
-    "dev": "NODE_ENV=development node secure-start.js",
-    "check": "node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js"
+    "start": "node --require ./persistent-session-preload.js secure-start.js",
+    "dev": "NODE_ENV=development node --require ./persistent-session-preload.js secure-start.js",
+    "db:migrate": "node scripts/migrate-db.js",
+    "db:import-json": "node scripts/migrate-json-to-postgres.js",
+    "check": "node --check persistent-session-preload.js && node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js && node --check src/db.js && node --check src/crypto.js && node --check src/subscriptions.js && node --check src/jellyfin/registry.js && node --check scripts/migrate-db.js && node --check scripts/migrate-json-to-postgres.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
     "dotenv": "^16.6.1",
-    "ejs": "^3.1.9",
-    "express": "^4.18.2",
-    "express-session": "^1.17.3"
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "pg": "^8.16.3"
   }
 }
