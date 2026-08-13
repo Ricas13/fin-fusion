@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { getPool } = require('../src/db');
-const { encryptString } = require('../src/crypto');
+const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
 const dataFile = process.env.LEGACY_DATA_FILE || path.join(__dirname, '..', 'db', 'data.json');
 
@@ -49,13 +49,20 @@ async function main() {
         }
 
         let defaultServerId = null;
-        if (process.env.JELLYFIN_URL && process.env.JELLYFIN_API_KEY && process.env.DATA_ENCRYPTION_KEY) {
+        if (process.env.JELLYFIN_URL && process.env.JELLYFIN_API_KEY && process.env.JELLYFIN_ENCRYPTION_KEY) {
             const server = await client.query(`
                 INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority)
                 VALUES($1,$2,$3,$4,$5,$6,TRUE,10)
                 ON CONFLICT(slug) DO UPDATE SET base_url=EXCLUDED.base_url,public_url=EXCLUDED.public_url,api_key_encrypted=EXCLUDED.api_key_encrypted
                 RETURNING id
-            `, [process.env.LEGACY_SERVER_NAME || 'Primary Jellyfin', process.env.LEGACY_SERVER_SLUG || 'primary', process.env.LEGACY_SERVER_CLASS || 'premium', process.env.JELLYFIN_URL, process.env.JELLYFIN_PUBLIC_URL || process.env.JELLYFIN_URL, encryptString(process.env.JELLYFIN_API_KEY)]);
+            `, [
+                process.env.LEGACY_SERVER_NAME || 'Primary Jellyfin',
+                process.env.LEGACY_SERVER_SLUG || 'primary',
+                process.env.LEGACY_SERVER_CLASS || 'premium',
+                process.env.JELLYFIN_URL,
+                process.env.JELLYFIN_PUBLIC_URL || process.env.JELLYFIN_URL,
+                encryptWithEnv(process.env.JELLYFIN_API_KEY, 'JELLYFIN_ENCRYPTION_KEY', 'jf1')
+            ]);
             defaultServerId = server.rows[0].id;
         }
 
