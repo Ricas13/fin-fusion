@@ -3,8 +3,13 @@
 require('dotenv').config();
 
 if (!process.env.DATABASE_URL) return;
-if (process.env.NODE_ENV === 'production' && !process.env.AUTH_ENCRYPTION_KEY) {
-    throw new Error('AUTH_ENCRYPTION_KEY is required in production for native staff authentication');
+
+if (process.env.NODE_ENV === 'production') {
+    const { keyFromEnv } = require('./src/security/purpose-crypto');
+    keyFromEnv('AUTH_ENCRYPTION_KEY');
+    if (process.env.REQUIRE_ADMIN_2FA === 'false') {
+        throw new Error('Administrator 2FA cannot be disabled in production');
+    }
 }
 
 const sessionPath = require.resolve('express-session');
