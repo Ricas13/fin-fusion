@@ -22,17 +22,27 @@ async function createManualSubscription({ customerId, planId, startsAt, endsAt, 
     });
 }
 
-async function extendWithResellerCredits({ resellerId, customerId, planCode = 'monthly', units = 1, actorUserId }) {
+async function extendWithResellerCredits({ resellerId, customerId, planCode = 'monthly', units = 1, wallet = 'regular', actorUserId }) {
     if (!Number.isInteger(units) || units < 1 || units > 24) throw new Error('units must be an integer from 1 to 24');
+    if (!['regular','trial'].includes(wallet)) throw new Error('Unsupported reseller credit wallet');
 
     return transaction(async client => {
         const reseller = await client.query('SELECT * FROM resellers WHERE id=$1 FOR UPDATE', [resellerId]);
         if (!reseller.rowCount) throw new Error('Reseller not found');
-        if (reseller.rows[0].credits < units) throw new Error('Insufficient reseller credits');
 
-        const plan = await client.query('SELECT * FROM plans WHERE code=$1 AND active=TRUE', [planCode]);
-        if (!plan.rowCount) throw new Error('Plan not found');
+        const plan = await client.query(`
+            SELECT * FROM plans
+            WHERE code=$1 AND active=TRUE AND audience IN ('reseller','both')
+            FOR SHARE
+        `, [planCode]);
+        if (!plan.rowCount) throw new Error('Reseller plan not found');
         const p = plan.rows[0];
+
+        const unitCost = wallet === 'trial' ? p.reseller_trial_credit_cost : p.reseller_credit_cost;
+        if (unitCost === null || unitCost === undefined) throw new Error(`Plan is not available for ${wallet} credits`);
+        const totalCost = Number(unitCost) * units;
+        const balanceField = wallet === 'trial' ? 'trial_credits' : 'credits';
+        if (Number(reseller.rows[0][balanceField] || 0) < totalCost) throw new Error('Insufficient reseller credits');
 
         const existing = await client.query(`
             SELECT * FROM subscriptions
@@ -63,15 +73,19 @@ async function extendWithResellerCredits({ resellerId, customerId, planCode = 'm
             subscription = created.rows[0];
         }
 
-        await client.query('UPDATE resellers SET credits=credits-$1 WHERE id=$2', [units, resellerId]);
+        if (wallet === 'trial') {
+            await client.query('UPDATE resellers SET trial_credits=trial_credits-$1 WHERE id=$2', [totalCost, resellerId]);
+        } else {
+            await client.query('UPDATE resellers SET credits=credits-$1 WHERE id=$2', [totalCost, resellerId]);
+        }
         await client.query(`
             INSERT INTO credit_transactions(reseller_id,amount,transaction_type,note,created_by)
             VALUES($1,$2,'deduct',$3,$4)
-        `, [resellerId, -units, `Subscription extension: ${planCode} x${units}`, actorUserId]);
+        `, [resellerId, -totalCost, `Subscription extension: ${planCode} x${units} (${wallet})`, actorUserId]);
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'subscription.extend.reseller_credit','subscription',$2,$3::jsonb)
-        `, [actorUserId, subscription.id, JSON.stringify({ resellerId, customerId, planCode, units, newEnd })]);
+        `, [actorUserId, subscription.id, JSON.stringify({ resellerId, customerId, planCode, units, wallet, unitCost, totalCost, newEnd })]);
 
         return subscription;
     });
