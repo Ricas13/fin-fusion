@@ -12,8 +12,8 @@ function mockReq(sessionID = 'ci-auth-smoke-session') { return { ip:'127.0.0.1',
 function preloadStatus(overrides){ return spawnSync(process.execPath,['-e',"require('./staff-auth-preload.js')"],{cwd:process.cwd(),env:{...process.env,...overrides},encoding:'utf8'}); }
 function assertStartupPolicy(){
   if(preloadStatus({NODE_ENV:'production',DATABASE_URL:'',REQUIRE_ADMIN_2FA:'true'}).status===0) throw new Error('Production accepted missing database configuration');
-  if(preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'false'}).status===0) throw new Error('Production accepted disabled administrator 2FA');
-  const ok=preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'true'}); if(ok.status!==0) throw new Error('Valid production preload failed');
+  const optional=preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'false'}); if(optional.status!==0) throw new Error('Production rejected optional administrator 2FA');
+  const required=preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'true'}); if(required.status!==0) throw new Error('Valid production preload failed');
 }
 function assertAdminErrorRedaction(){
   if(serverAdmin.safeAdminError({code:'23505'})!=='A server with that name or slug already exists.') throw new Error('Duplicate server error was not sanitized');
