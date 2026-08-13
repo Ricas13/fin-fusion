@@ -31,6 +31,7 @@ jobs:
       JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ADMIN_2FA_ENROLLMENT_TOKEN: ci-admin-enrollment-approval-2026-very-long-value
       ACTIVITY_DB_PASSWORD: activity-ci-password-very-long-2026
       REQUIRE_ADMIN_2FA: 'true'
       NODE_ENV: test
@@ -86,6 +87,7 @@ jobs:
           node - <<'NODE'
           const activity = require('./src/jellyfin/activity');
           const auth = require('./src/auth/service');
+          const staff = require('./src/auth/staff-controller');
           delete process.env.STREAM_POLICY_MODE;
           delete process.env.STREAM_POLICY_ENFORCEMENT_ACK;
           let cfg = activity.config();
@@ -97,6 +99,8 @@ jobs:
           cfg = activity.config();
           if (cfg.effectiveMode !== 'enforce') throw new Error('Explicit acknowledgement should enable enforcement');
           if (!auth.requiresTwoFactor({ role: 'admin', totp_enabled: false })) throw new Error('Admin 2FA must be required by default');
+          if (staff.adminEnrollmentApproved('wrong-value')) throw new Error('Invalid admin enrollment approval was accepted');
+          if (!staff.adminEnrollmentApproved(process.env.ADMIN_2FA_ENROLLMENT_TOKEN)) throw new Error('Valid admin enrollment approval was rejected');
           NODE
 
       - name: Native staff auth smoke test
