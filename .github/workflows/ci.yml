@@ -11,6 +11,25 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      NODE_ENV: test
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,7 +37,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
@@ -26,6 +45,25 @@ jobs:
 
       - name: Syntax checks
         run: npm run check
+
+      - name: Apply database migrations
+        run: npm run db:migrate
+
+      - name: Schema smoke test
+        run: |
+          node - <<'NODE'
+          const { query, getPool } = require('./src/db');
+          (async () => {
+            const plans = await query('SELECT code FROM plans ORDER BY sort_order, code');
+            if (plans.rowCount < 4) throw new Error('Expected seeded plans');
+            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs");
+            if (!tables.rows[0].payment_customers || !tables.rows[0].provisioning_runs) throw new Error('Phase 3 schema missing');
+            console.log('Schema smoke test passed:', plans.rows.map(p => p.code).join(', '));
+          })().finally(() => getPool().end());
+          NODE
+
+      - name: Customer platform smoke test
+        run: node scripts/platform-smoke.js
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
