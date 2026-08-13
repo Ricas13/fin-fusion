@@ -21,20 +21,39 @@ function startJobs() {
     if (jobsStarted || !process.env.DATABASE_URL) return;
     jobsStarted = true;
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/provisioning');
+    const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
 
-    const run = async () => {
+    const runEntitlements = async () => {
         try {
-            const count = await expireSubscriptionsAndReconcile();
-            if (count) console.log(`Entitlement job expired/reconciled ${count} customer subscription(s)`);
+            const expired = await expireSubscriptionsAndReconcile();
+            const active = await reconcileActiveEntitlements();
+            if (expired || active.failed) {
+                console.log(`Entitlement job: expired=${expired}, active=${active.succeeded}/${active.total}, failed=${active.failed}`);
+            }
         } catch (error) {
-            console.error('Entitlement expiry job failed:', error.message);
+            console.error('Entitlement job failed:', error.message);
         }
     };
 
-    const initial = setTimeout(run, 15000);
-    initial.unref?.();
-    const timer = setInterval(run, Number(process.env.ENTITLEMENT_JOB_INTERVAL_MS || 5 * 60 * 1000));
-    timer.unref?.();
+    const runHealth = async () => {
+        try {
+            const results = await healthcheckAllServers();
+            const offline = results.filter(r => !r.ok);
+            if (offline.length) console.warn(`Jellyfin health check: ${offline.length}/${results.length} server(s) unavailable`);
+        } catch (error) {
+            console.error('Jellyfin health job failed:', error.message);
+        }
+    };
+
+    const initialEntitlement = setTimeout(runEntitlements, 15000);
+    const initialHealth = setTimeout(runHealth, 5000);
+    initialEntitlement.unref?.();
+    initialHealth.unref?.();
+
+    const entitlementTimer = setInterval(runEntitlements, Number(process.env.ENTITLEMENT_JOB_INTERVAL_MS || 5 * 60 * 1000));
+    const healthTimer = setInterval(runHealth, Number(process.env.SERVER_HEALTH_INTERVAL_MS || 2 * 60 * 1000));
+    entitlementTimer.unref?.();
+    healthTimer.unref?.();
 }
 
 function platformExpress(...args) {
