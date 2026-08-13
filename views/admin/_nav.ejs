@@ -1,0 +1,18 @@
+<aside class="sideNav">
+  <div class="brand"><%= siteName %></div>
+  <div class="navSection">Server</div>
+  <a class="navItem <%= activeNav==='dashboard'?'active':'' %>" href="/admin">Dashboard</a>
+  <a class="navItem <%= activeNav==='activity'?'active':'' %>" href="/admin/activity">Activity</a>
+  <a class="navItem <%= activeNav==='users'?'active':'' %>" href="/admin/users">Users</a>
+  <a class="navItem <%= activeNav==='servers'?'active':'' %>" href="/admin/servers">Servers</a>
+  <a class="navItem <%= activeNav==='libraries'?'active':'' %>" href="/admin/libraries">Libraries</a>
+  <div class="navSection">Business</div>
+  <a class="navItem <%= activeNav==='plans'?'active':'' %>" href="/admin/plans">Plans</a>
+  <a class="navItem <%= activeNav==='payments'?'active':'' %>" href="/admin/payments">Payments</a>
+  <a class="navItem <%= activeNav==='resellers'?'active':'' %>" href="/admin/resellers">Resellers</a>
+  <a class="navItem <%= activeNav==='requests'?'active':'' %>" href="/admin/requests">Requests</a>
+  <div class="navSection">System</div>
+  <a class="navItem <%= activeNav==='notifications'?'active':'' %>" href="/admin/notifications">Notifications</a>
+  <a class="navItem <%= activeNav==='security'?'active':'' %>" href="/admin/security">Security</a>
+  <a class="navItem <%= activeNav==='settings'?'active':'' %>" href="/admin/settings">Settings</a>
+</aside>
