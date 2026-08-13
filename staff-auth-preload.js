@@ -2,14 +2,15 @@
 
 require('dotenv').config();
 
-if (!process.env.DATABASE_URL) return;
+if (!process.env.DATABASE_URL) {
+    if (process.env.NODE_ENV === 'production') throw new Error('Production requires PostgreSQL-backed staff authentication');
+    return;
+}
 
 if (process.env.NODE_ENV === 'production') {
     const { keyFromEnv } = require('./src/security/purpose-crypto');
     keyFromEnv('AUTH_ENCRYPTION_KEY');
-    if (process.env.REQUIRE_ADMIN_2FA === 'false') {
-        throw new Error('Administrator 2FA cannot be disabled in production');
-    }
+    if (process.env.REQUIRE_ADMIN_2FA === 'false') throw new Error('Administrator 2FA cannot be disabled in production');
 }
 
 const sessionPath = require.resolve('express-session');
