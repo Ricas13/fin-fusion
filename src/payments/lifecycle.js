@@ -71,7 +71,11 @@ async function beginPaymentEvent({ provider, eventId, eventType, payload }) {
     const result = await query(`
         INSERT INTO payment_events(provider,provider_event_id,event_type,payload)
         VALUES($1,$2,$3,$4::jsonb)
-        ON CONFLICT(provider,provider_event_id) DO NOTHING
+        ON CONFLICT(provider,provider_event_id)
+        DO UPDATE SET event_type=EXCLUDED.event_type,
+                      payload=EXCLUDED.payload,
+                      processing_error=NULL
+        WHERE payment_events.processed_at IS NULL
         RETURNING id
     `, [provider, eventId, eventType, JSON.stringify(payload)]);
     return result.rows[0] || null;
@@ -81,7 +85,7 @@ async function finishPaymentEvent(eventRow, error = null) {
     if (!eventRow) return;
     await query(`
         UPDATE payment_events
-        SET processed_at=CASE WHEN $2::text IS NULL THEN NOW() ELSE processed_at END,
+        SET processed_at=CASE WHEN $2::text IS NULL THEN NOW() ELSE NULL END,
             processing_error=$2
         WHERE id=$1
     `, [eventRow.id, error ? String(error.message || error).slice(0, 4000) : null]);
