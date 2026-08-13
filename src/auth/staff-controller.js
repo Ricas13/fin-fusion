@@ -33,8 +33,26 @@ function requirePending(req, res, next) {
     return res.redirect('/login?session=expired');
 }
 
+function noStore(_req, res, next) {
+    res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    next();
+}
+
 function destination(role) {
     return role === 'reseller' ? '/reseller' : '/admin';
+}
+
+function timingSafeTextEqual(leftValue, rightValue) {
+    const left = Buffer.from(String(leftValue || ''), 'utf8');
+    const right = Buffer.from(String(rightValue || ''), 'utf8');
+    return left.length > 0 && left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function adminEnrollmentApproved(value) {
+    const expected = String(process.env.ADMIN_2FA_ENROLLMENT_TOKEN || '');
+    if (expected.length < 32) return false;
+    return timingSafeTextEqual(expected, value);
 }
 
 async function establishAuthenticatedSession(req, user) {
@@ -50,6 +68,8 @@ async function establishAuthenticatedSession(req, user) {
     if (user.role === 'admin') req.session.adminId = Number(user.legacy_numeric_id);
     if (user.role === 'reseller') req.session.resellerId = Number(user.legacy_numeric_id);
     req.session.csrfToken = crypto.randomBytes(32).toString('base64url');
+    const hours = Math.max(1, Math.min(24, Number(process.env.STAFF_SESSION_HOURS || 12)));
+    req.session.cookie.maxAge = hours * 60 * 60 * 1000;
     await save(req);
     await auth.registerSession(req, user);
 }
@@ -99,6 +119,7 @@ async function loginSubmit(req, res) {
             attempts: 0
         };
         req.session.csrfToken = crypto.randomBytes(32).toString('base64url');
+        req.session.cookie.maxAge = 10 * 60 * 1000;
         await save(req);
 
         if (auth.requiresTwoFactor(user)) {
@@ -132,6 +153,7 @@ async function logout(req, res) {
 
 function createAuthRouter() {
     const router = express.Router();
+    router.use('/auth/2fa', noStore);
 
     router.get('/auth/2fa', requirePending, async (req, res) => {
         const p = pending(req);
@@ -179,6 +201,7 @@ function createAuthRouter() {
             username: p.username,
             secret: enrollment.secret,
             uri: enrollment.uri,
+            requiresApproval: p.role === 'admin',
             error: null,
             csrfToken: csrf.token(req)
         });
@@ -187,6 +210,16 @@ function createAuthRouter() {
     router.post('/auth/2fa/setup', requirePending, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const p = pending(req);
+        if (p.role === 'admin' && !adminEnrollmentApproved(req.body.enrollmentToken)) {
+            await auth.recordEvent({ userId: p.userId, eventType: '2fa.enrollment_approval_failed', success: false, req });
+            return res.status(403).render('auth/message', {
+                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                title: 'Administrator enrollment not approved',
+                message: 'The independent enrollment approval was not accepted. No two-factor setting was changed.',
+                link: '/auth/2fa/setup',
+                linkText: 'Return to setup'
+            });
+        }
         const recoveryCodes = await auth.confirmTotpEnrollment(p.userId, req.body.code, req);
         if (!recoveryCodes) {
             return res.status(401).render('auth/message', {
@@ -199,6 +232,7 @@ function createAuthRouter() {
         }
         const user = await auth.getStaffById(p.userId);
         await establishAuthenticatedSession(req, user);
+        res.setHeader('Cache-Control', 'no-store, private, max-age=0');
         return res.render('auth/recovery-codes', {
             siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
             recoveryCodes,
@@ -209,4 +243,4 @@ function createAuthRouter() {
     return router;
 }
 
-module.exports = { loginPage, loginSubmit, logout, createAuthRouter, establishAuthenticatedSession };
+module.exports = { loginPage, loginSubmit, logout, createAuthRouter, establishAuthenticatedSession, adminEnrollmentApproved };
