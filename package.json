@@ -1,14 +1,15 @@
 {
   "name": "steam-fusion",
-  "version": "1.1.0",
-  "description": "Jellyfin reseller and subscription management platform",
+  "version": "1.2.0",
+  "description": "Jellyfin reseller, customer and subscription management platform",
   "main": "secure-start.js",
   "scripts": {
-    "start": "node --require ./persistent-session-preload.js secure-start.js",
-    "dev": "NODE_ENV=development node --require ./persistent-session-preload.js secure-start.js",
+    "start": "node --require ./platform-preload.js --require ./persistent-session-preload.js secure-start.js",
+    "dev": "NODE_ENV=development node --require ./platform-preload.js --require ./persistent-session-preload.js secure-start.js",
     "db:migrate": "node scripts/migrate-db.js",
     "db:import-json": "node scripts/migrate-json-to-postgres.js",
-    "check": "node --check persistent-session-preload.js && node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js && node --check src/db.js && node --check src/crypto.js && node --check src/subscriptions.js && node --check src/jellyfin/registry.js && node --check scripts/migrate-db.js && node --check scripts/migrate-json-to-postgres.js"
+    "payments:map": "node scripts/map-provider-price.js",
+    "check": "node --check platform-preload.js && node --check persistent-session-preload.js && node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js && node --check src/db.js && node --check src/crypto.js && node --check src/customers.js && node --check src/subscriptions.js && node --check src/jellyfin/registry.js && node --check src/jellyfin/provisioning.js && node --check src/payments/lifecycle.js && node --check src/payments/stripe.js && node --check src/payments/paypal.js && node --check src/platform/router.js && node --check src/platform/webhooks.js && node --check scripts/migrate-db.js && node --check scripts/migrate-json-to-postgres.js && node --check scripts/map-provider-price.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
