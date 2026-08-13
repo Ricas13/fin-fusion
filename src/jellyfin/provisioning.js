@@ -237,10 +237,13 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
 async function expireSubscriptionsAndReconcile() {
     const expired = await transaction(async client => {
         const rows = await client.query(`
-            UPDATE subscriptions
-            SET status='expired',updated_at=NOW()
-            WHERE status IN ('active','trialing','past_due') AND current_period_end <= NOW()
-            RETURNING DISTINCT customer_id
+            WITH expired AS (
+                UPDATE subscriptions
+                SET status='expired',updated_at=NOW()
+                WHERE status IN ('active','trialing','past_due') AND current_period_end <= NOW()
+                RETURNING customer_id
+            )
+            SELECT DISTINCT customer_id FROM expired
         `);
         return rows.rows.map(r => r.customer_id);
     });
