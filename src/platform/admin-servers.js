@@ -8,6 +8,25 @@ const registry = require('../jellyfin/registry');
 const { encryptWithEnv } = require('../security/purpose-crypto');
 
 const SERVER_CLASSES = new Set(['premium', 'free', 'custom']);
+const SAFE_ERROR_PREFIXES = [
+    'Slug must be ',
+    'Enter a valid ',
+    'Only http and https ',
+    'URLs may not contain ',
+    'URL hostname is required.',
+    'JELLYFIN_ALLOWED_HOSTS must be configured ',
+    'This Jellyfin hostname is not on the production allowlist.',
+    'Jellyfin API key format is invalid.',
+    'Number must be between ',
+    'Invalid server class.',
+    'Jellyfin rejected the server URL or API key.',
+    'Jellyfin returned an unexpected response.',
+    'Jellyfin validation timed out.',
+    'Could not validate the Jellyfin server securely.',
+    'Second-factor verification failed.',
+    'Server name is required.',
+    'Server not found.'
+];
 
 function requireNativeAdmin(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -75,6 +94,13 @@ function intField(value, { min = 0, max = 100000, nullable = false } = {}) {
     const number = Number(value);
     if (!Number.isInteger(number) || number < min || number > max) throw new Error(`Number must be between ${min} and ${max}.`);
     return number;
+}
+
+function safeAdminError(error) {
+    if (error?.code === '23505') return 'A server with that name or slug already exists.';
+    const message = String(error?.message || '');
+    if (SAFE_ERROR_PREFIXES.some(prefix => message.startsWith(prefix))) return message;
+    return 'The server change could not be completed safely.';
 }
 
 function parseServerForm(body, { apiKeyRequired = false } = {}) {
@@ -252,7 +278,7 @@ function createAdminServersRouter() {
                 server: null,
                 csrfToken: csrf.token(req),
                 allowedHosts: Array.from(allowedHosts()),
-                error: error.message
+                error: safeAdminError(error)
             });
         }
     });
@@ -276,7 +302,7 @@ function createAdminServersRouter() {
                 server: server || await serverDetail(req.params.serverId).catch(() => null),
                 csrfToken: csrf.token(req),
                 allowedHosts: Array.from(allowedHosts()),
-                error: error.message
+                error: safeAdminError(error)
             });
         }
     });
@@ -319,5 +345,6 @@ module.exports = {
     parseServerForm,
     normalizeUrl,
     allowedHosts,
-    probeCredentials
+    probeCredentials,
+    safeAdminError
 };
