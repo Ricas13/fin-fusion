@@ -169,7 +169,7 @@ async function beginTotpEnrollment(userId) {
         uri: totp.otpauthUri({
             secret,
             accountName: user.email || user.username,
-            issuer: process.env.SITE_NAME || 'CAPTAiNFiN'
+            issuer: process.env.SITE_NAME || 'CAPTaINFiN'
         })
     };
 }
@@ -229,7 +229,20 @@ async function confirmTotpEnrollment(userId, code, req) {
 
 async function verifySecondFactor(userId, token, req) {
     const user = await getStaffById(userId);
-    if (!user || !user.totp_enabled || !user.totp_secret_encrypted) return false;
+    if (!user) return false;
+
+    if (!user.totp_enabled && !requiresTwoFactor(user)) {
+        await recordEvent({
+            userId,
+            eventType: '2fa.step_up_not_required',
+            success: true,
+            req,
+            metadata: { policy: 'optional', enrolled: false }
+        });
+        return true;
+    }
+
+    if (!user.totp_enabled || !user.totp_secret_encrypted) return false;
     const value = String(token || '').trim();
     const secret = authDecrypt(user.totp_secret_encrypted);
 
