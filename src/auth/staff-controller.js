@@ -18,7 +18,10 @@ function save(req) {
 }
 
 function destroy(req) {
-    return new Promise(resolve => req.session?.destroy(() => resolve()));
+    return new Promise(resolve => {
+        if (!req.session) return resolve();
+        req.session.destroy(() => resolve());
+    });
 }
 
 function pending(req) {
@@ -71,7 +74,12 @@ async function establishAuthenticatedSession(req, user) {
     const hours = Math.max(1, Math.min(24, Number(process.env.STAFF_SESSION_HOURS || 12)));
     req.session.cookie.maxAge = hours * 60 * 60 * 1000;
     await save(req);
-    await auth.registerSession(req, user);
+    try {
+        await auth.registerSession(req, user);
+    } catch (error) {
+        await destroy(req);
+        throw error;
+    }
 }
 
 function loginPage(req, res) {
