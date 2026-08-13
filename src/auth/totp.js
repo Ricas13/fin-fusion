@@ -5,35 +5,27 @@ const crypto = require('crypto');
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 function base32Encode(buffer) {
-    let bits = 0;
-    let value = 0;
+    let bitString = '';
+    for (const byte of buffer) bitString += byte.toString(2).padStart(8, '0');
     let output = '';
-    for (const byte of buffer) {
-        value = (value << 8) | byte;
-        bits += 8;
-        while (bits >= 5) {
-            output += ALPHABET[(value >>> (bits - 5)) & 31];
-            bits -= 5;
-        }
+    for (let i = 0; i < bitString.length; i += 5) {
+        const chunk = bitString.slice(i, i + 5).padEnd(5, '0');
+        output += ALPHABET[Number.parseInt(chunk, 2)];
     }
-    if (bits > 0) output += ALPHABET[(value << (5 - bits)) & 31];
     return output;
 }
 
 function base32Decode(input) {
     const text = String(input || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
-    let bits = 0;
-    let value = 0;
-    const bytes = [];
+    let bitString = '';
     for (const char of text) {
         const index = ALPHABET.indexOf(char);
         if (index < 0) continue;
-        value = (value << 5) | index;
-        bits += 5;
-        if (bits >= 8) {
-            bytes.push((value >>> (bits - 8)) & 0xff);
-            bits -= 8;
-        }
+        bitString += index.toString(2).padStart(5, '0');
+    }
+    const bytes = [];
+    for (let i = 0; i + 8 <= bitString.length; i += 8) {
+        bytes.push(Number.parseInt(bitString.slice(i, i + 8), 2));
     }
     return Buffer.from(bytes);
 }
@@ -71,6 +63,7 @@ function verifyTotp(secret, code, { time = Date.now(), period = 30, digits = 6, 
     if (!new RegExp(`^\\d{${digits}}$`).test(normalized)) return false;
     const current = Math.floor(time / 1000 / period);
     for (let offset = -window; offset <= window; offset += 1) {
+        if (current + offset < 0) continue;
         if (safeEqualCode(hotp(secret, current + offset, digits), normalized)) return true;
     }
     return false;
