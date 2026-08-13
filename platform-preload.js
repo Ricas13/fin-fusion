@@ -24,7 +24,7 @@ function customerLoginThrottle(req, res, next) {
     bucket.count += 1;
     customerLoginAttempts.set(key, bucket);
     if (bucket.count > maxAttempts) {
-        res.setHeader('Retry-After', Math.max(1, Math.ceil((windowMs - (now - bucket.startedAt)) / 1000));
+        res.setHeader('Retry-After', Math.max(1, Math.ceil((windowMs - (now - bucket.startedAt)) / 1000)));
         return res.status(429).send('Too many login attempts. Try again later.');
     }
     return next();
