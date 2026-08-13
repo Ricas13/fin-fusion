@@ -1,0 +1,181 @@
+'use strict';
+
+const express = require('express');
+const { query } = require('../db');
+const csrf = require('../auth/csrf');
+const auth = require('../auth/service');
+const provisioning = require('../jellyfin/provisioning');
+
+function requireNativeAdmin(req, res, next) {
+    if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
+    return res.redirect('/login?session=expired');
+}
+
+function noStore(_req, res, next) {
+    res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    next();
+}
+
+function cleanQuery(value) {
+    return String(value || '').trim().slice(0, 80);
+}
+
+async function listUsers(search = '') {
+    const term = cleanQuery(search);
+    const params = [];
+    let where = '';
+    if (term) {
+        params.push(`%${term}%`);
+        where = `WHERE COALESCE(c.display_name,'') ILIKE $1
+                    OR COALESCE(c.email,'') ILIKE $1
+                    OR COALESCE(au.username,'') ILIKE $1
+                    OR EXISTS (
+                        SELECT 1 FROM jellyfin_accounts ja_search
+                        WHERE ja_search.customer_id=c.id AND ja_search.jellyfin_username ILIKE $1
+                    )`;
+    }
+
+    const result = await query(`
+        SELECT c.id,c.display_name,c.email,c.created_at,c.reseller_id,
+               au.username AS login_username,au.active AS login_active,
+               current_sub.status AS subscription_status,current_sub.current_period_end,
+               current_sub.plan_name,current_sub.streams,
+               COALESCE(accounts.account_count,0)::int AS jellyfin_accounts,
+               accounts.last_activity_at
+        FROM customers c
+        LEFT JOIN app_users au ON au.id=c.user_id
+        LEFT JOIN LATERAL (
+            SELECT s.status,s.current_period_end,p.name AS plan_name,p.streams
+            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=c.id
+            ORDER BY s.current_period_end DESC,s.created_at DESC
+            LIMIT 1
+        ) current_sub ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS account_count,MAX(ja.last_activity_at) AS last_activity_at
+            FROM jellyfin_accounts ja WHERE ja.customer_id=c.id
+        ) accounts ON TRUE
+        ${where}
+        ORDER BY COALESCE(accounts.last_activity_at,c.created_at) DESC NULLS LAST
+        LIMIT 150
+    `, params);
+    return result.rows;
+}
+
+async function userDetail(customerId) {
+    const customer = await query(`
+        SELECT c.id,c.display_name,c.email,c.note,c.created_at,c.reseller_id,
+               au.id AS user_id,au.username AS login_username,au.active AS login_active,
+               au.email_verified_at,au.last_login_at,
+               ru.username AS reseller_username
+        FROM customers c
+        LEFT JOIN app_users au ON au.id=c.user_id
+        LEFT JOIN resellers r ON r.id=c.reseller_id
+        LEFT JOIN app_users ru ON ru.id=r.user_id
+        WHERE c.id=$1
+    `, [customerId]);
+    if (!customer.rowCount) return null;
+
+    const [subscriptions, accounts, runs] = await Promise.all([
+        query(`
+            SELECT s.id,s.status,s.source,s.starts_at,s.current_period_end,s.cancel_at_period_end,
+                   p.code AS plan_code,p.name AS plan_name,p.streams,p.allow_downloads,
+                   p.allow_video_transcoding,p.server_class
+            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 ORDER BY s.created_at DESC LIMIT 25
+        `, [customerId]),
+        query(`
+            SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.last_activity_at,ja.last_policy_sync,
+                   js.name AS server_name,js.server_class,js.public_url,js.health_status
+            FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
+            WHERE ja.customer_id=$1 ORDER BY ja.created_at ASC
+        `, [customerId]),
+        query(`
+            SELECT action,status,started_at,completed_at
+            FROM provisioning_runs WHERE customer_id=$1
+            ORDER BY started_at DESC LIMIT 20
+        `, [customerId])
+    ]);
+
+    return {
+        customer: customer.rows[0],
+        subscriptions: subscriptions.rows,
+        accounts: accounts.rows,
+        runs: runs.rows
+    };
+}
+
+function createAdminUsersRouter() {
+    const router = express.Router();
+    router.use('/admin/users', requireNativeAdmin, noStore);
+
+    router.get('/admin/users', async (req, res, next) => {
+        try {
+            const search = cleanQuery(req.query.q);
+            return res.render('admin/users', {
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+                users: await listUsers(search),
+                search,
+                message: req.query.message || null,
+                error: req.query.error || null
+            });
+        } catch (error) { return next(error); }
+    });
+
+    router.get('/admin/users/:customerId', async (req, res, next) => {
+        try {
+            const detail = await userDetail(req.params.customerId);
+            if (!detail) return res.status(404).render('auth/message', {
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+                title: 'User not found',
+                message: 'This managed customer does not exist.',
+                link: '/admin/users',
+                linkText: 'Back to Users'
+            });
+            return res.render('admin/user-detail', {
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+                ...detail,
+                csrfToken: csrf.token(req),
+                message: req.query.message || null,
+                error: req.query.error || null
+            });
+        } catch (error) { return next(error); }
+    });
+
+    router.post('/admin/users/:customerId/reconcile', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            const secondFactorOk = await auth.verifySecondFactor(req.session.authUserId, req.body.code, req);
+            if (!secondFactorOk) {
+                return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?error=${encodeURIComponent('Second-factor verification failed. No Jellyfin changes were made.')}`);
+            }
+            const detail = await userDetail(req.params.customerId);
+            if (!detail) return res.status(404).send('User not found');
+            const result = await provisioning.reconcileCustomer(req.params.customerId);
+            await query(`
+                INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                VALUES($1,'admin.user.reconcile','customer',$2,$3::jsonb)
+            `, [req.session.authUserId, req.params.customerId, JSON.stringify({ active: Boolean(result?.active) })]);
+            return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?message=${encodeURIComponent('Jellyfin access reconciled with the current subscription.')}`);
+        } catch (error) {
+            console.error('Admin user reconcile failed:', error.message);
+            return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?error=${encodeURIComponent('Reconciliation could not be completed safely. Review server health and provisioning history.')}`);
+        }
+    });
+
+    router.use('/admin/users', (error, _req, res, _next) => {
+        console.error('Admin users route error:', error.message);
+        return res.status(500).render('auth/message', {
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+            title: 'Users unavailable',
+            message: 'The users view could not be loaded safely.',
+            link: '/admin',
+            linkText: 'Return to Administration'
+        });
+    });
+
+    return router;
+}
+
+module.exports = { createAdminUsersRouter, listUsers, userDetail };

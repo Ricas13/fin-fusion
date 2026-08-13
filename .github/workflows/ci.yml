@@ -118,6 +118,39 @@ jobs:
           ]) ejs.compile(fs.readFileSync(file,'utf8'));
           NODE
 
+      - name: Native admin safety smoke test
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const ejs = require('ejs');
+          const users = require('./src/platform/admin-users');
+          const servers = require('./src/platform/admin-servers');
+          const { getPool } = require('./src/db');
+          (async () => {
+            process.env.NODE_ENV = 'production';
+            process.env.JELLYFIN_ALLOWED_HOSTS = 'jellyfin.local,premium.example.com';
+            const allowed = servers.normalizeUrl('http://jellyfin.local:8096/', { baseUrl: true });
+            if (allowed !== 'http://jellyfin.local:8096') throw new Error('Allowed Jellyfin URL normalization failed');
+            for (const bad of ['http://not-allowed.local:8096','ftp://jellyfin.local/file','http://user:pass@jellyfin.local:8096']) {
+              let rejected = false;
+              try { servers.normalizeUrl(bad, { baseUrl: true }); } catch (_) { rejected = true; }
+              if (!rejected) throw new Error(`Unsafe Jellyfin URL accepted: ${bad}`);
+            }
+            const parsed = servers.parseServerForm({
+              name:'CI Jellyfin',slug:'ci-jellyfin',serverClass:'premium',baseUrl:'http://jellyfin.local:8096',
+              publicUrl:'https://premium.example.com',location:'CI',priority:'100',maxUsers:'500',
+              allowNewUsers:'on',trialEnabled:'on',paidEnabled:'on',apiKey:'0123456789abcdef'
+            }, { apiKeyRequired: true });
+            if (!parsed.allowNewUsers || !parsed.trialEnabled || !parsed.paidEnabled) throw new Error('Server placement flags parsed incorrectly');
+            if (!Array.isArray(await users.listUsers(''))) throw new Error('Users query did not return an array');
+            if (await users.userDetail('00000000-0000-0000-0000-000000000000')) throw new Error('Unknown customer unexpectedly resolved');
+            if (!Array.isArray(await servers.serverList())) throw new Error('Servers query did not return an array');
+            for (const file of ['views/admin/users.ejs','views/admin/user-detail.ejs','views/admin/servers.ejs','views/admin/server-form.ejs']) {
+              ejs.compile(fs.readFileSync(file,'utf8'));
+            }
+          })().finally(() => getPool().end());
+          NODE
+
       - name: Configure least-privilege activity role
         run: npm run db:activity-role
 
