@@ -87,6 +87,38 @@ async function finishPaymentEvent(eventRow, error = null) {
     `, [eventRow.id, error ? String(error.message || error).slice(0, 4000) : null]);
 }
 
+async function startFreeTrial(customerId) {
+    const subscription = await transaction(async client => {
+        const prior = await client.query(`
+            SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 AND p.billing_interval='trial' LIMIT 1
+        `, [customerId]);
+        if (prior.rowCount) throw new Error('This account has already used its free trial');
+
+        const planResult = await client.query(`
+            SELECT * FROM plans
+            WHERE code='trial-24h' AND active=TRUE AND visible=TRUE
+            LIMIT 1
+        `);
+        if (!planResult.rowCount) throw new Error('Free trial is not available');
+        const plan = planResult.rows[0];
+        const startsAt = new Date();
+        const endsAt = addPlanDuration(plan, startsAt);
+        const created = await client.query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'trialing','manual',$3,$4)
+            RETURNING *
+        `, [customerId, plan.id, startsAt, endsAt]);
+        await client.query(`
+            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES('subscription.trial.start','subscription',$1,$2::jsonb)
+        `, [created.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
+        return created.rows[0];
+    });
+    await reconcileCustomer(customerId);
+    return subscription;
+}
+
 async function activatePurchase({
     customerId,
     planId,
@@ -171,6 +203,7 @@ module.exports = {
     findPaymentCustomer,
     beginPaymentEvent,
     finishPaymentEvent,
+    startFreeTrial,
     activatePurchase,
     updateProviderSubscription
 };
