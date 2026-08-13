@@ -68,6 +68,8 @@ realExpress.application.listen = function platformListen(...args) {
     if (!this.locals.__platformRoutesMounted && process.env.DATABASE_URL) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
+        const { createMediaPortalRouter } = require('./src/requests/media-portal');
+        const { createMediaCenterRouter } = require('./src/platform/media-center');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
@@ -79,11 +81,13 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminUsersRouter } = require('./src/platform/admin-users');
         const { createAdminServersRouter } = require('./src/platform/admin-servers');
         this.use(customerLoginThrottle);
+        this.use(createMediaPortalRouter());
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlanLibrariesRouter());
+        this.use(createMediaCenterRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminActivityRouter());
         this.use(createAdminCustomer360Router());
