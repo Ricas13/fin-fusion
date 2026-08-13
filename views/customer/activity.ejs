@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Playback activity · <%= siteName %></title>
+  <style>
+    :root{color-scheme:dark}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e5e7eb}.wrap{max-width:1100px;margin:auto;padding:28px 18px 60px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.card{background:#111827;border:1px solid #263244;border-radius:16px;padding:18px;margin:14px 0}.muted{color:#94a3b8}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#1e293b;margin:2px;font-size:13px}a{color:#7dd3fc}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #263244;vertical-align:top}th{color:#94a3b8;font-weight:600}.scroll{overflow:auto}.warn{border-left:4px solid #f59e0b}.stop{border-left:4px solid #ef4444}
+  </style>
+</head>
+<body><div class="wrap">
+  <div class="top"><div><h1>Playback activity</h1><p class="muted">Recent activity for your own account. Network addresses are intentionally not displayed here.</p></div><a href="/account">← My account</a></div>
+
+  <div class="card">
+    <h2>Recent playback</h2>
+    <% if (!activity.length) { %><p class="muted">No playback activity has been recorded yet.</p><% } else { %>
+    <div class="scroll"><table><thead><tr><th>Started</th><th>Media</th><th>Playback</th><th>Device</th><th>Server</th><th>Ended</th></tr></thead><tbody>
+      <% activity.forEach(function(a){ %><tr>
+        <td><%= new Date(a.started_at).toLocaleString() %></td>
+        <td><strong><%= a.item_name || 'Unknown item' %></strong><div class="muted"><%= a.item_type || '' %></div></td>
+        <td><span class="pill"><%= a.playback_method %></span></td>
+        <td><%= a.device_name || a.client_name || 'Unknown device' %><div class="muted"><%= a.client_name || '' %></div></td>
+        <td><%= a.server_name %></td>
+        <td><%= a.ended_at ? new Date(a.ended_at).toLocaleString() : 'Active / recently active' %><% if (a.ended_reason) { %><div class="muted"><%= a.ended_reason %></div><% } %></td>
+      </tr><% }) %>
+    </tbody></table></div>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <h2>Stream-limit decisions</h2>
+    <p class="muted">Only unusual stream-limit decisions are shown. Normal playback does not generate policy events.</p>
+    <% if (!events.length) { %><p class="muted">No stream-limit events.</p><% } else { %>
+      <% events.forEach(function(e){ %><div class="card <%= e.decision === 'stopped' ? 'stop' : 'warn' %>"><strong><%= e.decision %></strong> · <%= new Date(e.created_at).toLocaleString() %><p><%= e.stream_count == null ? '?' : e.stream_count %> active stream(s) / limit <%= e.stream_limit == null ? '?' : e.stream_limit %></p><p class="muted"><%= e.reason %> · mode: <%= e.mode %></p></div><% }) %>
+    <% } %>
+  </div>
+</div></body></html>
