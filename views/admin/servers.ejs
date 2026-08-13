@@ -33,18 +33,18 @@
         <div class="sectionHead"><h2>Configured servers</h2><span class="muted"><%= servers.length %> total</span></div>
         <% if (!servers.length) { %><div class="empty">No Jellyfin servers are configured.</div><% } else { %>
         <div class="serverGrid">
-          <% servers.forEach(function(s){ const max=Number(s.max_users||0), used=Number(s.assigned_users||0); %>
+          <% servers.forEach(function(s){ const max=Number(s.max_users||0), used=Number(s.assigned_users||0); const healthDate=s.last_health_check?new Date(s.last_health_check):null; const healthText=healthDate&&!Number.isNaN(healthDate.getTime())?healthDate.toLocaleString():'never'; %>
             <div class="serverCard">
               <div class="serverTop"><div><strong><%= s.name %></strong><div class="subText"><%= s.slug %> · <%= s.server_class %><%= s.location ? ' · '+s.location : '' %></div></div><span class="pill <%= s.health_status==='healthy'?'good':(s.health_status==='offline'?'bad':'warn') %>"><%= s.health_status %></span></div>
               <div class="serverStats"><div><span class="metricMini"><%= used %><%= max ? ' / '+max : '' %></span><span class="subText">managed users</span></div><div><span class="metricMini"><%= s.active_streams %></span><span class="subText">active streams</span></div></div>
               <div class="flagRow"><span class="pill <%= s.allow_new_users?'good':'warn' %>"><%= s.allow_new_users?'Placement on':'Draining' %></span><span class="pill <%= s.trial_enabled?'accent':'' %>">Trials <%= s.trial_enabled?'on':'off' %></span><span class="pill <%= s.paid_enabled?'accent':'' %>">Paid <%= s.paid_enabled?'on':'off' %></span></div>
-              <div class="subText">Priority <%= s.priority %> · Last health check <%= s.last_health_check ? new Date(s.last_health_check).toLocaleString() : 'never' %></div>
+              <div class="subText">Priority <%= s.priority %> · Last health check <%= healthText %></div>
               <div class="buttonRow cardActions"><a class="button secondary" href="/admin/servers/<%= s.id %>/edit">Manage</a></div>
             </div>
           <% }) %>
         </div>
         <% } %>
-        <div class="securityNote">API keys are write-only and never rendered back to the browser. Health checks and configuration changes are available from the server detail screen.</div>
+        <div class="securityNote">Server credentials are write-only and never rendered back to the browser. Health checks and configuration changes are available from the server detail screen.</div>
       </section>
     </div>
   </main>
