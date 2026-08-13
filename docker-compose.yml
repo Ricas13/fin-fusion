@@ -62,10 +62,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
 
 volumes:
   steamfusion_pgdata:
