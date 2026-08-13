@@ -62,5 +62,8 @@ jobs:
           })().finally(() => getPool().end());
           NODE
 
+      - name: Customer platform smoke test
+        run: node scripts/platform-smoke.js
+
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
