@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Activity · <%= siteName %></title>
+  <link rel="stylesheet" href="/css/platform-shell.css">
+</head>
+<body>
+<div class="appShell">
+  <aside class="sideNav">
+    <div class="brand"><%= siteName %></div>
+    <div class="navSection">Server</div>
+    <a class="navItem" href="/admin">Dashboard</a>
+    <a class="navItem active" href="/admin/activity">Activity</a>
+    <span class="navItem disabled">Users</span>
+    <span class="navItem disabled">Servers</span>
+    <span class="navItem disabled">Libraries</span>
+    <div class="navSection">Business</div>
+    <span class="navItem disabled">Plans</span>
+    <span class="navItem disabled">Payments</span>
+    <span class="navItem disabled">Resellers</span>
+    <span class="navItem disabled">Requests</span>
+    <div class="navSection">System</div>
+    <span class="navItem disabled">Notifications</span>
+    <span class="navItem disabled">Security</span>
+    <span class="navItem disabled">Settings</span>
+  </aside>
+
+  <main class="mainPane">
+    <header class="topBar">
+      <div>Administration</div>
+      <div class="muted">Read-only monitoring</div>
+    </header>
+
+    <div class="content">
+      <div class="pageHeader">
+        <h1>Playback activity</h1>
+        <div class="muted">Jellyfin activity and stream-policy observation · refresh the page for current data</div>
+      </div>
+
+      <% if (cfg.effectiveMode === 'enforce') { %>
+        <div class="statusBanner bad"><strong>Enforcement mode is active.</strong> Policy actions can affect playback. Review policy events closely.</div>
+      <% } else if (cfg.requestedMode === 'enforce' && !cfg.acknowledged) { %>
+        <div class="statusBanner warn"><strong>Observation mode.</strong> Enforcement was requested but the required acknowledgement is absent, so no playback actions can occur.</div>
+      <% } else { %>
+        <div class="statusBanner"><strong>Observation mode.</strong> The worker records activity and potential stream-limit decisions without affecting playback.</div>
+      <% } %>
+
+      <div class="metrics">
+        <div class="metric"><div class="metricLabel">Active streams</div><div class="metricValue"><%= summary.active_streams %></div></div>
+        <div class="metric"><div class="metricLabel">Transcodes</div><div class="metricValue"><%= summary.transcodes %></div></div>
+        <div class="metric"><div class="metricLabel">Potential violations</div><div class="metricValue"><%= summary.violations_24h %></div><div class="subText">last 24 hours</div></div>
+        <div class="metric"><div class="metricLabel">Safety skips</div><div class="metricValue"><%= summary.safety_skips_24h %></div><div class="subText">last 24 hours</div></div>
+        <div class="metric"><div class="metricLabel">Subscriptions</div><div class="metricValue"><%= summary.active_subscriptions %></div><div class="subText">active entitlements</div></div>
+        <div class="metric"><div class="metricLabel">Server health</div><div class="metricValue"><%= summary.offline_servers %>/<%= summary.enabled_servers %></div><div class="subText">offline / enabled</div></div>
+      </div>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Active streams</h2><span class="muted"><%= streams.length %> observed</span></div>
+        <% if (!streams.length) { %><div class="empty">No managed playback is currently active.</div><% } else { %>
+        <div class="tableWrap"><table class="dataTable">
+          <thead><tr><th>User</th><th>Media</th><th>Server</th><th>Device</th><th>Method</th><th>Streams</th><th>State</th><th>Started</th></tr></thead>
+          <tbody>
+          <% streams.forEach(function(s){ const over=Number(s.stream_limit)>0 && Number(s.customer_stream_count)>Number(s.stream_limit); %>
+            <tr>
+              <td><div class="mediaTitle"><%= s.customer_name %></div><div class="subText"><%= s.jellyfin_username || '' %></div></td>
+              <td><div class="mediaTitle"><%= s.item_name || 'Unknown item' %></div><div class="subText"><%= s.item_type || '' %></div></td>
+              <td><%= s.server_name %></td>
+              <td><%= s.device_name || s.client_name || 'Unknown' %><div class="subText"><%= s.client_name || '' %></div></td>
+              <td><span class="pill <%= s.playback_method === 'transcode' ? 'warn' : 'accent' %>"><%= s.playback_method %></span></td>
+              <td><span class="pill <%= over ? 'bad' : 'good' %>"><%= s.customer_stream_count %> / <%= s.stream_limit || '?' %></span></td>
+              <td><span class="pill"><%= s.is_paused ? 'Paused' : 'Playing' %></span></td>
+              <td><%= new Date(s.first_seen_at).toLocaleString() %></td>
+            </tr>
+          <% }) %>
+          </tbody>
+        </table></div>
+        <% } %>
+        <div class="securityNote">Network endpoints and raw Jellyfin device identifiers are intentionally not exposed in this view.</div>
+      </section>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Servers</h2><span class="muted">capacity and activity</span></div>
+        <div class="serverGrid">
+          <% servers.forEach(function(s){ const max=Number(s.max_users||0); const used=Number(s.assigned_users||0); %>
+            <div class="serverCard">
+              <div class="serverTop"><strong><%= s.name %></strong><span class="pill <%= s.health_status === 'healthy' ? 'good' : (s.health_status === 'offline' ? 'bad' : 'warn') %>"><%= s.health_status %></span></div>
+              <p class="muted"><%= s.server_class %> · <%= s.active_streams %> active stream<%= Number(s.active_streams)===1?'':'s' %></p>
+              <p><%= used %><%= max ? ' / '+max : '' %> managed users</p>
+              <div class="subText">Last health check: <%= s.last_health_check ? new Date(s.last_health_check).toLocaleString() : 'never' %></div>
+            </div>
+          <% }) %>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Stream policy events</h2><span class="muted">most recent 60</span></div>
+        <% if (!events.length) { %><div class="empty">No stream-policy events recorded.</div><% } else { %>
+        <div class="tableWrap"><table class="dataTable">
+          <thead><tr><th>Time</th><th>User</th><th>Decision</th><th>Streams</th><th>Server</th><th>Reason</th></tr></thead>
+          <tbody>
+          <% events.forEach(function(e){ %>
+            <tr>
+              <td><%= new Date(e.created_at).toLocaleString() %></td>
+              <td><%= e.customer_name %></td>
+              <td><span class="pill <%= e.decision === 'stopped' || e.decision === 'stop_failed' ? 'bad' : (e.decision === 'skipped_safety' ? 'warn' : 'accent') %>"><%= e.decision %></span></td>
+              <td><%= e.stream_count == null ? '?' : e.stream_count %> / <%= e.stream_limit == null ? '?' : e.stream_limit %></td>
+              <td><%= e.server_name || '—' %></td>
+              <td><%= e.reason %><div class="subText"><%= e.mode %></div></td>
+            </tr>
+          <% }) %>
+          </tbody>
+        </table></div>
+        <% } %>
+      </section>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Recent playback</h2><span class="muted">most recent 60</span></div>
+        <% if (!history.length) { %><div class="empty">No playback history recorded yet.</div><% } else { %>
+        <div class="tableWrap"><table class="dataTable">
+          <thead><tr><th>Started</th><th>User</th><th>Media</th><th>Server</th><th>Device</th><th>Method</th><th>Ended</th></tr></thead>
+          <tbody>
+          <% history.forEach(function(h){ %>
+            <tr>
+              <td><%= new Date(h.started_at).toLocaleString() %></td>
+              <td><%= h.customer_name %></td>
+              <td><div class="mediaTitle"><%= h.item_name || 'Unknown item' %></div><div class="subText"><%= h.item_type || '' %></div></td>
+              <td><%= h.server_name %></td>
+              <td><%= h.device_name || h.client_name || 'Unknown' %></td>
+              <td><span class="pill <%= h.playback_method === 'transcode' ? 'warn' : 'accent' %>"><%= h.playback_method %></span></td>
+              <td><%= h.ended_at ? new Date(h.ended_at).toLocaleString() : 'Active / recent' %><% if(h.ended_reason){ %><div class="subText"><%= h.ended_reason %></div><% } %></td>
+            </tr>
+          <% }) %>
+          </tbody>
+        </table></div>
+        <% } %>
+      </section>
+    </div>
+  </main>
+</div>
+</body>
+</html>

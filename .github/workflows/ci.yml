@@ -28,6 +28,9 @@ jobs:
     env:
       DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
       DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_DB_PASSWORD: activity-ci-password-very-long-2026
       NODE_ENV: test
 
     steps:
@@ -43,13 +46,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Legacy and platform syntax checks
+      - name: Syntax checks
         run: npm run check
-
-      - name: Activity worker syntax checks
-        run: |
-          node --check src/jellyfin/activity.js
-          node --check scripts/activity-worker.js
 
       - name: Apply database migrations
         run: npm run db:migrate
@@ -62,11 +60,18 @@ jobs:
             const plans = await query('SELECT code FROM plans ORDER BY sort_order, code');
             if (plans.rowCount < 4) throw new Error('Expected seeded plans');
             const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs, to_regclass('public.active_playback_sessions') AS active_playback_sessions, to_regclass('public.playback_history') AS playback_history, to_regclass('public.stream_policy_events') AS stream_policy_events");
-            for (const [name, value] of Object.entries(tables.rows[0])) {
-              if (!value) throw new Error(`Required table missing: ${name}`);
-            }
-            console.log('Schema smoke test passed:', plans.rows.map(p => p.code).join(', '));
+            for (const [name, value] of Object.entries(tables.rows[0])) if (!value) throw new Error(`Required table missing: ${name}`);
           })().finally(() => getPool().end());
+          NODE
+
+      - name: Purpose-key encryption smoke test
+        run: |
+          node - <<'NODE'
+          const { encryptWithEnv, decryptWithEnv } = require('./src/security/purpose-crypto');
+          const encrypted = encryptWithEnv('ci-sentinel', 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
+          if (!encrypted.startsWith('jf1:')) throw new Error('Unexpected Jellyfin encryption format');
+          if (encrypted.includes('ci-sentinel')) throw new Error('Ciphertext leaked plaintext');
+          if (decryptWithEnv(encrypted, 'JELLYFIN_ENCRYPTION_KEY', 'jf1') !== 'ci-sentinel') throw new Error('Purpose-key roundtrip failed');
           NODE
 
       - name: Security default smoke test
@@ -84,7 +89,42 @@ jobs:
           cfg = activity.config();
           if (cfg.effectiveMode !== 'enforce') throw new Error('Explicit acknowledgement should enable enforcement');
           if (cfg.confirmationsRequired < 2) throw new Error('At least two confirmations are required');
-          console.log('Security defaults verified');
+          NODE
+
+      - name: Configure least-privilege activity role
+        run: npm run db:activity-role
+
+      - name: Verify activity database isolation
+        run: |
+          node - <<'NODE'
+          const { Client } = require('pg');
+          const password = encodeURIComponent(process.env.ACTIVITY_DB_PASSWORD);
+          const client = new Client({ connectionString: `postgres://steamfusion_activity:${password}@127.0.0.1:5432/steamfusion` });
+          (async () => {
+            await client.connect();
+            await client.query('SELECT id,streams FROM plans LIMIT 1');
+            const write = await client.query("INSERT INTO stream_policy_events(mode,decision,reason) VALUES('observe','observed','ci') RETURNING id");
+            if (!write.rowCount) throw new Error('Activity role could not write policy event');
+            let denied = false;
+            try { await client.query('SELECT id FROM payment_events LIMIT 1'); }
+            catch (error) { if (error.code === '42501') denied = true; else throw error; }
+            if (!denied) throw new Error('Activity role unexpectedly has payment table access');
+          })().finally(() => client.end());
+          NODE
+
+      - name: Admin activity dashboard smoke test
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const ejs = require('ejs');
+          const activity = require('./src/jellyfin/activity');
+          const { dashboardData } = require('./src/platform/admin-activity');
+          const { getPool } = require('./src/db');
+          (async () => {
+            ejs.compile(fs.readFileSync('views/admin/activity.ejs','utf8'));
+            const data = await dashboardData(activity.config());
+            if (!Array.isArray(data.streams) || !Array.isArray(data.servers) || !Array.isArray(data.events)) throw new Error('Dashboard data shape invalid');
+          })().finally(() => getPool().end());
           NODE
 
       - name: Customer platform smoke test

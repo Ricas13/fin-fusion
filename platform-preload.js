@@ -1,13 +1,8 @@
 'use strict';
 
 /**
- * Bridges the new PostgreSQL customer platform into the legacy Express app
- * without forcing a 50k-line app.js rewrite in one change.
- *
- * Payment webhooks are mounted at Express app creation time, before legacy
- * express.json(), so Stripe/PayPal signature verification receives raw bytes.
- * Customer portal routes are mounted immediately before listen(), after the
- * legacy session middleware has been installed.
+ * Bridges the PostgreSQL platform into the legacy Express app while preserving
+ * the existing admin/reseller routes during migration.
  */
 
 const expressPath = require.resolve('express');
@@ -90,7 +85,9 @@ realExpress.application.listen = function platformListen(...args) {
     if (!this.locals.__platformRoutesMounted && process.env.DATABASE_URL) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
+        const { createAdminActivityRouter } = require('./src/platform/admin-activity');
         this.use(customerLoginThrottle);
+        this.use(createAdminActivityRouter());
         this.use(createRouter());
         startJobs();
     }
