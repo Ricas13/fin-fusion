@@ -1,11 +1,12 @@
 {
   "name": "steam-fusion",
   "version": "1.0.0",
-  "description": "Jellyfin Admin Panel - Steam Fusion",
-  "main": "app.js",
+  "description": "Jellyfin reseller management platform",
+  "main": "secure-start.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "node app.js"
+    "start": "node secure-start.js",
+    "dev": "NODE_ENV=development node secure-start.js",
+    "check": "node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
