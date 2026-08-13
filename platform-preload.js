@@ -87,11 +87,13 @@ realExpress.application.listen = function platformListen(...args) {
         const { createRouter } = require('./src/platform/router');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
+        const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
         const { createAdminActivityRouter } = require('./src/platform/admin-activity');
         const { createAdminUsersRouter } = require('./src/platform/admin-users');
         const { createAdminServersRouter } = require('./src/platform/admin-servers');
         this.use(customerLoginThrottle);
         this.use(createAdminOriginalSettingsRouter());
+        this.use(createAdminResellersRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminActivityRouter());
         this.use(createAdminUsersRouter());
