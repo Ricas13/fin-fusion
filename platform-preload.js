@@ -86,6 +86,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
+        const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
         const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
@@ -96,6 +97,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminCatalogShellRouter());
+        this.use(createAdminPlanLibrariesRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminActivityRouter());
         this.use(createAdminUsersRouter());
