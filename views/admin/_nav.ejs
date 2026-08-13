@@ -4,20 +4,14 @@
       <img class="brandLogo" src="/logo.jpg" alt="">
       <div><div class="brandText"><%= siteName %></div><div class="brandSub">Administration</div></div>
     </a>
-    <div class="headerActions">
-      <a class="headerButton hideMobile" href="/" target="_blank" rel="noopener">Open Store</a>
-      <a class="headerButton" href="/admin/security">Security</a>
-      <a class="headerButton danger" href="/logout">Sign out</a>
-    </div>
   </div>
   <div class="adminTabsWrap"><nav class="adminTabs">
     <a class="adminTab <%= activeNav==='dashboard'?'active':'' %>" href="/admin">Dashboard</a>
     <a class="adminTab <%= activeNav==='users'?'active':'' %>" href="/admin/users">Customers</a>
-    <a class="adminTab <%= activeNav==='resellers'?'active':'' %>" href="/admin/resellers">Resellers</a>
+    <a class="adminTab <%= activeNav==='resellers'?'active':'' %>" href="/admin/reseller-management">Resellers</a>
     <a class="adminTab <%= activeNav==='activity'?'active':'' %>" href="/admin/activity">Activity</a>
     <span class="tabGroupBreak"></span>
     <a class="adminTab <%= activeNav==='servers'?'active':'' %>" href="/admin/servers">Servers</a>
-    <a class="adminTab <%= activeNav==='libraries'?'active':'' %>" href="/admin/libraries">Libraries</a>
     <a class="adminTab <%= activeNav==='plans'?'active':'' %>" href="/admin/plans">Plans</a>
     <a class="adminTab <%= activeNav==='payments'?'active':'' %>" href="/admin/payments">Payments</a>
     <span class="tabGroupBreak"></span>
@@ -25,4 +19,9 @@
     <a class="adminTab <%= activeNav==='notifications'?'active':'' %>" href="/admin/notifications">Notifications</a>
     <a class="adminTab <%= activeNav==='settings'?'active':'' %>" href="/admin/settings">Settings</a>
   </nav></div>
+  <div class="headerActions">
+    <a class="headerButton hideMobile" href="/" target="_blank" rel="noopener">Open Store</a>
+    <a class="headerButton" href="/admin/security">Security</a>
+    <a class="headerButton danger" href="/logout">Sign out</a>
+  </div>
 </header>
