@@ -8,14 +8,55 @@ function randomPassword() {
     return crypto.randomBytes(24).toString('base64url');
 }
 
-function policyForPlan(plan, disabled = false) {
+function normalizedLibraryNames(plan) {
+    return Array.from(new Set(
+        (Array.isArray(plan?.library_names) ? plan.library_names : [])
+            .map(value => String(value || '').trim())
+            .filter(Boolean)
+    ));
+}
+
+async function resolveLibraryAccess(serverId, plan, disabled = false) {
+    if (disabled) return { enableAllFolders: false, enabledFolders: [] };
+
+    const mode = ['all', 'exclude', 'include'].includes(plan?.library_access_mode)
+        ? plan.library_access_mode
+        : 'all';
+    const configuredNames = normalizedLibraryNames(plan);
+
+    if (mode === 'all' || (mode === 'exclude' && configuredNames.length === 0)) {
+        return { enableAllFolders: true, enabledFolders: [] };
+    }
+
+    const folders = await registry.request(serverId, '/Library/VirtualFolders');
+    if (!Array.isArray(folders)) throw new Error('Jellyfin did not return a valid library list');
+
+    const wanted = new Set(configuredNames.map(name => name.toLocaleLowerCase('en-GB')));
+    const usable = folders
+        .filter(folder => folder && folder.ItemId && folder.Name)
+        .map(folder => ({
+            id: String(folder.ItemId),
+            name: String(folder.Name).trim(),
+            key: String(folder.Name).trim().toLocaleLowerCase('en-GB')
+        }));
+
+    const enabledFolders = mode === 'include'
+        ? usable.filter(folder => wanted.has(folder.key)).map(folder => folder.id)
+        : usable.filter(folder => !wanted.has(folder.key)).map(folder => folder.id);
+
+    return { enableAllFolders: false, enabledFolders };
+}
+
+function policyForPlan(plan, disabled = false, libraryAccess = null) {
     const enabled = !disabled;
+    const folders = libraryAccess || { enableAllFolders: enabled, enabledFolders: [] };
     return {
         IsAdministrator: false,
         IsHidden: true,
         IsDisabled: disabled,
         EnableAllDevices: enabled,
-        EnableAllFolders: enabled,
+        EnableAllFolders: enabled && Boolean(folders.enableAllFolders),
+        EnabledFolders: enabled ? (Array.isArray(folders.enabledFolders) ? folders.enabledFolders : []) : [],
         EnableAllChannels: false,
         EnableRemoteAccess: enabled,
         EnableMediaPlayback: enabled,
@@ -105,6 +146,7 @@ async function createJellyfinAccount(customerId, server, plan) {
     const preferred = await preferredUsername(customerId);
     const username = await uniqueUsername(server.id, preferred);
     const bootstrapPassword = randomPassword();
+    const libraryAccess = await resolveLibraryAccess(server.id, plan, false);
     const created = await registry.request(server.id, '/Users/New', {
         method: 'POST',
         body: { Name: username, Password: bootstrapPassword }
@@ -114,7 +156,7 @@ async function createJellyfinAccount(customerId, server, plan) {
     try {
         await registry.request(server.id, `/Users/${created.Id}/Policy`, {
             method: 'POST',
-            body: policyForPlan(plan, false)
+            body: policyForPlan(plan, false, libraryAccess)
         });
     } catch (error) {
         try { await registry.request(server.id, `/Users/${created.Id}`, { method: 'DELETE' }); } catch (_) {}
@@ -130,9 +172,10 @@ async function createJellyfinAccount(customerId, server, plan) {
 }
 
 async function applyPolicy(account, plan, disabled = false) {
+    const libraryAccess = await resolveLibraryAccess(account.server_id, plan, disabled);
     await registry.request(account.server_id, `/Users/${account.jellyfin_user_id}/Policy`, {
         method: 'POST',
-        body: policyForPlan(plan, disabled)
+        body: policyForPlan(plan, disabled, libraryAccess)
     });
     await query(`
         UPDATE jellyfin_accounts
@@ -179,7 +222,9 @@ async function reconcileCustomer(customerId) {
                         allow_video_transcoding: false,
                         allow_downloads: false,
                         allow_live_tv: false,
-                        allow_live_tv_management: false
+                        allow_live_tv_management: false,
+                        library_access_mode: 'all',
+                        library_names: []
                     }, true);
                 }
             }
@@ -208,7 +253,9 @@ async function reconcileCustomer(customerId) {
             planCode: entitlement.code,
             serverId: account.server_id,
             jellyfinAccountId: account.id,
-            streamLimit: entitlement.streams
+            streamLimit: entitlement.streams,
+            libraryAccessMode: entitlement.library_access_mode,
+            libraryNames: normalizedLibraryNames(entitlement)
         })]);
 
         return { active: true, entitlement, account };
@@ -257,6 +304,7 @@ async function expireSubscriptionsAndReconcile() {
 
 module.exports = {
     policyForPlan,
+    resolveLibraryAccess,
     selectServerForPlan,
     currentEntitlement,
     reconcileCustomer,
