@@ -1,0 +1,37 @@
+'use strict';
+
+const express = require('express');
+const stripe = require('../payments/stripe');
+const paypal = require('../payments/paypal');
+
+function createWebhookRouter() {
+    const router = express.Router();
+
+    router.post('/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+        try {
+            if (!stripe.enabled()) return res.status(404).end();
+            const signature = req.get('stripe-signature');
+            if (!signature) return res.status(400).send('Missing Stripe signature');
+            await stripe.processWebhook(req.body, signature);
+            return res.json({ received: true });
+        } catch (error) {
+            console.error('Stripe webhook error:', error.message);
+            return res.status(400).send('Webhook rejected');
+        }
+    });
+
+    router.post('/webhooks/paypal', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+        try {
+            if (!paypal.enabled()) return res.status(404).end();
+            await paypal.processWebhook(req.body, req.headers);
+            return res.json({ received: true });
+        } catch (error) {
+            console.error('PayPal webhook error:', error.message);
+            return res.status(400).send('Webhook rejected');
+        }
+    });
+
+    return router;
+}
+
+module.exports = { createWebhookRouter };
