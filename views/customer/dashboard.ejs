@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My account · <%= siteName %></title>
+  <style>
+    :root{color-scheme:dark}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e5e7eb}.wrap{max-width:1100px;margin:auto;padding:28px 18px 60px}.top{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}.card{background:#111827;border:1px solid #263244;border-radius:16px;padding:18px}.plan{display:flex;flex-direction:column;min-height:250px}.price{font-size:30px;font-weight:800}.muted{color:#94a3b8}.ok{background:#052e1b;border:1px solid #166534;padding:10px 12px;border-radius:10px}.err{background:#451a1a;border:1px solid #7f1d1d;padding:10px 12px;border-radius:10px}button{padding:10px 14px;border:0;border-radius:10px;font-weight:700;cursor:pointer;margin:4px 0}input{width:100%;box-sizing:border-box;padding:10px;border-radius:9px;border:1px solid #334155;background:#0f172a;color:white}.actions{margin-top:auto}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#1e293b;margin:2px;font-size:13px}.sub{border-left:4px solid #38bdf8}.account{border-left:4px solid #22c55e}a{color:#7dd3fc}.row{display:flex;gap:8px;flex-wrap:wrap}.danger{background:#7f1d1d;color:#fff}.primary{background:#0284c7;color:#fff}.paypal{background:#facc15;color:#111827}.stripe{background:#635bff;color:white}
+  </style>
+</head>
+<body><div class="wrap">
+  <header class="top"><div><h1 style="margin-bottom:4px"><%= siteName %></h1><div class="muted">Signed in as <strong><%= portal.customer.login_username %></strong></div></div><form method="post" action="/account/logout"><button class="danger">Sign out</button></form></header>
+
+  <% if (message) { %><p class="ok"><%= message %></p><% } %>
+  <% if (error) { %><p class="err"><%= error %></p><% } %>
+
+  <h2>Subscriptions</h2>
+  <div class="grid">
+  <% if (!portal.subscriptions.length) { %><div class="card"><p>No subscription yet.</p></div><% } %>
+  <% portal.subscriptions.forEach(function(s){ %>
+    <div class="card sub"><strong><%= s.plan_name %></strong><p><span class="pill"><%= s.status %></span><span class="pill"><%= s.source %></span></p><p class="muted">Access until <%= new Date(s.current_period_end).toLocaleString() %></p><p><%= s.streams %> stream<%= s.streams === 1 ? '' : 's' %> · Downloads <%= s.allow_downloads ? 'on' : 'off' %> · Video transcode <%= s.allow_video_transcoding ? 'on' : 'off' %></p></div>
+  <% }) %>
+  </div>
+
+  <h2>Jellyfin access</h2>
+  <div class="grid">
+  <% if (!portal.accounts.length) { %><div class="card"><p>Your Jellyfin account will appear here after a trial or paid plan is activated.</p></div><% } %>
+  <% portal.accounts.forEach(function(a){ %>
+    <div class="card account"><strong><%= a.jellyfin_username %></strong><p class="muted"><%= a.server_name %> · <%= a.server_class %></p><p><span class="pill"><%= a.disabled ? 'disabled' : 'enabled' %></span></p><% if (a.public_url) { %><p><a href="<%= a.public_url %>" target="_blank" rel="noopener">Open Jellyfin</a></p><% } %><form method="post" action="/account/jellyfin/<%= a.id %>/password"><label>Set a new Jellyfin password</label><input type="password" name="password" minlength="8" autocomplete="new-password" required><button class="primary">Update Jellyfin password</button></form></div>
+  <% }) %>
+  </div>
+
+  <h2>Choose a plan</h2>
+  <div class="grid">
+  <% plans.forEach(function(p){ const opts=Array.isArray(p.payment_options)?p.payment_options:[]; const hasStripe=opts.some(o=>o.provider==='stripe'); const hasPaypal=opts.some(o=>o.provider==='paypal'); %>
+    <div class="card plan"><h3><%= p.name %></h3><div class="price"><%= p.price_minor === 0 ? 'Free' : '$' + (p.price_minor/100).toFixed(2) %></div><p class="muted"><%= p.description %></p><p><span class="pill"><%= p.streams %> stream<%= p.streams===1?'':'s' %></span><span class="pill">Downloads <%= p.allow_downloads?'on':'off' %></span><span class="pill">Transcode <%= p.allow_video_transcoding?'on':'off' %></span></p><div class="actions">
+      <% if (p.billing_interval === 'trial') { %><form method="post" action="/account/trial/start"><button class="primary">Start free trial</button></form><% } %>
+      <% if (p.price_minor > 0 && stripeEnabled && hasStripe) { %><form method="post" action="/account/checkout/stripe"><input type="hidden" name="planCode" value="<%= p.code %>"><button class="stripe">Pay with Stripe</button></form><% } %>
+      <% if (p.price_minor > 0 && paypalEnabled && hasPaypal) { %><form method="post" action="/account/checkout/paypal"><input type="hidden" name="planCode" value="<%= p.code %>"><button class="paypal">Pay with PayPal</button></form><% } %>
+      <% if (p.price_minor > 0 && !hasStripe && !hasPaypal) { %><div class="muted">Payment mapping not configured yet.</div><% } %>
+    </div></div>
+  <% }) %>
+  </div>
+
+  <% if (portal.providers.some(p=>p.provider==='stripe') && stripeEnabled) { %><h2>Billing</h2><div class="card"><form method="post" action="/account/stripe/portal"><button class="stripe">Manage Stripe billing</button></form></div><% } %>
+</div></body></html>
