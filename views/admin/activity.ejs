@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="refresh" content="30">
   <title>Activity · <%= siteName %></title>
   <link rel="stylesheet" href="/css/platform-shell.css">
 </head>
@@ -31,13 +30,13 @@
   <main class="mainPane">
     <header class="topBar">
       <div>Administration</div>
-      <div class="muted">Auto-refresh: 30s</div>
+      <div class="muted">Read-only monitoring</div>
     </header>
 
     <div class="content">
       <div class="pageHeader">
         <h1>Playback activity</h1>
-        <div class="muted">Live Jellyfin activity and stream-policy observation</div>
+        <div class="muted">Jellyfin activity and stream-policy observation · refresh the page for current data</div>
       </div>
 
       <% if (cfg.effectiveMode === 'enforce') { %>
