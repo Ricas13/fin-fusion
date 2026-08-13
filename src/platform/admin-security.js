@@ -50,6 +50,25 @@ function createAdminSecurityRouter() {
         } catch (error) { return next(error); }
     });
 
+    router.get('/admin/security/password', (req, res) => {
+        return res.render('admin/security-password', {
+            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            csrfToken: csrf.token(req)
+        });
+    });
+
+    router.get('/admin/security/recovery', async (req, res, next) => {
+        try {
+            const overview = await auth.getSecurityOverview(req.session.authUserId);
+            return res.render('admin/security-recovery', {
+                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                enabled: !!overview?.user?.totp_enabled,
+                remaining: overview?.recoveryCodesRemaining || 0,
+                csrfToken: csrf.token(req)
+            });
+        } catch (error) { return next(error); }
+    });
+
     router.post('/admin/security/sessions/revoke-others', async (req, res, next) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
