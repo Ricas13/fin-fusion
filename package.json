@@ -8,9 +8,12 @@
     "dev": "NODE_ENV=development node --require ./platform-preload.js --require ./persistent-session-preload.js secure-start.js",
     "db:migrate": "node scripts/migrate-db.js",
     "db:import-json": "node scripts/migrate-json-to-postgres.js",
+    "db:activity-role": "node scripts/configure-activity-db-role.js",
     "server:add": "node scripts/add-jellyfin-server.js",
     "payments:map": "node scripts/map-provider-price.js",
-    "check": "node --check platform-preload.js && node --check persistent-session-preload.js && node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js && node --check src/db.js && node --check src/crypto.js && node --check src/customers.js && node --check src/subscriptions.js && node --check src/jellyfin/registry.js && node --check src/jellyfin/provisioning.js && node --check src/jellyfin/jobs.js && node --check src/payments/lifecycle.js && node --check src/payments/stripe.js && node --check src/payments/paypal.js && node --check src/platform/router.js && node --check src/platform/webhooks.js && node --check scripts/migrate-db.js && node --check scripts/migrate-json-to-postgres.js && node --check scripts/map-provider-price.js && node --check scripts/add-jellyfin-server.js && node --check scripts/platform-smoke.js"
+    "activity:worker": "node scripts/activity-worker.js",
+    "secrets:rotate-jellyfin": "node scripts/rotate-jellyfin-keys.js",
+    "check": "node --check platform-preload.js && node --check persistent-session-preload.js && node --check secure-start.js && node --check app.js && node --check check-expired.js && node --check import_users.js && node --check src/db.js && node --check src/crypto.js && node --check src/security/purpose-crypto.js && node --check src/customers.js && node --check src/subscriptions.js && node --check src/jellyfin/registry.js && node --check src/jellyfin/provisioning.js && node --check src/jellyfin/jobs.js && node --check src/jellyfin/activity.js && node --check src/payments/lifecycle.js && node --check src/payments/stripe.js && node --check src/payments/paypal.js && node --check src/platform/router.js && node --check src/platform/admin-activity.js && node --check src/platform/webhooks.js && node --check scripts/migrate-db.js && node --check scripts/migrate-json-to-postgres.js && node --check scripts/configure-activity-db-role.js && node --check scripts/map-provider-price.js && node --check scripts/add-jellyfin-server.js && node --check scripts/rotate-jellyfin-keys.js && node --check scripts/activity-worker.js && node --check scripts/platform-smoke.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
