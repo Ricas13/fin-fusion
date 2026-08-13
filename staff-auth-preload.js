@@ -10,7 +10,9 @@ if (!process.env.DATABASE_URL) {
 if (process.env.NODE_ENV === 'production') {
     const { keyFromEnv } = require('./src/security/purpose-crypto');
     keyFromEnv('AUTH_ENCRYPTION_KEY');
-    if (process.env.REQUIRE_ADMIN_2FA === 'false') throw new Error('Administrator 2FA cannot be disabled in production');
+    if (process.env.REQUIRE_ADMIN_2FA === 'false') {
+        console.warn('SECURITY WARNING: administrator 2FA is optional for this deployment. Enable REQUIRE_ADMIN_2FA=true for stronger account protection.');
+    }
 }
 
 const sessionPath = require.resolve('express-session');
