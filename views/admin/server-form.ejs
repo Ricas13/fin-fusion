@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title><%= server ? 'Manage server' : 'Add server' %> · <%= siteName %></title>
+  <link rel="stylesheet" href="/css/platform-shell.css">
+</head>
+<body>
+<div class="appShell">
+  <aside class="sideNav">
+    <div class="brand"><%= siteName %></div>
+    <div class="navSection">Server</div>
+    <a class="navItem" href="/admin">Dashboard</a><a class="navItem" href="/admin/activity">Activity</a><a class="navItem" href="/admin/users">Users</a><a class="navItem active" href="/admin/servers">Servers</a><span class="navItem disabled">Libraries</span>
+    <div class="navSection">Business</div><span class="navItem disabled">Plans</span><span class="navItem disabled">Payments</span><span class="navItem disabled">Resellers</span><span class="navItem disabled">Requests</span>
+    <div class="navSection">System</div><span class="navItem disabled">Notifications</span><a class="navItem" href="/admin/security">Security</a><span class="navItem disabled">Settings</span>
+  </aside>
+  <main class="mainPane">
+    <header class="topBar"><div>Administration</div><a class="muted" href="/admin/servers">← Back to Servers</a></header>
+    <div class="content">
+      <div class="pageHeader"><h1><%= server ? 'Manage '+server.name : 'Add Jellyfin server' %></h1><div class="muted">Credential changes are write-only, validated before storage and require a fresh second factor</div></div>
+      <% if (error) { %><div class="notice error"><%= error %></div><% } %>
+      <% if (!allowedHosts.length) { %><div class="statusBanner warn"><strong>Production safety:</strong> configure <code>JELLYFIN_ALLOWED_HOSTS</code> before changing base URLs in production.</div><% } else { %><div class="statusBanner"><strong>Allowed Jellyfin hosts:</strong> <%= allowedHosts.join(', ') %></div><% } %>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Server configuration</h2><span class="muted"><%= server ? server.health_status : 'new server' %></span></div>
+        <form method="post" action="<%= server ? '/admin/servers/'+server.id : '/admin/servers' %>" class="formPanel">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="formGrid">
+            <div class="formGroup"><label for="name">Name</label><input class="input" id="name" name="name" maxlength="100" required value="<%= server ? server.name : '' %>"></div>
+            <div class="formGroup"><label for="slug">Slug</label><input class="input" id="slug" name="slug" maxlength="60" required pattern="[a-z0-9][a-z0-9-]{1,58}[a-z0-9]" value="<%= server ? server.slug : '' %>"></div>
+            <div class="formGroup"><label for="serverClass">Server class</label><select class="input" id="serverClass" name="serverClass"><% ['premium','free','custom'].forEach(function(v){ %><option value="<%= v %>" <%= server && server.server_class===v ? 'selected' : '' %>><%= v %></option><% }) %></select></div>
+            <div class="formGroup"><label for="location">Location</label><input class="input" id="location" name="location" maxlength="100" placeholder="e.g. London" value="<%= server && server.location ? server.location : '' %>"></div>
+            <div class="formGroup"><label for="baseUrl">Internal/base URL</label><input class="input" id="baseUrl" name="baseUrl" type="url" required placeholder="http://jellyfin:8096" value="<%= server ? server.base_url : '' %>"><div class="subText">Used by this application. Must be on the production hostname allowlist.</div></div>
+            <div class="formGroup"><label for="publicUrl">Customer/public URL</label><input class="input" id="publicUrl" name="publicUrl" type="url" placeholder="https://premium.example.com" value="<%= server && server.public_url ? server.public_url : '' %>"></div>
+            <div class="formGroup"><label for="priority">Placement priority</label><input class="input" id="priority" name="priority" type="number" min="0" max="10000" required value="<%= server ? server.priority : 100 %>"><div class="subText">Lower numbers are preferred after health/capacity checks.</div></div>
+            <div class="formGroup"><label for="maxUsers">Maximum managed users</label><input class="input" id="maxUsers" name="maxUsers" type="number" min="1" max="100000" placeholder="Unlimited" value="<%= server && server.max_users ? server.max_users : '' %>"></div>
+          </div>
+
+          <div class="toggleGrid">
+            <label class="toggleRow"><input type="checkbox" name="allowNewUsers" <%= !server || server.allow_new_users ? 'checked' : '' %>><span><strong>Allow new-user placement</strong><span class="subText">Turn this off to drain the server without disabling existing users.</span></span></label>
+            <label class="toggleRow"><input type="checkbox" name="trialEnabled" <%= !server || server.trial_enabled ? 'checked' : '' %>><span><strong>Allow trials</strong><span class="subText">Trial plans may be placed here.</span></span></label>
+            <label class="toggleRow"><input type="checkbox" name="paidEnabled" <%= !server || server.paid_enabled ? 'checked' : '' %>><span><strong>Allow paid subscriptions</strong><span class="subText">Paid plans may be placed here.</span></span></label>
+          </div>
+
+          <div class="formGrid">
+            <div class="formGroup"><label for="apiKey">Jellyfin API key <%= server ? '(leave blank to keep current key)' : '' %></label><input class="input" id="apiKey" name="apiKey" type="password" autocomplete="new-password" <%= server ? '' : 'required' %>><div class="subText">Never rendered back after submission. New/rotated credentials are tested before the database is changed.</div></div>
+            <div class="formGroup"><label for="code">Authenticator or recovery code</label><input class="input" id="code" name="code" autocomplete="one-time-code" required><div class="subText">Required for every server configuration write.</div></div>
+          </div>
+
+          <div class="buttonRow"><button class="button" type="submit"><%= server ? 'Save server' : 'Add server' %></button><a class="button secondary" href="/admin/servers">Cancel</a></div>
+        </form>
+      </section>
+
+      <% if (server) { %>
+      <section class="section">
+        <div class="sectionHead"><h2>Connectivity</h2><span class="pill <%= server.health_status==='healthy'?'good':(server.health_status==='offline'?'bad':'warn') %>"><%= server.health_status %></span></div>
+        <div class="formPanel"><p class="muted">Run a health check using the stored server credential. This does not modify the server.</p><form method="post" action="/admin/servers/<%= server.id %>/health"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary" type="submit">Run health check</button></form><div class="subText">Last check: <%= server.last_health_check ? new Date(server.last_health_check).toLocaleString() : 'never' %></div></div>
+      </section>
+      <% } %>
+
+      <div class="securityNote standalone">Server deletion and hard-disable controls are intentionally absent. Drain placement first and use a reviewed operational procedure for destructive actions.</div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
