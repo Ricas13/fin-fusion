@@ -39,20 +39,15 @@
               <div class="serverStats"><div><span class="metricMini"><%= used %><%= max ? ' / '+max : '' %></span><span class="subText">managed users</span></div><div><span class="metricMini"><%= s.active_streams %></span><span class="subText">active streams</span></div></div>
               <div class="flagRow"><span class="pill <%= s.allow_new_users?'good':'warn' %>"><%= s.allow_new_users?'Placement on':'Draining' %></span><span class="pill <%= s.trial_enabled?'accent':'' %>">Trials <%= s.trial_enabled?'on':'off' %></span><span class="pill <%= s.paid_enabled?'accent':'' %>">Paid <%= s.paid_enabled?'on':'off' %></span></div>
               <div class="subText">Priority <%= s.priority %> · Last health check <%= s.last_health_check ? new Date(s.last_health_check).toLocaleString() : 'never' %></div>
-              <div class="buttonRow cardActions"><a class="button secondary" href="/admin/servers/<%= s.id %>/edit">Edit</a><form method="post" action="/admin/servers/<%= s.id %>/health"><input type="hidden" name="_csrf" value=""><button class="button secondary healthButton" type="submit" data-server-id="<%= s.id %>">Health check</button></form></div>
+              <div class="buttonRow cardActions"><a class="button secondary" href="/admin/servers/<%= s.id %>/edit">Manage</a></div>
             </div>
           <% }) %>
         </div>
         <% } %>
-        <div class="securityNote">API keys are write-only and never rendered back to the browser. Server disabling/deletion is intentionally not exposed in this first native administration phase.</div>
+        <div class="securityNote">API keys are write-only and never rendered back to the browser. Health checks and configuration changes are available from the server detail screen.</div>
       </section>
     </div>
   </main>
 </div>
-<script>
-(function(){
-  const csrf = document.cookie.split('; ').find(v => v.startsWith(''));
-})();
-</script>
 </body>
 </html>
