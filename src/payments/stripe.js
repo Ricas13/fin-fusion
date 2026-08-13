@@ -5,15 +5,19 @@ const lifecycle = require('./lifecycle');
 
 let stripeClient;
 
+function apiKey() {
+    return process.env.STRIPE_RESTRICTED_KEY || process.env.STRIPE_API_KEY || '';
+}
+
 function enabled() {
-    return Boolean(process.env.STRIPE_API_KEY);
+    return Boolean(apiKey());
 }
 
 function getStripe() {
     if (!enabled()) throw new Error('Stripe is not configured');
     if (!stripeClient) {
         const Stripe = require('stripe');
-        stripeClient = new Stripe(process.env.STRIPE_API_KEY, {
+        stripeClient = new Stripe(apiKey(), {
             apiVersion: '2026-06-24.dahlia',
             appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' }
         });
