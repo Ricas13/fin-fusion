@@ -22,22 +22,41 @@ async function main() {
         const adminMap = new Map();
         for (const admin of data.admins || []) {
             const result = await client.query(`
-                INSERT INTO app_users(username,password_hash,role,active,created_at)
-                VALUES($1,$2,'admin',TRUE,COALESCE($3::timestamptz,NOW()))
-                ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash
+                INSERT INTO app_users(
+                    username,password_hash,role,active,legacy_numeric_id,password_changed_at,created_at
+                ) VALUES($1,$2,'admin',TRUE,$3,COALESCE($4::timestamptz,NOW()),COALESCE($5::timestamptz,NOW()))
+                ON CONFLICT(username) DO UPDATE SET
+                    legacy_numeric_id=EXCLUDED.legacy_numeric_id,
+                    active=TRUE,
+                    updated_at=NOW()
+                WHERE app_users.role='admin'
                 RETURNING id
-            `, [admin.username, admin.password, admin.createdAt || null]);
+            `, [admin.username, admin.password, Number(admin.id), admin.passwordChangedAt || null, admin.createdAt || null]);
+            if (!result.rowCount) throw new Error(`Role mismatch for existing admin ${admin.username}`);
             adminMap.set(admin.id, result.rows[0].id);
         }
 
         const resellerMap = new Map();
         for (const reseller of data.resellers || []) {
             const user = await client.query(`
-                INSERT INTO app_users(username,password_hash,role,active,created_at)
-                VALUES($1,$2,'reseller',$3,COALESCE($4::timestamptz,NOW()))
-                ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,active=EXCLUDED.active
+                INSERT INTO app_users(
+                    username,password_hash,role,active,legacy_numeric_id,password_changed_at,created_at
+                ) VALUES($1,$2,'reseller',$3,$4,COALESCE($5::timestamptz,NOW()),COALESCE($6::timestamptz,NOW()))
+                ON CONFLICT(username) DO UPDATE SET
+                    legacy_numeric_id=EXCLUDED.legacy_numeric_id,
+                    active=EXCLUDED.active,
+                    updated_at=NOW()
+                WHERE app_users.role='reseller'
                 RETURNING id
-            `, [reseller.username, reseller.password || bcrypt.hashSync(cryptoSafeFallback(), 12), reseller.active !== false, reseller.createdAt || null]);
+            `, [
+                reseller.username,
+                reseller.password || bcrypt.hashSync(cryptoSafeFallback(), 12),
+                reseller.active !== false,
+                Number(reseller.id),
+                reseller.passwordChangedAt || null,
+                reseller.createdAt || null
+            ]);
+            if (!user.rowCount) throw new Error(`Role mismatch for existing reseller ${reseller.username}`);
 
             const rr = await client.query(`
                 INSERT INTO resellers(user_id,credits,trial_credits,note,created_at)
@@ -99,6 +118,7 @@ async function main() {
         await client.query('COMMIT');
         console.log(`Imported ${(data.admins || []).length} admins, ${(data.resellers || []).length} resellers and ${(data.clients || []).length} clients.`);
         console.log('Legacy client passwords are intentionally not imported. Reset them if they must be re-shared.');
+        console.log('Existing PostgreSQL staff passwords are preserved when usernames already exist.');
     } catch (err) {
         await client.query('ROLLBACK');
         throw err;

@@ -30,7 +30,10 @@ jobs:
       DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ADMIN_2FA_ENROLLMENT_TOKEN: ci-admin-enrollment-approval-2026-very-long-value
       ACTIVITY_DB_PASSWORD: activity-ci-password-very-long-2026
+      REQUIRE_ADMIN_2FA: 'true'
       NODE_ENV: test
 
     steps:
@@ -59,7 +62,7 @@ jobs:
           (async () => {
             const plans = await query('SELECT code FROM plans ORDER BY sort_order, code');
             if (plans.rowCount < 4) throw new Error('Expected seeded plans');
-            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs, to_regclass('public.active_playback_sessions') AS active_playback_sessions, to_regclass('public.playback_history') AS playback_history, to_regclass('public.stream_policy_events') AS stream_policy_events");
+            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs, to_regclass('public.active_playback_sessions') AS active_playback_sessions, to_regclass('public.playback_history') AS playback_history, to_regclass('public.stream_policy_events') AS stream_policy_events, to_regclass('public.auth_sessions') AS auth_sessions, to_regclass('public.auth_events') AS auth_events, to_regclass('public.auth_recovery_codes') AS auth_recovery_codes, to_regclass('public.auth_totp_enrollments') AS auth_totp_enrollments");
             for (const [name, value] of Object.entries(tables.rows[0])) if (!value) throw new Error(`Required table missing: ${name}`);
           })().finally(() => getPool().end());
           NODE
@@ -68,16 +71,23 @@ jobs:
         run: |
           node - <<'NODE'
           const { encryptWithEnv, decryptWithEnv } = require('./src/security/purpose-crypto');
-          const encrypted = encryptWithEnv('ci-sentinel', 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
-          if (!encrypted.startsWith('jf1:')) throw new Error('Unexpected Jellyfin encryption format');
-          if (encrypted.includes('ci-sentinel')) throw new Error('Ciphertext leaked plaintext');
-          if (decryptWithEnv(encrypted, 'JELLYFIN_ENCRYPTION_KEY', 'jf1') !== 'ci-sentinel') throw new Error('Purpose-key roundtrip failed');
+          const jf = encryptWithEnv('ci-sentinel', 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
+          const auth = encryptWithEnv('ci-auth-sentinel', 'AUTH_ENCRYPTION_KEY', 'authv1');
+          if (!jf.startsWith('jf1:') || !auth.startsWith('authv1:')) throw new Error('Unexpected encryption format');
+          if (jf.includes('ci-sentinel') || auth.includes('ci-auth-sentinel')) throw new Error('Ciphertext leaked plaintext');
+          if (decryptWithEnv(jf, 'JELLYFIN_ENCRYPTION_KEY', 'jf1') !== 'ci-sentinel') throw new Error('Jellyfin key roundtrip failed');
+          if (decryptWithEnv(auth, 'AUTH_ENCRYPTION_KEY', 'authv1') !== 'ci-auth-sentinel') throw new Error('Auth key roundtrip failed');
+          let crossPurposeSucceeded = false;
+          try { decryptWithEnv(auth, 'JELLYFIN_ENCRYPTION_KEY', 'authv1'); crossPurposeSucceeded = true; } catch (_) {}
+          if (crossPurposeSucceeded) throw new Error('Cross-purpose key isolation failed');
           NODE
 
       - name: Security default smoke test
         run: |
           node - <<'NODE'
           const activity = require('./src/jellyfin/activity');
+          const auth = require('./src/auth/service');
+          const staff = require('./src/auth/staff-controller');
           delete process.env.STREAM_POLICY_MODE;
           delete process.env.STREAM_POLICY_ENFORCEMENT_ACK;
           let cfg = activity.config();
@@ -88,7 +98,24 @@ jobs:
           process.env.STREAM_POLICY_ENFORCEMENT_ACK = activity.ENFORCEMENT_ACK;
           cfg = activity.config();
           if (cfg.effectiveMode !== 'enforce') throw new Error('Explicit acknowledgement should enable enforcement');
-          if (cfg.confirmationsRequired < 2) throw new Error('At least two confirmations are required');
+          if (!auth.requiresTwoFactor({ role: 'admin', totp_enabled: false })) throw new Error('Admin 2FA must be required by default');
+          if (staff.adminEnrollmentApproved('wrong-value')) throw new Error('Invalid admin enrollment approval was accepted');
+          if (!staff.adminEnrollmentApproved(process.env.ADMIN_2FA_ENROLLMENT_TOKEN)) throw new Error('Valid admin enrollment approval was rejected');
+          NODE
+
+      - name: Native staff auth smoke test
+        run: npm run auth:smoke
+
+      - name: Compile security views
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const ejs = require('ejs');
+          for (const file of [
+            'views/auth/staff-login.ejs','views/auth/2fa-challenge.ejs','views/auth/2fa-setup.ejs',
+            'views/auth/recovery-codes.ejs','views/auth/message.ejs','views/admin/security.ejs',
+            'views/admin/security-password.ejs','views/admin/security-recovery.ejs'
+          ]) ejs.compile(fs.readFileSync(file,'utf8'));
           NODE
 
       - name: Configure least-privilege activity role
@@ -105,10 +132,14 @@ jobs:
             await client.query('SELECT id,streams FROM plans LIMIT 1');
             const write = await client.query("INSERT INTO stream_policy_events(mode,decision,reason) VALUES('observe','observed','ci') RETURNING id");
             if (!write.rowCount) throw new Error('Activity role could not write policy event');
-            let denied = false;
+            let paymentDenied = false;
             try { await client.query('SELECT id FROM payment_events LIMIT 1'); }
-            catch (error) { if (error.code === '42501') denied = true; else throw error; }
-            if (!denied) throw new Error('Activity role unexpectedly has payment table access');
+            catch (error) { if (error.code === '42501') paymentDenied = true; else throw error; }
+            if (!paymentDenied) throw new Error('Activity role unexpectedly has payment table access');
+            let authDenied = false;
+            try { await client.query('SELECT id FROM auth_events LIMIT 1'); }
+            catch (error) { if (error.code === '42501') authDenied = true; else throw error; }
+            if (!authDenied) throw new Error('Activity role unexpectedly has authentication table access');
           })().finally(() => client.end());
           NODE
 
