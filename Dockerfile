@@ -10,4 +10,4 @@ COPY . .
 
 USER node
 EXPOSE 3030
-CMD ["node", "secure-start.js"]
+CMD ["npm", "start"]
