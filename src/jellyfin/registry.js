@@ -1,8 +1,23 @@
 const { query } = require('../db');
 const { decryptString } = require('../crypto');
+const { decryptWithEnv } = require('../security/purpose-crypto');
 
 function normalizeBaseUrl(url) {
     return String(url || '').replace(/\/+$/, '');
+}
+
+function decryptJellyfinKey(payload) {
+    if (!payload) return null;
+    if (String(payload).startsWith('jf1:')) {
+        return decryptWithEnv(payload, 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
+    }
+    if (String(payload).startsWith('v1:') && process.env.DATA_ENCRYPTION_KEY) {
+        return decryptString(payload);
+    }
+    if (String(payload).startsWith('v1:')) {
+        throw new Error('Legacy Jellyfin key must be rotated before this process can use it');
+    }
+    throw new Error('Unsupported Jellyfin key format');
 }
 
 async function listServers({ enabledOnly = true, serverClass = null } = {}) {
@@ -33,7 +48,7 @@ async function getServerSecret(serverId) {
     return {
         ...server,
         base_url: normalizeBaseUrl(server.base_url),
-        apiKey: decryptString(server.api_key_encrypted)
+        apiKey: decryptJellyfinKey(server.api_key_encrypted)
     };
 }
 
@@ -85,4 +100,4 @@ async function healthcheckServer(serverId) {
     }
 }
 
-module.exports = { listServers, getServerSecret, request, healthcheckServer };
+module.exports = { listServers, getServerSecret, request, healthcheckServer, decryptJellyfinKey };
