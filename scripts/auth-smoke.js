@@ -6,6 +6,7 @@ const { spawnSync } = require('child_process');
 const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
 const totp = require('../src/auth/totp');
+const serverAdmin = require('../src/platform/admin-servers');
 const USERNAME = 'ci-auth-smoke-admin';
 function mockReq(sessionID = 'ci-auth-smoke-session') { return { ip:'127.0.0.1', sessionID, get(name){ return String(name).toLowerCase()==='user-agent'?'steam-fusion-auth-smoke/1':''; } }; }
 function preloadStatus(overrides){ return spawnSync(process.execPath,['-e',"require('./staff-auth-preload.js')"],{cwd:process.cwd(),env:{...process.env,...overrides},encoding:'utf8'}); }
@@ -14,9 +15,14 @@ function assertStartupPolicy(){
   if(preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'false'}).status===0) throw new Error('Production accepted disabled administrator 2FA');
   const ok=preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'true'}); if(ok.status!==0) throw new Error('Valid production preload failed');
 }
+function assertAdminErrorRedaction(){
+  if(serverAdmin.safeAdminError({code:'23505'})!=='A server with that name or slug already exists.') throw new Error('Duplicate server error was not sanitized');
+  const hidden=serverAdmin.safeAdminError(new Error('SECRET_INTERNAL_DATABASE_DETAIL'));
+  if(hidden!=='The server change could not be completed safely.'||hidden.includes('SECRET_INTERNAL')) throw new Error('Unexpected server error details were exposed');
+}
 async function cleanup(userId=null){ if(userId) await query('DELETE FROM auth_events WHERE user_id=$1',[userId]); await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]); await query('DELETE FROM app_users WHERE username=$1',[USERNAME]); }
 async function main(){
-  assertStartupPolicy();
+  assertStartupPolicy(); assertAdminErrorRedaction();
   const vectorSecret='GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'; if(totp.totp(vectorSecret,{time:59000,digits:8})!=='94287082') throw new Error('TOTP vector failed');
   await cleanup(); const password=crypto.randomBytes(24).toString('base64url')+'Aa1!';
   const inserted=await query("INSERT INTO app_users(username,password_hash,role,active,legacy_numeric_id,password_changed_at) VALUES($1,$2,'admin',TRUE,987654,NOW()) RETURNING id",[USERNAME,await bcrypt.hash(password,12)]); const userId=inserted.rows[0].id;
