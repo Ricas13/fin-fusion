@@ -33,6 +33,7 @@ require.cache[sessionPath].exports = guardedSession;
 
 const express = require('express');
 const controller = require('./src/auth/staff-controller');
+const dashboard = require('./src/platform/admin-dashboard');
 const originalGet = express.application.get;
 const originalPost = express.application.post;
 const currentListen = express.application.listen;
@@ -40,6 +41,7 @@ const currentListen = express.application.listen;
 express.application.get = function staffGet(path, ...handlers) {
     if (path === '/login' && handlers.length) return originalGet.call(this, path, controller.loginPage);
     if (path === '/logout' && handlers.length) return originalGet.call(this, path, controller.logout);
+    if (path === '/admin' && handlers.length) return originalGet.call(this, path, dashboard.dashboardPage);
     return originalGet.call(this, path, ...handlers);
 };
 
