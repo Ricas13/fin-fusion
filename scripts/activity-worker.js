@@ -1,6 +1,15 @@
 'use strict';
 
 require('dotenv').config();
+
+if (!process.env.ACTIVITY_DATABASE_URL) throw new Error('ACTIVITY_DATABASE_URL is required');
+if (!process.env.JELLYFIN_ENCRYPTION_KEY) throw new Error('JELLYFIN_ENCRYPTION_KEY is required');
+if (!process.env.ACTIVITY_ENCRYPTION_KEY) throw new Error('ACTIVITY_ENCRYPTION_KEY is required');
+
+process.env.DATABASE_URL = process.env.ACTIVITY_DATABASE_URL;
+process.env.DATA_ENCRYPTION_KEY = process.env.ACTIVITY_ENCRYPTION_KEY;
+process.env.ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN = 'false';
+
 const { getPool } = require('../src/db');
 const activity = require('../src/jellyfin/activity');
 
