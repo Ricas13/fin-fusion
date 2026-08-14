@@ -18,6 +18,11 @@ async function reload() {
     cache = result.rows[0]?.setting_value && typeof result.rows[0].setting_value === 'object'
         ? result.rows[0].setting_value
         : {};
+    // A number of inherited templates still read SITE_NAME synchronously. Keep
+    // those call sites white-label-safe while they are incrementally migrated to
+    // siteName() by reflecting the database-backed identity into this process.
+    const storedSiteName = typeof cache.siteName === 'string' ? cache.siteName.trim() : '';
+    if (storedSiteName) process.env.SITE_NAME = storedSiteName;
     return cache;
 }
 
@@ -25,6 +30,11 @@ async function ensureLoaded() {
     if (cache) return cache;
     if (!loadingPromise) loadingPromise = reload().finally(() => { loadingPromise = null; });
     return loadingPromise;
+}
+
+function siteName() {
+    const stored = typeof cache?.siteName === 'string' ? cache.siteName.trim() : '';
+    return stored || String(process.env.SITE_NAME || '').trim() || 'CAPTaINFiN';
 }
 
 function publicRegistrationOpen() {
@@ -70,6 +80,7 @@ function overseerrUrl() {
 module.exports = {
     reload,
     ensureLoaded,
+    siteName,
     publicRegistrationOpen,
     storefrontEnabled,
     requireEmailVerification,

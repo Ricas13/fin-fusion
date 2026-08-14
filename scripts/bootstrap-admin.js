@@ -36,6 +36,16 @@ async function main() {
             return;
         }
 
+        const hasUsername = Boolean(String(process.env.ADMIN_USERNAME || '').trim());
+        const hasPassword = Boolean(String(process.env.ADMIN_PASSWORD || ''));
+        if (!hasUsername && !hasPassword) {
+            console.log('native admin bootstrap: no environment credentials supplied; browser first-run setup remains available at /setup');
+            return;
+        }
+        if (!hasUsername || !hasPassword) {
+            throw new Error('Set both ADMIN_USERNAME and ADMIN_PASSWORD, or leave both unset to use browser first-run setup');
+        }
+
         const username = cleanUsername(process.env.ADMIN_USERNAME);
         const password = validatePassword(process.env.ADMIN_PASSWORD);
         const emailRaw = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();

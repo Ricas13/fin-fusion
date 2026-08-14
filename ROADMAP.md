@@ -1,4 +1,4 @@
-# Steam Fusion / CAPTAiNFiN Roadmap
+# Steam Fusion / CAPTaINFiN Roadmap
 
 This fork keeps the useful Steam Fusion reseller workflow while turning it into a production-grade, self-hosted multi-server platform.
 
@@ -61,7 +61,7 @@ This is a cross-cutting product rule rather than a final migration phase: new wo
 - [x] Referral rewards disabled by default on clean installs
 - [x] Payment and notification providers remain optional
 - [x] Automated blank-database test reaches a working administrator dashboard
-- [ ] Browser-based first-run administrator creation and permanent setup lockout
+- [x] Browser-based first-run administrator creation and permanent setup lockout
 - [ ] Remove remaining legacy Premium/Free business assumptions where they are not intrinsic configuration
 - [ ] Safe configuration export/import
 - [ ] Review new data models for future workspace/tenant scoping without implementing full multi-tenancy
@@ -196,9 +196,9 @@ The original project already contains a basic content-request workflow. The fork
 - [ ] Privileged-role 2FA enforcement
 - [ ] Per-action audit history
 
-## Phase 12 — White label / CAPTAiNFiN product layer
+## Phase 12 — White label / CAPTaINFiN product layer
 
-- [ ] CAPTAiNFiN branding/theme
+- [ ] CAPTaINFiN branding/theme
 - [ ] Custom domain
 - [ ] Logo and wallpaper
 - [ ] Home/pricing/subscription/library-statistics custom content
