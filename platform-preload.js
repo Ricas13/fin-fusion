@@ -128,10 +128,14 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminBulkCustomersRouter());
         this.use(createAdminCustomersListRouter());
         this.use(createAdminPlanLibrariesRouter());
+        // The current admin shell owns GET presentation for Activity, Servers
+        // (including add/edit) and Libraries. Keep it ahead of the legacy
+        // handlers so those pages use one layout; POSTs still fall through to
+        // the specialised routers below.
+        this.use(createAdminShellRouter());
         this.use(createAdminServersRouter());
         this.use(createAdminActivityRouter());
         this.use(createAdminLibrariesRouter());
-        this.use(createAdminShellRouter());
         this.use(createAdminCustomer360Router());
         this.use(createAdminUsersRouter());
         this.use(createAdminDiscountsRouter());

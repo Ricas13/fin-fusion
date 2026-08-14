@@ -37,6 +37,13 @@ function requireEmailVerification() {
     return typeof stored === 'boolean' ? stored : process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
 }
 
+function requireAdminTwoFactor() {
+    const stored = cache?.requireAdminTwoFactor;
+    // 2FA is optional by default. An explicit runtime setting or env=true can
+    // make it mandatory for administrator sign-in without changing code.
+    return typeof stored === 'boolean' ? stored : process.env.REQUIRE_ADMIN_2FA === 'true';
+}
+
 function entitlementJobIntervalMs() {
     const stored = Number(cache?.entitlementJobIntervalMs);
     return Number.isFinite(stored) && stored >= 30000 ? stored : Number(process.env.ENTITLEMENT_JOB_INTERVAL_MS || 5 * 60 * 1000);
@@ -56,6 +63,7 @@ module.exports = {
     ensureLoaded,
     publicRegistrationOpen,
     requireEmailVerification,
+    requireAdminTwoFactor,
     entitlementJobIntervalMs,
     serverHealthIntervalMs,
     overseerrUrl
