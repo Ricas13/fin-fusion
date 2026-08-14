@@ -7,6 +7,7 @@ const STRATEGIES = new Set(['balanced', 'lowest_customers', 'lowest_streams', 'w
 const DEFAULT_STALE_MS = 5 * 60 * 1000;
 let fleetSnapshot = new Map();
 let snapshotLoadedAt = 0;
+let refreshTimer = null;
 
 function normalizeStrategy(value) {
     const strategy = String(value || 'balanced').trim().toLowerCase();
@@ -161,6 +162,16 @@ async function refreshFleetSnapshot() {
     return next.size;
 }
 
+function startFleetSnapshotRefresh() {
+    if (refreshTimer || !process.env.DATABASE_URL) return;
+    const run = () => refreshFleetSnapshot().catch(error => {
+        console.warn('Placement fleet snapshot refresh failed:', error.message);
+    });
+    run();
+    refreshTimer = setInterval(run, 30000);
+    refreshTimer.unref?.();
+}
+
 function snapshotStatus() {
     return { serverCount: fleetSnapshot.size, loadedAt: snapshotLoadedAt || null, staleAfterMs: staleMs() };
 }
@@ -175,6 +186,8 @@ function setFleetSnapshotForTests(entries) {
     snapshotLoadedAt = Date.now();
 }
 
+startFleetSnapshotRefresh();
+
 module.exports = {
     STRATEGIES,
     normalizeStrategy,
@@ -184,6 +197,7 @@ module.exports = {
     atCapacity,
     selectServer,
     refreshFleetSnapshot,
+    startFleetSnapshotRefresh,
     snapshotStatus,
     setFleetSnapshotForTests
 };
