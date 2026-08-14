@@ -1,0 +1,143 @@
+'use strict';
+
+const express = require('express');
+const { esc, layout } = require('./admin-html');
+const { listData } = require('./admin-plans');
+
+function site() { return process.env.SITE_NAME || 'CAPTaINFiN'; }
+function gate(req, res, next) {
+    if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
+    return res.redirect('/login?session=expired');
+}
+function noStore(_req, res, next) {
+    res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    next();
+}
+function notice(req) {
+    return `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`;
+}
+
+function durationLabel(plan) {
+    const days = Math.max(1, Number(plan?.duration_days || 1));
+    switch (plan?.billing_interval) {
+        case 'trial': return days === 1 ? '24 hours' : `${days} days`;
+        case 'month': return '1 month';
+        case '6_months': return '6 months';
+        case 'year': return '1 year';
+        default: return days === 1 ? '1 day' : `${days} days`;
+    }
+}
+
+function durationDetail(plan) {
+    const days = Math.max(1, Number(plan?.duration_days || 1));
+    if (plan?.billing_interval === 'custom' || (plan?.billing_interval === 'trial' && days === 1)) return '';
+    return `${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
+function priceLabel(plan) {
+    const minor = Number(plan?.price_minor || 0);
+    if (minor === 0) return 'Free';
+    return `${String(plan?.currency || '').toUpperCase()} ${(minor / 100).toFixed(2)}`.trim();
+}
+
+function billingLabel(value) {
+    return ({ trial: 'Trial', month: 'Monthly', '6_months': '6 months', year: 'Yearly', custom: 'Custom' })[value] || 'Custom';
+}
+
+function planRow(plan) {
+    const href = `/admin/plans/${encodeURIComponent(plan.id)}/edit`;
+    const active = Boolean(plan.active);
+    const free = Number(plan.price_minor || 0) === 0;
+    const downloads = Boolean(plan.allow_downloads);
+    const durationDays = Number(plan.duration_days || 0);
+    const streams = Number(plan.streams || 0);
+    const subscribers = Number(plan.subscription_count || 0);
+    const searchable = [plan.name, plan.code, plan.description, plan.audience, plan.server_class, plan.billing_interval].filter(Boolean).join(' ').toLowerCase();
+    return `<tr class="planListRow" tabindex="0" data-plan-row data-href="${esc(href)}"
+        data-search="${esc(searchable)}"
+        data-status="${active ? 'active' : 'archived'}"
+        data-price-type="${free ? 'free' : 'paid'}"
+        data-billing="${esc(plan.billing_interval || 'custom')}"
+        data-server-class="${esc(plan.server_class || 'custom')}"
+        data-sort-name="${esc(String(plan.name || '').toLowerCase())}"
+        data-sort-status="${active ? '1' : '0'}"
+        data-sort-price="${Number(plan.price_minor || 0)}"
+        data-sort-duration="${durationDays}"
+        data-sort-downloads="${downloads ? '1' : '0'}"
+        data-sort-streams="${streams}"
+        data-sort-subscribers="${subscribers}">
+        <td class="planListPlanCell">
+            <div class="planListName">${esc(plan.name)}</div>
+            <div class="planListMeta">${esc(plan.code)} · ${esc(plan.audience)} · ${esc(plan.server_class || 'custom')}</div>
+            <div class="planListDescription">${esc(plan.description || 'No description')}</div>
+        </td>
+        <td><span class="pill ${active ? 'good' : 'bad'}">${active ? 'Active' : 'Archived'}</span><div class="planListSubtle">${plan.visible ? 'Visible' : 'Hidden'}</div></td>
+        <td class="planListPrice"><strong>${esc(priceLabel(plan))}</strong><div class="planListSubtle">${esc(billingLabel(plan.billing_interval))}</div></td>
+        <td><strong>${esc(durationLabel(plan))}</strong>${durationDetail(plan) ? `<div class="planListSubtle">${esc(durationDetail(plan))}</div>` : ''}</td>
+        <td><span class="pill ${downloads ? 'good' : ''}">${downloads ? 'Yes' : 'No'}</span></td>
+        <td class="planListNumber"><strong>${streams.toLocaleString('en-GB')}</strong></td>
+        <td class="planListNumber"><strong>${subscribers.toLocaleString('en-GB')}</strong></td>
+        <td class="planListActions"><a class="button secondary" href="${esc(href)}">Manage</a></td>
+    </tr>`;
+}
+
+function filterOptions(rows) {
+    const classes = [...new Set(rows.map(row => String(row.server_class || 'custom')).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return classes.map(value => `<option value="${esc(value)}">${esc(value.charAt(0).toUpperCase() + value.slice(1))}</option>`).join('');
+}
+
+const styles = `<style>
+.planListToolbar{display:grid;grid-template-columns:minmax(220px,1.5fr) repeat(4,minmax(125px,.7fr)) auto;gap:8px;align-items:end;padding:12px;border-bottom:1px solid #252d36;background:#10161d}.planListToolbar label{display:grid;gap:4px;color:#7f8b9b;font-size:10px;font-weight:650}.planListToolbar .input{min-width:0}.planListReset{align-self:end}.planListTable{min-width:1040px}.planListTable th{white-space:nowrap}.planListSortButton{display:inline-flex;align-items:center;gap:5px;padding:0;border:0;background:none;color:inherit;font:inherit;font-weight:650;cursor:pointer}.planListSortButton:hover{color:#cbd5df}.planListSortButton[data-direction="asc"] .planSortArrow::after{content:"↑"}.planListSortButton[data-direction="desc"] .planSortArrow::after{content:"↓"}.planSortArrow::after{content:"↕";font-size:10px}.planListRow{cursor:pointer}.planListRow:focus{outline:1px solid #2ca6ca;outline-offset:-1px}.planListRow[hidden]{display:none}.planListPlanCell{min-width:280px}.planListName{font-size:12px;font-weight:750;color:#edf2f7}.planListMeta,.planListDescription,.planListSubtle{font-size:9px;color:#718094;margin-top:3px}.planListDescription{max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.planListPrice{white-space:nowrap}.planListNumber{text-align:right;font-variant-numeric:tabular-nums}.planListActions{text-align:right}.planListSummary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;color:#738193;font-size:10px;border-top:1px solid #222933}.planListFilteredEmpty{display:none;padding:24px;text-align:center;color:#697789;font-size:11px}.planListFilteredEmpty.visible{display:block}.planListTable.is-empty{display:none}@media(max-width:1180px){.planListToolbar{grid-template-columns:repeat(3,minmax(150px,1fr))}.planListToolbar label:first-child{grid-column:span 2}}@media(max-width:760px){.planListToolbar{grid-template-columns:1fr}.planListToolbar label:first-child{grid-column:auto}.planListTable{min-width:960px}}
+</style>`;
+
+async function plansPage(req) {
+    const rows = await listData();
+    const action = '<a class="button" href="/admin/plans/new">Add plan</a> <a class="button secondary" href="/admin/plans/export">Export CSV</a>';
+    if (!rows.length) {
+        const body = `${notice(req)}${styles}<section class="section"><div class="sectionHead"><h2>Plans</h2><span class="muted">0 total</span></div><div class="empty">No plans configured yet. Create your first plan when you are ready to offer access.</div></section>`;
+        return layout({ siteName: site(), active: 'plans', title: 'Plans', subtitle: 'Pricing, duration and Jellyfin entitlements', body, action });
+    }
+
+    const body = `${notice(req)}${styles}<section class="section">
+        <div class="sectionHead"><h2>Plans</h2><span class="muted">${rows.length} total</span></div>
+        <div class="planListToolbar" data-plan-filters>
+            <label>Search<input class="input" type="search" placeholder="Name, code or description" autocomplete="off" data-plan-search></label>
+            <label>Status<select class="input" data-plan-status><option value="">All statuses</option><option value="active">Active</option><option value="archived">Archived</option></select></label>
+            <label>Price<select class="input" data-plan-price><option value="">Free + paid</option><option value="free">Free</option><option value="paid">Paid</option></select></label>
+            <label>Billing<select class="input" data-plan-billing><option value="">All billing</option><option value="trial">Trial</option><option value="month">Monthly</option><option value="6_months">6 months</option><option value="year">Yearly</option><option value="custom">Custom</option></select></label>
+            <label>Server class<select class="input" data-plan-server><option value="">All classes</option>${filterOptions(rows)}</select></label>
+            <button class="button secondary planListReset" type="button" data-plan-reset>Reset</button>
+        </div>
+        <div class="tableWrap" data-plan-table-wrap>
+            <table class="dataTable planTable planListTable" data-plan-table>
+                <thead><tr>
+                    <th><button class="planListSortButton" type="button" data-plan-sort="name">Plan <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th><button class="planListSortButton" type="button" data-plan-sort="status">Status <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th><button class="planListSortButton" type="button" data-plan-sort="price">Price <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th><button class="planListSortButton" type="button" data-plan-sort="duration">Duration <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th><button class="planListSortButton" type="button" data-plan-sort="downloads">Downloads <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th class="right"><button class="planListSortButton" type="button" data-plan-sort="streams">Streams <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th class="right"><button class="planListSortButton" type="button" data-plan-sort="subscribers">Subscribers <span class="planSortArrow" aria-hidden="true"></span></button></th>
+                    <th class="right">Actions</th>
+                </tr></thead>
+                <tbody>${rows.map(planRow).join('')}</tbody>
+            </table>
+        </div>
+        <div class="planListFilteredEmpty" data-plan-filtered-empty>No plans match the current filters.</div>
+        <div class="planListSummary"><span data-plan-result-count>${rows.length} of ${rows.length} plans</span><span>Click a row to manage the plan</span></div>
+    </section><script src="/js/admin-plans-table.js" defer></script>`;
+    return layout({ siteName: site(), active: 'plans', title: 'Plans', subtitle: 'Pricing, duration and Jellyfin entitlements', body, action });
+}
+
+function createAdminPlansListRouter() {
+    const router = express.Router();
+    router.use('/admin/plans', gate, noStore);
+    router.get('/admin/plans', async (req, res, next) => {
+        try { return res.send(await plansPage(req)); }
+        catch (error) { return next(error); }
+    });
+    return router;
+}
+
+module.exports = { createAdminPlansListRouter, plansPage, durationLabel, durationDetail, priceLabel, billingLabel };
