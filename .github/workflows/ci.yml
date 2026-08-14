@@ -194,5 +194,8 @@ jobs:
       - name: Customer platform smoke test
         run: node scripts/platform-smoke.js
 
+      - name: Bulk jobs and reconciliation smoke test
+        run: node scripts/bulk-jobs-smoke.js
+
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
