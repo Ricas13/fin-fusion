@@ -7,7 +7,7 @@ const groups=[
     ['servers','Servers',[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries']]],
     ['commerce','Commerce',[['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]],
     ['automation','Automation',[['requests','Requests','/admin/requests'],['activity','Activity','/admin/activity'],['notifications','Notifications','/admin/notifications']]],
-    ['settings','Settings',[['settings','Settings','/admin/settings']]]
+    ['settings','Settings',[['settings','General','/admin/settings'],['branding','Branding','/admin/settings/branding']]]
 ];
 function findGroup(active){for(const g of groups){if(g[2].some(p=>p[0]===active))return g}return groups[0]}
 const iconPaths={
