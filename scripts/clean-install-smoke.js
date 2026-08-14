@@ -50,9 +50,10 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
         assert.strictEqual(readiness.cleanInstall, true);
         assert.strictEqual(readiness.counts.plans, 0);
         assert.strictEqual(readiness.counts.servers, 0);
-        assert.strictEqual(readiness.totalCount, 6);
+        assert.strictEqual(readiness.totalCount, 7);
         assert(readiness.checklist.find(item => item.key === 'jellyfin' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'plans' && !item.configured));
+        assert(readiness.checklist.find(item => item.key === 'requests' && !item.configured));
         console.log(`clean install smoke: ok (admins=${expectedAdmins})`);
     } else {
         // A database that already contained an application/legacy table before
