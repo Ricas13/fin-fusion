@@ -53,9 +53,6 @@ function startJobs() {
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     initialEntitlement.unref?.(); initialHealth.unref?.();
-    // Wait for the admin-editable interval settings to load (falling back to the env
-    // vars on failure) before starting the recurring timers, so a value set in
-    // Admin -> Settings is honored from process start rather than only on next boot.
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -81,6 +78,8 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
+        const { createAdminBrandingRouter } = require('./src/platform/admin-branding');
+        const { createBrandingRouter } = require('./src/platform/branding');
         const { createAdminResellerSummaryRouter } = require('./src/platform/admin-reseller-summary');
         const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
         const { createAdminActivityRouter } = require('./src/platform/admin-activity');
@@ -91,17 +90,14 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminReferralsRouter } = require('./src/platform/admin-referrals');
         const resellerPortal = require('./src/platform/reseller-portal');
         this.use(customerLoginThrottle);
-        // /reseller/export has no legacy app.js registration to intercept, so it is mounted
-        // directly here rather than through the staff-auth-preload.js route-substitution list.
+        this.use(createBrandingRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createAdminOriginalSettingsRouter());
+        this.use(createAdminBrandingRouter());
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlanLibrariesRouter());
-        // Servers/Activity/Libraries are mounted ahead of admin-shell.js so these
-        // dedicated, more capable routers win over admin-shell's older inline
-        // duplicates for the same paths (which remain harmlessly unreachable).
         this.use(createAdminServersRouter());
         this.use(createAdminActivityRouter());
         this.use(createAdminLibrariesRouter());
