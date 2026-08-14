@@ -35,6 +35,8 @@ function startJobs() {
     jobsStarted = true;
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
+    const bulkWorker = require('./src/jellyfin/bulk-worker');
+    require('./src/platform/bulk-operations'); // registers bulk-job handlers as a side effect
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
     const runEntitlements = async () => {
@@ -51,9 +53,25 @@ function startJobs() {
             if (offline.length) console.warn(`Jellyfin health check: ${offline.length}/${results.length} server(s) unavailable`);
         } catch (error) { console.error('Jellyfin health job failed:', error.message); }
     };
+    const runBulkJobs = async () => {
+        try { await bulkWorker.processBatch(); }
+        catch (error) { console.error('Bulk job worker failed:', error.message); }
+    };
+    const runStaleReclaim = async () => {
+        try {
+            const reclaimed = await bulkWorker.reclaimStaleRunningItems();
+            if (reclaimed) console.warn(`Bulk job worker: reclaimed ${reclaimed} stale 'running' item(s) as failed`);
+        } catch (error) { console.error('Stale bulk job reclaim failed:', error.message); }
+    };
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     initialEntitlement.unref?.(); initialHealth.unref?.();
+    // Bulk jobs poll on a short fixed interval (not settings-driven -- these
+    // are bounded per-tick batches, not a tunable operational cadence).
+    createRescheduler(runBulkJobs, () => 3000).start();
+    // Decoupled from the 3s claim loop -- this only needs to run often enough
+    // relative to STALE_RUNNING_MINUTES to catch a crashed worker promptly.
+    createRescheduler(runStaleReclaim, () => 60000).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -91,6 +109,10 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminServersRouter } = require('./src/platform/admin-servers');
         const { createAdminDiscountsRouter } = require('./src/platform/admin-discounts');
         const { createAdminReferralsRouter } = require('./src/platform/admin-referrals');
+        const { createAdminPlansRouter } = require('./src/platform/admin-plans');
+        const { createAdminJobsRouter } = require('./src/platform/admin-jobs');
+        const { createAdminBulkCustomersRouter } = require('./src/platform/admin-bulk-customers');
+        const { createAdminCustomersListRouter } = require('./src/platform/admin-customers-list');
         const resellerPortal = require('./src/platform/reseller-portal');
         this.use(customerLoginThrottle);
         this.use(createBrandingRouter());
@@ -101,6 +123,10 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminCatalogShellRouter());
+        this.use(createAdminPlansRouter());
+        this.use(createAdminJobsRouter());
+        this.use(createAdminBulkCustomersRouter());
+        this.use(createAdminCustomersListRouter());
         this.use(createAdminPlanLibrariesRouter());
         this.use(createAdminServersRouter());
         this.use(createAdminActivityRouter());

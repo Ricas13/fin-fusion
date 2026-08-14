@@ -1,6 +1,7 @@
 'use strict';
 
 const {query}=require('../db');
+const provisioning=require('../jellyfin/provisioning');
 
 function seconds(value){return Number(value||0)}
 function bytes(value){return Number(value||0)}
@@ -27,7 +28,7 @@ async function customer360(customerId){
 
     const [subscriptions,accounts,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
         query(`SELECT s.id,s.status,s.source,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.code plan_code,p.name plan_name,p.price_minor,p.currency,p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class,p.library_access_mode,p.library_names FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 ORDER BY s.created_at DESC LIMIT 50`,[customerId]),
-        query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.created_at,ja.last_activity_at,ja.last_policy_sync,js.id server_id,js.name server_name,js.server_class,js.location,js.public_url,js.health_status FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 ORDER BY ja.created_at`,[customerId]),
+        query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.created_at,ja.last_activity_at,ja.last_policy_sync,js.id server_id,js.name server_name,js.server_class,js.location,js.public_url,js.health_status,jpr.status recon_status,jpr.last_error recon_last_error,jpr.attempt_count recon_attempts,jpr.last_attempt_at recon_last_attempt FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id LEFT JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja.id WHERE ja.customer_id=$1 ORDER BY ja.created_at`,[customerId]),
         query(`SELECT provider,provider_customer_id,created_at,updated_at FROM payment_customers WHERE customer_id=$1 ORDER BY provider`,[customerId]),
         query(`SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,aps.playback_method,aps.is_paused,aps.first_seen_at,aps.last_seen_at,js.name server_name FROM active_playback_sessions aps LEFT JOIN jellyfin_servers js ON js.id=aps.server_id WHERE aps.customer_id=$1 ORDER BY aps.last_seen_at DESC`,[customerId]),
         query(`SELECT COUNT(*)::int sessions_30d,COUNT(*) FILTER(WHERE playback_method='transcode')::int transcodes_30d,COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at))),0)::bigint watch_seconds_30d,MAX(last_seen_at) last_playback_at FROM playback_history WHERE customer_id=$1 AND started_at>=NOW()-INTERVAL '30 days'`,[customerId]),
@@ -67,6 +68,16 @@ async function customer360(customerId){
         authEvents:authEvents.rows,
         timeline
     };
+}
+
+// Computed separately (not inside customer360()) because it makes live
+// Jellyfin discovery calls -- only the Access tab needs it, so other tabs
+// (Overview/Activity/Billing/Security/History) stay fast and don't depend
+// on Jellyfin server availability to render.
+async function customerAccessDetail(customerId){
+    const currentPlan=await provisioning.currentEntitlement(customerId);
+    const effective=await provisioning.effectivePolicyForCustomer(customerId,currentPlan);
+    return{currentPlan,effective};
 }
 
 async function reseller360(resellerId){
@@ -117,4 +128,4 @@ async function reseller360(resellerId){
     };
 }
 
-module.exports={customer360,reseller360};
+module.exports={customer360,reseller360,customerAccessDetail};
