@@ -51,7 +51,7 @@ function entitlementJobIntervalMs() {
 
 function serverHealthIntervalMs() {
     const stored = Number(cache?.serverHealthIntervalMs);
-    return Number.isFinite(stored) && stored >= 30000 ? stored : Number(process.env.SERVER_HEALTH_INTERVAL_MS || 2 * 60 * 1000);
+    return Number.isFinite(stored) && stored >= 30000 ? stored : Number(process.env.SERVER_HEALTH_INTERVAL_MS || 5 * 60 * 1000);
 }
 
 function overseerrUrl() {
