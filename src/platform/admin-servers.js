@@ -13,10 +13,14 @@ const SAFE_ERROR_PREFIXES = [
     'Only http and https ',
     'URLs may not contain ',
     'URL hostname is required.',
+    'Internal/base URL is required.',
     'JELLYFIN_ALLOWED_HOSTS must be configured ',
     'This Jellyfin hostname is not on the production allowlist.',
+    'Hostname "',
+    'Jellyfin API key is required.',
     'Jellyfin API key format is invalid.',
-    'Number must be between ',
+    'Priority must be between ',
+    'Maximum users must be between ',
     'Invalid server class.',
     'Jellyfin rejected the server URL or API key.',
     'Jellyfin returned an unexpected response.',
@@ -25,6 +29,18 @@ const SAFE_ERROR_PREFIXES = [
     'Server name is required.',
     'Server not found.'
 ];
+
+class FieldValidationError extends Error {
+    constructor(field, message) {
+        super(message);
+        this.name = 'FieldValidationError';
+        this.field = field;
+    }
+}
+
+function invalidField(field, message) {
+    return new FieldValidationError(field, message);
+}
 
 function requireNativeAdmin(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -44,41 +60,61 @@ function cleanText(value, max = 120) {
 function cleanSlug(value) {
     const slug = cleanText(value, 60).toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$/.test(slug)) {
-        throw new Error('Slug must be 3-60 lowercase letters, numbers or dashes.');
+        throw invalidField('slug', 'Slug must be 3-60 lowercase letters, numbers or dashes.');
     }
     return slug;
 }
 
 function allowedHosts() {
     return new Set(String(process.env.JELLYFIN_ALLOWED_HOSTS || '')
-        .split(',').map(v => v.trim().toLowerCase()).filter(Boolean));
+        .split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
 }
 
-function normalizeUrl(value, { baseUrl = false } = {}) {
+function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
+    const fieldName = field || (baseUrl ? 'baseUrl' : 'publicUrl');
     const raw = cleanText(value, 500);
-    if (!raw) return null;
+    if (!raw) {
+        if (baseUrl) throw invalidField(fieldName, 'Internal/base URL is required.');
+        return null;
+    }
+
     let parsed;
-    try { parsed = new URL(raw); } catch (_) { throw new Error('Enter a valid http/https URL.'); }
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http and https URLs are allowed.');
-    if (parsed.username || parsed.password || parsed.hash) throw new Error('URLs may not contain credentials or fragments.');
-    if (!parsed.hostname) throw new Error('URL hostname is required.');
+    try { parsed = new URL(raw); }
+    catch (_) { throw invalidField(fieldName, 'Enter a valid http/https URL.'); }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw invalidField(fieldName, 'Only http and https URLs are allowed.');
+    }
+    if (parsed.username || parsed.password || parsed.hash) {
+        throw invalidField(fieldName, 'URLs may not contain credentials or fragments.');
+    }
+    if (!parsed.hostname) throw invalidField(fieldName, 'URL hostname is required.');
+
     parsed.pathname = parsed.pathname.replace(/\/+$/, '');
     parsed.search = '';
     parsed.hash = '';
 
     if (baseUrl && process.env.NODE_ENV === 'production') {
         const hosts = allowedHosts();
-        if (!hosts.size) throw new Error('JELLYFIN_ALLOWED_HOSTS must be configured before server URLs can be changed in production.');
-        if (!hosts.has(parsed.hostname.toLowerCase())) throw new Error('This Jellyfin hostname is not on the production allowlist.');
+        if (!hosts.size) {
+            throw invalidField(fieldName, 'JELLYFIN_ALLOWED_HOSTS must be configured before server URLs can be changed in production.');
+        }
+        if (!hosts.has(parsed.hostname.toLowerCase())) {
+            throw invalidField(
+                fieldName,
+                `Hostname "${parsed.hostname}" is not on the production Jellyfin allowlist. Add it to JELLYFIN_ALLOWED_HOSTS before saving this server.`
+            );
+        }
     }
     return parsed.toString().replace(/\/$/, '');
 }
 
 function validateApiKey(value, required = true) {
     const key = String(value || '').trim();
+    if (!key && required) throw invalidField('apiKey', 'Jellyfin API key is required.');
     if (!key && !required) return null;
     if (key.length < 16 || key.length > 256 || /[\s\x00-\x1f\x7f]/.test(key)) {
-        throw new Error('Jellyfin API key format is invalid.');
+        throw invalidField('apiKey', 'Jellyfin API key format is invalid.');
     }
     return key;
 }
@@ -87,32 +123,56 @@ function boolField(value) {
     return value === 'on' || value === 'true' || value === true || value === '1';
 }
 
-function intField(value, { min = 0, max = 100000, nullable = false } = {}) {
+function intField(value, { min = 0, max = 100000, nullable = false, field = null, label = 'Number' } = {}) {
     if ((value === '' || value == null) && nullable) return null;
     const number = Number(value);
-    if (!Number.isInteger(number) || number < min || number > max) throw new Error(`Number must be between ${min} and ${max}.`);
+    if (!Number.isInteger(number) || number < min || number > max) {
+        throw invalidField(field, `${label} must be between ${min} and ${max}.`);
+    }
     return number;
 }
 
-function safeAdminError(error) {
-    if (error?.code === '23505') return 'A server with that name or slug already exists.';
+function safeAdminErrorInfo(error) {
+    if (error instanceof FieldValidationError) {
+        return { message: error.message, field: error.field || null };
+    }
+    if (error?.code === '23505') {
+        const constraint = String(error.constraint || '').toLowerCase();
+        const field = constraint.includes('slug') ? 'slug' : constraint.includes('name') ? 'name' : null;
+        return { message: 'A server with that name or slug already exists.', field };
+    }
     const message = String(error?.message || '');
-    if (SAFE_ERROR_PREFIXES.some(prefix => message.startsWith(prefix))) return message;
-    return 'The server change could not be completed safely.';
+    if (SAFE_ERROR_PREFIXES.some(prefix => message.startsWith(prefix))) return { message, field: error?.field || null };
+    return { message: 'The server change could not be completed safely.', field: null };
+}
+
+function safeAdminError(error) {
+    return safeAdminErrorInfo(error).message;
+}
+
+function formErrorRedirect(path, error) {
+    const info = safeAdminErrorInfo(error);
+    const params = new URLSearchParams({ error: info.message });
+    if (info.field) params.set('field', info.field);
+    return `${path}?${params.toString()}`;
 }
 
 function parseServerForm(body, { apiKeyRequired = false } = {}) {
+    const name = cleanText(body.name, 100);
+    if (!name) throw invalidField('name', 'Server name is required.');
+
     const serverClass = cleanText(body.serverClass, 20).toLowerCase();
-    if (!SERVER_CLASSES.has(serverClass)) throw new Error('Invalid server class.');
+    if (!SERVER_CLASSES.has(serverClass)) throw invalidField('serverClass', 'Invalid server class.');
+
     return {
-        name: cleanText(body.name, 100),
+        name,
         slug: cleanSlug(body.slug),
         serverClass,
-        baseUrl: normalizeUrl(body.baseUrl, { baseUrl: true }),
-        publicUrl: normalizeUrl(body.publicUrl, { baseUrl: false }),
+        baseUrl: normalizeUrl(body.baseUrl, { baseUrl: true, field: 'baseUrl' }),
+        publicUrl: normalizeUrl(body.publicUrl, { baseUrl: false, field: 'publicUrl' }),
         location: cleanText(body.location, 100) || null,
-        priority: intField(body.priority, { min: 0, max: 10000 }),
-        maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: true }),
+        priority: intField(body.priority, { min: 0, max: 10000, field: 'priority', label: 'Priority' }),
+        maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: true, field: 'maxUsers', label: 'Maximum users' }),
         allowNewUsers: boolField(body.allowNewUsers),
         trialEnabled: boolField(body.trialEnabled),
         paidEnabled: boolField(body.paidEnabled),
@@ -170,6 +230,17 @@ async function serverDetail(serverId) {
     return result.rows[0] || null;
 }
 
+async function persistHealthCheck(serverId, status) {
+    const result = await query(`
+        UPDATE jellyfin_servers
+        SET health_status=$2,last_health_check=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE id=$1
+        RETURNING last_health_check
+    `, [serverId, status]);
+    if (!result.rowCount) throw new Error('Server not found.');
+    return result.rows[0].last_health_check;
+}
+
 async function createServer(actorUserId, form) {
     await probeCredentials(form.baseUrl, form.apiKey);
     return transaction(async client => {
@@ -225,8 +296,6 @@ function createAdminServersRouter() {
     const router = express.Router();
     router.use('/admin/servers', requireNativeAdmin, noStore);
 
-    // These GET handlers remain as compatibility fallbacks. The current admin
-    // shell is mounted first and normally owns their presentation.
     router.get('/admin/servers', async (req, res, next) => {
         try {
             return res.render('admin/servers', {
@@ -267,13 +336,12 @@ function createAdminServersRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
             const form = parseServerForm(req.body, { apiKeyRequired: true });
-            if (!form.name) throw new Error('Server name is required.');
             const id = await createServer(req.session.authUserId, form);
             try { await registry.healthcheckServer(id); } catch (_) {}
             return res.redirect('/admin/servers?message=' + encodeURIComponent('Jellyfin server added and credentials validated.'));
         } catch (error) {
             console.warn('Admin server create rejected:', error.message);
-            return res.redirect('/admin/servers/new?error=' + encodeURIComponent(safeAdminError(error)));
+            return res.redirect(formErrorRedirect('/admin/servers/new', error));
         }
     });
 
@@ -289,19 +357,15 @@ function createAdminServersRouter() {
             const latencyMs = Date.now() - started;
             const serverName = cleanText(info.ServerName, 100) || server.name;
             const version = cleanText(info.Version, 40);
-            await query(`
-                UPDATE jellyfin_servers SET health_status='healthy',last_health_check=NOW(),updated_at=NOW() WHERE id=$1
-            `, [req.params.serverId]);
+            const checkedAt = await persistHealthCheck(req.params.serverId, 'healthy');
             await query(`
                 INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                 VALUES($1,'admin.server.connection_test','jellyfin_server',$2,$3::jsonb)
-            `, [req.session.authUserId,req.params.serverId,JSON.stringify({ ok: true, latencyMs, version: version || null })]);
+            `, [req.session.authUserId,req.params.serverId,JSON.stringify({ ok: true, latencyMs, version: version || null, checkedAt })]);
             const detail = `${serverName}${version ? ` · Jellyfin ${version}` : ''} · ${latencyMs} ms`;
             return res.redirect('/admin/servers?message=' + encodeURIComponent(`Connection successful — ${detail}.`));
         } catch (error) {
-            await query(`
-                UPDATE jellyfin_servers SET health_status='offline',last_health_check=NOW(),updated_at=NOW() WHERE id=$1
-            `, [req.params.serverId]).catch(() => {});
+            await persistHealthCheck(req.params.serverId, 'offline').catch(() => {});
             console.warn('Admin server connection test failed:', error.message);
             return res.redirect('/admin/servers?error=' + encodeURIComponent(`Connection failed — ${safeAdminError(error)}`));
         }
@@ -313,12 +377,12 @@ function createAdminServersRouter() {
             const server = await serverDetail(req.params.serverId);
             if (!server) return res.status(404).send('Server not found');
             const form = parseServerForm(req.body, { apiKeyRequired: false });
-            if (!form.name) throw new Error('Server name is required.');
             await updateServer(req.session.authUserId, req.params.serverId, form);
             return res.redirect('/admin/servers?message=' + encodeURIComponent('Server configuration updated.'));
         } catch (error) {
             console.warn('Admin server update rejected:', error.message);
-            return res.redirect('/admin/servers/' + encodeURIComponent(req.params.serverId) + '/edit?error=' + encodeURIComponent(safeAdminError(error)));
+            const path = '/admin/servers/' + encodeURIComponent(req.params.serverId) + '/edit';
+            return res.redirect(formErrorRedirect(path, error));
         }
     });
 
@@ -361,5 +425,8 @@ module.exports = {
     normalizeUrl,
     allowedHosts,
     probeCredentials,
-    safeAdminError
+    safeAdminError,
+    safeAdminErrorInfo,
+    persistHealthCheck,
+    FieldValidationError
 };

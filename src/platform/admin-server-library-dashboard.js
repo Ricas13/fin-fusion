@@ -34,6 +34,25 @@ function send(res, options) {
     return res.send(layout({ siteName: site(), ...options }));
 }
 
+// Health fields are loaded from the simple jellyfin_servers query rather than
+// the aggregate stats query. This keeps last_health_check authoritative even
+// as customer/session joins evolve. Aggregate rows only contribute counters.
+async function dashboardServerRows() {
+    const [healthRows, statsRows] = await Promise.all([
+        registry.listServers({ enabledOnly: false }),
+        serversAdmin.serverList()
+    ]);
+    const statsById = new Map(statsRows.map(row => [String(row.id), row]));
+    return healthRows.map(server => {
+        const stats = statsById.get(String(server.id)) || {};
+        return {
+            ...server,
+            assigned_users: Number(stats.assigned_users || 0),
+            active_streams: Number(stats.active_streams || 0)
+        };
+    });
+}
+
 function serverRow(req, server) {
     const state = healthState(server.health_status);
     const customerValue = server.max_users
@@ -56,7 +75,7 @@ function serverRow(req, server) {
 
 async function serverBody(req) {
     await runtimeSettings.ensureLoaded();
-    const rows = await serversAdmin.serverList();
+    const rows = await dashboardServerRows();
     const intervalMinutes = Math.max(1, Math.round(runtimeSettings.serverHealthIntervalMs() / 60000));
     return `${notice(req.query.message)}${notice(req.query.error, 'error')}
         <section class="section compactServerSection">
@@ -92,7 +111,7 @@ function libraryTypeLabel(collectionType) {
         homevideosandphotos: 'Home Videos & Photos',
         mixed: 'Mixed'
     };
-    return labels[type] || type.replace(/(^|[-_])([a-z])/g, (_m, _sep, ch) => ` ${ch.toUpperCase()}`).trim();
+    return labels[type] || type.replace(/(^|[-_])([a-z])/g, (_match, _separator, character) => ` ${character.toUpperCase()}`).trim();
 }
 
 async function mapLimit(items, limit, worker) {
@@ -199,7 +218,7 @@ async function librariesBody(req) {
 
 async function serverStatusJson(_req, res, next) {
     try {
-        const rows = await serversAdmin.serverList();
+        const rows = await dashboardServerRows();
         return res.json({
             servers: rows.map(server => ({
                 id: String(server.id),
