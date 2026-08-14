@@ -108,6 +108,7 @@ realExpress.application.listen = function platformListen(...args) {
     if (!this.locals.__platformRoutesMounted && process.env.DATABASE_URL) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
+        const { createCustomerPasswordSyncRouter } = require('./src/platform/customer-password-sync');
         const { createInviteOnboardingRouter } = require('./src/platform/invite-onboarding');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlansListRouter } = require('./src/platform/admin-plans-list');
@@ -143,6 +144,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(customerLoginThrottle);
         this.use(createBrandingRouter());
         this.use(createInviteOnboardingRouter());
+        this.use(createCustomerPasswordSyncRouter());
         this.use(createAdminPreviewRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createAdminSetupRouter());
