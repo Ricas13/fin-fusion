@@ -52,6 +52,9 @@ function timingSafeTextEqual(leftValue, rightValue) {
     return left.length > 0 && left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
+// Kept for backwards compatibility with any external callers/tests. Enrollment
+// itself no longer requires this separate token; 2FA is configured through the
+// normal authenticated account flow.
 function adminEnrollmentApproved(value) {
     const expected = String(process.env.ADMIN_2FA_ENROLLMENT_TOKEN || '');
     if (expected.length < 32) return false;
@@ -89,7 +92,7 @@ function loginPage(req, res) {
             ? 'Authentication was temporarily locked after repeated failures.'
             : null;
     return res.render('auth/staff-login', {
-        siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+        siteName: process.env.SITE_NAME || 'CAPTaINFiN',
         error: null,
         message,
         csrfToken: csrf.token(req)
@@ -99,7 +102,7 @@ function loginPage(req, res) {
 async function loginSubmit(req, res) {
     if (!csrf.verify(req)) {
         return res.status(403).render('auth/staff-login', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             error: 'The sign-in form expired. Please try again.',
             message: null,
             csrfToken: csrf.token(req)
@@ -110,7 +113,7 @@ async function loginSubmit(req, res) {
         const user = await auth.authenticateStaff(req.body.username, req.body.password, req);
         if (!user || !Number.isInteger(Number(user.legacy_numeric_id))) {
             return res.status(401).render('auth/staff-login', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 error: 'Invalid username or password.',
                 message: null,
                 csrfToken: csrf.token(req)
@@ -139,7 +142,7 @@ async function loginSubmit(req, res) {
     } catch (error) {
         console.error('Native staff login failed:', error.message);
         return res.status(503).render('auth/staff-login', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             error: 'Authentication is temporarily unavailable.',
             message: null,
             csrfToken: csrf.token(req)
@@ -168,7 +171,7 @@ function createAuthRouter() {
         const user = await auth.getStaffById(p.userId);
         if (!user?.totp_enabled) return res.redirect('/auth/2fa/setup');
         return res.render('auth/2fa-challenge', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             username: p.username,
             error: null,
             csrfToken: csrf.token(req)
@@ -188,7 +191,7 @@ function createAuthRouter() {
                 return res.redirect('/login?locked=1');
             }
             return res.status(401).render('auth/2fa-challenge', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 username: p.username,
                 error: 'Invalid authenticator or recovery code.',
                 csrfToken: csrf.token(req)
@@ -205,11 +208,11 @@ function createAuthRouter() {
         if (user?.totp_enabled) return res.redirect('/auth/2fa');
         const enrollment = await auth.beginTotpEnrollment(p.userId);
         return res.render('auth/2fa-setup', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             username: p.username,
             secret: enrollment.secret,
             uri: enrollment.uri,
-            requiresApproval: p.role === 'admin',
+            requiresApproval: false,
             error: null,
             csrfToken: csrf.token(req)
         });
@@ -218,20 +221,10 @@ function createAuthRouter() {
     router.post('/auth/2fa/setup', requirePending, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const p = pending(req);
-        if (p.role === 'admin' && !adminEnrollmentApproved(req.body.enrollmentToken)) {
-            await auth.recordEvent({ userId: p.userId, eventType: '2fa.enrollment_approval_failed', success: false, req });
-            return res.status(403).render('auth/message', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
-                title: 'Administrator enrollment not approved',
-                message: 'The independent enrollment approval was not accepted. No two-factor setting was changed.',
-                link: '/auth/2fa/setup',
-                linkText: 'Return to setup'
-            });
-        }
         const recoveryCodes = await auth.confirmTotpEnrollment(p.userId, req.body.code, req);
         if (!recoveryCodes) {
             return res.status(401).render('auth/message', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 title: 'Two-factor setup failed',
                 message: 'The code did not match. Return to setup and try again.',
                 link: '/auth/2fa/setup',
@@ -242,7 +235,7 @@ function createAuthRouter() {
         await establishAuthenticatedSession(req, user);
         res.setHeader('Cache-Control', 'no-store, private, max-age=0');
         return res.render('auth/recovery-codes', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             recoveryCodes,
             continueUrl: destination(user.role)
         });
