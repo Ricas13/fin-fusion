@@ -50,6 +50,7 @@ function publicInvitation(row) {
         planId: row.plan_id,
         planName: row.plan_name,
         planCode: row.plan_code,
+        planActive: Boolean(row.plan_active),
         billingInterval: row.billing_interval,
         durationDays: row.duration_days,
         invitedEmail: row.invited_email,
