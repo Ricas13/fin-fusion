@@ -19,7 +19,7 @@ const SAFE_ERROR_PREFIXES = [
     'Priority must be between ',
     'Maximum users must be between ',
     'Invalid server class.',
-    'Jellyfin rejected the server URL or API key.',
+    'Jellyfin returned HTTP ',
     'Jellyfin returned an unexpected response.',
     'Jellyfin validation timed out.',
     'Could not validate the Jellyfin server securely.',
@@ -173,18 +173,31 @@ async function probeCredentials(baseUrl, apiKey) {
             method: 'GET',
             redirect: 'error',
             signal: controller.signal,
-            headers: { 'X-Emby-Token': apiKey, Accept: 'application/json' }
+            headers: registry.authHeaders(apiKey)
         });
-        if (!response.ok) throw new Error('Jellyfin rejected the server URL or API key.');
+        if (response.status === 401) {
+            throw invalidField('apiKey', 'Jellyfin returned HTTP 401 — API key was not accepted.');
+        }
+        if (response.status === 403) {
+            throw invalidField('baseUrl', 'Jellyfin returned HTTP 403 — request was blocked by the Jellyfin server or reverse proxy.');
+        }
+        if (!response.ok) {
+            throw invalidField('baseUrl', `Jellyfin returned HTTP ${response.status} while validating the server.`);
+        }
         const contentType = String(response.headers.get('content-type') || '');
-        if (!contentType.includes('application/json')) throw new Error('Jellyfin returned an unexpected response.');
+        if (!contentType.includes('application/json')) {
+            throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
+        }
         const info = await response.json();
-        if (!info || typeof info !== 'object' || Array.isArray(info)) throw new Error('Jellyfin returned an unexpected response.');
+        if (!info || typeof info !== 'object' || Array.isArray(info)) {
+            throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
+        }
         return info;
     } catch (error) {
-        if (error.name === 'AbortError') throw new Error('Jellyfin validation timed out.');
+        if (error instanceof FieldValidationError) throw error;
+        if (error.name === 'AbortError') throw invalidField('baseUrl', 'Jellyfin validation timed out.');
         if (error.message.startsWith('Jellyfin ')) throw error;
-        throw new Error('Could not validate the Jellyfin server securely.');
+        throw invalidField('baseUrl', 'Could not validate the Jellyfin server securely.');
     } finally {
         clearTimeout(timer);
     }

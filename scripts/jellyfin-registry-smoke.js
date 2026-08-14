@@ -31,7 +31,14 @@ try {
         /may not contain credentials/
     );
 
-    console.log('Jellyfin registry URL validation smoke test passed.');
+    const token = '1234567890abcdef1234567890abcdef';
+    const headers = registry.authHeaders(token);
+    assert.strictEqual(headers.Authorization, `MediaBrowser Token="${token}"`);
+    assert.strictEqual(headers.Accept, 'application/json');
+    assert.strictEqual(headers['X-Emby-Token'], undefined, 'Deprecated X-Emby-Token header must not be used');
+    assert.strictEqual(registry.authHeaders(token, { jsonBody: true })['Content-Type'], 'application/json');
+
+    console.log('Jellyfin registry URL/auth validation smoke test passed.');
 } finally {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
