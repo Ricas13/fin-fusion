@@ -21,6 +21,7 @@ const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const POSTGRES_STAFF_AUTH = Boolean(process.env.DATABASE_URL);
 const COOKIE_SECURE = process.env.COOKIE_SECURE
     ? process.env.COOKIE_SECURE.toLowerCase() === 'true'
     : IS_PRODUCTION;
@@ -111,15 +112,22 @@ function ensureSecureAdminAndMigrateData() {
     );
 
     if (legacyAdmin) {
-        if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
-            fail('Legacy admin/admin123 detected. Set ADMIN_USERNAME and ADMIN_PASSWORD before starting.');
+        if (POSTGRES_STAFF_AUTH) {
+            // Native PostgreSQL staff authentication owns /login on modern
+            // deployments. A legacy admin/admin123 record is therefore removed,
+            // not converted into a second hidden administrator identity.
+            data.admins = data.admins.filter(a => a !== legacyAdmin);
+        } else {
+            if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+                fail('Legacy admin/admin123 detected. Set ADMIN_USERNAME and ADMIN_PASSWORD before starting.');
+            }
+            legacyAdmin.username = ADMIN_USERNAME;
+            legacyAdmin.password = bcrypt.hashSync(ADMIN_PASSWORD, 12);
+            legacyAdmin.passwordChangedAt = new Date().toISOString();
         }
-        legacyAdmin.username = ADMIN_USERNAME;
-        legacyAdmin.password = bcrypt.hashSync(ADMIN_PASSWORD, 12);
-        legacyAdmin.passwordChangedAt = new Date().toISOString();
     }
 
-    if (data.admins.length === 0) {
+    if (data.admins.length === 0 && !POSTGRES_STAFF_AUTH) {
         if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
             fail('No admin account exists. Set ADMIN_USERNAME and ADMIN_PASSWORD for first bootstrap.');
         }
@@ -131,6 +139,10 @@ function ensureSecureAdminAndMigrateData() {
             passwordChangedAt: new Date().toISOString()
         });
     }
+
+    // With DATABASE_URL configured, zero legacy administrators is intentional:
+    // scripts/bootstrap-admin.js may create the first native admin from env, or
+    // the browser /setup flow claims the installation and creates it securely.
 
     // Legacy client credentials were stored in plaintext. Remove them at rest.
     stripClientPasswords(data);
