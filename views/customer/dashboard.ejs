@@ -3,73 +3,208 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>My account · <%= siteName %></title>
   <link rel="icon" href="/branding/favicon">
-  <style>
-    :root{color-scheme:dark}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e5e7eb}.wrap{max-width:1100px;margin:auto;padding:28px 18px 60px}.top{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}.brandLockup{display:flex;align-items:center;gap:12px}.brandLogo{width:42px;height:42px;border-radius:10px;object-fit:cover}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}.card{background:#111827;border:1px solid #263244;border-radius:16px;padding:18px}.plan{display:flex;flex-direction:column;min-height:250px}.price{font-size:30px;font-weight:800}.muted{color:#94a3b8}.ok{background:#052e1b;border:1px solid #166534;padding:10px 12px;border-radius:10px}.err{background:#451a1a;border:1px solid #7f1d1d;padding:10px 12px;border-radius:10px}button{padding:10px 14px;border:0;border-radius:10px;font-weight:700;cursor:pointer;margin:4px 0}input{width:100%;box-sizing:border-box;padding:10px;border-radius:9px;border:1px solid #334155;background:#0f172a;color:white}.actions{margin-top:auto}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#1e293b;margin:2px;font-size:13px}.sub{border-left:4px solid #38bdf8}.account{border-left:4px solid #22c55e}a{color:#7dd3fc}.row{display:flex;gap:8px;flex-wrap:wrap}.danger{background:#7f1d1d;color:#fff}.primary{background:#0284c7;color:#fff}.paypal{background:#facc15;color:#111827}.stripe{background:#635bff;color:white}.free{background:#166534;color:#fff}.discountField{margin:8px 0 2px;font-size:12px}.codeBox{background:#0f172a;border:1px solid #334155;border-radius:9px;padding:10px 12px;font-family:ui-monospace,monospace;word-break:break-all;font-size:14px}.copyRow{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}.copyRow input{flex:1;min-width:0}.copyRow button{margin:0;white-space:nowrap}@media(max-width:480px){.wrap{padding:16px 12px 44px}.price{font-size:24px}}
-  </style>
+  <link rel="stylesheet" href="/css/customer-portal.css">
 </head>
-<body><div class="wrap">
-  <header class="top"><div class="brandLockup"><img class="brandLogo" src="/branding/logo" alt=""><div><h1 style="margin-bottom:4px"><%= siteName %></h1><div class="muted">Signed in as <strong><%= portal.customer.login_username %></strong></div></div></div><form method="post" action="/account/logout"><button class="danger">Sign out</button></form></header>
+<%
+  function safeDate(value) {
+    if (!value) return 'Not available';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Not available';
+    return parsed.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  function price(plan) {
+    if (Number(plan.price_minor || 0) === 0) return 'Free';
+    try {
+      return new Intl.NumberFormat('en-GB', { style: 'currency', currency: plan.currency || 'USD' }).format(Number(plan.price_minor) / 100);
+    } catch (_) {
+      return `${plan.currency || 'USD'} ${(Number(plan.price_minor) / 100).toFixed(2)}`;
+    }
+  }
+  function duration(plan) {
+    const labels = { trial: '24-hour trial', month: 'Monthly', '6_months': '6 months', year: 'Yearly', custom: 'Custom duration' };
+    if (labels[plan.billing_interval]) return labels[plan.billing_interval];
+    if (plan.duration_days) return `${plan.duration_days} days`;
+    return 'Subscription';
+  }
+  const username = portal.customer.login_username || portal.customer.display_name || 'customer';
+  const activeAccount = portal.accounts.find(a => !a.disabled) || portal.accounts[0] || null;
+  const activePlanId = currentPlan ? (currentPlan.plan_id || currentPlan.id) : null;
+  const currentName = currentPlan ? (currentPlan.name || currentPlan.plan_name || currentPlan.code) : 'No active plan';
+  const currentStreams = currentPlan ? Number(currentPlan.streams || 0) : 0;
+  const visibleLibraryCount = Array.isArray(librarySelection) ? librarySelection.length : 0;
+%>
+<body>
+<div class="portalShell">
+  <header class="portalTopbar">
+    <div class="portalTopbarInner">
+      <a class="brandLockup" href="/account">
+        <img class="brandLogo" src="/branding/logo" alt="">
+        <div>
+          <div class="brandName"><%= siteName %></div>
+          <div class="brandMeta">Customer account</div>
+        </div>
+      </a>
+      <div class="portalActions">
+        <span class="userLabel brandMeta">Signed in as <strong><%= username %></strong></span>
+        <form class="plainForm" method="post" action="/account/logout"><button class="button danger" type="submit">Sign out</button></form>
+      </div>
+    </div>
+  </header>
 
-  <% if (message) { %><p class="ok"><%= message %></p><% } %>
-  <% if (error) { %><p class="err"><%= error %></p><% } %>
+  <main class="portalMain">
+    <% if (message) { %><div class="flash ok"><%= message %></div><% } %>
+    <% if (error) { %><div class="flash err"><%= error %></div><% } %>
 
-  <h2>Subscriptions</h2>
-  <div class="grid">
-  <% if (!portal.subscriptions.length) { %><div class="card"><p>No subscription yet.</p></div><% } %>
-  <% portal.subscriptions.forEach(function(s){ %>
-    <div class="card sub"><strong><%= s.plan_name %></strong><p><span class="pill"><%= s.status %></span><span class="pill"><%= s.source %></span></p><p class="muted">Access until <%= new Date(s.current_period_end).toLocaleString() %></p><p><%= s.streams %> stream<%= s.streams === 1 ? '' : 's' %> · Downloads <%= s.allow_downloads ? 'on' : 'off' %> · Video transcode <%= s.allow_video_transcoding ? 'on' : 'off' %></p></div>
-  <% }) %>
-  </div>
+    <section class="heroCard">
+      <div class="welcomePanel">
+        <div class="eyebrow">Your account</div>
+        <h1>Welcome back, <%= username %>.</h1>
+        <p>Manage your streaming access, Jellyfin account, libraries and subscription from one place.</p>
+        <div class="heroButtons">
+          <% if (activeAccount && activeAccount.public_url && !activeAccount.disabled) { %><a class="button primary" href="<%= activeAccount.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %>
+          <a class="button secondary" href="#plans">View plans</a>
+          <% if (overseerrUrl) { %><a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Request content</a><% } %>
+        </div>
+      </div>
+      <aside class="summaryPanel" aria-label="Account summary">
+        <div class="summaryItem"><div><div class="summaryLabel">Current plan</div></div><div class="summaryValue"><%= currentName %></div></div>
+        <div class="summaryItem"><div><div class="summaryLabel">Jellyfin</div></div><div class="summaryValue"><%= activeAccount ? (activeAccount.disabled ? 'Disabled' : 'Ready') : 'Not provisioned' %></div></div>
+        <div class="summaryItem"><div><div class="summaryLabel">Libraries visible</div></div><div class="summaryValue"><%= libraryEntitlement && libraryEntitlement.length ? `${visibleLibraryCount} / ${libraryEntitlement.length}` : 'Plan controlled' %></div></div>
+      </aside>
+    </section>
 
-  <h2>Jellyfin access</h2>
-  <div class="grid">
-  <% if (!portal.accounts.length) { %><div class="card"><p>Your Jellyfin account will appear here after a trial or paid plan is activated.</p></div><% } %>
-  <% portal.accounts.forEach(function(a){ %>
-    <div class="card account"><strong><%= a.jellyfin_username %></strong><p class="muted"><%= a.server_name %> · <%= a.server_class %></p><p><span class="pill"><%= a.disabled ? 'disabled' : 'enabled' %></span></p><% if (a.public_url) { %><p><a href="<%= a.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a></p><% } %><form method="post" action="/account/jellyfin/<%= a.id %>/password"><label>Set a new Jellyfin password</label><input type="password" name="password" minlength="8" autocomplete="new-password" required><button class="primary">Update Jellyfin password</button></form></div>
-  <% }) %>
-  </div>
+    <section class="sectionBlock">
+      <div class="sectionHead"><div><h2>Your access</h2><p>Your active subscription and Jellyfin account.</p></div></div>
+      <div class="twoCol">
+        <% if (currentPlan) { %>
+          <article class="panel">
+            <div class="accessHeader">
+              <div><div class="accessTitle"><%= currentName %></div><div class="accessMeta">Access until <%= safeDate(currentPlan.current_period_end) %></div></div>
+              <span class="pill accent"><%= currentPlan.status || 'active' %></span>
+            </div>
+            <div class="metricGrid">
+              <div class="metric"><strong><%= currentStreams || 1 %></strong><span>Concurrent streams</span></div>
+              <div class="metric"><strong><%= currentPlan.allow_downloads ? 'Included' : 'Off' %></strong><span>Downloads</span></div>
+              <div class="metric"><strong><%= currentPlan.allow_video_transcoding ? 'Allowed' : 'Off' %></strong><span>Video transcode</span></div>
+            </div>
+            <div class="accessMeta" style="margin-top:11px">Activated via <%= currentPlan.source || 'subscription' %>.</div>
+            <% if (portal.subscriptions.length > 1) { %>
+              <details class="detailsBox"><summary>Subscription history</summary><div style="margin-top:8px;display:grid;gap:6px"><% portal.subscriptions.forEach(function(s){ %><div class="metric"><strong><%= s.plan_name %> · <%= s.status %></strong><span><%= safeDate(s.current_period_end) %></span></div><% }) %></div></details>
+            <% } %>
+          </article>
+        <% } else { %>
+          <div class="empty">You do not currently have an active subscription. Choose a plan below when you're ready.</div>
+        <% } %>
 
-  <% if (libraryEntitlement && libraryEntitlement.length) { %>
-  <h2>Library visibility</h2>
-  <div class="card">
-    <p class="muted">Choose which of your entitled libraries appear on your Jellyfin account. You can only select from what your plan and any admin adjustments already grant you.</p>
-    <form method="post" action="/account/libraries">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <% libraryEntitlement.forEach(function(name){ %>
-        <label class="pill" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" name="library" value="<%= name %>" <%= librarySelection.includes(name) ? 'checked' : '' %>> <%= name %></label>
+        <% if (!portal.accounts.length) { %>
+          <div class="empty">Your Jellyfin account will appear here once access is provisioned.</div>
+        <% } %>
+        <% portal.accounts.forEach(function(a){ %>
+          <article class="panel">
+            <div class="accessHeader">
+              <div><div class="accessTitle"><%= a.jellyfin_username %></div><div class="accessMeta"><%= a.server_name %><%= a.server_class ? ` · ${a.server_class}` : '' %></div></div>
+              <span class="pill <%= a.disabled ? 'warn' : 'good' %>"><%= a.disabled ? 'Disabled' : 'Enabled' %></span>
+            </div>
+            <% if (a.public_url) { %><a class="button primary" href="<%= a.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %>
+            <details class="detailsBox">
+              <summary>Change Jellyfin password</summary>
+              <form method="post" action="/account/jellyfin/<%= a.id %>/password">
+                <div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="8" autocomplete="new-password" required></div>
+                <button class="button secondary" type="submit">Update password</button>
+              </form>
+            </details>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+
+    <% if (libraryEntitlement && libraryEntitlement.length) { %>
+      <section class="sectionBlock">
+        <div class="sectionHead"><div><h2>Library visibility</h2><p>Choose which entitled libraries appear in Jellyfin.</p></div><span class="pill"><%= visibleLibraryCount %> of <%= libraryEntitlement.length %> selected</span></div>
+        <div class="panel libraryPanel">
+          <div class="libraryIntro"><p>Your plan determines what you are allowed to access. These controls only let you hide or show libraries already granted to you.</p></div>
+          <form method="post" action="/account/libraries">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="libraryGrid">
+              <% libraryEntitlement.forEach(function(name){ %>
+                <label class="libraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= librarySelection.includes(name) ? 'checked' : '' %>><span><%= name %></span></label>
+              <% }) %>
+            </div>
+            <div class="libraryActions"><button class="button primary" type="submit">Save library visibility</button></div>
+          </form>
+        </div>
+      </section>
+    <% } %>
+
+    <% if (overseerrUrl) { %>
+      <section class="sectionBlock">
+        <div class="sectionHead"><div><h2>Request content</h2></div></div>
+        <div class="panel requestCard"><p>Looking for something that isn't available yet? Open the request portal.</p><a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a></div>
+      </section>
+    <% } %>
+
+    <section class="sectionBlock" id="plans">
+      <div class="sectionHead"><div><h2>Plans</h2><p>Compare access levels and change your subscription when payment options are available.</p></div></div>
+      <% if (!plans.length) { %><div class="empty">No plans are currently available.</div><% } %>
+      <div class="plansGrid">
+      <% plans.forEach(function(p){
+           const opts=Array.isArray(p.payment_options)?p.payment_options:[];
+           const stripeOpt=opts.find(o=>o.provider==='stripe');
+           const paypalOpt=opts.find(o=>o.provider==='paypal');
+           const isFreePlan = Number(p.price_minor)===0 && p.billing_interval!=='trial';
+           const isCurrent = Boolean(activePlanId && String(activePlanId)===String(p.id));
+      %>
+        <article class="planCard <%= isCurrent ? 'current' : '' %>">
+          <div class="planTop"><div><div class="planName"><%= p.name %></div><div class="planDuration"><%= duration(p) %></div></div><% if (isCurrent) { %><span class="pill accent">Current</span><% } %></div>
+          <div class="planPrice"><%= price(p) %></div>
+          <div class="planDescription"><%= p.description || 'Streaming access managed through your account.' %></div>
+          <ul class="featureList">
+            <li><%= p.streams %> concurrent stream<%= Number(p.streams)===1?'':'s' %></li>
+            <li><%= p.allow_downloads ? 'Downloads included' : 'Streaming only' %></li>
+            <li><%= p.allow_video_transcoding ? 'Video transcoding allowed' : 'Direct playback preferred' %></li>
+          </ul>
+          <div class="planActions">
+            <% if (isCurrent) { %><span class="button secondary full">Current plan</span><% } else { %>
+              <% if (p.billing_interval === 'trial') { %><form class="plainForm" method="post" action="/account/trial/start"><button class="button primary full" type="submit">Start free trial</button></form><% } %>
+              <% if (isFreePlan) { %><form class="plainForm" method="post" action="/account/claim-free/<%= p.code %>"><button class="button free full" type="submit">Get free access</button></form><% } %>
+              <% if (Number(p.price_minor) > 0 && stripeEnabled && stripeOpt) { %><form class="plainForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="planCode" value="<%= p.code %>"><input class="input discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><button class="button stripe full" type="submit">Pay with Stripe</button></form><% } %>
+              <% if (Number(p.price_minor) > 0 && paypalEnabled && paypalOpt) { %><form class="plainForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="planCode" value="<%= p.code %>"><% if (paypalOpt.checkoutMode !== 'subscription') { %><input class="input discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><% } %><button class="button paypal full" type="submit">Pay with PayPal</button></form><% } %>
+              <% if (Number(p.price_minor) > 0 && !stripeOpt && !paypalOpt) { %><div class="paymentNote">Online payment is not configured for this plan yet.</div><% } %>
+            <% } %>
+          </div>
+        </article>
       <% }) %>
-      <div style="margin-top:12px"><button class="primary">Save library visibility</button></div>
-    </form>
-  </div>
-  <% } %>
+      </div>
+    </section>
 
-  <% if (overseerrUrl) { %>
-  <h2>Request content</h2>
-  <div class="card"><p class="muted">Looking for something that isn't in the library yet? Submit a request.</p><a class="stripe" style="display:inline-block;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:700" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a></div>
-  <% } %>
+    <% if (portal.providers.some(p=>p.provider==='stripe') && stripeEnabled) { %>
+      <section class="sectionBlock">
+        <div class="sectionHead"><div><h2>Billing</h2></div></div>
+        <div class="panel billingRow"><div><div class="accessTitle">Stripe billing</div><div class="accessMeta">Manage payment methods, invoices and your billing profile.</div></div><form class="plainForm" method="post" action="/account/stripe/portal"><button class="button stripe" type="submit">Manage billing</button></form></div>
+      </section>
+    <% } %>
 
-  <h2>Choose a plan</h2>
-  <div class="grid">
-  <% plans.forEach(function(p){ const opts=Array.isArray(p.payment_options)?p.payment_options:[]; const stripeOpt=opts.find(o=>o.provider==='stripe'); const paypalOpt=opts.find(o=>o.provider==='paypal'); const isFreePlan = p.price_minor===0 && p.billing_interval!=='trial'; %>
-    <div class="card plan"><h3><%= p.name %></h3><div class="price"><%= p.price_minor === 0 ? 'Free' : '$' + (p.price_minor/100).toFixed(2) %></div><p class="muted"><%= p.description %></p><p><span class="pill"><%= p.streams %> stream<%= p.streams===1?'':'s' %></span><span class="pill">Downloads <%= p.allow_downloads?'on':'off' %></span><span class="pill">Transcode <%= p.allow_video_transcoding?'on':'off' %></span></p><div class="actions">
-      <% if (p.billing_interval === 'trial') { %><form method="post" action="/account/trial/start"><button class="primary">Start free trial</button></form><% } %>
-      <% if (isFreePlan) { %><form method="post" action="/account/claim-free/<%= p.code %>"><button class="free">Get free access</button></form><% } %>
-      <% if (p.price_minor > 0 && stripeEnabled && stripeOpt) { %><form method="post" action="/account/checkout/stripe"><input type="hidden" name="planCode" value="<%= p.code %>"><input class="discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><button class="stripe">Pay with Stripe</button></form><% } %>
-      <% if (p.price_minor > 0 && paypalEnabled && paypalOpt) { %><form method="post" action="/account/checkout/paypal"><input type="hidden" name="planCode" value="<%= p.code %>"><% if (paypalOpt.checkoutMode !== 'subscription') { %><input class="discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><% } %><button class="paypal">Pay with PayPal</button></form><% } %>
-      <% if (p.price_minor > 0 && !stripeOpt && !paypalOpt) { %><div class="muted">Payment mapping not configured yet.</div><% } %>
-    </div></div>
-  <% }) %>
-  </div>
-
-  <% if (portal.providers.some(p=>p.provider==='stripe') && stripeEnabled) { %><h2>Billing</h2><div class="card"><form method="post" action="/account/stripe/portal"><button class="stripe">Manage Stripe billing</button></form></div><% } %>
-
-  <h2>Refer a friend</h2>
-  <div class="card">
-    <p class="muted">Share your referral link. When someone signs up with it and activates a paid plan, your active subscription is extended as a thank-you.</p>
-    <div class="copyRow"><input id="refLink" readonly value="/account/register?ref=<%= portal.referralCode %>"><button type="button" class="primary" onclick="const i=document.getElementById('refLink');i.select();navigator.clipboard&amp;&amp;navigator.clipboard.writeText(location.origin+i.value);">Copy link</button></div>
-    <p class="muted" style="margin-top:10px">Or share the code directly:</p>
-    <div class="codeBox"><%= portal.referralCode %></div>
-  </div>
-</div></body></html>
+    <section class="sectionBlock">
+      <div class="sectionHead"><div><h2>Refer a friend</h2><p>Share your referral link and receive the configured reward when a referral qualifies.</p></div></div>
+      <div class="panel">
+        <div class="referralLayout">
+          <div><div class="codeLabel">Referral link</div><div class="copyLine"><input class="input referralCode" id="refLink" readonly data-path="/account/register?ref=<%= portal.referralCode %>" value="/account/register?ref=<%= portal.referralCode %>"><button type="button" class="button primary" id="copyReferral">Copy link</button></div></div>
+          <div><div class="codeLabel">Referral code</div><input class="input referralCode" readonly value="<%= portal.referralCode %>"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+(function(){
+  const input=document.getElementById('refLink');
+  if(input&&input.dataset.path) input.value=location.origin+input.dataset.path;
+  const button=document.getElementById('copyReferral');
+  button?.addEventListener('click',async()=>{if(!input)return;try{await navigator.clipboard.writeText(input.value);const old=button.textContent;button.textContent='Copied';setTimeout(()=>button.textContent=old,1200)}catch(_){input.select()}});
+})();
+</script>
+</body>
+</html>
