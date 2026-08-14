@@ -5,7 +5,8 @@ BEGIN;
 -- accounts from plan/server changes; choose the newest enabled/non-disabled
 -- account as the initial primary without deleting anything.
 ALTER TABLE jellyfin_accounts
-    ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT FALSE;
+    ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS password_reset_required BOOLEAN NOT NULL DEFAULT FALSE;
 
 WITH ranked AS (
     SELECT ja.id,
