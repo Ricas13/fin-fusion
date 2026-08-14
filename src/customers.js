@@ -69,7 +69,8 @@ async function registerCustomer({ email, username, password, referralCode }) {
 
     if (referralCode) {
         try {
-            await referrals.attributeReferral(created.customer.id, referralCode);
+            const referralSettings = await referrals.loadSettings();
+            if (referralSettings.enabled) await referrals.attributeReferral(created.customer.id, referralCode);
         } catch (error) {
             console.error('Referral attribution failed:', error.message);
         }
@@ -118,33 +119,32 @@ async function getCustomerPortal(customerId) {
     `, [customerId]);
     if (!customerResult.rowCount) return null;
 
-    const subscriptions = await query(`
-        SELECT s.*,p.code AS plan_code,p.name AS plan_name,p.streams,p.allow_downloads,
-               p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class
-        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.customer_id=$1 ORDER BY s.created_at DESC
-    `, [customerId]);
+    const [subscriptions, accounts, providers, referralSettings] = await Promise.all([
+        query(`
+            SELECT s.*,p.code AS plan_code,p.name AS plan_name,p.streams,p.allow_downloads,
+                   p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class
+            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 ORDER BY s.created_at DESC
+        `, [customerId]),
+        query(`
+            SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.last_activity_at,ja.last_policy_sync,
+                   js.name AS server_name,js.public_url,js.server_class
+            FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
+            WHERE ja.customer_id=$1 ORDER BY ja.created_at ASC
+        `, [customerId]),
+        query(`SELECT pc.provider,pc.provider_customer_id FROM payment_customers pc WHERE pc.customer_id=$1`, [customerId]),
+        referrals.loadSettings()
+    ]);
 
-    const accounts = await query(`
-        SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.last_activity_at,ja.last_policy_sync,
-               js.name AS server_name,js.public_url,js.server_class
-        FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
-        WHERE ja.customer_id=$1 ORDER BY ja.created_at ASC
-    `, [customerId]);
-
-    const providers = await query(`
-        SELECT pc.provider,pc.provider_customer_id
-        FROM payment_customers pc WHERE pc.customer_id=$1
-    `, [customerId]);
-
-    const referralCode = await referrals.ensureReferralCode(customerId);
+    const referralCode = referralSettings.enabled ? await referrals.ensureReferralCode(customerId) : null;
 
     return {
         customer: customerResult.rows[0],
         subscriptions: subscriptions.rows,
         accounts: accounts.rows,
         providers: providers.rows,
-        referralCode
+        referralCode,
+        referralsEnabled: referralSettings.enabled
     };
 }
 
