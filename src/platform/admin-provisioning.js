@@ -93,9 +93,30 @@ async function recentRuns() {
         FROM provisioning_runs pr
         JOIN customers c ON c.id=pr.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id
-        ORDER BY pr.started_at DESC LIMIT 40
+        ORDER BY pr.started_at DESC LIMIT 160
     `);
     return result.rows;
+}
+
+function compactRuns(rows) {
+    const out = [];
+    for (const row of rows) {
+        const error = row.detail?.error || '';
+        const previous = out[out.length - 1];
+        const same = previous
+            && String(previous.customer_id) === String(row.customer_id)
+            && previous.action === row.action
+            && previous.status === row.status
+            && (previous.detail?.error || '') === error;
+        if (same) {
+            previous.repeat_count += 1;
+            previous.earliest_started_at = row.started_at;
+            continue;
+        }
+        out.push({ ...row, repeat_count: 1, earliest_started_at: row.started_at });
+        if (out.length >= 40) break;
+    }
+    return out;
 }
 
 async function queueAllActive() {
@@ -131,13 +152,12 @@ function stateTable(req, rows) {
 }
 
 function runsTable(rows) {
-    if (!rows.length) return '';
-    return `<section class="section"><div class="sectionHead"><div><h2>Recent attempts</h2><div class="muted">Append-only provisioning history</div></div></div><div class="tableWrap"><table class="dataTable"><thead><tr><th>Customer</th><th>Action</th><th>Status</th><th>Started</th><th>Duration</th><th>Error</th></tr></thead><tbody>${rows.map(row => {
-        const started = row.started_at ? new Date(row.started_at).getTime() : 0;
-        const completed = row.completed_at ? new Date(row.completed_at).getTime() : Date.now();
-        const duration = started ? `${Math.max(0, Math.round((completed - started) / 100) / 10)}s` : '—';
+    const compact = compactRuns(rows);
+    if (!compact.length) return '';
+    return `<section class="section"><div class="sectionHead"><div><h2>Recent attempts</h2><div class="muted">Repeated identical results are grouped so routine health reconciliation does not flood the page.</div></div></div><div class="tableWrap"><table class="dataTable"><thead><tr><th>Customer</th><th>Action</th><th>Status</th><th>Attempts</th><th>Latest</th><th>Window</th><th>Error</th></tr></thead><tbody>${compact.map(row => {
         const error = row.detail?.error || '—';
-        return `<tr><td>${esc(row.customer_name)}</td><td>${esc(row.action)}</td><td>${pill(row.status === 'succeeded' ? 'healthy' : row.status)}</td><td>${esc(dt(row.started_at))}</td><td>${esc(duration)}</td><td class="problemCell">${esc(error)}</td></tr>`;
+        const window = row.repeat_count > 1 ? `${dt(row.earliest_started_at)} → ${dt(row.started_at)}` : '—';
+        return `<tr><td>${esc(row.customer_name)}</td><td>${esc(row.action)}</td><td>${pill(row.status === 'succeeded' ? 'healthy' : row.status)}</td><td>${row.repeat_count > 1 ? `<strong>${esc(row.repeat_count)}×</strong>` : '1'}</td><td>${esc(dt(row.started_at))}</td><td>${esc(window)}</td><td class="problemCell">${esc(error)}</td></tr>`;
     }).join('')}</tbody></table></div></section>`;
 }
 
@@ -148,7 +168,7 @@ async function page(req) {
     const failed = counts.failed || 0;
     const pending = (counts.pending || 0) + (counts.running || 0);
     const styles = `<style>.provisioningActions{display:flex;gap:7px;flex-wrap:wrap}.provisioningActions form{margin:0}.provisioningTable{min-width:1180px}.problemCell{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metricValue.smallish{font-size:22px}@media(max-width:760px){.provisioningActions{width:100%}.provisioningActions .button{flex:1}}</style>`;
-    const actions = `<div class="provisioningActions"><a class="button secondary" href="/admin/provisioning/migrations">Server migrations</a><form method="post" action="/admin/provisioning/retry-problems">${csrfInput(req)}<button class="button secondary" type="submit">Retry blocked & failed</button></form><form method="post" action="/admin/provisioning/reconcile-all">${csrfInput(req)}<button class="button" type="submit">Queue all active</button></form></div>`;
+    const actions = `<div class="provisioningActions"><a class="button secondary" href="/admin/request-users">Request users</a><a class="button secondary" href="/admin/provisioning/migrations">Server migrations</a><form method="post" action="/admin/provisioning/retry-problems">${csrfInput(req)}<button class="button secondary" type="submit">Retry blocked & failed</button></form><form method="post" action="/admin/provisioning/reconcile-all">${csrfInput(req)}<button class="button" type="submit">Queue all active</button></form></div>`;
     const metrics = `<div class="metrics"><div class="metric"><div class="metricLabel">Active customers</div><div class="metricValue smallish">${active}</div></div><div class="metric"><div class="metricLabel">Healthy</div><div class="metricValue smallish">${healthy}</div></div><div class="metric"><div class="metricLabel">Pending / running</div><div class="metricValue smallish">${pending}</div></div><div class="metric"><div class="metricLabel">Blocked</div><div class="metricValue smallish">${blocked}</div></div><div class="metric"><div class="metricLabel">Failed</div><div class="metricValue smallish">${failed}</div></div></div>`;
     const body = `${styles}${notice(req)}${metrics}${stateTable(req, rows)}${runsTable(runs)}`;
     return layout({ siteName: site(), active: 'provisioning', title: 'Provisioning', subtitle: 'Jellyfin account creation, policy reconciliation, retries and failures', action: actions, body });
@@ -191,4 +211,4 @@ function createAdminProvisioningRouter() {
     return router;
 }
 
-module.exports = { createAdminProvisioningRouter, page, provisioningRows, queueAllActive };
+module.exports = { createAdminProvisioningRouter, page, provisioningRows, queueAllActive, compactRuns };
