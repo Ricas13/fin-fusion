@@ -42,10 +42,7 @@ async function activeCustomerCount() {
 }
 
 async function statusCounts() {
-    const result = await query(`
-        SELECT status,COUNT(*)::int AS count
-        FROM customer_provisioning_state GROUP BY status
-    `);
+    const result = await query(`SELECT status,COUNT(*)::int AS count FROM customer_provisioning_state GROUP BY status`);
     return Object.fromEntries(result.rows.map(row => [row.status, row.count]));
 }
 
@@ -151,7 +148,7 @@ async function page(req) {
     const failed = counts.failed || 0;
     const pending = (counts.pending || 0) + (counts.running || 0);
     const styles = `<style>.provisioningActions{display:flex;gap:7px;flex-wrap:wrap}.provisioningActions form{margin:0}.provisioningTable{min-width:1180px}.problemCell{max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metricValue.smallish{font-size:22px}@media(max-width:760px){.provisioningActions{width:100%}.provisioningActions .button{flex:1}}</style>`;
-    const actions = `<div class="provisioningActions"><form method="post" action="/admin/provisioning/retry-problems">${csrfInput(req)}<button class="button secondary" type="submit">Retry blocked & failed</button></form><form method="post" action="/admin/provisioning/reconcile-all">${csrfInput(req)}<button class="button" type="submit">Queue all active</button></form></div>`;
+    const actions = `<div class="provisioningActions"><a class="button secondary" href="/admin/provisioning/migrations">Server migrations</a><form method="post" action="/admin/provisioning/retry-problems">${csrfInput(req)}<button class="button secondary" type="submit">Retry blocked & failed</button></form><form method="post" action="/admin/provisioning/reconcile-all">${csrfInput(req)}<button class="button" type="submit">Queue all active</button></form></div>`;
     const metrics = `<div class="metrics"><div class="metric"><div class="metricLabel">Active customers</div><div class="metricValue smallish">${active}</div></div><div class="metric"><div class="metricLabel">Healthy</div><div class="metricValue smallish">${healthy}</div></div><div class="metric"><div class="metricLabel">Pending / running</div><div class="metricValue smallish">${pending}</div></div><div class="metric"><div class="metricLabel">Blocked</div><div class="metricValue smallish">${blocked}</div></div><div class="metric"><div class="metricLabel">Failed</div><div class="metricValue smallish">${failed}</div></div></div>`;
     const body = `${styles}${notice(req)}${metrics}${stateTable(req, rows)}${runsTable(runs)}`;
     return layout({ siteName: site(), active: 'provisioning', title: 'Provisioning', subtitle: 'Jellyfin account creation, policy reconciliation, retries and failures', action: actions, body });
