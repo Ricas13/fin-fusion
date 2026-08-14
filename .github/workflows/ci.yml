@@ -58,14 +58,28 @@ jobs:
       - name: Apply database migrations
         run: npm run db:migrate
 
-      - name: Schema smoke test
+      - name: Schema and clean-install smoke test
         run: |
           node - <<'NODE'
           const { query, getPool } = require('./src/db');
           (async () => {
-            const plans = await query('SELECT code FROM plans ORDER BY sort_order, code');
-            if (plans.rowCount < 4) throw new Error('Expected seeded plans');
-            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs, to_regclass('public.active_playback_sessions') AS active_playback_sessions, to_regclass('public.playback_history') AS playback_history, to_regclass('public.stream_policy_events') AS stream_policy_events, to_regclass('public.auth_sessions') AS auth_sessions, to_regclass('public.auth_events') AS auth_events, to_regclass('public.auth_recovery_codes') AS auth_recovery_codes, to_regclass('public.auth_totp_enrollments') AS auth_totp_enrollments");
+            const businessCounts = await query(`
+              SELECT
+                (SELECT COUNT(*)::int FROM plans) AS plans,
+                (SELECT COUNT(*)::int FROM jellyfin_servers) AS servers,
+                (SELECT COUNT(*)::int FROM customers) AS customers,
+                (SELECT COUNT(*)::int FROM resellers) AS resellers
+            `);
+            for (const [name, value] of Object.entries(businessCounts.rows[0])) {
+              if (Number(value) !== 0) throw new Error(`Fresh CI database unexpectedly seeded ${name}: ${value}`);
+            }
+            const clean = await query("SELECT setting_value FROM platform_settings WHERE setting_key='installation'");
+            if (clean.rows[0]?.setting_value?.cleanInstall !== true) throw new Error('Clean-install marker missing');
+            const platform = await query("SELECT setting_value FROM platform_settings WHERE setting_key='platform'");
+            if (platform.rows[0]?.setting_value?.storefrontEnabled !== false) throw new Error('Fresh storefront must be disabled');
+            if (platform.rows[0]?.setting_value?.publicRegistration !== false) throw new Error('Fresh registration must be disabled');
+
+            const tables = await query("SELECT to_regclass('public.payment_customers') AS payment_customers, to_regclass('public.provisioning_runs') AS provisioning_runs, to_regclass('public.active_playback_sessions') AS active_playback_sessions, to_regclass('public.playback_history') AS playback_history, to_regclass('public.stream_policy_events') AS stream_policy_events, to_regclass('public.auth_sessions') AS auth_sessions, to_regclass('public.auth_events') AS auth_events, to_regclass('public.auth_recovery_codes') AS auth_recovery_codes, to_regclass('public.auth_totp_enrollments') AS auth_totp_enrollments, to_regclass('public.customer_provisioning_state') AS customer_provisioning_state, to_regclass('public.customer_invitations') AS customer_invitations");
             for (const [name, value] of Object.entries(tables.rows[0])) if (!value) throw new Error(`Required table missing: ${name}`);
           })().finally(() => getPool().end());
           NODE
