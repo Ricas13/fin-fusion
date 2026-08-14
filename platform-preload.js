@@ -94,6 +94,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
+        const { createAdminPlansListRouter } = require('./src/platform/admin-plans-list');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
@@ -125,6 +126,9 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminCatalogShellRouter());
+        // The compact/filterable Plans index owns only GET /admin/plans.
+        // The existing plan router still owns create/edit/export and sub-pages.
+        this.use(createAdminPlansListRouter());
         this.use(createAdminPlansRouter());
         this.use(createAdminPlanPlacementRouter());
         this.use(createAdminJobsRouter());
