@@ -1,7 +1,7 @@
 'use strict';
 
 const { query, transaction } = require('../db');
-const { reconcileCustomer } = require('../jellyfin/provisioning');
+const { reconcileCustomer } = require('../jellyfin/resilient-provisioning');
 const discounts = require('./discounts');
 const referrals = require('../referrals');
 
@@ -224,14 +224,6 @@ async function activatePurchase({
         }
 
         if (discountCodeId) {
-            // A payment provider has already accepted this customer's money by the time we
-            // get here, so a failure recording discount usage must never roll back or block
-            // the subscription/access they paid for -- see redeemForSubscriptionTx(). A plain
-            // try/catch is not enough: once any statement errors, Postgres marks the whole
-            // transaction aborted and every later statement on this client (including the
-            // audit_log insert and the final COMMIT) fails too. A SAVEPOINT isolates the
-            // failure so it can be rolled back on its own, leaving the rest of this
-            // transaction free to continue and commit normally.
             await client.query('SAVEPOINT discount_redemption');
             try {
                 await discounts.redeemForSubscriptionTx(client, {
