@@ -5,6 +5,8 @@ const { query } = require('../db');
 const csrf = require('../auth/csrf');
 const auth = require('../auth/service');
 const runtimeSettings = require('./runtime-settings');
+const providerSettings = require('../payments/provider-settings');
+const requestServiceSettings = require('../integrations/request-service-settings');
 const { layout, esc } = require('./admin-html');
 
 function gate(req, res, next) {
@@ -30,10 +32,13 @@ function cleanSiteName(value) {
 }
 
 async function load() {
-    await runtimeSettings.ensureLoaded();
-    const [rows, plans] = await Promise.all([
+    await Promise.all([runtimeSettings.ensureLoaded(), providerSettings.ensureLoaded(), requestServiceSettings.ensureLoaded()]);
+    const [rows, plans, stripe, paypal, requests] = await Promise.all([
         query("SELECT setting_key,setting_value FROM platform_settings WHERE setting_key IN ('storefront','storefront_features','reseller_defaults','admin_defaults')"),
-        query("SELECT code,name FROM plans WHERE active=TRUE AND audience IN ('direct','both') ORDER BY sort_order,price_minor,name")
+        query("SELECT code,name FROM plans WHERE active=TRUE AND audience IN ('direct','both') ORDER BY sort_order,price_minor,name"),
+        providerSettings.status('stripe'),
+        providerSettings.status('paypal'),
+        requestServiceSettings.status()
     ]);
     const settings = Object.fromEntries(rows.rows.map(row => [row.setting_key, row.setting_value]));
     const fallbackPlan = plans.rows[0]?.code || '';
@@ -56,15 +61,20 @@ async function load() {
             publicRegistration: runtimeSettings.publicRegistrationOpen(),
             requireEmailVerification: runtimeSettings.requireEmailVerification(),
             entitlementJobIntervalMinutes: Math.round(runtimeSettings.entitlementJobIntervalMs() / 60000),
-            serverHealthIntervalMinutes: Math.round(runtimeSettings.serverHealthIntervalMs() / 60000),
-            overseerrUrl: runtimeSettings.overseerrUrl()
+            serverHealthIntervalMinutes: Math.round(runtimeSettings.serverHealthIntervalMs() / 60000)
         },
+        integrations: { stripe, paypal, requests },
         plans: plans.rows
     };
 }
 
 function status(label, value, kind = 'accent', hint = '') {
     return `<div class="compact-item"><div><div class="compact-title">${esc(label)}</div><div class="compact-meta">${esc(hint)}</div></div><span class="pill ${kind}">${esc(value)}</span></div>`;
+}
+function integrationLabel(item) {
+    if (!item.enabled) return ['Disabled', 'warn'];
+    if (item.configured) return ['Ready', 'good'];
+    return ['Not configured', 'warn'];
 }
 
 function page(req, data) {
@@ -73,6 +83,9 @@ function page(req, data) {
     const r = data.reseller;
     const a = data.admin;
     const pf = data.platform;
+    const stripeState = integrationLabel(data.integrations.stripe);
+    const paypalState = integrationLabel(data.integrations.paypal);
+    const requestState = integrationLabel(data.integrations.requests);
     const planOptions = data.plans.map(plan => `<option value="${esc(plan.code)}" ${a.defaultPlanCode === plan.code ? 'selected' : ''}>${esc(plan.name)} · ${esc(plan.code)}</option>`).join('');
 
     const body = `${notice(req.query.message, 'success')}${notice(req.query.error, 'error')}
@@ -118,9 +131,9 @@ function page(req, data) {
         </section>
 
         <section class="settings-card">
-            <div class="card-header"><div><h3>Platform &amp; integrations</h3><div class="settings-hint">Site identity and customer-facing modules are explicit choices, not implied by the presence of database tables.</div></div></div>
+            <div class="card-header"><div><h3>Platform</h3><div class="settings-hint">Site identity, public entry points and scheduler timing. Provider credentials are managed on their dedicated pages.</div></div></div>
             <div class="card-body"><form method="post" action="/admin/settings/platform">${csrfInput(req)}
-                <div class="formGroup"><label>Site name</label><input class="input" name="siteName" minlength="2" maxlength="80" value="${esc(pf.siteName)}" required><div class="settings-hint">Used by the admin shell, staff sign-in and customer-facing pages. Changes take effect without a restart.</div></div>
+                <div class="formGroup"><label>Site name</label><input class="input" name="siteName" minlength="2" maxlength="80" value="${esc(pf.siteName)}" required><div class="settings-hint">Used by the admin shell, staff sign-in and customer-facing pages.</div></div>
                 <div class="toggleGrid">
                     <label class="toggleRow"><input type="checkbox" name="storefrontEnabled" ${pf.storefrontEnabled ? 'checked' : ''}><span><strong>Publish public storefront</strong><small class="muted">New clean installs leave this disabled until you intentionally publish it.</small></span></label>
                     <label class="toggleRow"><input type="checkbox" name="publicRegistration" ${pf.publicRegistration ? 'checked' : ''}><span><strong>Public registration open</strong><small class="muted">Invitations and admin onboarding continue to work while this is off.</small></span></label>
@@ -129,24 +142,24 @@ function page(req, data) {
                 <div class="formGrid">
                     <div class="formGroup"><label>Entitlement reconcile interval · minutes</label><input class="input" type="number" min="1" max="180" name="entitlementJobIntervalMinutes" value="${esc(pf.entitlementJobIntervalMinutes)}"></div>
                     <div class="formGroup"><label>Server health-check interval · minutes</label><input class="input" type="number" min="1" max="180" name="serverHealthIntervalMinutes" value="${esc(pf.serverHealthIntervalMinutes)}"></div>
-                    <div class="formGroup"><label>External request site URL <span class="muted">(Overseerr/Seerr)</span></label><input class="input" type="url" name="overseerrUrl" maxlength="500" placeholder="https://requests.example.com" value="${esc(pf.overseerrUrl)}"></div>
                 </div>
-                <p class="settings-hint">Identity, interval and toggle changes take effect immediately, no restart required.</p>${stepInput()}<button class="button">Save platform settings</button>
+                <p class="settings-hint">These settings take effect immediately; no container restart is required.</p>${stepInput()}<button class="button">Save platform settings</button>
             </form></div>
         </section>
 
         <section class="settings-card">
-            <div class="card-header"><div><h3>Deployment &amp; integrations</h3><div class="settings-hint">Sensitive values remain server-side</div></div></div>
+            <div class="card-header"><div><h3>Integrations</h3><div class="settings-hint">Configure and test integrations from their dedicated pages.</div></div></div>
             <div class="card-body">
-                ${status('Stripe', process.env.STRIPE_API_KEY || process.env.STRIPE_RESTRICTED_KEY ? 'Configured' : 'Not configured', process.env.STRIPE_API_KEY || process.env.STRIPE_RESTRICTED_KEY ? 'good' : 'warn', 'Secrets are never rendered here')}
-                ${status('PayPal', process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET ? 'Configured' : 'Not configured', process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET ? 'good' : 'warn', 'Secrets are never rendered here')}
+                ${status('Stripe', stripeState[0], stripeState[1], 'Commerce → Payments')}
+                ${status('PayPal', paypalState[0], paypalState[1], 'Commerce → Payments')}
+                ${status('Request service', requestState[0], requestState[1], data.integrations.requests.baseUrl || 'Automation → Provisioning → Request Service')}
                 ${status('Email', process.env.SMTP_URL ? 'Configured' : 'Not configured', process.env.SMTP_URL ? 'good' : 'warn', 'Optional SMTP delivery')}
                 ${status('Telegram', process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID ? 'Configured' : 'Not configured', process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID ? 'good' : 'warn', 'Configure credentials on the server')}
                 ${status('Activity mode', String(process.env.STREAM_POLICY_MODE || 'observe').toUpperCase(), 'accent', 'Playback-policy worker mode')}
                 <div class="quick-actions" style="margin-top:12px">
+                    <a class="quick-action" href="/admin/payments"><strong>Payment gateways</strong><span>Stripe / PayPal credentials, enable switches and connection tests</span></a>
+                    <a class="quick-action" href="/admin/request-users"><strong>Request Service</strong><span>Overseerr / Jellyseerr / Seerr URL, API key, sync and plan quotas</span></a>
                     <a class="quick-action" href="/admin/setup"><strong>Setup</strong><span>Feature readiness and first-run checklist</span></a>
-                    <a class="quick-action" href="/admin/plans"><strong>Plans</strong><span>Prices, streams and reseller credits</span></a>
-                    <a class="quick-action" href="/admin/payments"><strong>Payments</strong><span>Provider status and events</span></a>
                     <a class="quick-action" href="/admin/notifications"><strong>Notifications</strong><span>Event delivery preferences</span></a>
                     <a class="quick-action" href="/admin/security"><strong>Security</strong><span>Sessions and account controls</span></a>
                 </div>
@@ -215,23 +228,13 @@ function createAdminOriginalSettingsRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             if (!(await requireStep(req))) throw new Error('verification');
-            const rawOverseerrUrl = String(req.body.overseerrUrl || '').trim().slice(0, 500);
-            let overseerrUrl = '';
-            if (rawOverseerrUrl) {
-                let parsed;
-                try { parsed = new URL(rawOverseerrUrl); }
-                catch { throw new Error('The external request URL is not a valid URL.'); }
-                if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('The external request URL must use http:// or https://.');
-                overseerrUrl = parsed.href;
-            }
             const value = {
                 siteName: cleanSiteName(req.body.siteName),
                 storefrontEnabled: req.body.storefrontEnabled === 'on',
                 publicRegistration: req.body.publicRegistration === 'on',
                 requireEmailVerification: req.body.requireEmailVerification === 'on',
                 entitlementJobIntervalMinutes: int(req.body.entitlementJobIntervalMinutes, 1, 180, 5),
-                serverHealthIntervalMinutes: int(req.body.serverHealthIntervalMinutes, 1, 180, 5),
-                overseerrUrl
+                serverHealthIntervalMinutes: int(req.body.serverHealthIntervalMinutes, 1, 180, 5)
             };
             await saveSetting('platform', {
                 siteName: value.siteName,
@@ -239,8 +242,7 @@ function createAdminOriginalSettingsRouter() {
                 publicRegistration: value.publicRegistration,
                 requireEmailVerification: value.requireEmailVerification,
                 entitlementJobIntervalMs: value.entitlementJobIntervalMinutes * 60000,
-                serverHealthIntervalMs: value.serverHealthIntervalMinutes * 60000,
-                overseerrUrl: value.overseerrUrl
+                serverHealthIntervalMs: value.serverHealthIntervalMinutes * 60000
             }, req, { merge: true });
             await runtimeSettings.reload();
             return res.redirect('/admin/settings?message=' + encodeURIComponent('Platform settings saved.'));
