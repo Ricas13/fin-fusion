@@ -1,0 +1,56 @@
+name: Customer Claim
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/032_customer_account_claims.sql'
+      - 'src/customer-claims.js'
+      - 'src/platform/customer-claim.js'
+      - 'src/platform/admin-html.js'
+      - 'platform-preload.js'
+      - 'scripts/customer-claim-smoke.js'
+      - '.github/workflows/customer-claim.yml'
+  workflow_dispatch:
+
+jobs:
+  customer-claim:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: customer_claim
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d customer_claim"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/customer-claims.js
+          node --check src/platform/customer-claim.js
+          node --check scripts/customer-claim-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/customer_claim
+        run: npm run db:migrate
+      - name: Claim imported Jellyfin user without changing Jellyfin identity
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/customer_claim
+          DATA_ENCRYPTION_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+          JELLYFIN_ENCRYPTION_KEY: '3333333333333333333333333333333333333333333333333333333333333333'
+          AUTH_ENCRYPTION_KEY: '5555555555555555555555555555555555555555555555555555555555555555'
+        run: node scripts/customer-claim-smoke.js
