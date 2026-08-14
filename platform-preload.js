@@ -36,7 +36,7 @@ function startJobs() {
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/resilient-provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
     const bulkWorker = require('./src/jellyfin/bulk-worker');
-    require('./src/platform/bulk-operations'); // registers bulk-job handlers as a side effect
+    require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
     const runEntitlements = async () => {
@@ -68,17 +68,11 @@ function startJobs() {
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     initialEntitlement.unref?.(); initialHealth.unref?.();
-    // Bulk jobs poll on a short fixed interval (not settings-driven -- these
-    // are bounded per-tick batches, not a tunable operational cadence).
     createRescheduler(runBulkJobs, () => 3000).start();
-    // Decoupled from the 3s claim loop -- this only needs to run often enough
-    // relative to STALE_RUNNING_MINUTES to catch a crashed worker promptly.
     createRescheduler(runStaleReclaim, () => 60000).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
-            // setTimeout (not setInterval) re-reads runtimeSettings on every cycle, so
-            // an admin Settings change takes effect on the job's next run, no restart.
             createRescheduler(runEntitlements, runtimeSettings.entitlementJobIntervalMs).start();
             createRescheduler(runHealth, runtimeSettings.serverHealthIntervalMs).start();
         });
@@ -103,6 +97,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminSetupRouter } = require('./src/platform/admin-setup');
+        const { createAdminConfigurationTransferRouter } = require('./src/platform/admin-configuration-transfer');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminServerLibraryDashboardRouter } = require('./src/platform/admin-server-library-dashboard');
@@ -129,6 +124,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminPreviewRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createAdminSetupRouter());
+        this.use(createAdminConfigurationTransferRouter());
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminBrandingRouter());
         this.use(createAdminResellerSummaryRouter());
@@ -136,8 +132,6 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminInvitationsRouter());
         this.use(createAdminProvisioningRouter());
         this.use(createAdminCatalogShellRouter());
-        // The compact/filterable Plans index owns only GET /admin/plans.
-        // The existing plan router still owns create/edit/export and sub-pages.
         this.use(createAdminPlansListRouter());
         this.use(createAdminPlansRouter());
         this.use(createAdminPlanPlacementRouter());
@@ -145,8 +139,6 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminBulkCustomersRouter());
         this.use(createAdminCustomersListRouter());
         this.use(createAdminPlanLibrariesRouter());
-        // Compact/scalable Servers + Libraries presentation owns the exact
-        // index GETs. The shell still owns add/edit and all other admin pages.
         this.use(createAdminServerLibraryDashboardRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminServersRouter());

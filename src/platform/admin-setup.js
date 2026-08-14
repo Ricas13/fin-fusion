@@ -3,8 +3,9 @@
 const express = require('express');
 const { layout, esc } = require('./admin-html');
 const { setupReadiness } = require('./setup-readiness');
+const runtimeSettings = require('./runtime-settings');
 
-function site() { return process.env.SITE_NAME || 'CAPTaINFiN'; }
+function site() { return runtimeSettings.siteName ? runtimeSettings.siteName() : (process.env.SITE_NAME || 'CAPTaINFiN'); }
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
     return res.redirect('/login?session=expired');
@@ -57,6 +58,13 @@ function page(data) {
                 </div>
             </div>
             <div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Module</th><th>State</th><th>Detail</th></tr></thead><tbody>${data.modules.map(moduleRow).join('')}</tbody></table></div>
+        </section>
+        <section class="card" style="margin-top:16px">
+            <div class="card-header"><div><h2 class="card-title">Installation portability</h2><div class="muted">Move configuration without moving users or secrets.</div></div><a class="button secondary" href="/admin/settings/configuration">Open configuration transfer</a></div>
+            <div class="card-body">
+                <div class="compact-item"><div><div class="compact-title">Export portable business configuration</div><div class="compact-meta">Plans, policy settings, storefront copy, plan placement references and notification preferences are exported in a versioned JSON document.</div></div><span class="pill good">Safe export</span></div>
+                <div class="compact-item"><div><div class="compact-title">Preview before import</div><div class="compact-meta">Imports are validated and shown as create/update counts before an administrator confirms them. Missing server slugs are never guessed.</div></div><span class="pill good">Merge only</span></div>
+            </div>
         </section>
         <section class="card" style="margin-top:16px">
             <div class="card-header"><h2 class="card-title">Clean-install rules</h2></div>

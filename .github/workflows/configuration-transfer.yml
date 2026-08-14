@@ -1,0 +1,52 @@
+name: Configuration Transfer
+
+on:
+  pull_request:
+    paths:
+      - 'src/platform/configuration-transfer.js'
+      - 'src/platform/admin-configuration-transfer.js'
+      - 'src/platform/admin-setup.js'
+      - 'platform-preload.js'
+      - 'scripts/configuration-transfer-smoke.js'
+      - '.github/workflows/configuration-transfer.yml'
+  workflow_dispatch:
+
+jobs:
+  configuration-transfer:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: config_transfer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d config_transfer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/platform/configuration-transfer.js
+          node --check src/platform/admin-configuration-transfer.js
+          node --check scripts/configuration-transfer-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/config_transfer
+        run: npm run db:migrate
+      - name: Portable configuration round-trip
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/config_transfer
+        run: node scripts/configuration-transfer-smoke.js
