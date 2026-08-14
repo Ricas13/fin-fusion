@@ -137,6 +137,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminConfigurationTransferRouter } = require('./src/platform/admin-configuration-transfer');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
+        const { createAdminServerFleetDashboardRouter } = require('./src/platform/admin-server-fleet-dashboard');
         const { createAdminServerLibraryDashboardRouter } = require('./src/platform/admin-server-library-dashboard');
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
         const { createAdminBrandingRouter } = require('./src/platform/admin-branding');
@@ -185,6 +186,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminBulkCustomersRouter());
         this.use(createAdminCustomersListRouter());
         this.use(createAdminPlanLibrariesRouter());
+        this.use(createAdminServerFleetDashboardRouter());
         this.use(createAdminServerLibraryDashboardRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminServersRouter());

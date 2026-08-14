@@ -13,9 +13,10 @@ async function main() {
         const required = await client.query(`
             SELECT to_regclass('public.active_playback_sessions') AS active,
                    to_regclass('public.playback_history') AS history,
-                   to_regclass('public.stream_policy_events') AS events
+                   to_regclass('public.stream_policy_events') AS events,
+                   to_regclass('public.jellyfin_server_metrics') AS metrics
         `);
-        if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events) {
+        if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics) {
             throw new Error('Run database migrations before configuring the activity role');
         }
 
@@ -53,6 +54,7 @@ async function main() {
             GRANT SELECT,INSERT,UPDATE,DELETE ON active_playback_sessions TO steamfusion_activity;
             GRANT SELECT,INSERT,UPDATE,DELETE ON playback_history TO steamfusion_activity;
             GRANT SELECT,INSERT,UPDATE,DELETE ON stream_policy_events TO steamfusion_activity;
+            GRANT SELECT,INSERT,UPDATE ON jellyfin_server_metrics TO steamfusion_activity;
             GRANT USAGE,SELECT ON SEQUENCE playback_history_id_seq TO steamfusion_activity;
             GRANT USAGE,SELECT ON SEQUENCE stream_policy_events_id_seq TO steamfusion_activity;
         `);
