@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { query, transaction } = require('../db');
 const registry = require('./registry');
 const policy = require('./policy');
+const placement = require('./placement');
 
 function randomPassword() {
     return crypto.randomBytes(24).toString('base64url');
@@ -237,28 +238,38 @@ async function resolveLibraryAccessForServer(serverId, unrestricted, visibleName
 
 async function selectServerForPlan(plan) {
     const isTrial = plan.billing_interval === 'trial';
+    const planId = plan.plan_id || plan.id;
+    if (!planId) throw new Error('Plan id is required for server placement');
+
     const result = await query(`
+        WITH restriction AS (
+            SELECT EXISTS(
+                SELECT 1 FROM plan_server_eligibility WHERE plan_id=$3
+            ) AS restricted
+        )
         SELECT js.*,
-               COUNT(ja.id)::int AS assigned_users,
-               CASE WHEN js.max_users IS NULL OR js.max_users=0 THEN 0
-                    ELSE COUNT(ja.id)::numeric/js.max_users END AS load_ratio
+               COUNT(DISTINCT ja.id)::int AS assigned_users,
+               COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams,
+               COALESCE(pse.weight,100)::int AS placement_weight
         FROM jellyfin_servers js
-        LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id AND ja.disabled=FALSE
+        CROSS JOIN restriction r
+        LEFT JOIN plan_server_eligibility pse
+               ON pse.plan_id=$3 AND pse.server_id=js.id
+        LEFT JOIN jellyfin_accounts ja
+               ON ja.server_id=js.id AND ja.disabled=FALSE
+        LEFT JOIN active_playback_sessions aps
+               ON aps.server_id=js.id
         WHERE js.enabled=TRUE
           AND js.allow_new_users=TRUE
           AND js.server_class=$1
           AND js.health_status <> 'offline'
           AND CASE WHEN $2::boolean THEN js.trial_enabled ELSE js.paid_enabled END
-        GROUP BY js.id
-        HAVING js.max_users IS NULL OR js.max_users=0 OR COUNT(ja.id) < js.max_users
-        ORDER BY
-          CASE js.health_status WHEN 'healthy' THEN 0 WHEN 'unknown' THEN 1 WHEN 'degraded' THEN 2 ELSE 3 END,
-          load_ratio ASC,
-          js.priority ASC,
-          js.name ASC
-        LIMIT 1
-    `, [plan.server_class, isTrial]);
-    return result.rows[0] || null;
+          AND (NOT r.restricted OR pse.server_id IS NOT NULL)
+        GROUP BY js.id,pse.weight,r.restricted
+        HAVING js.max_users IS NULL OR js.max_users=0 OR COUNT(DISTINCT ja.id) < js.max_users
+    `, [plan.server_class, isTrial, planId]);
+
+    return placement.selectServer(result.rows, plan.placement_strategy);
 }
 
 async function currentEntitlement(customerId) {
@@ -435,7 +446,7 @@ async function reconcileCustomer(customerId) {
         let account = accounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
         if (!account) {
             const server = await selectServerForPlan(entitlement);
-            if (!server) throw new Error(`No eligible ${entitlement.server_class} Jellyfin server has capacity`);
+            if (!server) throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.code}`);
             account = await createJellyfinAccount(customerId, server, effective);
         } else {
             await applyPolicy(account, effective, false);
@@ -455,7 +466,8 @@ async function reconcileCustomer(customerId) {
             serverId: account.server_id,
             jellyfinAccountId: account.id,
             effectiveStreams: effective.technical.streams,
-            libraryVisibleCount: effective.visibleNames.length
+            libraryVisibleCount: effective.visibleNames.length,
+            placementStrategy: placement.normalizeStrategy(entitlement.placement_strategy)
         })]);
 
         return { active: true, entitlement, account, effective };
