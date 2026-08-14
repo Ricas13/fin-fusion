@@ -62,7 +62,10 @@ async function chooseOrResolve(req, res, provider) {
 function createFlexibleCheckoutRouter() {
     const router = express.Router();
 
-    router.use('/account', async (_req, _res, next) => {
+    // Database-backed payment credentials must be loaded before any downstream
+    // route evaluates stripe.enabled()/paypal.enabled(). This runs once per
+    // process in practice because providerSettings caches the decrypted values.
+    router.use(async (_req, _res, next) => {
         try { await providerSettings.ensureLoaded(); return next(); }
         catch (error) { return next(error); }
     });
