@@ -1,4 +1,5 @@
 const { transaction, query } = require('./db');
+const { reconcileCustomer } = require('./jellyfin/provisioning');
 
 async function getPlanByCode(code) {
     const result = await query('SELECT * FROM plans WHERE code=$1 AND active=TRUE', [code]);
@@ -88,6 +89,9 @@ async function extendWithResellerCredits({ resellerId, customerId, planCode = 'm
         `, [actorUserId, subscription.id, JSON.stringify({ resellerId, customerId, planCode, units, wallet, unitCost, totalCost, newEnd })]);
 
         return subscription;
+    }).then(async subscription => {
+        const reconcile = await reconcileCustomer(customerId);
+        return { subscription, reconcile };
     });
 }
 

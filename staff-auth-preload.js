@@ -34,19 +34,44 @@ require.cache[sessionPath].exports = guardedSession;
 const express = require('express');
 const controller = require('./src/auth/staff-controller');
 const dashboard = require('./src/platform/admin-dashboard');
+const resellerPortal = require('./src/platform/reseller-portal');
 const originalGet = express.application.get;
 const originalPost = express.application.post;
 const currentListen = express.application.listen;
+
+const resellerGetRoutes = {
+    '/reseller': resellerPortal.dashboardPage,
+    '/reseller/expiring-clients': resellerPortal.expiringClientsRedirect,
+    '/reseller/expired-clients': resellerPortal.expiredClientsRedirect,
+    '/reseller/credit-history': resellerPortal.creditHistoryPage,
+    '/reseller/client/:id/credentials': resellerPortal.credentialsPage
+};
+const resellerPostRoutes = {
+    '/reseller/trial/create': resellerPortal.createTrialClient,
+    '/reseller/trial/extend': resellerPortal.extendClient,
+    '/reseller/client/reset-password': resellerPortal.resetClientPassword,
+    '/reseller/client/update-note': resellerPortal.updateClientNote,
+    '/reseller/client/toggle': resellerPortal.toggleClient,
+    '/reseller/client/delete': resellerPortal.deleteClientStub,
+    '/reseller/content-request': resellerPortal.contentRequest,
+    '/reseller/message/read': resellerPortal.messageReadStub
+};
 
 express.application.get = function staffGet(path, ...handlers) {
     if (path === '/login' && handlers.length) return originalGet.call(this, path, controller.loginPage);
     if (path === '/logout' && handlers.length) return originalGet.call(this, path, controller.logout);
     if (path === '/admin' && handlers.length) return originalGet.call(this, path, dashboard.dashboardPage);
+    if (resellerGetRoutes[path] && handlers.length) {
+        return originalGet.call(this, path, resellerPortal.gate, resellerPortal.noStore, resellerGetRoutes[path]);
+    }
     return originalGet.call(this, path, ...handlers);
 };
 
 express.application.post = function staffPost(path, ...handlers) {
     if (path === '/login' && handlers.length) return originalPost.call(this, path, controller.loginSubmit);
+    if (resellerPostRoutes[path] && handlers.length) {
+        return originalPost.call(this, path, resellerPortal.gate, resellerPortal.noStore, resellerPostRoutes[path]);
+    }
     return originalPost.call(this, path, ...handlers);
 };
 
