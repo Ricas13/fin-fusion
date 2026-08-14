@@ -52,11 +52,13 @@ class SmtpSession {
         this.socket = null;
         this.buffer = '';
         this.waiters = [];
+        this.responses = [];
     }
 
     bind(socket) {
         this.socket = socket;
         this.buffer = '';
+        this.responses = [];
         socket.setTimeout(this.config.timeoutMs || 10000);
         socket.setEncoding('utf8');
         socket.on('data', chunk => this.onData(chunk));
@@ -81,8 +83,10 @@ class SmtpSession {
             if (endIndex < 0) return;
             const responseLines = lines.slice(0, endIndex + 1);
             this.buffer = lines.slice(endIndex + 1).join('\r\n');
+            const response = { code, lines: responseLines, text: responseLines.join('\n') };
             const waiter = this.waiters.shift();
-            if (waiter) waiter.resolve({ code, lines: responseLines, text: responseLines.join('\n') });
+            if (waiter) waiter.resolve(response);
+            else this.responses.push(response);
         }
     }
 
@@ -92,6 +96,7 @@ class SmtpSession {
     }
 
     response() {
+        if (this.responses.length) return Promise.resolve(this.responses.shift());
         return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
     }
 
@@ -103,8 +108,9 @@ class SmtpSession {
     }
 
     async command(command, codes) {
+        const pending = this.expect(codes);
         this.socket.write(`${command}\r\n`);
-        return this.expect(codes);
+        return pending;
     }
 
     async connect() {
@@ -175,8 +181,9 @@ class SmtpSession {
         await this.command(`MAIL FROM:<${sender}>`, 250);
         await this.command(`RCPT TO:<${recipient}>`, [250, 251]);
         await this.command('DATA', 354);
+        const pending = this.expect(250);
         this.socket.write(`${buildMessage(message)}\r\n.\r\n`);
-        await this.expect(250);
+        await pending;
     }
 
     async close() {
