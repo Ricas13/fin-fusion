@@ -129,7 +129,7 @@ async function verifyClaimCode(value) {
     return !!expected && timingSafeHexEqual(claimHash(code), expected);
 }
 
-async function completeSetup({ claimCode, username, email, password, passwordConfirm, siteName, req = null }) {
+async function completeSetup({ claimCode, username, email, password, passwordConfirm, siteName }) {
     const clean = {
         username: cleanUsername(username),
         email: cleanEmail(email),
@@ -205,8 +205,7 @@ async function completeSetup({ claimCode, username, email, password, passwordCon
             username: clean.username,
             siteName: clean.siteName,
             legacyNumericId: legacyId,
-            source: 'browser_first_run',
-            ip: req?.ip || null
+            source: 'browser_first_run'
         })]);
 
         return user;
