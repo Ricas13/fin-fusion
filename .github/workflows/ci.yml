@@ -125,6 +125,7 @@ jobs:
           const ejs = require('ejs');
           const users = require('./src/platform/admin-users');
           const servers = require('./src/platform/admin-servers');
+          const customerFilters = require('./src/platform/customer-filters');
           const { getPool } = require('./src/db');
           (async () => {
             process.env.NODE_ENV = 'production';
@@ -142,7 +143,8 @@ jobs:
               allowNewUsers:'on',trialEnabled:'on',paidEnabled:'on',apiKey:'0123456789abcdef'
             }, { apiKeyRequired: true });
             if (!parsed.allowNewUsers || !parsed.trialEnabled || !parsed.paidEnabled) throw new Error('Server placement flags parsed incorrectly');
-            if (!Array.isArray(await users.listUsers(''))) throw new Error('Users query did not return an array');
+            const listed = await customerFilters.listCustomers({}, null, {});
+            if (!Array.isArray(listed.rows)) throw new Error('Customers query did not return an array');
             if (await users.userDetail('00000000-0000-0000-0000-000000000000')) throw new Error('Unknown customer unexpectedly resolved');
             if (!Array.isArray(await servers.serverList())) throw new Error('Servers query did not return an array');
             for (const file of ['views/admin/servers.ejs','views/admin/server-form.ejs']) {
