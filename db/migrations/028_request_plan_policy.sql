@@ -21,7 +21,7 @@ ALTER TABLE plans
 ALTER TABLE request_user_sync
     ADD COLUMN IF NOT EXISTS active_permissions INTEGER,
     ADD COLUMN IF NOT EXISTS access_suspended BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS applied_plan_id BIGINT REFERENCES plans(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS applied_plan_id UUID REFERENCES plans(id) ON DELETE SET NULL,
     ADD COLUMN IF NOT EXISTS applied_movie_quota_limit INTEGER,
     ADD COLUMN IF NOT EXISTS applied_movie_quota_days INTEGER,
     ADD COLUMN IF NOT EXISTS applied_tv_quota_limit INTEGER,
