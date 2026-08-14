@@ -5,7 +5,7 @@ const bcrypt=require('bcryptjs');
 const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const auth=require('../auth/service');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 const {esc,layout}=require('./admin-html');
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function txt(v,n=500){return String(v||'').trim().slice(0,n)}
