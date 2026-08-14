@@ -42,7 +42,7 @@ See [`STREAMS_MANAGER_PARITY.md`](STREAMS_MANAGER_PARITY.md) for the canonical p
 - [ ] Assign clients/resellers/plans to a server or server pool
 - [ ] Premium and Free server classes
 - [ ] Server capacity/health/location-aware account placement
-- [ ] Controlled client migration between servers
+- [x] Controlled client migration between servers
 - [ ] Per-server policy templates for streams, downloads and transcoding
 - [ ] Continuous user/server/library reconciliation
 
@@ -63,7 +63,7 @@ This is a cross-cutting product rule rather than a final migration phase: new wo
 - [x] Automated blank-database test reaches a working administrator dashboard
 - [x] Browser-based first-run administrator creation and permanent setup lockout
 - [ ] Remove remaining legacy Premium/Free business assumptions where they are not intrinsic configuration
-- [ ] Safe configuration export/import
+- [x] Safe configuration export/import
 - [ ] Review new data models for future workspace/tenant scoping without implementing full multi-tenancy
 
 ## Phase 4 — Plans and subscription lifecycle

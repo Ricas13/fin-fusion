@@ -127,10 +127,12 @@ async function getCustomerPortal(customerId) {
             WHERE s.customer_id=$1 ORDER BY s.created_at DESC
         `, [customerId]),
         query(`
-            SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.last_activity_at,ja.last_policy_sync,
+            SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.is_primary,ja.password_reset_required,
+                   ja.last_activity_at,ja.last_policy_sync,
                    js.name AS server_name,js.public_url,js.server_class
             FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
-            WHERE ja.customer_id=$1 ORDER BY ja.created_at ASC
+            WHERE ja.customer_id=$1
+            ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at DESC
         `, [customerId]),
         query(`SELECT pc.provider,pc.provider_customer_id FROM payment_customers pc WHERE pc.customer_id=$1`, [customerId]),
         referrals.loadSettings()

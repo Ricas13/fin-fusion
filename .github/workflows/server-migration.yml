@@ -1,0 +1,60 @@
+name: Server Migration
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/026_customer_server_migrations.sql'
+      - 'src/jellyfin/provisioning.js'
+      - 'src/jellyfin/resilient-provisioning.js'
+      - 'src/jellyfin/server-migration.js'
+      - 'src/customers.js'
+      - 'src/platform/admin-server-migrations.js'
+      - 'src/platform/admin-provisioning.js'
+      - 'platform-preload.js'
+      - 'scripts/server-migration-smoke.js'
+      - '.github/workflows/server-migration.yml'
+  workflow_dispatch:
+
+jobs:
+  server-migration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: server_migration
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d server_migration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/jellyfin/provisioning.js
+          node --check src/jellyfin/resilient-provisioning.js
+          node --check src/jellyfin/server-migration.js
+          node --check src/platform/admin-server-migrations.js
+          node --check src/platform/admin-provisioning.js
+          node --check src/customers.js
+          node --check scripts/server-migration-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/server_migration
+        run: npm run db:migrate
+      - name: Controlled migration and rollback
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/server_migration
+        run: node scripts/server-migration-smoke.js

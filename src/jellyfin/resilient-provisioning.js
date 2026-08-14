@@ -51,6 +51,16 @@ async function releaseAccess(customerId) {
     return reconcileCustomer(customerId);
 }
 
+async function setJellyfinPassword(customerId, accountId, newPassword) {
+    const result = await base.setJellyfinPassword(customerId, accountId, newPassword);
+    await query(`
+        UPDATE jellyfin_accounts
+        SET password_reset_required=FALSE,updated_at=NOW()
+        WHERE id=$1 AND customer_id=$2
+    `, [accountId, customerId]);
+    return result;
+}
+
 async function expireSubscriptionsAndReconcile() {
     const expired = await transaction(async client => {
         const rows = await client.query(`
@@ -80,6 +90,7 @@ module.exports = {
     reconcileAccount,
     holdAccess,
     releaseAccess,
+    setJellyfinPassword,
     expireSubscriptionsAndReconcile,
     control
 };
