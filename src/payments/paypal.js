@@ -3,25 +3,35 @@
 const crypto = require('crypto');
 const lifecycle = require('./lifecycle');
 const discounts = require('./discounts');
+const providerSettings = require('./provider-settings');
 
 let cachedToken = null;
 let cachedUntil = 0;
+let cachedCredentialKey = null;
 
 function enabled() {
-    return Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
+    const cfg = providerSettings.peek('paypal');
+    return Boolean(cfg?.clientId && cfg?.clientSecret);
 }
 
-function baseUrl() {
-    return process.env.PAYPAL_ENV === 'live'
+function baseUrl(config) {
+    return config?.environment === 'live'
         ? 'https://api-m.paypal.com'
         : 'https://api-m.sandbox.paypal.com';
 }
 
 async function accessToken() {
-    if (!enabled()) throw new Error('PayPal is not configured');
-    if (cachedToken && Date.now() < cachedUntil - 60000) return cachedToken;
-    const basic = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`).toString('base64');
-    const response = await fetch(`${baseUrl()}/v1/oauth2/token`, {
+    const config = await providerSettings.get('paypal');
+    if (!config.clientId || !config.clientSecret) throw new Error('PayPal is not configured');
+    const credentialKey = `${config.environment || 'sandbox'}:${config.clientId}:${config.clientSecret}`;
+    if (cachedCredentialKey !== credentialKey) {
+        cachedToken = null;
+        cachedUntil = 0;
+        cachedCredentialKey = credentialKey;
+    }
+    if (cachedToken && Date.now() < cachedUntil - 60000) return { token: cachedToken, config };
+    const basic = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
+    const response = await fetch(`${baseUrl(config)}/v1/oauth2/token`, {
         method: 'POST',
         headers: {
             Authorization: `Basic ${basic}`,
@@ -34,12 +44,12 @@ async function accessToken() {
     if (!response.ok || !payload.access_token) throw new Error(`PayPal OAuth failed: ${payload.error_description || response.status}`);
     cachedToken = payload.access_token;
     cachedUntil = Date.now() + Number(payload.expires_in || 300) * 1000;
-    return cachedToken;
+    return { token: cachedToken, config };
 }
 
 async function api(path, { method = 'GET', body = null, requestId = null } = {}) {
-    const token = await accessToken();
-    const response = await fetch(`${baseUrl()}${path}`, {
+    const { token, config } = await accessToken();
+    const response = await fetch(`${baseUrl(config)}${path}`, {
         method,
         headers: {
             Authorization: `Bearer ${token}`,
@@ -75,13 +85,14 @@ function approvalUrl(payload) {
     return links.find(l => ['approve', 'payer-action'].includes(l.rel))?.href || null;
 }
 
-async function createCheckout({ customerId, planCode, returnUrl, cancelUrl, discountCode = null }) {
-    const plan = await lifecycle.getProviderPlan(planCode, 'paypal');
-    if (!plan) throw new Error('This plan is not configured for PayPal');
+async function createCheckout({ customerId, planCode, returnUrl, cancelUrl, discountCode = null, checkoutMode = null }) {
+    const plan = await lifecycle.getProviderPlan(planCode, 'paypal', checkoutMode);
+    if (!plan) throw new Error('This plan is not configured for the selected PayPal payment type');
     const idempotencyKey = crypto.randomUUID();
 
     if (plan.checkout_mode === 'subscription') {
-        if (discountCode) throw new Error('Discount codes are not supported for PayPal subscriptions yet. Use Stripe or a one-time PayPal plan.');
+        if (!plan.external_id) throw new Error('This PayPal recurring option has no Billing Plan ID');
+        if (discountCode) throw new Error('Discount codes are not supported for PayPal subscriptions yet. Use Stripe or a one-time PayPal payment.');
         const subscription = await api('/v1/billing/subscriptions', {
             method: 'POST',
             requestId: idempotencyKey,
@@ -89,7 +100,7 @@ async function createCheckout({ customerId, planCode, returnUrl, cancelUrl, disc
                 plan_id: plan.external_id,
                 custom_id: customId(customerId, plan.id),
                 application_context: {
-                    brand_name: process.env.SITE_NAME || 'CAPTAiNFiN',
+                    brand_name: process.env.SITE_NAME || 'CAPTaINFiN',
                     shipping_preference: 'NO_SHIPPING',
                     user_action: 'SUBSCRIBE_NOW',
                     return_url: returnUrl,
@@ -125,7 +136,7 @@ async function createCheckout({ customerId, planCode, returnUrl, cancelUrl, disc
             payment_source: {
                 paypal: {
                     experience_context: {
-                        brand_name: process.env.SITE_NAME || 'CAPTAiNFiN',
+                        brand_name: process.env.SITE_NAME || 'CAPTaINFiN',
                         shipping_preference: 'NO_SHIPPING',
                         user_action: 'PAY_NOW',
                         return_url: returnUrl,
@@ -186,8 +197,9 @@ async function activateSubscription(subscriptionId) {
 }
 
 async function verifyWebhook(headers, event) {
-    const webhookId = process.env.PAYPAL_WEBHOOK_ID;
-    if (!webhookId) throw new Error('PAYPAL_WEBHOOK_ID is not configured');
+    const config = await providerSettings.get('paypal');
+    const webhookId = config.webhookId;
+    if (!webhookId) throw new Error('PayPal webhook ID is not configured');
     const result = await api('/v1/notifications/verify-webhook-signature', {
         method: 'POST',
         body: {

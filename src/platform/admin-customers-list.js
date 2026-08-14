@@ -10,7 +10,7 @@ const {BULK_ACTIONS}=require('./admin-bulk-customers');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
-function site(){return process.env.SITE_NAME||'CAPTAiNFiN'}
+function site(){return process.env.SITE_NAME||'CAPTaINFiN'}
 function t(v,max=200){return String(v||'').trim().slice(0,max)}
 function pill(v,k=''){return `<span class="pill ${k}">${esc(v)}</span>`}
 function date(v){return v?new Date(v).toLocaleDateString():'—'}
@@ -95,6 +95,7 @@ function row(x){
         <td data-label="Status">${pill(x.subscription_status||'none',statusKind)}</td>
         <td data-label="Expires">${esc(date(x.current_period_end))}</td>
         <td data-label="Jellyfin">${esc(x.account_count||0)}${x.has_enabled_account===false&&x.account_count?' (disabled)':''}</td>
+        <td data-label="Server">${x.server_names?esc(x.server_names):'—'}</td>
         <td data-label="Reconciliation">${reconLabel?pill(reconLabel,reconLabel==='failed'?'bad':reconLabel==='successful'?'good':'warn'):'—'}</td>
         <td data-label="Override">${x.has_override?pill('Yes','accent'):'—'}</td>
         <td data-label="Last active">${esc(dt(x.last_activity_at))}</td>
@@ -131,9 +132,9 @@ async function listPage(req){
     const sort=['expiring','name','recent'].includes(req.query.sort)?req.query.sort:'recent';
     const [options,result]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize:25,sort})]);
     const rows=result.rows;
-    const body=`${notice(req)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>Customers</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><thead><tr><th><input type="checkbox" id="checkAllPage"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Reconciliation</th><th>Override</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}
-    <script>(function(){var all=document.getElementById('checkAllPage');var form=document.getElementById('bulkForm');var table=document.getElementById('customersTable');if(all&&table){all.addEventListener('change',function(){table.querySelectorAll('.rowCheck').forEach(function(cb){cb.checked=all.checked})})}if(form&&table){form.addEventListener('submit',function(e){table.querySelectorAll('.rowCheck:checked').forEach(function(cb){var input=document.createElement('input');input.type='hidden';input.name='customerId';input.value=cb.value;form.appendChild(input)})})}})();</script>`;
-    return layout({siteName:site(),active:'users',title:'Customers',subtitle:'Managed customers, subscriptions and Jellyfin access',body,action:'<a class="button" href="/admin/users/new">Add customer</a> <a class="button secondary" href="/admin/users/export?'+queryStringFor(filters)+'">Export CSV</a>'});
+    const body=`${notice(req)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>Customers</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><thead><tr><th><input type="checkbox" id="checkAllPage"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Server</th><th>Reconciliation</th><th>Override</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}
+    <script>(function(){var all=document.getElementById('checkAllPage');var form=document.getElementById('bulkForm');var table=document.getElementById('customersTable');if(all&&table){all.addEventListener('change',function(){table.querySelectorAll('.rowCheck').forEach(function(cb){cb.checked=all.checked})})}if(form&&table){form.addEventListener('submit',function(){table.querySelectorAll('.rowCheck:checked').forEach(function(cb){var input=document.createElement('input');input.type='hidden';input.name='customerId';input.value=cb.value;form.appendChild(input)})})}})();</script>`;
+    return layout({siteName:site(),active:'users',title:'Customers',subtitle:'Managed customers, subscriptions and Jellyfin access',body,action:'<a class="button" href="/admin/users/new">Add customer</a> <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a> <a class="button secondary" href="/admin/users/export?'+queryStringFor(filters)+'">Export CSV</a>'});
 }
 
 function createAdminCustomersListRouter(){
@@ -148,7 +149,7 @@ function createAdminCustomersListRouter(){
                 {key:'display_name',label:'Name'},{key:'login_username',label:'Username'},{key:'email',label:'Email'},
                 {key:'plan_name',label:'Plan'},{key:'subscription_status',label:'Status'},
                 {label:'Expires',value:x=>x.current_period_end||''},{key:'account_count',label:'Jellyfin accounts'},
-                {key:'last_activity_at',label:'Last activity'},{key:'reseller_username',label:'Reseller'}
+                {key:'server_names',label:'Jellyfin servers'},{key:'last_activity_at',label:'Last activity'},{key:'reseller_username',label:'Reseller'}
             ],rows);
         }catch(e){next(e)}
     });

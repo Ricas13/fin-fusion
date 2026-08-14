@@ -1,0 +1,86 @@
+'use strict';
+
+const assert = require('assert');
+
+process.env.DATA_ENCRYPTION_KEY = process.env.DATA_ENCRYPTION_KEY || '11'.repeat(32);
+
+const { query } = require('../src/db');
+const providerSettings = require('../src/payments/provider-settings');
+const lifecycle = require('../src/payments/lifecycle');
+const customerFilters = require('../src/platform/customer-filters');
+
+async function main() {
+    const admin = await query(`INSERT INTO app_users(username,password_hash,role) VALUES('commerce-admin','x','admin') RETURNING id`);
+    const adminId = admin.rows[0].id;
+
+    await providerSettings.save('stripe', {
+        restrictedKey: 'rk_test_browser_secret',
+        webhookSecret: 'whsec_browser_secret'
+    }, adminId);
+    await providerSettings.save('paypal', {
+        environment: 'sandbox',
+        clientId: 'paypal-browser-client',
+        clientSecret: 'paypal-browser-secret',
+        webhookId: 'WH-BROWSER'
+    }, adminId);
+
+    const [stripeStatus, paypalStatus] = await Promise.all([
+        providerSettings.status('stripe'), providerSettings.status('paypal')
+    ]);
+    assert.equal(stripeStatus.source, 'database');
+    assert.equal(stripeStatus.configured, true);
+    assert.equal(stripeStatus.webhookConfigured, true);
+    assert.equal(paypalStatus.source, 'database');
+    assert.equal(paypalStatus.configured, true);
+    assert.equal(paypalStatus.webhookConfigured, true);
+    assert.equal(paypalStatus.environment, 'sandbox');
+
+    const encrypted = await query(`SELECT provider,secrets_encrypted FROM payment_provider_credentials ORDER BY provider`);
+    assert.equal(encrypted.rowCount, 2);
+    for (const row of encrypted.rows) {
+        assert.ok(row.secrets_encrypted.startsWith('v1:'));
+        assert.ok(!row.secrets_encrypted.includes('browser-secret'));
+    }
+
+    const plan = await query(`
+        INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
+        VALUES('flex-month','Flexible Monthly','direct','month',30,600,'USD',3,'premium',TRUE,TRUE)
+        RETURNING id
+    `);
+    const planId = plan.rows[0].id;
+
+    await query(`INSERT INTO plan_provider_prices(plan_id,provider,external_id,checkout_mode,active) VALUES
+        ($1,'stripe','price_once','payment',TRUE),
+        ($1,'stripe','price_recurring','subscription',TRUE),
+        ($1,'paypal',NULL,'payment',TRUE),
+        ($1,'paypal','P-RECURRING','subscription',TRUE)`, [planId]);
+
+    const stripeOptions = await lifecycle.getProviderOptions('flex-month', 'stripe');
+    assert.deepEqual(stripeOptions.map(x => x.checkout_mode), ['payment', 'subscription']);
+    assert.equal((await lifecycle.getProviderPlan('flex-month','stripe','payment')).external_id, 'price_once');
+    assert.equal((await lifecycle.getProviderPlan('flex-month','stripe','subscription')).external_id, 'price_recurring');
+    const paypalOptions = await lifecycle.getProviderOptions('flex-month', 'paypal');
+    assert.equal(paypalOptions.length, 2);
+    assert.equal((await lifecycle.getProviderPlan('flex-month','paypal','payment')).external_id, null);
+
+    const serverA = await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled) VALUES('Premium A','premium-a','premium','https://a.invalid','x',TRUE) RETURNING id`);
+    const serverB = await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled) VALUES('Premium B','premium-b','premium','https://b.invalid','x',TRUE) RETURNING id`);
+    const customer = await query(`INSERT INTO customers(display_name,email) VALUES('Server User','server@example.test') RETURNING id`);
+    const customerId = customer.rows[0].id;
+    await query(`INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary) VALUES
+        ($1,$2,'jf-a','ServerUser',FALSE,TRUE),
+        ($1,$3,'jf-b','ServerUser',TRUE,FALSE)`, [customerId, serverA.rows[0].id, serverB.rows[0].id]);
+
+    const list = await customerFilters.listCustomers({}, null, { page: 1, pageSize: 25 });
+    const row = list.rows.find(x => x.id === customerId);
+    assert.ok(row);
+    assert.equal(row.account_count, 2);
+    assert.equal(row.server_names, 'Premium A, Premium B');
+
+    console.log('browser payments + flexible checkout smoke: ok');
+}
+
+main().then(() => process.exit(0)).catch(error => {
+    console.error(error);
+    process.exit(1);
+});

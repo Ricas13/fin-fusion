@@ -109,11 +109,14 @@ realExpress.application.listen = function platformListen(...args) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
         const { createCustomerPasswordSyncRouter } = require('./src/platform/customer-password-sync');
+        const { createFlexibleCheckoutRouter } = require('./src/platform/flexible-checkout');
         const { createInviteOnboardingRouter } = require('./src/platform/invite-onboarding');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlansListRouter } = require('./src/platform/admin-plans-list');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
+        const { createAdminPlanPaymentOptionsRouter } = require('./src/platform/admin-plan-payment-options');
+        const { createAdminPaymentSettingsRouter } = require('./src/platform/admin-payment-settings');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
@@ -146,6 +149,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createBrandingRouter());
         this.use(createInviteOnboardingRouter());
         this.use(createCustomerPasswordSyncRouter());
+        this.use(createFlexibleCheckoutRouter());
         this.use(createAdminPreviewRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createAdminSetupRouter());
@@ -160,8 +164,10 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminRequestPlanPolicyRouter());
         this.use(createAdminRequestUsersRouter());
         this.use(createAdminProvisioningRouter());
+        this.use(createAdminPaymentSettingsRouter());
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlansListRouter());
+        this.use(createAdminPlanPaymentOptionsRouter());
         this.use(createAdminPlansRouter());
         this.use(createAdminPlanPlacementRouter());
         this.use(createAdminJobsRouter());
