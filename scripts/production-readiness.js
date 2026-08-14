@@ -21,6 +21,13 @@ function secretLooksStrong(name) {
     return value.length >= 32 && !/change[-_ ]?(me|this)|example|placeholder|your[-_]/i.test(value);
 }
 
+function hostAllowlist(name) {
+    return new Set(String(process.env[name] || '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean));
+}
+
 function checkEnvironment() {
     if (!present('DATABASE_URL')) record('critical', 'database.missing', 'DATABASE_URL is not configured.');
     if (!secretLooksStrong('SESSION_SECRET')) record('critical', 'session.weak', 'SESSION_SECRET is missing, too short, or looks like a placeholder.');
@@ -45,6 +52,10 @@ function checkEnvironment() {
             record('critical', 'paypal.credentials', 'PayPal configuration is incomplete.');
         }
         if (!present('PAYPAL_WEBHOOK_ID')) record('critical', 'paypal.webhook', 'PayPal is enabled but PAYPAL_WEBHOOK_ID is not configured.');
+    }
+
+    if (String(process.env.NODE_ENV || '').toLowerCase() === 'production' && !present('JELLYFIN_ALLOWED_HOSTS')) {
+        record('critical', 'jellyfin.allowlist', 'JELLYFIN_ALLOWED_HOSTS is required in production so outbound Jellyfin requests fail closed to approved hosts only.');
     }
 
     if (present('TMDB_READ_ACCESS_TOKEN') && !present('ARR_ALLOWED_HOSTS')) {
@@ -91,6 +102,23 @@ async function checkDatabase() {
     if (Number(servers.rows[0]?.enabled || 0) < 1) record('critical', 'jellyfin.none', 'No enabled Jellyfin server is configured.');
     if (Number(servers.rows[0]?.missing_keys || 0) > 0) record('critical', 'jellyfin.keys', 'One or more enabled Jellyfin servers have no encrypted API key.');
     if (Number(servers.rows[0]?.insecure_public_urls || 0) > 0) record('critical', 'jellyfin.https', 'One or more enabled Jellyfin public URLs are not HTTPS.');
+
+    const allowedJellyfinHosts = hostAllowlist('JELLYFIN_ALLOWED_HOSTS');
+    if (allowedJellyfinHosts.size) {
+        const configuredServers = await query('SELECT name,base_url FROM jellyfin_servers WHERE enabled=TRUE ORDER BY name');
+        const unapproved = [];
+        for (const server of configuredServers.rows) {
+            try {
+                const hostname = new URL(server.base_url).hostname.toLowerCase();
+                if (!allowedJellyfinHosts.has(hostname)) unapproved.push(server.name);
+            } catch (_) {
+                unapproved.push(server.name);
+            }
+        }
+        if (unapproved.length) {
+            record('critical', 'jellyfin.unapproved_hosts', `Enabled Jellyfin servers are outside JELLYFIN_ALLOWED_HOSTS: ${unapproved.join(', ')}`);
+        }
+    }
 
     const plans = await query(`
         SELECT COUNT(*) AS total,
