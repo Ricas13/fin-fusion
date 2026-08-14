@@ -12,9 +12,24 @@ process.env.ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN = 'false';
 
 const { getPool } = require('../src/db');
 const activity = require('../src/jellyfin/activity');
+const fleetMetrics = require('../src/jellyfin/fleet-metrics');
 
 const intervalSeconds = Math.max(10, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 30)));
+const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
+let lastFleetRun = 0;
 let shuttingDown = false;
+
+async function refreshFleetMetricsIfDue() {
+    const now = Date.now();
+    if (now - lastFleetRun < fleetIntervalSeconds * 1000) return;
+    lastFleetRun = now;
+    const results = await fleetMetrics.refreshAll();
+    const failures = results.filter(result => !result.ok);
+    const streams = results.filter(result => result.ok).reduce((sum, result) => sum + Number(result.activeStreams || 0), 0);
+    if (failures.length) {
+        console.warn(`Fleet metrics: ${failures.length}/${results.length} server(s) unavailable; observed streams=${streams}`);
+    }
+}
 
 async function run() {
     while (!shuttingDown) {
@@ -26,6 +41,11 @@ async function run() {
             }
         } catch (error) {
             console.error('Activity cycle failed:', error.message);
+        }
+        try {
+            await refreshFleetMetricsIfDue();
+        } catch (error) {
+            console.error('Fleet metrics refresh failed:', error.message);
         }
         await new Promise(resolve => setTimeout(resolve, intervalSeconds * 1000));
     }
