@@ -10,9 +10,6 @@ if (!process.env.DATABASE_URL) {
 if (process.env.NODE_ENV === 'production') {
     const { keyFromEnv } = require('./src/security/purpose-crypto');
     keyFromEnv('AUTH_ENCRYPTION_KEY');
-    if (process.env.REQUIRE_ADMIN_2FA === 'false') {
-        console.warn('SECURITY WARNING: administrator 2FA is optional for this deployment. Enable REQUIRE_ADMIN_2FA=true for stronger account protection.');
-    }
 }
 
 const sessionPath = require.resolve('express-session');
@@ -30,6 +27,34 @@ function guardedSession(options = {}) {
 }
 Object.assign(guardedSession, currentSessionFactory);
 require.cache[sessionPath].exports = guardedSession;
+
+// Administrator 2FA is a runtime policy. When it is optional, an enrolled
+// authenticator remains stored but is not demanded at login or for routine
+// administrative writes. Reseller 2FA keeps its existing policy semantics.
+const admin2faPolicy = require('./src/auth/admin-2fa-policy');
+const authService = require('./src/auth/service');
+const baseRequiresTwoFactor = authService.requiresTwoFactor;
+const baseVerifySecondFactor = authService.verifySecondFactor;
+
+authService.requiresTwoFactor = function requiresTwoFactorWithRuntimePolicy(user) {
+    if (user?.role === 'admin') return admin2faPolicy.requiredSync();
+    return baseRequiresTwoFactor(user);
+};
+
+authService.verifySecondFactor = async function verifySecondFactorWithRuntimePolicy(userId, token, req) {
+    const user = await authService.getStaffById(userId);
+    if (user?.role === 'admin' && !(await admin2faPolicy.required())) {
+        await authService.recordEvent({
+            userId,
+            eventType: '2fa.step_up_not_required',
+            success: true,
+            req,
+            metadata: { policy: 'optional-runtime', enrolled: Boolean(user.totp_enabled) }
+        });
+        return true;
+    }
+    return baseVerifySecondFactor(userId, token, req);
+};
 
 const express = require('express');
 const controller = require('./src/auth/staff-controller');
@@ -57,6 +82,15 @@ const resellerPostRoutes = {
     '/reseller/message/read': resellerPortal.messageReadStub
 };
 
+async function adminPolicyAwareLogin(req, res, next) {
+    try {
+        await admin2faPolicy.required();
+        return controller.loginSubmit(req, res, next);
+    } catch (error) {
+        return next(error);
+    }
+}
+
 express.application.get = function staffGet(path, ...handlers) {
     if (path === '/login' && handlers.length) return originalGet.call(this, path, controller.loginPage);
     if (path === '/logout' && handlers.length) return originalGet.call(this, path, controller.logout);
@@ -68,7 +102,7 @@ express.application.get = function staffGet(path, ...handlers) {
 };
 
 express.application.post = function staffPost(path, ...handlers) {
-    if (path === '/login' && handlers.length) return originalPost.call(this, path, controller.loginSubmit);
+    if (path === '/login' && handlers.length) return originalPost.call(this, path, adminPolicyAwareLogin);
     if (resellerPostRoutes[path] && handlers.length) {
         return originalPost.call(this, path, resellerPortal.gate, resellerPortal.noStore, resellerPostRoutes[path]);
     }
