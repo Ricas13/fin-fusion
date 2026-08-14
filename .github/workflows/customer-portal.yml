@@ -1,0 +1,24 @@
+name: Customer Portal
+
+on:
+  push:
+    branches: [main, 'agent/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  portal-view-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check portal route syntax
+        run: node --check src/platform/router.js
+      - name: Render customer portal
+        run: node scripts/customer-portal-view-smoke.js
