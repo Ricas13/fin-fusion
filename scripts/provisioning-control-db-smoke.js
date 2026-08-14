@@ -66,8 +66,19 @@ const jobs = require('../src/jellyfin/jobs');
         assert.strictEqual(forced.status, 'pending');
         assert(new Date(forced.next_attempt_at).getTime() <= Date.now() + 1000);
 
-        const due = await jobs.dueActiveCustomers(100);
-        assert(due.some(row => row.customer_id === customerId), 'manually queued customer should be visible to the due scheduler');
+        let due = await jobs.dueCustomers(100);
+        assert(due.some(row => row.customer_id === customerId), 'manually queued active customer should be visible to the due scheduler');
+
+        // A failed/pending deprovision must remain retryable even after the
+        // entitlement has disappeared. Otherwise a Jellyfin outage exactly at
+        // expiry could leave access enabled forever.
+        await query(`
+            UPDATE subscriptions SET status='expired',current_period_end=NOW()-INTERVAL '1 minute',updated_at=NOW()
+            WHERE customer_id=$1
+        `, [customerId]);
+        await provisioning.control.forceCustomerDue(customerId);
+        due = await jobs.dueCustomers(100);
+        assert(due.some(row => row.customer_id === customerId), 'due deprovisioning must remain scheduled after the subscription expires');
 
         console.log('provisioning control db smoke: ok');
     } finally {
