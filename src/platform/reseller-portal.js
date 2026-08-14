@@ -9,6 +9,7 @@ const subscriptions = require('../subscriptions');
 const provisioning = require('../jellyfin/provisioning');
 const { esc } = require('./admin-html');
 const { sendCsv } = require('./export');
+const branding = require('./branding');
 
 function site() {
     return process.env.SITE_NAME || 'CAPTaINFiN';
@@ -45,7 +46,7 @@ function nav(active) {
 }
 
 function shell({ active, title, subtitle = '', body }) {
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · ${esc(site())}</title><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"></head><body><div class="appShell"><header class="topBar" style="position:static;margin:0"><div><strong>${esc(site())}</strong> · Reseller</div><a class="button secondary btn-sm" href="/logout">Sign out</a></header><main class="mainPane" style="margin-left:0"><div class="content"><div class="pageHeader"><h1>${esc(title)}</h1><div class="muted">${esc(subtitle)}</div></div>${nav(active)}${body}</div></main></div></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · ${esc(site())}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"><style>.brandLockup{display:flex;align-items:center;gap:10px}.brandLockup img{width:26px;height:26px;border-radius:6px;object-fit:cover}</style></head><body><div class="appShell"><header class="topBar" style="position:static;margin:0"><div class="brandLockup"><img src="${esc(branding.assetUrl('logo'))}" alt=""><div><strong>${esc(site())}</strong> · Reseller</div></div><a class="button secondary btn-sm" href="/logout">Sign out</a></header><main class="mainPane" style="margin-left:0"><div class="content"><div class="pageHeader"><h1>${esc(title)}</h1><div class="muted">${esc(subtitle)}</div></div>${nav(active)}${body}</div></main></div></body></html>`;
 }
 
 function csrfInput(req) {
@@ -224,7 +225,7 @@ async function credentialsBody(req, reseller, customerId) {
         FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
         WHERE ja.customer_id=$1 ORDER BY ja.created_at ASC
     `, [customerId]);
-    return `${notice(req)}<section class="section"><div class="sectionHead"><h2>${esc(client.rows[0].display_name)}</h2></div>${accounts.rowCount ? accounts.rows.map(a => `<div class="serverCard"><strong>${esc(a.jellyfin_username)}</strong><div class="subText">${esc(a.server_name)} · ${pill(a.disabled ? 'disabled' : 'enabled', a.disabled ? 'bad' : 'good')}</div>${a.public_url ? `<p><a href="${esc(a.public_url)}" target="_blank" rel="noopener">Open Jellyfin</a></p>` : ''}</div>`).join('') : '<div class="empty">No Jellyfin account yet.</div>'}<div class="securityNote standalone">Passwords are never stored or displayed after creation. Use "Reset Jellyfin password" on the dashboard to issue a new one.</div><a class="button secondary" href="/reseller">Back</a></section>`;
+    return `${notice(req)}<section class="section"><div class="sectionHead"><h2>${esc(client.rows[0].display_name)}</h2></div>${accounts.rowCount ? accounts.rows.map(a => `<div class="serverCard"><strong>${esc(a.jellyfin_username)}</strong><div class="subText">${esc(a.server_name)} · ${pill(a.disabled ? 'disabled' : 'enabled', a.disabled ? 'bad' : 'good')}</div>${a.public_url ? `<p><a href="${esc(a.public_url)}" target="_blank" rel="noopener noreferrer">Open Jellyfin</a></p>` : ''}</div>`).join('') : '<div class="empty">No Jellyfin account yet.</div>'}<div class="securityNote standalone">Passwords are never stored or displayed after creation. Use "Reset Jellyfin password" on the dashboard to issue a new one.</div><a class="button secondary" href="/reseller">Back</a></section>`;
 }
 
 async function dashboardPage(req, res, next) {

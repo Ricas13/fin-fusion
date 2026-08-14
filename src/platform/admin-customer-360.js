@@ -31,7 +31,8 @@ function createAdminCustomer360Router(){
             const detail=await customer360(req.params.customerId);
             if(!detail)return res.status(404).render('auth/message',{siteName:site(),title:'Customer not found',message:'This managed customer does not exist.',link:'/admin/users',linkText:'Back to Customers'});
             const activeTab=TABS.has(String(req.query.tab||''))?String(req.query.tab):'overview';
-            return res.send(layout({siteName:site(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req))}`,action:'<a class="button secondary" href="/admin/users">Back to Customers</a>'}));
+            const id=encodeURIComponent(req.params.customerId);
+            return res.send(layout({siteName:site(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req))}`,action:`<div class="buttonRow"><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
         }catch(error){return next(error)}
     });
 

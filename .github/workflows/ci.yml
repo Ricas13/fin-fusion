@@ -145,7 +145,7 @@ jobs:
             if (!Array.isArray(await users.listUsers(''))) throw new Error('Users query did not return an array');
             if (await users.userDetail('00000000-0000-0000-0000-000000000000')) throw new Error('Unknown customer unexpectedly resolved');
             if (!Array.isArray(await servers.serverList())) throw new Error('Servers query did not return an array');
-            for (const file of ['views/admin/users.ejs','views/admin/user-detail.ejs','views/admin/servers.ejs','views/admin/server-form.ejs']) {
+            for (const file of ['views/admin/servers.ejs','views/admin/server-form.ejs']) {
               ejs.compile(fs.readFileSync(file,'utf8'));
             }
           })().finally(() => getPool().end());

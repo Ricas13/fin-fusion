@@ -35,6 +35,8 @@ function startJobs() {
     jobsStarted = true;
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
+    const runtimeSettings = require('./src/platform/runtime-settings');
+    const { createRescheduler } = require('./src/platform/reschedule-timer');
     const runEntitlements = async () => {
         try {
             const expired = await expireSubscriptionsAndReconcile();
@@ -52,9 +54,14 @@ function startJobs() {
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     initialEntitlement.unref?.(); initialHealth.unref?.();
-    const entitlementTimer = setInterval(runEntitlements, Number(process.env.ENTITLEMENT_JOB_INTERVAL_MS || 5 * 60 * 1000));
-    const healthTimer = setInterval(runHealth, Number(process.env.SERVER_HEALTH_INTERVAL_MS || 2 * 60 * 1000));
-    entitlementTimer.unref?.(); healthTimer.unref?.();
+    runtimeSettings.ensureLoaded()
+        .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
+        .finally(() => {
+            // setTimeout (not setInterval) re-reads runtimeSettings on every cycle, so
+            // an admin Settings change takes effect on the job's next run, no restart.
+            createRescheduler(runEntitlements, runtimeSettings.entitlementJobIntervalMs).start();
+            createRescheduler(runHealth, runtimeSettings.serverHealthIntervalMs).start();
+        });
 }
 
 function platformExpress(...args) { const app = realExpress(...args); app.use(createWebhookRouter()); return app; }
@@ -68,13 +75,14 @@ realExpress.application.listen = function platformListen(...args) {
     if (!this.locals.__platformRoutesMounted && process.env.DATABASE_URL) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
-        const { createMediaPortalRouter } = require('./src/requests/media-portal');
-        const { createMediaCenterRouter } = require('./src/platform/media-center');
-        const { createMediaCenterActionsRouter } = require('./src/platform/media-center-actions');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
+        const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
+        const { createAdminBrandingRouter } = require('./src/platform/admin-branding');
+        const { createBrandingRouter } = require('./src/platform/branding');
+        const { createAdminPreviewRouter } = require('./src/platform/admin-preview');
         const { createAdminResellerSummaryRouter } = require('./src/platform/admin-reseller-summary');
         const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
         const { createAdminActivityRouter } = require('./src/platform/admin-activity');
@@ -85,22 +93,21 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminReferralsRouter } = require('./src/platform/admin-referrals');
         const resellerPortal = require('./src/platform/reseller-portal');
         this.use(customerLoginThrottle);
-        // /reseller/export has no legacy app.js registration to intercept, so it is mounted
-        // directly here rather than through the staff-auth-preload.js route-substitution list.
+        this.use(createBrandingRouter());
+        this.use(createAdminPreviewRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
-        this.use(createMediaPortalRouter());
         this.use(createAdminOriginalSettingsRouter());
+        this.use(createAdminBrandingRouter());
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlanLibrariesRouter());
-        this.use(createMediaCenterRouter());
-        this.use(createMediaCenterActionsRouter());
-        this.use(createAdminShellRouter());
+        this.use(createAdminServersRouter());
         this.use(createAdminActivityRouter());
+        this.use(createAdminLibrariesRouter());
+        this.use(createAdminShellRouter());
         this.use(createAdminCustomer360Router());
         this.use(createAdminUsersRouter());
-        this.use(createAdminServersRouter());
         this.use(createAdminDiscountsRouter());
         this.use(createAdminReferralsRouter());
         this.use(createRouter());
