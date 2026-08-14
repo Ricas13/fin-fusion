@@ -36,6 +36,7 @@ function startJobs() {
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
     const runtimeSettings = require('./src/platform/runtime-settings');
+    const { createRescheduler } = require('./src/platform/reschedule-timer');
     const runEntitlements = async () => {
         try {
             const expired = await expireSubscriptionsAndReconcile();
@@ -56,9 +57,10 @@ function startJobs() {
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
-            const entitlementTimer = setInterval(runEntitlements, runtimeSettings.entitlementJobIntervalMs());
-            const healthTimer = setInterval(runHealth, runtimeSettings.serverHealthIntervalMs());
-            entitlementTimer.unref?.(); healthTimer.unref?.();
+            // setTimeout (not setInterval) re-reads runtimeSettings on every cycle, so
+            // an admin Settings change takes effect on the job's next run, no restart.
+            createRescheduler(runEntitlements, runtimeSettings.entitlementJobIntervalMs).start();
+            createRescheduler(runHealth, runtimeSettings.serverHealthIntervalMs).start();
         });
 }
 
