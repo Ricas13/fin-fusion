@@ -88,59 +88,64 @@ This is a cross-cutting product rule rather than a final migration phase: new wo
 - [x] Provider-neutral payment abstraction/schema
 - [ ] Stripe Billing + Checkout Sessions
 - [ ] Stripe Customer Portal
-- [ ] Stripe one-time purchases
-- [ ] PayPal subscriptions
-- [ ] PayPal one-time payments
-- [ ] Webhook verification
-- [ ] Idempotent payment event processing
-- [ ] Payment-to-subscription reconciliation
-- [ ] Refund/cancellation handling
-- [ ] Failed payment / grace-period handling
-- [ ] Multiple payment methods per plan
-- [ ] Per-plan provider pricing/mapping
-- [ ] Discounts/promo codes
-- [ ] Referral credits / referral links
+- [ ] PayPal integration
+- [ ] Square integration
+- [ ] SumUp integration
+- [ ] Plisio/crypto integration
+- [ ] Per-gateway enable/disable
+- [ ] Webhook signature verification and idempotency
+- [ ] One-time/pay-as-you-go purchases
+- [ ] Recurring subscriptions
+- [ ] Transaction synchronization/reconciliation
+- [ ] Unmatched-payment queue and manual matching
+- [ ] Manual payment entry
+- [ ] Automatic reseller credit purchases
+- [ ] Automatic customer subscription activation/extension
+- [ ] Refund and chargeback state handling
+- [ ] Discount codes
 
-## Phase 6 — Customer lifecycle and bulk operations
+## Phase 6 — Registration, self-service and identity
 
-- [ ] Customer self-registration
+- [ ] Separate site-login identity from Jellyfin identity
+- [ ] Public/invite-only registration
 - [ ] Email verification
 - [ ] Password reset
-- [ ] Customer profile fields
-- [ ] Admin create/edit/delete customer
-- [ ] Bulk customer import
-- [ ] Bulk enable/disable/delete
-- [ ] Bulk plan change
-- [ ] Bulk server migration
-- [ ] Bulk email/message
-- [ ] Customer tags/segments
-- [ ] Customer notes
-- [ ] Expiring/expired customer views
-- [ ] Customer activity / last seen
+- [ ] Customer profile/account portal
+- [ ] Subscription/payment history
+- [ ] Change/extend subscription
+- [ ] Pending invites and bulk invitations
+- [ ] Referral-code registration
+- [ ] Linked/household users
+- [ ] Merge/replacement user workflow
+- [ ] TOTP two-factor authentication
+- [ ] Recovery codes
+- [ ] Session/device management
 
-## Phase 7 — Reseller workflows
+## Phase 7 — Notifications and reminders
 
-- [x] Existing Steam Fusion reseller dashboard retained
-- [x] Existing credit and trial-credit concept retained
-- [ ] Reseller account management in PostgreSQL
-- [ ] Reseller-created customer provisioning through multi-server layer
-- [ ] Per-reseller server/pool constraints
-- [ ] Per-reseller plan catalogue
-- [ ] Trial-plan configuration
-- [ ] Configurable trial-credit return policy
-- [ ] Wholesale/reseller pricing per plan
-- [ ] Reseller payment/credit purchases
-- [ ] Reseller commissions / revenue share
-- [ ] Reseller branding options
-- [ ] Reseller API keys
-- [ ] Reseller audit trail
+- [x] Telegram support inherited from Steam Fusion
+- [ ] Email notifications
+- [ ] Discord notifications
+- [ ] WhatsApp notifications
+- [ ] Notification templates by event
+- [ ] Per-event channel enable/disable
+- [ ] Per-user notification preferences
+- [ ] Configurable payment reminders
+- [ ] Expiry/renewal/access/payment/violation notifications
+- [ ] Delivery history and failure retry
+- [ ] Mass contact/broadcast messaging
 
-## Phase 8 — Activity, policy enforcement and reporting
+## Phase 8 — Usage, enforcement and reports
 
-- [ ] Real-time stream visibility
-- [ ] Stream-policy engine
-- [ ] Concurrent stream enforcement
-- [ ] Download policy/enforcement
+- [ ] Jellyfin playback/session ingestion
+- [ ] Streaming activity log
+- [ ] Download activity log
+- [ ] Active streams by server/reseller/client
+- [ ] Per-plan concurrent-stream enforcement
+- [ ] Stop violating sessions and notify user
+- [ ] Download entitlement enforcement
+- [ ] Weekly download limits
+- [ ] Download time restrictions
 - [ ] Transcoding policy enforcement
 - [ ] 4K policy enforcement
 - [ ] Device/session limits
@@ -191,9 +196,9 @@ The original project already contains a basic content-request workflow. The fork
 - [ ] Privileged-role 2FA enforcement
 - [ ] Per-action audit history
 
-## Phase 12 — White label / CAPTAiNFiN product layer
+## Phase 12 — White label / CAPTaINFiN product layer
 
-- [ ] CAPTAiNFiN branding/theme
+- [ ] CAPTaINFiN branding/theme
 - [ ] Custom domain
 - [ ] Logo and wallpaper
 - [ ] Home/pricing/subscription/library-statistics custom content
