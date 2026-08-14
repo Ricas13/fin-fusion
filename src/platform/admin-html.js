@@ -14,7 +14,7 @@ const groups = [
     ['servers', 'Servers', [['servers', 'Servers', '/admin/servers'], ['libraries', 'Libraries', '/admin/libraries']]],
     ['commerce', 'Commerce', [['plans', 'Plans', '/admin/plans'], ['payments', 'Payments', '/admin/payments'], ['discounts', 'Discounts', '/admin/discounts'], ['referrals', 'Referrals', '/admin/referrals']]],
     ['automation', 'Automation', [['provisioning', 'Provisioning', '/admin/provisioning'], ['requests', 'Requests', '/admin/requests'], ['notifications', 'Notifications', '/admin/notifications']]],
-    ['settings', 'Settings', [['settings', 'General', '/admin/settings'], ['branding', 'Branding', '/admin/settings/branding']]]
+    ['settings', 'Settings', [['setup', 'Setup', '/admin/setup'], ['settings', 'General', '/admin/settings'], ['branding', 'Branding', '/admin/settings/branding']]]
 ];
 
 function findGroup(active) {
@@ -28,7 +28,7 @@ const iconPaths = {
     servers: '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
     commerce: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h2"/>',
     automation: '<path d="M18 8a6 6 0 1 0 1.76 4.24"/><path d="M18 3v5h5"/><path d="m13 9-3 4h4l-3 4"/>',
-    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.2.37.52.68.9.87.33.16.7.24 1.06.23H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/>'
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06-.06A1.7 1.7 0 0 0 19.4 9c.2.37.52.68.9.87.33.16.7.24 1.06.23H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/>'
 };
 
 function icon(key) {

@@ -3,7 +3,7 @@ services:
     build: .
     restart: "no"
     env_file: .env
-    command: ["npm", "run", "db:migrate"]
+    command: ["sh", "-c", "npm run db:migrate && npm run auth:bootstrap"]
     depends_on:
       postgres:
         condition: service_healthy

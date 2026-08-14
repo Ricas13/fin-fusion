@@ -26,6 +26,20 @@ async function ensureMigrationLedger(pool) {
     await pool.query('ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT');
 }
 
+async function detectFreshDatabase(pool) {
+    // Detect freshness from schema shape rather than migration-ledger count alone.
+    // Older deployments may have application tables but no historical ledger;
+    // those must NEVER receive fresh-install cleanup/defaults.
+    const result = await pool.query(`
+        SELECT COUNT(*)::int AS count
+        FROM information_schema.tables
+        WHERE table_schema='public'
+          AND table_type='BASE TABLE'
+          AND table_name <> 'schema_migrations'
+    `);
+    return Number(result.rows[0]?.count || 0) === 0;
+}
+
 async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
     const existing = await pool.query(
         'SELECT checksum FROM schema_migrations WHERE filename=$1',
@@ -55,10 +69,14 @@ async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
     return true;
 }
 
-async function applyMigration(pool, filename, sql, checksum) {
+async function applyMigration(pool, filename, sql, checksum, freshInstall) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        // Expose a transaction-local marker to migrations that need to distinguish
+        // a truly blank database from an upgrade. Existing deployments always see
+        // "off"; this prevents cleanup/default migrations from rewriting live data.
+        await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
         // Historical migrations include their own BEGIN/COMMIT wrappers. Strip only
         // those outer wrappers so the schema change and ledger insert commit atomically.
         await client.query(unwrapTransaction(sql));
@@ -83,6 +101,8 @@ async function main() {
 
     try {
         await ensureMigrationLedger(pool);
+        const freshInstall = await detectFreshDatabase(pool);
+        if (freshInstall) console.log('fresh database detected: applying clean-install defaults');
 
         for (const filename of files) {
             const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
@@ -93,7 +113,7 @@ async function main() {
                 continue;
             }
 
-            await applyMigration(pool, filename, sql, checksum);
+            await applyMigration(pool, filename, sql, checksum, freshInstall);
         }
     } finally {
         await pool.end();

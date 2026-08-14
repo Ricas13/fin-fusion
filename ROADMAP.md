@@ -46,10 +46,30 @@ See [`STREAMS_MANAGER_PARITY.md`](STREAMS_MANAGER_PARITY.md) for the canonical p
 - [ ] Per-server policy templates for streams, downloads and transcoding
 - [ ] Continuous user/server/library reconciliation
 
+## Phase 3U — Clean install / white-label / SaaS readiness
+
+This is a cross-cutting product rule rather than a final migration phase: new work must remain valid when there are zero servers, zero plans, zero customers, zero resellers and zero payment providers.
+
+- [x] Genuinely fresh PostgreSQL database starts with zero business objects
+- [x] Jellyfin is optional at application startup
+- [x] Existing installations are protected from fresh-install cleanup
+- [x] Environment-based bootstrap creates the first native administrator when required
+- [x] Admin Setup checklist and feature-readiness view
+- [x] Empty admin dashboard remains usable and guides configuration
+- [x] Storefront disabled by default on clean installs
+- [x] Public registration disabled by default on clean installs
+- [x] Referral rewards disabled by default on clean installs
+- [x] Payment and notification providers remain optional
+- [x] Automated blank-database test reaches a working administrator dashboard
+- [ ] Browser-based first-run administrator creation and permanent setup lockout
+- [ ] Remove remaining legacy Premium/Free business assumptions where they are not intrinsic configuration
+- [ ] Safe configuration export/import
+- [ ] Review new data models for future workspace/tenant scoping without implementing full multi-tenancy
+
 ## Phase 4 — Plans and subscription lifecycle
 
 - [x] Database-backed plan/subscription models
-- [x] Seed current trial/monthly/6-month/yearly CAPTAiNFiN plans
+- [x] Preserve historical CAPTaINFiN trial/monthly/6-month/yearly plans on upgrades while clean installs start empty
 - [ ] Configurable plans in admin UI
 - [ ] Plan library groups
 - [ ] Trial, one-time and recurring terms

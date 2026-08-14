@@ -17,7 +17,8 @@ const ejs = require('ejs');
             subscriptions: [{ plan_name: 'Monthly', status: 'active', current_period_end: currentPlan.current_period_end }],
             accounts: [{ id: 'account-1', jellyfin_username: 'viewer1', disabled: false, server_name: 'Primary', server_class: 'premium', public_url: 'https://jellyfin.example.test' }],
             providers: [],
-            referralCode: 'ABC123'
+            referralCode: 'ABC123',
+            referralsEnabled: true
         },
         currentPlan,
         plans: [
@@ -48,7 +49,7 @@ const ejs = require('ejs');
 
     const empty = await ejs.renderFile(path.join(__dirname, '..', 'views', 'customer', 'dashboard.ejs'), {
         ...locals,
-        portal: { ...locals.portal, subscriptions: [], accounts: [] },
+        portal: { ...locals.portal, subscriptions: [], accounts: [], referralCode: null, referralsEnabled: false },
         currentPlan: null,
         plans: [],
         libraryEntitlement: [],
@@ -56,6 +57,7 @@ const ejs = require('ejs');
     });
     assert.match(empty, /do not currently have an active subscription/i);
     assert.match(empty, /No plans are currently available/i);
+    assert.doesNotMatch(empty, /Refer a friend/, 'Disabled referral module must not appear in the portal');
 
     console.log('customer portal view smoke: ok');
 })().catch(error => {

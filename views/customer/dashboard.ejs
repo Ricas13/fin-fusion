@@ -35,6 +35,7 @@
   const currentName = currentPlan ? (currentPlan.name || currentPlan.plan_name || currentPlan.code) : 'No active plan';
   const currentStreams = currentPlan ? Number(currentPlan.streams || 0) : 0;
   const visibleLibraryCount = Array.isArray(librarySelection) ? librarySelection.length : 0;
+  const referralsEnabled = Boolean(portal.referralsEnabled && portal.referralCode);
 %>
 <body>
 <div class="portalShell">
@@ -187,15 +188,17 @@
       </section>
     <% } %>
 
-    <section class="sectionBlock">
-      <div class="sectionHead"><div><h2>Refer a friend</h2><p>Share your referral link and receive the configured reward when a referral qualifies.</p></div></div>
-      <div class="panel">
-        <div class="referralLayout">
-          <div><div class="codeLabel">Referral link</div><div class="copyLine"><input class="input referralCode" id="refLink" readonly data-path="/account/register?ref=<%= portal.referralCode %>" value="/account/register?ref=<%= portal.referralCode %>"><button type="button" class="button primary" id="copyReferral">Copy link</button></div></div>
-          <div><div class="codeLabel">Referral code</div><input class="input referralCode" readonly value="<%= portal.referralCode %>"></div>
+    <% if (referralsEnabled) { %>
+      <section class="sectionBlock">
+        <div class="sectionHead"><div><h2>Refer a friend</h2><p>Share your referral link and receive the configured reward when a referral qualifies.</p></div></div>
+        <div class="panel">
+          <div class="referralLayout">
+            <div><div class="codeLabel">Referral link</div><div class="copyLine"><input class="input referralCode" id="refLink" readonly data-path="/account/register?ref=<%= portal.referralCode %>" value="/account/register?ref=<%= portal.referralCode %>"><button type="button" class="button primary" id="copyReferral">Copy link</button></div></div>
+            <div><div class="codeLabel">Referral code</div><input class="input referralCode" readonly value="<%= portal.referralCode %>"></div>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    <% } %>
   </main>
 </div>
 <script>

@@ -32,6 +32,15 @@ function publicRegistrationOpen() {
     return typeof stored === 'boolean' ? stored : process.env.PUBLIC_REGISTRATION !== 'false';
 }
 
+function storefrontEnabled() {
+    const stored = cache?.storefrontEnabled;
+    // Compatibility default is ON for existing installations that predate the
+    // setting. Migration 025 writes OFF explicitly for genuinely fresh databases.
+    if (typeof stored === 'boolean') return stored;
+    if (typeof process.env.STOREFRONT_ENABLED === 'string') return process.env.STOREFRONT_ENABLED === 'true';
+    return true;
+}
+
 function requireEmailVerification() {
     const stored = cache?.requireEmailVerification;
     return typeof stored === 'boolean' ? stored : process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
@@ -62,6 +71,7 @@ module.exports = {
     reload,
     ensureLoaded,
     publicRegistrationOpen,
+    storefrontEnabled,
     requireEmailVerification,
     requireAdminTwoFactor,
     entitlementJobIntervalMs,

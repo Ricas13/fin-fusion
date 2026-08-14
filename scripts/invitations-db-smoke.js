@@ -6,10 +6,15 @@ const invitations = require('../src/invitations');
 const { query, getPool } = require('../src/db');
 
 (async () => {
-    const planResult = await query('SELECT id FROM plans WHERE active=TRUE ORDER BY sort_order,name LIMIT 1');
-    assert(planResult.rowCount, 'Expected at least one active plan for invitation smoke test');
     const suffix = crypto.randomBytes(5).toString('hex');
     const password = `Invitation-${suffix}-Password!`;
+    const planResult = await query(`
+        INSERT INTO plans(
+            code,name,audience,billing_interval,duration_days,price_minor,currency,streams,
+            allow_downloads,allow_video_transcoding,server_class,active,visible,sort_order
+        ) VALUES($1,$2,'direct','trial',1,0,'USD',1,FALSE,FALSE,'premium',TRUE,TRUE,10)
+        RETURNING id
+    `, [`invite-smoke-${suffix}`, `Invitation smoke ${suffix}`]);
 
     const created = await invitations.createInvitation({
         planId: planResult.rows[0].id,
