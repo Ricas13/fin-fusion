@@ -21,6 +21,13 @@ function int(value, min, max, fallback) {
     const n = parseInt(value, 10);
     return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
+function cleanSiteName(value) {
+    const name = String(value || '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) {
+        throw new Error('Site name must be between 2 and 80 visible characters.');
+    }
+    return name;
+}
 
 async function load() {
     await runtimeSettings.ensureLoaded();
@@ -44,6 +51,7 @@ async function load() {
             ...(settings.admin_defaults || {})
         },
         platform: {
+            siteName: runtimeSettings.siteName(),
             storefrontEnabled: runtimeSettings.storefrontEnabled(),
             publicRegistration: runtimeSettings.publicRegistrationOpen(),
             requireEmailVerification: runtimeSettings.requireEmailVerification(),
@@ -110,8 +118,9 @@ function page(req, data) {
         </section>
 
         <section class="settings-card">
-            <div class="card-header"><div><h3>Platform &amp; integrations</h3><div class="settings-hint">Customer-facing modules are explicit choices, not implied by the presence of database tables.</div></div></div>
+            <div class="card-header"><div><h3>Platform &amp; integrations</h3><div class="settings-hint">Site identity and customer-facing modules are explicit choices, not implied by the presence of database tables.</div></div></div>
             <div class="card-body"><form method="post" action="/admin/settings/platform">${csrfInput(req)}
+                <div class="formGroup"><label>Site name</label><input class="input" name="siteName" minlength="2" maxlength="80" value="${esc(pf.siteName)}" required><div class="settings-hint">Used by the admin shell, staff sign-in and customer-facing pages. Changes take effect without a restart.</div></div>
                 <div class="toggleGrid">
                     <label class="toggleRow"><input type="checkbox" name="storefrontEnabled" ${pf.storefrontEnabled ? 'checked' : ''}><span><strong>Publish public storefront</strong><small class="muted">New clean installs leave this disabled until you intentionally publish it.</small></span></label>
                     <label class="toggleRow"><input type="checkbox" name="publicRegistration" ${pf.publicRegistration ? 'checked' : ''}><span><strong>Public registration open</strong><small class="muted">Invitations and admin onboarding continue to work while this is off.</small></span></label>
@@ -122,7 +131,7 @@ function page(req, data) {
                     <div class="formGroup"><label>Server health-check interval · minutes</label><input class="input" type="number" min="1" max="180" name="serverHealthIntervalMinutes" value="${esc(pf.serverHealthIntervalMinutes)}"></div>
                     <div class="formGroup"><label>External request site URL <span class="muted">(Overseerr/Seerr)</span></label><input class="input" type="url" name="overseerrUrl" maxlength="500" placeholder="https://requests.example.com" value="${esc(pf.overseerrUrl)}"></div>
                 </div>
-                <p class="settings-hint">Interval and toggle changes take effect immediately, no restart required.</p>${stepInput()}<button class="button">Save platform settings</button>
+                <p class="settings-hint">Identity, interval and toggle changes take effect immediately, no restart required.</p>${stepInput()}<button class="button">Save platform settings</button>
             </form></div>
         </section>
 
@@ -145,11 +154,14 @@ function page(req, data) {
         </section>
     </div>`;
 
-    return layout({ siteName: process.env.SITE_NAME || 'CAPTaINFiN', active: 'settings', title: 'Settings', subtitle: 'Business defaults, storefront and integration state', body });
+    return layout({ siteName: runtimeSettings.siteName(), active: 'settings', title: 'Settings', subtitle: 'Business defaults, storefront and integration state', body });
 }
 
-async function saveSetting(key, value, req) {
-    await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`, [key, JSON.stringify(value), req.session.authUserId]);
+async function saveSetting(key, value, req, { merge = false } = {}) {
+    const conflict = merge
+        ? 'setting_value=platform_settings.setting_value || EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()'
+        : 'setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()';
+    await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET ${conflict}`, [key, JSON.stringify(value), req.session.authUserId]);
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.settings.update',$2,$2,$3::jsonb)`, [req.session.authUserId, key, JSON.stringify(value)]);
 }
 
@@ -213,6 +225,7 @@ function createAdminOriginalSettingsRouter() {
                 overseerrUrl = parsed.href;
             }
             const value = {
+                siteName: cleanSiteName(req.body.siteName),
                 storefrontEnabled: req.body.storefrontEnabled === 'on',
                 publicRegistration: req.body.publicRegistration === 'on',
                 requireEmailVerification: req.body.requireEmailVerification === 'on',
@@ -221,13 +234,14 @@ function createAdminOriginalSettingsRouter() {
                 overseerrUrl
             };
             await saveSetting('platform', {
+                siteName: value.siteName,
                 storefrontEnabled: value.storefrontEnabled,
                 publicRegistration: value.publicRegistration,
                 requireEmailVerification: value.requireEmailVerification,
                 entitlementJobIntervalMs: value.entitlementJobIntervalMinutes * 60000,
                 serverHealthIntervalMs: value.serverHealthIntervalMinutes * 60000,
                 overseerrUrl: value.overseerrUrl
-            }, req);
+            }, req, { merge: true });
             await runtimeSettings.reload();
             return res.redirect('/admin/settings?message=' + encodeURIComponent('Platform settings saved.'));
         } catch (error) {
