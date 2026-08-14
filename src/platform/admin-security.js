@@ -4,6 +4,7 @@ const express = require('express');
 const crypto = require('crypto');
 const auth = require('../auth/service');
 const csrf = require('../auth/csrf');
+const admin2faPolicy = require('../auth/admin-2fa-policy');
 
 function requireNativeAdmin(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -24,6 +25,19 @@ function createAdminSecurityRouter() {
     const router = express.Router();
     router.use('/admin/security', requireNativeAdmin, noStore);
 
+    // Loaded by every modern admin surface. When administrator 2FA is optional,
+    // routine step-up fields disappear entirely; actual TOTP setup/recovery
+    // pages use their own auth stylesheet and remain unaffected.
+    router.get('/admin/security/policy.css', async (_req, res, next) => {
+        try {
+            const required = await admin2faPolicy.required();
+            res.type('text/css');
+            return res.send(required ? '' : `
+.formGroup:has(input[name="code"][autocomplete="one-time-code"]) { display:none !important; }
+`);
+        } catch (error) { return next(error); }
+    });
+
     router.get('/admin/security', async (req, res, next) => {
         try {
             const overview = await auth.getSecurityOverview(req.session.authUserId);
@@ -37,12 +51,12 @@ function createAdminSecurityRouter() {
                 fingerprint: fingerprint(s.user_agent_hash)
             }));
             return res.render('admin/security', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 user: overview.user,
                 sessions,
                 events: overview.events,
                 recoveryCodesRemaining: overview.recoveryCodesRemaining,
-                admin2faRequired: process.env.REQUIRE_ADMIN_2FA !== 'false',
+                admin2faRequired: await admin2faPolicy.required(),
                 csrfToken: csrf.token(req),
                 message: req.query.message || null,
                 error: req.query.error || null
@@ -50,9 +64,25 @@ function createAdminSecurityRouter() {
         } catch (error) { return next(error); }
     });
 
+    router.post('/admin/security/2fa-policy', async (req, res, next) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            const required = req.body.requireAdminTwoFactor === 'on' || req.body.requireAdminTwoFactor === 'true';
+            await admin2faPolicy.setRequired(required, req.session.authUserId);
+            const overview = await auth.getSecurityOverview(req.session.authUserId);
+            let message = required
+                ? 'Administrator 2FA is now required.'
+                : 'Administrator 2FA is now optional. Existing authenticator enrollment was kept.';
+            if (required && !overview?.user?.totp_enabled) {
+                message += ' Sign out and sign back in to complete authenticator setup.';
+            }
+            return res.redirect('/admin/security?message=' + encodeURIComponent(message));
+        } catch (error) { return next(error); }
+    });
+
     router.get('/admin/security/password', (req, res) => {
         return res.render('admin/security-password', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             csrfToken: csrf.token(req)
         });
     });
@@ -61,7 +91,7 @@ function createAdminSecurityRouter() {
         try {
             const overview = await auth.getSecurityOverview(req.session.authUserId);
             return res.render('admin/security-recovery', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 enabled: !!overview?.user?.totp_enabled,
                 remaining: overview?.recoveryCodesRemaining || 0,
                 csrfToken: csrf.token(req)
@@ -105,7 +135,7 @@ function createAdminSecurityRouter() {
             const codes = await auth.regenerateRecoveryCodes(req.session.authUserId, req.body.code, req);
             if (!codes) return res.redirect('/admin/security?error=' + encodeURIComponent('Authenticator code was not accepted.'));
             return res.render('auth/recovery-codes', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 recoveryCodes: codes,
                 continueUrl: '/admin/security'
             });
@@ -115,7 +145,7 @@ function createAdminSecurityRouter() {
     router.use('/admin/security', (error, _req, res, _next) => {
         console.error('Admin security route error:', error.message);
         return res.status(500).render('auth/message', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             title: 'Security request failed',
             message: 'The request could not be completed safely. No security settings were changed.',
             link: '/admin/security',
