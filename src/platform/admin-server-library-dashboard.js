@@ -34,23 +34,12 @@ function send(res, options) {
     return res.send(layout({ siteName: site(), ...options }));
 }
 
-// Health fields are loaded from the simple jellyfin_servers query rather than
-// the aggregate stats query. This keeps last_health_check authoritative even
-// as customer/session joins evolve. Aggregate rows only contribute counters.
+// Keep one authoritative query shape for both initial rendering and the
+// lightweight status endpoint. It already includes health timestamps plus the
+// customer/session counters, so the browser cannot be refreshed with a
+// different/null timestamp immediately after the page renders.
 async function dashboardServerRows() {
-    const [healthRows, statsRows] = await Promise.all([
-        registry.listServers({ enabledOnly: false }),
-        serversAdmin.serverList()
-    ]);
-    const statsById = new Map(statsRows.map(row => [String(row.id), row]));
-    return healthRows.map(server => {
-        const stats = statsById.get(String(server.id)) || {};
-        return {
-            ...server,
-            assigned_users: Number(stats.assigned_users || 0),
-            active_streams: Number(stats.active_streams || 0)
-        };
-    });
+    return serversAdmin.serverList();
 }
 
 function serverRow(req, server) {
@@ -216,6 +205,12 @@ async function librariesBody(req) {
         <script src="/js/admin-server-library-dashboard.js" defer></script>`;
 }
 
+function isoDate(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 async function serverStatusJson(_req, res, next) {
     try {
         const rows = await dashboardServerRows();
@@ -223,7 +218,7 @@ async function serverStatusJson(_req, res, next) {
             servers: rows.map(server => ({
                 id: String(server.id),
                 status: server.health_status || 'unknown',
-                lastHealthCheck: server.last_health_check || null,
+                lastHealthCheck: isoDate(server.last_health_check),
                 customers: Number(server.assigned_users || 0),
                 maxUsers: server.max_users == null ? null : Number(server.max_users),
                 activeStreams: Number(server.active_streams || 0)
@@ -262,4 +257,4 @@ function createAdminServerLibraryDashboardRouter() {
     return router;
 }
 
-module.exports = { createAdminServerLibraryDashboardRouter };
+module.exports = { createAdminServerLibraryDashboardRouter, dashboardServerRows, serverStatusJson };
