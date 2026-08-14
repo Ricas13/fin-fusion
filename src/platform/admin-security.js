@@ -22,6 +22,10 @@ function fingerprint(value) {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12);
 }
 
+function save(req) {
+    return new Promise((resolve, reject) => req.session.save(error => error ? reject(error) : resolve()));
+}
+
 async function setAdminTwoFactorPolicy(required, userId) {
     await query(`
         INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at)
@@ -96,6 +100,40 @@ function createAdminSecurityRouter() {
         } catch (error) { return next(error); }
     });
 
+    router.post('/admin/security/2fa/enable', async (req, res, next) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            const user = await auth.getStaffById(req.session.authUserId);
+            if (!user) return res.redirect('/login?session=expired');
+            if (user.totp_enabled) {
+                return res.redirect('/admin/security?message=' + encodeURIComponent('2FA is already enabled for this account.'));
+            }
+            req.session.pendingStaffAuth = {
+                userId: user.id,
+                role: user.role,
+                username: user.username,
+                legacyId: Number(user.legacy_numeric_id),
+                startedAt: Date.now(),
+                attempts: 0
+            };
+            await save(req);
+            return res.redirect('/auth/2fa/setup');
+        } catch (error) { return next(error); }
+    });
+
+    router.post('/admin/security/2fa/disable', async (req, res, next) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            await runtimeSettings.ensureLoaded();
+            if (runtimeSettings.requireAdminTwoFactor()) {
+                return res.redirect('/admin/security?error=' + encodeURIComponent('Turn off the global 2FA requirement before disabling this account\'s 2FA.'));
+            }
+            const disabled = await auth.disableTotp(req.session.authUserId, req.body.currentPassword, req);
+            if (!disabled) return res.redirect('/admin/security?error=' + encodeURIComponent('Current password was not accepted.'));
+            return res.redirect('/admin/security?message=' + encodeURIComponent('2FA disabled for this administrator account.'));
+        } catch (error) { return next(error); }
+    });
+
     router.post('/admin/security/sessions/revoke-others', async (req, res, next) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
@@ -119,7 +157,7 @@ function createAdminSecurityRouter() {
             );
             if (!changed) return res.redirect('/admin/security?error=' + encodeURIComponent('Current password was not accepted.'));
             req.session.authSessionVersion = Number(changed.sessionVersion);
-            await new Promise((resolve, reject) => req.session.save(error => error ? reject(error) : resolve()));
+            await save(req);
             return res.redirect('/admin/security?message=' + encodeURIComponent('Password changed. Other staff sessions were revoked.'));
         } catch (error) {
             return res.redirect('/admin/security?error=' + encodeURIComponent(error.message));
