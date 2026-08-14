@@ -134,7 +134,10 @@
                 const streams = root.querySelector('[data-server-streams]');
                 if (streams) streams.textContent = Number(server.activeStreams || 0).toLocaleString();
                 const lastCheck = root.querySelector('[data-server-last-check]');
-                if (lastCheck) lastCheck.textContent = formatDate(server.lastHealthCheck);
+                // A polling response must never erase a timestamp already rendered
+                // from the database. New/unprobed servers are rendered as "never"
+                // initially, so there is no need to write "never" from a null poll.
+                if (lastCheck && server.lastHealthCheck) lastCheck.textContent = formatDate(server.lastHealthCheck);
             }
         } catch (_) {
             // Keep the last known server state visible if the lightweight UI refresh fails.
