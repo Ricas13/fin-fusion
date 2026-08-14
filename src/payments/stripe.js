@@ -3,26 +3,31 @@
 const crypto = require('crypto');
 const lifecycle = require('./lifecycle');
 const discounts = require('./discounts');
+const providerSettings = require('./provider-settings');
 const { query } = require('../db');
 
 let stripeClient;
+let stripeClientKey = null;
 
-function apiKey() {
-    return process.env.STRIPE_RESTRICTED_KEY || process.env.STRIPE_API_KEY || '';
+function apiKeyFrom(config) {
+    return config?.restrictedKey || config?.apiKey || '';
 }
 
 function enabled() {
-    return Boolean(apiKey());
+    return Boolean(apiKeyFrom(providerSettings.peek('stripe')));
 }
 
-function getStripe() {
-    if (!enabled()) throw new Error('Stripe is not configured');
-    if (!stripeClient) {
+async function getStripe() {
+    const config = await providerSettings.get('stripe');
+    const key = apiKeyFrom(config);
+    if (!key) throw new Error('Stripe is not configured');
+    if (!stripeClient || stripeClientKey !== key) {
         const Stripe = require('stripe');
-        stripeClient = new Stripe(apiKey(), {
+        stripeClient = new Stripe(key, {
             apiVersion: '2026-06-24.dahlia',
-            appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' }
+            appInfo: { name: 'CAPTaINFiN', version: '1.0.0' }
         });
+        stripeClientKey = key;
     }
     return stripeClient;
 }
@@ -47,7 +52,7 @@ function subscriptionPeriod(subscription) {
 async function ensureStripeCustomer(customerId, email) {
     const existing = await lifecycle.findPaymentCustomer(customerId, 'stripe');
     if (existing) return existing.provider_customer_id;
-    const stripe = getStripe();
+    const stripe = await getStripe();
     const customer = await stripe.customers.create({
         email: email || undefined,
         metadata: { internal_customer_id: customerId }
@@ -58,7 +63,7 @@ async function ensureStripeCustomer(customerId, email) {
 
 async function ensureStripeCoupon(discount, plan) {
     if (discount.stripe_coupon_id) return discount.stripe_coupon_id;
-    const stripe = getStripe();
+    const stripe = await getStripe();
     const params = { duration: 'once', name: discount.code };
     if (discount.discount_type === 'percent') {
         params.percent_off = discount.percent_off;
@@ -71,10 +76,10 @@ async function ensureStripeCoupon(discount, plan) {
     return coupon.id;
 }
 
-async function createCheckout({ customerId, planCode, email, successUrl, cancelUrl, discountCode = null }) {
-    const plan = await lifecycle.getProviderPlan(planCode, 'stripe');
-    if (!plan) throw new Error('This plan is not configured for Stripe');
-    const stripe = getStripe();
+async function createCheckout({ customerId, planCode, email, successUrl, cancelUrl, discountCode = null, checkoutMode = null }) {
+    const plan = await lifecycle.getProviderPlan(planCode, 'stripe', checkoutMode);
+    if (!plan) throw new Error('This plan is not configured for the selected Stripe payment type');
+    const stripe = await getStripe();
     const stripeCustomerId = await ensureStripeCustomer(customerId, email);
     const mode = plan.checkout_mode === 'subscription' ? 'subscription' : 'payment';
     const metadata = {
@@ -107,13 +112,14 @@ async function createCheckout({ customerId, planCode, email, successUrl, cancelU
     else params.payment_intent_data = { metadata };
 
     const session = await stripe.checkout.sessions.create(params);
-    return { id: session.id, url: session.url };
+    return { id: session.id, url: session.url, mode };
 }
 
 async function createCustomerPortal({ customerId, returnUrl }) {
     const mapping = await lifecycle.findPaymentCustomer(customerId, 'stripe');
     if (!mapping) throw new Error('No Stripe customer exists for this account');
-    const session = await getStripe().billingPortal.sessions.create({
+    const stripe = await getStripe();
+    const session = await stripe.billingPortal.sessions.create({
         customer: mapping.provider_customer_id,
         return_url: returnUrl
     });
@@ -138,7 +144,8 @@ async function activateCheckoutSession(session) {
     if (session.mode === 'subscription') {
         const subscriptionId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
         if (!subscriptionId) throw new Error('Stripe Checkout subscription ID is missing');
-        const subscription = await getStripe().subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] });
+        const stripe = await getStripe();
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] });
         const period = subscriptionPeriod(subscription);
         return lifecycle.activatePurchase({
             customerId,
@@ -167,7 +174,8 @@ async function activateCheckoutSession(session) {
 }
 
 async function syncSubscription(subscriptionId, statusOverride = null) {
-    const subscription = await getStripe().subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] });
+    const stripe = await getStripe();
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ['items.data.price'] });
     const period = subscriptionPeriod(subscription);
     return lifecycle.updateProviderSubscription({
         provider: 'stripe',
@@ -179,9 +187,11 @@ async function syncSubscription(subscriptionId, statusOverride = null) {
 }
 
 async function processWebhook(rawBody, signature) {
-    const secret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!secret) throw new Error('STRIPE_WEBHOOK_SECRET is not configured');
-    const event = getStripe().webhooks.constructEvent(rawBody, signature, secret);
+    const config = await providerSettings.get('stripe');
+    const secret = config.webhookSecret;
+    if (!secret) throw new Error('Stripe webhook secret is not configured');
+    const stripe = await getStripe();
+    const event = stripe.webhooks.constructEvent(rawBody, signature, secret);
     const eventRow = await lifecycle.beginPaymentEvent({
         provider: 'stripe', eventId: event.id, eventType: event.type, payload: event
     });
