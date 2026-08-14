@@ -1,0 +1,55 @@
+name: Billing Lifecycle
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/033_billing_lifecycle_control.sql'
+      - 'src/payments/billing-control.js'
+      - 'src/platform/admin-billing.js'
+      - 'src/platform/admin-html.js'
+      - 'platform-preload.js'
+      - 'scripts/billing-lifecycle-smoke.js'
+      - '.github/workflows/billing-lifecycle.yml'
+  workflow_dispatch:
+
+jobs:
+  billing-lifecycle:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: billing_lifecycle
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d billing_lifecycle"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/payments/billing-control.js
+          node --check src/platform/admin-billing.js
+          node --check scripts/billing-lifecycle-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/billing_lifecycle
+        run: npm run db:migrate
+      - name: Reconcile recurring providers with failure-safe entitlement handling
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/billing_lifecycle
+          DATA_ENCRYPTION_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+          JELLYFIN_ENCRYPTION_KEY: '3333333333333333333333333333333333333333333333333333333333333333'
+        run: node scripts/billing-lifecycle-smoke.js

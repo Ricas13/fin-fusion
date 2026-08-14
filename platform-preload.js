@@ -41,6 +41,12 @@ function requestUserSyncIntervalMs() {
     }
 }
 
+function billingSyncPollIntervalMs() {
+    const configured = Number(process.env.BILLING_SYNC_POLL_INTERVAL_MS);
+    if (!Number.isFinite(configured) || configured <= 0) return 15 * 60 * 1000;
+    return Math.max(5 * 60 * 1000, Math.min(60 * 60 * 1000, configured));
+}
+
 function startJobs() {
     if (jobsStarted || !process.env.DATABASE_URL) return;
     jobsStarted = true;
@@ -50,6 +56,7 @@ function startJobs() {
     const bulkWorker = require('./src/jellyfin/bulk-worker');
     const requestUserSync = require('./src/integrations/request-user-sync');
     const requestServiceSettings = require('./src/integrations/request-service-settings');
+    const billingControl = require('./src/payments/billing-control');
     require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
@@ -91,15 +98,25 @@ function startJobs() {
             }
         } catch (error) { console.error('Request user sync failed:', error.message); }
     };
+    const runBillingSync = async () => {
+        try {
+            const result = await billingControl.syncDue({ all: false, limit: 100 });
+            if (result.total || result.failed) {
+                console.log(`Billing provider sync: due=${result.total}, succeeded=${result.succeeded}, failed=${result.failed}`);
+            }
+        } catch (error) { console.error('Billing provider sync failed:', error.message); }
+    };
     requestServiceSettings.ensureLoaded()
         .catch(error => console.error('Request service settings load failed, using environment fallback:', error.message));
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     const initialRequestUsers = setTimeout(runRequestUsers, 30000);
-    initialEntitlement.unref?.(); initialHealth.unref?.(); initialRequestUsers.unref?.();
+    const initialBillingSync = setTimeout(runBillingSync, 45000);
+    initialEntitlement.unref?.(); initialHealth.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.();
     createRescheduler(runBulkJobs, () => 3000).start();
     createRescheduler(runStaleReclaim, () => 60000).start();
     createRescheduler(runRequestUsers, requestUserSyncIntervalMs).start();
+    createRescheduler(runBillingSync, billingSyncPollIntervalMs).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -130,6 +147,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
         const { createAdminPlanPaymentOptionsRouter } = require('./src/platform/admin-plan-payment-options');
         const { createAdminPaymentSettingsRouter } = require('./src/platform/admin-payment-settings');
+        const { createAdminBillingRouter } = require('./src/platform/admin-billing');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
@@ -182,6 +200,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminRequestRedirectRouter());
         this.use(createAdminProvisioningRouter());
         this.use(createAdminPaymentSettingsRouter());
+        this.use(createAdminBillingRouter());
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlansListRouter());
         this.use(createAdminPlanPaymentOptionsRouter());
@@ -208,4 +227,4 @@ realExpress.application.listen = function platformListen(...args) {
     return originalListen.apply(this, args);
 };
 
-module.exports = { requestUserSyncIntervalMs };
+module.exports = { requestUserSyncIntervalMs, billingSyncPollIntervalMs };
