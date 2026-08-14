@@ -1,0 +1,56 @@
+name: Jellyfin Policy Drift
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/035_jellyfin_policy_drift.sql'
+      - 'src/jellyfin/drift-control.js'
+      - 'src/platform/admin-drift.js'
+      - 'src/platform/admin-provisioning.js'
+      - 'platform-preload.js'
+      - 'scripts/jellyfin-drift-smoke.js'
+      - '.github/workflows/jellyfin-drift.yml'
+  workflow_dispatch:
+
+jobs:
+  jellyfin-drift:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: jellyfin_drift
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d jellyfin_drift"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/jellyfin/drift-control.js
+          node --check src/platform/admin-drift.js
+          node --check src/platform/admin-provisioning.js
+          node --check scripts/jellyfin-drift-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/jellyfin_drift
+        run: npm run db:migrate
+      - name: Detect out-of-band Jellyfin policy drift read-only
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/jellyfin_drift
+          DATA_ENCRYPTION_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+          JELLYFIN_ENCRYPTION_KEY: '3333333333333333333333333333333333333333333333333333333333333333'
+        run: node scripts/jellyfin-drift-smoke.js
