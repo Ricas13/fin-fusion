@@ -102,6 +102,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
+        const { createAdminSetupRouter } = require('./src/platform/admin-setup');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminServerLibraryDashboardRouter } = require('./src/platform/admin-server-library-dashboard');
@@ -127,6 +128,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createInviteOnboardingRouter());
         this.use(createAdminPreviewRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
+        this.use(createAdminSetupRouter());
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminBrandingRouter());
         this.use(createAdminResellerSummaryRouter());
