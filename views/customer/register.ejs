@@ -18,6 +18,7 @@
     <label>Username</label><input name="username" minlength="3" maxlength="40" autocomplete="username" required>
     <label>Site password</label><input type="password" name="password" minlength="12" autocomplete="new-password" required>
     <p class="muted">This is your portal password. Your Jellyfin password is managed separately and is never stored here.</p>
+    <label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K">
     <button type="submit">Create account</button>
   </form>
   <% } %>

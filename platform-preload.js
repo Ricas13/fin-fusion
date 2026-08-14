@@ -81,7 +81,13 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminCustomer360Router } = require('./src/platform/admin-customer-360');
         const { createAdminUsersRouter } = require('./src/platform/admin-users');
         const { createAdminServersRouter } = require('./src/platform/admin-servers');
+        const { createAdminDiscountsRouter } = require('./src/platform/admin-discounts');
+        const { createAdminReferralsRouter } = require('./src/platform/admin-referrals');
+        const resellerPortal = require('./src/platform/reseller-portal');
         this.use(customerLoginThrottle);
+        // /reseller/export has no legacy app.js registration to intercept, so it is mounted
+        // directly here rather than through the staff-auth-preload.js route-substitution list.
+        this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createMediaPortalRouter());
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminResellerSummaryRouter());
@@ -95,6 +101,8 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminCustomer360Router());
         this.use(createAdminUsersRouter());
         this.use(createAdminServersRouter());
+        this.use(createAdminDiscountsRouter());
+        this.use(createAdminReferralsRouter());
         this.use(createRouter());
         startJobs();
     }

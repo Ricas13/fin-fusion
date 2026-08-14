@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const lifecycle = require('./lifecycle');
+const discounts = require('./discounts');
 
 let cachedToken = null;
 let cachedUntil = 0;
@@ -60,13 +61,13 @@ async function api(path, { method = 'GET', body = null, requestId = null } = {})
     return payload || {};
 }
 
-function customId(customerId, planId) {
-    return `${customerId}:${planId}`;
+function customId(customerId, planId, discountCodeId = null) {
+    return discountCodeId ? `${customerId}:${planId}:${discountCodeId}` : `${customerId}:${planId}`;
 }
 
 function parseCustomId(value) {
-    const match = String(value || '').match(/^([0-9a-f-]{36}):([0-9a-f-]{36})$/i);
-    return match ? { customerId: match[1], planId: match[2] } : null;
+    const match = String(value || '').match(/^([0-9a-f-]{36}):([0-9a-f-]{36})(?::([0-9a-f-]{36}))?$/i);
+    return match ? { customerId: match[1], planId: match[2], discountCodeId: match[3] || null } : null;
 }
 
 function approvalUrl(payload) {
@@ -74,12 +75,13 @@ function approvalUrl(payload) {
     return links.find(l => ['approve', 'payer-action'].includes(l.rel))?.href || null;
 }
 
-async function createCheckout({ customerId, planCode, returnUrl, cancelUrl }) {
+async function createCheckout({ customerId, planCode, returnUrl, cancelUrl, discountCode = null }) {
     const plan = await lifecycle.getProviderPlan(planCode, 'paypal');
     if (!plan) throw new Error('This plan is not configured for PayPal');
     const idempotencyKey = crypto.randomUUID();
 
     if (plan.checkout_mode === 'subscription') {
+        if (discountCode) throw new Error('Discount codes are not supported for PayPal subscriptions yet. Use Stripe or a one-time PayPal plan.');
         const subscription = await api('/v1/billing/subscriptions', {
             method: 'POST',
             requestId: idempotencyKey,
@@ -100,14 +102,23 @@ async function createCheckout({ customerId, planCode, returnUrl, cancelUrl }) {
         return { id: subscription.id, url, mode: 'subscription' };
     }
 
-    const value = (Number(plan.price_minor) / 100).toFixed(2);
+    let amountMinor = Number(plan.price_minor);
+    let discount = null;
+    if (discountCode) {
+        discount = await discounts.validateForCheckout({ code: discountCode, planId: plan.id, planCode, customerId });
+        if (discount.discount_type === 'fixed' && discount.currency && String(discount.currency).toUpperCase() !== String(plan.currency).toUpperCase()) {
+            throw new Error("That discount code's currency does not match this plan");
+        }
+        amountMinor = discounts.computeDiscountedMinor(amountMinor, discount);
+    }
+    const value = (amountMinor / 100).toFixed(2);
     const order = await api('/v2/checkout/orders', {
         method: 'POST',
         requestId: idempotencyKey,
         body: {
             intent: 'CAPTURE',
             purchase_units: [{
-                custom_id: customId(customerId, plan.id),
+                custom_id: customId(customerId, plan.id, discount?.id),
                 description: plan.name,
                 amount: { currency_code: String(plan.currency).toUpperCase(), value }
             }],
@@ -148,7 +159,8 @@ async function captureOrder(orderId) {
         provider: 'paypal',
         providerCustomerId: payerId,
         providerSubscriptionId: providerId,
-        providerStatus: 'active'
+        providerStatus: 'active',
+        discountCodeId: mapping.discountCodeId
     });
 }
 

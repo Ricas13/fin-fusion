@@ -2,6 +2,8 @@
 
 const { query, transaction } = require('../db');
 const { reconcileCustomer } = require('../jellyfin/provisioning');
+const discounts = require('./discounts');
+const referrals = require('../referrals');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 
@@ -137,6 +139,40 @@ async function startFreeTrial(customerId) {
     return subscription;
 }
 
+async function claimFreePlan(customerId, planCode) {
+    const subscription = await transaction(async client => {
+        const planResult = await client.query(`
+            SELECT * FROM plans
+            WHERE code=$1 AND active=TRUE AND visible=TRUE AND price_minor=0 AND billing_interval<>'trial'
+            LIMIT 1
+        `, [planCode]);
+        if (!planResult.rowCount) throw new Error('This free plan is not available');
+        const plan = planResult.rows[0];
+
+        const active = await client.query(`
+            SELECT 1 FROM subscriptions
+            WHERE customer_id=$1 AND plan_id=$2 AND status IN ('active','trialing')
+            LIMIT 1
+        `, [customerId, plan.id]);
+        if (active.rowCount) throw new Error('You already have free access on this plan');
+
+        const startsAt = new Date();
+        const endsAt = addPlanDuration(plan, startsAt);
+        const created = await client.query(`
+            INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'active','free_claim',$3,$4)
+            RETURNING *
+        `, [customerId, plan.id, startsAt, endsAt]);
+        await client.query(`
+            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES('subscription.free.claim','subscription',$1,$2::jsonb)
+        `, [created.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
+        return created.rows[0];
+    });
+    await reconcileCustomer(customerId);
+    return subscription;
+}
+
 async function activatePurchase({
     customerId,
     planId,
@@ -146,7 +182,9 @@ async function activatePurchase({
     providerStatus = 'active',
     periodStart = null,
     periodEnd = null,
-    cancelAtPeriodEnd = false
+    cancelAtPeriodEnd = false,
+    discountCodeId = null,
+    discountAmountAppliedMinor = 0
 }) {
     if (!['stripe', 'paypal'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
@@ -185,6 +223,27 @@ async function activatePurchase({
             row = inserted.rows[0];
         }
 
+        if (discountCodeId) {
+            // A payment provider has already accepted this customer's money by the time we
+            // get here, so a failure recording discount usage must never roll back or block
+            // the subscription/access they paid for -- see redeemForSubscriptionTx(). A plain
+            // try/catch is not enough: once any statement errors, Postgres marks the whole
+            // transaction aborted and every later statement on this client (including the
+            // audit_log insert and the final COMMIT) fails too. A SAVEPOINT isolates the
+            // failure so it can be rolled back on its own, leaving the rest of this
+            // transaction free to continue and commit normally.
+            await client.query('SAVEPOINT discount_redemption');
+            try {
+                await discounts.redeemForSubscriptionTx(client, {
+                    discountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: discountAmountAppliedMinor
+                });
+                await client.query('RELEASE SAVEPOINT discount_redemption');
+            } catch (error) {
+                console.error('Discount redemption bookkeeping failed; subscription is still being activated:', error.message);
+                await client.query('ROLLBACK TO SAVEPOINT discount_redemption');
+            }
+        }
+
         await client.query(`
             INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)
@@ -194,6 +253,11 @@ async function activatePurchase({
 
     if (providerCustomerId) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
     await reconcileCustomer(customerId);
+    try {
+        await referrals.rewardIfQualifying(customerId);
+    } catch (error) {
+        console.error('Referral reward check failed:', error.message);
+    }
     return subscription;
 }
 
@@ -223,6 +287,7 @@ module.exports = {
     beginPaymentEvent,
     finishPaymentEvent,
     startFreeTrial,
+    claimFreePlan,
     activatePurchase,
     updateProviderSubscription
 };
