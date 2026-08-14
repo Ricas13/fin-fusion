@@ -5,6 +5,7 @@ on:
     paths:
       - 'db/migrations/**'
       - 'scripts/migrate-db.js'
+      - 'scripts/bootstrap-admin.js'
       - 'scripts/clean-install-smoke.js'
       - 'src/platform/setup-readiness.js'
       - 'src/platform/admin-setup.js'
@@ -12,7 +13,10 @@ on:
       - 'src/platform/runtime-settings.js'
       - 'src/platform/storefront.js'
       - 'src/platform/admin-original-settings.js'
+      - 'src/customers.js'
+      - 'views/customer/dashboard.ejs'
       - 'secure-start.js'
+      - 'docker-compose.yml'
       - '.github/workflows/clean-install.yml'
   workflow_dispatch:
 
@@ -42,15 +46,20 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Migrate a truly blank database
+      - name: Migrate blank database and bootstrap native administrator
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
-        run: npm run db:migrate
+          ADMIN_USERNAME: cleanadmin
+          ADMIN_EMAIL: cleanadmin@example.test
+          ADMIN_PASSWORD: CleanInstall-Test-Password-2026!
+        run: npm run db:migrate && npm run auth:bootstrap
 
       - name: Assert zero-data clean-install state
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
           CLEAN_INSTALL_EXPECTED: 'true'
+          # Deliberately contradictory env fallbacks: persisted clean-install
+          # settings must win and keep these customer-facing features disabled.
           PUBLIC_REGISTRATION: 'true'
           STOREFRONT_ENABLED: 'true'
         run: node scripts/clean-install-smoke.js
@@ -84,7 +93,7 @@ jobs:
           CLEAN_INSTALL_EXPECTED: 'false'
         run: node scripts/clean-install-smoke.js
 
-      - name: Production startup does not require Jellyfin
+      - name: Production startup reaches working empty admin dashboard without Jellyfin
         env:
           NODE_ENV: production
           PORT: '3031'
@@ -95,15 +104,47 @@ jobs:
           ACTIVITY_ENCRYPTION_KEY: 4444444444444444444444444444444444444444444444444444444444444444
           AUTH_ENCRYPTION_KEY: 5555555555555555555555555555555555555555555555555555555555555555
           ADMIN_USERNAME: cleanadmin
+          ADMIN_EMAIL: cleanadmin@example.test
           ADMIN_PASSWORD: CleanInstall-Test-Password-2026!
           COOKIE_SECURE: 'false'
           REQUIRE_ADMIN_2FA: 'false'
         run: |
-          set +e
-          timeout 10s npm start > /tmp/clean-start.log 2>&1
-          code=$?
-          set -e
+          npm start > /tmp/clean-start.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS -c /tmp/cookies.txt http://127.0.0.1:3031/login -o /tmp/login.html; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
           cat /tmp/clean-start.log
-          if [ "$code" -ne 124 ] && [ "$code" -ne 0 ]; then exit "$code"; fi
+          test "$ready" = 1
           grep -q 'Steam Fusion running' /tmp/clean-start.log
           grep -q 'Jellyfin: not configured' /tmp/clean-start.log
+
+          csrf=$(sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' /tmp/login.html | head -1)
+          test -n "$csrf"
+
+          curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt \
+            -X POST \
+            --data-urlencode "_csrf=$csrf" \
+            --data-urlencode "username=cleanadmin" \
+            --data-urlencode "password=CleanInstall-Test-Password-2026!" \
+            -D /tmp/login-headers.txt \
+            -o /tmp/login-post.html \
+            http://127.0.0.1:3031/login
+          grep -q '^location: /admin' /tmp/login-headers.txt
+
+          curl -fsS -b /tmp/cookies.txt http://127.0.0.1:3031/admin -o /tmp/admin.html
+          grep -q 'Admin Dashboard' /tmp/admin.html
+          grep -q 'Platform setup' /tmp/admin.html
+          grep -q '0 / 6 configured' /tmp/admin.html
+
+          curl -fsS -b /tmp/cookies.txt http://127.0.0.1:3031/admin/setup -o /tmp/setup.html
+          grep -q 'Feature readiness' /tmp/setup.html
+          grep -q 'Zero business objects are valid' /tmp/setup.html
