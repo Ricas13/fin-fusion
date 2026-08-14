@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Libraries · <%= siteName %></title>
+  <%- include('_head') %>
+</head>
+<body>
+<div class="appShell">
+  <%- include('_nav',{siteName,activeNav:'libraries'}) %>
+  <main class="mainPane">
+    <header class="topBar"><div>Administration</div><a class="button secondary" href="/admin/servers">Manage servers</a></header>
+    <div class="content">
+      <div class="pageHeader"><h1>Libraries</h1><div class="muted">Live Jellyfin library discovery by configured server</div></div>
+      <% if(message){ %><div class="notice success"><%= message %></div><% } %>
+      <% if(error){ %><div class="notice error"><%= error %></div><% } %>
+
+      <% if(!groups.length){ %>
+        <section class="section"><div class="empty">No enabled Jellyfin servers are configured. Add a server before discovering libraries.</div></section>
+      <% } %>
+
+      <% groups.forEach(function(group){ const server=group.server; %>
+        <section class="section">
+          <div class="sectionHead">
+            <div><h2><%= server.name %></h2><div class="subText"><%= server.server_class || 'server' %><%= server.location ? ' · '+server.location : '' %></div></div>
+            <span class="pill <%= group.ok?'good':'bad' %>"><%= group.ok ? group.libraries.length+' libraries' : 'Unavailable' %></span>
+          </div>
+
+          <% if(!group.ok){ %>
+            <div class="notice error"><%= group.error %></div>
+          <% } else if(!group.libraries.length){ %>
+            <div class="empty">Jellyfin returned no libraries for this server.</div>
+          <% } else { %>
+            <div class="tableWrap"><table class="dataTable"><thead><tr><th>Library</th><th>Type</th><th>Jellyfin folder ID</th></tr></thead><tbody>
+              <% group.libraries.forEach(function(library){ %>
+                <tr><td><strong><%= library.name %></strong></td><td><span class="pill"><%= library.collectionType %></span></td><td><code><%= library.itemId || '—' %></code></td></tr>
+              <% }) %>
+            </tbody></table></div>
+          <% } %>
+
+          <form class="formPanel" method="post" action="/admin/libraries/<%= server.id %>/refresh" style="margin-top:12px">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="formGroup"><label>Authenticator / recovery code <span class="muted">(only when Administrator 2FA is required)</span></label><input class="input" name="code" autocomplete="one-time-code"></div>
+            <div class="buttonRow"><button class="button secondary" type="submit">Request Jellyfin library scan</button></div>
+          </form>
+        </section>
+      <% }) %>
+
+      <div class="securityNote standalone">Library discovery is read-only. A refresh asks Jellyfin to rescan its configured libraries but does not change CAPTaINFiN plan access by itself.</div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
