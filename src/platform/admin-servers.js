@@ -133,7 +133,9 @@ async function probeCredentials(baseUrl, apiKey) {
         if (!response.ok) throw new Error('Jellyfin rejected the server URL or API key.');
         const contentType = String(response.headers.get('content-type') || '');
         if (!contentType.includes('application/json')) throw new Error('Jellyfin returned an unexpected response.');
-        return true;
+        const info = await response.json();
+        if (!info || typeof info !== 'object' || Array.isArray(info)) throw new Error('Jellyfin returned an unexpected response.');
+        return info;
     } catch (error) {
         if (error.name === 'AbortError') throw new Error('Jellyfin validation timed out.');
         if (error.message.startsWith('Jellyfin ')) throw error;
@@ -272,6 +274,36 @@ function createAdminServersRouter() {
         } catch (error) {
             console.warn('Admin server create rejected:', error.message);
             return res.redirect('/admin/servers/new?error=' + encodeURIComponent(safeAdminError(error)));
+        }
+    });
+
+    router.post('/admin/servers/:serverId/test', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        const started = Date.now();
+        try {
+            const server = await serverDetail(req.params.serverId);
+            if (!server) return res.status(404).send('Server not found');
+            const secret = await registry.getServerSecret(req.params.serverId);
+            if (!secret) return res.status(404).send('Server not found');
+            const info = await probeCredentials(secret.base_url, secret.apiKey);
+            const latencyMs = Date.now() - started;
+            const serverName = cleanText(info.ServerName, 100) || server.name;
+            const version = cleanText(info.Version, 40);
+            await query(`
+                UPDATE jellyfin_servers SET health_status='healthy',last_health_check=NOW(),updated_at=NOW() WHERE id=$1
+            `, [req.params.serverId]);
+            await query(`
+                INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                VALUES($1,'admin.server.connection_test','jellyfin_server',$2,$3::jsonb)
+            `, [req.session.authUserId,req.params.serverId,JSON.stringify({ ok: true, latencyMs, version: version || null })]);
+            const detail = `${serverName}${version ? ` · Jellyfin ${version}` : ''} · ${latencyMs} ms`;
+            return res.redirect('/admin/servers?message=' + encodeURIComponent(`Connection successful — ${detail}.`));
+        } catch (error) {
+            await query(`
+                UPDATE jellyfin_servers SET health_status='offline',last_health_check=NOW(),updated_at=NOW() WHERE id=$1
+            `, [req.params.serverId]).catch(() => {});
+            console.warn('Admin server connection test failed:', error.message);
+            return res.redirect('/admin/servers?error=' + encodeURIComponent(`Connection failed — ${safeAdminError(error)}`));
         }
     });
 
