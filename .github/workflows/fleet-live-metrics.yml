@@ -1,0 +1,58 @@
+name: Fleet Live Metrics
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/031_jellyfin_server_metrics.sql'
+      - 'scripts/activity-worker.js'
+      - 'scripts/configure-activity-db-role.js'
+      - 'scripts/fleet-live-metrics-smoke.js'
+      - 'src/jellyfin/fleet-metrics.js'
+      - 'src/platform/admin-server-fleet-dashboard.js'
+      - 'public/js/admin-server-library-dashboard.js'
+      - 'platform-preload.js'
+      - '.github/workflows/fleet-live-metrics.yml'
+  workflow_dispatch:
+
+jobs:
+  fleet-live-metrics:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fleet_metrics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fleet_metrics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/jellyfin/fleet-metrics.js
+          node --check src/platform/admin-server-fleet-dashboard.js
+          node --check scripts/activity-worker.js
+          node --check scripts/fleet-live-metrics-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fleet_metrics
+        run: npm run db:migrate
+      - name: Count all Jellyfin streams and preserve managed subset
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fleet_metrics
+          DATA_ENCRYPTION_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+          JELLYFIN_ENCRYPTION_KEY: '3333333333333333333333333333333333333333333333333333333333333333'
+        run: node scripts/fleet-live-metrics-smoke.js
