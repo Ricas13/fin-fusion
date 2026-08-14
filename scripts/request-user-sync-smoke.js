@@ -9,11 +9,21 @@ process.env.SEERR_API_KEY = 'request-sync-test-key';
 
 const remote = {
     users: [
-        { id: 41, email: 'existing@example.test', username: 'existing-user' }
+        {
+            id: 41,
+            email: 'existing@example.test',
+            username: 'existing-user',
+            permissions: 32,
+            settings: { username: 'existing-user', locale: 'en', movieQuotaLimit: 0, movieQuotaDays: 30, tvQuotaLimit: 0, tvQuotaDays: 30 }
+        }
     ],
     createCalls: 0,
-    passwordCalls: []
+    passwordCalls: [],
+    permissionCalls: [],
+    quotaCalls: []
 };
+
+function userById(id) { return remote.users.find(user => Number(user.id) === Number(id)); }
 
 function readJson(req) {
     return new Promise((resolve, reject) => {
@@ -37,7 +47,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET' && url.pathname === '/api/v1/user') {
             const take = Math.max(1, Number(url.searchParams.get('take') || 10));
             const skip = Math.max(0, Number(url.searchParams.get('skip') || 0));
-            const results = remote.users.slice(skip, skip + take);
+            const results = remote.users.slice(skip, skip + take).map(({ settings, ...user }) => user);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({
                 pageInfo: {
@@ -56,12 +66,55 @@ const server = http.createServer(async (req, res) => {
                 res.writeHead(409, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({ message: 'User already exists with submitted email.' }));
             }
-            const created = { id: 100 + remote.createCalls, email: body.email, username: body.username };
+            const created = {
+                id: 100 + remote.createCalls,
+                email: body.email,
+                username: body.username,
+                permissions: 32,
+                settings: { username: body.username, locale: null, region: null, originalLanguage: null, movieQuotaLimit: 0, movieQuotaDays: 30, tvQuotaLimit: 0, tvQuotaDays: 30 }
+            };
             remote.createCalls += 1;
             remote.users.push(created);
             res.writeHead(201, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify(created));
+            const { settings, ...publicUser } = created;
+            return res.end(JSON.stringify(publicUser));
         }
+
+        const permissions = url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/permissions$/);
+        if (permissions) {
+            const user = userById(permissions[1]);
+            if (!user) throw new Error('remote user missing');
+            if (req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ permissions: user.permissions }));
+            }
+            if (req.method === 'POST') {
+                const body = await readJson(req);
+                user.permissions = Number(body.permissions) || 0;
+                remote.permissionCalls.push({ id: user.id, permissions: user.permissions });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ permissions: user.permissions }));
+            }
+        }
+
+        const main = url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/main$/);
+        if (main) {
+            const user = userById(main[1]);
+            if (!user) throw new Error('remote user missing');
+            if (req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify(user.settings));
+            }
+            if (req.method === 'POST') {
+                const body = await readJson(req);
+                user.settings = { ...user.settings, ...body };
+                user.username = body.username || user.username;
+                remote.quotaCalls.push({ id: user.id, ...body });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify(user.settings));
+            }
+        }
+
         const password = url.pathname.match(/^\/api\/v1\/user\/(\d+)\/settings\/password$/);
         if (req.method === 'POST' && password) {
             const body = await readJson(req);
@@ -99,7 +152,21 @@ async function makeServer(name, slug) {
     return result.rows[0].id;
 }
 
-async function makeCustomer({ username, email = null, serverIds }) {
+async function makePlan() {
+    const result = await query(`
+        INSERT INTO plans(
+            code,name,audience,billing_interval,duration_days,price_minor,currency,streams,
+            allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,
+            server_class,active,visible,request_movie_quota_limit,request_movie_quota_days,
+            request_tv_quota_limit,request_tv_quota_days
+        ) VALUES('request-test','Request Test','both','month',30,600,'USD',3,TRUE,FALSE,TRUE,TRUE,
+                 'premium',TRUE,TRUE,2,30,2,30)
+        RETURNING id
+    `);
+    return result.rows[0].id;
+}
+
+async function makeCustomer({ username, email = null, serverIds, planId }) {
     const user = await query(`
         INSERT INTO app_users(email,username,password_hash,role,active)
         VALUES($1,$2,'test-hash','customer',TRUE) RETURNING id
@@ -108,6 +175,10 @@ async function makeCustomer({ username, email = null, serverIds }) {
         INSERT INTO customers(user_id,display_name,email)
         VALUES($1,$2,$3) RETURNING id
     `, [user.rows[0].id, username, email]);
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days')
+    `, [customer.rows[0].id, planId]);
     let primary = true;
     for (const serverId of serverIds) {
         await query(`
@@ -134,19 +205,13 @@ async function makeCustomer({ username, email = null, serverIds }) {
 
     const firstServer = await makeServer('Premium A', 'premium-a');
     const secondServer = await makeServer('Premium B', 'premium-b');
+    const planId = await makePlan();
     const multiServerCustomer = await makeCustomer({
-        username: 'multi-user',
-        email: 'multi@example.test',
-        serverIds: [firstServer, secondServer]
+        username: 'multi-user', email: 'multi@example.test', serverIds: [firstServer, secondServer], planId
     });
-    const noEmailCustomer = await makeCustomer({
-        username: 'no-email-user',
-        serverIds: [firstServer]
-    });
+    const noEmailCustomer = await makeCustomer({ username: 'no-email-user', serverIds: [firstServer], planId });
     const existingCustomer = await makeCustomer({
-        username: 'existing-user',
-        email: 'existing@example.test',
-        serverIds: [secondServer]
+        username: 'existing-user', email: 'existing@example.test', serverIds: [secondServer], planId
     });
 
     const requestSync = require('../src/integrations/request-user-sync');
@@ -154,13 +219,20 @@ async function makeCustomer({ username, email = null, serverIds }) {
     assert.strictEqual(candidates.length, 3, 'multi-server Jellyfin accounts must collapse to one CAPTaINFiN request user');
     const multi = candidates.find(row => String(row.customer_id) === String(multiServerCustomer));
     assert.strictEqual(multi.active_server_count, 2);
-    assert(String(multi.active_servers).includes('Premium A'));
-    assert(String(multi.active_servers).includes('Premium B'));
+    assert.strictEqual(multi.request_movie_quota_limit, 2);
+    assert.strictEqual(multi.request_tv_quota_limit, 2);
 
     const first = await requestSync.syncAll();
-    assert.deepStrictEqual(first, { total: 3, created: 2, linked: 1, failed: 0 });
+    assert.deepStrictEqual(first, { total: 3, created: 2, linked: 1, suspended: 0, failed: 0 });
     assert.strictEqual(remote.createCalls, 2);
     assert.strictEqual(remote.users.length, 3);
+    for (const user of remote.users) {
+        assert.strictEqual(user.settings.movieQuotaLimit, 2);
+        assert.strictEqual(user.settings.movieQuotaDays, 30);
+        assert.strictEqual(user.settings.tvQuotaLimit, 2);
+        assert.strictEqual(user.settings.tvQuotaDays, 30);
+        assert.strictEqual(user.permissions, 32);
+    }
 
     const linked = await requestSync.requestAccessForCustomer(existingCustomer);
     assert.strictEqual(Number(linked.external_user_id), 41, 'existing request user should be linked by email rather than duplicated');
@@ -174,23 +246,45 @@ async function makeCustomer({ username, email = null, serverIds }) {
     const multiAccess = await requestSync.requestAccessForCustomer(multiServerCustomer);
     assert.strictEqual(multiAccess.password_reset_required, true);
 
-    // Idempotency: a second full sync links all three existing external users,
-    // creates none, and must not clear a newly-created user's password prompt.
     const second = await requestSync.syncAll();
-    assert.deepStrictEqual(second, { total: 3, created: 0, linked: 3, failed: 0 });
+    assert.deepStrictEqual(second, { total: 3, created: 0, linked: 3, suspended: 0, failed: 0 });
     assert.strictEqual(remote.createCalls, 2);
-    const multiAfterSecond = await requestSync.requestAccessForCustomer(multiServerCustomer);
-    assert.strictEqual(multiAfterSecond.password_reset_required, true);
+    assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).password_reset_required, true);
 
-    await requestSync.setCustomerPassword(multiServerCustomer, 'Central-Requests-Password-2026!');
+    await requestSync.setCustomerPassword(multiServerCustomer, 'SharedPass-2026!');
     assert.strictEqual(remote.passwordCalls.length, 1);
-    assert.strictEqual(remote.passwordCalls[0].id, Number(multiAfterSecond.external_user_id));
-    assert.strictEqual(remote.passwordCalls[0].newPassword, 'Central-Requests-Password-2026!');
-    const ready = await requestSync.requestAccessForCustomer(multiServerCustomer);
-    assert.strictEqual(ready.password_reset_required, false);
+    assert.strictEqual(remote.passwordCalls[0].id, Number(multiAccess.external_user_id));
+    assert.strictEqual(remote.passwordCalls[0].newPassword, 'SharedPass-2026!');
+    assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).password_reset_required, false);
 
-    // The provisioning page should group the user's historical identical
-    // successful health checks instead of rendering one visual row per tick.
+    // Expiry removes request permission but never deletes the remote account or history.
+    await query(`UPDATE subscriptions SET current_period_end=NOW()-INTERVAL '1 minute',status='expired' WHERE customer_id=$1`, [multiServerCustomer]);
+    const expired = await requestSync.syncAll();
+    assert.deepStrictEqual(expired, { total: 3, created: 0, linked: 2, suspended: 1, failed: 0 });
+    const multiRemote = userById(multiAccess.external_user_id);
+    assert.strictEqual(multiRemote.permissions, 0, 'expired customer must lose request permission');
+    const suspended = await requestSync.requestAccessForCustomer(multiServerCustomer);
+    assert.strictEqual(suspended.access_suspended, true);
+    assert.strictEqual(Number(suspended.active_permissions), 32);
+    assert.strictEqual(remote.users.length, 3, 'expiry must not delete request users');
+
+    // Renewal restores permissions and applies the latest plan quota.
+    await query(`UPDATE plans SET request_movie_quota_limit=10,request_tv_quota_limit=15 WHERE id=$1`, [planId]);
+    await query(`UPDATE subscriptions SET current_period_end=NOW()+INTERVAL '30 days',status='active' WHERE customer_id=$1`, [multiServerCustomer]);
+    const renewed = await requestSync.syncAll();
+    assert.deepStrictEqual(renewed, { total: 3, created: 0, linked: 3, suspended: 0, failed: 0 });
+    assert.strictEqual(multiRemote.permissions, 32, 'renewal must restore remembered request permissions');
+    assert.strictEqual(multiRemote.settings.movieQuotaLimit, 10);
+    assert.strictEqual(multiRemote.settings.tvQuotaLimit, 15);
+    assert.strictEqual((await requestSync.requestAccessForCustomer(multiServerCustomer)).access_suspended, false);
+
+    // Blank plan limits are pushed as zero, which explicitly means unlimited in Overseerr/Seerr
+    // instead of inheriting a potentially restrictive global default.
+    await query(`UPDATE plans SET request_movie_quota_limit=NULL,request_tv_quota_limit=NULL WHERE id=$1`, [planId]);
+    await requestSync.syncAll();
+    assert.strictEqual(multiRemote.settings.movieQuotaLimit, 0);
+    assert.strictEqual(multiRemote.settings.tvQuotaLimit, 0);
+
     const { compactRuns } = require('../src/platform/admin-provisioning');
     const grouped = compactRuns([
         { customer_id: multiServerCustomer, customer_name: 'multi-user', action: 'reconcile', status: 'succeeded', detail: {}, started_at: '2026-08-14T20:00:00Z' },

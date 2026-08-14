@@ -4,8 +4,11 @@ on:
   pull_request:
     paths:
       - 'db/migrations/027_request_user_sync.sql'
+      - 'db/migrations/028_request_plan_policy.sql'
       - 'src/integrations/request-user-sync.js'
       - 'src/platform/admin-request-users.js'
+      - 'src/platform/admin-request-plan-policy.js'
+      - 'src/platform/customer-password-sync.js'
       - 'src/platform/admin-provisioning.js'
       - 'src/platform/router.js'
       - 'views/customer/dashboard.ejs'
@@ -43,6 +46,8 @@ jobs:
         run: |
           node --check src/integrations/request-user-sync.js
           node --check src/platform/admin-request-users.js
+          node --check src/platform/admin-request-plan-policy.js
+          node --check src/platform/customer-password-sync.js
           node --check src/platform/admin-provisioning.js
           node --check src/platform/router.js
           node --check scripts/request-user-sync-smoke.js
@@ -51,7 +56,7 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/request_user_sync
         run: npm run db:migrate
-      - name: Aggregate all Jellyfin users into one request service
+      - name: Plan quotas, expiry suspension, renewal and password policy
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/request_user_sync
         run: node scripts/request-user-sync-smoke.js

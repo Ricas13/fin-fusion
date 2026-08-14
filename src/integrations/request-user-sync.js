@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const { query } = require('../db');
 const runtimeSettings = require('../platform/runtime-settings');
 
+const REQUEST_PERMISSION = 32;
+
 function cleanBaseUrl(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -83,24 +85,63 @@ function fallbackEmail(customerId) {
     return `cf-${compact}@captainfin.invalid`;
 }
 
+function quotaLimit(value) {
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function quotaDays(value) {
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : 30;
+}
+
 async function syncCandidates() {
     const result = await query(`
         SELECT c.id AS customer_id,
                COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS email,
                COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),MIN(ja.jellyfin_username),'user') AS username,
-               COUNT(DISTINCT ja.server_id)::int AS active_server_count,
-               STRING_AGG(DISTINCT js.name, ', ' ORDER BY js.name) AS active_servers,
+               COUNT(DISTINCT ja.server_id) FILTER (WHERE ja.disabled=FALSE AND js.enabled=TRUE)::int AS active_server_count,
+               STRING_AGG(DISTINCT js.name, ', ' ORDER BY js.name) FILTER (WHERE ja.disabled=FALSE AND js.enabled=TRUE) AS active_servers,
+               ent.plan_id,ent.plan_name,ent.plan_code,ent.current_period_end,
+               ent.request_movie_quota_limit,ent.request_movie_quota_days,
+               ent.request_tv_quota_limit,ent.request_tv_quota_days,
+               (ent.plan_id IS NOT NULL) AS entitlement_active,
                rus.external_user_id,rus.external_email,rus.external_username,
                rus.status,rus.password_reset_required,rus.last_error,
-               rus.last_attempt_at,rus.last_success_at
+               rus.last_attempt_at,rus.last_success_at,rus.active_permissions,
+               rus.access_suspended,rus.applied_plan_id,
+               rus.applied_movie_quota_limit,rus.applied_movie_quota_days,
+               rus.applied_tv_quota_limit,rus.applied_tv_quota_days
         FROM customers c
         LEFT JOIN app_users u ON u.id=c.user_id
-        JOIN jellyfin_accounts ja ON ja.customer_id=c.id AND ja.disabled=FALSE
-        JOIN jellyfin_servers js ON js.id=ja.server_id AND js.enabled=TRUE
+        LEFT JOIN LATERAL (
+            SELECT p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,s.current_period_end,
+                   p.request_movie_quota_limit,p.request_movie_quota_days,
+                   p.request_tv_quota_limit,p.request_tv_quota_days
+            FROM subscriptions s
+            JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=c.id
+              AND s.status IN ('active','trialing','past_due')
+              AND s.current_period_end > NOW()
+              AND p.active=TRUE
+              AND c.access_paused_at IS NULL
+            ORDER BY s.current_period_end DESC,s.created_at DESC
+            LIMIT 1
+        ) ent ON TRUE
+        LEFT JOIN jellyfin_accounts ja ON ja.customer_id=c.id
+        LEFT JOIN jellyfin_servers js ON js.id=ja.server_id
         LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
-        GROUP BY c.id,u.email,u.username,rus.external_user_id,rus.external_email,
-                 rus.external_username,rus.status,rus.password_reset_required,rus.last_error,
-                 rus.last_attempt_at,rus.last_success_at
+        WHERE ent.plan_id IS NOT NULL OR rus.external_user_id IS NOT NULL
+        GROUP BY c.id,u.email,u.username,
+                 ent.plan_id,ent.plan_name,ent.plan_code,ent.current_period_end,
+                 ent.request_movie_quota_limit,ent.request_movie_quota_days,
+                 ent.request_tv_quota_limit,ent.request_tv_quota_days,
+                 rus.external_user_id,rus.external_email,rus.external_username,
+                 rus.status,rus.password_reset_required,rus.last_error,
+                 rus.last_attempt_at,rus.last_success_at,rus.active_permissions,
+                 rus.access_suspended,rus.applied_plan_id,
+                 rus.applied_movie_quota_limit,rus.applied_movie_quota_days,
+                 rus.applied_tv_quota_limit,rus.applied_tv_quota_days
         ORDER BY COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),MIN(ja.jellyfin_username),'user')
     `);
     return result.rows;
@@ -118,13 +159,49 @@ async function externalUsers() {
     return users;
 }
 
+async function permissionState(externalUserId) {
+    const response = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`);
+    const permissions = Number(response?.permissions);
+    return Number.isInteger(permissions) && permissions >= 0 ? permissions : 0;
+}
+
+async function setPermissions(externalUserId, permissions) {
+    await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`, {
+        method: 'POST',
+        body: { permissions: Math.max(0, Number(permissions) || 0) }
+    });
+}
+
+async function setQuotas(externalUserId, externalUsername, plan) {
+    const current = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`);
+    const body = {
+        username: current?.username ?? externalUsername ?? null,
+        discordId: current?.discordId ?? null,
+        locale: current?.locale ?? null,
+        region: current?.region ?? null,
+        originalLanguage: current?.originalLanguage ?? null,
+        watchlistSyncMovies: current?.watchlistSyncMovies ?? false,
+        watchlistSyncTv: current?.watchlistSyncTv ?? false,
+        movieQuotaLimit: quotaLimit(plan?.request_movie_quota_limit),
+        movieQuotaDays: quotaDays(plan?.request_movie_quota_days),
+        tvQuotaLimit: quotaLimit(plan?.request_tv_quota_limit),
+        tvQuotaDays: quotaDays(plan?.request_tv_quota_days)
+    };
+    await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`, { method: 'POST', body });
+    return body;
+}
+
 async function mark(customerId, fields) {
     const status = fields.status || 'pending';
     await query(`
         INSERT INTO request_user_sync(
             customer_id,external_user_id,external_email,external_username,status,
-            password_reset_required,last_error,last_attempt_at,last_success_at,updated_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),CASE WHEN $5='synced' THEN NOW() ELSE NULL END,NOW())
+            password_reset_required,last_error,last_attempt_at,last_success_at,updated_at,
+            active_permissions,access_suspended,applied_plan_id,
+            applied_movie_quota_limit,applied_movie_quota_days,
+            applied_tv_quota_limit,applied_tv_quota_days
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),CASE WHEN $5='synced' THEN NOW() ELSE NULL END,NOW(),
+                 $8,$9,$10,$11,$12,$13,$14)
         ON CONFLICT(customer_id) DO UPDATE SET
             external_user_id=COALESCE(EXCLUDED.external_user_id,request_user_sync.external_user_id),
             external_email=COALESCE(EXCLUDED.external_email,request_user_sync.external_email),
@@ -134,6 +211,13 @@ async function mark(customerId, fields) {
             last_error=EXCLUDED.last_error,
             last_attempt_at=NOW(),
             last_success_at=CASE WHEN EXCLUDED.status='synced' THEN NOW() ELSE request_user_sync.last_success_at END,
+            active_permissions=COALESCE(EXCLUDED.active_permissions,request_user_sync.active_permissions),
+            access_suspended=EXCLUDED.access_suspended,
+            applied_plan_id=EXCLUDED.applied_plan_id,
+            applied_movie_quota_limit=EXCLUDED.applied_movie_quota_limit,
+            applied_movie_quota_days=EXCLUDED.applied_movie_quota_days,
+            applied_tv_quota_limit=EXCLUDED.applied_tv_quota_limit,
+            applied_tv_quota_days=EXCLUDED.applied_tv_quota_days,
             updated_at=NOW()
     `, [
         customerId,
@@ -142,16 +226,72 @@ async function mark(customerId, fields) {
         fields.username || null,
         status,
         Boolean(fields.passwordResetRequired),
-        fields.error ? String(fields.error).slice(0, 1000) : null
+        fields.error ? String(fields.error).slice(0, 1000) : null,
+        fields.activePermissions == null ? null : Math.max(0, Number(fields.activePermissions) || 0),
+        Boolean(fields.accessSuspended),
+        fields.planId || null,
+        fields.movieQuotaLimit == null ? null : Number(fields.movieQuotaLimit),
+        fields.movieQuotaDays == null ? null : Number(fields.movieQuotaDays),
+        fields.tvQuotaLimit == null ? null : Number(fields.tvQuotaLimit),
+        fields.tvQuotaDays == null ? null : Number(fields.tvQuotaDays)
     ]);
+}
+
+async function suspendCustomer(candidate, external) {
+    if (!external?.id) return { status: 'ignored', customerId: candidate.customer_id };
+    try {
+        const currentPermissions = await permissionState(external.id);
+        const remembered = Number(candidate.active_permissions);
+        const activePermissions = Number.isInteger(remembered) && remembered > 0
+            ? remembered
+            : currentPermissions > 0 ? currentPermissions : REQUEST_PERMISSION;
+        if (currentPermissions !== 0) await setPermissions(external.id, 0);
+        await mark(candidate.customer_id, {
+            status: 'synced',
+            externalUserId: external.id,
+            email: external.email || candidate.external_email,
+            username: external.username || candidate.external_username || candidate.username,
+            passwordResetRequired: Boolean(candidate.password_reset_required),
+            activePermissions,
+            accessSuspended: true,
+            planId: null,
+            movieQuotaLimit: candidate.applied_movie_quota_limit,
+            movieQuotaDays: candidate.applied_movie_quota_days,
+            tvQuotaLimit: candidate.applied_tv_quota_limit,
+            tvQuotaDays: candidate.applied_tv_quota_days
+        });
+        return { status: 'suspended', customerId: candidate.customer_id };
+    } catch (error) {
+        await mark(candidate.customer_id, {
+            status: 'failed',
+            externalUserId: external.id,
+            email: external.email || candidate.external_email,
+            username: external.username || candidate.username,
+            passwordResetRequired: Boolean(candidate.password_reset_required),
+            activePermissions: candidate.active_permissions,
+            accessSuspended: Boolean(candidate.access_suspended),
+            planId: candidate.applied_plan_id,
+            movieQuotaLimit: candidate.applied_movie_quota_limit,
+            movieQuotaDays: candidate.applied_movie_quota_days,
+            tvQuotaLimit: candidate.applied_tv_quota_limit,
+            tvQuotaDays: candidate.applied_tv_quota_days,
+            error: error.message
+        });
+        return { status: 'failed', customerId: candidate.customer_id, error: error.message };
+    }
 }
 
 async function syncCustomer(candidate, indexes = {}) {
     const username = cleanUsername(candidate.username);
     const email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
+    let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
+    if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
+
+    if (!candidate.entitlement_active) {
+        return suspendCustomer(candidate, external);
+    }
+
     try {
-        let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
-        if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
         let created = false;
         if (!external) {
             const bootstrapPassword = crypto.randomBytes(30).toString('base64url');
@@ -164,18 +304,44 @@ async function syncCustomer(candidate, indexes = {}) {
             if (external?.email && indexes.byEmail) indexes.byEmail.set(String(external.email).toLowerCase(), external);
         }
         if (!external?.id) throw new Error('Request service did not return a user ID.');
+
+        const currentPermissions = await permissionState(external.id);
+        const remembered = Number(candidate.active_permissions);
+        const activePermissions = Number.isInteger(remembered) && remembered > 0
+            ? remembered
+            : currentPermissions > 0 ? currentPermissions : REQUEST_PERMISSION;
+        if (candidate.access_suspended || currentPermissions === 0) {
+            await setPermissions(external.id, activePermissions);
+        }
+        const quotas = await setQuotas(external.id, external.username || username, candidate);
+
         await mark(candidate.customer_id, {
             status: 'synced',
             externalUserId: external.id,
             email: external.email || email,
             username: external.username || username,
-            passwordResetRequired: created || Boolean(candidate.password_reset_required)
+            passwordResetRequired: created || Boolean(candidate.password_reset_required),
+            activePermissions,
+            accessSuspended: false,
+            planId: candidate.plan_id,
+            movieQuotaLimit: quotas.movieQuotaLimit,
+            movieQuotaDays: quotas.movieQuotaDays,
+            tvQuotaLimit: quotas.tvQuotaLimit,
+            tvQuotaDays: quotas.tvQuotaDays
         });
         return { status: 'synced', customerId: candidate.customer_id, created };
     } catch (error) {
         await mark(candidate.customer_id, {
             status: 'failed', email, username,
+            externalUserId: external?.id || candidate.external_user_id,
             passwordResetRequired: Boolean(candidate.password_reset_required),
+            activePermissions: candidate.active_permissions,
+            accessSuspended: Boolean(candidate.access_suspended),
+            planId: candidate.applied_plan_id,
+            movieQuotaLimit: candidate.applied_movie_quota_limit,
+            movieQuotaDays: candidate.applied_movie_quota_days,
+            tvQuotaLimit: candidate.applied_tv_quota_limit,
+            tvQuotaDays: candidate.applied_tv_quota_days,
             error: error.message
         });
         return { status: 'failed', customerId: candidate.customer_id, error: error.message };
@@ -194,12 +360,13 @@ async function syncAll() {
     if (!config.configured) throw new Error('Configure an external request site URL and SEERR_API_KEY/OVERSEERR_API_KEY first.');
     const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]);
     const indexes = indexesFor(existing);
-    const summary = { total: candidates.length, created: 0, linked: 0, failed: 0 };
+    const summary = { total: candidates.length, created: 0, linked: 0, suspended: 0, failed: 0 };
     for (const candidate of candidates) {
         const result = await syncCustomer(candidate, indexes);
         if (result.status === 'failed') summary.failed += 1;
+        else if (result.status === 'suspended') summary.suspended += 1;
         else if (result.created) summary.created += 1;
-        else summary.linked += 1;
+        else if (result.status === 'synced') summary.linked += 1;
     }
     return summary;
 }
@@ -207,25 +374,27 @@ async function syncAll() {
 async function syncOneCustomer(customerId) {
     const candidates = await syncCandidates();
     const candidate = candidates.find(row => String(row.customer_id) === String(customerId));
-    if (!candidate) throw new Error('Customer has no active Jellyfin account to sync.');
+    if (!candidate) throw new Error('Customer has no managed request identity or active subscription to sync.');
     const existing = await externalUsers();
     return syncCustomer(candidate, indexesFor(existing));
 }
 
 async function requestAccessForCustomer(customerId) {
     const result = await query(`
-        SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email
+        SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,
+               p.name AS applied_plan_name,p.code AS applied_plan_code
         FROM customers c
         LEFT JOIN app_users u ON u.id=c.user_id
         LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
+        LEFT JOIN plans p ON p.id=rus.applied_plan_id
         WHERE c.id=$1
     `, [customerId]);
     return result.rows[0] || null;
 }
 
 async function setCustomerPassword(customerId, password) {
-    if (typeof password !== 'string' || password.length < 12 || password.length > 200) {
-        throw new Error('Request-site password must be between 12 and 200 characters.');
+    if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
+        throw new Error('Request-site password must be between 8 and 200 characters.');
     }
     let access = await requestAccessForCustomer(customerId);
     if (!access?.external_user_id) {
@@ -234,6 +403,7 @@ async function setCustomerPassword(customerId, password) {
         access = await requestAccessForCustomer(customerId);
     }
     if (!access?.external_user_id) throw new Error('Request-site user is not synced yet.');
+    if (access.access_suspended) throw new Error('Request access is suspended until the subscription becomes active again.');
     await apiRequest(`/api/v1/user/${encodeURIComponent(access.external_user_id)}/settings/password`, {
         method: 'POST',
         body: { newPassword: password }
@@ -246,29 +416,46 @@ async function setCustomerPassword(customerId, password) {
     return true;
 }
 
+async function markPasswordSyncFailure(customerId, error) {
+    await query(`
+        UPDATE request_user_sync
+        SET password_reset_required=TRUE,last_error=$2,updated_at=NOW()
+        WHERE customer_id=$1
+    `, [customerId, String(error?.message || error || 'Request password sync failed').slice(0, 1000)]);
+}
+
 async function statusSummary() {
-    const [config, counts] = await Promise.all([
+    const [config, counts, suspended] = await Promise.all([
         configuration(),
-        query(`SELECT status,COUNT(*)::int AS count FROM request_user_sync GROUP BY status`)
+        query(`SELECT status,COUNT(*)::int AS count FROM request_user_sync GROUP BY status`),
+        query(`SELECT COUNT(*)::int AS count FROM request_user_sync WHERE access_suspended=TRUE`)
     ]);
     return {
         ...config,
-        counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count]))
+        counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])),
+        suspended: Number(suspended.rows[0]?.count || 0)
     };
 }
 
 module.exports = {
+    REQUEST_PERMISSION,
     cleanBaseUrl,
     configuration,
     apiRequest,
     validEmail,
     cleanUsername,
     fallbackEmail,
+    quotaLimit,
+    quotaDays,
     syncCandidates,
     externalUsers,
+    permissionState,
+    setPermissions,
+    setQuotas,
     syncAll,
     syncOneCustomer,
     requestAccessForCustomer,
     setCustomerPassword,
+    markPasswordSyncFailure,
     statusSummary
 };
