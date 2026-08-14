@@ -63,9 +63,6 @@ function loadRatio(server) {
     const max = number(server.max_users, 0);
     const users = fleetLoad(server).users;
     if (max > 0) return users / max;
-    // Unlimited servers have no hard capacity ceiling. Keep them competitive,
-    // but do not make every unlimited server permanently beat a lightly loaded
-    // capped server solely because its denominator is missing.
     return users / 1000;
 }
 
@@ -185,8 +182,6 @@ function setFleetSnapshotForTests(entries) {
     }]));
     snapshotLoadedAt = Date.now();
 }
-
-startFleetSnapshotRefresh();
 
 module.exports = {
     STRATEGIES,
