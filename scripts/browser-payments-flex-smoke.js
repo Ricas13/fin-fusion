@@ -14,23 +14,29 @@ async function main() {
     const adminId = admin.rows[0].id;
 
     await providerSettings.save('stripe', {
+        enabled: true,
         restrictedKey: 'rk_test_browser_secret',
         webhookSecret: 'whsec_browser_secret'
     }, adminId);
     await providerSettings.save('paypal', {
+        enabled: true,
         environment: 'sandbox',
         clientId: 'paypal-browser-client',
         clientSecret: 'paypal-browser-secret',
         webhookId: 'WH-BROWSER'
     }, adminId);
 
-    const [stripeStatus, paypalStatus] = await Promise.all([
+    let [stripeStatus, paypalStatus] = await Promise.all([
         providerSettings.status('stripe'), providerSettings.status('paypal')
     ]);
     assert.equal(stripeStatus.source, 'database');
+    assert.equal(stripeStatus.enabled, true);
+    assert.equal(stripeStatus.credentialsConfigured, true);
     assert.equal(stripeStatus.configured, true);
     assert.equal(stripeStatus.webhookConfigured, true);
     assert.equal(paypalStatus.source, 'database');
+    assert.equal(paypalStatus.enabled, true);
+    assert.equal(paypalStatus.credentialsConfigured, true);
     assert.equal(paypalStatus.configured, true);
     assert.equal(paypalStatus.webhookConfigured, true);
     assert.equal(paypalStatus.environment, 'sandbox');
@@ -41,6 +47,34 @@ async function main() {
         assert.ok(row.secrets_encrypted.startsWith('v1:'));
         assert.ok(!row.secrets_encrypted.includes('browser-secret'));
     }
+
+    const realFetch = global.fetch;
+    global.fetch = async url => {
+        const href = String(url);
+        if (href.startsWith('https://api.stripe.com/')) {
+            return new Response(JSON.stringify({ object: 'list', data: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (href.includes('paypal.com/v1/oauth2/token')) {
+            return new Response(JSON.stringify({ access_token: 'test-token', token_type: 'Bearer', expires_in: 3600 }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        throw new Error(`Unexpected fetch in smoke test: ${href}`);
+    };
+    try {
+        assert.equal((await providerSettings.testConnection('stripe')).ok, true);
+        assert.equal((await providerSettings.testConnection('paypal')).ok, true);
+    } finally {
+        global.fetch = realFetch;
+    }
+
+    await providerSettings.save('stripe', { enabled: false }, adminId);
+    stripeStatus = await providerSettings.status('stripe');
+    assert.equal(stripeStatus.enabled, false);
+    assert.equal(stripeStatus.credentialsConfigured, true);
+    assert.equal(stripeStatus.configured, false);
+    assert.equal(providerSettings.peek('stripe').restrictedKey, '');
+    await providerSettings.save('stripe', { enabled: true }, adminId);
+    stripeStatus = await providerSettings.status('stripe');
+    assert.equal(stripeStatus.configured, true);
 
     const plan = await query(`
         INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)

@@ -31,9 +31,14 @@ function customerLoginThrottle(req, res, next) {
 }
 
 function requestUserSyncIntervalMs() {
-    const configured = Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS);
-    if (!Number.isFinite(configured) || configured <= 0) return 15 * 60 * 1000;
-    return Math.max(5 * 60 * 1000, configured);
+    try {
+        const requestServiceSettings = require('./src/integrations/request-service-settings');
+        return requestServiceSettings.syncIntervalMs();
+    } catch (_) {
+        const configured = Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS);
+        if (!Number.isFinite(configured) || configured <= 0) return 15 * 60 * 1000;
+        return Math.max(5 * 60 * 1000, configured);
+    }
 }
 
 function startJobs() {
@@ -43,6 +48,7 @@ function startJobs() {
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
     const bulkWorker = require('./src/jellyfin/bulk-worker');
     const requestUserSync = require('./src/integrations/request-user-sync');
+    const requestServiceSettings = require('./src/integrations/request-service-settings');
     require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
@@ -74,6 +80,7 @@ function startJobs() {
     };
     const runRequestUsers = async () => {
         try {
+            await requestServiceSettings.ensureLoaded();
             const config = await requestUserSync.configuration();
             if (!config.configured) return;
             const result = await requestUserSync.syncAll();
@@ -82,6 +89,8 @@ function startJobs() {
             }
         } catch (error) { console.error('Request user sync failed:', error.message); }
     };
+    requestServiceSettings.ensureLoaded()
+        .catch(error => console.error('Request service settings load failed, using environment fallback:', error.message));
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     const initialRequestUsers = setTimeout(runRequestUsers, 30000);
@@ -121,6 +130,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
         const { createAdminRequestPlanPolicyRouter } = require('./src/platform/admin-request-plan-policy');
+        const { createAdminRequestRedirectRouter } = require('./src/platform/admin-request-redirect');
         const { createAdminServerMigrationsRouter } = require('./src/platform/admin-server-migrations');
         const { createAdminJellyfinImportRouter } = require('./src/platform/admin-jellyfin-import');
         const { createAdminSetupRouter } = require('./src/platform/admin-setup');
@@ -163,6 +173,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminServerMigrationsRouter());
         this.use(createAdminRequestPlanPolicyRouter());
         this.use(createAdminRequestUsersRouter());
+        this.use(createAdminRequestRedirectRouter());
         this.use(createAdminProvisioningRouter());
         this.use(createAdminPaymentSettingsRouter());
         this.use(createAdminCatalogShellRouter());

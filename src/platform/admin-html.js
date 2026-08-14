@@ -13,7 +13,7 @@ const groups = [
     ['people', 'People', [['users', 'Customers', '/admin/users'], ['jellyfin-import', 'Jellyfin Import', '/admin/jellyfin-import'], ['invitations', 'Invitations', '/admin/invitations'], ['resellers', 'Resellers', '/admin/reseller-management'], ['activity', 'Activity', '/admin/activity']]],
     ['servers', 'Servers', [['servers', 'Servers', '/admin/servers'], ['libraries', 'Libraries', '/admin/libraries']]],
     ['commerce', 'Commerce', [['plans', 'Plans', '/admin/plans'], ['payments', 'Payments', '/admin/payments'], ['discounts', 'Discounts', '/admin/discounts'], ['referrals', 'Referrals', '/admin/referrals']]],
-    ['automation', 'Automation', [['provisioning', 'Provisioning', '/admin/provisioning'], ['requests', 'Requests', '/admin/requests'], ['notifications', 'Notifications', '/admin/notifications']]],
+    ['automation', 'Automation', [['provisioning', 'Provisioning', '/admin/provisioning'], ['notifications', 'Notifications', '/admin/notifications']]],
     ['settings', 'Settings', [['setup', 'Setup', '/admin/setup'], ['settings', 'General', '/admin/settings'], ['branding', 'Branding', '/admin/settings/branding']]]
 ];
 

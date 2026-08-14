@@ -2,15 +2,17 @@
 
 const { query } = require('../db');
 const runtimeSettings = require('./runtime-settings');
+const providerSettings = require('../payments/provider-settings');
+const requestServiceSettings = require('../integrations/request-service-settings');
 
 function envPresent(...names) {
     return names.some(name => Boolean(String(process.env[name] || '').trim()));
 }
 
 async function setupReadiness() {
-    await runtimeSettings.ensureLoaded();
+    await Promise.all([runtimeSettings.ensureLoaded(), providerSettings.ensureLoaded(), requestServiceSettings.ensureLoaded()]);
 
-    const [counts, providerMappings, settings, activeDiscounts] = await Promise.all([
+    const [counts, providerMappings, settings, activeDiscounts, stripeStatus, paypalStatus, requestStatus] = await Promise.all([
         query(`
             SELECT
                 (SELECT COUNT(*)::int FROM jellyfin_servers) AS servers,
@@ -30,17 +32,18 @@ async function setupReadiness() {
             FROM platform_settings
             WHERE setting_key IN ('referral_program','installation')
         `),
-        query(`SELECT COUNT(*)::int AS count FROM discount_codes WHERE active=TRUE`)
+        query(`SELECT COUNT(*)::int AS count FROM discount_codes WHERE active=TRUE`),
+        providerSettings.status('stripe'),
+        providerSettings.status('paypal'),
+        requestServiceSettings.status()
     ]);
 
     const c = counts.rows[0] || {};
     const mappingByProvider = Object.fromEntries(providerMappings.rows.map(row => [row.provider, Number(row.mappings || 0)]));
     const settingMap = Object.fromEntries(settings.rows.map(row => [row.setting_key, row.setting_value || {}]));
 
-    const stripeCredentials = envPresent('STRIPE_RESTRICTED_KEY', 'STRIPE_API_KEY');
-    const paypalCredentials = envPresent('PAYPAL_CLIENT_ID') && envPresent('PAYPAL_CLIENT_SECRET');
-    const stripeReady = stripeCredentials && Number(mappingByProvider.stripe || 0) > 0;
-    const paypalReady = paypalCredentials && Number(mappingByProvider.paypal || 0) > 0;
+    const stripeReady = stripeStatus.configured && Number(mappingByProvider.stripe || 0) > 0;
+    const paypalReady = paypalStatus.configured && Number(mappingByProvider.paypal || 0) > 0;
     const emailReady = envPresent('SMTP_URL');
     const telegramReady = envPresent('TELEGRAM_BOT_TOKEN') && envPresent('TELEGRAM_CHAT_ID');
     const whatsappReady = envPresent('WHATSAPP_PROVIDER') && envPresent('WHATSAPP_ACCESS_TOKEN');
@@ -48,7 +51,7 @@ async function setupReadiness() {
     const storefrontEnabled = runtimeSettings.storefrontEnabled();
     const registrationEnabled = runtimeSettings.publicRegistrationOpen();
     const referralsEnabled = settingMap.referral_program?.enabled === true;
-    const overseerrReady = Boolean(runtimeSettings.overseerrUrl());
+    const requestReady = requestStatus.configured;
 
     const checklist = [
         {
@@ -71,8 +74,15 @@ async function setupReadiness() {
             configured: stripeReady || paypalReady,
             detail: stripeReady || paypalReady
                 ? [stripeReady ? 'Stripe' : null, paypalReady ? 'PayPal' : null].filter(Boolean).join(' + ') + ' ready'
-                : 'Optional · no provider with credentials and plan mapping is ready',
+                : 'Optional · enable a provider, save credentials and map it to a plan',
             href: '/admin/payments'
+        },
+        {
+            key: 'requests',
+            label: 'Configure request service',
+            configured: requestReady,
+            detail: requestReady ? `Central request service ready · ${requestStatus.baseUrl}` : 'Optional · add URL and API key under Provisioning → Request Service',
+            href: '/admin/request-users'
         },
         {
             key: 'email',
@@ -105,13 +115,14 @@ async function setupReadiness() {
         { name: 'Customers', state: 'enabled', detail: `${Number(c.customers || 0)} customer${Number(c.customers) === 1 ? '' : 's'}` },
         { name: 'Resellers', state: 'enabled', detail: `${Number(c.resellers || 0)} reseller${Number(c.resellers) === 1 ? '' : 's'}` },
         { name: 'Jellyfin', state: Number(c.servers || 0) > 0 ? 'configured' : 'not_configured', detail: `${Number(c.servers || 0)} servers` },
-        { name: 'Payments', state: stripeReady || paypalReady ? 'configured' : 'not_configured', detail: stripeReady || paypalReady ? 'Provider ready' : 'Optional' },
+        { name: 'Stripe', state: stripeStatus.enabled ? (stripeStatus.configured ? 'configured' : 'not_configured') : 'disabled', detail: stripeStatus.configured ? `${mappingByProvider.stripe || 0} plan mapping(s)` : 'Optional' },
+        { name: 'PayPal', state: paypalStatus.enabled ? (paypalStatus.configured ? 'configured' : 'not_configured') : 'disabled', detail: paypalStatus.configured ? `${mappingByProvider.paypal || 0} plan mapping(s)` : 'Optional' },
+        { name: 'Request service', state: requestStatus.enabled ? (requestReady ? 'configured' : 'not_configured') : 'disabled', detail: requestReady ? requestStatus.baseUrl : 'Optional' },
         { name: 'Storefront', state: storefrontEnabled ? 'enabled' : 'disabled', detail: storefrontEnabled ? 'Public homepage enabled' : 'Opt-in' },
         { name: 'Registration', state: registrationEnabled ? 'enabled' : 'disabled', detail: registrationEnabled ? 'Public registration open' : 'Invite/admin onboarding only' },
         { name: 'Notifications', state: notificationsReady ? 'configured' : 'not_configured', detail: notificationsReady ? 'Delivery channel ready' : 'Optional' },
         { name: 'Referrals', state: referralsEnabled ? 'enabled' : 'disabled', detail: referralsEnabled ? 'Reward program enabled' : 'Opt-in' },
-        { name: 'Discounts', state: Number(activeDiscounts.rows[0]?.count || 0) > 0 ? 'enabled' : 'available', detail: `${Number(activeDiscounts.rows[0]?.count || 0)} active` },
-        { name: 'Overseerr / Seerr', state: overseerrReady ? 'configured' : 'not_configured', detail: overseerrReady ? 'External request URL set' : 'Optional' }
+        { name: 'Discounts', state: Number(activeDiscounts.rows[0]?.count || 0) > 0 ? 'enabled' : 'available', detail: `${Number(activeDiscounts.rows[0]?.count || 0)} active` }
     ];
 
     return {

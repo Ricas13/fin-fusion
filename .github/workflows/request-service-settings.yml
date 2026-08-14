@@ -1,0 +1,61 @@
+name: Request Service Settings
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/030_request_service_settings.sql'
+      - 'src/integrations/request-service-settings.js'
+      - 'src/platform/admin-request-users.js'
+      - 'src/platform/admin-request-redirect.js'
+      - 'src/platform/admin-html.js'
+      - 'src/platform/admin-original-settings.js'
+      - 'platform-preload.js'
+      - 'scripts/request-service-settings-smoke.js'
+      - '.github/workflows/request-service-settings.yml'
+  workflow_dispatch:
+
+jobs:
+  request-service-settings:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: request_service_settings
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d request_service_settings"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/integrations/request-service-settings.js
+          node --check src/platform/admin-request-users.js
+          node --check src/platform/admin-request-redirect.js
+          node --check src/platform/admin-original-settings.js
+          node --check src/payments/provider-settings.js
+          node --check src/platform/admin-payment-settings.js
+          node --check scripts/request-service-settings-smoke.js
+          node --check platform-preload.js
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/request_service_settings
+          DATA_ENCRYPTION_KEY: ${{ '2222222222222222222222222222222222222222222222222222222222222222' }}
+        run: npm run db:migrate
+      - name: Browser request settings and runtime activation
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/request_service_settings
+          DATA_ENCRYPTION_KEY: ${{ '2222222222222222222222222222222222222222222222222222222222222222' }}
+        run: node scripts/request-service-settings-smoke.js

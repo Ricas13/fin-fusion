@@ -4,6 +4,11 @@ const { query } = require('../db');
 const { encryptString, decryptString } = require('../crypto');
 const runtimeSettings = require('../platform/runtime-settings');
 
+const ENV_SEERR_API_KEY = String(process.env.SEERR_API_KEY || '').trim();
+const ENV_OVERSEERR_API_KEY = String(process.env.OVERSEERR_API_KEY || '').trim();
+const ENV_REQUEST_URL = String(process.env.SEERR_URL || process.env.OVERSEERR_URL || '').trim();
+const ENV_SYNC_INTERVAL_MS = Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS || 15 * 60 * 1000);
+
 let cache = null;
 let loading = null;
 
@@ -20,19 +25,19 @@ function cleanBaseUrl(value) {
     return parsed.toString().replace(/\/$/, '');
 }
 
-function envApiKey() {
-    return String(process.env.SEERR_API_KEY || process.env.OVERSEERR_API_KEY || '').trim();
+function originalEnvApiKey() {
+    return ENV_SEERR_API_KEY || ENV_OVERSEERR_API_KEY;
 }
 
 function envConfig() {
-    const baseUrl = cleanBaseUrl(runtimeSettings.overseerrUrl() || process.env.OVERSEERR_URL || process.env.SEERR_URL || '');
-    const apiKey = envApiKey();
+    const baseUrl = cleanBaseUrl(runtimeSettings.overseerrUrl() || ENV_REQUEST_URL || '');
+    const apiKey = originalEnvApiKey();
     return {
         source: 'environment',
         enabled: Boolean(baseUrl && apiKey),
         baseUrl,
         apiKey,
-        syncIntervalMinutes: Math.max(5, Math.min(1440, Math.round(Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS || 15 * 60 * 1000) / 60000) || 15)),
+        syncIntervalMinutes: Math.max(5, Math.min(1440, Math.round(ENV_SYNC_INTERVAL_MS / 60000) || 15)),
         updatedAt: null
     };
 }
@@ -45,7 +50,7 @@ function decodeRow(row) {
     // Platform Settings URL. Keep any existing env API key working until an
     // administrator explicitly saves the new browser-managed settings form.
     const migratedCompatibilityRow = !row.updated_by && !row.api_key_encrypted;
-    if (!apiKey && migratedCompatibilityRow) apiKey = envApiKey();
+    if (!apiKey && migratedCompatibilityRow) apiKey = originalEnvApiKey();
 
     const baseUrl = cleanBaseUrl(row.base_url || '');
     const enabled = migratedCompatibilityRow
@@ -62,12 +67,31 @@ function decodeRow(row) {
     };
 }
 
+function applyRuntime(cfg) {
+    const activeKey = cfg?.enabled ? String(cfg.apiKey || '').trim() : '';
+    process.env.SEERR_API_KEY = activeKey;
+    process.env.OVERSEERR_API_KEY = '';
+    process.env.REQUEST_USER_SYNC_INTERVAL_MS = String(Math.max(5, Number(cfg?.syncIntervalMinutes) || 15) * 60000);
+}
+
+async function mirrorUrl(baseUrl) {
+    await query(`
+        INSERT INTO platform_settings(setting_key,setting_value,updated_at)
+        VALUES('platform',$1::jsonb,NOW())
+        ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value=platform_settings.setting_value || EXCLUDED.setting_value,
+            updated_at=NOW()
+    `, [JSON.stringify({ overseerrUrl: baseUrl || '' })]);
+    await runtimeSettings.reload();
+}
+
 async function load() {
     if (loading) return loading;
     loading = (async () => {
         await runtimeSettings.ensureLoaded();
         const result = await query('SELECT enabled,base_url,api_key_encrypted,sync_interval_minutes,updated_by,updated_at FROM request_service_settings WHERE id=1');
         cache = result.rowCount ? decodeRow(result.rows[0]) : envConfig();
+        applyRuntime(cache);
         return cache;
     })().finally(() => { loading = null; });
     return loading;
@@ -127,6 +151,8 @@ async function save(input, actorUserId = null) {
     `, [enabled, baseUrl || null, nextApiKey ? encryptString(nextApiKey) : null, syncIntervalMinutes, actorUserId]);
 
     cache = { source: 'database', enabled, baseUrl, apiKey: nextApiKey, syncIntervalMinutes, updatedAt: new Date() };
+    applyRuntime(cache);
+    await mirrorUrl(baseUrl);
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                  VALUES($1,'admin.request_service.update','request_service','central',$2::jsonb)`,
         [actorUserId, JSON.stringify({ enabled, baseUrl, apiKeyConfigured: Boolean(nextApiKey), syncIntervalMinutes })]);
@@ -137,9 +163,47 @@ async function useEnvironment(actorUserId = null) {
     await query('DELETE FROM request_service_settings WHERE id=1');
     await runtimeSettings.ensureLoaded();
     cache = envConfig();
+    applyRuntime(cache);
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                  VALUES($1,'admin.request_service.use_environment','request_service','central','{}'::jsonb)`, [actorUserId]);
     return status();
+}
+
+async function testConnection() {
+    const cfg = await get();
+    if (!cfg.baseUrl) throw new Error('Request service URL is not configured.');
+    if (!cfg.apiKey) throw new Error('Request service API key is not configured.');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+        const url = new URL('/api/v1/user?take=1&skip=0&sort=displayname', `${cfg.baseUrl}/`);
+        const response = await fetch(url, {
+            method: 'GET',
+            redirect: 'error',
+            signal: controller.signal,
+            headers: { Accept: 'application/json', 'X-Api-Key': cfg.apiKey }
+        });
+        if (!response.ok) {
+            let detail = '';
+            try {
+                const body = await response.json();
+                detail = body?.message ? `: ${body.message}` : '';
+            } catch (_) {}
+            throw new Error(`Request service returned HTTP ${response.status}${detail}`);
+        }
+        const body = await response.json().catch(() => ({}));
+        return {
+            ok: true,
+            message: 'Connected successfully. The request-service URL and API key are valid.',
+            usersVisible: Number(body?.pageInfo?.results ?? (Array.isArray(body?.results) ? body.results.length : 0))
+        };
+    } catch (error) {
+        if (error?.name === 'AbortError') throw new Error('Request service connection timed out after 10 seconds.');
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 function syncIntervalMs() {
@@ -147,4 +211,4 @@ function syncIntervalMs() {
     return Math.max(5, Number(cfg.syncIntervalMinutes) || 15) * 60000;
 }
 
-module.exports = { cleanBaseUrl, ensureLoaded, get, peek, status, save, useEnvironment, configured, syncIntervalMs };
+module.exports = { cleanBaseUrl, ensureLoaded, get, peek, status, save, useEnvironment, configured, testConnection, syncIntervalMs };

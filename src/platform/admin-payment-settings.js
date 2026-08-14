@@ -45,39 +45,50 @@ async function paymentsData() {
 }
 
 function providerMetric(status, label) {
-    const good = status.configured && status.webhookConfigured;
-    const partial = status.configured && !status.webhookConfigured;
-    const value = good ? 'Ready' : partial ? 'Checkout only' : 'Not configured';
-    return `<div class="metric"><div class="metricLabel">${esc(label)}</div><div class="metricValue small">${esc(value)}</div><div class="subText">${esc(status.source === 'database' ? 'Browser-managed' : 'Environment fallback')}</div></div>`;
+    const value = !status.enabled ? 'Disabled' : status.configured && status.webhookConfigured ? 'Ready' : status.configured ? 'Checkout only' : 'Not configured';
+    const source = status.source === 'database' ? 'Browser-managed' : 'Environment fallback';
+    return `<div class="metric"><div class="metricLabel">${esc(label)}</div><div class="metricValue small">${esc(value)}</div><div class="subText">${esc(source)}</div></div>`;
 }
 
 function secretField(name, label, help, configured = false) {
     return `<div class="formGroup"><label>${esc(label)}</label><input class="input" type="password" name="${esc(name)}" autocomplete="new-password" placeholder="${configured ? 'Configured — leave blank to keep current value' : 'Enter value'}"><div class="inlineHelp">${esc(help)}</div><label class="toggleRow compact"><input type="checkbox" name="clear_${esc(name)}"><span>Clear saved value</span></label></div>`;
 }
 
+function testForm(req, provider, disabled = false) {
+    return `<form method="post" action="/admin/payments/${esc(provider)}/test" class="inlineForm">${csrfInput(req)}<button class="button secondary" type="submit" ${disabled ? 'disabled' : ''}>Test connection</button></form>`;
+}
+
 function stripeForm(req, status) {
-    return `<section class="section"><div class="sectionHead"><div><h2>Stripe</h2><div class="muted">Configure checkout and webhook credentials in the browser. Secret values are encrypted at rest and never displayed again.</div></div>${pill(status.configured ? (status.webhookConfigured ? 'Ready' : 'Webhook missing') : 'Not configured', status.configured ? (status.webhookConfigured ? 'good' : 'warn') : '')}</div>
+    const badge = !status.enabled ? pill('Disabled', 'warn') : status.configured ? pill(status.webhookConfigured ? 'Ready' : 'Webhook missing', status.webhookConfigured ? 'good' : 'warn') : pill('Not configured');
+    return `<section class="section"><div class="sectionHead"><div><h2>Stripe</h2><div class="muted">Configure checkout and webhook credentials in the browser. Secret values are encrypted at rest and never displayed again.</div></div>${badge}</div>
     <form class="formPanel" method="post" action="/admin/payments/stripe">${csrfInput(req)}
-      <div class="formGrid">
-        ${secretField('restrictedKey','Restricted key','Preferred Stripe server credential.', status.configured)}
-        ${secretField('apiKey','Secret API key fallback','Optional fallback if you are not using a restricted key.', status.configured)}
+      <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable Stripe gateway</strong><small class="muted">When disabled, Stripe checkout and webhook handling are unavailable while saved credentials are retained.</small></span></label>
+      <div class="formGrid" style="margin-top:14px">
+        ${secretField('restrictedKey','Restricted key','Preferred Stripe server credential.', status.credentialsConfigured)}
+        ${secretField('apiKey','Secret API key fallback','Optional fallback if you are not using a restricted key.', status.credentialsConfigured)}
         ${secretField('webhookSecret','Webhook signing secret','Required to process Stripe subscription renewals, cancellations and failed payments.', status.webhookConfigured)}
       </div>
       <div class="buttonRow"><button class="button">Save Stripe settings</button>${status.source === 'database' ? `<button class="button secondary" type="submit" name="useEnvironment" value="1">Use environment fallback instead</button>` : ''}</div>
-    </form></section>`;
+    </form>
+    <div class="formPanel" style="margin-top:10px"><div class="sectionHead"><div><strong>Connection validation</strong><div class="subText">Tests the saved Stripe credential against the Stripe API. Save any changed fields first.</div></div>${testForm(req, 'stripe', !status.credentialsConfigured)}</div></div>
+    </section>`;
 }
 
 function paypalForm(req, status) {
-    return `<section class="section"><div class="sectionHead"><div><h2>PayPal</h2><div class="muted">Client credentials and webhook ID are encrypted at rest. Choose sandbox while testing and live for production.</div></div>${pill(status.configured ? (status.webhookConfigured ? 'Ready' : 'Webhook missing') : 'Not configured', status.configured ? (status.webhookConfigured ? 'good' : 'warn') : '')}</div>
+    const badge = !status.enabled ? pill('Disabled', 'warn') : status.configured ? pill(status.webhookConfigured ? 'Ready' : 'Webhook missing', status.webhookConfigured ? 'good' : 'warn') : pill('Not configured');
+    return `<section class="section"><div class="sectionHead"><div><h2>PayPal</h2><div class="muted">Client credentials and webhook ID are encrypted at rest. Choose sandbox while testing and live for production.</div></div>${badge}</div>
     <form class="formPanel" method="post" action="/admin/payments/paypal">${csrfInput(req)}
-      <div class="formGrid">
+      <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable PayPal gateway</strong><small class="muted">Disabling PayPal preserves the saved credentials but removes it from checkout.</small></span></label>
+      <div class="formGrid" style="margin-top:14px">
         <div class="formGroup"><label>Environment</label><select class="input" name="environment"><option value="sandbox" ${status.environment !== 'live' ? 'selected' : ''}>Sandbox</option><option value="live" ${status.environment === 'live' ? 'selected' : ''}>Live</option></select></div>
-        ${secretField('clientId','Client ID','PayPal REST app client ID.', status.configured)}
-        ${secretField('clientSecret','Client secret','PayPal REST app secret.', status.configured)}
+        ${secretField('clientId','Client ID','PayPal REST app client ID.', status.credentialsConfigured)}
+        ${secretField('clientSecret','Client secret','PayPal REST app secret.', status.credentialsConfigured)}
         ${secretField('webhookId','Webhook ID','Required to verify PayPal subscription lifecycle events.', status.webhookConfigured)}
       </div>
       <div class="buttonRow"><button class="button">Save PayPal settings</button>${status.source === 'database' ? `<button class="button secondary" type="submit" name="useEnvironment" value="1">Use environment fallback instead</button>` : ''}</div>
-    </form></section>`;
+    </form>
+    <div class="formPanel" style="margin-top:10px"><div class="sectionHead"><div><strong>Connection validation</strong><div class="subText">Requests a PayPal OAuth access token using the saved ${esc(status.environment || 'sandbox')} credentials. Save changed fields first.</div></div>${testForm(req, 'paypal', !status.credentialsConfigured)}</div></div>
+    </section>`;
 }
 
 async function page(req) {
@@ -87,7 +98,7 @@ async function page(req) {
     const metrics = `<div class="metrics">${providerMetric(d.stripeStatus, 'Stripe')}${providerMetric(d.paypalStatus, 'PayPal')}<div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div>`;
     const state = `<section class="section"><div class="sectionHead"><h2>Subscription state</h2></div>${d.subscriptions.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Source</th><th>Status</th><th>Count</th></tr></thead><tbody>${d.subscriptions.map(x => `<tr><td>${esc(x.source)}</td><td>${pill(x.status)}</td><td>${esc(x.count)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No subscriptions yet.</div>'}</section>`;
     const events = `<section class="section"><div class="sectionHead"><h2>Recent provider events</h2></div>${d.events.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${d.events.map(x => `<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill(x.failed ? 'error' : 'ok', x.failed ? 'bad' : 'good')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No provider events yet.</div>'}</section>`;
-    return layout({ siteName: process.env.SITE_NAME || 'CAPTaINFiN', active: 'payments', title: 'Payments', subtitle: 'Provider configuration, checkout modes, subscriptions and webhook processing', body: `${notice(req)}${metrics}${stripeForm(req, d.stripeStatus)}${paypalForm(req, d.paypalStatus)}${state}${events}` });
+    return layout({ siteName: process.env.SITE_NAME || 'CAPTaINFiN', active: 'payments', title: 'Payments', subtitle: 'Payment gateways, checkout modes, subscriptions and webhook processing', body: `${notice(req)}${metrics}${stripeForm(req, d.stripeStatus)}${paypalForm(req, d.paypalStatus)}${state}${events}` });
 }
 
 function createAdminPaymentSettingsRouter() {
@@ -95,6 +106,19 @@ function createAdminPaymentSettingsRouter() {
     router.use('/admin/payments', gate, noStore);
     router.get('/admin/payments', async (req, res, next) => {
         try { return res.send(await page(req)); } catch (error) { return next(error); }
+    });
+    router.post('/admin/payments/:provider/test', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        const provider = req.params.provider;
+        if (!['stripe','paypal'].includes(provider)) return res.status(404).send('Unknown provider');
+        try {
+            const result = await providerSettings.testConnection(provider);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.test','payment_provider',$2,$3::jsonb)`, [req.session.authUserId, provider, JSON.stringify({ ok: true, limited: Boolean(result.limited) })]);
+            return res.redirect('/admin/payments?message=' + encodeURIComponent(result.message));
+        } catch (error) {
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.test','payment_provider',$2,$3::jsonb)`, [req.session.authUserId, provider, JSON.stringify({ ok: false, error: String(error.message || error).slice(0, 300) })]).catch(() => {});
+            return res.redirect('/admin/payments?error=' + encodeURIComponent(`${provider === 'stripe' ? 'Stripe' : 'PayPal'} test failed: ${error.message || error}`));
+        }
     });
     router.post('/admin/payments/:provider', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
@@ -106,6 +130,7 @@ function createAdminPaymentSettingsRouter() {
                 return res.redirect('/admin/payments?message=' + encodeURIComponent(`${provider === 'stripe' ? 'Stripe' : 'PayPal'} now uses environment fallback settings.`));
             }
             const input = provider === 'stripe' ? {
+                enabled: checked(req.body.enabled),
                 restrictedKey: req.body.restrictedKey,
                 apiKey: req.body.apiKey,
                 webhookSecret: req.body.webhookSecret,
@@ -113,6 +138,7 @@ function createAdminPaymentSettingsRouter() {
                 clearApiKey: checked(req.body.clear_apiKey),
                 clearWebhookSecret: checked(req.body.clear_webhookSecret)
             } : {
+                enabled: checked(req.body.enabled),
                 environment: req.body.environment,
                 clientId: req.body.clientId,
                 clientSecret: req.body.clientSecret,
@@ -122,7 +148,7 @@ function createAdminPaymentSettingsRouter() {
                 clearWebhookId: checked(req.body.clear_webhookId)
             };
             const status = await providerSettings.save(provider, input, req.session.authUserId);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.update','payment_provider',$2,$3::jsonb)`, [req.session.authUserId, provider, JSON.stringify({ configured: status.configured, webhookConfigured: status.webhookConfigured, environment: status.environment })]);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.update','payment_provider',$2,$3::jsonb)`, [req.session.authUserId, provider, JSON.stringify({ enabled: status.enabled, configured: status.configured, webhookConfigured: status.webhookConfigured, environment: status.environment })]);
             return res.redirect('/admin/payments?message=' + encodeURIComponent(`${provider === 'stripe' ? 'Stripe' : 'PayPal'} settings saved securely.`));
         } catch (error) {
             console.error('Payment settings update failed:', error.message);

@@ -10,25 +10,33 @@ let loading = null;
 
 function envConfig(provider) {
     if (provider === 'stripe') {
-        return {
+        const cfg = {
             source: 'environment',
             restrictedKey: process.env.STRIPE_RESTRICTED_KEY || '',
             apiKey: process.env.STRIPE_API_KEY || '',
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || ''
         };
+        cfg.enabled = process.env.STRIPE_ENABLED === 'false' ? false : Boolean(cfg.restrictedKey || cfg.apiKey);
+        return cfg;
     }
-    return {
+    const cfg = {
         source: 'environment',
         environment: process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox',
         clientId: process.env.PAYPAL_CLIENT_ID || '',
         clientSecret: process.env.PAYPAL_CLIENT_SECRET || '',
         webhookId: process.env.PAYPAL_WEBHOOK_ID || ''
     };
+    cfg.enabled = process.env.PAYPAL_ENABLED === 'false' ? false : Boolean(cfg.clientId && cfg.clientSecret);
+    return cfg;
+}
+
+function credentialsConfigured(provider, cfg) {
+    if (provider === 'stripe') return Boolean(cfg?.restrictedKey || cfg?.apiKey);
+    return Boolean(cfg?.clientId && cfg?.clientSecret);
 }
 
 function configured(provider, cfg) {
-    if (provider === 'stripe') return Boolean(cfg?.restrictedKey || cfg?.apiKey);
-    return Boolean(cfg?.clientId && cfg?.clientSecret);
+    return Boolean(cfg?.enabled && credentialsConfigured(provider, cfg));
 }
 
 function webhookConfigured(provider, cfg) {
@@ -38,9 +46,12 @@ function webhookConfigured(provider, cfg) {
 
 function decodeRow(row) {
     const secrets = JSON.parse(decryptString(row.secrets_encrypted) || '{}');
+    const settings = row.settings || {};
     return {
         ...secrets,
-        ...(row.settings || {}),
+        ...settings,
+        // Existing browser-managed credentials predate the explicit switch.
+        enabled: typeof settings.enabled === 'boolean' ? settings.enabled : credentialsConfigured(row.provider, secrets),
         source: 'database',
         updatedAt: row.updated_at || null
     };
@@ -65,8 +76,21 @@ async function ensureLoaded() {
     return true;
 }
 
-function peek(provider) {
+function raw(provider) {
     return cache.get(provider) || envConfig(provider);
+}
+
+// Runtime consumers use peek/get. Disabled gateways deliberately receive
+// blank operational credentials while the encrypted values stay stored, so
+// toggling a provider off is reversible without deleting secrets.
+function effective(provider, cfg) {
+    if (cfg?.enabled !== false) return cfg;
+    if (provider === 'stripe') return { ...cfg, restrictedKey: '', apiKey: '', webhookSecret: '' };
+    return { ...cfg, clientId: '', clientSecret: '', webhookId: '' };
+}
+
+function peek(provider) {
+    return effective(provider, raw(provider));
 }
 
 async function get(provider) {
@@ -75,11 +99,19 @@ async function get(provider) {
     return peek(provider);
 }
 
+async function getRaw(provider) {
+    if (!PROVIDERS.includes(provider)) throw new Error('Unsupported payment provider');
+    await ensureLoaded();
+    return raw(provider);
+}
+
 async function status(provider) {
-    const cfg = await get(provider);
+    const cfg = await getRaw(provider);
     return {
         provider,
         source: cfg.source || 'environment',
+        enabled: Boolean(cfg.enabled),
+        credentialsConfigured: credentialsConfigured(provider, cfg),
         configured: configured(provider, cfg),
         webhookConfigured: webhookConfigured(provider, cfg),
         environment: provider === 'paypal' ? (cfg.environment === 'live' ? 'live' : 'sandbox') : null,
@@ -93,9 +125,9 @@ function clean(value, max = 1000) {
 
 async function save(provider, input, actorUserId = null) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unsupported payment provider');
-    const current = await get(provider);
+    const current = await getRaw(provider);
     let secrets;
-    let settings = {};
+    let settings = { enabled: input.enabled !== false };
 
     if (provider === 'stripe') {
         secrets = {
@@ -109,7 +141,7 @@ async function save(provider, input, actorUserId = null) {
             clientSecret: input.clearClientSecret ? '' : (clean(input.clientSecret) || current.clientSecret || ''),
             webhookId: input.clearWebhookId ? '' : (clean(input.webhookId) || current.webhookId || '')
         };
-        settings = { environment: input.environment === 'live' ? 'live' : 'sandbox' };
+        settings = { ...settings, environment: input.environment === 'live' ? 'live' : 'sandbox' };
     }
 
     await query(`
@@ -138,13 +170,74 @@ async function remove(provider, actorUserId = null) {
     `, [actorUserId, provider]);
 }
 
+async function fetchWithTimeout(url, options, timeoutMs = 10000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal, redirect: 'error' });
+    } catch (error) {
+        if (error?.name === 'AbortError') throw new Error('Connection timed out after 10 seconds.');
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function testStripe(cfg) {
+    const key = cfg.restrictedKey || cfg.apiKey || '';
+    if (!key) throw new Error('Stripe API credentials are not configured.');
+    const response = await fetchWithTimeout('https://api.stripe.com/v1/prices?limit=1', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401) throw new Error(body?.error?.message || 'Stripe rejected the API key.');
+    if (response.status === 403) {
+        return { ok: true, limited: true, message: 'Stripe accepted the credential, but this restricted key cannot read Prices. Review its resource permissions before checkout testing.' };
+    }
+    if (!response.ok) throw new Error(body?.error?.message || `Stripe returned HTTP ${response.status}.`);
+    return { ok: true, limited: false, message: 'Stripe connection successful. API credentials were accepted.' };
+}
+
+async function testPayPal(cfg) {
+    if (!cfg.clientId || !cfg.clientSecret) throw new Error('PayPal client ID and secret are not configured.');
+    const host = cfg.environment === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+    const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64');
+    const response = await fetchWithTimeout(`${host}/v1/oauth2/token`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Basic ${basic}`,
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: 'grant_type=client_credentials'
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body?.access_token) {
+        throw new Error(body?.error_description || body?.message || `PayPal returned HTTP ${response.status}.`);
+    }
+    return {
+        ok: true,
+        limited: false,
+        message: `PayPal ${cfg.environment === 'live' ? 'Live' : 'Sandbox'} connection successful. Client credentials were accepted.`
+    };
+}
+
+async function testConnection(provider) {
+    const cfg = await getRaw(provider);
+    return provider === 'stripe' ? testStripe(cfg) : testPayPal(cfg);
+}
+
 module.exports = {
     ensureLoaded,
     get,
+    getRaw,
     peek,
     status,
     save,
     remove,
     configured,
-    webhookConfigured
+    credentialsConfigured,
+    webhookConfigured,
+    testConnection
 };
