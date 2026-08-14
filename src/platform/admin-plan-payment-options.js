@@ -56,9 +56,7 @@ function createAdminPlanPaymentOptionsRouter(){
         if(!csrf.verify(req))return res.status(403).send('Invalid security token');
         try{
             const plan=await planById(req.params.id);if(!plan)throw new Error('Plan not found');
-            const specs=[
-                ['stripe','payment'],['stripe','subscription'],['paypal','payment'],['paypal','subscription']
-            ];
+            const specs=[['stripe','payment'],['stripe','subscription'],['paypal','payment'],['paypal','subscription']];
             await transaction(async client=>{
                 for(const [provider,mode] of specs){
                     const key=`${provider}_${mode}`;
@@ -69,6 +67,32 @@ function createAdminPlanPaymentOptionsRouter(){
             return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/commerce?message=`+encodeURIComponent('Payment choices saved.'));
         }catch(error){
             return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/commerce?error=`+encodeURIComponent(error.message||'Payment choices could not be saved.'));
+        }
+    });
+
+    // Compatibility handler for pre-029 forms/bookmarks. The legacy route used
+    // ON CONFLICT(plan_id,provider), which no longer exists once a provider can
+    // expose two checkout modes. Keeping this handler ahead of the old router
+    // makes stale forms safe instead of failing with a PostgreSQL conflict error.
+    router.post('/admin/plans/:id/provider',async(req,res)=>{
+        if(!csrf.verify(req))return res.status(403).send('Invalid security token');
+        try{
+            const plan=await planById(req.params.id);if(!plan)throw new Error('Plan not found');
+            const provider=['stripe','paypal'].includes(req.body.provider)?req.body.provider:null;
+            if(!provider)throw new Error('Unknown payment provider');
+            const mode=req.body.checkoutMode==='subscription'?'subscription':'payment';
+            const externalId=cleanExternal(req.body.externalId);
+            await transaction(async client=>{
+                if(externalId || (provider==='paypal'&&mode==='payment')) {
+                    await saveOption(client,plan.id,provider,mode,true,externalId);
+                } else {
+                    await saveOption(client,plan.id,provider,mode,false,'');
+                }
+                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.provider_mapping_compat','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify({provider,mode,configured:Boolean(externalId)||(provider==='paypal'&&mode==='payment')})]);
+            });
+            return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/commerce?message=`+encodeURIComponent('Payment mapping updated.'));
+        }catch(error){
+            return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/commerce?error=`+encodeURIComponent(error.message||'Payment mapping could not be updated.'));
         }
     });
     return router;
