@@ -1,9 +1,46 @@
+'use strict';
+
 const { query } = require('../db');
 const { decryptString } = require('../crypto');
 const { decryptWithEnv } = require('../security/purpose-crypto');
 
-function normalizeBaseUrl(url) {
-    return String(url || '').replace(/\/+$/, '');
+function allowedHosts() {
+    return new Set(String(process.env.JELLYFIN_ALLOWED_HOSTS || '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean));
+}
+
+function normalizeBaseUrl(value, { enforceAllowlist = true } = {}) {
+    let parsed;
+    try {
+        parsed = new URL(String(value || '').trim());
+    } catch (_) {
+        throw new Error('Enter a valid Jellyfin http/https URL.');
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('Only http and https Jellyfin URLs are allowed.');
+    }
+    if (parsed.username || parsed.password || parsed.hash) {
+        throw new Error('Jellyfin URLs may not contain credentials or fragments.');
+    }
+    if (!parsed.hostname) throw new Error('Jellyfin URL hostname is required.');
+
+    if (enforceAllowlist && process.env.NODE_ENV === 'production') {
+        const hosts = allowedHosts();
+        if (!hosts.size) {
+            throw new Error('JELLYFIN_ALLOWED_HOSTS must be configured before Jellyfin requests are allowed in production.');
+        }
+        if (!hosts.has(parsed.hostname.toLowerCase())) {
+            throw new Error('This Jellyfin hostname is not on the production allowlist.');
+        }
+    }
+
+    parsed.search = '';
+    parsed.hash = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/$/, '');
 }
 
 function decryptJellyfinKey(payload) {
@@ -51,20 +88,30 @@ async function getServerSecret(serverId) {
     const server = result.rows[0];
     return {
         ...server,
-        base_url: normalizeBaseUrl(server.base_url),
+        base_url: normalizeBaseUrl(server.base_url, { enforceAllowlist: true }),
         apiKey: decryptJellyfinKey(server.api_key_encrypted)
     };
 }
 
 async function request(serverId, endpoint, { method = 'GET', body = null, timeoutMs = 10000 } = {}) {
+    if (typeof endpoint !== 'string' || !endpoint.startsWith('/') || endpoint.startsWith('//')) {
+        throw new Error('Invalid Jellyfin API endpoint.');
+    }
+
     const server = await getServerSecret(serverId);
     if (!server || !server.enabled) throw new Error('Jellyfin server is unavailable or disabled');
+
+    const url = new URL(endpoint, `${server.base_url}/`);
+    if (url.origin !== new URL(server.base_url).origin) {
+        throw new Error('Jellyfin API endpoint escaped the configured server origin.');
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        const response = await fetch(`${server.base_url}${endpoint}`, {
+        const response = await fetch(url, {
             method,
+            redirect: 'error',
             signal: controller.signal,
             headers: {
                 'X-Emby-Token': server.apiKey,
@@ -104,4 +151,12 @@ async function healthcheckServer(serverId) {
     }
 }
 
-module.exports = { listServers, getServerSecret, request, healthcheckServer, decryptJellyfinKey };
+module.exports = {
+    allowedHosts,
+    normalizeBaseUrl,
+    listServers,
+    getServerSecret,
+    request,
+    healthcheckServer,
+    decryptJellyfinKey
+};

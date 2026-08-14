@@ -5,6 +5,8 @@ const { reconcileCustomer } = require('../jellyfin/provisioning');
 const discounts = require('./discounts');
 const referrals = require('../referrals');
 
+const PAYMENT_EVENT_LEASE_MINUTES = 30;
+
 function addPlanDuration(plan, from = new Date()) {
     const days = Number(plan.duration_days || 30);
     return new Date(from.getTime() + days * 86400000);
@@ -71,26 +73,38 @@ async function findPaymentCustomer(customerId, provider) {
 
 async function beginPaymentEvent({ provider, eventId, eventType, payload }) {
     const result = await query(`
-        INSERT INTO payment_events(provider,provider_event_id,event_type,payload)
-        VALUES($1,$2,$3,$4::jsonb)
+        INSERT INTO payment_events(
+            provider,provider_event_id,event_type,payload,processing_started_at,processing_token
+        )
+        VALUES($1,$2,$3,$4::jsonb,NOW(),gen_random_uuid())
         ON CONFLICT(provider,provider_event_id)
         DO UPDATE SET event_type=EXCLUDED.event_type,
                       payload=EXCLUDED.payload,
-                      processing_error=NULL
+                      processing_error=NULL,
+                      processing_started_at=NOW(),
+                      processing_token=gen_random_uuid()
         WHERE payment_events.processed_at IS NULL
-        RETURNING id
-    `, [provider, eventId, eventType, JSON.stringify(payload)]);
+          AND (
+              payment_events.processing_started_at IS NULL
+              OR payment_events.processing_started_at < NOW() - ($5::int * INTERVAL '1 minute')
+          )
+        RETURNING id,processing_token,processing_started_at
+    `, [provider, eventId, eventType, JSON.stringify(payload), PAYMENT_EVENT_LEASE_MINUTES]);
     return result.rows[0] || null;
 }
 
 async function finishPaymentEvent(eventRow, error = null) {
-    if (!eventRow) return;
-    await query(`
+    if (!eventRow?.id || !eventRow?.processing_token) return false;
+    const result = await query(`
         UPDATE payment_events
-        SET processed_at=CASE WHEN $2::text IS NULL THEN NOW() ELSE NULL END,
-            processing_error=$2
-        WHERE id=$1
-    `, [eventRow.id, error ? String(error.message || error).slice(0, 4000) : null]);
+        SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,
+            processing_error=$3,
+            processing_started_at=NULL,
+            processing_token=NULL
+        WHERE id=$1 AND processing_token=$2
+        RETURNING id
+    `, [eventRow.id, eventRow.processing_token, error ? String(error.message || error).slice(0, 4000) : null]);
+    return result.rowCount === 1;
 }
 
 async function startFreeTrial(customerId) {
@@ -212,13 +226,21 @@ async function activatePurchase({
         if (discountCodeId) {
             // A payment provider has already accepted this customer's money by the time we
             // get here, so a failure recording discount usage must never roll back or block
-            // the subscription/access they paid for -- see redeemForSubscriptionTx().
+            // the subscription/access they paid for -- see redeemForSubscriptionTx(). A plain
+            // try/catch is not enough: once any statement errors, Postgres marks the whole
+            // transaction aborted and every later statement on this client (including the
+            // audit_log insert and the final COMMIT) fails too. A SAVEPOINT isolates the
+            // failure so it can be rolled back on its own, leaving the rest of this
+            // transaction free to continue and commit normally.
+            await client.query('SAVEPOINT discount_redemption');
             try {
                 await discounts.redeemForSubscriptionTx(client, {
                     discountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: discountAmountAppliedMinor
                 });
+                await client.query('RELEASE SAVEPOINT discount_redemption');
             } catch (error) {
                 console.error('Discount redemption bookkeeping failed; subscription is still being activated:', error.message);
+                await client.query('ROLLBACK TO SAVEPOINT discount_redemption');
             }
         }
 
@@ -255,6 +277,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
 }
 
 module.exports = {
+    PAYMENT_EVENT_LEASE_MINUTES,
     addPlanDuration,
     mapProviderStatus,
     getProviderPlan,

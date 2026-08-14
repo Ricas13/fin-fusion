@@ -73,6 +73,28 @@ services:
     cap_drop:
       - ALL
 
+  recovery-tools:
+    build: .
+    profiles: ["recovery"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      DB_SSL: ${DB_SSL:-false}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY in .env}
+      BACKUP_DIR: /backups
+      BACKUP_RESTORE_TMPDIR: /tmp
+    volumes:
+      - ./backups:/backups
+    tmpfs:
+      - /tmp:size=2g,mode=700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   postgres:
     image: postgres:17-alpine
     container_name: steam-fusion-postgres

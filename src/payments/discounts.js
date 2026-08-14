@@ -61,11 +61,6 @@ function computeDiscountedMinor(baseMinor, discount) {
 async function redeemForSubscriptionTx(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor = 0 }) {
     if (!discountCodeId) return { redeemed: false, reason: 'no_code' };
 
-    if (subscriptionId) {
-        const already = await client.query('SELECT 1 FROM discount_redemptions WHERE subscription_id=$1', [subscriptionId]);
-        if (already.rowCount) return { redeemed: true, alreadyRecorded: true };
-    }
-
     // Lock the discount_codes row so concurrent redemption attempts for the SAME code
     // serialize here, closing the race window validateForCheckout() (a pre-payment,
     // non-locking check) cannot close on its own.
@@ -91,12 +86,22 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
         }
     }
 
-    await client.query('UPDATE discount_codes SET redemption_count=redemption_count+1,updated_at=NOW() WHERE id=$1', [discountCodeId]);
-    await client.query(`
+    // INSERT first, under the discount_codes lock: the unique index on subscription_id
+    // is the actual source of truth for "is this a new redemption." A retried activation
+    // for the same subscription hits ON CONFLICT and inserts nothing, so the counter below
+    // only ever moves for a row that was genuinely just inserted -- fixing the double-count
+    // a separate up-front existence check would otherwise allow (two concurrent activations
+    // for the same subscription can both pass a pre-lock check before either holds the lock).
+    const inserted = await client.query(`
         INSERT INTO discount_redemptions(discount_code_id,customer_id,subscription_id,amount_applied_minor)
         VALUES($1,$2,$3,$4)
         ON CONFLICT (subscription_id) WHERE subscription_id IS NOT NULL DO NOTHING
+        RETURNING id
     `, [discountCodeId, customerId, subscriptionId || null, amountAppliedMinor]);
+
+    if (!inserted.rowCount) return { redeemed: true, alreadyRecorded: true };
+
+    await client.query('UPDATE discount_codes SET redemption_count=redemption_count+1,updated_at=NOW() WHERE id=$1', [discountCodeId]);
     return { redeemed: true };
 }
 
