@@ -1,4 +1,22 @@
 services:
+  migrate:
+    build: .
+    restart: "no"
+    env_file: .env
+    command: ["npm", "run", "db:migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db:/app/db:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   app:
     build: .
     container_name: steam-fusion
@@ -7,6 +25,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:3030:3030"
     volumes:
@@ -24,6 +44,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       ACTIVITY_DATABASE_URL: ${ACTIVITY_DATABASE_URL:?set ACTIVITY_DATABASE_URL in .env}
       JELLYFIN_ENCRYPTION_KEY: ${JELLYFIN_ENCRYPTION_KEY:?set JELLYFIN_ENCRYPTION_KEY in .env}
