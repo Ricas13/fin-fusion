@@ -30,15 +30,30 @@ function mapProviderStatus(provider, status) {
     return 'past_due';
 }
 
-async function getProviderPlan(planCode, provider) {
+async function getProviderOptions(planCode, provider) {
     const result = await query(`
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
         FROM plans p
         JOIN plan_provider_prices pp ON pp.plan_id=p.id
         WHERE p.code=$1 AND p.active=TRUE AND p.visible=TRUE
           AND pp.provider=$2 AND pp.active=TRUE
-        LIMIT 1
+        ORDER BY CASE pp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END
     `, [planCode, provider]);
+    return result.rows;
+}
+
+async function getProviderPlan(planCode, provider, checkoutMode = null) {
+    const mode = checkoutMode && ['payment','subscription'].includes(checkoutMode) ? checkoutMode : null;
+    const result = await query(`
+        SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
+        FROM plans p
+        JOIN plan_provider_prices pp ON pp.plan_id=p.id
+        WHERE p.code=$1 AND p.active=TRUE AND p.visible=TRUE
+          AND pp.provider=$2 AND pp.active=TRUE
+          AND ($3::text IS NULL OR pp.checkout_mode=$3)
+        ORDER BY CASE pp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END
+        LIMIT 1
+    `, [planCode, provider, mode]);
     return result.rows[0] || null;
 }
 
@@ -116,9 +131,6 @@ async function startFreeTrial(customerId, planCode = null) {
         `, [customerId]);
         if (prior.rowCount) throw new Error('This account has already used its free trial');
 
-        // Trial is a plan property, not a product-code convention. A clean install
-        // has no `trial-24h` seed, so choose the requested visible trial (when a
-        // caller supplies one) or the first configured direct trial plan.
         const planResult = await client.query(`
             SELECT * FROM plans
             WHERE billing_interval='trial'
@@ -280,6 +292,7 @@ module.exports = {
     PAYMENT_EVENT_LEASE_MINUTES,
     addPlanDuration,
     mapProviderStatus,
+    getProviderOptions,
     getProviderPlan,
     getProviderPlanByExternalId,
     ensurePaymentCustomer,
