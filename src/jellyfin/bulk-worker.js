@@ -11,7 +11,7 @@
 
 const crypto = require('crypto');
 const { query, transaction } = require('../db');
-const provisioning = require('./provisioning');
+const provisioning = require('./resilient-provisioning');
 
 const BATCH_SIZE = 20;
 const STALE_RUNNING_MINUTES = 10;

@@ -1,5 +1,5 @@
 const { transaction, query } = require('./db');
-const { reconcileCustomer } = require('./jellyfin/provisioning');
+const { reconcileCustomer } = require('./jellyfin/resilient-provisioning');
 
 async function getPlanByCode(code) {
     const result = await query('SELECT * FROM plans WHERE code=$1 AND active=TRUE', [code]);

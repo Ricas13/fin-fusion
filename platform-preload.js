@@ -33,7 +33,7 @@ function customerLoginThrottle(req, res, next) {
 function startJobs() {
     if (jobsStarted || !process.env.DATABASE_URL) return;
     jobsStarted = true;
-    const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/provisioning');
+    const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/resilient-provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
     const bulkWorker = require('./src/jellyfin/bulk-worker');
     require('./src/platform/bulk-operations'); // registers bulk-job handlers as a side effect
@@ -43,7 +43,9 @@ function startJobs() {
         try {
             const expired = await expireSubscriptionsAndReconcile();
             const active = await reconcileActiveEntitlements();
-            if (expired || active.failed) console.log(`Entitlement job: expired=${expired}, active=${active.succeeded}/${active.total}, failed=${active.failed}`);
+            if (expired || active.failed || active.blocked) {
+                console.log(`Entitlement job: expired=${expired}, due=${active.total}, succeeded=${active.succeeded}, blocked=${active.blocked}, failed=${active.failed}`);
+            }
         } catch (error) { console.error('Entitlement job failed:', error.message); }
     };
     const runHealth = async () => {
@@ -99,6 +101,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
+        const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminServerLibraryDashboardRouter } = require('./src/platform/admin-server-library-dashboard');
@@ -129,6 +132,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminInvitationsRouter());
+        this.use(createAdminProvisioningRouter());
         this.use(createAdminCatalogShellRouter());
         // The compact/filterable Plans index owns only GET /admin/plans.
         // The existing plan router still owns create/edit/export and sub-pages.

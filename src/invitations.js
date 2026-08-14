@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query, transaction } = require('./db');
 const { encryptString, decryptString } = require('./crypto');
-const provisioning = require('./jellyfin/provisioning');
+const provisioning = require('./jellyfin/resilient-provisioning');
 
 function hashToken(rawToken) {
     return crypto.createHash('sha256').update(String(rawToken || ''), 'utf8').digest('hex');
