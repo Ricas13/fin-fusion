@@ -55,10 +55,11 @@ async function main() {
             ) VALUES($1,$2,$3,'admin',TRUE,$4,NOW(),CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END,NOW(),NOW())
             RETURNING id,username,legacy_numeric_id
         `, [email, username, passwordHash, legacyId]);
+        const adminId = inserted.rows[0].id;
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-            VALUES($1,'admin.bootstrap','app_user',$1,$2::jsonb)
-        `, [inserted.rows[0].id, JSON.stringify({ username, legacyNumericId: legacyId, source: 'environment' })]);
+            VALUES($1,'admin.bootstrap','app_user',$2,$3::jsonb)
+        `, [adminId, String(adminId), JSON.stringify({ username, legacyNumericId: legacyId, source: 'environment' })]);
         await client.query('COMMIT');
         console.log(`native admin bootstrap: created ${username}`);
     } catch (error) {
