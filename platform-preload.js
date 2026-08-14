@@ -30,6 +30,12 @@ function customerLoginThrottle(req, res, next) {
     return next();
 }
 
+function requestUserSyncIntervalMs() {
+    const configured = Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS);
+    if (!Number.isFinite(configured) || configured <= 0) return 15 * 60 * 1000;
+    return Math.max(5 * 60 * 1000, configured);
+}
+
 function startJobs() {
     if (jobsStarted || !process.env.DATABASE_URL) return;
     jobsStarted = true;
@@ -71,8 +77,8 @@ function startJobs() {
             const config = await requestUserSync.configuration();
             if (!config.configured) return;
             const result = await requestUserSync.syncAll();
-            if (result.created || result.failed || result.skipped) {
-                console.log(`Request user sync: total=${result.total}, created=${result.created}, linked=${result.linked}, skipped=${result.skipped}, failed=${result.failed}`);
+            if (result.created || result.failed) {
+                console.log(`Request user sync: total=${result.total}, created=${result.created}, linked=${result.linked}, failed=${result.failed}`);
             }
         } catch (error) { console.error('Request user sync failed:', error.message); }
     };
@@ -82,7 +88,7 @@ function startJobs() {
     initialEntitlement.unref?.(); initialHealth.unref?.(); initialRequestUsers.unref?.();
     createRescheduler(runBulkJobs, () => 3000).start();
     createRescheduler(runStaleReclaim, () => 60000).start();
-    createRescheduler(runRequestUsers, () => Math.max(5 * 60 * 1000, Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS || 15 * 60 * 1000))).start();
+    createRescheduler(runRequestUsers, requestUserSyncIntervalMs).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -170,3 +176,5 @@ realExpress.application.listen = function platformListen(...args) {
     }
     return originalListen.apply(this, args);
 };
+
+module.exports = { requestUserSyncIntervalMs };
