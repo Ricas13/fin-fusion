@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const lifecycle = require('./lifecycle');
 const providerSettings = require('./provider-settings');
+const provisioning = require('../jellyfin/resilient-provisioning');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -120,9 +121,6 @@ async function paypalAdapter() {
             const subscription = await paypalApi(`/v1/billing/subscriptions/${encodeURIComponent(row.provider_subscription_id)}`);
             const status = String(subscription.status || '').toUpperCase();
             const nextBilling = subscription.billing_info?.next_billing_time ? new Date(subscription.billing_info.next_billing_time) : null;
-            // PayPal cancellation stops future billing. Preserve already-paid
-            // access until the locally known paid-through date, then the normal
-            // expiry job removes entitlement.
             if (status === 'CANCELLED' && new Date(row.current_period_end) > new Date()) {
                 return {
                     status: 'active',
@@ -211,6 +209,30 @@ async function recordFailure(row, error) {
     return failures;
 }
 
+async function applyRemoteState(row, remote) {
+    const status = lifecycle.mapProviderStatus(row.source, remote.status);
+    const updated = await query(`
+        UPDATE subscriptions
+        SET status=$1,
+            current_period_end=COALESCE($2,current_period_end),
+            cancel_at_period_end=COALESCE($3,cancel_at_period_end),
+            updated_at=NOW()
+        WHERE id=$4
+        RETURNING customer_id,status,current_period_end,cancel_at_period_end
+    `, [status, remote.periodEnd || null, remote.cancelAtPeriodEnd ?? null, row.id]);
+    if (!updated.rowCount) throw new Error('Subscription disappeared during provider sync.');
+
+    // Provider verification is authoritative independently of Jellyfin health.
+    // Provisioning has its own retry/control state, so an offline media server
+    // must not make a successful payment-provider verification look failed.
+    try {
+        await provisioning.reconcileCustomer(updated.rows[0].customer_id);
+    } catch (error) {
+        console.warn(`Billing sync provisioning follow-up blocked for ${updated.rows[0].customer_id}:`, error.message);
+    }
+    return updated.rows[0];
+}
+
 async function syncSubscription(subscriptionId, { adapter = null } = {}) {
     const row = await subscriptionById(subscriptionId);
     if (!row) throw new Error('Subscription not found.');
@@ -219,13 +241,7 @@ async function syncSubscription(subscriptionId, { adapter = null } = {}) {
         const remoteAdapter = adapter || await defaultAdapter(row.source);
         const remote = await remoteAdapter.fetchRemote(row);
         if (!remote || !remote.status) throw new Error('Provider returned an invalid subscription state.');
-        await lifecycle.updateProviderSubscription({
-            provider: row.source,
-            providerSubscriptionId: row.provider_subscription_id,
-            providerStatus: remote.status,
-            periodEnd: remote.periodEnd || null,
-            cancelAtPeriodEnd: remote.cancelAtPeriodEnd ?? null
-        });
+        await applyRemoteState(row, remote);
         await recordSuccess(row, remote);
         return { ok: true, subscriptionId: row.id, provider: row.source, remote };
     } catch (error) {
@@ -275,9 +291,6 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
     if (enabled) await remoteAdapter.resumeRenewal(row);
     else await remoteAdapter.stopRenewal(row);
 
-    // Stripe returns the authoritative toggle on the next GET. For PayPal,
-    // cancellation is immediate remotely but the paid-through entitlement is
-    // retained locally until current_period_end.
     if (row.source === 'paypal' && !enabled) {
         await query(`UPDATE subscriptions SET cancel_at_period_end=TRUE,updated_at=NOW() WHERE id=$1`, [row.id]);
     }
@@ -340,5 +353,6 @@ module.exports = {
     setRenewal,
     dashboardData,
     subscriptionById,
-    stripePeriod
+    stripePeriod,
+    applyRemoteState
 };
