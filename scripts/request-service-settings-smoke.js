@@ -1,8 +1,11 @@
 'use strict';
 
 const assert = require('assert');
+process.env.DATA_ENCRYPTION_KEY = process.env.DATA_ENCRYPTION_KEY || '22'.repeat(32);
+
 const { query } = require('../src/db');
 const requestSettings = require('../src/integrations/request-service-settings');
+const runtimeSettings = require('../src/platform/runtime-settings');
 
 (async () => {
     const actor = null;
@@ -31,6 +34,10 @@ const requestSettings = require('../src/integrations/request-service-settings');
     assert.strictEqual(cfg.apiKey, 'super-secret-test-key');
     assert.strictEqual(cfg.baseUrl, 'https://requests.example.test');
     assert.strictEqual(requestSettings.syncIntervalMs(), 12 * 60 * 1000);
+    assert.strictEqual(process.env.SEERR_API_KEY, 'super-secret-test-key');
+    assert.strictEqual(Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS), 12 * 60 * 1000);
+    await runtimeSettings.reload();
+    assert.strictEqual(runtimeSettings.overseerrUrl(), 'https://requests.example.test');
 
     await requestSettings.save({
         enabled: false,
@@ -43,6 +50,7 @@ const requestSettings = require('../src/integrations/request-service-settings');
     assert.strictEqual(disabled.enabled, false);
     assert.strictEqual(disabled.configured, false);
     assert.strictEqual(disabled.apiKeyConfigured, false);
+    assert.strictEqual(process.env.SEERR_API_KEY, '');
 
     console.log('request-service-settings-smoke: ok');
 })().catch(error => {
