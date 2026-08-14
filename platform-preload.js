@@ -120,6 +120,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createCustomerPasswordSyncRouter } = require('./src/platform/customer-password-sync');
         const { createFlexibleCheckoutRouter } = require('./src/platform/flexible-checkout');
         const { createInviteOnboardingRouter } = require('./src/platform/invite-onboarding');
+        const { createCustomerClaimRouter } = require('./src/platform/customer-claim');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlansListRouter } = require('./src/platform/admin-plans-list');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
@@ -159,6 +160,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(customerLoginThrottle);
         this.use(createBrandingRouter());
         this.use(createInviteOnboardingRouter());
+        this.use(createCustomerClaimRouter());
         this.use(createCustomerPasswordSyncRouter());
         this.use(createFlexibleCheckoutRouter());
         this.use(createAdminPreviewRouter());
