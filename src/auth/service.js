@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query, transaction } = require('../db');
 const { keyFromEnv, encryptWithEnv, decryptWithEnv } = require('../security/purpose-crypto');
+const runtimeSettings = require('../platform/runtime-settings');
 const totp = require('./totp');
 
 const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(24).toString('hex'), 12);
@@ -88,6 +89,10 @@ async function getStaffById(userId) {
 }
 
 async function authenticateStaff(identity, password, req) {
+    // Load the database-backed security policy before deciding whether this
+    // login needs 2FA. If settings are temporarily unavailable, the getter
+    // safely falls back to the explicit environment setting.
+    await runtimeSettings.ensureLoaded().catch(() => {});
     const cleanIdentity = String(identity || '').trim().slice(0, 160);
     const supplied = typeof password === 'string' ? password : '';
     const user = await getStaffByIdentity(cleanIdentity);
@@ -147,8 +152,11 @@ async function authenticateStaff(identity, password, req) {
 
 function requiresTwoFactor(user) {
     if (!user) return false;
+    // Individual enrollment always wins: a user who opts in keeps 2FA at login.
     if (user.totp_enabled) return true;
-    if (user.role === 'admin') return process.env.REQUIRE_ADMIN_2FA !== 'false';
+    // Administrator enforcement is optional by default and is controlled by
+    // the runtime setting (with REQUIRE_ADMIN_2FA=true as an env fallback).
+    if (user.role === 'admin') return runtimeSettings.requireAdminTwoFactor();
     if (user.role === 'reseller') return process.env.REQUIRE_RESELLER_2FA === 'true';
     return false;
 }
@@ -227,9 +235,43 @@ async function confirmTotpEnrollment(userId, code, req) {
     return recoveryCodes;
 }
 
+async function disableTotp(userId, currentPassword, req) {
+    const user = await getStaffById(userId);
+    if (!user || !user.totp_enabled) return false;
+    if (!(await bcrypt.compare(String(currentPassword || ''), user.password_hash))) {
+        await recordEvent({ userId, eventType: '2fa.disable_failed', success: false, req });
+        return false;
+    }
+    await transaction(async client => {
+        await client.query(`
+            UPDATE app_users
+            SET totp_enabled=FALSE,totp_secret_encrypted=NULL,totp_enrolled_at=NULL,updated_at=NOW()
+            WHERE id=$1
+        `, [userId]);
+        await client.query('DELETE FROM auth_recovery_codes WHERE user_id=$1', [userId]);
+        await client.query('DELETE FROM auth_totp_enrollments WHERE user_id=$1', [userId]);
+        await recordEvent({ userId, eventType: '2fa.disabled', success: true, req }, client);
+    });
+    return true;
+}
+
 async function verifySecondFactor(userId, token, req) {
     const user = await getStaffById(userId);
     if (!user) return false;
+
+    // 2FA is a sign-in factor, not a code prompt repeated throughout the admin
+    // UI. Once a native staff session is established, legacy step-up callers
+    // are allowed through without consuming a TOTP/recovery code.
+    if (req?.session?.authUserId && String(req.session.authUserId) === String(userId) && !req.session?.pendingStaffAuth) {
+        await recordEvent({
+            userId,
+            eventType: '2fa.step_up_not_required',
+            success: true,
+            req,
+            metadata: { policy: 'login_only', enrolled: !!user.totp_enabled }
+        });
+        return true;
+    }
 
     if (!user.totp_enabled && !requiresTwoFactor(user)) {
         await recordEvent({
@@ -432,6 +474,7 @@ module.exports = {
     requiresTwoFactor,
     beginTotpEnrollment,
     confirmTotpEnrollment,
+    disableTotp,
     verifySecondFactor,
     lockAfterSecondFactorFailures,
     registerSession,
