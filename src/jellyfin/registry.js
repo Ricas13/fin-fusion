@@ -4,14 +4,7 @@ const { query } = require('../db');
 const { decryptString } = require('../crypto');
 const { decryptWithEnv } = require('../security/purpose-crypto');
 
-function allowedHosts() {
-    return new Set(String(process.env.JELLYFIN_ALLOWED_HOSTS || '')
-        .split(',')
-        .map(value => value.trim().toLowerCase())
-        .filter(Boolean));
-}
-
-function normalizeBaseUrl(value, { enforceAllowlist = true } = {}) {
+function normalizeBaseUrl(value) {
     let parsed;
     try {
         parsed = new URL(String(value || '').trim());
@@ -26,16 +19,6 @@ function normalizeBaseUrl(value, { enforceAllowlist = true } = {}) {
         throw new Error('Jellyfin URLs may not contain credentials or fragments.');
     }
     if (!parsed.hostname) throw new Error('Jellyfin URL hostname is required.');
-
-    if (enforceAllowlist && process.env.NODE_ENV === 'production') {
-        const hosts = allowedHosts();
-        if (!hosts.size) {
-            throw new Error('JELLYFIN_ALLOWED_HOSTS must be configured before Jellyfin requests are allowed in production.');
-        }
-        if (!hosts.has(parsed.hostname.toLowerCase())) {
-            throw new Error('This Jellyfin hostname is not on the production allowlist.');
-        }
-    }
 
     parsed.search = '';
     parsed.hash = '';
@@ -88,7 +71,7 @@ async function getServerSecret(serverId) {
     const server = result.rows[0];
     return {
         ...server,
-        base_url: normalizeBaseUrl(server.base_url, { enforceAllowlist: true }),
+        base_url: normalizeBaseUrl(server.base_url),
         apiKey: decryptJellyfinKey(server.api_key_encrypted)
     };
 }
@@ -152,7 +135,6 @@ async function healthcheckServer(serverId) {
 }
 
 module.exports = {
-    allowedHosts,
     normalizeBaseUrl,
     listServers,
     getServerSecret,
