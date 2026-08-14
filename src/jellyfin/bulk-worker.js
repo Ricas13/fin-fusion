@@ -9,6 +9,7 @@
 // generic and doesn't need to know about libraries/plans/reseller
 // assignment/etc itself.
 
+const crypto = require('crypto');
 const { query, transaction } = require('../db');
 const provisioning = require('./provisioning');
 
@@ -33,13 +34,22 @@ async function claimBatch() {
         `, [BATCH_SIZE]);
         if (!claimed.rowCount) return [];
         const ids = claimed.rows.map(row => row.id);
-        await client.query(`UPDATE background_job_items SET status='running',updated_at=NOW() WHERE id=ANY($1::bigint[])`, [ids]);
+        // A fresh, unique claim_token per item -- this is what lets
+        // finishItem() later prove it's still completing the SAME claim it
+        // started, not some earlier (reclaimed) claim on the same item id.
+        const tokens = ids.map(() => crypto.randomUUID());
+        await client.query(`
+            UPDATE background_job_items AS bji SET status='running',claim_token=data.token,updated_at=NOW()
+            FROM (SELECT UNNEST($1::bigint[]) AS id, UNNEST($2::uuid[]) AS token) AS data
+            WHERE bji.id = data.id
+        `, [ids, tokens]);
         const jobIds = Array.from(new Set(claimed.rows.map(row => row.job_id)));
         await client.query(`
             UPDATE background_jobs SET status='running',started_at=COALESCE(started_at,NOW())
             WHERE id=ANY($1::uuid[]) AND status='pending'
         `, [jobIds]);
-        return claimed.rows;
+        const tokenById = new Map(ids.map((id, i) => [id, tokens[i]]));
+        return claimed.rows.map(row => ({ ...row, claim_token: tokenById.get(row.id) }));
     });
 }
 
@@ -55,6 +65,7 @@ async function reclaimStaleRunningItems() {
     const stale = await query(`
         UPDATE background_job_items
         SET status='failed',
+            claim_token=NULL,
             last_error='Stale: claimed but never completed (worker crash or restart); marked failed for manual retry.',
             updated_at=NOW()
         WHERE status='running' AND updated_at < NOW() - make_interval(mins => $1)
@@ -80,12 +91,25 @@ async function reclaimStaleRunningItems() {
     return stale.rowCount;
 }
 
+// Claim-aware / compare-and-set: this may only complete the EXACT claim it
+// still holds (id + claim_token, and still 'running'). If a genuinely slow
+// (not crashed) handler finishes after its claim was reclaimed as stale --
+// and possibly already retried and re-claimed under a fresh token -- this
+// late completion must be a complete no-op: it must not resurrect/overwrite
+// whatever the current claim holder is doing, and must not double-count
+// background_jobs' progress counters (reclaim already counted this item
+// once as failed).
 async function finishItem(item, ok, errorMessage, result) {
-    await query(`
+    const updated = await query(`
         UPDATE background_job_items
-        SET status=$2,attempt_count=attempt_count+1,last_error=$3,result=$4::jsonb,updated_at=NOW()
-        WHERE id=$1
-    `, [item.id, ok ? 'succeeded' : 'failed', errorMessage || null, JSON.stringify(result || {})]);
+        SET status=$2,claim_token=NULL,attempt_count=attempt_count+1,last_error=$3,result=$4::jsonb,updated_at=NOW()
+        WHERE id=$1 AND status='running' AND claim_token IS NOT DISTINCT FROM $5
+        RETURNING id
+    `, [item.id, ok ? 'succeeded' : 'failed', errorMessage || null, JSON.stringify(result || {}), item.claim_token]);
+    if (!updated.rowCount) {
+        console.warn(`Bulk job item ${item.id}: discarding a completion from an invalidated claim (already reclaimed and/or re-claimed)`);
+        return;
+    }
     await query(`
         UPDATE background_jobs SET succeeded_items=succeeded_items+$2,failed_items=failed_items+$3 WHERE id=$1
     `, [item.job_id, ok ? 1 : 0, ok ? 0 : 1]);
@@ -128,4 +152,4 @@ registerHandler('plan_reconcile', async item => {
     return { active: Boolean(outcome?.active) };
 });
 
-module.exports = { registerHandler, processBatch, reclaimStaleRunningItems, BATCH_SIZE, STALE_RUNNING_MINUTES };
+module.exports = { registerHandler, processBatch, reclaimStaleRunningItems, finishItem, BATCH_SIZE, STALE_RUNNING_MINUTES };

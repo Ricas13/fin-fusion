@@ -220,6 +220,67 @@ async function main() {
     const expiryAfterSecond = new Date(subAfterSecond.rows[0].current_period_end).getTime();
     if (expiryAfterSecond !== expiryAfterFirst) throw new Error('Re-running extend_entitlement must not extend the subscription a second time');
 
+    // Claim-token CAS regression test (review fix): claim A -> reclaim
+    // (stale) -> retry/claim B -> late finish from claim A. The late
+    // completion must be ignored -- it must not alter claim B's state and
+    // must not double-count job counters (reclaim already counted this item
+    // once as failed). Drives the REAL claimBatch()/finishItem()/
+    // reclaimStaleRunningItems() functions rather than re-implementing their
+    // SQL, so this exercises the actual shipped code path.
+    const claimJob = await bulkJobs.createJob('reconcile', {});
+    const claimCustomer = await query(
+        `INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,
+        [`Bulk Smoke Claim ${suffix}`, `bulk-smoke-claim-${suffix}@example.invalid`]
+    );
+    await bulkJobs.enqueueItems(claimJob.job.id, [claimCustomer.rows[0].id]);
+    const claimItemRow = await query('SELECT id FROM background_job_items WHERE job_id=$1', [claimJob.job.id]);
+    const claimItemId = claimItemRow.rows[0].id;
+
+    // Claim A: simulate the worker's claim, long enough ago to be stale.
+    const claimTokenA = crypto.randomUUID();
+    await query(
+        `UPDATE background_job_items SET status='running',claim_token=$2,updated_at=NOW()-make_interval(mins=>$3) WHERE id=$1`,
+        [claimItemId, claimTokenA, bulkWorker.STALE_RUNNING_MINUTES + 5]
+    );
+
+    // Reclaim invalidates claim A (fails the item, clears its token).
+    const reclaimedForClaimTest = await bulkWorker.reclaimStaleRunningItems();
+    if (reclaimedForClaimTest < 1) throw new Error('Expected the simulated stale claim to be reclaimed');
+    const afterReclaimClaim = await query('SELECT status,claim_token FROM background_job_items WHERE id=$1', [claimItemId]);
+    if (afterReclaimClaim.rows[0].status !== 'failed') throw new Error('Reclaimed item should be failed');
+    if (afterReclaimClaim.rows[0].claim_token !== null) throw new Error('Reclaim must clear the invalidated claim token');
+
+    // Retry, then claim B: a fresh claim on the SAME item id.
+    await bulkJobs.retryFailedItems(claimJob.job.id, null);
+    const claimTokenB = crypto.randomUUID();
+    await query(`UPDATE background_job_items SET status='running',claim_token=$2,updated_at=NOW() WHERE id=$1`, [claimItemId, claimTokenB]);
+    const jobBeforeLateFinish = await bulkJobs.getJob(claimJob.job.id);
+
+    // Late finish from claim A arrives (the original, genuinely slow --
+    // not crashed -- handler invocation finally completing after reclaim).
+    // This calls the real finishItem() with claim A's now-invalidated token.
+    await bulkWorker.finishItem({ id: claimItemId, job_id: claimJob.job.id, claim_token: claimTokenA }, true, null, {});
+
+    // Claim B's state must be completely untouched by the rejected late completion.
+    const afterLateFinish = await query('SELECT status,claim_token,attempt_count FROM background_job_items WHERE id=$1', [claimItemId]);
+    if (afterLateFinish.rows[0].status !== 'running') throw new Error("Claim B's running state must survive a late completion from the invalidated claim A");
+    if (afterLateFinish.rows[0].claim_token !== claimTokenB) throw new Error("Claim B's token must be unchanged by the rejected late completion");
+
+    // Job counters must not have moved from the rejected late completion.
+    const jobAfterLateFinish = await bulkJobs.getJob(claimJob.job.id);
+    if (Number(jobAfterLateFinish.succeeded_items) !== Number(jobBeforeLateFinish.succeeded_items)) {
+        throw new Error('A rejected late completion must not increment succeeded_items');
+    }
+    if (Number(jobAfterLateFinish.failed_items) !== Number(jobBeforeLateFinish.failed_items)) {
+        throw new Error('A rejected late completion must not double-count failed_items beyond what reclaim already counted');
+    }
+
+    // Claim B's own completion (its real, current claim) must still work normally.
+    await bulkWorker.finishItem({ id: claimItemId, job_id: claimJob.job.id, claim_token: claimTokenB }, true, null, { ok: true });
+    const afterRealFinish = await query('SELECT status,claim_token FROM background_job_items WHERE id=$1', [claimItemId]);
+    if (afterRealFinish.rows[0].status !== 'succeeded') throw new Error("Claim B's own completion (its real, current claim) must be accepted");
+    if (afterRealFinish.rows[0].claim_token !== null) throw new Error('A successful completion must clear the claim token');
+
     console.log('Bulk jobs smoke test passed.');
 }
 
