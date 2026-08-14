@@ -42,7 +42,7 @@ See [`STREAMS_MANAGER_PARITY.md`](STREAMS_MANAGER_PARITY.md) for the canonical p
 - [ ] Assign clients/resellers/plans to a server or server pool
 - [ ] Premium and Free server classes
 - [ ] Server capacity/health/location-aware account placement
-- [ ] Controlled client migration between servers
+- [x] Controlled client migration between servers
 - [ ] Per-server policy templates for streams, downloads and transcoding
 - [ ] Continuous user/server/library reconciliation
 
@@ -63,7 +63,7 @@ This is a cross-cutting product rule rather than a final migration phase: new wo
 - [x] Automated blank-database test reaches a working administrator dashboard
 - [x] Browser-based first-run administrator creation and permanent setup lockout
 - [ ] Remove remaining legacy Premium/Free business assumptions where they are not intrinsic configuration
-- [ ] Safe configuration export/import
+- [x] Safe configuration export/import
 - [ ] Review new data models for future workspace/tenant scoping without implementing full multi-tenancy
 
 ## Phase 4 — Plans and subscription lifecycle
@@ -88,64 +88,59 @@ This is a cross-cutting product rule rather than a final migration phase: new wo
 - [x] Provider-neutral payment abstraction/schema
 - [ ] Stripe Billing + Checkout Sessions
 - [ ] Stripe Customer Portal
-- [ ] PayPal integration
-- [ ] Square integration
-- [ ] SumUp integration
-- [ ] Plisio/crypto integration
-- [ ] Per-gateway enable/disable
-- [ ] Webhook signature verification and idempotency
-- [ ] One-time/pay-as-you-go purchases
-- [ ] Recurring subscriptions
-- [ ] Transaction synchronization/reconciliation
-- [ ] Unmatched-payment queue and manual matching
-- [ ] Manual payment entry
-- [ ] Automatic reseller credit purchases
-- [ ] Automatic customer subscription activation/extension
-- [ ] Refund and chargeback state handling
-- [ ] Discount codes
+- [ ] Stripe one-time purchases
+- [ ] PayPal subscriptions
+- [ ] PayPal one-time payments
+- [ ] Webhook verification
+- [ ] Idempotent payment event processing
+- [ ] Payment-to-subscription reconciliation
+- [ ] Refund/cancellation handling
+- [ ] Failed payment / grace-period handling
+- [ ] Multiple payment methods per plan
+- [ ] Per-plan provider pricing/mapping
+- [ ] Discounts/promo codes
+- [ ] Referral credits / referral links
 
-## Phase 6 — Registration, self-service and identity
+## Phase 6 — Customer lifecycle and bulk operations
 
-- [ ] Separate site-login identity from Jellyfin identity
-- [ ] Public/invite-only registration
+- [ ] Customer self-registration
 - [ ] Email verification
 - [ ] Password reset
-- [ ] Customer profile/account portal
-- [ ] Subscription/payment history
-- [ ] Change/extend subscription
-- [ ] Pending invites and bulk invitations
-- [ ] Referral-code registration
-- [ ] Linked/household users
-- [ ] Merge/replacement user workflow
-- [ ] TOTP two-factor authentication
-- [ ] Recovery codes
-- [ ] Session/device management
+- [ ] Customer profile fields
+- [ ] Admin create/edit/delete customer
+- [ ] Bulk customer import
+- [ ] Bulk enable/disable/delete
+- [ ] Bulk plan change
+- [ ] Bulk server migration
+- [ ] Bulk email/message
+- [ ] Customer tags/segments
+- [ ] Customer notes
+- [ ] Expiring/expired customer views
+- [ ] Customer activity / last seen
 
-## Phase 7 — Notifications and reminders
+## Phase 7 — Reseller workflows
 
-- [x] Telegram support inherited from Steam Fusion
-- [ ] Email notifications
-- [ ] Discord notifications
-- [ ] WhatsApp notifications
-- [ ] Notification templates by event
-- [ ] Per-event channel enable/disable
-- [ ] Per-user notification preferences
-- [ ] Configurable payment reminders
-- [ ] Expiry/renewal/access/payment/violation notifications
-- [ ] Delivery history and failure retry
-- [ ] Mass contact/broadcast messaging
+- [x] Existing Steam Fusion reseller dashboard retained
+- [x] Existing credit and trial-credit concept retained
+- [ ] Reseller account management in PostgreSQL
+- [ ] Reseller-created customer provisioning through multi-server layer
+- [ ] Per-reseller server/pool constraints
+- [ ] Per-reseller plan catalogue
+- [ ] Trial-plan configuration
+- [ ] Configurable trial-credit return policy
+- [ ] Wholesale/reseller pricing per plan
+- [ ] Reseller payment/credit purchases
+- [ ] Reseller commissions / revenue share
+- [ ] Reseller branding options
+- [ ] Reseller API keys
+- [ ] Reseller audit trail
 
-## Phase 8 — Usage, enforcement and reports
+## Phase 8 — Activity, policy enforcement and reporting
 
-- [ ] Jellyfin playback/session ingestion
-- [ ] Streaming activity log
-- [ ] Download activity log
-- [ ] Active streams by server/reseller/client
-- [ ] Per-plan concurrent-stream enforcement
-- [ ] Stop violating sessions and notify user
-- [ ] Download entitlement enforcement
-- [ ] Weekly download limits
-- [ ] Download time restrictions
+- [ ] Real-time stream visibility
+- [ ] Stream-policy engine
+- [ ] Concurrent stream enforcement
+- [ ] Download policy/enforcement
 - [ ] Transcoding policy enforcement
 - [ ] 4K policy enforcement
 - [ ] Device/session limits
@@ -196,9 +191,9 @@ The original project already contains a basic content-request workflow. The fork
 - [ ] Privileged-role 2FA enforcement
 - [ ] Per-action audit history
 
-## Phase 12 — White label / CAPTaINFiN product layer
+## Phase 12 — White label / CAPTAiNFiN product layer
 
-- [ ] CAPTaINFiN branding/theme
+- [ ] CAPTAiNFiN branding/theme
 - [ ] Custom domain
 - [ ] Logo and wallpaper
 - [ ] Home/pricing/subscription/library-statistics custom content
