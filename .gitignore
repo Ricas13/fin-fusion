@@ -7,6 +7,10 @@ db/
 *.json
 !package*.json
 
+# Encrypted database backups - still sensitive production data
+backups/
+*.pgdump.enc
+
 # Logs
 *.log
 npm-debug.log*
