@@ -97,6 +97,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
+        const { createAdminServerLibraryDashboardRouter } = require('./src/platform/admin-server-library-dashboard');
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
         const { createAdminBrandingRouter } = require('./src/platform/admin-branding');
         const { createBrandingRouter } = require('./src/platform/branding');
@@ -128,10 +129,9 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminBulkCustomersRouter());
         this.use(createAdminCustomersListRouter());
         this.use(createAdminPlanLibrariesRouter());
-        // The current admin shell owns GET presentation for Activity, Servers
-        // (including add/edit) and Libraries. Keep it ahead of the legacy
-        // handlers so those pages use one layout; POSTs still fall through to
-        // the specialised routers below.
+        // Compact/scalable Servers + Libraries presentation owns the exact
+        // index GETs. The shell still owns add/edit and all other admin pages.
+        this.use(createAdminServerLibraryDashboardRouter());
         this.use(createAdminShellRouter());
         this.use(createAdminServersRouter());
         this.use(createAdminActivityRouter());
