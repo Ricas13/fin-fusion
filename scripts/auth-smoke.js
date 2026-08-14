@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const { spawnSync } = require('child_process');
 const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
+const admin2faPolicy = require('../src/auth/admin-2fa-policy');
 const totp = require('../src/auth/totp');
 const serverAdmin = require('../src/platform/admin-servers');
 const adminDashboard = require('../src/platform/admin-dashboard');
@@ -23,7 +24,15 @@ function assertAdminErrorRedaction(){
   const hidden=serverAdmin.safeAdminError(new Error('SECRET_INTERNAL_DATABASE_DETAIL'));
   if(hidden!=='The server change could not be completed safely.'||hidden.includes('SECRET_INTERNAL')) throw new Error('Unexpected server error details were exposed');
 }
-async function cleanup(userId=null){ if(userId) await query('DELETE FROM auth_events WHERE user_id=$1',[userId]); await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]); await query('DELETE FROM app_users WHERE username=$1',[USERNAME]); }
+async function cleanup(userId=null){
+  await query("DELETE FROM platform_settings WHERE setting_key='security_policy'");
+  if(userId){
+    await query("DELETE FROM audit_log WHERE actor_user_id=$1 AND action='admin.security.2fa_policy'",[userId]);
+    await query('DELETE FROM auth_events WHERE user_id=$1',[userId]);
+  }
+  await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]);
+  await query('DELETE FROM app_users WHERE username=$1',[USERNAME]);
+}
 async function main(){
   assertStartupPolicy(); assertAdminErrorRedaction();
   ejs.compile(fs.readFileSync('views/admin/dashboard.ejs','utf8'));
@@ -40,6 +49,19 @@ async function main(){
     const enrollment=await auth.beginTotpEnrollment(userId); const codes=await auth.confirmTotpEnrollment(userId,totp.totp(enrollment.secret),mockReq()); if(!Array.isArray(codes)||codes.length!==10) throw new Error('2FA enrollment failed');
     if(!(await auth.verifySecondFactor(userId,totp.totp(enrollment.secret),mockReq()))) throw new Error('TOTP verification failed');
     if(!(await auth.verifySecondFactor(userId,codes[0],mockReq()))) throw new Error('Recovery verification failed'); if(await auth.verifySecondFactor(userId,codes[0],mockReq())) throw new Error('Recovery code reused');
+
+    // Runtime policy must override the environment and must apply even to an
+    // administrator who is already enrolled. Requiring staff-auth-preload here
+    // installs the same auth-service wrapper used by the production process.
+    await admin2faPolicy.setRequired(false,userId);
+    require('../staff-auth-preload.js');
+    if(!(await auth.verifySecondFactor(userId,'definitely-not-a-valid-code',mockReq()))) throw new Error('Optional administrator 2FA still demanded a step-up code');
+    if(auth.requiresTwoFactor(await auth.getStaffById(userId))) throw new Error('Optional administrator 2FA still forced a login challenge');
+    await admin2faPolicy.setRequired(true,userId);
+    if(await auth.verifySecondFactor(userId,'definitely-not-a-valid-code',mockReq())) throw new Error('Required administrator 2FA accepted an invalid step-up code');
+    if(!auth.requiresTwoFactor(await auth.getStaffById(userId))) throw new Error('Required administrator 2FA did not restore login enforcement');
+    if(!(await auth.verifySecondFactor(userId,totp.totp(enrollment.secret),mockReq()))) throw new Error('Required administrator 2FA rejected a valid authenticator code');
+
     const refreshed=await auth.getStaffById(userId); await auth.registerSession(mockReq(),refreshed); const session=await query('SELECT 1 FROM auth_sessions WHERE session_id=$1 AND user_id=$2',['ci-auth-smoke-session',userId]); if(!session.rowCount) throw new Error('Staff session registration failed');
     console.log('Auth and admin dashboard smoke tests passed');
   }finally{ await cleanup(userId); await getPool().end(); }
