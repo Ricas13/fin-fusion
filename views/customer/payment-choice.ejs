@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Choose payment type · <%= siteName %></title>
+  <link rel="icon" href="/branding/favicon">
+  <link rel="stylesheet" href="/css/customer-portal.css">
+</head>
+<body>
+<div class="portalShell">
+  <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Secure checkout</div></div></a></div></header>
+  <main class="portalMain" style="max-width:760px">
+    <section class="heroCard" style="display:block">
+      <div class="welcomePanel">
+        <div class="eyebrow"><%= provider === 'stripe' ? 'Stripe' : 'PayPal' %></div>
+        <h1>How would you like to pay?</h1>
+        <p><strong><%= planName %></strong> · <%= priceLabel %>. Choose whether this purchase should renew automatically.</p>
+      </div>
+    </section>
+    <section class="sectionBlock">
+      <form method="post" action="/account/checkout/<%= provider %>" class="panel">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="planCode" value="<%= planCode %>">
+        <% if (discountCode) { %><input type="hidden" name="discountCode" value="<%= discountCode %>"><% } %>
+        <div class="plansGrid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))">
+          <% options.forEach(function(option){ %>
+            <label class="planCard" style="cursor:pointer">
+              <div class="planTop"><div><div class="planName"><%= option.checkout_mode === 'subscription' ? 'Automatic renewal' : 'One-time payment' %></div><div class="planDuration"><%= option.checkout_mode === 'subscription' ? 'Renews automatically until cancelled' : 'No automatic renewal' %></div></div></div>
+              <div class="planDescription"><%= option.checkout_mode === 'subscription' ? 'Your access renews through the selected payment provider.' : 'Pay once now. Access ends after the plan duration unless you buy again.' %></div>
+              <div style="margin-top:14px"><input type="radio" name="checkoutMode" value="<%= option.checkout_mode %>" required> Choose this option</div>
+            </label>
+          <% }) %>
+        </div>
+        <% if (provider === 'paypal' && options.some(function(o){return o.checkout_mode === 'subscription'}) && discountCode) { %><div class="flash err" style="margin-top:14px">PayPal discount codes currently apply only to one-time payments. Choose one-time or remove the discount code.</div><% } %>
+        <div class="heroButtons" style="margin-top:18px"><button class="button primary" type="submit">Continue to <%= provider === 'stripe' ? 'Stripe' : 'PayPal' %></button><a class="button secondary" href="/account#plans">Back to plans</a></div>
+      </form>
+    </section>
+  </main>
+</div>
+</body>
+</html>
