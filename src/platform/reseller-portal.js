@@ -274,23 +274,23 @@ async function createTrialClient(req, res) {
         const reseller = await resolveReseller(req.session.authUserId);
         if (!(await requireStep(req))) throw new Error('verification');
         const username = String(req.body.username || '').trim();
-        if (!/^[A-Za-z0-9._-]{3,40}$/.test(username)) throw new Error('Enter a valid username.');
         const planCode = String(req.body.planCode || '').trim();
         if (!planCode) throw new Error('Choose a plan.');
 
-        const created = await query('INSERT INTO customers(reseller_id,display_name) VALUES($1,$2) RETURNING id', [reseller.id, username]);
-        const customerId = created.rows[0].id;
-        const { reconcile } = await subscriptions.extendWithResellerCredits({
-            resellerId: reseller.id, customerId, planCode, units: 1, wallet: 'trial', actorUserId: req.session.authUserId
+        const { subscription, reconcile, reconcileError } = await subscriptions.createResellerClient({
+            resellerId: reseller.id, username, planCode, actorUserId: req.session.authUserId
         });
 
         if (reconcile?.account?.id) {
             const password = randomPassword();
-            await provisioning.setJellyfinPassword(customerId, reconcile.account.id, password);
+            await provisioning.setJellyfinPassword(subscription.customer_id, reconcile.account.id, password);
             const body = `<div class="notice success">Client created.</div><section class="section"><div class="formPanel"><p><strong>Username:</strong> ${esc(username)}</p><p><strong>Password:</strong></p><div class="codeBox">${esc(password)}</div><p class="muted">Shown once. Share it securely.</p><a class="button" href="/reseller">Back</a></div></section>`;
             return res.send(shell({ active: 'dashboard', title: 'Client created', body }));
         }
-        return redirect(res, 'message', 'Client created. Use "Reset Jellyfin password" to issue credentials.');
+        const note = reconcileError
+            ? 'Client created and credits were charged, but Jellyfin provisioning is still catching up. It will finish automatically within a few minutes -- use "Reset Jellyfin password" once it does.'
+            : 'Client created. Use "Reset Jellyfin password" to issue credentials.';
+        return redirect(res, 'message', note);
     } catch (error) {
         console.error('Reseller trial create failed:', error.message);
         return redirect(res, 'error', error.message === 'verification' ? 'Verification failed.' : error.message);

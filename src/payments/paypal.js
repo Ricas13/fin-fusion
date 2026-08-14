@@ -106,6 +106,9 @@ async function createCheckout({ customerId, planCode, returnUrl, cancelUrl, disc
     let discount = null;
     if (discountCode) {
         discount = await discounts.validateForCheckout({ code: discountCode, planId: plan.id, planCode, customerId });
+        if (discount.discount_type === 'fixed' && discount.currency && String(discount.currency).toUpperCase() !== String(plan.currency).toUpperCase()) {
+            throw new Error("That discount code's currency does not match this plan");
+        }
         amountMinor = discounts.computeDiscountedMinor(amountMinor, discount);
     }
     const value = (amountMinor / 100).toFixed(2);

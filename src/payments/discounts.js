@@ -51,18 +51,53 @@ function computeDiscountedMinor(baseMinor, discount) {
     return Math.max(0, base - Number(discount.fixed_off_minor || 0));
 }
 
+// Runs inside the same transaction that activates a paid subscription. By design this
+// NEVER throws for a limit violation -- by the time this runs, a payment provider has
+// already accepted the customer's money, so a bookkeeping limit being exceeded (lost a
+// race against a concurrent checkout, or a webhook retry) must not roll back or block
+// the subscription/Jellyfin access the customer already paid for. It only refuses to
+// double-count. Idempotent per subscription via a unique index + ON CONFLICT DO NOTHING,
+// so a retried webhook/activation for the same subscription is a safe no-op.
 async function redeemForSubscriptionTx(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor = 0 }) {
-    const claimed = await client.query(`
-        UPDATE discount_codes
-        SET redemption_count=redemption_count+1, updated_at=NOW()
-        WHERE id=$1 AND (max_redemptions IS NULL OR redemption_count<max_redemptions)
-        RETURNING id
-    `, [discountCodeId]);
-    if (!claimed.rowCount) throw new Error('That discount code has reached its redemption limit');
+    if (!discountCodeId) return { redeemed: false, reason: 'no_code' };
+
+    if (subscriptionId) {
+        const already = await client.query('SELECT 1 FROM discount_redemptions WHERE subscription_id=$1', [subscriptionId]);
+        if (already.rowCount) return { redeemed: true, alreadyRecorded: true };
+    }
+
+    // Lock the discount_codes row so concurrent redemption attempts for the SAME code
+    // serialize here, closing the race window validateForCheckout() (a pre-payment,
+    // non-locking check) cannot close on its own.
+    const discount = await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE', [discountCodeId]);
+    if (!discount.rowCount) {
+        console.error(`Discount code ${discountCodeId} was removed before redemption could be recorded; granting access anyway.`);
+        return { redeemed: false, reason: 'code_missing' };
+    }
+    const row = discount.rows[0];
+
+    if (row.max_redemptions !== null && row.redemption_count >= row.max_redemptions) {
+        console.error(`Discount ${row.code} exceeded its redemption limit at activation time; granting access anyway.`);
+        return { redeemed: false, reason: 'max_redemptions' };
+    }
+    if (customerId) {
+        const used = await client.query(
+            'SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2',
+            [discountCodeId, customerId]
+        );
+        if (used.rows[0].n >= row.per_customer_limit) {
+            console.error(`Discount ${row.code} exceeded its per-customer limit for customer ${customerId} at activation time; granting access anyway.`);
+            return { redeemed: false, reason: 'per_customer_limit' };
+        }
+    }
+
+    await client.query('UPDATE discount_codes SET redemption_count=redemption_count+1,updated_at=NOW() WHERE id=$1', [discountCodeId]);
     await client.query(`
         INSERT INTO discount_redemptions(discount_code_id,customer_id,subscription_id,amount_applied_minor)
         VALUES($1,$2,$3,$4)
+        ON CONFLICT (subscription_id) WHERE subscription_id IS NOT NULL DO NOTHING
     `, [discountCodeId, customerId, subscriptionId || null, amountAppliedMinor]);
+    return { redeemed: true };
 }
 
 module.exports = {

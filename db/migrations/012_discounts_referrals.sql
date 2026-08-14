@@ -58,8 +58,10 @@ CREATE TABLE IF NOT EXISTS referral_redemptions (
 CREATE INDEX IF NOT EXISTS referral_redemptions_code_idx ON referral_redemptions(referral_code_id);
 CREATE INDEX IF NOT EXISTS referral_redemptions_status_idx ON referral_redemptions(status);
 
+-- Off by default: a newly introduced reward-granting feature must be explicitly
+-- enabled by an admin (see /admin/referrals), not silently active on deploy.
 INSERT INTO platform_settings(setting_key, setting_value)
-VALUES ('referral_program', '{"rewardDays": 7, "enabled": true}'::jsonb)
+VALUES ('referral_program', '{"rewardDays": 7, "enabled": false}'::jsonb)
 ON CONFLICT (setting_key) DO NOTHING;
 
 COMMIT;

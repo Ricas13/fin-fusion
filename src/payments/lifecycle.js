@@ -210,9 +210,16 @@ async function activatePurchase({
         }
 
         if (discountCodeId) {
-            await discounts.redeemForSubscriptionTx(client, {
-                discountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: discountAmountAppliedMinor
-            });
+            // A payment provider has already accepted this customer's money by the time we
+            // get here, so a failure recording discount usage must never roll back or block
+            // the subscription/access they paid for -- see redeemForSubscriptionTx().
+            try {
+                await discounts.redeemForSubscriptionTx(client, {
+                    discountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: discountAmountAppliedMinor
+                });
+            } catch (error) {
+                console.error('Discount redemption bookkeeping failed; subscription is still being activated:', error.message);
+            }
         }
 
         await client.query(`

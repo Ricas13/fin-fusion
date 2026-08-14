@@ -95,6 +95,9 @@ async function createCheckout({ customerId, planCode, email, successUrl, cancelU
 
     if (discountCode) {
         const discount = await discounts.validateForCheckout({ code: discountCode, planId: plan.id, planCode, customerId });
+        if (discount.discount_type === 'fixed' && discount.currency && String(discount.currency).toUpperCase() !== String(plan.currency).toUpperCase()) {
+            throw new Error("That discount code's currency does not match this plan");
+        }
         const couponId = await ensureStripeCoupon(discount, plan);
         params.discounts = [{ coupon: couponId }];
         metadata.internal_discount_code_id = discount.id;

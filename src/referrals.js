@@ -54,7 +54,9 @@ async function loadSettings() {
     const rewardDays = Number.parseInt(value.rewardDays, 10);
     return {
         rewardDays: Number.isFinite(rewardDays) && rewardDays > 0 ? Math.min(rewardDays, 365) : 7,
-        enabled: value.enabled !== false
+        // Default OFF: a reward-granting feature must be explicitly enabled by an admin,
+        // whether that's because the settings row is missing or its "enabled" key is absent.
+        enabled: value.enabled === true
     };
 }
 
@@ -72,10 +74,13 @@ async function rewardIfQualifying(referredCustomerId) {
         if (!pending.rowCount) return null;
         const redemption = pending.rows[0];
 
+        // Matches currentEntitlement()'s definition of "the" active subscription
+        // (src/jellyfin/provisioning.js) so the reward lands on the referrer's actual
+        // current entitlement rather than an incidental short-lived one.
         const target = await client.query(`
             SELECT id FROM subscriptions
-            WHERE customer_id=$1 AND status IN ('active','trialing')
-            ORDER BY current_period_end ASC LIMIT 1 FOR UPDATE
+            WHERE customer_id=$1 AND status IN ('active','trialing','past_due') AND current_period_end>NOW()
+            ORDER BY current_period_end DESC,created_at DESC LIMIT 1 FOR UPDATE
         `, [redemption.referrer_customer_id]);
 
         if (!target.rowCount) {
