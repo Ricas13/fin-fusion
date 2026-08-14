@@ -46,12 +46,14 @@ function startJobs() {
     jobsStarted = true;
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/resilient-provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
+    const placement = require('./src/jellyfin/placement');
     const bulkWorker = require('./src/jellyfin/bulk-worker');
     const requestUserSync = require('./src/integrations/request-user-sync');
     const requestServiceSettings = require('./src/integrations/request-service-settings');
     require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
+    placement.startFleetSnapshotRefresh();
     const runEntitlements = async () => {
         try {
             const expired = await expireSubscriptionsAndReconcile();
