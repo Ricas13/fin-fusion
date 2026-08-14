@@ -13,6 +13,7 @@ const { query, transaction } = require('../db');
 const provisioning = require('./provisioning');
 
 const BATCH_SIZE = 20;
+const STALE_RUNNING_MINUTES = 10;
 const handlers = new Map();
 
 function registerHandler(jobType, fn) {
@@ -22,7 +23,7 @@ function registerHandler(jobType, fn) {
 async function claimBatch() {
     return transaction(async client => {
         const claimed = await client.query(`
-            SELECT bji.id, bji.job_id, bji.customer_id, bji.attempt_count, bg.job_type, bg.params
+            SELECT bji.id, bji.job_id, bji.customer_id, bji.attempt_count, bji.previous_state, bg.job_type, bg.params
             FROM background_job_items bji
             JOIN background_jobs bg ON bg.id = bji.job_id
             WHERE bji.status='pending'
@@ -40,6 +41,43 @@ async function claimBatch() {
         `, [jobIds]);
         return claimed.rows;
     });
+}
+
+// A process crash (or container restart) between claiming an item and
+// finishing it would otherwise leave that item 'running' forever -- the
+// normal claim query only ever picks up 'pending' items, so nothing would
+// ever revisit it. This never silently re-queues a stale item back to
+// 'pending' for automatic reprocessing (that could double-apply a
+// non-idempotent mutation if the crashed attempt actually completed);
+// instead it fails the item explicitly so it shows up for an admin's
+// deliberate Retry Failed action, same as any other failure.
+async function reclaimStaleRunningItems() {
+    const stale = await query(`
+        UPDATE background_job_items
+        SET status='failed',
+            last_error='Stale: claimed but never completed (worker crash or restart); marked failed for manual retry.',
+            updated_at=NOW()
+        WHERE status='running' AND updated_at < NOW() - make_interval(mins => $1)
+        RETURNING id, job_id
+    `, [STALE_RUNNING_MINUTES]);
+    if (!stale.rowCount) return 0;
+    const jobIds = Array.from(new Set(stale.rows.map(row => row.job_id)));
+    for (const jobId of jobIds) {
+        const reclaimedForJob = stale.rows.filter(row => row.job_id === jobId).length;
+        await query(`UPDATE background_jobs SET failed_items=failed_items+$2 WHERE id=$1`, [jobId, reclaimedForJob]);
+        const remaining = await query(`
+            SELECT COUNT(*) FILTER(WHERE status IN ('pending','running'))::int AS pending,
+                   COUNT(*) FILTER(WHERE status='failed')::int AS failed
+            FROM background_job_items WHERE job_id=$1
+        `, [jobId]);
+        if (remaining.rows[0].pending === 0) {
+            await query(`
+                UPDATE background_jobs SET status=$2,completed_at=NOW()
+                WHERE id=$1 AND status NOT IN ('cancelled','completed','completed_with_errors')
+            `, [jobId, remaining.rows[0].failed > 0 ? 'completed_with_errors' : 'completed']);
+        }
+    }
+    return stale.rowCount;
 }
 
 async function finishItem(item, ok, errorMessage, result) {
@@ -90,4 +128,4 @@ registerHandler('plan_reconcile', async item => {
     return { active: Boolean(outcome?.active) };
 });
 
-module.exports = { registerHandler, processBatch, BATCH_SIZE };
+module.exports = { registerHandler, processBatch, reclaimStaleRunningItems, BATCH_SIZE, STALE_RUNNING_MINUTES };

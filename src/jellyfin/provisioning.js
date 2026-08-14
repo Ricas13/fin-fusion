@@ -267,7 +267,9 @@ async function currentEntitlement(customerId) {
                s.id AS subscription_id,p.id AS plan_id
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id
         WHERE s.customer_id=$1
+          AND c.access_paused_at IS NULL
           AND s.status IN ('active','trialing','past_due')
           AND s.current_period_end > NOW()
           AND p.active=TRUE
@@ -326,9 +328,17 @@ async function createJellyfinAccount(customerId, server, effective) {
         RETURNING *
     `, [customerId, server.id, created.Id, username]);
     const account = stored.rows[0];
-    const status = libraryAccess.missing.length ? 'failed' : 'successful';
-    await upsertReconciliationStatus(account.id, customerId, status,
-        libraryAccess.missing.length ? `Missing on server: ${libraryAccess.missing.join(', ')}` : null);
+    if (libraryAccess.missing.length) {
+        const message = `Missing on server: ${libraryAccess.missing.join(', ')}`;
+        await upsertReconciliationStatus(account.id, customerId, 'failed', message);
+        // The account exists and the narrowed (safe) policy is already applied
+        // -- not rolled back, since losing the whole account over one missing
+        // library would be more disruptive than the narrowed access itself --
+        // but this must still surface as a real failure to the caller so
+        // reconcileCustomer/bulk jobs don't report success.
+        throw new Error(`Jellyfin account created with a narrowed library set -- ${message}`);
+    }
+    await upsertReconciliationStatus(account.id, customerId, 'successful', null);
     return account;
 }
 
@@ -359,10 +369,20 @@ async function applyPolicy(account, effective, disabled = false) {
         SET disabled=$1,last_policy_sync=NOW(),updated_at=NOW()
         WHERE id=$2
     `, [disabled, account.id]);
-    const status = libraryAccess.missing.length ? 'failed' : 'successful';
-    await upsertReconciliationStatus(account.id, account.customer_id, status,
-        libraryAccess.missing.length ? `Missing on server: ${libraryAccess.missing.join(', ')}` : null);
-    return { missing: libraryAccess.missing };
+    if (libraryAccess.missing.length) {
+        const message = `Missing on server: ${libraryAccess.missing.join(', ')}`;
+        await upsertReconciliationStatus(account.id, account.customer_id, 'failed', message);
+        // The narrowed (safe) policy was still applied above -- fail-closed is
+        // preserved -- but this is a real reconciliation failure and must
+        // propagate, not read as success: callers (reconcileCustomer,
+        // reconcileAccount, bulk job items) need to end up failed/retryable,
+        // and provisioning_runs needs to record it, or a missing library would
+        // silently look like a clean reconcile everywhere except this one
+        // account's reconciliation-status row.
+        throw new Error(`Jellyfin policy applied with a narrowed library set -- ${message}`);
+    }
+    await upsertReconciliationStatus(account.id, account.customer_id, 'successful', null);
+    return { missing: [] };
 }
 
 const DISABLED_EFFECTIVE = {
@@ -479,21 +499,23 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
     });
 }
 
-// Pauses Jellyfin access for a customer WITHOUT touching their subscription
-// -- unlike cancelling a subscription, this is meant to be reversible by a
-// later reconcileCustomer() call (bulk "enable"), since the underlying
-// entitlement is untouched and simply re-applies once accounts are no
-// longer force-disabled.
-async function disableAllAccounts(customerId) {
-    const accountsResult = await query(`
-        SELECT ja.*,js.enabled AS server_enabled FROM jellyfin_accounts ja
-        JOIN jellyfin_servers js ON js.id=ja.server_id
-        WHERE ja.customer_id=$1 AND ja.disabled=FALSE
-    `, [customerId]);
-    for (const account of accountsResult.rows) {
-        if (account.server_enabled) await applyPolicy(account, DISABLED_EFFECTIVE, true);
-    }
-    return accountsResult.rowCount;
+// Places a persistent, reversible access hold WITHOUT touching the
+// subscription -- currentEntitlement() treats a held customer as having no
+// current entitlement, so reconcileCustomer() disables their accounts, and
+// (unlike directly disabling the accounts) that disabled state survives the
+// periodic entitlement-reconcile sweep, since the sweep re-derives
+// entitlement from this same check every time it runs.
+async function holdAccess(customerId, reason) {
+    await query(`UPDATE customers SET access_paused_at=NOW(),access_hold_reason=$2 WHERE id=$1`, [customerId, reason]);
+    return reconcileCustomer(customerId);
+}
+
+// Clears a hold placed by holdAccess() and reconciles -- this restores
+// exactly whatever the customer's real subscription state is, since the
+// hold never touched subscription status at all.
+async function releaseAccess(customerId) {
+    await query(`UPDATE customers SET access_paused_at=NULL,access_hold_reason=NULL WHERE id=$1`, [customerId]);
+    return reconcileCustomer(customerId);
 }
 
 async function expireSubscriptionsAndReconcile() {
@@ -536,7 +558,8 @@ module.exports = {
     currentEntitlement,
     reconcileCustomer,
     reconcileAccount,
-    disableAllAccounts,
+    holdAccess,
+    releaseAccess,
     setJellyfinPassword,
     expireSubscriptionsAndReconcile
 };

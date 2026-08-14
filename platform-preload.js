@@ -57,12 +57,21 @@ function startJobs() {
         try { await bulkWorker.processBatch(); }
         catch (error) { console.error('Bulk job worker failed:', error.message); }
     };
+    const runStaleReclaim = async () => {
+        try {
+            const reclaimed = await bulkWorker.reclaimStaleRunningItems();
+            if (reclaimed) console.warn(`Bulk job worker: reclaimed ${reclaimed} stale 'running' item(s) as failed`);
+        } catch (error) { console.error('Stale bulk job reclaim failed:', error.message); }
+    };
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
     initialEntitlement.unref?.(); initialHealth.unref?.();
     // Bulk jobs poll on a short fixed interval (not settings-driven -- these
     // are bounded per-tick batches, not a tunable operational cadence).
     createRescheduler(runBulkJobs, () => 3000).start();
+    // Decoupled from the 3s claim loop -- this only needs to run often enough
+    // relative to STALE_RUNNING_MINUTES to catch a crashed worker promptly.
+    createRescheduler(runStaleReclaim, () => 60000).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {

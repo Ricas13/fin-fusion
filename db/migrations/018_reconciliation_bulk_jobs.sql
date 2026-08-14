@@ -41,8 +41,14 @@ CREATE TABLE IF NOT EXISTS background_jobs (
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ
 );
+-- NULLS NOT DISTINCT (PG16, matching CI's postgres:16-alpine) so two
+-- system-created jobs (created_by NULL, e.g. plan-change fanout) with the
+-- same idempotency key still collide -- plain unique semantics treat NULLs
+-- as distinct from each other, which would otherwise let duplicates through
+-- for every NULL-created_by caller.
 CREATE UNIQUE INDEX IF NOT EXISTS background_jobs_idempotency_unique
     ON background_jobs(created_by, idempotency_key)
+    NULLS NOT DISTINCT
     WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS background_jobs_status_idx
     ON background_jobs(status, created_at);
@@ -75,5 +81,10 @@ CREATE INDEX IF NOT EXISTS background_job_items_job_status_idx
 CREATE INDEX IF NOT EXISTS background_job_items_pending_idx
     ON background_job_items(status, id)
     WHERE status = 'pending';
+-- Supports the stale-running reclaim sweep (a crash after claim must not
+-- leave an item 'running' forever).
+CREATE INDEX IF NOT EXISTS background_job_items_running_idx
+    ON background_job_items(status, updated_at)
+    WHERE status = 'running';
 
 COMMIT;

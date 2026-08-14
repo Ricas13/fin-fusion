@@ -95,18 +95,37 @@ registerHandler('plan_change', async item => {
     return { planId };
 });
 
+// Idempotent across retries: "extend by N units from wherever current_period_end
+// happens to be right now" is NOT safe to simply re-run, since a retry after
+// an uncertain outcome (crash, stale-running reclaim, explicit Retry Failed)
+// could extend twice if the first attempt actually committed before failing
+// to report success. The target expiry is computed once and persisted to
+// previous_state before mutating; every subsequent attempt for this same job
+// item reuses that persisted target instead of recomputing from the
+// (possibly already-mutated) current value.
 registerHandler('extend_entitlement', async item => {
     const units = Number(item.params?.units) || 1;
     const sub = await currentSubscription(item.customer_id);
     if (!sub) throw new Error('Customer has no subscription to extend');
-    const planResult = await query('SELECT duration_days FROM plans WHERE id=$1', [sub.plan_id]);
-    const durationDays = Number(planResult.rows[0]?.duration_days) || 30;
-    const base = new Date(sub.current_period_end) > new Date() ? new Date(sub.current_period_end) : new Date();
-    const next = new Date(base.getTime() + durationDays * units * 86400000);
-    await query(`UPDATE subscriptions SET current_period_end=$2,status=CASE WHEN status IN ('cancelled','expired') THEN 'active' ELSE status END,updated_at=NOW() WHERE id=$1`, [sub.id, next]);
+
+    let targetExpiry;
+    if (item.previous_state?.targetExpiry) {
+        targetExpiry = new Date(item.previous_state.targetExpiry);
+    } else {
+        const planResult = await query('SELECT duration_days FROM plans WHERE id=$1', [sub.plan_id]);
+        const durationDays = Number(planResult.rows[0]?.duration_days) || 30;
+        const base = new Date(sub.current_period_end) > new Date() ? new Date(sub.current_period_end) : new Date();
+        targetExpiry = new Date(base.getTime() + durationDays * units * 86400000);
+        await query(`UPDATE background_job_items SET previous_state=$2::jsonb WHERE id=$1`, [
+            item.id,
+            JSON.stringify({ targetExpiry: targetExpiry.toISOString(), originalExpiry: sub.current_period_end })
+        ]);
+    }
+
+    await query(`UPDATE subscriptions SET current_period_end=$2,status=CASE WHEN status IN ('cancelled','expired') THEN 'active' ELSE status END,updated_at=NOW() WHERE id=$1`, [sub.id, targetExpiry]);
     await provisioning.reconcileCustomer(item.customer_id);
-    await auditItem('admin.bulk.extend_entitlement', item.customer_id, { units, newExpiry: next });
-    return { newExpiry: next };
+    await auditItem('admin.bulk.extend_entitlement', item.customer_id, { units, newExpiry: targetExpiry });
+    return { newExpiry: targetExpiry };
 });
 
 registerHandler('set_expiry', async item => {
@@ -130,26 +149,29 @@ registerHandler('reset_overrides', async item => {
 
 // ---- Customer state -------------------------------------------------------
 
+// enable/disable/suspend all go through the same persistent, reversible
+// access hold (customers.access_paused_at/access_hold_reason) rather than
+// mutating subscription status -- disable/suspend must survive the periodic
+// entitlement-reconcile sweep (which only looks at subscription state, so a
+// direct Jellyfin-account disable would get silently undone), and enable
+// must be able to restore exactly the prior state without having to guess
+// what subscription status to resume to.
 registerHandler('enable', async item => {
-    const outcome = await provisioning.reconcileCustomer(item.customer_id);
+    const outcome = await provisioning.releaseAccess(item.customer_id);
     await auditItem('admin.bulk.enable', item.customer_id, { active: Boolean(outcome?.active) });
     return { active: Boolean(outcome?.active) };
 });
 
 registerHandler('disable', async item => {
-    const count = await provisioning.disableAllAccounts(item.customer_id);
-    await auditItem('admin.bulk.disable', item.customer_id, { accountsDisabled: count });
-    return { accountsDisabled: count };
+    const outcome = await provisioning.holdAccess(item.customer_id, 'disabled');
+    await auditItem('admin.bulk.disable', item.customer_id, { active: Boolean(outcome?.active) });
+    return { active: Boolean(outcome?.active) };
 });
 
 registerHandler('suspend', async item => {
-    await query(`
-        UPDATE subscriptions SET status='cancelled',updated_at=NOW()
-        WHERE customer_id=$1 AND status IN ('active','trialing','past_due')
-    `, [item.customer_id]);
-    await provisioning.reconcileCustomer(item.customer_id);
-    await auditItem('admin.bulk.suspend', item.customer_id, {});
-    return {};
+    const outcome = await provisioning.holdAccess(item.customer_id, 'suspended');
+    await auditItem('admin.bulk.suspend', item.customer_id, { active: Boolean(outcome?.active) });
+    return { active: Boolean(outcome?.active) };
 });
 
 // ---- Jellyfin -------------------------------------------------------------
@@ -165,13 +187,19 @@ registerHandler('retry_failed', async item => {
         SELECT jellyfin_account_id FROM jellyfin_policy_reconciliation
         WHERE customer_id=$1 AND status='failed'
     `, [item.customer_id]);
-    let retried = 0;
+    let succeeded = 0;
+    const errors = [];
     for (const row of failed.rows) {
-        try { await provisioning.reconcileAccount(row.jellyfin_account_id); retried += 1; }
-        catch (_) { /* left failed; visible via reconciliation status */ }
+        try { await provisioning.reconcileAccount(row.jellyfin_account_id); succeeded += 1; }
+        catch (error) { errors.push(error.message); }
     }
-    await auditItem('admin.bulk.retry_failed', item.customer_id, { retried });
-    return { retried };
+    await auditItem('admin.bulk.retry_failed', item.customer_id, { attempted: failed.rows.length, succeeded, stillFailing: errors.length });
+    // Nothing to retry is a legitimate success (failed.rows.length === 0);
+    // anything still failing after the attempt must fail this job item too,
+    // or Retry Failed would silently report success while accounts remain
+    // in a failed reconciliation state.
+    if (errors.length) throw new Error(`${errors.length}/${failed.rows.length} account(s) still failing after retry: ${errors[0]}`);
+    return { succeeded };
 });
 
 registerHandler('revoke_sessions', async item => {
@@ -216,6 +244,7 @@ registerHandler('payments_sync', async item => {
         WHERE customer_id=$1 AND source IN ('stripe','paypal') AND provider_subscription_id IS NOT NULL
     `, [item.customer_id]);
     let synced = 0;
+    const errors = [];
     for (const row of subs.rows) {
         try {
             if (row.source === 'stripe' && stripe.enabled()) {
@@ -231,9 +260,17 @@ registerHandler('payments_sync', async item => {
                 });
                 synced += 1;
             }
-        } catch (error) { console.error(`Payment sync failed for ${item.customer_id}:`, error.message); }
+        } catch (error) {
+            console.error(`Payment sync failed for ${item.customer_id}:`, error.message);
+            errors.push(`${row.source}: ${error.message}`);
+        }
     }
-    await auditItem('admin.bulk.payments_sync', item.customer_id, { synced });
+    await auditItem('admin.bulk.payments_sync', item.customer_id, { synced, failed: errors.length });
+    // A customer with zero stripe/paypal subscriptions to sync is a
+    // legitimate no-op success; a provider call that actually failed must
+    // fail this job item, or the worker/UI would report success while the
+    // stored subscription state is still stale.
+    if (errors.length) throw new Error(`${errors.length} payment sync(s) failed: ${errors[0]}`);
     return { synced };
 });
 

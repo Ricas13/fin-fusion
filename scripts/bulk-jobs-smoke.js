@@ -12,6 +12,8 @@ const crypto = require('crypto');
 const { getPool, query } = require('../src/db');
 const bulkJobs = require('../src/platform/bulk-jobs');
 const provisioning = require('../src/jellyfin/provisioning');
+const bulkWorker = require('../src/jellyfin/bulk-worker');
+require('../src/platform/bulk-operations'); // registers the real job-type handlers, e.g. extend_entitlement
 
 async function main() {
     const suffix = crypto.randomBytes(4).toString('hex');
@@ -45,6 +47,9 @@ async function main() {
     if (!planJobItems.some(item => item.customer_id === customerId)) {
         throw new Error('Affected customer missing from queued plan-reconciliation job items');
     }
+    // Neutralize this item so later processBatch() calls in this test don't
+    // pick it up and try to reach the fake Jellyfin server created below.
+    await query(`UPDATE background_job_items SET status='succeeded' WHERE job_id=$1`, [planJob.id]);
 
     // A plan with zero active subscribers must not queue an empty job.
     const emptyPlan = await query(`
@@ -88,6 +93,8 @@ async function main() {
     if (dupInsertCount !== 0) throw new Error('Re-enqueueing the same customer on a reused job must not insert a duplicate item');
     const itemCountAfterDup = await query('SELECT COUNT(*)::int n FROM background_job_items WHERE job_id=$1', [first.job.id]);
     if (Number(itemCountAfterDup.rows[0].n) !== 1) throw new Error('Duplicate submission must not result in the mutation being queued twice');
+    // Neutralize this item too, for the same reason as the plan-reconcile one above.
+    await query(`UPDATE background_job_items SET status='succeeded' WHERE job_id=$1`, [first.job.id]);
 
     // #13 retrying failed items must never touch an item that already
     // succeeded -- only items currently in 'failed' status are reset.
@@ -129,6 +136,85 @@ async function main() {
     if (foreignResult) throw new Error("A reseller must never be able to view another reseller's job results");
     const adminResult = await bulkJobs.getJobForActor(scopedJob.job.id, null);
     if (!adminResult) throw new Error('An admin (no reseller scope) must still be able to view any job');
+
+    // Concurrent duplicate submission (review fix): two truly concurrent
+    // createJob calls with the same idempotency key -- including the
+    // createdBy=null system-job case, where plain SQL/unique-index equality
+    // previously let NULL-creator duplicates through -- must resolve to
+    // exactly one job.
+    const concurrentKey = `smoke-concurrent-${suffix}`;
+    const [concurrentA, concurrentB] = await Promise.all([
+        bulkJobs.createJob('reconcile', {}, { createdBy: null, idempotencyKey: concurrentKey }),
+        bulkJobs.createJob('reconcile', {}, { createdBy: null, idempotencyKey: concurrentKey })
+    ]);
+    if (concurrentA.job.id !== concurrentB.job.id) {
+        throw new Error('Concurrent duplicate submissions with the same key (createdBy=null) must resolve to the same job');
+    }
+    if ([concurrentA.reused, concurrentB.reused].filter(Boolean).length !== 1) {
+        throw new Error('Exactly one of two concurrent duplicate submissions should be marked reused');
+    }
+    const concurrentJobCount = await query(
+        'SELECT COUNT(*)::int n FROM background_jobs WHERE created_by IS NULL AND idempotency_key=$1',
+        [concurrentKey]
+    );
+    if (Number(concurrentJobCount.rows[0].n) !== 1) throw new Error('Concurrent duplicate submission must not create two job rows');
+
+    // Crash/retry semantics (review fix): a 'running' item that's been stuck
+    // past the stale threshold must be reclaimed as failed (never silently
+    // re-run automatically), and extend_entitlement must apply the exact same
+    // target expiry no matter how many times its job item is retried.
+    const extendPlan = await query(`
+        INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
+        VALUES($1,'Bulk smoke extend plan','direct','custom',30,0,'USD',1,'premium',TRUE,TRUE)
+        RETURNING id
+    `, [`bulk-smoke-extend-plan-${suffix}`]);
+    const extendCustomer = await query(
+        `INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,
+        [`Bulk Smoke Extend ${suffix}`, `bulk-smoke-extend-${suffix}@example.invalid`]
+    );
+    const extendCustomerId = extendCustomer.rows[0].id;
+    const originalExpiry = new Date(Date.now() + 5 * 86400000);
+    const extendSub = await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+        VALUES($1,$2,'active','manual',NOW(),$3) RETURNING id
+    `, [extendCustomerId, extendPlan.rows[0].id, originalExpiry]);
+
+    const extendJob = await bulkJobs.createJob('extend_entitlement', { units: 1 });
+    await bulkJobs.enqueueItems(extendJob.job.id, [extendCustomerId]);
+    const extendItemBefore = await query('SELECT id FROM background_job_items WHERE job_id=$1', [extendJob.job.id]);
+    const extendItemId = extendItemBefore.rows[0].id;
+
+    // Simulate a worker crash: claimed (running) long enough ago to be stale.
+    await query(
+        `UPDATE background_job_items SET status='running',updated_at=NOW()-make_interval(mins=>$2) WHERE id=$1`,
+        [extendItemId, bulkWorker.STALE_RUNNING_MINUTES + 5]
+    );
+    const reclaimedCount = await bulkWorker.reclaimStaleRunningItems();
+    if (reclaimedCount < 1) throw new Error('reclaimStaleRunningItems should have reclaimed the stale running item');
+    const afterReclaim = await query('SELECT status,last_error,previous_state FROM background_job_items WHERE id=$1', [extendItemId]);
+    if (afterReclaim.rows[0].status !== 'failed') throw new Error('A stale running item must be marked failed, never silently left running or re-queued automatically');
+    if (afterReclaim.rows[0].previous_state !== null) throw new Error('Reclaiming a stale item must not fabricate previous_state');
+
+    // Explicit admin retry (not automatic) picks it up and actually runs it.
+    await bulkJobs.retryFailedItems(extendJob.job.id, null);
+    const processedFirst = await bulkWorker.processBatch();
+    if (processedFirst < 1) throw new Error('processBatch should have processed the retried extend_entitlement item');
+    const subAfterFirst = await query('SELECT current_period_end FROM subscriptions WHERE id=$1', [extendSub.rows[0].id]);
+    const expiryAfterFirst = new Date(subAfterFirst.rows[0].current_period_end).getTime();
+    if (expiryAfterFirst <= originalExpiry.getTime()) throw new Error('First successful attempt should have extended the subscription');
+    const itemAfterFirst = await query('SELECT status,previous_state FROM background_job_items WHERE id=$1', [extendItemId]);
+    if (itemAfterFirst.rows[0].status !== 'succeeded') throw new Error('extend_entitlement should have succeeded on the retried attempt');
+    if (!itemAfterFirst.rows[0].previous_state?.targetExpiry) throw new Error('A successful extend_entitlement must persist its computed target expiry to previous_state');
+
+    // Force a second run of the SAME item (simulating e.g. an operator
+    // re-running it after an ambiguous outcome) and confirm the target
+    // expiry does not move again -- proving the mutation is idempotent.
+    await query(`UPDATE background_job_items SET status='pending' WHERE id=$1`, [extendItemId]);
+    const processedSecond = await bulkWorker.processBatch();
+    if (processedSecond < 1) throw new Error('processBatch should have processed the re-run extend_entitlement item');
+    const subAfterSecond = await query('SELECT current_period_end FROM subscriptions WHERE id=$1', [extendSub.rows[0].id]);
+    const expiryAfterSecond = new Date(subAfterSecond.rows[0].current_period_end).getTime();
+    if (expiryAfterSecond !== expiryAfterFirst) throw new Error('Re-running extend_entitlement must not extend the subscription a second time');
 
     console.log('Bulk jobs smoke test passed.');
 }
