@@ -3,7 +3,6 @@
 const express = require('express');
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
-const auth = require('../auth/service');
 const registry = require('../jellyfin/registry');
 const { encryptWithEnv } = require('../security/purpose-crypto');
 
@@ -23,7 +22,6 @@ const SAFE_ERROR_PREFIXES = [
     'Jellyfin returned an unexpected response.',
     'Jellyfin validation timed out.',
     'Could not validate the Jellyfin server securely.',
-    'Second-factor verification failed.',
     'Server name is required.',
     'Server not found.'
 ];
@@ -225,6 +223,8 @@ function createAdminServersRouter() {
     const router = express.Router();
     router.use('/admin/servers', requireNativeAdmin, noStore);
 
+    // These GET handlers remain as compatibility fallbacks. The current admin
+    // shell is mounted first and normally owns their presentation.
     router.get('/admin/servers', async (req, res, next) => {
         try {
             return res.render('admin/servers', {
@@ -264,8 +264,6 @@ function createAdminServersRouter() {
     router.post('/admin/servers', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
-            const secondFactorOk = await auth.verifySecondFactor(req.session.authUserId, req.body.code, req);
-            if (!secondFactorOk) throw new Error('Second-factor verification failed.');
             const form = parseServerForm(req.body, { apiKeyRequired: true });
             if (!form.name) throw new Error('Server name is required.');
             const id = await createServer(req.session.authUserId, form);
@@ -273,37 +271,22 @@ function createAdminServersRouter() {
             return res.redirect('/admin/servers?message=' + encodeURIComponent('Jellyfin server added and credentials validated.'));
         } catch (error) {
             console.warn('Admin server create rejected:', error.message);
-            return res.status(400).render('admin/server-form', {
-                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
-                server: null,
-                csrfToken: csrf.token(req),
-                allowedHosts: Array.from(allowedHosts()),
-                error: safeAdminError(error)
-            });
+            return res.redirect('/admin/servers/new?error=' + encodeURIComponent(safeAdminError(error)));
         }
     });
 
     router.post('/admin/servers/:serverId', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
-        let server = null;
         try {
-            server = await serverDetail(req.params.serverId);
+            const server = await serverDetail(req.params.serverId);
             if (!server) return res.status(404).send('Server not found');
-            const secondFactorOk = await auth.verifySecondFactor(req.session.authUserId, req.body.code, req);
-            if (!secondFactorOk) throw new Error('Second-factor verification failed.');
             const form = parseServerForm(req.body, { apiKeyRequired: false });
             if (!form.name) throw new Error('Server name is required.');
             await updateServer(req.session.authUserId, req.params.serverId, form);
             return res.redirect('/admin/servers?message=' + encodeURIComponent('Server configuration updated.'));
         } catch (error) {
             console.warn('Admin server update rejected:', error.message);
-            return res.status(400).render('admin/server-form', {
-                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
-                server: server || await serverDetail(req.params.serverId).catch(() => null),
-                csrfToken: csrf.token(req),
-                allowedHosts: Array.from(allowedHosts()),
-                error: safeAdminError(error)
-            });
+            return res.redirect('/admin/servers/' + encodeURIComponent(req.params.serverId) + '/edit?error=' + encodeURIComponent(safeAdminError(error)));
         }
     });
 
