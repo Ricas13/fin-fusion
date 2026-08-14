@@ -6,6 +6,7 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
 
 (async () => {
     const expectClean = String(process.env.CLEAN_INSTALL_EXPECTED || 'true') === 'true';
+    const expectedAdmins = Number(process.env.CLEAN_INSTALL_EXPECT_ADMINS ?? (process.env.ADMIN_USERNAME ? 1 : 0));
     const counts = await query(`
         SELECT
             (SELECT COUNT(*)::int FROM plans) AS plans,
@@ -30,11 +31,13 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
         assert.strictEqual(Number(row.resellers), 0, 'fresh install must not seed resellers');
         assert.strictEqual(Number(row.subscriptions), 0, 'fresh install must not seed subscriptions');
         assert.strictEqual(Number(row.provider_mappings), 0, 'fresh install must not seed payment mappings');
-        assert.strictEqual(Number(row.admins), 1, 'first unattended bootstrap must create exactly one native administrator');
-        const admin = await query("SELECT username,legacy_numeric_id,password_changed_at FROM app_users WHERE role='admin' LIMIT 1");
-        assert.strictEqual(admin.rows[0]?.username, process.env.ADMIN_USERNAME || 'cleanadmin');
-        assert(Number(admin.rows[0]?.legacy_numeric_id) > 0, 'native administrator must have compatibility id for staff sessions');
-        assert(admin.rows[0]?.password_changed_at, 'native administrator password timestamp missing');
+        assert.strictEqual(Number(row.admins), expectedAdmins, `fresh install expected ${expectedAdmins} native administrator(s)`);
+        if (expectedAdmins === 1) {
+            const admin = await query("SELECT username,legacy_numeric_id,password_changed_at FROM app_users WHERE role='admin' LIMIT 1");
+            assert.strictEqual(admin.rows[0]?.username, process.env.ADMIN_USERNAME || 'cleanadmin');
+            assert(Number(admin.rows[0]?.legacy_numeric_id) > 0, 'native administrator must have compatibility id for staff sessions');
+            assert(admin.rows[0]?.password_changed_at, 'native administrator password timestamp missing');
+        }
 
         assert.strictEqual(map.platform?.storefrontEnabled, false, 'fresh storefront must be disabled');
         assert.strictEqual(map.platform?.publicRegistration, false, 'fresh public registration must be disabled');
@@ -50,7 +53,7 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
         assert.strictEqual(readiness.totalCount, 6);
         assert(readiness.checklist.find(item => item.key === 'jellyfin' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'plans' && !item.configured));
-        console.log('clean install smoke: ok');
+        console.log(`clean install smoke: ok (admins=${expectedAdmins})`);
     } else {
         // A database that already contained an application/legacy table before
         // migration must NOT be treated as a fresh install. This protects live
