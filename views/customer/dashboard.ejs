@@ -30,6 +30,11 @@
   <% }) %>
   </div>
 
+  <% if (overseerrUrl) { %>
+  <h2>Request content</h2>
+  <div class="card"><p class="muted">Looking for something that isn't in the library yet? Submit a request.</p><a class="stripe" style="display:inline-block;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:700" href="<%= overseerrUrl %>" target="_blank" rel="noopener">Open request site</a></div>
+  <% } %>
+
   <h2>Choose a plan</h2>
   <div class="grid">
   <% plans.forEach(function(p){ const opts=Array.isArray(p.payment_options)?p.payment_options:[]; const stripeOpt=opts.find(o=>o.provider==='stripe'); const paypalOpt=opts.find(o=>o.provider==='paypal'); const isFreePlan = p.price_minor===0 && p.billing_interval!=='trial'; %>

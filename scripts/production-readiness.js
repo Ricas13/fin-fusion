@@ -58,10 +58,6 @@ function checkEnvironment() {
         record('critical', 'jellyfin.allowlist', 'JELLYFIN_ALLOWED_HOSTS is required in production so outbound Jellyfin requests fail closed to approved hosts only.');
     }
 
-    if (present('TMDB_READ_ACCESS_TOKEN') && !present('ARR_ALLOWED_HOSTS')) {
-        record('warning', 'media.arr_allowlist', 'TMDB discovery is configured but ARR_ALLOWED_HOSTS is empty. Arr integrations should fail closed until hosts are allowlisted.');
-    }
-
     if (String(process.env.NODE_ENV || '').toLowerCase() !== 'production') {
         record('warning', 'node_env', 'NODE_ENV is not set to production.');
     }

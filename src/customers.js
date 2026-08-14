@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query, transaction } = require('./db');
 const referrals = require('./referrals');
+const runtimeSettings = require('./platform/runtime-settings');
 
 function cleanEmail(value) {
     const email = String(value || '').trim().toLowerCase();
@@ -30,12 +31,13 @@ async function registerCustomer({ email, username, password, referralCode }) {
     username = cleanUsername(username);
     validatePassword(password);
 
-    if (process.env.PUBLIC_REGISTRATION === 'false') {
+    await runtimeSettings.ensureLoaded();
+    if (!runtimeSettings.publicRegistrationOpen()) {
         throw new Error('Public registration is currently disabled');
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const verifyImmediately = process.env.REQUIRE_EMAIL_VERIFICATION !== 'true';
+    const verifyImmediately = !runtimeSettings.requireEmailVerification();
 
     const created = await transaction(async client => {
         const exists = await client.query(
@@ -91,7 +93,8 @@ async function authenticateCustomer(identity, password) {
 
     const row = result.rows[0];
     if (!(await bcrypt.compare(password, row.password_hash))) return null;
-    if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true' && !row.email_verified_at) {
+    await runtimeSettings.ensureLoaded();
+    if (runtimeSettings.requireEmailVerification() && !row.email_verified_at) {
         const error = new Error('Please verify your email address before signing in');
         error.code = 'EMAIL_NOT_VERIFIED';
         throw error;
