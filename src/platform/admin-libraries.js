@@ -2,7 +2,6 @@
 
 const express = require('express');
 const csrf = require('../auth/csrf');
-const auth = require('../auth/service');
 const registry = require('../jellyfin/registry');
 const { query } = require('../db');
 
@@ -28,14 +27,12 @@ async function libraryData(){
 function createAdminLibrariesRouter(){
   const router=express.Router();
   router.use('/admin/libraries',requireAdmin,noStore);
-  router.get('/admin/libraries',async(req,res,next)=>{
-    try{return res.render('admin/libraries',{siteName:process.env.SITE_NAME||'CAPTaINFiN',activeNav:'libraries',groups:await libraryData(),csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null});}
-    catch(error){return next(error);}
-  });
+
+  // GET /admin/libraries is intentionally owned by admin-shell.js so there is
+  // only one layout and no dependency on the removed legacy libraries view.
   router.post('/admin/libraries/:serverId/refresh',async(req,res)=>{
     if(!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
     try{
-      if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req))) return res.redirect('/admin/libraries?error='+encodeURIComponent('Second-factor verification failed. No library scan was started.'));
       await registry.request(req.params.serverId,'/Library/Refresh',{method:'POST',timeoutMs:8000});
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.library.refresh','jellyfin_server',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.serverId]);
       return res.redirect('/admin/libraries?message='+encodeURIComponent('Library scan requested successfully.'));
