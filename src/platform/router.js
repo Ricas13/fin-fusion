@@ -7,6 +7,7 @@ const lifecycle = require('../payments/lifecycle');
 const stripe = require('../payments/stripe');
 const paypal = require('../payments/paypal');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const requestUserSync = require('../integrations/request-user-sync');
 const policy = require('../jellyfin/policy');
 const csrf = require('../auth/csrf');
 const { createAdminActionsRouter } = require('./admin-actions');
@@ -115,9 +116,13 @@ function createRouter() {
     router.get('/account', requireCustomer, async (req, res, next) => {
         try {
             await runtimeSettings.ensureLoaded();
-            const portal = await customers.getCustomerPortal(req.session.customerId);
-            const plans = await customers.listPublicPlans();
-            const currentPlan = await provisioning.currentEntitlement(req.session.customerId);
+            const [portal, plans, currentPlan, requestAccess, requestConfig] = await Promise.all([
+                customers.getCustomerPortal(req.session.customerId),
+                customers.listPublicPlans(),
+                provisioning.currentEntitlement(req.session.customerId),
+                requestUserSync.requestAccessForCustomer(req.session.customerId),
+                requestUserSync.configuration()
+            ]);
             const effective = currentPlan ? await provisioning.effectivePolicyForCustomer(req.session.customerId, currentPlan) : null;
             const libraryEntitlement = effective ? effective.entitlementRows.filter(row => row.effective).map(row => row.name) : [];
             const librarySelection = effective ? effective.visibleNames : [];
@@ -128,6 +133,8 @@ function createRouter() {
                 stripeEnabled: stripe.enabled(),
                 paypalEnabled: paypal.enabled(),
                 overseerrUrl: runtimeSettings.overseerrUrl(),
+                requestAccess,
+                requestSyncConfigured: requestConfig.configured,
                 libraryEntitlement,
                 librarySelection,
                 csrfToken: csrf.token(req),
@@ -158,6 +165,17 @@ function createRouter() {
             return res.redirect('/account?message=' + encodeURIComponent('Library visibility updated.'));
         } catch (_) {
             return res.redirect('/account?error=' + encodeURIComponent('Library visibility could not be updated safely.'));
+        }
+    });
+
+    router.post('/account/requests/password', requireCustomer, async (req, res) => {
+        if (!csrf.verify(req)) return res.redirect('/account?error=' + encodeURIComponent('Invalid or expired security token'));
+        try {
+            if (req.body.password !== req.body.confirmPassword) throw new Error('Request-site passwords do not match.');
+            await requestUserSync.setCustomerPassword(req.session.customerId, req.body.password);
+            return res.redirect('/account?message=' + encodeURIComponent('Request-site password updated.'));
+        } catch (error) {
+            return res.redirect('/account?error=' + encodeURIComponent(error.message || 'Request-site password could not be updated.'));
         }
     });
 
