@@ -3,6 +3,8 @@
 const { query, transaction } = require('../db');
 const { reconcileCustomer } = require('../jellyfin/provisioning');
 
+const PAYMENT_EVENT_LEASE_MINUTES = 30;
+
 function addPlanDuration(plan, from = new Date()) {
     const days = Number(plan.duration_days || 30);
     return new Date(from.getTime() + days * 86400000);
@@ -69,26 +71,38 @@ async function findPaymentCustomer(customerId, provider) {
 
 async function beginPaymentEvent({ provider, eventId, eventType, payload }) {
     const result = await query(`
-        INSERT INTO payment_events(provider,provider_event_id,event_type,payload)
-        VALUES($1,$2,$3,$4::jsonb)
+        INSERT INTO payment_events(
+            provider,provider_event_id,event_type,payload,processing_started_at,processing_token
+        )
+        VALUES($1,$2,$3,$4::jsonb,NOW(),gen_random_uuid())
         ON CONFLICT(provider,provider_event_id)
         DO UPDATE SET event_type=EXCLUDED.event_type,
                       payload=EXCLUDED.payload,
-                      processing_error=NULL
+                      processing_error=NULL,
+                      processing_started_at=NOW(),
+                      processing_token=gen_random_uuid()
         WHERE payment_events.processed_at IS NULL
-        RETURNING id
-    `, [provider, eventId, eventType, JSON.stringify(payload)]);
+          AND (
+              payment_events.processing_started_at IS NULL
+              OR payment_events.processing_started_at < NOW() - ($5::int * INTERVAL '1 minute')
+          )
+        RETURNING id,processing_token,processing_started_at
+    `, [provider, eventId, eventType, JSON.stringify(payload), PAYMENT_EVENT_LEASE_MINUTES]);
     return result.rows[0] || null;
 }
 
 async function finishPaymentEvent(eventRow, error = null) {
-    if (!eventRow) return;
-    await query(`
+    if (!eventRow?.id || !eventRow?.processing_token) return false;
+    const result = await query(`
         UPDATE payment_events
-        SET processed_at=CASE WHEN $2::text IS NULL THEN NOW() ELSE NULL END,
-            processing_error=$2
-        WHERE id=$1
-    `, [eventRow.id, error ? String(error.message || error).slice(0, 4000) : null]);
+        SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,
+            processing_error=$3,
+            processing_started_at=NULL,
+            processing_token=NULL
+        WHERE id=$1 AND processing_token=$2
+        RETURNING id
+    `, [eventRow.id, eventRow.processing_token, error ? String(error.message || error).slice(0, 4000) : null]);
+    return result.rowCount === 1;
 }
 
 async function startFreeTrial(customerId) {
@@ -199,6 +213,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
 }
 
 module.exports = {
+    PAYMENT_EVENT_LEASE_MINUTES,
     addPlanDuration,
     mapProviderStatus,
     getProviderPlan,
