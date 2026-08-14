@@ -31,6 +31,20 @@
   <% }) %>
   </div>
 
+  <% if (libraryEntitlement && libraryEntitlement.length) { %>
+  <h2>Library visibility</h2>
+  <div class="card">
+    <p class="muted">Choose which of your entitled libraries appear on your Jellyfin account. You can only select from what your plan and any admin adjustments already grant you.</p>
+    <form method="post" action="/account/libraries">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <% libraryEntitlement.forEach(function(name){ %>
+        <label class="pill" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" name="library" value="<%= name %>" <%= librarySelection.includes(name) ? 'checked' : '' %>> <%= name %></label>
+      <% }) %>
+      <div style="margin-top:12px"><button class="primary">Save library visibility</button></div>
+    </form>
+  </div>
+  <% } %>
+
   <% if (overseerrUrl) { %>
   <h2>Request content</h2>
   <div class="card"><p class="muted">Looking for something that isn't in the library yet? Submit a request.</p><a class="stripe" style="display:inline-block;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:700" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a></div>

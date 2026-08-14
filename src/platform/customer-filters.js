@@ -1,0 +1,223 @@
+'use strict';
+
+// Single source of truth for the People -> Customers filtered/paginated
+// query, reused by both the list page and bulk-operation "select all
+// matching" resolution -- so a bulk job can never see a wider set of
+// customers than the list page itself would show for the same filters, and
+// reseller scope is enforced in exactly one place instead of being
+// re-implemented per call site.
+//
+// `scope.resellerId` is set whenever the caller is a reseller -- it is
+// ALWAYS ANDed onto the query server-side and can never be widened by
+// anything in `filters`, regardless of what a request claims.
+
+const { query } = require('../db');
+
+const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 'expired'];
+const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
+const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
+const MAX_MATCHING = 5000;
+
+function isUuid(v) {
+    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+
+function baseJoins() {
+    return `
+        FROM customers c
+        LEFT JOIN app_users au ON au.id=c.user_id
+        LEFT JOIN resellers r ON r.id=c.reseller_id
+        LEFT JOIN app_users ru ON ru.id=r.user_id
+        LEFT JOIN LATERAL (
+            SELECT s.* FROM subscriptions s WHERE s.customer_id=c.id
+            ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1
+        ) cur ON TRUE
+        LEFT JOIN plans p ON p.id=cur.plan_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS account_count,MAX(ja.last_activity_at) AS last_activity_at,
+                   BOOL_OR(NOT ja.disabled) AS has_enabled_account
+            FROM jellyfin_accounts ja WHERE ja.customer_id=c.id
+        ) acc ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT MIN(CASE jpr.status WHEN 'failed' THEN 1 WHEN 'pending' THEN 2 WHEN 'running' THEN 3 ELSE 4 END) AS rank
+            FROM jellyfin_accounts ja2 JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id
+            WHERE ja2.customer_id=c.id
+        ) recon ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT provider FROM payment_customers pc WHERE pc.customer_id=c.id ORDER BY pc.updated_at DESC LIMIT 1
+        ) pay ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT EXISTS(
+                SELECT 1 FROM customer_policy_overrides cpo WHERE cpo.customer_id=c.id AND (
+                    cpo.streams IS NOT NULL OR cpo.allow_downloads IS NOT NULL OR cpo.allow_video_transcoding IS NOT NULL OR
+                    cpo.allow_audio_transcoding IS NOT NULL OR cpo.allow_remuxing IS NOT NULL OR cpo.allow_live_tv IS NOT NULL OR
+                    cpo.allow_live_tv_management IS NOT NULL OR cpo.allow_remote_access IS NOT NULL
+                )
+                UNION ALL SELECT 1 FROM customer_library_overrides clo WHERE clo.customer_id=c.id
+            ) AS has_override
+        ) ovr ON TRUE
+    `;
+}
+
+const RECON_RANK = { failed: 1, pending: 2, running: 3, successful: 4 };
+
+// Builds WHERE clause + params. Every filter value is bound as a parameter;
+// nothing from `filters` is ever concatenated into the SQL text itself.
+function buildWhere(filters, scope) {
+    const where = [];
+    const params = [];
+    function p(value) { params.push(value); return `$${params.length}`; }
+
+    // Reseller scope is applied first and unconditionally -- filters.resellerId
+    // is only honored for admins picking "customers of reseller X"; a reseller
+    // caller's own id always wins regardless of what filters requested.
+    if (scope?.resellerId) {
+        where.push(`c.reseller_id=${p(scope.resellerId)}`);
+    } else if (filters.resellerId && isUuid(filters.resellerId)) {
+        where.push(`c.reseller_id=${p(filters.resellerId)}`);
+    }
+
+    if (filters.q) {
+        const term = `%${String(filters.q).trim().slice(0, 80)}%`;
+        const idx = p(term);
+        where.push(`(COALESCE(c.display_name,'') ILIKE ${idx} OR COALESCE(c.email,'') ILIKE ${idx} OR COALESCE(au.username,'') ILIKE ${idx} OR EXISTS (SELECT 1 FROM jellyfin_accounts jaq WHERE jaq.customer_id=c.id AND jaq.jellyfin_username ILIKE ${idx}))`);
+    }
+
+    if (filters.serverId && isUuid(filters.serverId)) {
+        where.push(`EXISTS (SELECT 1 FROM jellyfin_accounts jas WHERE jas.customer_id=c.id AND jas.server_id=${p(filters.serverId)})`);
+    }
+
+    if (filters.planId && isUuid(filters.planId)) {
+        where.push(`cur.plan_id=${p(filters.planId)}`);
+    }
+
+    if (filters.status) {
+        if (filters.status === 'none') where.push('cur.id IS NULL');
+        else if (STATUS_VALUES.includes(filters.status)) where.push(`cur.status=${p(filters.status)}`);
+    }
+
+    if (filters.accountStatus === 'portal_disabled') where.push('au.active=FALSE');
+    else if (filters.accountStatus === 'enabled') where.push('acc.has_enabled_account=TRUE');
+    else if (filters.accountStatus === 'disabled') where.push('(acc.has_enabled_account IS NOT TRUE)');
+
+    if (filters.paymentProvider) {
+        if (filters.paymentProvider === 'none') where.push('pay.provider IS NULL');
+        else if (PAYMENT_PROVIDERS.includes(filters.paymentProvider)) where.push(`pay.provider=${p(filters.paymentProvider)}`);
+    }
+
+    if (filters.expiryFrom) where.push(`cur.current_period_end >= ${p(filters.expiryFrom)}::timestamptz`);
+    if (filters.expiryTo) where.push(`cur.current_period_end <= ${p(filters.expiryTo)}::timestamptz`);
+
+    if (filters.lastActiveFrom) where.push(`acc.last_activity_at >= ${p(filters.lastActiveFrom)}::timestamptz`);
+    if (filters.lastActiveTo) where.push(`acc.last_activity_at <= ${p(filters.lastActiveTo)}::timestamptz`);
+
+    if (filters.registeredFrom) where.push(`c.created_at >= ${p(filters.registeredFrom)}::timestamptz`);
+    if (filters.registeredTo) where.push(`c.created_at <= ${p(filters.registeredTo)}::timestamptz`);
+
+    if (filters.reconciliationStatus) {
+        if (filters.reconciliationStatus === 'none') where.push('recon.rank IS NULL');
+        else if (RECON_VALUES.includes(filters.reconciliationStatus)) where.push(`recon.rank=${p(RECON_RANK[filters.reconciliationStatus])}`);
+    }
+
+    if (filters.hasOverride === true) where.push('ovr.has_override=TRUE');
+    else if (filters.hasOverride === false) where.push('(ovr.has_override IS NOT TRUE)');
+
+    // Library filter is a plan/override-level approximation (mode+names +
+    // any explicit per-customer override), not a live per-server resolution
+    // -- accurate enough for admin triage without making a Jellyfin API call
+    // per row in a list query.
+    if (filters.library) {
+        const name = p(String(filters.library).trim().slice(0, 200));
+        where.push(`(
+            EXISTS (SELECT 1 FROM customer_library_overrides clo2 WHERE clo2.customer_id=c.id AND clo2.granted=TRUE AND lower(clo2.library_name)=lower(${name}))
+            OR (
+                NOT EXISTS (SELECT 1 FROM customer_library_overrides clo3 WHERE clo3.customer_id=c.id AND clo3.granted=FALSE AND lower(clo3.library_name)=lower(${name}))
+                AND (
+                    p.library_access_mode IS NULL OR p.library_access_mode='all'
+                    OR (p.library_access_mode='include' AND lower(${name})=ANY(SELECT lower(x) FROM unnest(p.library_names) x))
+                    OR (p.library_access_mode='exclude' AND lower(${name})<>ALL(SELECT lower(x) FROM unnest(p.library_names) x))
+                )
+            )
+        )`);
+    }
+
+    return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+}
+
+const SELECT_COLUMNS = `
+    c.id,c.display_name,c.email,c.created_at,c.reseller_id,
+    au.username AS login_username,au.active AS login_active,
+    ru.username AS reseller_username,
+    cur.status AS subscription_status,cur.current_period_end,
+    p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,
+    acc.account_count,acc.last_activity_at,acc.has_enabled_account,
+    recon.rank AS recon_rank,pay.provider AS payment_provider,ovr.has_override
+`;
+
+async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'recent' } = {}) {
+    const { whereSql, params } = buildWhere(filters, scope);
+    const orderSql = sort === 'expiring'
+        ? 'ORDER BY cur.current_period_end ASC NULLS LAST'
+        : sort === 'name'
+            ? 'ORDER BY COALESCE(c.display_name,au.username,c.email) ASC'
+            : 'ORDER BY COALESCE(acc.last_activity_at,c.created_at) DESC NULLS LAST';
+    const boundedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 25, 5), 100);
+    const boundedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const offset = (boundedPage - 1) * boundedPageSize;
+    const limitIdx = params.length + 1;
+    const offsetIdx = params.length + 2;
+    const rows = await query(`
+        SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ${orderSql} LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    `, [...params, boundedPageSize, offset]);
+    const countResult = await query(`SELECT COUNT(*)::int AS n ${baseJoins()} ${whereSql}`, params);
+    return { rows: rows.rows, total: countResult.rows[0].n, page: boundedPage, pageSize: boundedPageSize };
+}
+
+// Full rows for every match (capped), used by CSV export -- same query shape
+// as listCustomers but without pagination.
+async function exportRows(filters, scope) {
+    const { whereSql, params } = buildWhere(filters, scope);
+    const result = await query(`
+        SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ORDER BY c.id LIMIT ${MAX_MATCHING}
+    `, params);
+    return result.rows;
+}
+
+// Every id this filter set matches, scoped and capped -- the backing query
+// for "Select all matching results". Never trust a client to enumerate this
+// itself; always re-derive it here.
+async function matchingCustomerIds(filters, scope) {
+    const { whereSql, params } = buildWhere(filters, scope);
+    const result = await query(`
+        SELECT c.id ${baseJoins()} ${whereSql} ORDER BY c.id LIMIT ${MAX_MATCHING}
+    `, params);
+    return result.rows.map(row => row.id);
+}
+
+// Re-authorizes a client-supplied id list against the same filtered+scoped
+// query -- used when the admin picked explicit checkboxes rather than
+// "select all matching". IDs outside the caller's authorization (wrong
+// reseller, filtered out, don't exist) are silently dropped, never trusted.
+async function reauthorizeCustomerIds(candidateIds, scope) {
+    const ids = Array.from(new Set((candidateIds || []).filter(isUuid))).slice(0, MAX_MATCHING);
+    if (!ids.length) return [];
+    const { whereSql, params } = buildWhere({}, scope);
+    const idParamIdx = params.length + 1;
+    const result = await query(`
+        SELECT c.id ${baseJoins()} ${whereSql}${whereSql ? ' AND' : 'WHERE'} c.id=ANY($${idParamIdx}::uuid[])
+    `, [...params, ids]);
+    return result.rows.map(row => row.id);
+}
+
+module.exports = {
+    MAX_MATCHING,
+    STATUS_VALUES,
+    RECON_VALUES,
+    PAYMENT_PROVIDERS,
+    isUuid,
+    buildWhere,
+    listCustomers,
+    exportRows,
+    matchingCustomerIds,
+    reauthorizeCustomerIds
+};

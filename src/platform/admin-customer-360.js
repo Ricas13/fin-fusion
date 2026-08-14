@@ -4,9 +4,11 @@ const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const auth=require('../auth/service');
-const {customer360}=require('./customer-360');
+const {customer360,customerAccessDetail}=require('./customer-360');
 const view=require('./customer-360-view');
 const {layout,esc}=require('./admin-html');
+const provisioning=require('../jellyfin/provisioning');
+const policy=require('../jellyfin/policy');
 
 const TABS=new Set(view.TABS.map(x=>x[0]));
 function site(){return process.env.SITE_NAME||'CAPTAiNFiN'}
@@ -32,7 +34,8 @@ function createAdminCustomer360Router(){
             if(!detail)return res.status(404).render('auth/message',{siteName:site(),title:'Customer not found',message:'This managed customer does not exist.',link:'/admin/users',linkText:'Back to Customers'});
             const activeTab=TABS.has(String(req.query.tab||''))?String(req.query.tab):'overview';
             const id=encodeURIComponent(req.params.customerId);
-            return res.send(layout({siteName:site(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req))}`,action:`<div class="buttonRow"><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
+            const accessDetail=activeTab==='access'?await customerAccessDetail(req.params.customerId):null;
+            return res.send(layout({siteName:site(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req),accessDetail)}`,action:`<div class="buttonRow"><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
         }catch(error){return next(error)}
     });
 
@@ -49,6 +52,95 @@ function createAdminCustomer360Router(){
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.profile.update','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({fields:['display_name','phone','country_code','timezone','referral_source','registration_source','discord','marketing_opt_in','tags','note']})]);
             return res.redirect(path(req.params.customerId)+'&message='+encodeURIComponent('Customer profile updated.'));
         }catch(error){const message=error.message==='verification'?'Verification failed.':error.message==='discord'?'Discord user ID must contain digits only.':error.code==='23505'?'That Discord user ID is already linked to another customer.':'Customer profile could not be updated safely.';return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}/edit-profile?error=${encodeURIComponent(message)}`)}
+    });
+
+    router.post('/admin/users/:customerId/policy-overrides',async(req,res)=>{
+        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+        try{
+            if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req)))throw new Error('verification');
+            const changed=[];
+            for(const field of policy.TECHNICAL_FIELDS){
+                const raw=req.body[field];
+                if(raw===undefined)continue;
+                const value=String(raw).trim();
+                if(value===''){
+                    await provisioning.resetPolicyOverrideField(req.params.customerId,field,req.session.authUserId);
+                }else if(field==='streams'){
+                    const parsed=Number.parseInt(value,10);
+                    if(!Number.isInteger(parsed)||parsed<1||parsed>50)throw new Error('validation');
+                    await provisioning.setPolicyOverrideField(req.params.customerId,field,parsed,req.session.authUserId);
+                }else{
+                    if(value!=='true'&&value!=='false')throw new Error('validation');
+                    await provisioning.setPolicyOverrideField(req.params.customerId,field,value==='true',req.session.authUserId);
+                }
+                changed.push(field);
+            }
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.policy_override','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({fields:changed})]);
+            let note='';
+            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){note=' Jellyfin is still catching up -- check reconciliation status below.'}
+            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('Policy overrides saved.'+note));
+        }catch(error){
+            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(error.message==='verification'?'Verification failed.':'Policy overrides could not be saved safely.'));
+        }
+    });
+
+    router.post('/admin/users/:customerId/policy-overrides/reset-all',async(req,res)=>{
+        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+        try{
+            if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req)))throw new Error('verification');
+            await provisioning.resetAllPolicyOverrides(req.params.customerId,req.session.authUserId);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.policy_override_reset_all','customer',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.customerId]);
+            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){}
+            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('All policy overrides reset to plan.'));
+        }catch(error){
+            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(error.message==='verification'?'Verification failed.':'Overrides could not be reset safely.'));
+        }
+    });
+
+    router.post('/admin/users/:customerId/library-overrides',async(req,res)=>{
+        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+        try{
+            if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req)))throw new Error('verification');
+            const plan=await provisioning.currentEntitlement(req.params.customerId);
+            if(!plan)throw new Error('no_plan');
+            const catalog=await provisioning.libraryCatalogForServerClass(plan.server_class);
+            const known=new Set(catalog.names.map(n=>policy.nameKey(n)));
+            const names=Array.isArray(req.body.libraryName)?req.body.libraryName:(req.body.libraryName!==undefined?[req.body.libraryName]:[]);
+            const values=Array.isArray(req.body.libraryValue)?req.body.libraryValue:(req.body.libraryValue!==undefined?[req.body.libraryValue]:[]);
+            const changed=[];
+            for(let i=0;i<names.length;i++){
+                const name=String(names[i]||'').trim();
+                const value=String(values[i]||'').trim();
+                if(!name||!known.has(policy.nameKey(name)))continue;
+                if(value===''){
+                    await provisioning.resetLibraryOverride(req.params.customerId,name);
+                }else if(value==='true'||value==='false'){
+                    await provisioning.setLibraryOverride(req.params.customerId,name,value==='true',req.session.authUserId);
+                }else{
+                    continue;
+                }
+                changed.push(name);
+            }
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.library_override','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({libraries:changed})]);
+            let note='';
+            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){note=' Jellyfin is still catching up -- check reconciliation status below.'}
+            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('Library overrides saved.'+note));
+        }catch(error){
+            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(error.message==='verification'?'Verification failed.':error.message==='no_plan'?'This customer has no active plan to override libraries against.':'Library overrides could not be saved safely.'));
+        }
+    });
+
+    router.post('/admin/users/:customerId/library-overrides/reset-all',async(req,res)=>{
+        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+        try{
+            if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req)))throw new Error('verification');
+            await provisioning.resetAllLibraryOverrides(req.params.customerId);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.library_override_reset_all','customer',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.customerId]);
+            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){}
+            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('All library overrides reset to plan.'));
+        }catch(error){
+            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(error.message==='verification'?'Verification failed.':'Overrides could not be reset safely.'));
+        }
     });
 
     router.use('/admin/users/:customerId',(error,_req,res,_next)=>{console.error('Customer 360 route error:',error.message);return res.status(500).render('auth/message',{siteName:site(),title:'Customer unavailable',message:'The customer profile could not be loaded safely.',link:'/admin/users',linkText:'Back to Customers'})});
