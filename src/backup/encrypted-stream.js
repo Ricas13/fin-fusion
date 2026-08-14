@@ -41,17 +41,18 @@ function parseHeader(filePath) {
     const bytes = fs.readSync(fd, maxHeader, 0, maxHeader.length, 0);
     const data = maxHeader.subarray(0, bytes);
     if (!data.subarray(0, MAGIC.length).equals(MAGIC)) {
-      throw new Error('Invalid CAPTAiNFiN backup header');
+      throw new Error('Invalid CAPTaINFiN backup header');
     }
     const newline = data.indexOf(0x0a, MAGIC.length);
-    if (newline === -1) throw new Error('Incomplete CAPTAiNFiN backup header');
+    if (newline === -1) throw new Error('Incomplete CAPTaINFiN backup header');
     const metadata = JSON.parse(data.subarray(MAGIC.length, newline).toString('utf8'));
     if (metadata.version !== 1 || metadata.cipher !== 'aes-256-gcm' || metadata.kdf !== 'scrypt') {
-      throw new Error('Unsupported CAPTAiNFiN backup format');
+      throw new Error('Unsupported CAPTaINFiN backup format');
     }
     return {
       metadata,
       headerBytes: newline + 1,
+      header: data.subarray(0, newline + 1),
       salt: Buffer.from(metadata.salt, 'base64'),
       iv: Buffer.from(metadata.iv, 'base64')
     };
@@ -64,12 +65,14 @@ function createEncryptionContext(secret = requireBackupKey()) {
   const salt = crypto.randomBytes(SALT_BYTES);
   const iv = crypto.randomBytes(IV_BYTES);
   const key = deriveKey(secret, salt);
+  const header = buildHeader({ salt, iv });
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
-  return { header: buildHeader({ salt, iv }), cipher };
+  cipher.setAAD(header);
+  return { header, cipher };
 }
 
 function createDecryptionContext(filePath, secret = requireBackupKey()) {
-  const { metadata, headerBytes, salt, iv } = parseHeader(filePath);
+  const { metadata, headerBytes, header, salt, iv } = parseHeader(filePath);
   const stat = fs.statSync(filePath);
   if (stat.size <= headerBytes + TAG_BYTES) throw new Error('Backup payload is truncated');
   const tag = Buffer.alloc(TAG_BYTES);
@@ -81,6 +84,7 @@ function createDecryptionContext(filePath, secret = requireBackupKey()) {
   }
   const key = deriveKey(secret, salt);
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
+  decipher.setAAD(header);
   decipher.setAuthTag(tag);
   return {
     metadata,
