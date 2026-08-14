@@ -184,6 +184,22 @@ async function createAccountToken(userId, tokenType, ttlMinutes) {
     return { token: raw, expiresAt };
 }
 
+async function createPasswordReset(identity, ttlMinutes = 60) {
+    identity = String(identity || '').trim();
+    if (!identity) return null;
+    const result = await query(`
+        SELECT u.id AS user_id,u.email,u.username
+        FROM app_users u
+        JOIN customers c ON c.user_id=u.id
+        WHERE u.role='customer' AND u.active=TRUE
+          AND (lower(COALESCE(u.email,''))=lower($1) OR lower(u.username)=lower($1))
+        LIMIT 1
+    `, [identity]);
+    if (!result.rowCount || !result.rows[0].email) return null;
+    const token = await createAccountToken(result.rows[0].user_id, 'password_reset', ttlMinutes);
+    return { ...result.rows[0], ...token };
+}
+
 async function consumeAccountToken(rawToken, tokenType) {
     const hash = crypto.createHash('sha256').update(String(rawToken || '')).digest('hex');
     return transaction(async client => {
@@ -210,7 +226,7 @@ async function resetSitePassword(rawToken, newPassword) {
     const token = await consumeAccountToken(rawToken, 'password_reset');
     if (!token) return false;
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await query('UPDATE app_users SET password_hash=$1,updated_at=NOW() WHERE id=$2', [passwordHash, token.user_id]);
+    await query('UPDATE app_users SET password_hash=$1,password_changed_at=NOW(),updated_at=NOW() WHERE id=$2', [passwordHash, token.user_id]);
     return true;
 }
 
@@ -220,6 +236,7 @@ module.exports = {
     getCustomerPortal,
     listPublicPlans,
     createAccountToken,
+    createPasswordReset,
     verifyEmail,
     resetSitePassword
 };

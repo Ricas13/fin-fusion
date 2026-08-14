@@ -11,21 +11,23 @@ const { createWebhookRouter } = require('./src/platform/webhooks');
 
 const originalListen = realExpress.application.listen;
 let jobsStarted = false;
-const customerLoginAttempts = new Map();
+const customerAuthAttempts = new Map();
 
 function customerLoginThrottle(req, res, next) {
-    if (req.method !== 'POST' || req.path !== '/account/login') return next();
+    if (req.method !== 'POST' || !['/account/login', '/account/forgot-password'].includes(req.path)) return next();
     const now = Date.now();
     const windowMs = 15 * 60 * 1000;
-    const maxAttempts = 10;
-    const key = req.ip || req.socket?.remoteAddress || 'unknown';
-    let bucket = customerLoginAttempts.get(key);
+    const resetFlow = req.path === '/account/forgot-password';
+    const maxAttempts = resetFlow ? 5 : 10;
+    const address = req.ip || req.socket?.remoteAddress || 'unknown';
+    const key = `${resetFlow ? 'reset' : 'login'}:${address}`;
+    let bucket = customerAuthAttempts.get(key);
     if (!bucket || now - bucket.startedAt > windowMs) bucket = { startedAt: now, count: 0 };
     bucket.count += 1;
-    customerLoginAttempts.set(key, bucket);
+    customerAuthAttempts.set(key, bucket);
     if (bucket.count > maxAttempts) {
         res.setHeader('Retry-After', Math.max(1, Math.ceil((windowMs - (now - bucket.startedAt)) / 1000)));
-        return res.status(429).send('Too many login attempts. Try again later.');
+        return res.status(429).send(resetFlow ? 'Too many password reset requests. Try again later.' : 'Too many login attempts. Try again later.');
     }
     return next();
 }
@@ -56,11 +58,14 @@ function startJobs() {
     const bulkWorker = require('./src/jellyfin/bulk-worker');
     const requestUserSync = require('./src/integrations/request-user-sync');
     const requestServiceSettings = require('./src/integrations/request-service-settings');
+    const emailSettings = require('./src/integrations/email-settings');
+    const emailOutbox = require('./src/integrations/email-outbox');
     const billingControl = require('./src/payments/billing-control');
     require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
     placement.startFleetSnapshotRefresh();
+
     const runEntitlements = async () => {
         try {
             const expired = await expireSubscriptionsAndReconcile();
@@ -98,6 +103,14 @@ function startJobs() {
             }
         } catch (error) { console.error('Request user sync failed:', error.message); }
     };
+    const runEmailOutbox = async () => {
+        try {
+            const status = await emailSettings.status();
+            if (!status.configured) return;
+            const result = await emailOutbox.deliverDue({ limit: 20 });
+            if (result.attempted) console.log(`Email delivery: attempted=${result.attempted}, sent=${result.sent}, failed=${result.failed}`);
+        } catch (error) { console.error('Email delivery failed:', error.message); }
+    };
     const runBillingSync = async () => {
         try {
             const result = await billingControl.syncDue({ all: false, limit: 100 });
@@ -106,15 +119,20 @@ function startJobs() {
             }
         } catch (error) { console.error('Billing provider sync failed:', error.message); }
     };
+
     requestServiceSettings.ensureLoaded()
         .catch(error => console.error('Request service settings load failed, using environment fallback:', error.message));
-    const initialEntitlement = setTimeout(runEntitlements, 15000);
+
     const initialHealth = setTimeout(runHealth, 5000);
+    const initialEntitlement = setTimeout(runEntitlements, 15000);
+    const initialEmail = setTimeout(runEmailOutbox, 20000);
     const initialRequestUsers = setTimeout(runRequestUsers, 30000);
     const initialBillingSync = setTimeout(runBillingSync, 45000);
-    initialEntitlement.unref?.(); initialHealth.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.();
+    initialHealth.unref?.(); initialEntitlement.unref?.(); initialEmail.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.();
+
     createRescheduler(runBulkJobs, () => 3000).start();
     createRescheduler(runStaleReclaim, () => 60000).start();
+    createRescheduler(runEmailOutbox, () => 60000).start();
     createRescheduler(runRequestUsers, requestUserSyncIntervalMs).start();
     createRescheduler(runBillingSync, billingSyncPollIntervalMs).start();
     runtimeSettings.ensureLoaded()
@@ -148,6 +166,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPlanPaymentOptionsRouter } = require('./src/platform/admin-plan-payment-options');
         const { createAdminPaymentSettingsRouter } = require('./src/platform/admin-payment-settings');
         const { createAdminBillingRouter } = require('./src/platform/admin-billing');
+        const { createAdminEmailRouter } = require('./src/platform/admin-email');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
@@ -199,6 +218,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminRequestUsersRouter());
         this.use(createAdminRequestRedirectRouter());
         this.use(createAdminProvisioningRouter());
+        this.use(createAdminEmailRouter());
         this.use(createAdminPaymentSettingsRouter());
         this.use(createAdminBillingRouter());
         this.use(createAdminCatalogShellRouter());

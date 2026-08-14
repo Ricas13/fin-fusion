@@ -8,6 +8,8 @@ const stripe = require('../payments/stripe');
 const paypal = require('../payments/paypal');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const requestUserSync = require('../integrations/request-user-sync');
+const emailSettings = require('../integrations/email-settings');
+const emailOutbox = require('../integrations/email-outbox');
 const policy = require('../jellyfin/policy');
 const csrf = require('../auth/csrf');
 const { createAdminActionsRouter } = require('./admin-actions');
@@ -30,6 +32,16 @@ function safeNext(value) {
     return next.startsWith('/') && !next.startsWith('//') ? next : '/account';
 }
 
+function htmlEsc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[character]));
+}
+
+function emailFrame(site, title, copy, actionLabel, actionUrl) {
+    return `<!doctype html><html><body style="margin:0;background:#0d1117;color:#e8edf3;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:32px 20px"><div style="font-size:20px;font-weight:700;margin-bottom:24px">${htmlEsc(site)}</div><div style="background:#151b22;border:1px solid #2b3440;border-radius:12px;padding:24px"><h1 style="font-size:24px;margin:0 0 12px">${htmlEsc(title)}</h1><p style="color:#aab5c1;line-height:1.6">${htmlEsc(copy)}</p><p style="margin:24px 0"><a href="${htmlEsc(actionUrl)}" style="display:inline-block;background:#163844;border:1px solid #2d6474;color:#ecfbff;text-decoration:none;padding:11px 18px;border-radius:7px;font-weight:700">${htmlEsc(actionLabel)}</a></p><p style="color:#748295;font-size:12px;line-height:1.5">If the button does not work, copy this address into your browser:<br>${htmlEsc(actionUrl)}</p></div></div></body></html>`;
+}
+
 async function registrationLocals(req, error = null, rawReferralCode = '') {
     await runtimeSettings.ensureLoaded();
     const referralSettings = await referrals.loadSettings();
@@ -38,16 +50,13 @@ async function registrationLocals(req, error = null, rawReferralCode = '') {
         registrationOpen: runtimeSettings.publicRegistrationOpen(),
         referralsEnabled: referralSettings.enabled,
         referralCode: referralSettings.enabled ? String(rawReferralCode || '').slice(0, 20) : '',
-        siteName: process.env.SITE_NAME || 'CAPTaINFiN'
+        siteName: runtimeSettings.siteName()
     };
 }
 
 function createRouter() {
     const router = express.Router();
 
-    // Store v1 extensions. Existing Activity/Users/Servers/Libraries routes are
-    // mounted earlier in platform-preload.js and retain their GET/POST handlers;
-    // new business/system pages are served here.
     router.use(createAdminActionsRouter());
 
     router.get('/account/register', async (req, res, next) => {
@@ -57,20 +66,36 @@ function createRouter() {
 
     router.post('/account/register', async (req, res) => {
         try {
+            await runtimeSettings.ensureLoaded();
+            if (runtimeSettings.requireEmailVerification()) {
+                const mail = await emailSettings.status();
+                if (!mail.configured) {
+                    throw new Error('Registration requires email verification, but transactional email is not configured. Please contact support.');
+                }
+            }
+
             const created = await customers.registerCustomer({ ...req.body, referralCode: req.body.referralCode });
             req.session.customerUserId = created.user.id;
             req.session.customerId = created.customer.id;
             req.session.customerUsername = created.user.username;
             if (runtimeSettings.requireEmailVerification()) {
                 const verification = await customers.createAccountToken(created.user.id, 'email_verify', 24 * 60);
-                if (process.env.NODE_ENV !== 'production') {
-                    console.log(`Development email verification URL: ${absoluteUrl(req, `/account/verify-email?token=${encodeURIComponent(verification.token)}`)}`);
-                }
+                const site = runtimeSettings.siteName();
+                const url = absoluteUrl(req, `/account/verify-email?token=${encodeURIComponent(verification.token)}`);
+                await emailOutbox.enqueue({
+                    type: 'email_verification',
+                    to: created.user.email,
+                    subject: `Verify your ${site} email address`,
+                    text: `Welcome to ${site}. Verify your email address using this secure link: ${url}\n\nThis link expires in 24 hours.`,
+                    html: emailFrame(site, 'Verify your email address', 'Your account has been created. Verify your email address to finish setting up your customer portal.', 'Verify email', url),
+                    dedupeKey: `verify:${created.user.id}:${verification.expiresAt.toISOString()}`
+                });
+                if (process.env.NODE_ENV !== 'production') console.log(`Development email verification URL: ${url}`);
                 req.session.destroy(() => {});
                 return res.render('customer/message', {
                     title: 'Check your email',
-                    message: 'Your account has been created and must be verified before you can sign in.',
-                    siteName: process.env.SITE_NAME || 'CAPTaINFiN'
+                    message: 'Your account has been created. A verification link has been queued for delivery.',
+                    siteName: site
                 });
             }
             return res.redirect('/account');
@@ -80,19 +105,23 @@ function createRouter() {
     });
 
     router.get('/account/verify-email', async (req, res) => {
+        await runtimeSettings.ensureLoaded();
         const ok = await customers.verifyEmail(req.query.token);
         return res.status(ok ? 200 : 400).render('customer/message', {
             title: ok ? 'Email verified' : 'Verification failed',
             message: ok ? 'Your email is verified. You can now sign in.' : 'This verification link is invalid or has expired.',
-            siteName: process.env.SITE_NAME || 'CAPTaINFiN'
+            siteName: runtimeSettings.siteName()
         });
     });
 
-    router.get('/account/login', (req, res) => res.render('customer/login', {
-        error: null,
-        next: safeNext(req.query.next),
-        siteName: process.env.SITE_NAME || 'CAPTaINFiN'
-    }));
+    router.get('/account/login', async (req, res) => {
+        await runtimeSettings.ensureLoaded();
+        return res.render('customer/login', {
+            error: req.query.reset ? null : null,
+            next: safeNext(req.query.next),
+            siteName: runtimeSettings.siteName()
+        });
+    });
 
     router.post('/account/login', async (req, res) => {
         try {
@@ -103,10 +132,108 @@ function createRouter() {
             req.session.customerUsername = account.username;
             return res.redirect(safeNext(req.body.next));
         } catch (error) {
+            await runtimeSettings.ensureLoaded();
             return res.status(401).render('customer/login', {
                 error: error.message,
                 next: safeNext(req.body.next),
-                siteName: process.env.SITE_NAME || 'CAPTaINFiN'
+                siteName: runtimeSettings.siteName()
+            });
+        }
+    });
+
+    router.get('/account/forgot-password', async (req, res, next) => {
+        try {
+            await runtimeSettings.ensureLoaded();
+            return res.render('customer/forgot-password', {
+                error: null,
+                csrfToken: csrf.token(req),
+                siteName: runtimeSettings.siteName()
+            });
+        } catch (error) { return next(error); }
+    });
+
+    router.post('/account/forgot-password', async (req, res, next) => {
+        try {
+            await runtimeSettings.ensureLoaded();
+            if (!csrf.verify(req)) {
+                return res.status(403).render('customer/forgot-password', {
+                    error: 'Your form expired. Please try again.',
+                    csrfToken: csrf.token(req),
+                    siteName: runtimeSettings.siteName()
+                });
+            }
+            const mail = await emailSettings.status();
+            if (!mail.configured) {
+                return res.status(503).render('customer/message', {
+                    title: 'Password reset unavailable',
+                    message: 'Email password reset is not configured right now. Please contact support.',
+                    siteName: runtimeSettings.siteName()
+                });
+            }
+            const reset = await customers.createPasswordReset(req.body.identity, 60);
+            if (reset) {
+                const site = runtimeSettings.siteName();
+                const url = absoluteUrl(req, `/account/reset-password?token=${encodeURIComponent(reset.token)}`);
+                await emailOutbox.enqueue({
+                    type: 'password_reset',
+                    to: reset.email,
+                    subject: `Reset your ${site} password`,
+                    text: `A password reset was requested for your ${site} customer account. Use this secure link: ${url}\n\nThis link expires in 60 minutes. If you did not request it, you can ignore this message.`,
+                    html: emailFrame(site, 'Reset your portal password', 'A password reset was requested for your customer portal account. This does not change your Jellyfin password.', 'Reset password', url),
+                    dedupeKey: `password-reset:${reset.user_id}:${reset.expiresAt.toISOString()}`
+                });
+            }
+            return res.render('customer/message', {
+                title: 'Check your email',
+                message: 'If a matching customer account with an email address exists, a secure reset link has been queued for delivery.',
+                siteName: runtimeSettings.siteName()
+            });
+        } catch (error) { return next(error); }
+    });
+
+    router.get('/account/reset-password', async (req, res, next) => {
+        try {
+            await runtimeSettings.ensureLoaded();
+            const token = String(req.query.token || '');
+            if (!token) {
+                return res.status(400).render('customer/message', {
+                    title: 'Reset link invalid',
+                    message: 'This password reset link is invalid or incomplete.',
+                    siteName: runtimeSettings.siteName()
+                });
+            }
+            return res.render('customer/reset-password', {
+                error: null,
+                token,
+                csrfToken: csrf.token(req),
+                siteName: runtimeSettings.siteName()
+            });
+        } catch (error) { return next(error); }
+    });
+
+    router.post('/account/reset-password', async (req, res, next) => {
+        try {
+            await runtimeSettings.ensureLoaded();
+            const token = String(req.body.token || '');
+            const locals = { token, csrfToken: csrf.token(req), siteName: runtimeSettings.siteName() };
+            if (!csrf.verify(req)) return res.status(403).render('customer/reset-password', { ...locals, error: 'Your form expired. Please try again.' });
+            if (String(req.body.password || '') !== String(req.body.confirmPassword || '')) {
+                return res.status(400).render('customer/reset-password', { ...locals, error: 'Passwords do not match.' });
+            }
+            const ok = await customers.resetSitePassword(token, req.body.password);
+            if (!ok) return res.status(400).render('customer/reset-password', { ...locals, error: 'This reset link is invalid, expired or has already been used.' });
+            return res.render('customer/message', {
+                title: 'Password updated',
+                message: 'Your portal password has been updated. Your Jellyfin password was not changed.',
+                siteName: runtimeSettings.siteName()
+            });
+        } catch (error) {
+            await runtimeSettings.ensureLoaded();
+            return res.status(400).render('customer/reset-password', {
+                error: error.message,
+                token: String(req.body.token || ''),
+                csrfToken: csrf.token(req),
+                siteName: runtimeSettings.siteName()
             });
         }
     });
@@ -138,7 +265,7 @@ function createRouter() {
                 libraryEntitlement,
                 librarySelection,
                 csrfToken: csrf.token(req),
-                siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+                siteName: runtimeSettings.siteName(),
                 message: req.query.message || null,
                 error: req.query.error || null
             });
@@ -155,8 +282,6 @@ function createRouter() {
             for (const raw of submitted) {
                 const name = String(raw || '').trim();
                 if (!name) continue;
-                // Re-derive entitlement server-side. A crafted request can hide an
-                // entitled library but can never grant a library outside the plan.
                 const match = effective.entitlementRows.find(row => row.effective && policy.nameKey(row.name) === policy.nameKey(name));
                 if (match) chosen.push(match.name);
             }
@@ -278,7 +403,7 @@ function createRouter() {
         return res.status(500).render('customer/message', {
             title: 'Something went wrong',
             message: 'The request could not be completed. Please try again.',
-            siteName: process.env.SITE_NAME || 'CAPTaINFiN'
+            siteName: runtimeSettings.siteName()
         });
     });
 

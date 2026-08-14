@@ -4,6 +4,7 @@ const { query } = require('../db');
 const runtimeSettings = require('./runtime-settings');
 const providerSettings = require('../payments/provider-settings');
 const requestServiceSettings = require('../integrations/request-service-settings');
+const emailSettings = require('../integrations/email-settings');
 
 function envPresent(...names) {
     return names.some(name => Boolean(String(process.env[name] || '').trim()));
@@ -12,7 +13,7 @@ function envPresent(...names) {
 async function setupReadiness() {
     await Promise.all([runtimeSettings.ensureLoaded(), providerSettings.ensureLoaded(), requestServiceSettings.ensureLoaded()]);
 
-    const [counts, providerMappings, settings, activeDiscounts, stripeStatus, paypalStatus, requestStatus] = await Promise.all([
+    const [counts, providerMappings, settings, activeDiscounts, stripeStatus, paypalStatus, requestStatus, emailStatus] = await Promise.all([
         query(`
             SELECT
                 (SELECT COUNT(*)::int FROM jellyfin_servers) AS servers,
@@ -35,7 +36,8 @@ async function setupReadiness() {
         query(`SELECT COUNT(*)::int AS count FROM discount_codes WHERE active=TRUE`),
         providerSettings.status('stripe'),
         providerSettings.status('paypal'),
-        requestServiceSettings.status()
+        requestServiceSettings.status(),
+        emailSettings.status()
     ]);
 
     const c = counts.rows[0] || {};
@@ -44,7 +46,7 @@ async function setupReadiness() {
 
     const stripeReady = stripeStatus.configured && Number(mappingByProvider.stripe || 0) > 0;
     const paypalReady = paypalStatus.configured && Number(mappingByProvider.paypal || 0) > 0;
-    const emailReady = envPresent('SMTP_URL');
+    const emailReady = emailStatus.configured;
     const telegramReady = envPresent('TELEGRAM_BOT_TOKEN') && envPresent('TELEGRAM_CHAT_ID');
     const whatsappReady = envPresent('WHATSAPP_PROVIDER') && envPresent('WHATSAPP_ACCESS_TOKEN');
     const notificationsReady = emailReady || telegramReady || whatsappReady;
@@ -88,7 +90,7 @@ async function setupReadiness() {
             key: 'email',
             label: 'Configure email',
             configured: emailReady,
-            detail: emailReady ? 'SMTP configured' : 'Optional · SMTP is not configured',
+            detail: emailReady ? `Transactional email ready · ${emailStatus.source === 'browser' ? 'browser managed' : 'environment fallback'}` : 'Optional · configure SMTP under Notifications',
             href: '/admin/notifications'
         },
         {
@@ -118,6 +120,7 @@ async function setupReadiness() {
         { name: 'Stripe', state: stripeStatus.enabled ? (stripeStatus.configured ? 'configured' : 'not_configured') : 'disabled', detail: stripeStatus.configured ? `${mappingByProvider.stripe || 0} plan mapping(s)` : 'Optional' },
         { name: 'PayPal', state: paypalStatus.enabled ? (paypalStatus.configured ? 'configured' : 'not_configured') : 'disabled', detail: paypalStatus.configured ? `${mappingByProvider.paypal || 0} plan mapping(s)` : 'Optional' },
         { name: 'Request service', state: requestStatus.enabled ? (requestReady ? 'configured' : 'not_configured') : 'disabled', detail: requestReady ? requestStatus.baseUrl : 'Optional' },
+        { name: 'Email', state: emailStatus.enabled ? (emailReady ? 'configured' : 'not_configured') : 'disabled', detail: emailReady ? `${emailStatus.host}:${emailStatus.port}` : 'Optional' },
         { name: 'Storefront', state: storefrontEnabled ? 'enabled' : 'disabled', detail: storefrontEnabled ? 'Public homepage enabled' : 'Opt-in' },
         { name: 'Registration', state: registrationEnabled ? 'enabled' : 'disabled', detail: registrationEnabled ? 'Public registration open' : 'Invite/admin onboarding only' },
         { name: 'Notifications', state: notificationsReady ? 'configured' : 'not_configured', detail: notificationsReady ? 'Delivery channel ready' : 'Optional' },
