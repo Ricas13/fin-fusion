@@ -107,7 +107,8 @@ async function finishPaymentEvent(eventRow, error = null) {
     return result.rowCount === 1;
 }
 
-async function startFreeTrial(customerId) {
+async function startFreeTrial(customerId, planCode = null) {
+    const requestedCode = String(planCode || '').trim() || null;
     const subscription = await transaction(async client => {
         const prior = await client.query(`
             SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
@@ -115,11 +116,18 @@ async function startFreeTrial(customerId) {
         `, [customerId]);
         if (prior.rowCount) throw new Error('This account has already used its free trial');
 
+        // Trial is a plan property, not a product-code convention. A clean install
+        // has no `trial-24h` seed, so choose the requested visible trial (when a
+        // caller supplies one) or the first configured direct trial plan.
         const planResult = await client.query(`
             SELECT * FROM plans
-            WHERE code='trial-24h' AND active=TRUE AND visible=TRUE
+            WHERE billing_interval='trial'
+              AND active=TRUE AND visible=TRUE
+              AND audience IN ('direct','both')
+              AND ($1::text IS NULL OR code=$1)
+            ORDER BY sort_order,price_minor,name
             LIMIT 1
-        `);
+        `, [requestedCode]);
         if (!planResult.rowCount) throw new Error('Free trial is not available');
         const plan = planResult.rows[0];
         const startsAt = new Date();
