@@ -18,12 +18,17 @@ const migrate = serviceBlock('migrate', 'app');
 const app = serviceBlock('app', 'activity-worker');
 const activity = serviceBlock('activity-worker', 'recovery-tools');
 
-assert.match(migrate, /command:\s*\["npm",\s*"run",\s*"db:migrate"\]/, 'migrate service must run db:migrate');
+assert.match(migrate, /npm run db:migrate/, 'migrate service must run db:migrate');
+assert.match(migrate, /npm run auth:bootstrap/, 'migrate service must bootstrap a native administrator when required');
+assert(
+    migrate.indexOf('npm run db:migrate') < migrate.indexOf('npm run auth:bootstrap'),
+    'database migrations must complete before native administrator bootstrap'
+);
 assert.match(migrate, /postgres:\n\s+condition:\s+service_healthy/, 'migrate must wait for healthy postgres');
 assert.match(migrate, /restart:\s+"no"/, 'migrate must be a one-shot service');
 
 for (const [name, block] of [['app', app], ['activity-worker', activity]]) {
-    assert.match(block, /migrate:\n\s+condition:\s+service_completed_successfully/, `${name} must wait for migrations`);
+    assert.match(block, /migrate:\n\s+condition:\s+service_completed_successfully/, `${name} must wait for migrations and bootstrap`);
 }
 
 console.log('compose migration smoke: ok');
