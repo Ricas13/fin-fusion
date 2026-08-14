@@ -1,8 +1,13 @@
 'use strict';
 
 const crypto = require('crypto');
+const { query } = require('../db');
 
 const STRATEGIES = new Set(['balanced', 'lowest_customers', 'lowest_streams', 'weighted', 'manual']);
+const DEFAULT_STALE_MS = 5 * 60 * 1000;
+let fleetSnapshot = new Map();
+let snapshotLoadedAt = 0;
+let refreshTimer = null;
 
 function normalizeStrategy(value) {
     const strategy = String(value || 'balanced').trim().toLowerCase();
@@ -21,14 +26,44 @@ function number(value, fallback = 0) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function staleMs() {
+    const seconds = Number(process.env.PLACEMENT_FLEET_METRICS_STALE_SECONDS || 300);
+    if (!Number.isFinite(seconds)) return DEFAULT_STALE_MS;
+    return Math.max(60, Math.min(1800, seconds)) * 1000;
+}
+
+function metricFor(server) {
+    const metric = fleetSnapshot.get(String(server?.id || ''));
+    if (!metric?.observedAt) return null;
+    const observed = new Date(metric.observedAt).getTime();
+    if (!Number.isFinite(observed) || Date.now() - observed > staleMs()) return null;
+    return metric;
+}
+
+function fleetLoad(server) {
+    const metric = metricFor(server);
+    const managedUsers = number(server?.assigned_users, 0);
+    const managedStreams = number(server?.active_streams, 0);
+    return {
+        users: metric?.totalUsers == null ? managedUsers : number(metric.totalUsers, managedUsers),
+        streams: metric?.activeStreams == null ? managedStreams : number(metric.activeStreams, managedStreams),
+        managedUsers,
+        managedStreams,
+        source: metric ? 'fleet' : 'managed',
+        observedAt: metric?.observedAt || null
+    };
+}
+
+function atCapacity(server) {
+    const max = number(server?.max_users, 0);
+    return max > 0 && fleetLoad(server).users >= max;
+}
+
 function loadRatio(server) {
     const max = number(server.max_users, 0);
-    const assigned = number(server.assigned_users, 0);
-    if (max > 0) return assigned / max;
-    // Unlimited servers have no hard capacity ceiling. Keep them competitive,
-    // but do not make every unlimited server permanently beat a lightly loaded
-    // capped server solely because its denominator is missing.
-    return assigned / 1000;
+    const users = fleetLoad(server).users;
+    if (max > 0) return users / max;
+    return users / 1000;
 }
 
 function tieBreak(a, b) {
@@ -42,25 +77,31 @@ function baseHealthCompare(a, b) {
 }
 
 function balancedCompare(a, b) {
+    const al = fleetLoad(a);
+    const bl = fleetLoad(b);
     return baseHealthCompare(a, b)
         || loadRatio(a) - loadRatio(b)
-        || number(a.active_streams) - number(b.active_streams)
-        || number(a.assigned_users) - number(b.assigned_users)
+        || al.streams - bl.streams
+        || al.users - bl.users
         || tieBreak(a, b);
 }
 
 function customerCompare(a, b) {
+    const al = fleetLoad(a);
+    const bl = fleetLoad(b);
     return baseHealthCompare(a, b)
-        || number(a.assigned_users) - number(b.assigned_users)
-        || number(a.active_streams) - number(b.active_streams)
+        || al.users - bl.users
+        || al.streams - bl.streams
         || loadRatio(a) - loadRatio(b)
         || tieBreak(a, b);
 }
 
 function streamCompare(a, b) {
+    const al = fleetLoad(a);
+    const bl = fleetLoad(b);
     return baseHealthCompare(a, b)
-        || number(a.active_streams) - number(b.active_streams)
-        || number(a.assigned_users) - number(b.assigned_users)
+        || al.streams - bl.streams
+        || al.users - bl.users
         || loadRatio(a) - loadRatio(b)
         || tieBreak(a, b);
 }
@@ -80,15 +121,17 @@ function weightedPick(candidates, randomInt = crypto.randomInt) {
 }
 
 function selectServer(candidates, strategyValue, { randomInt = crypto.randomInt } = {}) {
-    const candidatesList = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
-    if (!candidatesList.length) return null;
+    const raw = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+    if (!raw.length) return null;
     const strategy = normalizeStrategy(strategyValue);
+    const candidatesList = raw.filter(server => !atCapacity(server));
+    if (!candidatesList.length) return null;
 
     if (strategy === 'manual') {
-        if (candidatesList.length !== 1) {
+        if (raw.length !== 1) {
             throw new Error('Manual server placement requires exactly one eligible Jellyfin server.');
         }
-        return candidatesList[0];
+        return candidatesList[0] || null;
     }
     if (strategy === 'weighted') return weightedPick(candidatesList, randomInt);
     if (strategy === 'lowest_customers') return [...candidatesList].sort(customerCompare)[0];
@@ -96,10 +139,60 @@ function selectServer(candidates, strategyValue, { randomInt = crypto.randomInt 
     return [...candidatesList].sort(balancedCompare)[0];
 }
 
+async function refreshFleetSnapshot() {
+    const result = await query(`
+        SELECT server_id,total_users,active_streams,managed_streams,observed_at
+        FROM jellyfin_server_metrics
+        WHERE observed_at IS NOT NULL
+    `);
+    const next = new Map();
+    for (const row of result.rows) {
+        next.set(String(row.server_id), {
+            totalUsers: row.total_users == null ? null : Number(row.total_users),
+            activeStreams: row.active_streams == null ? null : Number(row.active_streams),
+            managedStreams: row.managed_streams == null ? null : Number(row.managed_streams),
+            observedAt: row.observed_at
+        });
+    }
+    fleetSnapshot = next;
+    snapshotLoadedAt = Date.now();
+    return next.size;
+}
+
+function startFleetSnapshotRefresh() {
+    if (refreshTimer || !process.env.DATABASE_URL) return;
+    const run = () => refreshFleetSnapshot().catch(error => {
+        console.warn('Placement fleet snapshot refresh failed:', error.message);
+    });
+    run();
+    refreshTimer = setInterval(run, 30000);
+    refreshTimer.unref?.();
+}
+
+function snapshotStatus() {
+    return { serverCount: fleetSnapshot.size, loadedAt: snapshotLoadedAt || null, staleAfterMs: staleMs() };
+}
+
+function setFleetSnapshotForTests(entries) {
+    fleetSnapshot = new Map((entries || []).map(entry => [String(entry.serverId), {
+        totalUsers: entry.totalUsers,
+        activeStreams: entry.activeStreams,
+        managedStreams: entry.managedStreams,
+        observedAt: entry.observedAt || new Date()
+    }]));
+    snapshotLoadedAt = Date.now();
+}
+
 module.exports = {
     STRATEGIES,
     normalizeStrategy,
     healthRank,
     loadRatio,
-    selectServer
+    fleetLoad,
+    atCapacity,
+    selectServer,
+    refreshFleetSnapshot,
+    startFleetSnapshotRefresh,
+    snapshotStatus,
+    setFleetSnapshotForTests
 };
