@@ -26,6 +26,17 @@ function normalizeBaseUrl(value) {
     return parsed.toString().replace(/\/$/, '');
 }
 
+function authHeaders(apiKey, { jsonBody = false } = {}) {
+    const token = String(apiKey || '').trim();
+    if (!token) throw new Error('Jellyfin API key is required.');
+    if (/[\r\n]/.test(token)) throw new Error('Jellyfin API key contains invalid characters.');
+    return {
+        Authorization: `MediaBrowser Token="${token}"`,
+        Accept: 'application/json',
+        ...(jsonBody ? { 'Content-Type': 'application/json' } : {})
+    };
+}
+
 function decryptJellyfinKey(payload) {
     if (!payload) return null;
     if (String(payload).startsWith('jf1:')) {
@@ -96,11 +107,7 @@ async function request(serverId, endpoint, { method = 'GET', body = null, timeou
             method,
             redirect: 'error',
             signal: controller.signal,
-            headers: {
-                'X-Emby-Token': server.apiKey,
-                'Accept': 'application/json',
-                ...(body ? { 'Content-Type': 'application/json' } : {})
-            },
+            headers: authHeaders(server.apiKey, { jsonBody: Boolean(body) }),
             ...(body ? { body: JSON.stringify(body) } : {})
         });
 
@@ -136,6 +143,7 @@ async function healthcheckServer(serverId) {
 
 module.exports = {
     normalizeBaseUrl,
+    authHeaders,
     listServers,
     getServerSecret,
     request,
