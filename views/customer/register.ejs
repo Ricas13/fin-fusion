@@ -10,7 +10,7 @@
 </head>
 <body><main class="card">
   <h1>Create <%= siteName %> account</h1>
-  <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed.</div><% } %>
+  <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. Use an invitation link if one was provided to you.</div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
   <% if (registrationOpen) { %>
   <form method="post" action="/account/register">
@@ -18,7 +18,7 @@
     <label>Username</label><input name="username" minlength="3" maxlength="40" autocomplete="username" required>
     <label>Site password</label><input type="password" name="password" minlength="12" autocomplete="new-password" required>
     <p class="muted">This is your portal password. Your Jellyfin password is managed separately and is never stored here.</p>
-    <label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K">
+    <% if (referralsEnabled) { %><label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"><% } %>
     <button type="submit">Create account</button>
   </form>
   <% } %>
