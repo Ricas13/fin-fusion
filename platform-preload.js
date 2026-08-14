@@ -93,10 +93,12 @@ realExpress.application.listen = function platformListen(...args) {
     if (!this.locals.__platformRoutesMounted && process.env.DATABASE_URL) {
         this.locals.__platformRoutesMounted = true;
         const { createRouter } = require('./src/platform/router');
+        const { createInviteOnboardingRouter } = require('./src/platform/invite-onboarding');
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlansListRouter } = require('./src/platform/admin-plans-list');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
+        const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
         const { createAdminShellRouter } = require('./src/platform/admin-shell');
         const { createAdminServerLibraryDashboardRouter } = require('./src/platform/admin-server-library-dashboard');
@@ -119,12 +121,14 @@ realExpress.application.listen = function platformListen(...args) {
         const resellerPortal = require('./src/platform/reseller-portal');
         this.use(customerLoginThrottle);
         this.use(createBrandingRouter());
+        this.use(createInviteOnboardingRouter());
         this.use(createAdminPreviewRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminBrandingRouter());
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
+        this.use(createAdminInvitationsRouter());
         this.use(createAdminCatalogShellRouter());
         // The compact/filterable Plans index owns only GET /admin/plans.
         // The existing plan router still owns create/edit/export and sub-pages.
