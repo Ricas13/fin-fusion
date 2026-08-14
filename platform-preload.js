@@ -119,6 +119,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
         const { createAdminRequestPlanPolicyRouter } = require('./src/platform/admin-request-plan-policy');
         const { createAdminServerMigrationsRouter } = require('./src/platform/admin-server-migrations');
+        const { createAdminJellyfinImportRouter } = require('./src/platform/admin-jellyfin-import');
         const { createAdminSetupRouter } = require('./src/platform/admin-setup');
         const { createAdminConfigurationTransferRouter } = require('./src/platform/admin-configuration-transfer');
         const { createAdminLibrariesRouter } = require('./src/platform/admin-libraries');
@@ -154,6 +155,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminInvitationsRouter());
+        this.use(createAdminJellyfinImportRouter());
         this.use(createAdminServerMigrationsRouter());
         this.use(createAdminRequestPlanPolicyRouter());
         this.use(createAdminRequestUsersRouter());
