@@ -81,6 +81,8 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminCustomer360Router } = require('./src/platform/admin-customer-360');
         const { createAdminUsersRouter } = require('./src/platform/admin-users');
         const { createAdminServersRouter } = require('./src/platform/admin-servers');
+        const { createAdminDiscountsRouter } = require('./src/platform/admin-discounts');
+        const { createAdminReferralsRouter } = require('./src/platform/admin-referrals');
         this.use(customerLoginThrottle);
         this.use(createMediaPortalRouter());
         this.use(createAdminOriginalSettingsRouter());
@@ -95,6 +97,8 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminCustomer360Router());
         this.use(createAdminUsersRouter());
         this.use(createAdminServersRouter());
+        this.use(createAdminDiscountsRouter());
+        this.use(createAdminReferralsRouter());
         this.use(createRouter());
         startJobs();
     }

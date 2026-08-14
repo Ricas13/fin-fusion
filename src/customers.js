@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query, transaction } = require('./db');
+const referrals = require('./referrals');
 
 function cleanEmail(value) {
     const email = String(value || '').trim().toLowerCase();
@@ -24,7 +25,7 @@ function validatePassword(password) {
     }
 }
 
-async function registerCustomer({ email, username, password }) {
+async function registerCustomer({ email, username, password, referralCode }) {
     email = cleanEmail(email);
     username = cleanUsername(username);
     validatePassword(password);
@@ -36,7 +37,7 @@ async function registerCustomer({ email, username, password }) {
     const passwordHash = await bcrypt.hash(password, 12);
     const verifyImmediately = process.env.REQUIRE_EMAIL_VERIFICATION !== 'true';
 
-    return transaction(async client => {
+    const created = await transaction(async client => {
         const exists = await client.query(
             'SELECT 1 FROM app_users WHERE lower(email)=lower($1) OR lower(username)=lower($2) LIMIT 1',
             [email, username]
@@ -63,6 +64,15 @@ async function registerCustomer({ email, username, password }) {
 
         return { user, customer: customerResult.rows[0] };
     });
+
+    if (referralCode) {
+        try {
+            await referrals.attributeReferral(created.customer.id, referralCode);
+        } catch (error) {
+            console.error('Referral attribution failed:', error.message);
+        }
+    }
+    return created;
 }
 
 async function authenticateCustomer(identity, password) {
@@ -124,11 +134,14 @@ async function getCustomerPortal(customerId) {
         FROM payment_customers pc WHERE pc.customer_id=$1
     `, [customerId]);
 
+    const referralCode = await referrals.ensureReferralCode(customerId);
+
     return {
         customer: customerResult.rows[0],
         subscriptions: subscriptions.rows,
         accounts: accounts.rows,
-        providers: providers.rows
+        providers: providers.rows,
+        referralCode
     };
 }
 

@@ -2,6 +2,8 @@
 
 const crypto = require('crypto');
 const lifecycle = require('./lifecycle');
+const discounts = require('./discounts');
+const { query } = require('../db');
 
 let stripeClient;
 
@@ -54,7 +56,22 @@ async function ensureStripeCustomer(customerId, email) {
     return customer.id;
 }
 
-async function createCheckout({ customerId, planCode, email, successUrl, cancelUrl }) {
+async function ensureStripeCoupon(discount, plan) {
+    if (discount.stripe_coupon_id) return discount.stripe_coupon_id;
+    const stripe = getStripe();
+    const params = { duration: 'once', name: discount.code };
+    if (discount.discount_type === 'percent') {
+        params.percent_off = discount.percent_off;
+    } else {
+        params.amount_off = discount.fixed_off_minor;
+        params.currency = String(discount.currency || plan.currency || 'usd').toLowerCase();
+    }
+    const coupon = await stripe.coupons.create(params);
+    await query('UPDATE discount_codes SET stripe_coupon_id=$1,updated_at=NOW() WHERE id=$2', [coupon.id, discount.id]);
+    return coupon.id;
+}
+
+async function createCheckout({ customerId, planCode, email, successUrl, cancelUrl, discountCode = null }) {
     const plan = await lifecycle.getProviderPlan(planCode, 'stripe');
     if (!plan) throw new Error('This plan is not configured for Stripe');
     const stripe = getStripe();
@@ -75,6 +92,14 @@ async function createCheckout({ customerId, planCode, email, successUrl, cancelU
         metadata,
         integration_identifier: randomIntegrationIdentifier()
     };
+
+    if (discountCode) {
+        const discount = await discounts.validateForCheckout({ code: discountCode, planId: plan.id, planCode, customerId });
+        const couponId = await ensureStripeCoupon(discount, plan);
+        params.discounts = [{ coupon: couponId }];
+        metadata.internal_discount_code_id = discount.id;
+    }
+
     if (mode === 'subscription') params.subscription_data = { metadata };
     else params.payment_intent_data = { metadata };
 
@@ -103,6 +128,7 @@ async function activateCheckoutSession(session) {
     if (!['paid', 'no_payment_required'].includes(session.payment_status)) return null;
     const customerId = session.metadata?.internal_customer_id;
     const planId = session.metadata?.internal_plan_id;
+    const discountCodeId = session.metadata?.internal_discount_code_id || null;
     if (!customerId || !planId) throw new Error('Stripe Checkout session is missing internal metadata');
 
     const providerCustomerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
@@ -120,7 +146,8 @@ async function activateCheckoutSession(session) {
             providerStatus: subscription.status,
             periodStart: period.start,
             periodEnd: period.end,
-            cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end)
+            cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+            discountCodeId
         });
     }
 
@@ -131,7 +158,8 @@ async function activateCheckoutSession(session) {
         provider: 'stripe',
         providerCustomerId,
         providerSubscriptionId: paymentId,
-        providerStatus: 'active'
+        providerStatus: 'active',
+        discountCodeId
     });
 }
 
