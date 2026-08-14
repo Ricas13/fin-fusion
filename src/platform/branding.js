@@ -8,23 +8,16 @@ const csrf = require('../auth/csrf');
 const auth = require('../auth/service');
 
 const BRAND_DIR = path.resolve(__dirname, '../../db/branding');
+const DEFAULT_LOGO = path.resolve(__dirname, '../../public/logo.jpg');
 const LOGO_MAX = 1024 * 1024;
 const FAVICON_MAX = 256 * 1024;
 
 const types = {
-    logo: {
-        max: LOGO_MAX,
-        allowed: new Set(['png', 'jpg', 'webp'])
-    },
-    favicon: {
-        max: FAVICON_MAX,
-        allowed: new Set(['png', 'ico'])
-    }
+    logo: { max: LOGO_MAX, allowed: new Set(['png', 'jpg', 'webp']) },
+    favicon: { max: FAVICON_MAX, allowed: new Set(['png', 'ico']) }
 };
 
-function ensureDir() {
-    fs.mkdirSync(BRAND_DIR, { recursive: true, mode: 0o700 });
-}
+function ensureDir() { fs.mkdirSync(BRAND_DIR, { recursive: true, mode: 0o700 }); }
 
 function detectImageType(buf) {
     if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
@@ -50,18 +43,24 @@ function existing(kind) {
     return null;
 }
 
-function removeExisting(kind) {
+function removeOtherExtensions(kind, keepExt = null) {
     const cfg = types[kind];
     if (!cfg) return;
     ensureDir();
     for (const ext of cfg.allowed) {
+        if (ext === keepExt) continue;
         try { fs.unlinkSync(path.join(BRAND_DIR, `${kind}.${ext}`)); }
         catch (e) { if (e.code !== 'ENOENT') throw e; }
     }
 }
 
+function removeExisting(kind) {
+    removeOtherExtensions(kind, null);
+}
+
 function assetUrl(kind) {
-    return existing(kind) ? `/branding/${kind}` : (kind === 'logo' ? '/logo.jpg' : '/favicon.ico');
+    if (!types[kind]) return '/logo.jpg';
+    return `/branding/${kind}`;
 }
 
 function gate(req, res, next) {
@@ -81,13 +80,19 @@ async function audit(req, action, kind) {
     );
 }
 
-function sendAsset(kind, req, res) {
+function sendAsset(kind, _req, res) {
     const item = existing(kind);
-    if (!item) return res.status(404).end();
-    res.setHeader('Content-Type', mimeFor(item.ext));
+    if (item) {
+        res.setHeader('Content-Type', mimeFor(item.ext));
+        res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return fs.createReadStream(item.file).pipe(res);
+    }
+    if (!fs.existsSync(DEFAULT_LOGO)) return res.status(404).end();
+    res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    return fs.createReadStream(item.file).pipe(res);
+    return fs.createReadStream(DEFAULT_LOGO).pipe(res);
 }
 
 function createBrandingRouter() {
@@ -103,6 +108,7 @@ function createBrandingRouter() {
         const cfg = types[kind];
         if (!cfg) return res.status(404).json({ ok: false, error: 'Unknown branding asset.' });
         if (!csrf.verify(req)) return res.status(403).json({ ok: false, error: 'Invalid security token.' });
+        let tmp = null;
         try {
             if (!(await requireStep(req))) return res.status(403).json({ ok: false, error: 'Verification failed.' });
             if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ ok: false, error: 'No file received.' });
@@ -112,14 +118,16 @@ function createBrandingRouter() {
                 return res.status(415).json({ ok: false, error: kind === 'logo' ? 'Logo must be PNG, JPEG or WebP.' : 'Favicon must be PNG or ICO.' });
             }
             ensureDir();
-            const tmp = path.join(BRAND_DIR, `.${kind}.${process.pid}.${Date.now()}.tmp`);
+            tmp = path.join(BRAND_DIR, `.${kind}.${process.pid}.${Date.now()}.tmp`);
             const target = path.join(BRAND_DIR, `${kind}.${ext}`);
             fs.writeFileSync(tmp, req.body, { mode: 0o600, flag: 'wx' });
-            removeExisting(kind);
             fs.renameSync(tmp, target);
+            tmp = null;
+            removeOtherExtensions(kind, ext);
             await audit(req, 'admin.branding.upload', kind);
             return res.json({ ok: true, url: `/branding/${kind}?v=${Date.now()}` });
         } catch (error) {
+            if (tmp) { try { fs.unlinkSync(tmp); } catch (_) {} }
             console.error('Branding upload failed:', error.message);
             return res.status(500).json({ ok: false, error: 'Branding asset could not be saved safely.' });
         }
@@ -133,9 +141,9 @@ function createBrandingRouter() {
             if (!(await requireStep(req))) throw new Error('verification');
             removeExisting(kind);
             await audit(req, 'admin.branding.remove', kind);
-            return res.redirect('/admin/settings?message=' + encodeURIComponent(`${kind === 'logo' ? 'Logo' : 'Favicon'} reset to default.`));
+            return res.redirect('/admin/settings/branding?message=' + encodeURIComponent(`${kind === 'logo' ? 'Logo' : 'Favicon'} reset to default.`));
         } catch (error) {
-            return res.redirect('/admin/settings?error=' + encodeURIComponent(error.message === 'verification' ? 'Verification failed.' : 'Branding asset could not be removed safely.'));
+            return res.redirect('/admin/settings/branding?error=' + encodeURIComponent(error.message === 'verification' ? 'Verification failed.' : 'Branding asset could not be removed safely.'));
         }
     });
 
