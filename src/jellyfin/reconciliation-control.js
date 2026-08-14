@@ -5,6 +5,7 @@ const { query } = require('../db');
 
 const VERIFY_INTERVAL_MS = 30 * 60 * 1000;
 const BLOCKED_RETRY_MINUTES = 10;
+const RUNNING_STALE_MINUTES = 15;
 const FAILURE_RETRY_MINUTES = [1, 2, 5, 10, 30, 60];
 
 const POLICY_KEYS = [
@@ -74,16 +75,17 @@ async function getCustomerState(customerId) {
 async function markCustomerRunning(customerId, entitlement = null) {
     await query(`
         INSERT INTO customer_provisioning_state(
-            customer_id,status,attempt_count,last_attempt_at,subscription_id,plan_id,updated_at
-        ) VALUES($1,'running',1,NOW(),$2,$3,NOW())
+            customer_id,status,attempt_count,last_attempt_at,next_attempt_at,subscription_id,plan_id,updated_at
+        ) VALUES($1,'running',1,NOW(),NOW()+make_interval(mins=>$4),$2,$3,NOW())
         ON CONFLICT (customer_id) DO UPDATE SET
             status='running',
             attempt_count=customer_provisioning_state.attempt_count+1,
             last_attempt_at=NOW(),
+            next_attempt_at=NOW()+make_interval(mins=>$4),
             subscription_id=EXCLUDED.subscription_id,
             plan_id=EXCLUDED.plan_id,
             updated_at=NOW()
-    `, [customerId, entitlement?.subscription_id || null, entitlement?.plan_id || null]);
+    `, [customerId, entitlement?.subscription_id || null, entitlement?.plan_id || null, RUNNING_STALE_MINUTES]);
 }
 
 async function markCustomerHealthy(customerId, detail = {}) {
@@ -224,6 +226,8 @@ async function markAccountFailure(accountId, customerId, desiredHash, error) {
 
 module.exports = {
     VERIFY_INTERVAL_MS,
+    BLOCKED_RETRY_MINUTES,
+    RUNNING_STALE_MINUTES,
     POLICY_KEYS,
     policySnapshot,
     policyHash,
