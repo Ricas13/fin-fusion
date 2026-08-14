@@ -1,0 +1,45 @@
+'use strict';
+
+const express = require('express');
+const { customer360, reseller360 } = require('./customer-360');
+const { esc } = require('./admin-html');
+const branding = require('./branding');
+
+function gate(req, res, next) {
+    if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
+    return res.redirect('/login?session=expired');
+}
+
+function pill(v, kind='') { return `<span class="pill ${kind}">${esc(v)}</span>`; }
+function fmtDate(v) { return v ? esc(new Date(v).toLocaleString()) : '—'; }
+function safeUrl(v) {
+    try { const u = new URL(String(v || '')); return ['http:','https:'].includes(u.protocol) ? u.href : ''; }
+    catch { return ''; }
+}
+function shell({ title, subtitle, back, body }) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · Admin preview</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"><style>body{margin:0;background:#0c1117;color:#d9e0e8}.previewBanner{position:sticky;top:0;z-index:200;background:#5a3b08;color:#fff3c4;border-bottom:1px solid #8d6214;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}.previewBanner strong{letter-spacing:.02em}.previewWrap{max-width:1180px;margin:auto;padding:24px 18px 60px}.previewHeader{display:flex;align-items:center;gap:12px;margin-bottom:22px}.previewLogo{width:38px;height:38px;border-radius:9px;object-fit:cover}.previewGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.previewCard{background:#121922;border:1px solid #26303d;border-radius:12px;padding:16px}.previewCard h3{margin:0 0 8px}.previewStat{font-size:26px;font-weight:800}.previewList{display:grid;gap:10px}.previewRow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #222b36}.previewRow:last-child{border-bottom:0}.previewDisabled{opacity:.55;pointer-events:none}.previewNote{background:#18212c;border:1px dashed #425065;border-radius:10px;padding:12px;color:#9da9b8}@media(max-width:620px){.previewBanner{align-items:flex-start;flex-direction:column}.previewWrap{padding:18px 12px 46px}}</style></head><body><div class="previewBanner"><div><strong>ADMIN PREVIEW — READ ONLY</strong><div style="font-size:12px;opacity:.85">This is a safe mock of the portal experience. Account-changing actions are disabled.</div></div><a class="button secondary btn-sm" href="${esc(back)}">Exit preview</a></div><main class="previewWrap"><header class="previewHeader"><img class="previewLogo" src="${esc(branding.assetUrl('logo'))}" alt=""><div><h1 style="margin:0 0 3px">${esc(title)}</h1><div class="muted">${esc(subtitle)}</div></div></header>${body}</main></body></html>`;
+}
+
+function customerBody(d) {
+    const c=d.customer;
+    const current=d.subscriptions.find(x=>['active','trialing','past_due'].includes(x.status) && (!x.current_period_end || new Date(x.current_period_end)>new Date())) || d.subscriptions[0];
+    const account=d.accounts[0];
+    const jellyfinUrl=safeUrl(account?.public_url);
+    return `<div class="previewGrid"><section class="previewCard"><h3>My subscription</h3>${current?`<div class="previewStat">${esc(current.plan_name)}</div><p>${pill(current.status,current.status==='active'?'good':'')} ${pill(`${current.streams} stream${Number(current.streams)===1?'':'s'}`)}</p><div class="muted">Access until ${fmtDate(current.current_period_end)}</div>`:'<div class="muted">No active subscription.</div>'}</section><section class="previewCard"><h3>Jellyfin access</h3>${account?`<div class="previewStat" style="font-size:18px">${esc(account.jellyfin_username)}</div><p>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'bad':'good')}</p><div class="muted">${esc(account.server_name)}${account.location?' · '+esc(account.location):''}</div>${jellyfinUrl?`<p><a href="${esc(jellyfinUrl)}" target="_blank" rel="noopener noreferrer">Open Jellyfin</a></p>`:''}`:'<div class="muted">No Jellyfin account yet.</div>'}</section><section class="previewCard"><h3>Activity</h3><div class="previewStat">${esc(d.activeStreams.length)}</div><div class="muted">active stream${d.activeStreams.length===1?'':'s'} now</div><p>${esc(d.activitySummary.sessions_30d||0)} sessions in the last 30 days</p></section><section class="previewCard"><h3>Billing</h3><div class="previewStat" style="font-size:18px">${esc(d.paymentCustomers.map(x=>x.provider).join(', ')||'No provider')}</div><div class="muted">${current?.cancel_at_period_end?'Cancels at period end':'Subscription billing status shown here'}</div></section></div><section class="previewCard" style="margin-top:14px"><h3>Account settings</h3><div class="previewList"><div class="previewRow"><span>Login username</span><strong>${esc(c.login_username||'—')}</strong></div><div class="previewRow"><span>Email</span><strong>${esc(c.login_email||c.email||'—')}</strong></div><div class="previewRow"><span>Discord</span><strong>${esc(c.discord_username||'Not linked')}</strong></div></div><div class="previewNote" style="margin-top:14px">In the real customer portal this area can contain password, notification, billing and library controls. They are deliberately disabled in admin preview.</div></section>`;
+}
+
+function resellerBody(d) {
+    const now=Date.now();
+    const expiring=d.customers.filter(x=>x.current_period_end&&new Date(x.current_period_end).getTime()>now&&new Date(x.current_period_end).getTime()-now<7*86400000).length;
+    return `<div class="previewGrid"><section class="previewCard"><h3>Regular credits</h3><div class="previewStat">${esc(d.reseller.credits)}</div></section><section class="previewCard"><h3>Trial credits</h3><div class="previewStat">${esc(d.reseller.trial_credits)}</div></section><section class="previewCard"><h3>Customers</h3><div class="previewStat">${esc(d.customers.length)}</div><div class="muted">${esc(expiring)} expiring in 7 days</div></section><section class="previewCard"><h3>Streaming now</h3><div class="previewStat">${esc(d.activeStreams.length)}</div><div class="muted">across reseller customers</div></section></div><section class="previewCard" style="margin-top:14px"><h3>Customers</h3>${d.customers.length?`<div class="previewList">${d.customers.slice(0,12).map(x=>`<div class="previewRow"><div><strong>${esc(x.display_name||x.login_username||x.email||'Customer')}</strong><div class="muted">${esc(x.plan_name||'No plan')}</div></div><div style="text-align:right">${pill(x.subscription_status||'no plan',x.subscription_status==='active'?'good':'')}<div class="muted">${x.current_period_end?fmtDate(x.current_period_end):'—'}</div></div></div>`).join('')}</div>`:'<div class="muted">No customers yet.</div>'}<div class="previewNote" style="margin-top:14px">Credit spending, trial creation, password resets, notes, suspension and exports are disabled in admin preview.</div></section>`;
+}
+
+function createAdminPreviewRouter() {
+    const r=express.Router();
+    r.use('/admin/preview',gate);
+    r.get('/admin/preview/customer/:id',async(req,res,next)=>{try{const d=await customer360(req.params.id);if(!d)return res.status(404).send('Customer not found');res.setHeader('Cache-Control','no-store, private, max-age=0');return res.send(shell({title:process.env.SITE_NAME||'CAPTAiNFiN',subtitle:`Customer portal · ${d.customer.login_username||d.customer.display_name||d.customer.login_email||'Customer'}`,back:`/admin/users/${encodeURIComponent(req.params.id)}`,body:customerBody(d)}));}catch(e){next(e)}});
+    r.get('/admin/preview/reseller/:id',async(req,res,next)=>{try{const d=await reseller360(req.params.id);if(!d)return res.status(404).send('Reseller not found');res.setHeader('Cache-Control','no-store, private, max-age=0');return res.send(shell({title:process.env.SITE_NAME||'CAPTAiNFiN',subtitle:`Reseller portal · ${d.reseller.username||d.reseller.email||'Reseller'}`,back:`/admin/reseller-management/${encodeURIComponent(req.params.id)}`,body:resellerBody(d)}));}catch(e){next(e)}});
+    return r;
+}
+
+module.exports={createAdminPreviewRouter};
