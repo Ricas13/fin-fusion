@@ -27,6 +27,11 @@ async function ensureLoaded() {
     return loadingPromise;
 }
 
+function siteName() {
+    const stored = typeof cache?.siteName === 'string' ? cache.siteName.trim() : '';
+    return stored || String(process.env.SITE_NAME || '').trim() || 'CAPTaINFiN';
+}
+
 function publicRegistrationOpen() {
     const stored = cache?.publicRegistration;
     return typeof stored === 'boolean' ? stored : process.env.PUBLIC_REGISTRATION !== 'false';
@@ -70,6 +75,7 @@ function overseerrUrl() {
 module.exports = {
     reload,
     ensureLoaded,
+    siteName,
     publicRegistrationOpen,
     storefrontEnabled,
     requireEmailVerification,
