@@ -49,12 +49,19 @@ function billingSyncPollIntervalMs() {
     return Math.max(5 * 60 * 1000, Math.min(60 * 60 * 1000, configured));
 }
 
+function driftPollIntervalMs() {
+    const configured = Number(process.env.JELLYFIN_DRIFT_POLL_INTERVAL_MS);
+    if (!Number.isFinite(configured) || configured <= 0) return 15 * 60 * 1000;
+    return Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, configured));
+}
+
 function startJobs() {
     if (jobsStarted || !process.env.DATABASE_URL) return;
     jobsStarted = true;
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/resilient-provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
     const placement = require('./src/jellyfin/placement');
+    const driftControl = require('./src/jellyfin/drift-control');
     const bulkWorker = require('./src/jellyfin/bulk-worker');
     const requestUserSync = require('./src/integrations/request-user-sync');
     const requestServiceSettings = require('./src/integrations/request-service-settings');
@@ -119,6 +126,14 @@ function startJobs() {
             }
         } catch (error) { console.error('Billing provider sync failed:', error.message); }
     };
+    const runDriftAudit = async () => {
+        try {
+            const result = await driftControl.auditDue({ all: false, limit: 100 });
+            if (result.total && (result.drift || result.missing || result.unreachable)) {
+                console.warn(`Jellyfin policy audit: total=${result.total}, inSync=${result.inSync}, drift=${result.drift}, missing=${result.missing}, unreachable=${result.unreachable}`);
+            }
+        } catch (error) { console.error('Jellyfin policy audit failed:', error.message); }
+    };
 
     requestServiceSettings.ensureLoaded()
         .catch(error => console.error('Request service settings load failed, using environment fallback:', error.message));
@@ -128,13 +143,15 @@ function startJobs() {
     const initialEmail = setTimeout(runEmailOutbox, 20000);
     const initialRequestUsers = setTimeout(runRequestUsers, 30000);
     const initialBillingSync = setTimeout(runBillingSync, 45000);
-    initialHealth.unref?.(); initialEntitlement.unref?.(); initialEmail.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.();
+    const initialDrift = setTimeout(runDriftAudit, 90000);
+    initialHealth.unref?.(); initialEntitlement.unref?.(); initialEmail.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.(); initialDrift.unref?.();
 
     createRescheduler(runBulkJobs, () => 3000).start();
     createRescheduler(runStaleReclaim, () => 60000).start();
     createRescheduler(runEmailOutbox, () => 60000).start();
     createRescheduler(runRequestUsers, requestUserSyncIntervalMs).start();
     createRescheduler(runBillingSync, billingSyncPollIntervalMs).start();
+    createRescheduler(runDriftAudit, driftPollIntervalMs).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -169,6 +186,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminEmailRouter } = require('./src/platform/admin-email');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
+        const { createAdminDriftRouter } = require('./src/platform/admin-drift');
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
         const { createAdminRequestPlanPolicyRouter } = require('./src/platform/admin-request-plan-policy');
         const { createAdminRequestRedirectRouter } = require('./src/platform/admin-request-redirect');
@@ -217,6 +235,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminRequestPlanPolicyRouter());
         this.use(createAdminRequestUsersRouter());
         this.use(createAdminRequestRedirectRouter());
+        this.use(createAdminDriftRouter());
         this.use(createAdminProvisioningRouter());
         this.use(createAdminEmailRouter());
         this.use(createAdminPaymentSettingsRouter());
@@ -247,4 +266,4 @@ realExpress.application.listen = function platformListen(...args) {
     return originalListen.apply(this, args);
 };
 
-module.exports = { requestUserSyncIntervalMs, billingSyncPollIntervalMs };
+module.exports = { requestUserSyncIntervalMs, billingSyncPollIntervalMs, driftPollIntervalMs };
