@@ -113,6 +113,11 @@
         return Number.isNaN(parsed.getTime()) ? 'never' : parsed.toLocaleString();
     }
 
+    function formatNumber(value, fallback = '—') {
+        const number = numberOrNull(value);
+        return number == null ? fallback : number.toLocaleString();
+    }
+
     async function refreshServerRows() {
         const roots = new Map(Array.from(document.querySelectorAll('[data-server-id]')).map(root => [String(root.dataset.serverId), root]));
         if (!roots.size) return;
@@ -136,17 +141,31 @@
                 }
                 const statusText = root.querySelector('[data-server-health-text]');
                 if (statusText) statusText.textContent = state.label;
+
                 const users = root.querySelector('[data-server-users]');
-                if (users) users.textContent = server.maxUsers == null
-                    ? Number(server.customers || 0).toLocaleString()
-                    : `${Number(server.customers || 0).toLocaleString()} / ${Number(server.maxUsers).toLocaleString()}`;
+                if (users) users.textContent = formatNumber(server.totalUsers);
+                const userDetail = root.querySelector('[data-server-users-detail]');
+                if (userDetail) {
+                    const managed = formatNumber(server.managedCustomers, '0');
+                    userDetail.textContent = server.maxUsers == null
+                        ? `Jellyfin users · ${managed} managed`
+                        : `Jellyfin users · ${managed} managed / ${formatNumber(server.maxUsers, '0')} placement capacity`;
+                }
+
                 const streams = root.querySelector('[data-server-streams]');
-                if (streams) streams.textContent = Number(server.activeStreams || 0).toLocaleString();
+                if (streams) streams.textContent = formatNumber(server.activeStreams);
+                const streamDetail = root.querySelector('[data-server-streams-detail]');
+                if (streamDetail) {
+                    const parts = [`${formatNumber(server.managedStreams, '0')} managed`];
+                    if (server.unmanagedStreams != null) parts.push(`${formatNumber(server.unmanagedStreams, '0')} unmanaged`);
+                    if (server.transcodeStreams != null) parts.push(`${formatNumber(server.transcodeStreams, '0')} transcoding`);
+                    streamDetail.textContent = parts.join(' · ');
+                }
+
                 const lastCheck = root.querySelector('[data-server-last-check]');
-                // A polling response must never erase a timestamp already rendered
-                // from the database. New/unprobed servers are rendered as "never"
-                // initially, so there is no need to write "never" from a null poll.
                 if (lastCheck && server.lastHealthCheck) lastCheck.textContent = formatDate(server.lastHealthCheck);
+                const metricsCheck = root.querySelector('[data-server-metrics-check]');
+                if (metricsCheck && server.metricsObservedAt) metricsCheck.textContent = formatDate(server.metricsObservedAt);
             }
         } catch (_) {
             // Keep the last known server state visible if the lightweight UI refresh fails.
