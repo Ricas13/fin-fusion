@@ -9,6 +9,15 @@
     }
 
     function initLibraryServer(root) {
+        const serverId = String(root.dataset.libraryServerId || '').trim();
+        const storageKey = serverId ? `captainfin.admin.libraries.open.${serverId}` : null;
+        if (storageKey) {
+            try { root.open = window.localStorage.getItem(storageKey) === '1'; } catch (_) {}
+            root.addEventListener('toggle', () => {
+                try { window.localStorage.setItem(storageKey, root.open ? '1' : '0'); } catch (_) {}
+            });
+        }
+
         const table = root.querySelector('[data-library-table]');
         if (!table) return;
         const tbody = table.querySelector('tbody');

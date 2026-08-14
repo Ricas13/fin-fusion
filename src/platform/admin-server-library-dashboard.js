@@ -148,11 +148,11 @@ function libraryRow(library) {
     </tr>`;
 }
 
-function libraryServer(req, group, index) {
+function libraryServer(req, group) {
     const state = group.ok ? { cls: 'online', label: 'Connected' } : { cls: 'offline', label: 'Unavailable' };
     const types = [...new Set(group.libs.map(lib => String(lib?.CollectionType || 'mixed').toLowerCase()))].sort();
     const typeOptions = types.map(type => `<option value="${esc(type)}">${esc(libraryTypeLabel(type))}</option>`).join('');
-    return `<details class="libraryServer" data-library-server ${index === 0 ? 'open' : ''}>
+    return `<details class="libraryServer" data-library-server data-library-server-id="${esc(group.server.id)}">
         <summary>
             <span class="libraryServerSummaryMain"><span class="serverStatusDot ${state.cls}" title="${esc(state.label)}"></span><strong>${esc(group.server.name)}</strong></span>
             <span class="libraryServerSummaryMeta"><span data-library-visible>${group.libs.length} ${group.libs.length === 1 ? 'library' : 'libraries'}</span><span class="libraryChevron" aria-hidden="true"></span></span>
@@ -201,7 +201,7 @@ async function librariesBody(req) {
         }
     });
     return `${notice(req.query.message)}${notice(req.query.error, 'error')}
-        <div class="libraryServerList">${groups.length ? groups.map((group, index) => libraryServer(req, group, index)).join('') : '<div class="empty">No enabled Jellyfin servers configured.</div>'}</div>
+        <div class="libraryServerList">${groups.length ? groups.map(group => libraryServer(req, group)).join('') : '<div class="empty">No enabled Jellyfin servers configured.</div>'}</div>
         <script src="/js/admin-server-library-dashboard.js" defer></script>`;
 }
 
