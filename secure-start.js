@@ -45,14 +45,9 @@ function validateEnvironment() {
         fail('SESSION_SECRET must be a unique random value of at least 32 characters.');
     }
 
-    if (IS_PRODUCTION) {
-        if (!process.env.JELLYFIN_URL) {
-            fail('JELLYFIN_URL is required in production.');
-        }
-        if (!process.env.JELLYFIN_API_KEY || process.env.JELLYFIN_API_KEY === 'YOUR_JELLYFIN_API_KEY') {
-            fail('JELLYFIN_API_KEY is required in production.');
-        }
-    }
+    // Jellyfin is deliberately NOT required at process startup. Modern server
+    // configuration lives in PostgreSQL and is administered through the web UI;
+    // a clean installation with zero Jellyfin servers is a supported state.
 
     if (ADMIN_PASSWORD && ADMIN_PASSWORD.length < 12) {
         fail('ADMIN_PASSWORD must be at least 12 characters when provided.');
@@ -337,6 +332,9 @@ function installSafeStartupLogging() {
     console.log = (...args) => {
         if (args.some(arg => typeof arg === 'string' && arg.includes('Admin login: admin / admin123'))) {
             return originalLog('👤 Admin login: configured securely');
+        }
+        if (!process.env.JELLYFIN_URL && args.some(arg => typeof arg === 'string' && arg.startsWith('📺 Jellyfin:'))) {
+            return originalLog('📺 Jellyfin: not configured — add a server from Administration → Servers');
         }
         return originalLog(...args);
     };
