@@ -52,6 +52,10 @@ function formPage(req, invitation, values = {}, error = null) {
     return shell('Accept invitation', body);
 }
 
+function invitationUsable(invitation) {
+    return invitation && invitation.planActive && ['pending', 'active'].includes(invitation.status);
+}
+
 function createInviteOnboardingRouter() {
     const router = express.Router();
     router.use('/invite', noStore);
@@ -60,9 +64,8 @@ function createInviteOnboardingRouter() {
         try {
             const invitation = await invitations.lookupInvitation(req.params.token);
             if (!invitation) return res.status(404).send(unavailablePage('This invitation link is invalid.'));
-            if (!['pending', 'active'].includes(invitation.status)) {
-                return res.status(410).send(unavailablePage(statusMessage(invitation.status)));
-            }
+            if (!invitation.planActive) return res.status(410).send(unavailablePage('The plan attached to this invitation is no longer available.'));
+            if (!invitationUsable(invitation)) return res.status(410).send(unavailablePage(statusMessage(invitation.status)));
             return res.send(formPage(req, invitation));
         } catch (error) { return next(error); }
     });
@@ -71,9 +74,8 @@ function createInviteOnboardingRouter() {
         try {
             const invitation = await invitations.lookupInvitation(req.params.token);
             if (!invitation) return res.status(404).send(unavailablePage('This invitation link is invalid.'));
-            if (!['pending', 'active'].includes(invitation.status)) {
-                return res.status(410).send(unavailablePage(statusMessage(invitation.status)));
-            }
+            if (!invitation.planActive) return res.status(410).send(unavailablePage('The plan attached to this invitation is no longer available.'));
+            if (!invitationUsable(invitation)) return res.status(410).send(unavailablePage(statusMessage(invitation.status)));
             if (!csrf.verify(req)) return res.status(403).send(formPage(req, invitation, req.body, 'Your form expired. Please try again.'));
             if (String(req.body.password || '') !== String(req.body.confirmPassword || '')) {
                 return res.status(400).send(formPage(req, invitation, req.body, 'Passwords do not match.'));
@@ -109,4 +111,4 @@ function createInviteOnboardingRouter() {
     return router;
 }
 
-module.exports = { createInviteOnboardingRouter, formPage, unavailablePage, statusMessage };
+module.exports = { createInviteOnboardingRouter, formPage, unavailablePage, statusMessage, invitationUsable };
