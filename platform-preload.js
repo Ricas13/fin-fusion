@@ -124,6 +124,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminCatalogShellRouter } = require('./src/platform/admin-catalog-shell');
         const { createAdminPlansListRouter } = require('./src/platform/admin-plans-list');
         const { createAdminPlanLibrariesRouter } = require('./src/platform/admin-plan-libraries');
+        const { createAdminPlanPlacementFleetRouter } = require('./src/platform/admin-plan-placement-fleet');
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
         const { createAdminPlanPaymentOptionsRouter } = require('./src/platform/admin-plan-payment-options');
         const { createAdminPaymentSettingsRouter } = require('./src/platform/admin-payment-settings');
@@ -183,6 +184,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminPlansListRouter());
         this.use(createAdminPlanPaymentOptionsRouter());
         this.use(createAdminPlansRouter());
+        this.use(createAdminPlanPlacementFleetRouter());
         this.use(createAdminPlanPlacementRouter());
         this.use(createAdminJobsRouter());
         this.use(createAdminBulkCustomersRouter());
