@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+npm-debug.log*
+backups
+*.dump
+*.log
+coverage
+.DS_Store
+
+# Persistent/runtime application state must never enter the image build context.
+db/branding
+db/data.json
+db/*.tmp
