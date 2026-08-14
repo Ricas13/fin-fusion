@@ -33,8 +33,9 @@ async function apiRequest(path, { method = 'GET', body = null, timeoutMs = 10000
     if (!config.baseUrl) throw new Error('External request site URL is not configured.');
     if (!config.apiKey) throw new Error('SEERR_API_KEY or OVERSEERR_API_KEY is not configured.');
     if (typeof path !== 'string' || !path.startsWith('/api/v1/') || path.startsWith('//')) throw new Error('Invalid requests API path.');
-    const url = new URL(path, `${config.baseUrl}/`);
-    if (url.origin !== new URL(config.baseUrl).origin) throw new Error('Requests API path escaped configured origin.');
+    const base = new URL(`${config.baseUrl}/`);
+    const url = new URL(path.replace(/^\//, ''), base);
+    if (url.origin !== base.origin) throw new Error('Requests API path escaped configured origin.');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -75,6 +76,11 @@ function validEmail(value) {
 function cleanUsername(value) {
     const username = String(value || '').trim().replace(/[^A-Za-z0-9._-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
     return username || 'user';
+}
+
+function fallbackEmail(customerId) {
+    const compact = String(customerId || '').replace(/[^a-f0-9]/gi, '').toLowerCase().slice(0, 24) || crypto.randomBytes(8).toString('hex');
+    return `cf-${compact}@captainfin.invalid`;
 }
 
 async function syncCandidates() {
@@ -140,19 +146,12 @@ async function mark(customerId, fields) {
     ]);
 }
 
-async function syncCustomer(candidate, knownByEmail = null) {
-    const email = validEmail(candidate.email);
+async function syncCustomer(candidate, indexes = {}) {
     const username = cleanUsername(candidate.username);
-    if (!email) {
-        await mark(candidate.customer_id, {
-            status: 'skipped', username,
-            error: 'A valid customer email is required before this user can be synced to the request service.'
-        });
-        return { status: 'skipped', customerId: candidate.customer_id };
-    }
-
+    const email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
     try {
-        let external = knownByEmail?.get(email) || null;
+        let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
+        if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
         let created = false;
         if (!external) {
             const bootstrapPassword = crypto.randomBytes(30).toString('base64url');
@@ -161,33 +160,44 @@ async function syncCustomer(candidate, knownByEmail = null) {
                 body: { email, username, password: bootstrapPassword }
             });
             created = true;
-            if (knownByEmail && external?.email) knownByEmail.set(String(external.email).toLowerCase(), external);
+            if (external?.id && indexes.byId) indexes.byId.set(String(external.id), external);
+            if (external?.email && indexes.byEmail) indexes.byEmail.set(String(external.email).toLowerCase(), external);
         }
         if (!external?.id) throw new Error('Request service did not return a user ID.');
         await mark(candidate.customer_id, {
             status: 'synced',
             externalUserId: external.id,
-            email,
+            email: external.email || email,
             username: external.username || username,
-            passwordResetRequired: created
+            passwordResetRequired: created || Boolean(candidate.password_reset_required)
         });
         return { status: 'synced', customerId: candidate.customer_id, created };
     } catch (error) {
-        await mark(candidate.customer_id, { status: 'failed', email, username, error: error.message });
+        await mark(candidate.customer_id, {
+            status: 'failed', email, username,
+            passwordResetRequired: Boolean(candidate.password_reset_required),
+            error: error.message
+        });
         return { status: 'failed', customerId: candidate.customer_id, error: error.message };
     }
+}
+
+function indexesFor(users) {
+    return {
+        byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])),
+        byEmail: new Map(users.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user]))
+    };
 }
 
 async function syncAll() {
     const config = await configuration();
     if (!config.configured) throw new Error('Configure an external request site URL and SEERR_API_KEY/OVERSEERR_API_KEY first.');
     const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]);
-    const byEmail = new Map(existing.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user]));
-    const summary = { total: candidates.length, created: 0, linked: 0, skipped: 0, failed: 0 };
+    const indexes = indexesFor(existing);
+    const summary = { total: candidates.length, created: 0, linked: 0, failed: 0 };
     for (const candidate of candidates) {
-        const result = await syncCustomer(candidate, byEmail);
-        if (result.status === 'skipped') summary.skipped += 1;
-        else if (result.status === 'failed') summary.failed += 1;
+        const result = await syncCustomer(candidate, indexes);
+        if (result.status === 'failed') summary.failed += 1;
         else if (result.created) summary.created += 1;
         else summary.linked += 1;
     }
@@ -199,8 +209,7 @@ async function syncOneCustomer(customerId) {
     const candidate = candidates.find(row => String(row.customer_id) === String(customerId));
     if (!candidate) throw new Error('Customer has no active Jellyfin account to sync.');
     const existing = await externalUsers();
-    const byEmail = new Map(existing.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user]));
-    return syncCustomer(candidate, byEmail);
+    return syncCustomer(candidate, indexesFor(existing));
 }
 
 async function requestAccessForCustomer(customerId) {
@@ -220,7 +229,8 @@ async function setCustomerPassword(customerId, password) {
     }
     let access = await requestAccessForCustomer(customerId);
     if (!access?.external_user_id) {
-        await syncOneCustomer(customerId);
+        const result = await syncOneCustomer(customerId);
+        if (result.status !== 'synced') throw new Error(result.error || 'Request-site user could not be synced.');
         access = await requestAccessForCustomer(customerId);
     }
     if (!access?.external_user_id) throw new Error('Request-site user is not synced yet.');
@@ -251,6 +261,9 @@ module.exports = {
     cleanBaseUrl,
     configuration,
     apiRequest,
+    validEmail,
+    cleanUsername,
+    fallbackEmail,
     syncCandidates,
     externalUsers,
     syncAll,
