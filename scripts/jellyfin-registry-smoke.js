@@ -9,12 +9,7 @@ const originalAllowedHosts = process.env.JELLYFIN_ALLOWED_HOSTS;
 try {
     process.env.NODE_ENV = 'production';
     delete process.env.JELLYFIN_ALLOWED_HOSTS;
-    assert.throws(
-        () => registry.normalizeBaseUrl('http://jellyfin.internal:8096'),
-        /JELLYFIN_ALLOWED_HOSTS must be configured/
-    );
 
-    process.env.JELLYFIN_ALLOWED_HOSTS = 'jellyfin.internal, jellyfin-free.internal';
     assert.strictEqual(
         registry.normalizeBaseUrl('http://jellyfin.internal:8096/'),
         'http://jellyfin.internal:8096'
@@ -23,9 +18,9 @@ try {
         registry.normalizeBaseUrl('https://jellyfin-free.internal/base/?ignored=true'),
         'https://jellyfin-free.internal/base'
     );
-    assert.throws(
-        () => registry.normalizeBaseUrl('http://127.0.0.1:8096'),
-        /not on the production allowlist/
+    assert.strictEqual(
+        registry.normalizeBaseUrl('http://127.0.0.1:8096/'),
+        'http://127.0.0.1:8096'
     );
     assert.throws(
         () => registry.normalizeBaseUrl('file:///etc/passwd'),
@@ -36,14 +31,7 @@ try {
         /may not contain credentials/
     );
 
-    process.env.NODE_ENV = 'development';
-    delete process.env.JELLYFIN_ALLOWED_HOSTS;
-    assert.strictEqual(
-        registry.normalizeBaseUrl('http://localhost:8096/'),
-        'http://localhost:8096'
-    );
-
-    console.log('Jellyfin registry SSRF guard smoke test passed.');
+    console.log('Jellyfin registry URL validation smoke test passed.');
 } finally {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;

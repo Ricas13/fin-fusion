@@ -129,10 +129,10 @@ jobs:
           const { getPool } = require('./src/db');
           (async () => {
             process.env.NODE_ENV = 'production';
-            process.env.JELLYFIN_ALLOWED_HOSTS = 'jellyfin.local,premium.example.com';
-            const allowed = servers.normalizeUrl('http://jellyfin.local:8096/', { baseUrl: true });
-            if (allowed !== 'http://jellyfin.local:8096') throw new Error('Allowed Jellyfin URL normalization failed');
-            for (const bad of ['http://not-allowed.local:8096','ftp://jellyfin.local/file','http://user:pass@jellyfin.local:8096']) {
+            delete process.env.JELLYFIN_ALLOWED_HOSTS;
+            const arbitrary = servers.normalizeUrl('http://not-allowed.local:8096/', { baseUrl: true });
+            if (arbitrary !== 'http://not-allowed.local:8096') throw new Error('Admin-added Jellyfin URL normalization failed');
+            for (const bad of ['ftp://jellyfin.local/file','http://user:pass@jellyfin.local:8096']) {
               let rejected = false;
               try { servers.normalizeUrl(bad, { baseUrl: true }); } catch (_) { rejected = true; }
               if (!rejected) throw new Error(`Unsafe Jellyfin URL accepted: ${bad}`);

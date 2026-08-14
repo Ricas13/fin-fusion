@@ -14,9 +14,6 @@ const SAFE_ERROR_PREFIXES = [
     'URLs may not contain ',
     'URL hostname is required.',
     'Internal/base URL is required.',
-    'JELLYFIN_ALLOWED_HOSTS must be configured ',
-    'This Jellyfin hostname is not on the production allowlist.',
-    'Hostname "',
     'Jellyfin API key is required.',
     'Jellyfin API key format is invalid.',
     'Priority must be between ',
@@ -65,9 +62,10 @@ function cleanSlug(value) {
     return slug;
 }
 
+// Kept as a compatibility export for older templates. Jellyfin hostnames are
+// now trusted when an authenticated administrator explicitly adds a server.
 function allowedHosts() {
-    return new Set(String(process.env.JELLYFIN_ALLOWED_HOSTS || '')
-        .split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+    return new Set();
 }
 
 function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
@@ -93,19 +91,6 @@ function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
     parsed.pathname = parsed.pathname.replace(/\/+$/, '');
     parsed.search = '';
     parsed.hash = '';
-
-    if (baseUrl && process.env.NODE_ENV === 'production') {
-        const hosts = allowedHosts();
-        if (!hosts.size) {
-            throw invalidField(fieldName, 'JELLYFIN_ALLOWED_HOSTS must be configured before server URLs can be changed in production.');
-        }
-        if (!hosts.has(parsed.hostname.toLowerCase())) {
-            throw invalidField(
-                fieldName,
-                `Hostname "${parsed.hostname}" is not on the production Jellyfin allowlist. Add it to JELLYFIN_ALLOWED_HOSTS before saving this server.`
-            );
-        }
-    }
     return parsed.toString().replace(/\/$/, '');
 }
 
@@ -301,7 +286,7 @@ function createAdminServersRouter() {
             return res.render('admin/servers', {
                 siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 servers: await serverList(),
-                allowedHosts: Array.from(allowedHosts()),
+                allowedHosts: [],
                 message: req.query.message || null,
                 error: req.query.error || null
             });
@@ -313,7 +298,7 @@ function createAdminServersRouter() {
             siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             server: null,
             csrfToken: csrf.token(req),
-            allowedHosts: Array.from(allowedHosts()),
+            allowedHosts: [],
             error: null
         });
     });
@@ -326,7 +311,7 @@ function createAdminServersRouter() {
                 siteName: process.env.SITE_NAME || 'CAPTaINFiN',
                 server,
                 csrfToken: csrf.token(req),
-                allowedHosts: Array.from(allowedHosts()),
+                allowedHosts: [],
                 error: null
             });
         } catch (error) { return next(error); }
