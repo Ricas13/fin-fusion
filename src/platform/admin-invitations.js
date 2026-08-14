@@ -51,7 +51,7 @@ function createPanel(req, plans) {
     }
     return `<section class="section">
         <div class="sectionHead"><div><h2>Create invitation</h2><div class="muted">The customer chooses their own login and Jellyfin password.</div></div></div>
-        <form class="formPanel invitationCreate" method="post" action="/admin/invitations">
+        <form class="formPanel invitationCreate" method="post" action="/admin/invitations" data-native-submit="true">
             ${csrfInput(req)}
             <div class="formGrid">
                 <div class="formGroup"><label>Plan</label><select class="input" name="planId" required>${plans.map(plan => `<option value="${esc(plan.id)}">${esc(plan.name)} · ${esc(plan.server_class)}</option>`).join('')}</select></div>
@@ -78,7 +78,7 @@ function invitationTable(req, rows) {
                 <td>${esc(date(row.expires_at))}</td>
                 <td>${esc(date(row.created_at))}</td>
                 <td class="right"><div class="invitationActions">
-                    ${['pending','active'].includes(row.status) ? `<form method="post" action="/admin/invitations/${esc(row.id)}/rotate">${csrfInput(req)}<button class="button secondary" type="submit">New link</button></form><form method="post" action="/admin/invitations/${esc(row.id)}/revoke">${csrfInput(req)}<button class="button secondary" type="submit">Revoke</button></form>` : ''}
+                    ${['pending','active'].includes(row.status) ? `<form method="post" action="/admin/invitations/${esc(row.id)}/rotate" data-native-submit="true">${csrfInput(req)}<button class="button secondary" type="submit">New link</button></form><form method="post" action="/admin/invitations/${esc(row.id)}/revoke">${csrfInput(req)}<button class="button secondary" type="submit">Revoke</button></form>` : ''}
                 </div></td>
             </tr>`).join('')}
         </tbody></table></div>
