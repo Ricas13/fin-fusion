@@ -393,8 +393,8 @@ async function requestAccessForCustomer(customerId) {
 }
 
 async function setCustomerPassword(customerId, password) {
-    if (typeof password !== 'string' || password.length < 12 || password.length > 200) {
-        throw new Error('Request-site password must be between 12 and 200 characters.');
+    if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
+        throw new Error('Request-site password must be between 8 and 200 characters.');
     }
     let access = await requestAccessForCustomer(customerId);
     if (!access?.external_user_id) {
