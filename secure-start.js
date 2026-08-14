@@ -194,10 +194,6 @@ function deepRedactPasswords(value, allowTopLevelPassword = false, depth = 0, se
     return output;
 }
 
-function clientIp(req) {
-    return req.ip || req.socket?.remoteAddress || 'unknown';
-}
-
 function installExpressSecurity() {
     const expressPath = require.resolve('express');
     const realExpress = require(expressPath);
@@ -221,10 +217,6 @@ function installExpressSecurity() {
         }
         return originalRender.call(this, view, options, callback);
     };
-
-    const attempts = new Map();
-    const WINDOW_MS = 15 * 60 * 1000;
-    const MAX_ATTEMPTS = 10;
 
     function securityMiddleware(req, res, next) {
         res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -253,21 +245,6 @@ function installExpressSecurity() {
                 } catch (_) {
                     return res.status(403).send('Invalid origin');
                 }
-            }
-        }
-
-        if (req.method === 'POST' && req.path === '/login') {
-            const key = clientIp(req);
-            const now = Date.now();
-            let bucket = attempts.get(key);
-            if (!bucket || now - bucket.startedAt > WINDOW_MS) {
-                bucket = { startedAt: now, count: 0 };
-            }
-            bucket.count += 1;
-            attempts.set(key, bucket);
-            if (bucket.count > MAX_ATTEMPTS) {
-                res.setHeader('Retry-After', Math.ceil((WINDOW_MS - (now - bucket.startedAt)) / 1000));
-                return res.status(429).send('Too many login attempts. Try again later.');
             }
         }
 
@@ -373,9 +350,5 @@ installExpressSecurity();
 installSecureSessionDefaults();
 installTelegramBackupRedaction();
 installSafeStartupLogging();
-
-if (IS_PRODUCTION) {
-    console.warn('⚠️  express-session MemoryStore is transitional. Redis-backed sessions are scheduled for the database phase.');
-}
 
 require('./app');
