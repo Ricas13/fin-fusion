@@ -88,3 +88,7 @@ services:
 
 volumes:
   steamfusion_pgdata:
+
+networks:
+  captainfin_proxy:
+    external: true
