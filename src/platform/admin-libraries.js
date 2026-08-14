@@ -17,9 +17,20 @@ async function libraryData(){
   return Promise.all(servers.map(async server=>{
     try{
       const raw=await registry.request(server.id,'/Library/VirtualFolders',{timeoutMs:8000});
-      const folders=Array.isArray(raw)?raw:[];
-      return {server,ok:true,libraries:folders.map(v=>({name:v.Name||'Unnamed library',collectionType:v.CollectionType||'mixed',locations:Array.isArray(v.Locations)?v.Locations:[],itemId:v.ItemId||null}))};
+      if(!Array.isArray(raw)) throw new Error('Unexpected Jellyfin library response');
+      return {
+        server,
+        ok:true,
+        libraries:raw
+          .filter(v=>v && v.Name)
+          .map(v=>({
+            name:String(v.Name),
+            collectionType:String(v.CollectionType||'mixed'),
+            itemId:v.ItemId?String(v.ItemId):null
+          }))
+      };
     }catch(error){
+      console.warn(`Library discovery failed for server ${server.id}:`,error.message);
       return {server,ok:false,error:'Library information could not be loaded from this server.',libraries:[]};
     }
   }));
@@ -35,6 +46,8 @@ function createAdminLibrariesRouter(){
   router.post('/admin/libraries/:serverId/refresh',async(req,res)=>{
     if(!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
     try{
+      const exists=await query('SELECT id FROM jellyfin_servers WHERE id=$1 AND enabled=TRUE',[req.params.serverId]);
+      if(!exists.rowCount) return res.status(404).send('Server not found');
       if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req))) return res.redirect('/admin/libraries?error='+encodeURIComponent('Second-factor verification failed. No library scan was started.'));
       await registry.request(req.params.serverId,'/Library/Refresh',{method:'POST',timeoutMs:8000});
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.library.refresh','jellyfin_server',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.serverId]);
