@@ -2,6 +2,8 @@
 
 const assert = require('assert');
 const placement = require('../src/jellyfin/placement');
+const plansList = require('../src/platform/admin-plans-list');
+require('../public/js/admin-plans-table');
 
 const base = {
     health_status: 'healthy',
@@ -41,4 +43,12 @@ assert.strictEqual(
     'weighted placement must not send new accounts to a worse health tier while a healthier server is eligible'
 );
 
-console.log('server placement smoke: ok');
+assert.strictEqual(plansList.durationLabel({ billing_interval: 'trial', duration_days: 1 }), '24 hours');
+assert.strictEqual(plansList.durationLabel({ billing_interval: 'month', duration_days: 30 }), '1 month');
+assert.strictEqual(plansList.durationLabel({ billing_interval: '6_months', duration_days: 180 }), '6 months');
+assert.strictEqual(plansList.durationLabel({ billing_interval: 'year', duration_days: 365 }), '1 year');
+assert.strictEqual(plansList.durationLabel({ billing_interval: 'custom', duration_days: 45 }), '45 days');
+assert.strictEqual(plansList.priceLabel({ price_minor: 0, currency: 'USD' }), 'Free');
+assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), 'USD 6.00');
+
+console.log('server placement + plans list smoke: ok');
