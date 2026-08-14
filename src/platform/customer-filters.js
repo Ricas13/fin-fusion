@@ -35,8 +35,11 @@ function baseJoins() {
         LEFT JOIN plans p ON p.id=cur.plan_id
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS account_count,MAX(ja.last_activity_at) AS last_activity_at,
-                   BOOL_OR(NOT ja.disabled) AS has_enabled_account
-            FROM jellyfin_accounts ja WHERE ja.customer_id=c.id
+                   BOOL_OR(NOT ja.disabled) AS has_enabled_account,
+                   STRING_AGG(DISTINCT js.name, ', ' ORDER BY js.name) AS server_names
+            FROM jellyfin_accounts ja
+            JOIN jellyfin_servers js ON js.id=ja.server_id
+            WHERE ja.customer_id=c.id
         ) acc ON TRUE
         LEFT JOIN LATERAL (
             SELECT MIN(CASE jpr.status WHEN 'failed' THEN 1 WHEN 'pending' THEN 2 WHEN 'running' THEN 3 ELSE 4 END) AS rank
@@ -61,16 +64,11 @@ function baseJoins() {
 
 const RECON_RANK = { failed: 1, pending: 2, running: 3, successful: 4 };
 
-// Builds WHERE clause + params. Every filter value is bound as a parameter;
-// nothing from `filters` is ever concatenated into the SQL text itself.
 function buildWhere(filters, scope) {
     const where = [];
     const params = [];
     function p(value) { params.push(value); return `$${params.length}`; }
 
-    // Reseller scope is applied first and unconditionally -- filters.resellerId
-    // is only honored for admins picking "customers of reseller X"; a reseller
-    // caller's own id always wins regardless of what filters requested.
     if (scope?.resellerId) {
         where.push(`c.reseller_id=${p(scope.resellerId)}`);
     } else if (filters.resellerId && isUuid(filters.resellerId)) {
@@ -122,10 +120,6 @@ function buildWhere(filters, scope) {
     if (filters.hasOverride === true) where.push('ovr.has_override=TRUE');
     else if (filters.hasOverride === false) where.push('(ovr.has_override IS NOT TRUE)');
 
-    // Library filter is a plan/override-level approximation (mode+names +
-    // any explicit per-customer override), not a live per-server resolution
-    // -- accurate enough for admin triage without making a Jellyfin API call
-    // per row in a list query.
     if (filters.library) {
         const name = p(String(filters.library).trim().slice(0, 200));
         where.push(`(
@@ -150,7 +144,7 @@ const SELECT_COLUMNS = `
     ru.username AS reseller_username,
     cur.status AS subscription_status,cur.current_period_end,
     p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,
-    acc.account_count,acc.last_activity_at,acc.has_enabled_account,
+    acc.account_count,acc.last_activity_at,acc.has_enabled_account,acc.server_names,
     recon.rank AS recon_rank,pay.provider AS payment_provider,ovr.has_override
 `;
 
@@ -173,8 +167,6 @@ async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = '
     return { rows: rows.rows, total: countResult.rows[0].n, page: boundedPage, pageSize: boundedPageSize };
 }
 
-// Full rows for every match (capped), used by CSV export -- same query shape
-// as listCustomers but without pagination.
 async function exportRows(filters, scope) {
     const { whereSql, params } = buildWhere(filters, scope);
     const result = await query(`
@@ -183,9 +175,6 @@ async function exportRows(filters, scope) {
     return result.rows;
 }
 
-// Every id this filter set matches, scoped and capped -- the backing query
-// for "Select all matching results". Never trust a client to enumerate this
-// itself; always re-derive it here.
 async function matchingCustomerIds(filters, scope) {
     const { whereSql, params } = buildWhere(filters, scope);
     const result = await query(`
@@ -194,10 +183,6 @@ async function matchingCustomerIds(filters, scope) {
     return result.rows.map(row => row.id);
 }
 
-// Re-authorizes a client-supplied id list against the same filtered+scoped
-// query -- used when the admin picked explicit checkboxes rather than
-// "select all matching". IDs outside the caller's authorization (wrong
-// reseller, filtered out, don't exist) are silently dropped, never trusted.
 async function reauthorizeCustomerIds(candidateIds, scope) {
     const ids = Array.from(new Set((candidateIds || []).filter(isUuid))).slice(0, MAX_MATCHING);
     if (!ids.length) return [];
