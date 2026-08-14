@@ -38,7 +38,6 @@ async function libraryCatalogFromServers(servers) {
     };
 }
 
-// Compatibility helper for callers that only have a class rather than a plan.
 async function libraryCatalogForServerClass(serverClass) {
     const result = await query(`
         SELECT id,name FROM jellyfin_servers
@@ -47,9 +46,6 @@ async function libraryCatalogForServerClass(serverClass) {
     return libraryCatalogFromServers(result.rows);
 }
 
-// Plan-aware catalogue. When a plan has an explicit placement pool, policy
-// choices and reconciliation must use that same pool rather than libraries
-// from unrelated servers of the same class.
 async function libraryCatalogForPlan(plan) {
     if (!plan) return { names: [], failedServers: [], serverCount: 0 };
     const servers = await planServers.eligibleServersForPlan(plan, { enabledOnly: true });
@@ -127,8 +123,6 @@ async function getLibrarySelection(customerId) {
     return result.rows[0] || null;
 }
 
-// Persisting a name never grants access on its own; every apply path intersects
-// it with the server-computed plan entitlement.
 async function setLibrarySelection(customerId, names) {
     const clean = policy.normalizedNames(names).slice(0, 500).map(n => n.slice(0, 200));
     await query(`
@@ -298,6 +292,12 @@ async function preferredUsername(customerId) {
     return String(result.rows[0].username || 'user').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40) || 'user';
 }
 
+async function usernameAvailable(serverId, preferred) {
+    const users = await registry.request(serverId, '/Users');
+    const names = new Set((Array.isArray(users) ? users : []).map(u => String(u.Name || '').toLowerCase()));
+    return !names.has(String(preferred || '').toLowerCase());
+}
+
 async function uniqueUsername(serverId, preferred) {
     const users = await registry.request(serverId, '/Users');
     const names = new Set((Array.isArray(users) ? users : []).map(u => String(u.Name || '').toLowerCase()));
@@ -310,10 +310,29 @@ async function uniqueUsername(serverId, preferred) {
     throw new Error('Unable to generate a unique Jellyfin username');
 }
 
-async function createJellyfinAccount(customerId, server, effective) {
-    const preferred = await preferredUsername(customerId);
-    const username = await uniqueUsername(server.id, preferred);
-    const bootstrapPassword = randomPassword();
+async function markPrimaryAccount(customerId, accountId) {
+    await transaction(async client => {
+        const exists = await client.query('SELECT id FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 FOR UPDATE', [accountId, customerId]);
+        if (!exists.rowCount) throw new Error('Jellyfin account not found');
+        await client.query('UPDATE jellyfin_accounts SET is_primary=FALSE,updated_at=NOW() WHERE customer_id=$1 AND is_primary=TRUE AND id<>$2', [customerId, accountId]);
+        await client.query('UPDATE jellyfin_accounts SET is_primary=TRUE,updated_at=NOW() WHERE id=$1', [accountId]);
+    });
+}
+
+async function createJellyfinAccount(customerId, server, effective, options = {}) {
+    const preferred = String(options.preferredUsername || await preferredUsername(customerId)).slice(0, 40);
+    let username;
+    if (options.requireExactUsername) {
+        if (!(await usernameAvailable(server.id, preferred))) {
+            const error = new Error(`Username ${preferred} already exists on target Jellyfin server`);
+            error.code = 'TARGET_USERNAME_EXISTS';
+            throw error;
+        }
+        username = preferred;
+    } else {
+        username = await uniqueUsername(server.id, preferred);
+    }
+    const bootstrapPassword = options.bootstrapPassword || randomPassword();
     const libraryAccess = await resolveLibraryAccessForServer(server.id, effective.unrestricted, effective.visibleNames, false);
     const created = await registry.request(server.id, '/Users/New', {
         method: 'POST',
@@ -332,8 +351,8 @@ async function createJellyfinAccount(customerId, server, effective) {
     }
 
     const stored = await query(`
-        INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync)
-        VALUES($1,$2,$3,$4,FALSE,NOW())
+        INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync,is_primary)
+        VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE)
         RETURNING *
     `, [customerId, server.id, created.Id, username]);
     const account = stored.rows[0];
@@ -343,6 +362,10 @@ async function createJellyfinAccount(customerId, server, effective) {
         throw new Error(`Jellyfin account created with a narrowed library set -- ${message}`);
     }
     await upsertReconciliationStatus(account.id, customerId, 'successful', null);
+    if (options.makePrimary !== false) {
+        await markPrimaryAccount(customerId, account.id);
+        account.is_primary = true;
+    }
     return account;
 }
 
@@ -384,6 +407,10 @@ const DISABLED_EFFECTIVE = {
     visibleNames: []
 };
 
+async function disableJellyfinAccount(account) {
+    return applyPolicy(account, DISABLED_EFFECTIVE, true);
+}
+
 async function recordRun(customerId, subscriptionId, action, fn) {
     const started = await query(`
         INSERT INTO provisioning_runs(customer_id,subscription_id,action,status)
@@ -410,7 +437,8 @@ async function reconcileCustomer(customerId) {
         const accountsResult = await query(`
             SELECT ja.*,js.enabled AS server_enabled,js.server_class
             FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
-            WHERE ja.customer_id=$1 ORDER BY ja.created_at ASC
+            WHERE ja.customer_id=$1
+            ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at ASC
         `, [customerId]);
         const accounts = accountsResult.rows;
 
@@ -425,16 +453,22 @@ async function reconcileCustomer(customerId) {
 
         const effective = await effectivePolicyForCustomer(customerId, entitlement);
 
-        // Placement is intentionally only for accounts that still need to be
-        // created. Existing matching accounts stay put until a deliberate
-        // migration workflow is introduced.
-        let account = accounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
+        // Existing access is deliberately sticky. A controlled migration moves
+        // is_primary to the new account; routine reconciliation then keeps using
+        // that account instead of silently moving customers as server load changes.
+        let account = accounts.find(a => a.is_primary && a.server_class === entitlement.server_class && a.server_enabled);
+        if (!account) account = accounts.find(a => !a.disabled && a.server_class === entitlement.server_class && a.server_enabled);
+        if (!account) account = accounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
         if (!account) {
             const server = await selectServerForPlan(entitlement);
             if (!server) throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.code}`);
             account = await createJellyfinAccount(customerId, server, effective);
         } else {
             await applyPolicy(account, effective, false);
+            if (!account.is_primary) {
+                await markPrimaryAccount(customerId, account.id);
+                account.is_primary = true;
+            }
         }
         for (const old of accounts) {
             if (old.id !== account.id && !old.disabled && old.server_enabled) {
@@ -540,8 +574,15 @@ module.exports = {
     getLibrarySelection,
     setLibrarySelection,
     effectivePolicyForCustomer,
+    policyBody,
+    resolveLibraryAccessForServer,
     selectServerForPlan,
     currentEntitlement,
+    usernameAvailable,
+    createJellyfinAccount,
+    applyPolicy,
+    disableJellyfinAccount,
+    markPrimaryAccount,
     reconcileCustomer,
     reconcileAccount,
     holdAccess,
