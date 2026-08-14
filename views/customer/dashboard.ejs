@@ -142,8 +142,26 @@
 
     <% if (overseerrUrl) { %>
       <section class="sectionBlock">
-        <div class="sectionHead"><div><h2>Request content</h2></div></div>
-        <div class="panel requestCard"><p>Looking for something that isn't available yet? Open the request portal.</p><a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a></div>
+        <div class="sectionHead"><div><h2>Request content</h2><p>One request account works across all of your Jellyfin access.</p></div><% if (requestAccess && requestAccess.external_user_id) { %><span class="pill <%= requestAccess.password_reset_required ? 'warn' : 'good' %>"><%= requestAccess.password_reset_required ? 'Password needed' : 'Ready' %></span><% } %></div>
+        <div class="panel requestCard">
+          <% if (!requestSyncConfigured) { %>
+            <p>The request portal is available, but automatic account sync is not configured yet.</p>
+          <% } else if (!requestAccess || !requestAccess.external_user_id) { %>
+            <p>Your request account is waiting to be synced. If your account has no email address, an administrator will need to add one before it can be created.</p>
+          <% } else { %>
+            <p>Your central request account is <strong><%= requestAccess.external_email || requestAccess.customer_email || 'linked' %></strong>. It is independent of which Jellyfin server currently hosts your streaming account.</p>
+            <details class="detailsBox" <%= requestAccess.password_reset_required ? 'open' : '' %>>
+              <summary><%= requestAccess.password_reset_required ? 'Set your request-site password' : 'Change request-site password' %></summary>
+              <form method="post" action="/account/requests/password">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div>
+                <div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div>
+                <button class="button secondary" type="submit">Update request password</button>
+              </form>
+            </details>
+          <% } %>
+          <a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a>
+        </div>
       </section>
     <% } %>
 

@@ -30,12 +30,19 @@ function customerLoginThrottle(req, res, next) {
     return next();
 }
 
+function requestUserSyncIntervalMs() {
+    const configured = Number(process.env.REQUEST_USER_SYNC_INTERVAL_MS);
+    if (!Number.isFinite(configured) || configured <= 0) return 15 * 60 * 1000;
+    return Math.max(5 * 60 * 1000, configured);
+}
+
 function startJobs() {
     if (jobsStarted || !process.env.DATABASE_URL) return;
     jobsStarted = true;
     const { expireSubscriptionsAndReconcile } = require('./src/jellyfin/resilient-provisioning');
     const { reconcileActiveEntitlements, healthcheckAllServers } = require('./src/jellyfin/jobs');
     const bulkWorker = require('./src/jellyfin/bulk-worker');
+    const requestUserSync = require('./src/integrations/request-user-sync');
     require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
@@ -65,11 +72,23 @@ function startJobs() {
             if (reclaimed) console.warn(`Bulk job worker: reclaimed ${reclaimed} stale 'running' item(s) as failed`);
         } catch (error) { console.error('Stale bulk job reclaim failed:', error.message); }
     };
+    const runRequestUsers = async () => {
+        try {
+            const config = await requestUserSync.configuration();
+            if (!config.configured) return;
+            const result = await requestUserSync.syncAll();
+            if (result.created || result.failed) {
+                console.log(`Request user sync: total=${result.total}, created=${result.created}, linked=${result.linked}, failed=${result.failed}`);
+            }
+        } catch (error) { console.error('Request user sync failed:', error.message); }
+    };
     const initialEntitlement = setTimeout(runEntitlements, 15000);
     const initialHealth = setTimeout(runHealth, 5000);
-    initialEntitlement.unref?.(); initialHealth.unref?.();
+    const initialRequestUsers = setTimeout(runRequestUsers, 30000);
+    initialEntitlement.unref?.(); initialHealth.unref?.(); initialRequestUsers.unref?.();
     createRescheduler(runBulkJobs, () => 3000).start();
     createRescheduler(runStaleReclaim, () => 60000).start();
+    createRescheduler(runRequestUsers, requestUserSyncIntervalMs).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -96,6 +115,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPlanPlacementRouter } = require('./src/platform/admin-plan-placement');
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
+        const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
         const { createAdminServerMigrationsRouter } = require('./src/platform/admin-server-migrations');
         const { createAdminSetupRouter } = require('./src/platform/admin-setup');
         const { createAdminConfigurationTransferRouter } = require('./src/platform/admin-configuration-transfer');
@@ -132,6 +152,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminResellersRouter());
         this.use(createAdminInvitationsRouter());
         this.use(createAdminServerMigrationsRouter());
+        this.use(createAdminRequestUsersRouter());
         this.use(createAdminProvisioningRouter());
         this.use(createAdminCatalogShellRouter());
         this.use(createAdminPlansListRouter());
@@ -155,3 +176,5 @@ realExpress.application.listen = function platformListen(...args) {
     }
     return originalListen.apply(this, args);
 };
+
+module.exports = { requestUserSyncIntervalMs };
