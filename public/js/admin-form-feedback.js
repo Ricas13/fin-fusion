@@ -45,7 +45,20 @@
         if (String(form.method || 'get').toLowerCase() !== 'post') return false;
         if (form.dataset.nativeSubmit === 'true') return false;
         if (form.target && form.target !== '_self') return false;
+        if (String(form.enctype || '').toLowerCase() === 'multipart/form-data') return false;
+        if (form.querySelector('input[type="file"]')) return false;
         return sameOrigin(form.action || window.location.href);
+    }
+
+    function urlencodedBody(form, submitter) {
+        const params = new URLSearchParams();
+        const data = new FormData(form);
+        if (submitter?.name && !data.has(submitter.name)) data.append(submitter.name, submitter.value || '');
+        for (const [key, value] of data.entries()) {
+            if (typeof File !== 'undefined' && value instanceof File) continue;
+            params.append(key, String(value));
+        }
+        return params;
     }
 
     async function downloadResponse(response) {
@@ -77,14 +90,14 @@
         if (submitter) submitter.disabled = true;
 
         try {
-            const data = new FormData(form);
-            if (submitter?.name && !data.has(submitter.name)) data.append(submitter.name, submitter.value || '');
+            const data = urlencodedBody(form, submitter);
             const response = await fetch(form.action || window.location.href, {
                 method: 'POST',
-                body: data,
+                body: data.toString(),
                 credentials: 'same-origin',
                 redirect: 'follow',
                 headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
                     'X-CAPTAINFIN-AJAX-FORM': '1',
                     'Accept': 'text/html,application/xhtml+xml,application/json'
                 }
