@@ -77,8 +77,8 @@ function startJobs() {
             const config = await requestUserSync.configuration();
             if (!config.configured) return;
             const result = await requestUserSync.syncAll();
-            if (result.created || result.failed) {
-                console.log(`Request user sync: total=${result.total}, created=${result.created}, linked=${result.linked}, failed=${result.failed}`);
+            if (result.created || result.suspended || result.failed) {
+                console.log(`Request user sync: total=${result.total}, created=${result.created}, linked=${result.linked}, suspended=${result.suspended}, failed=${result.failed}`);
             }
         } catch (error) { console.error('Request user sync failed:', error.message); }
     };
@@ -116,6 +116,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminInvitationsRouter } = require('./src/platform/admin-invitations');
         const { createAdminProvisioningRouter } = require('./src/platform/admin-provisioning');
         const { createAdminRequestUsersRouter } = require('./src/platform/admin-request-users');
+        const { createAdminRequestPlanPolicyRouter } = require('./src/platform/admin-request-plan-policy');
         const { createAdminServerMigrationsRouter } = require('./src/platform/admin-server-migrations');
         const { createAdminSetupRouter } = require('./src/platform/admin-setup');
         const { createAdminConfigurationTransferRouter } = require('./src/platform/admin-configuration-transfer');
@@ -152,6 +153,7 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createAdminResellersRouter());
         this.use(createAdminInvitationsRouter());
         this.use(createAdminServerMigrationsRouter());
+        this.use(createAdminRequestPlanPolicyRouter());
         this.use(createAdminRequestUsersRouter());
         this.use(createAdminProvisioningRouter());
         this.use(createAdminCatalogShellRouter());
