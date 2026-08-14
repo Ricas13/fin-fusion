@@ -34,6 +34,7 @@ require.cache[sessionPath].exports = guardedSession;
 const express = require('express');
 const controller = require('./src/auth/staff-controller');
 const firstRun = require('./src/auth/first-run-setup');
+const runtimeSettings = require('./src/platform/runtime-settings');
 const dashboard = require('./src/platform/admin-dashboard');
 const resellerPortal = require('./src/platform/reseller-portal');
 const originalGet = express.application.get;
@@ -61,6 +62,9 @@ const resellerPostRoutes = {
 async function redirectBlankInstall(req, res, next, handler) {
     try {
         if (await firstRun.isSetupRequired()) return res.redirect('/setup');
+        // Ensure database-backed white-label identity is reflected into inherited
+        // synchronous templates before the first staff sign-in page is rendered.
+        await runtimeSettings.ensureLoaded().catch(() => {});
         return handler(req, res, next);
     } catch (error) {
         return next(error);
