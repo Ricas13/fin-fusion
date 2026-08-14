@@ -25,15 +25,15 @@ function checkEnvironment() {
     if (!present('DATABASE_URL')) record('critical', 'database.missing', 'DATABASE_URL is not configured.');
     if (!secretLooksStrong('SESSION_SECRET')) record('critical', 'session.weak', 'SESSION_SECRET is missing, too short, or looks like a placeholder.');
 
-    for (const key of ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY']) {
+    for (const key of ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY', 'BACKUP_ENCRYPTION_KEY']) {
         if (!secretLooksStrong(key)) record('critical', `secret.${key.toLowerCase()}`, `${key} is missing, too short, or looks like a placeholder.`);
     }
 
-    const encryptionValues = ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY']
+    const encryptionValues = ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY', 'BACKUP_ENCRYPTION_KEY']
         .map(name => String(process.env[name] || ''))
         .filter(Boolean);
     if (new Set(encryptionValues).size !== encryptionValues.length) {
-        record('critical', 'secret.reuse', 'Purpose-specific encryption keys must not reuse the same value.');
+        record('critical', 'secret.reuse', 'Purpose-specific encryption keys, including the backup key, must not reuse the same value.');
     }
 
     if (present('STRIPE_RESTRICTED_KEY') || present('STRIPE_API_KEY')) {
