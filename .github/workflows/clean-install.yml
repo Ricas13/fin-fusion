@@ -1,0 +1,109 @@
+name: Clean Install
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/**'
+      - 'scripts/migrate-db.js'
+      - 'scripts/clean-install-smoke.js'
+      - 'src/platform/setup-readiness.js'
+      - 'src/platform/admin-setup.js'
+      - 'src/platform/admin-dashboard*'
+      - 'src/platform/runtime-settings.js'
+      - 'src/platform/storefront.js'
+      - 'src/platform/admin-original-settings.js'
+      - 'secure-start.js'
+      - '.github/workflows/clean-install.yml'
+  workflow_dispatch:
+
+jobs:
+  clean-install:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clean
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clean"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Migrate a truly blank database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
+        run: npm run db:migrate
+
+      - name: Assert zero-data clean-install state
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
+          CLEAN_INSTALL_EXPECTED: 'true'
+          PUBLIC_REGISTRATION: 'true'
+          STOREFRONT_ENABLED: 'true'
+        run: node scripts/clean-install-smoke.js
+
+      - name: Create upgrade-simulation database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          node <<'NODE'
+          const { Client } = require('pg');
+          (async () => {
+            const admin = new Client({ connectionString: process.env.DATABASE_URL });
+            await admin.connect();
+            await admin.query('CREATE DATABASE clean_upgrade');
+            await admin.end();
+            const upgrade = new Client({ connectionString: 'postgres://postgres:postgres@127.0.0.1:5432/clean_upgrade' });
+            await upgrade.connect();
+            await upgrade.query('CREATE TABLE legacy_marker(id integer primary key)');
+            await upgrade.end();
+          })().catch(error => { console.error(error); process.exit(1); });
+          NODE
+
+      - name: Migrate upgrade simulation
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean_upgrade
+        run: npm run db:migrate
+
+      - name: Assert upgrade data is preserved
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean_upgrade
+          CLEAN_INSTALL_EXPECTED: 'false'
+        run: node scripts/clean-install-smoke.js
+
+      - name: Production startup does not require Jellyfin
+        env:
+          NODE_ENV: production
+          PORT: '3031'
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
+          SESSION_SECRET: 1111111111111111111111111111111111111111111111111111111111111111
+          DATA_ENCRYPTION_KEY: 2222222222222222222222222222222222222222222222222222222222222222
+          JELLYFIN_ENCRYPTION_KEY: 3333333333333333333333333333333333333333333333333333333333333333
+          ACTIVITY_ENCRYPTION_KEY: 4444444444444444444444444444444444444444444444444444444444444444
+          AUTH_ENCRYPTION_KEY: 5555555555555555555555555555555555555555555555555555555555555555
+          ADMIN_USERNAME: cleanadmin
+          ADMIN_PASSWORD: CleanInstall-Test-Password-2026!
+          COOKIE_SECURE: 'false'
+          REQUIRE_ADMIN_2FA: 'false'
+        run: |
+          set +e
+          timeout 10s npm start > /tmp/clean-start.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/clean-start.log
+          if [ "$code" -ne 124 ] && [ "$code" -ne 0 ]; then exit "$code"; fi
+          grep -q 'Steam Fusion running' /tmp/clean-start.log
+          grep -q 'Jellyfin: not configured' /tmp/clean-start.log
