@@ -183,9 +183,9 @@ async function completeSetup({ claimCode, username, email, password, passwordCon
 
         await client.query(`
             INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at)
-            VALUES('platform',jsonb_build_object('siteName',$1),$2,NOW())
+            VALUES('platform',jsonb_build_object('siteName',$1::text),$2,NOW())
             ON CONFLICT(setting_key) DO UPDATE
-            SET setting_value=platform_settings.setting_value || jsonb_build_object('siteName',$1),
+            SET setting_value=platform_settings.setting_value || jsonb_build_object('siteName',$1::text),
                 updated_by=$2,updated_at=NOW()
         `, [clean.siteName, user.id]);
 
