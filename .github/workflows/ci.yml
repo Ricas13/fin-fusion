@@ -49,6 +49,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Compose migration wiring smoke test
+        run: node scripts/compose-migration-smoke.js
+
       - name: Syntax checks
         run: npm run check
 
