@@ -5,6 +5,7 @@ const { query, transaction } = require('../db');
 const registry = require('./registry');
 const policy = require('./policy');
 const placement = require('./placement');
+const planServers = require('./plan-servers');
 
 function randomPassword() {
     return crypto.randomBytes(24).toString('base64url');
@@ -20,19 +21,10 @@ async function discoverServerLibraries(serverId) {
         .map(folder => ({ id: String(folder.ItemId), name: String(folder.Name).trim() }));
 }
 
-// Every distinct library name discovered across the enabled servers of a
-// given server class, used so admins can see/override libraries that exist
-// on any eligible server even before a specific customer account exists on
-// one of them. failedServers is surfaced by callers as a warning -- it is
-// never treated as "those libraries don't exist", just "we couldn't check".
-async function libraryCatalogForServerClass(serverClass) {
-    const servers = await query(`
-        SELECT id,name FROM jellyfin_servers
-        WHERE enabled=TRUE AND server_class=$1 ORDER BY priority,name
-    `, [serverClass]);
+async function libraryCatalogFromServers(servers) {
     const names = new Set();
     const failedServers = [];
-    for (const server of servers.rows) {
+    for (const server of servers) {
         try {
             (await discoverServerLibraries(server.id)).forEach(folder => names.add(folder.name));
         } catch (error) {
@@ -42,8 +34,26 @@ async function libraryCatalogForServerClass(serverClass) {
     return {
         names: Array.from(names).sort((a, b) => a.localeCompare(b)),
         failedServers,
-        serverCount: servers.rows.length
+        serverCount: servers.length
     };
+}
+
+// Compatibility helper for callers that only have a class rather than a plan.
+async function libraryCatalogForServerClass(serverClass) {
+    const result = await query(`
+        SELECT id,name FROM jellyfin_servers
+        WHERE enabled=TRUE AND server_class=$1 ORDER BY priority,name
+    `, [serverClass]);
+    return libraryCatalogFromServers(result.rows);
+}
+
+// Plan-aware catalogue. When a plan has an explicit placement pool, policy
+// choices and reconciliation must use that same pool rather than libraries
+// from unrelated servers of the same class.
+async function libraryCatalogForPlan(plan) {
+    if (!plan) return { names: [], failedServers: [], serverCount: 0 };
+    const servers = await planServers.eligibleServersForPlan(plan, { enabledOnly: true });
+    return libraryCatalogFromServers(servers);
 }
 
 // ---- Per-customer overrides (admin) -----------------------------------
@@ -117,9 +127,8 @@ async function getLibrarySelection(customerId) {
     return result.rows[0] || null;
 }
 
-// names is never trusted as authoritative -- every apply path intersects it
-// with server-computed entitlement, so persisting an out-of-entitlement name
-// here can never grant access to it.
+// Persisting a name never grants access on its own; every apply path intersects
+// it with the server-computed plan entitlement.
 async function setLibrarySelection(customerId, names) {
     const clean = policy.normalizedNames(names).slice(0, 500).map(n => n.slice(0, 200));
     await query(`
@@ -131,10 +140,6 @@ async function setLibrarySelection(customerId, names) {
 
 // ---- Effective policy computation --------------------------------------
 
-// Computes the full PLAN -> ADMIN OVERRIDE -> CUSTOMER DESELECTION chain for
-// a customer against a given plan. `plan` should be the customer's current
-// entitlement plan row (or null when they have none, in which case
-// technical fields fall back to the safe defaults and libraries are empty).
 async function effectivePolicyForCustomer(customerId, plan) {
     const [override, libOverrides, selection] = await Promise.all([
         getPolicyOverride(customerId),
@@ -143,15 +148,11 @@ async function effectivePolicyForCustomer(customerId, plan) {
     ]);
     const technicalRows = policy.effectiveTechnicalPolicy(plan, override);
     const catalog = plan
-        ? await libraryCatalogForServerClass(plan.server_class)
+        ? await libraryCatalogForPlan(plan)
         : { names: [], failedServers: [], serverCount: 0 };
     const entitlementRows = policy.libraryEntitlement(plan, libOverrides, catalog.names);
     const visibleNames = policy.customerVisibleLibraries(entitlementRows, selection);
     const mode = ['all', 'exclude', 'include'].includes(plan?.library_access_mode) ? plan.library_access_mode : 'all';
-    // Only take the EnableAllFolders fast path (so newly added libraries show
-    // up automatically with no resync needed) when nothing narrows the plan's
-    // own "all libraries" grant -- any override or recorded customer
-    // deselection means we must enumerate explicit folder IDs instead.
     const unrestricted = mode === 'all' && libOverrides.length === 0 && !selection;
     return {
         override,
@@ -222,12 +223,6 @@ function policyBody(effectiveTechnical, disabled, libraryAccess) {
     };
 }
 
-// Resolves the visible library names to this specific server's folder IDs.
-// Never returns EnableAllFolders=true except through the deliberate
-// `unrestricted` fast path -- any name that doesn't resolve on this server is
-// reported in `missing` and simply omitted from the applied set, so the
-// applied policy is always a subset of (never broader than) what was
-// intended. Throws if the server can't be read at all (caller fails closed).
 async function resolveLibraryAccessForServer(serverId, unrestricted, visibleNames, disabled) {
     if (disabled) return { enableAllFolders: false, enabledFolders: [], missing: [] };
     if (unrestricted) return { enableAllFolders: true, enabledFolders: [], missing: [] };
@@ -238,13 +233,16 @@ async function resolveLibraryAccessForServer(serverId, unrestricted, visibleName
 
 async function selectServerForPlan(plan) {
     const isTrial = plan.billing_interval === 'trial';
-    const planId = plan.plan_id || plan.id;
+    const planId = planServers.planId(plan);
     if (!planId) throw new Error('Plan id is required for server placement');
 
     const result = await query(`
         WITH restriction AS (
             SELECT EXISTS(
-                SELECT 1 FROM plan_server_eligibility WHERE plan_id=$3
+                SELECT 1
+                FROM plan_server_eligibility pse
+                JOIN jellyfin_servers restricted_server ON restricted_server.id=pse.server_id
+                WHERE pse.plan_id=$3 AND restricted_server.server_class=$1
             ) AS restricted
         )
         SELECT js.*,
@@ -342,21 +340,12 @@ async function createJellyfinAccount(customerId, server, effective) {
     if (libraryAccess.missing.length) {
         const message = `Missing on server: ${libraryAccess.missing.join(', ')}`;
         await upsertReconciliationStatus(account.id, customerId, 'failed', message);
-        // The account exists and the narrowed (safe) policy is already applied
-        // -- not rolled back, since losing the whole account over one missing
-        // library would be more disruptive than the narrowed access itself --
-        // but this must still surface as a real failure to the caller so
-        // reconcileCustomer/bulk jobs don't report success.
         throw new Error(`Jellyfin account created with a narrowed library set -- ${message}`);
     }
     await upsertReconciliationStatus(account.id, customerId, 'successful', null);
     return account;
 }
 
-// Applies the given effective policy to a single account. `effective` should
-// come from effectivePolicyForCustomer -- computed once per customer and
-// reused across their accounts, since library entitlement doesn't vary by
-// account (only its per-server folder-ID resolution does).
 async function applyPolicy(account, effective, disabled = false) {
     await markReconciliationRunning(account.id, account.customer_id);
     let libraryAccess;
@@ -383,13 +372,6 @@ async function applyPolicy(account, effective, disabled = false) {
     if (libraryAccess.missing.length) {
         const message = `Missing on server: ${libraryAccess.missing.join(', ')}`;
         await upsertReconciliationStatus(account.id, account.customer_id, 'failed', message);
-        // The narrowed (safe) policy was still applied above -- fail-closed is
-        // preserved -- but this is a real reconciliation failure and must
-        // propagate, not read as success: callers (reconcileCustomer,
-        // reconcileAccount, bulk job items) need to end up failed/retryable,
-        // and provisioning_runs needs to record it, or a missing library would
-        // silently look like a clean reconcile everywhere except this one
-        // account's reconciliation-status row.
         throw new Error(`Jellyfin policy applied with a narrowed library set -- ${message}`);
     }
     await upsertReconciliationStatus(account.id, account.customer_id, 'successful', null);
@@ -443,6 +425,9 @@ async function reconcileCustomer(customerId) {
 
         const effective = await effectivePolicyForCustomer(customerId, entitlement);
 
+        // Placement is intentionally only for accounts that still need to be
+        // created. Existing matching accounts stay put until a deliberate
+        // migration workflow is introduced.
         let account = accounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
         if (!account) {
             const server = await selectServerForPlan(entitlement);
@@ -474,9 +459,6 @@ async function reconcileCustomer(customerId) {
     });
 }
 
-// Single-account reconcile against the customer's current entitlement --
-// used by bulk "retry failed" / "reconcile" operations so they can target one
-// account without re-deriving/re-selecting a server for the whole customer.
 async function reconcileAccount(accountId) {
     const result = await query(`
         SELECT ja.*,js.enabled AS server_enabled FROM jellyfin_accounts ja
@@ -511,20 +493,11 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
     });
 }
 
-// Places a persistent, reversible access hold WITHOUT touching the
-// subscription -- currentEntitlement() treats a held customer as having no
-// current entitlement, so reconcileCustomer() disables their accounts, and
-// (unlike directly disabling the accounts) that disabled state survives the
-// periodic entitlement-reconcile sweep, since the sweep re-derives
-// entitlement from this same check every time it runs.
 async function holdAccess(customerId, reason) {
     await query(`UPDATE customers SET access_paused_at=NOW(),access_hold_reason=$2 WHERE id=$1`, [customerId, reason]);
     return reconcileCustomer(customerId);
 }
 
-// Clears a hold placed by holdAccess() and reconciles -- this restores
-// exactly whatever the customer's real subscription state is, since the
-// hold never touched subscription status at all.
 async function releaseAccess(customerId) {
     await query(`UPDATE customers SET access_paused_at=NULL,access_hold_reason=NULL WHERE id=$1`, [customerId]);
     return reconcileCustomer(customerId);
@@ -554,6 +527,7 @@ async function expireSubscriptionsAndReconcile() {
 module.exports = {
     discoverServerLibraries,
     libraryCatalogForServerClass,
+    libraryCatalogForPlan,
     upsertReconciliationStatus,
     getPolicyOverride,
     setPolicyOverrideField,
