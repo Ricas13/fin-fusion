@@ -25,6 +25,10 @@ async function main() {
     env: postgresProcessEnv(),
     stdio: ['ignore', 'pipe', 'pipe']
   });
+  const childExit = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
 
   let stderr = '';
   child.stderr.setEncoding('utf8');
@@ -32,13 +36,13 @@ async function main() {
 
   try {
     await pipeline(child.stdout, cipher, out, { end: false });
-    const exitCode = await new Promise((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', resolve);
-    });
+    const exitCode = await childExit;
     if (exitCode !== 0) throw new Error(`pg_dump failed with exit code ${exitCode}: ${stderr.trim()}`);
     out.write(cipher.getAuthTag());
-    await new Promise((resolve, reject) => out.end(err => err ? reject(err) : resolve()));
+    await new Promise((resolve, reject) => {
+      out.once('error', reject);
+      out.end(resolve);
+    });
     fs.renameSync(tempPath, finalPath);
     console.log(`Encrypted database backup created: ${finalPath}`);
   } catch (error) {
