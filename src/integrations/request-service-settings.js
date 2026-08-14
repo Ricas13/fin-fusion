@@ -20,9 +20,13 @@ function cleanBaseUrl(value) {
     return parsed.toString().replace(/\/$/, '');
 }
 
+function envApiKey() {
+    return String(process.env.SEERR_API_KEY || process.env.OVERSEERR_API_KEY || '').trim();
+}
+
 function envConfig() {
     const baseUrl = cleanBaseUrl(runtimeSettings.overseerrUrl() || process.env.OVERSEERR_URL || process.env.SEERR_URL || '');
-    const apiKey = String(process.env.SEERR_API_KEY || process.env.OVERSEERR_API_KEY || '').trim();
+    const apiKey = envApiKey();
     return {
         source: 'environment',
         enabled: Boolean(baseUrl && apiKey),
@@ -36,10 +40,22 @@ function envConfig() {
 function decodeRow(row) {
     let apiKey = '';
     if (row.api_key_encrypted) apiKey = decryptString(row.api_key_encrypted) || '';
+
+    // Migration 030 creates an unclaimed row (updated_by=NULL) from the old
+    // Platform Settings URL. Keep any existing env API key working until an
+    // administrator explicitly saves the new browser-managed settings form.
+    const migratedCompatibilityRow = !row.updated_by && !row.api_key_encrypted;
+    if (!apiKey && migratedCompatibilityRow) apiKey = envApiKey();
+
+    const baseUrl = cleanBaseUrl(row.base_url || '');
+    const enabled = migratedCompatibilityRow
+        ? Boolean(baseUrl && apiKey)
+        : Boolean(row.enabled);
+
     return {
-        source: 'database',
-        enabled: Boolean(row.enabled),
-        baseUrl: cleanBaseUrl(row.base_url || ''),
+        source: migratedCompatibilityRow ? 'environment-migration' : 'database',
+        enabled,
+        baseUrl,
         apiKey: String(apiKey || '').trim(),
         syncIntervalMinutes: Number(row.sync_interval_minutes) || 15,
         updatedAt: row.updated_at || null
@@ -50,7 +66,7 @@ async function load() {
     if (loading) return loading;
     loading = (async () => {
         await runtimeSettings.ensureLoaded();
-        const result = await query('SELECT enabled,base_url,api_key_encrypted,sync_interval_minutes,updated_at FROM request_service_settings WHERE id=1');
+        const result = await query('SELECT enabled,base_url,api_key_encrypted,sync_interval_minutes,updated_by,updated_at FROM request_service_settings WHERE id=1');
         cache = result.rowCount ? decodeRow(result.rows[0]) : envConfig();
         return cache;
     })().finally(() => { loading = null; });
