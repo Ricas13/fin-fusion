@@ -105,6 +105,8 @@ async function server(slug, name) {
     const applied = await transfer.applyImport(exported, null);
     assert.strictEqual(applied.summary.poolsApplied, 1);
     assert.strictEqual(applied.summary.poolsSkipped, 1);
+    assert.strictEqual(applied.summary.atomic, true, 'portable import must commit as one atomic transaction');
+    assert.strictEqual(applied.summary.version, 2, 'portable import summary must preserve document version');
 
     const updatedPlan = await query("SELECT id,name,price_minor FROM plans WHERE code='portable-monthly'");
     assert.strictEqual(updatedPlan.rows[0].name, 'Portable Monthly Updated');
@@ -126,9 +128,11 @@ async function server(slug, name) {
     assert.strictEqual(platform.rows[0].setting_value.siteName, 'Portable Target');
     assert.strictEqual(platform.rows[0].setting_value.requireAdminTwoFactor, true, 'non-portable security setting must survive merge import');
 
-    const audit = await query("SELECT metadata FROM audit_log WHERE action='admin.configuration.import.v2' ORDER BY id DESC LIMIT 1");
-    assert.strictEqual(audit.rowCount, 1, 'v2 import must emit its v2 audit event');
-    assert(Object.prototype.hasOwnProperty.call(audit.rows[0].metadata, 'automationJobs'), 'v2 import audit must include the v2 preview summary');
+    const audit = await query("SELECT metadata FROM audit_log WHERE action='admin.configuration.import.atomic' ORDER BY id DESC LIMIT 1");
+    assert.strictEqual(audit.rowCount, 1, 'portable import must emit its atomic audit event');
+    assert.strictEqual(Number(audit.rows[0].metadata.version), 2, 'atomic import audit must record the imported document version');
+    assert.strictEqual(audit.rows[0].metadata.atomic, true, 'atomic import audit must record transaction semantics');
+    assert(Object.prototype.hasOwnProperty.call(audit.rows[0].metadata, 'automationJobs'), 'atomic import audit must include the v2 preview summary');
 
     const bad = JSON.parse(JSON.stringify(exported));
     bad.configuration.plans[0].streams = 0;
