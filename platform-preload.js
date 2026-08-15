@@ -61,6 +61,7 @@ function startJobs() {
     const emailSettings = require('./src/integrations/email-settings');
     const emailOutbox = require('./src/integrations/email-outbox');
     const billingControl = require('./src/payments/billing-control');
+    const resellerJobs = require('./src/resellers/jobs');
     require('./src/platform/bulk-operations');
     const runtimeSettings = require('./src/platform/runtime-settings');
     const { createRescheduler } = require('./src/platform/reschedule-timer');
@@ -119,6 +120,22 @@ function startJobs() {
             }
         } catch (error) { console.error('Billing provider sync failed:', error.message); }
     };
+    const runResellerBilling = async () => {
+        try {
+            const result = await resellerJobs.syncProviderSubscriptions();
+            if (result.total || result.failed) {
+                console.log(`Reseller billing sync: due=${result.total}, succeeded=${result.succeeded}, failed=${result.failed}`);
+            }
+        } catch (error) { console.error('Reseller billing sync failed:', error.message); }
+    };
+    const runResellerEstates = async () => {
+        try {
+            const result = await resellerJobs.reconcileSubscribedEstates();
+            if (result.suspended || result.failed) {
+                console.log(`Reseller estate reconcile: total=${result.total}, active=${result.active}, suspended=${result.suspended}, failed=${result.failed}`);
+            }
+        } catch (error) { console.error('Reseller estate reconcile failed:', error.message); }
+    };
 
     requestServiceSettings.ensureLoaded()
         .catch(error => console.error('Request service settings load failed, using environment fallback:', error.message));
@@ -128,13 +145,17 @@ function startJobs() {
     const initialEmail = setTimeout(runEmailOutbox, 20000);
     const initialRequestUsers = setTimeout(runRequestUsers, 30000);
     const initialBillingSync = setTimeout(runBillingSync, 45000);
-    initialHealth.unref?.(); initialEntitlement.unref?.(); initialEmail.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.();
+    const initialResellerBilling = setTimeout(runResellerBilling, 55000);
+    const initialResellerEstates = setTimeout(runResellerEstates, 65000);
+    initialHealth.unref?.(); initialEntitlement.unref?.(); initialEmail.unref?.(); initialRequestUsers.unref?.(); initialBillingSync.unref?.(); initialResellerBilling.unref?.(); initialResellerEstates.unref?.();
 
     createRescheduler(runBulkJobs, () => 3000).start();
     createRescheduler(runStaleReclaim, () => 60000).start();
     createRescheduler(runEmailOutbox, () => 60000).start();
     createRescheduler(runRequestUsers, requestUserSyncIntervalMs).start();
     createRescheduler(runBillingSync, billingSyncPollIntervalMs).start();
+    createRescheduler(runResellerBilling, billingSyncPollIntervalMs).start();
+    createRescheduler(runResellerEstates, () => 5 * 60 * 1000).start();
     runtimeSettings.ensureLoaded()
         .catch(error => console.error('Runtime settings load failed, using env defaults:', error.message))
         .finally(() => {
@@ -186,6 +207,8 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminPreviewRouter } = require('./src/platform/admin-preview');
         const { createAdminResellerSummaryRouter } = require('./src/platform/admin-reseller-summary');
         const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
+        const { createAdminResellerTiersRouter } = require('./src/platform/admin-reseller-tiers');
+        const { createResellerMonthlyPortalRouter } = require('./src/platform/reseller-monthly-portal');
         const { createAdminActivityRouter } = require('./src/platform/admin-activity');
         const { createAdminCustomer360Router } = require('./src/platform/admin-customer-360');
         const { createAdminUsersRouter } = require('./src/platform/admin-users');
@@ -204,11 +227,13 @@ realExpress.application.listen = function platformListen(...args) {
         this.use(createCustomerPasswordSyncRouter());
         this.use(createFlexibleCheckoutRouter());
         this.use(createAdminPreviewRouter());
+        this.use(createResellerMonthlyPortalRouter());
         this.get('/reseller/export', resellerPortal.gate, resellerPortal.noStore, resellerPortal.exportClientsCsv);
         this.use(createAdminSetupRouter());
         this.use(createAdminConfigurationTransferRouter());
         this.use(createAdminOriginalSettingsRouter());
         this.use(createAdminBrandingRouter());
+        this.use(createAdminResellerTiersRouter());
         this.use(createAdminResellerSummaryRouter());
         this.use(createAdminResellersRouter());
         this.use(createAdminInvitationsRouter());
