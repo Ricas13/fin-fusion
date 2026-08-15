@@ -9,174 +9,52 @@
   <link rel="stylesheet" href="/css/customer-portal.css">
 </head>
 <%
-  function validDate(value) {
-    if (!value) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  function formatDate(value) {
-    const parsed = validDate(value);
-    return parsed ? parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not available';
-  }
-  function formatDateTime(value) {
-    const parsed = validDate(value);
-    return parsed ? parsed.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not available';
-  }
-  function price(plan) {
-    if (Number(plan && plan.price_minor || 0) === 0) return 'Free';
-    try {
-      return new Intl.NumberFormat('en-GB', { style: 'currency', currency: plan.currency || 'USD' }).format(Number(plan.price_minor || 0) / 100);
-    } catch (_) {
-      return `${plan.currency || 'USD'} ${(Number(plan.price_minor || 0) / 100).toFixed(2)}`;
-    }
-  }
-  function duration(plan) {
-    const labels = { trial: '24-hour trial', month: 'Monthly', '6_months': '6 months', year: 'Yearly', custom: 'Custom duration' };
-    if (plan && labels[plan.billing_interval]) return labels[plan.billing_interval];
-    if (plan && plan.duration_days) return `${plan.duration_days} days`;
-    return 'Subscription';
-  }
-  const username = portal.customer.login_username || portal.customer.login_email || portal.customer.display_name || 'Customer';
-  const primaryAccount = portal.accounts.find(a => a.is_primary && !a.disabled) || portal.accounts.find(a => !a.disabled) || portal.accounts[0] || null;
-  const activePlanId = currentPlan ? (currentPlan.plan_id || currentPlan.id) : null;
-  const activeSubscription = Array.isArray(portal.subscriptions)
-    ? (portal.subscriptions.find(s => ['active','trialing','past_due','paused'].includes(String(s.status || '')) && (!s.current_period_end || (validDate(s.current_period_end) && validDate(s.current_period_end).getTime() > Date.now()))) || portal.subscriptions[0] || null)
-    : null;
-  const visibleLibraryCount = Array.isArray(librarySelection) ? librarySelection.length : 0;
-  const referralsEnabled = Boolean(portal.referralsEnabled && portal.referralCode);
-  const referralCode = portal.referralCode || '';
+  function validDate(value) { if (!value) return null; const parsed=new Date(value); return Number.isNaN(parsed.getTime())?null:parsed; }
+  function formatDate(value) { const parsed=validDate(value); return parsed?parsed.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'Not available'; }
+  function formatDateTime(value) { const parsed=validDate(value); return parsed?parsed.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'}):'Not available'; }
+  function price(plan) { if(Number(plan&&plan.price_minor||0)===0)return'Free';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'USD'}).format(Number(plan.price_minor||0)/100)}catch(_){return `${plan.currency||'USD'} ${(Number(plan.price_minor||0)/100).toFixed(2)}`;} }
+  function duration(plan) { const labels={trial:'24-hour trial',month:'Monthly','6_months':'6 months',year:'Yearly',custom:'Custom duration'};if(plan&&labels[plan.billing_interval])return labels[plan.billing_interval];if(plan&&plan.duration_days)return `${plan.duration_days} days`;return'Subscription'; }
+  const username=portal.customer.login_username||portal.customer.login_email||portal.customer.display_name||'Customer';
+  const primaryAccount=portal.accounts.find(a=>a.is_primary&&!a.disabled)||portal.accounts.find(a=>!a.disabled)||portal.accounts[0]||null;
+  const activePlanId=currentPlan?(currentPlan.plan_id||currentPlan.id):null;
+  const activeSubscription=Array.isArray(portal.subscriptions)?(portal.subscriptions.find(s=>['active','trialing','past_due','paused'].includes(String(s.status||''))&&(!s.current_period_end||(validDate(s.current_period_end)&&validDate(s.current_period_end).getTime()>Date.now())))||portal.subscriptions[0]||null):null;
+  const recurringSubscription=Boolean(activeSubscription&&((activeSubscription.source==='stripe'&&/^sub_/i.test(String(activeSubscription.provider_subscription_id||'')))||(activeSubscription.source==='paypal'&&/^I-/i.test(String(activeSubscription.provider_subscription_id||'')))));
+  const visibleLibraryCount=Array.isArray(librarySelection)?librarySelection.length:0;
+  const referralsEnabled=Boolean(portal.referralsEnabled&&portal.referralCode),referralCode=portal.referralCode||'';
 %>
 <body>
 <div class="portalShell">
-  <header class="portalTopbar">
-    <div class="brandLockup"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Customer portal</div></div></div>
-    <div class="portalActions"><span class="signedIn">Signed in as <strong><%= username %></strong></span><a class="button secondary small" href="/account/history">Billing history</a><form method="post" action="/account/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button ghost small" type="submit">Sign out</button></form></div>
-  </header>
+  <header class="portalTopbar"><div class="brandLockup"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Customer portal</div></div></div><div class="portalActions"><span class="signedIn">Signed in as <strong><%= username %></strong></span><a class="button secondary small" href="/account/history">Billing history</a><form method="post" action="/account/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button ghost small" type="submit">Sign out</button></form></div></header>
 
   <main class="portalMain">
     <% if (message) { %><div class="notice success"><%= message %></div><% } %>
     <% if (error) { %><div class="notice error"><%= error %></div><% } %>
 
-    <section class="accountHero">
-      <div>
-        <div class="eyebrow">Your access</div>
-        <h1>Welcome back, <%= username %>.</h1>
-        <p>Manage your subscription, Jellyfin access, request account and library visibility from one place.</p>
-      </div>
-      <div class="heroActions">
-        <% if (primaryAccount && primaryAccount.public_url && !primaryAccount.disabled) { %><a class="button primary" href="<%= primaryAccount.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %>
-        <a class="button secondary" href="#plans">View plans</a>
-        <a class="button secondary" href="/account/history">Subscription history</a>
-        <% if (overseerrUrl) { %><a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Request content</a><% } %>
-      </div>
-    </section>
+    <section class="accountHero"><div><div class="eyebrow">Your access</div><h1>Welcome back, <%= username %>.</h1><p>Manage your subscription, Jellyfin access, request account and library visibility from one place.</p></div><div class="heroActions"><% if(primaryAccount&&primaryAccount.public_url&&!primaryAccount.disabled){ %><a class="button primary" href="<%= primaryAccount.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %><a class="button secondary" href="#plans">View plans</a><a class="button secondary" href="/account/history">Subscription history</a><% if(overseerrUrl){ %><a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Request content</a><% } %></div></section>
 
-    <section class="overviewGrid">
-      <article class="metricCard"><div class="metricLabel">Current plan</div><div class="metricValue"><%= currentPlan ? (currentPlan.name || currentPlan.plan_name || currentPlan.code) : 'No active plan' %></div><div class="metricSub"><%= currentPlan ? duration(currentPlan) : 'Choose a plan below' %></div></article>
-      <article class="metricCard"><div class="metricLabel">Concurrent streams</div><div class="metricValue"><%= currentPlan ? currentPlan.streams : '—' %></div><div class="metricSub"><%= currentPlan ? 'Your plan allowance' : 'No entitlement' %></div></article>
-      <article class="metricCard"><div class="metricLabel">Jellyfin accounts</div><div class="metricValue"><%= portal.accounts.length %></div><div class="metricSub"><%= primaryAccount ? primaryAccount.server_name : 'Provisioning pending' %></div></article>
-      <article class="metricCard"><div class="metricLabel">Request account</div><div class="metricValue"><%= requestAccess && requestAccess.external_user_id ? 'Linked' : (overseerrUrl ? 'Pending' : 'Off') %></div><div class="metricSub"><%= requestAccess && requestAccess.external_email ? requestAccess.external_email : (overseerrUrl ? 'Central request portal' : 'Not configured') %></div></article>
-    </section>
+    <section class="overviewGrid"><article class="metricCard"><div class="metricLabel">Current plan</div><div class="metricValue"><%= currentPlan?(currentPlan.name||currentPlan.plan_name||currentPlan.code):'No active plan' %></div><div class="metricSub"><%= currentPlan?duration(currentPlan):'Choose a plan below' %></div></article><article class="metricCard"><div class="metricLabel">Concurrent streams</div><div class="metricValue"><%= currentPlan?currentPlan.streams:'—' %></div><div class="metricSub"><%= currentPlan?'Your plan allowance':'No entitlement' %></div></article><article class="metricCard"><div class="metricLabel">Jellyfin accounts</div><div class="metricValue"><%= portal.accounts.length %></div><div class="metricSub"><%= primaryAccount?primaryAccount.server_name:'Provisioning pending' %></div></article><article class="metricCard"><div class="metricLabel">Request account</div><div class="metricValue"><%= requestAccess&&requestAccess.external_user_id?'Linked':(overseerrUrl?'Pending':'Off') %></div><div class="metricSub"><%= requestAccess&&requestAccess.external_email?requestAccess.external_email:(overseerrUrl?'Central request portal':'Not configured') %></div></article></section>
 
-    <section class="sectionBlock">
-      <div class="sectionHead"><div><h2>Subscription</h2><p>Your current access and renewal state.</p></div></div>
-      <% if (activeSubscription) { %>
-        <div class="panel subscriptionPanel">
-          <div><div class="accessTitle"><%= activeSubscription.plan_name || activeSubscription.name || activeSubscription.code || 'Subscription' %></div><div class="accessMeta"><span class="pill <%= activeSubscription.status === 'active' ? 'good' : activeSubscription.status === 'past_due' ? 'warn' : '' %>"><%= activeSubscription.status %></span><span>Access until <strong><%= formatDate(activeSubscription.current_period_end) %></strong></span><span><%= activeSubscription.cancel_at_period_end ? 'Renewal stops at period end' : 'Renewal state unchanged' %></span></div></div>
-          <a class="button secondary" href="/account/history">View full history</a>
-        </div>
+    <section class="sectionBlock"><div class="sectionHead"><div><h2>Subscription</h2><p>Your current access, renewal and plan-change state.</p></div></div>
+      <% if(activeSubscription){ %>
+        <div class="panel subscriptionPanel"><div><div class="accessTitle"><%= activeSubscription.plan_name||activeSubscription.name||activeSubscription.code||'Subscription' %></div><div class="accessMeta"><span class="pill <%= activeSubscription.status==='active'?'good':activeSubscription.status==='past_due'?'warn':'' %>"><%= activeSubscription.status %></span><span>Access until <strong><%= formatDate(activeSubscription.current_period_end) %></strong></span><span><%= activeSubscription.cancel_at_period_end?'Renewal stops at period end':'Renewal active / unchanged' %></span></div></div><div class="heroActions"><a class="button secondary" href="/account/history">View full history</a><% if(recurringSubscription&&!activeSubscription.cancel_at_period_end){ %><form class="plainForm" method="post" action="/account/subscription/renewal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="action" value="stop"><button class="button secondary" type="submit">Stop renewal</button></form><% } else if(recurringSubscription&&activeSubscription.cancel_at_period_end&&activeSubscription.source==='stripe'){ %><form class="plainForm" method="post" action="/account/subscription/renewal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="action" value="resume"><button class="button primary" type="submit">Resume renewal</button></form><% } %></div></div>
+        <% if(recurringSubscription&&activeSubscription.cancel_at_period_end&&activeSubscription.source==='paypal'){ %><div class="notice">PayPal renewal is cancelled. Your paid access remains until <strong><%= formatDate(activeSubscription.current_period_end) %></strong>; PayPal requires a new authorization if you subscribe again.</div><% } %>
       <% } else { %><div class="empty">You do not currently have an active subscription.</div><% } %>
-      <% if (portal.subscriptions.length > 1) { %>
-        <details class="detailsBox"><summary>Previous subscription records</summary><div class="historyList"><% portal.subscriptions.forEach(function(s){ %><div class="historyRow"><div><strong><%= s.plan_name || s.name || s.code || 'Subscription' %></strong><div class="accessMeta"><%= s.source || 'unknown' %> · <%= s.status || 'unknown' %></div></div><div><%= formatDate(s.current_period_end) %></div></div><% }) %></div><p><a href="/account/history">Open detailed billing history</a></p></details>
-      <% } %>
+      <% if(portal.subscriptions.length>1){ %><details class="detailsBox"><summary>Previous subscription records</summary><div class="historyList"><% portal.subscriptions.forEach(function(s){ %><div class="historyRow"><div><strong><%= s.plan_name||s.name||s.code||'Subscription' %></strong><div class="accessMeta"><%= s.source||'unknown' %> · <%= s.status||'unknown' %></div></div><div><%= formatDate(s.current_period_end) %></div></div><% }) %></div><p><a href="/account/history">Open detailed billing history</a></p></details><% } %>
     </section>
 
-    <section class="sectionBlock">
-      <div class="sectionHead"><div><h2>Jellyfin access</h2><p>Your provisioned streaming accounts and server access.</p></div></div>
-      <div class="accessGrid">
-        <% if (!portal.accounts.length) { %><div class="empty">Your Jellyfin account is not provisioned yet. The provisioning system will keep retrying when capacity is available.</div><% } %>
-        <% portal.accounts.forEach(function(a){ %>
-          <article class="accessCard">
-            <div class="accessTop"><div><div class="accessTitle"><%= a.jellyfin_username %></div><div class="accessMeta"><%= a.server_name %> · <%= a.server_class %></div></div><span class="pill <%= a.disabled ? 'bad' : 'good' %>"><%= a.disabled ? 'Disabled' : 'Enabled' %></span></div>
-            <div class="accessMeta"><span><%= a.is_primary ? 'Primary account' : 'Secondary account' %></span><span>Last activity <strong><%= a.last_activity_at ? formatDateTime(a.last_activity_at) : 'Never' %></strong></span></div>
-            <% if (a.public_url && !a.disabled) { %><a class="button primary" href="<%= a.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %>
-            <details class="detailsBox">
-              <summary>Change Jellyfin password</summary>
-              <form method="post" action="/account/jellyfin/<%= a.id %>/password">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="8" autocomplete="new-password" required></div>
-                <button class="button secondary" type="submit">Update password</button>
-              </form>
-            </details>
-          </article>
-        <% }) %>
-      </div>
-    </section>
+    <section class="sectionBlock"><div class="sectionHead"><div><h2>Jellyfin access</h2><p>Your provisioned streaming accounts and server access.</p></div></div><div class="accessGrid"><% if(!portal.accounts.length){ %><div class="empty">Your Jellyfin account is not provisioned yet. The provisioning system will keep retrying when capacity is available.</div><% } %><% portal.accounts.forEach(function(a){ %><article class="accessCard"><div class="accessTop"><div><div class="accessTitle"><%= a.jellyfin_username %></div><div class="accessMeta"><%= a.server_name %> · <%= a.server_class %></div></div><span class="pill <%= a.disabled?'bad':'good' %>"><%= a.disabled?'Disabled':'Enabled' %></span></div><div class="accessMeta"><span><%= a.is_primary?'Primary account':'Secondary account' %></span><span>Last activity <strong><%= a.last_activity_at?formatDateTime(a.last_activity_at):'Never' %></strong></span></div><% if(a.public_url&&!a.disabled){ %><a class="button primary" href="<%= a.public_url %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %><details class="detailsBox"><summary>Change Jellyfin password</summary><form method="post" action="/account/jellyfin/<%= a.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="8" autocomplete="new-password" required></div><button class="button secondary" type="submit">Update password</button></form></details></article><% }) %></div></section>
 
-    <% if (libraryEntitlement && libraryEntitlement.length) { %>
-      <section class="sectionBlock">
-        <div class="sectionHead"><div><h2>Library visibility</h2><p>Choose which entitled libraries appear in Jellyfin.</p></div><span class="pill"><%= visibleLibraryCount %> of <%= libraryEntitlement.length %> selected</span></div>
-        <div class="panel libraryPanel">
-          <div class="libraryIntro"><p>Your plan determines what you are allowed to access. These controls only let you hide or show libraries already granted to you.</p></div>
-          <form method="post" action="/account/libraries">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <div class="libraryGrid"><% libraryEntitlement.forEach(function(name){ %><label class="libraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= librarySelection.includes(name) ? 'checked' : '' %>><span><%= name %></span></label><% }) %></div>
-            <div class="libraryActions"><button class="button primary" type="submit">Save library visibility</button></div>
-          </form>
-        </div>
-      </section>
-    <% } %>
+    <% if(libraryEntitlement&&libraryEntitlement.length){ %><section class="sectionBlock"><div class="sectionHead"><div><h2>Library visibility</h2><p>Choose which entitled libraries appear in Jellyfin.</p></div><span class="pill"><%= visibleLibraryCount %> of <%= libraryEntitlement.length %> selected</span></div><div class="panel libraryPanel"><div class="libraryIntro"><p>Your plan determines what you are allowed to access. These controls only let you hide or show libraries already granted to you.</p></div><form method="post" action="/account/libraries"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="libraryGrid"><% libraryEntitlement.forEach(function(name){ %><label class="libraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= librarySelection.includes(name)?'checked':'' %>><span><%= name %></span></label><% }) %></div><div class="libraryActions"><button class="button primary" type="submit">Save library visibility</button></div></form></div></section><% } %>
 
-    <% if (overseerrUrl) { %>
-      <section class="sectionBlock">
-        <div class="sectionHead"><div><h2>Request content</h2><p>One request account works across all of your Jellyfin access.</p></div><% if (requestAccess && requestAccess.external_user_id) { %><span class="pill <%= requestAccess.password_reset_required ? 'warn' : 'good' %>"><%= requestAccess.password_reset_required ? 'Password needed' : 'Ready' %></span><% } %></div>
-        <div class="panel requestCard">
-          <% if (!requestSyncConfigured) { %><p>The request portal is available, but automatic account sync is not configured yet.</p>
-          <% } else if (!requestAccess || !requestAccess.external_user_id) { %><p>Your request account is waiting to be synced. If your account has no email address, an administrator will need to add one before it can be created.</p>
-          <% } else { %>
-            <p>Your central request account is <strong><%= requestAccess.external_email || requestAccess.customer_email || 'linked' %></strong>. It is independent of which Jellyfin server currently hosts your streaming account.</p>
-            <details class="detailsBox" <%= requestAccess.password_reset_required ? 'open' : '' %>><summary><%= requestAccess.password_reset_required ? 'Set your request-site password' : 'Change request-site password' %></summary><form method="post" action="/account/requests/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit">Update request password</button></form></details>
-          <% } %>
-          <a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a>
-        </div>
-      </section>
-    <% } %>
+    <% if(overseerrUrl){ %><section class="sectionBlock"><div class="sectionHead"><div><h2>Request content</h2><p>One request account works across all of your Jellyfin access.</p></div><% if(requestAccess&&requestAccess.external_user_id){ %><span class="pill <%= requestAccess.password_reset_required?'warn':'good' %>"><%= requestAccess.password_reset_required?'Password needed':'Ready' %></span><% } %></div><div class="panel requestCard"><% if(!requestSyncConfigured){ %><p>The request portal is available, but automatic account sync is not configured yet.</p><% } else if(!requestAccess||!requestAccess.external_user_id){ %><p>Your request account is waiting to be synced. If your account has no email address, an administrator will need to add one before it can be created.</p><% } else { %><p>Your central request account is <strong><%= requestAccess.external_email||requestAccess.customer_email||'linked' %></strong>. It is independent of which Jellyfin server currently hosts your streaming account.</p><details class="detailsBox" <%= requestAccess.password_reset_required?'open':'' %>><summary><%= requestAccess.password_reset_required?'Set your request-site password':'Change request-site password' %></summary><form method="post" action="/account/requests/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit">Update request password</button></form></details><% } %><a class="button secondary" href="<%= overseerrUrl %>" target="_blank" rel="noopener noreferrer">Open request site</a></div></section><% } %>
 
-    <section class="sectionBlock" id="plans">
-      <div class="sectionHead"><div><h2>Plans</h2><p>Compare access levels. Existing recurring subscriptions use controlled upgrade/downgrade transitions instead of creating overlapping subscriptions.</p></div></div>
-      <% if (!plans.length) { %><div class="empty">No plans are currently available.</div><% } %>
-      <div class="plansGrid">
-      <% plans.forEach(function(p){ const opts=Array.isArray(p.payment_options)?p.payment_options:[]; const stripeOpt=opts.find(o=>o.provider==='stripe'); const paypalOpt=opts.find(o=>o.provider==='paypal'); const isFreePlan=Number(p.price_minor)===0&&p.billing_interval!=='trial'; const isCurrent=Boolean(activePlanId&&String(activePlanId)===String(p.id)); %>
-        <article class="planCard <%= isCurrent ? 'current' : '' %>">
-          <div class="planTop"><div><div class="planName"><%= p.name %></div><div class="planDuration"><%= duration(p) %></div></div><% if (isCurrent) { %><span class="pill accent">Current</span><% } %></div>
-          <div class="planPrice"><%= price(p) %></div><div class="planDescription"><%= p.description || 'Streaming access managed through your account.' %></div>
-          <ul class="featureList"><li><%= p.streams %> concurrent stream<%= Number(p.streams)===1?'':'s' %></li><li><%= p.allow_downloads ? 'Downloads included' : 'Streaming only' %></li><li><%= p.allow_video_transcoding ? 'Video transcoding allowed' : 'Direct playback preferred' %></li></ul>
-          <div class="planActions">
-            <% if (isCurrent) { %><span class="button secondary full">Current plan</span><% } else { %>
-              <% if (p.billing_interval === 'trial') { %><form class="plainForm" method="post" action="/account/trial/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><button class="button primary full" type="submit">Start free trial</button></form><% } %>
-              <% if (isFreePlan) { %><form class="plainForm" method="post" action="/account/claim-free/<%= p.code %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button free full" type="submit">Get free access</button></form><% } %>
-              <% if (Number(p.price_minor)>0 && stripeEnabled && stripeOpt) { %><form class="plainForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input class="input discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><button class="button stripe full" type="submit">Pay / change with Stripe</button></form><% } %>
-              <% if (Number(p.price_minor)>0 && paypalEnabled && paypalOpt) { %><form class="plainForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><% if (paypalOpt.checkoutMode !== 'subscription') { %><input class="input discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><% } %><button class="button paypal full" type="submit">Pay / change with PayPal</button></form><% } %>
-              <% if (Number(p.price_minor)>0 && !stripeOpt && !paypalOpt) { %><div class="paymentNote">Online payment is not configured for this plan yet.</div><% } %>
-            <% } %>
-          </div>
-        </article>
-      <% }) %>
-      </div>
-    </section>
+    <section class="sectionBlock" id="plans"><div class="sectionHead"><div><h2>Plans</h2><p>Compare access levels. For recurring billing, upgrades/downgrades use controlled provider transitions rather than overlapping subscriptions.</p></div></div><% if(!plans.length){ %><div class="empty">No plans are currently available.</div><% } %><div class="plansGrid"><% plans.forEach(function(p){const opts=Array.isArray(p.payment_options)?p.payment_options:[],stripeOpt=opts.find(o=>o.provider==='stripe'),paypalOpt=opts.find(o=>o.provider==='paypal'),isFreePlan=Number(p.price_minor)===0&&p.billing_interval!=='trial',isCurrent=Boolean(activePlanId&&String(activePlanId)===String(p.id)); %><article class="planCard <%= isCurrent?'current':'' %>"><div class="planTop"><div><div class="planName"><%= p.name %></div><div class="planDuration"><%= duration(p) %></div></div><% if(isCurrent){ %><span class="pill accent">Current</span><% } %></div><div class="planPrice"><%= price(p) %></div><div class="planDescription"><%= p.description||'Streaming access managed through your account.' %></div><ul class="featureList"><li><%= p.streams %> concurrent stream<%= Number(p.streams)===1?'':'s' %></li><li><%= p.allow_downloads?'Downloads included':'Streaming only' %></li><li><%= p.allow_video_transcoding?'Video transcoding allowed':'Direct playback preferred' %></li></ul><div class="planActions"><% if(isCurrent){ %><span class="button secondary full">Current plan</span><% } else { %><% if(p.billing_interval==='trial'){ %><form class="plainForm" method="post" action="/account/trial/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><button class="button primary full" type="submit">Start free trial</button></form><% } %><% if(isFreePlan){ %><form class="plainForm" method="post" action="/account/claim-free/<%= p.code %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button free full" type="submit">Get free access</button></form><% } %><% if(Number(p.price_minor)>0&&stripeEnabled&&stripeOpt){ %><form class="plainForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input class="input discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><button class="button stripe full" type="submit">Pay / change with Stripe</button></form><% } %><% if(Number(p.price_minor)>0&&paypalEnabled&&paypalOpt){ %><form class="plainForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><% if(paypalOpt.checkoutMode!=='subscription'){ %><input class="input discountField" name="discountCode" placeholder="Discount code (optional)" maxlength="40"><% } %><button class="button paypal full" type="submit">Pay / change with PayPal</button></form><% } %><% if(Number(p.price_minor)>0&&!stripeOpt&&!paypalOpt){ %><div class="paymentNote">Online payment is not configured for this plan yet.</div><% } %><% } %></div></article><% }) %></div></section>
 
-    <% if (portal.providers.some(p=>p.provider==='stripe') && stripeEnabled) { %>
-      <section class="sectionBlock"><div class="sectionHead"><div><h2>Billing</h2></div><a class="button secondary small" href="/account/history">History</a></div><div class="panel billingRow"><div><div class="accessTitle">Stripe billing</div><div class="accessMeta">Manage payment methods, invoices and your billing profile.</div></div><form class="plainForm" method="post" action="/account/stripe/portal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button stripe" type="submit">Manage billing</button></form></div></section>
-    <% } %>
+    <% if(portal.providers.some(p=>p.provider==='stripe')&&stripeEnabled){ %><section class="sectionBlock"><div class="sectionHead"><div><h2>Billing</h2></div><a class="button secondary small" href="/account/history">History</a></div><div class="panel billingRow"><div><div class="accessTitle">Stripe billing</div><div class="accessMeta">Manage payment methods, invoices and your billing profile.</div></div><form class="plainForm" method="post" action="/account/stripe/portal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button stripe" type="submit">Manage billing</button></form></div></section><% } %>
 
-    <% if (referralsEnabled) { %>
-      <section class="sectionBlock"><div class="sectionHead"><div><h2>Refer a friend</h2><p>Share your referral code. Rewards are granted only under the active referral policy.</p></div></div><div class="panel referralPanel"><div><div class="accessTitle">Your referral code</div><div class="referralCode"><%= referralCode %></div></div><div class="accessMeta">Referral rewards are controlled by the administrator.</div></div></section>
-    <% } %>
+    <% if(referralsEnabled){ %><section class="sectionBlock"><div class="sectionHead"><div><h2>Refer a friend</h2><p>Share your referral code. Rewards are granted only under the active referral policy.</p></div></div><div class="panel referralPanel"><div><div class="accessTitle">Your referral code</div><div class="referralCode"><%= referralCode %></div></div><div class="accessMeta">Referral rewards are controlled by the administrator.</div></div></section><% } %>
 
-    <section class="sectionBlock">
-      <div class="sectionHead"><div><h2>Account security</h2><p>Change the password used to sign into this customer portal.</p></div></div>
-      <div class="panel passwordPanel"><form method="post" action="/account/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="formGrid"><div class="field"><label>Current password</label><input class="input" type="password" name="currentPassword" autocomplete="current-password" required></div><div class="field"><label>New password</label><input class="input" type="password" name="newPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div></div><button class="button secondary" type="submit">Change portal password</button></form></div>
-    </section>
+    <section class="sectionBlock"><div class="sectionHead"><div><h2>Account security</h2><p>Change the password used to sign into this customer portal.</p></div></div><div class="panel passwordPanel"><form method="post" action="/account/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="formGrid"><div class="field"><label>Current password</label><input class="input" type="password" name="currentPassword" autocomplete="current-password" required></div><div class="field"><label>New password</label><input class="input" type="password" name="newPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div></div><button class="button secondary" type="submit">Change portal password</button></form></div></section>
   </main>
 </div>
 </body>
