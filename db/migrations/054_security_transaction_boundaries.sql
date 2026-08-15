@@ -113,8 +113,11 @@ SELECT DISTINCT ON (s.customer_id)
     p.allow_audio_transcoding,
     p.allow_live_tv,
     p.allow_live_tv_management,
-    p.allow_4k,
     p.server_class,
+    p.request_movie_quota_limit,
+    p.request_movie_quota_days,
+    p.request_tv_quota_limit,
+    p.request_tv_quota_days,
     EXISTS (
         SELECT 1 FROM customer_access_holds h
         WHERE h.customer_id=s.customer_id AND h.released_at IS NULL
