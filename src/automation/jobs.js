@@ -8,6 +8,7 @@ const requestUserSync = require('../integrations/request-user-sync');
 const requestServiceSettings = require('../integrations/request-service-settings');
 const emailSettings = require('../integrations/email-settings');
 const emailOutbox = require('../integrations/email-outbox');
+const notificationOutbox = require('../integrations/notification-outbox');
 const billingControl = require('../payments/billing-control');
 const customerPlanChange = require('../payments/customer-plan-change');
 const resellerJobs = require('../resellers/jobs');
@@ -38,6 +39,7 @@ const jobs = {
         if (!status.configured) return { processed: 0, skipped: 'email_not_configured' };
         return emailOutbox.deliverDue({ limit: 50 });
     },
+    async notification_outbox() { return notificationOutbox.deliverDue({ limit: 50 }); },
     async request_users() {
         await requestServiceSettings.ensureLoaded();
         const config = await requestUserSync.configuration();
