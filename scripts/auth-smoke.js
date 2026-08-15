@@ -11,12 +11,19 @@ const totp = require('../src/auth/totp');
 const serverAdmin = require('../src/platform/admin-servers');
 const adminDashboard = require('../src/platform/admin-dashboard');
 const USERNAME = 'ci-auth-smoke-admin';
+const STARTUP_SECRET = 'ci-auth-smoke-session-secret-2026-0123456789abcdef';
 function mockReq(sessionID = 'ci-auth-smoke-session') { return { ip:'127.0.0.1', sessionID, get(name){ return String(name).toLowerCase()==='user-agent'?'steam-fusion-auth-smoke/1':''; } }; }
-function preloadStatus(overrides){ return spawnSync(process.execPath,['-e',"require('./staff-auth-preload.js')"],{cwd:process.cwd(),env:{...process.env,...overrides},encoding:'utf8'}); }
+function applicationStatus(overrides){
+  return spawnSync(process.execPath,['-e',"require('./src/application').createApplication()"],{
+    cwd:process.cwd(),
+    env:{...process.env,SESSION_SECRET:STARTUP_SECRET,...overrides},
+    encoding:'utf8'
+  });
+}
 function assertStartupPolicy(){
-  if(preloadStatus({NODE_ENV:'production',DATABASE_URL:'',REQUIRE_ADMIN_2FA:'true'}).status===0) throw new Error('Production accepted missing database configuration');
-  const optional=preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'false'}); if(optional.status!==0) throw new Error('Production rejected optional administrator 2FA');
-  const required=preloadStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'true'}); if(required.status!==0) throw new Error('Valid production preload failed');
+  if(applicationStatus({NODE_ENV:'production',DATABASE_URL:'',REQUIRE_ADMIN_2FA:'true'}).status===0) throw new Error('Production accepted missing database configuration');
+  const optional=applicationStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'false'}); if(optional.status!==0) throw new Error(`Production rejected optional administrator 2FA: ${optional.stderr||optional.stdout}`);
+  const required=applicationStatus({NODE_ENV:'production',REQUIRE_ADMIN_2FA:'true'}); if(required.status!==0) throw new Error(`Valid production application startup failed: ${required.stderr||required.stdout}`);
 }
 function assertAdminErrorRedaction(){
   if(serverAdmin.safeAdminError({code:'23505'})!=='A server with that name or slug already exists.') throw new Error('Duplicate server error was not sanitized');
