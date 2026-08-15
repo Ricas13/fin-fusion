@@ -47,3 +47,5 @@ jobs:
         run: npm run db:migrate
       - name: Race transaction invariants
         run: node scripts/adversarial-concurrency-smoke.js
+      - name: Referral qualification safety
+        run: node scripts/referral-safety-smoke.js
