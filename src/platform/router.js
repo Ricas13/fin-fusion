@@ -10,6 +10,7 @@ const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminConfigurationHealthRouter } = require('./admin-configuration-health');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
+const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
@@ -34,6 +35,7 @@ function createRouter(){
     router.use(createAdminConfigurationHealthRouter());
     router.use(createAdminResellerSettingsRouter());
     router.use(createAdminResellerDunningRouter());
+    router.use(createAdminNotificationPreferencesRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
