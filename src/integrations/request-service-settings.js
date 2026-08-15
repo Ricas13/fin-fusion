@@ -115,7 +115,7 @@ async function save(input, actorUserId = null) {
             SET interval_seconds=$2,enabled=$3,
                 next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
                 force_run_requested=CASE WHEN $3 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
-            WHERE job_key='request_users' RETURNING id`,['request_users',syncIntervalMinutes*60,enabled]);
+            WHERE job_key='request_users' RETURNING job_key`,['request_users',syncIntervalMinutes*60,enabled]);
         if(!schedule.rowCount)await client.query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at) VALUES('request_users',$1,$2,CASE WHEN $1 THEN NOW() ELSE NULL END)`,[enabled,syncIntervalMinutes*60]);
     });
     cache = { source: 'database', enabled, baseUrl, apiKey: nextApiKey, syncIntervalMinutes, updatedAt: new Date() };
