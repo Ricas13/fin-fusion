@@ -35,8 +35,6 @@ function cleanSlug(value) {
     if (!/^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$/.test(slug)) throw invalidField('slug', 'Slug must be 3-60 lowercase letters, numbers or dashes.');
     return slug;
 }
-// Compatibility export only. Host allowlisting was intentionally retired; an
-// authenticated administrator may register any explicit HTTP/HTTPS Jellyfin URL.
 function allowedHosts() { return new Set(); }
 function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
     const fieldName = field || (baseUrl ? 'baseUrl' : 'publicUrl');
@@ -180,7 +178,8 @@ async function renderLocals(req, server = null, error = null) {
 }
 function createAdminServersRouter() {
     const router = express.Router(); router.use('/admin/servers', requireNativeAdmin, noStore);
-    router.get('/admin/servers', async (req,res,next) => { try { await runtimeSettings.ensureLoaded(); return res.render('admin/servers',{siteName:runtimeSettings.siteName(),servers:await serverList(),message:req.query.message||null,error:req.query.error||null}); } catch(error){next(error);} });
+    // GET /admin/servers is owned by admin-server-fleet-dashboard.js. This
+    // router owns server creation/edit/test/health mutations and edit forms.
     router.get('/admin/servers/new', async (req,res,next) => { try { return res.render('admin/server-form', await renderLocals(req)); } catch(error){next(error);} });
     router.get('/admin/servers/:serverId/edit', async (req,res,next) => { try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); return res.render('admin/server-form',await renderLocals(req,server)); } catch(error){next(error);} });
     router.post('/admin/servers', async (req,res) => {
