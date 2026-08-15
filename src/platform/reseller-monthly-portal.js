@@ -1,6 +1,8 @@
 'use strict';
 
 const core = require('./reseller-monthly-portal-core');
+const monthly = require('../resellers/monthly');
+const { query } = require('../db');
 
 function pruneRoutes(router, paths) {
     if (!router?.stack) return router;
@@ -14,14 +16,49 @@ function pruneRoutes(router, paths) {
 
 function createResellerMonthlyPortalRouter() {
     const router = core.createResellerMonthlyPortalRouter();
-    // These paths now have dedicated canonical owners. Removing them from the
-    // old monthly portal stack avoids shadowing/duplicate Express routes while
-    // preserving the rest of the battle-tested portal implementation.
-    pruneRoutes(router, new Set([
-        '/reseller/billing/tier',
-        '/reseller/sales'
-    ]));
+    // Dedicated canonical routers own tier changes and the append-only ledger.
+    pruneRoutes(router, new Set(['/reseller/billing/tier','/reseller/sales']));
     return router;
 }
 
-module.exports = { ...core, createResellerMonthlyPortalRouter, pruneRoutes };
+// Compatibility API used by older integrations/smokes.  Keep one analytics
+// implementation: all historical revenue/customer/playback aggregation comes
+// from the canonical reseller service and this facade only adapts its shape.
+async function analytics(resellerId, rng) {
+    const start = new Date(rng?.start || Date.now() - 30 * 86400000);
+    const end = new Date(rng?.end || Date.now());
+    const days = Math.max(1, Math.min(45, Number(rng?.days) || Math.ceil((end - start) / 86400000) || 30));
+    const [stats, live] = await Promise.all([
+        monthly.salesAnalytics(resellerId, { from: start, to: end }),
+        query(`SELECT COUNT(DISTINCT aps.jellyfin_session_id)::int streams
+               FROM active_playback_sessions aps
+               JOIN customers c ON c.id=aps.customer_id
+               WHERE c.reseller_id=$1`, [resellerId])
+    ]);
+    const totals = Array.isArray(stats.totals) ? stats.totals : [];
+    const primary = totals.slice().sort((a,b) => Number(b.amount_minor||0) - Number(a.amount_minor||0))[0]
+        || { currency: 'GBP', amount_minor: 0, sales: 0 };
+    const series = [];
+    for (let i=days-1;i>=0;i--) {
+        const d = new Date(end.getTime() - i*86400000);
+        series.push({ key: d.toISOString().slice(0,10), value: 0 });
+    }
+    const byDay = new Map(series.map(point => [point.key, point]));
+    for (const row of stats.daily || []) {
+        if (String(row.currency || '').trim() !== String(primary.currency || '').trim()) continue;
+        const key = new Date(row.day).toISOString().slice(0,10);
+        const point = byDay.get(key);
+        if (point) point.value += Number(row.amount_minor || 0);
+    }
+    return {
+        totals,
+        primary,
+        newCustomers: Number(stats.newCustomers || 0),
+        playback: stats.playback || {},
+        liveStreams: Number(live.rows[0]?.streams || 0),
+        top: stats.topCustomers || [],
+        series
+    };
+}
+
+module.exports = { ...core, createResellerMonthlyPortalRouter, pruneRoutes, analytics };
