@@ -83,13 +83,23 @@ function normalizeSession(serverId, account, entitlement, session) {
 async function activeEntitlements() {
     const result = await query(`
         SELECT DISTINCT ON (s.customer_id)
-            s.customer_id,s.id AS subscription_id,p.id AS plan_id,p.code,p.streams
+            s.customer_id,s.id AS subscription_id,p.id AS plan_id,p.code,p.streams,
+            s.current_period_end + (COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
-        WHERE s.status IN ('active','trialing','past_due')
-          AND s.current_period_end > NOW()
-          AND p.active=TRUE
-        ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
+        JOIN customers c ON c.id=s.customer_id
+        WHERE s.superseded_by IS NULL
+          AND s.starts_at<=NOW()
+          AND c.access_paused_at IS NULL
+          AND (
+              (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+              OR (COALESCE(s.service_extension_days,0)>0
+                  AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
+                  AND s.current_period_end+(s.service_extension_days||' days')::interval>NOW())
+          )
+        ORDER BY s.customer_id,
+                 (s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval) DESC,
+                 s.created_at DESC
     `);
     return new Map(result.rows.map(row => [row.customer_id, row]));
 }
@@ -512,5 +522,6 @@ module.exports = {
     config,
     runActivityPolicyCycle,
     listCustomerActivity,
-    listCustomerPolicyEvents
+    listCustomerPolicyEvents,
+    activeEntitlements
 };

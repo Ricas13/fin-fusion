@@ -6,6 +6,7 @@ const registry = require('./registry');
 const policy = require('./policy');
 const placement = require('./placement');
 const planServers = require('./plan-servers');
+const subscriptionState = require('../entitlements/subscription-state');
 
 function randomPassword() {
     return crypto.randomBytes(24).toString('base64url');
@@ -48,7 +49,9 @@ async function libraryCatalogForServerClass(serverClass) {
 
 async function libraryCatalogForPlan(plan) {
     if (!plan) return { names: [], failedServers: [], serverCount: 0 };
-    const servers = await planServers.eligibleServersForPlan(plan, { enabledOnly: true });
+    // Library policy should reflect servers that may actually receive a new
+    // account under the current placement/health policy.
+    const servers = await planServers.eligibleServersForPlan(plan, { enabledOnly: true, forPlacement: true });
     return libraryCatalogFromServers(servers);
 }
 
@@ -229,6 +232,7 @@ async function selectServerForPlan(plan) {
     const isTrial = plan.billing_interval === 'trial';
     const planId = planServers.planId(plan);
     if (!planId) throw new Error('Plan id is required for server placement');
+    const healthMode = await planServers.placementHealthMode();
 
     const result = await query(`
         WITH restriction AS (
@@ -253,33 +257,27 @@ async function selectServerForPlan(plan) {
                ON aps.server_id=js.id
         WHERE js.enabled=TRUE
           AND js.allow_new_users=TRUE
+          AND COALESCE(js.placement_mode,'active')='active'
           AND js.server_class=$1
-          AND js.health_status <> 'offline'
+          AND (
+              ($4='healthy_only' AND js.health_status='healthy') OR
+              ($4='healthy_or_degraded' AND js.health_status IN ('healthy','degraded')) OR
+              ($4='fail_open' AND js.health_status<>'offline')
+          )
           AND CASE WHEN $2::boolean THEN js.trial_enabled ELSE js.paid_enabled END
           AND (NOT r.restricted OR pse.server_id IS NOT NULL)
         GROUP BY js.id,pse.weight,r.restricted
         HAVING js.max_users IS NULL OR js.max_users=0 OR COUNT(DISTINCT ja.id) < js.max_users
-    `, [plan.server_class, isTrial, planId]);
+    `, [plan.server_class, isTrial, planId, healthMode]);
 
     return placement.selectServer(result.rows, plan.placement_strategy);
 }
 
 async function currentEntitlement(customerId) {
-    const result = await query(`
-        SELECT s.*,p.*,
-               s.id AS subscription_id,p.id AS plan_id
-        FROM subscriptions s
-        JOIN plans p ON p.id=s.plan_id
-        JOIN customers c ON c.id=s.customer_id
-        WHERE s.customer_id=$1
-          AND c.access_paused_at IS NULL
-          AND s.status IN ('active','trialing','past_due')
-          AND s.current_period_end > NOW()
-          AND p.active=TRUE
-        ORDER BY s.current_period_end DESC,s.created_at DESC
-        LIMIT 1
-    `, [customerId]);
-    return result.rows[0] || null;
+    // One source of truth for starts_at, paid-through, supersession and typed
+    // access holds. Catalogue active/visible flags are deliberately irrelevant
+    // after a subscription contract has been created.
+    return subscriptionState.effectiveSubscription(customerId);
 }
 
 async function preferredUsername(customerId) {
@@ -453,15 +451,14 @@ async function reconcileCustomer(customerId) {
 
         const effective = await effectivePolicyForCustomer(customerId, entitlement);
 
-        // Existing access is deliberately sticky. A controlled migration moves
-        // is_primary to the new account; routine reconciliation then keeps using
-        // that account instead of silently moving customers as server load changes.
+        // Existing access is deliberately sticky. Drain/maintenance affects new
+        // placement only; it does not silently evict a healthy existing account.
         let account = accounts.find(a => a.is_primary && a.server_class === entitlement.server_class && a.server_enabled);
         if (!account) account = accounts.find(a => !a.disabled && a.server_class === entitlement.server_class && a.server_enabled);
         if (!account) account = accounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
         if (!account) {
             const server = await selectServerForPlan(entitlement);
-            if (!server) throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.code}`);
+            if (!server) throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.contract_plan_code || entitlement.code}`);
             account = await createJellyfinAccount(customerId, server, effective);
         } else {
             await applyPolicy(account, effective, false);
@@ -481,7 +478,7 @@ async function reconcileCustomer(customerId) {
             VALUES('entitlement.reconcile','customer',$1,$2::jsonb)
         `, [customerId, JSON.stringify({
             subscriptionId: entitlement.subscription_id,
-            planCode: entitlement.code,
+            planCode: entitlement.contract_plan_code || entitlement.code,
             serverId: account.server_id,
             jellyfinAccountId: account.id,
             effectiveStreams: effective.technical.streams,
@@ -527,6 +524,8 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
     });
 }
 
+// Compatibility exports only. The public provisioning facade owns typed
+// access holds and subscription expiry semantics.
 async function holdAccess(customerId, reason) {
     await query(`UPDATE customers SET access_paused_at=NOW(),access_hold_reason=$2 WHERE id=$1`, [customerId, reason]);
     return reconcileCustomer(customerId);
