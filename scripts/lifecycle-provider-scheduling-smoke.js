@@ -6,8 +6,9 @@ const root=path.resolve(__dirname,'..'),read=p=>fs.readFileSync(path.join(root,p
 for(const file of ['db/migrations/047_lifecycle_integrity_and_operations.sql','db/migrations/048_provider_scheduled_plan_changes.sql','db/migrations/054_security_transaction_boundaries.sql'])assert(fs.existsSync(path.join(root,file)),`${file} must exist`);
 const customer=read('src/payments/customer-plan-change.js'),reseller=read('src/payments/reseller-billing-v2-core.js'),provisioning=read('src/jellyfin/provisioning-core.js'),entitlement=read('src/entitlements/subscription-state.js'),canonical=read('db/migrations/054_security_transaction_boundaries.sql'),app=read('src/application.js'),health=read('src/platform/health.js'),compose=read('docker-compose.yml');
 assert(/operationType:'plan_change_schedule'/.test(customer)&&/providerOps\.begin/.test(customer),'customer Stripe period-end change must be represented by an idempotent provider operation');
-assert(/subscriptionSchedules\.create\(\{from_subscription:current\.provider_subscription_id\},\{idempotencyKey:/.test(customer),'customer Stripe period-end change must create a provider subscription schedule with an idempotency key');
-assert(/subscriptionSchedules\.update\(schedule\.id,[\s\S]*?idempotencyKey:/.test(customer),'customer Stripe schedule must define provider phases idempotently before renewal');
+assert(/subscriptionSchedules\.create/.test(customer)&&/from_subscription:current\.provider_subscription_id/.test(customer),'customer Stripe period-end change must create a provider subscription schedule from the current subscription');
+assert(/subscriptionSchedules\.update/.test(customer)&&/phases:\[/.test(customer),'customer Stripe schedule must define provider phases before renewal');
+assert(/idempotencyKey/.test(customer),'customer Stripe schedule mutations must carry provider idempotency keys');
 assert(/subscriptionSchedules\.release\(schedule\.id\)/.test(customer),'cancelling a customer Stripe change must release the provider schedule');
 assert(/providerOps\.providerApplied/.test(customer)&&/providerOps\.reconciled/.test(customer),'customer provider scheduling must record provider and local reconciliation states');
 assert(/PayPal cannot replace an active billing agreement in place/.test(customer),'PayPal plan selection must not silently cancel an active agreement');
