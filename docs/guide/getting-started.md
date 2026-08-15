@@ -1,24 +1,29 @@
-# Getting Started
+# Getting started
 
-CAPTaINFiN manages access to media services, subscriptions, Jellyfin accounts, reseller estates and related platform services from one portal.
+CAPTaINFiN has separate areas for customers, resellers and administrators. Sign in with the account type you were given and use the navigation for your role.
 
-## Which portal should I use?
+## Customers
 
-### Customer
-Use the customer portal to manage your subscription, service access, Jellyfin credentials, requests and account security.
+A customer can use the portal to review service status, manage account security, set a separate Jellyfin password when required, adjust allowed library visibility, and access payment/subscription actions made available by the active plan.
 
-### Reseller
-Use the reseller portal to manage your own subscription tier, available seats, customers, recorded sales and account security.
+## Resellers
 
-### Administrator
-Use the administrator portal to configure the storefront, plans, Jellyfin servers, payments, integrations, resellers, automation, backups and security policies.
+A reseller manages a downstream customer estate within the capacity of the reseller subscription. Seats represent active downstream entitlements; temporary suspension does not create extra capacity.
 
-## Account security
+## Administrators
 
-CAPTaINFiN portal credentials and Jellyfin credentials are separate. Changing one does not automatically change the other.
+Administrators configure the platform itself: plans, servers, libraries, resellers, commerce, automation, security and system settings.
 
-Two-factor authentication can be enabled for additional account protection. Whether it is mandatory depends on the administrator's configured policy.
+The admin interface groups controls by purpose. Each important setting includes a short explanation of what it changes; deeper topics are documented in the Administrator section of this guide.
 
-## Need help?
+## Passwords
 
-Use the Help entry in CAPTaINFiN when available, or continue to the guide for your account type.
+CAPTaINFiN portal passwords and Jellyfin passwords are separate. A portal password reset does not silently change the Jellyfin password.
+
+## If something fails
+
+For a normal validation error, the platform should explain what needs to be corrected. For an unexpected server error, note what page/action you were using and contact the administrator. Administrators can use the application request ID and logs to locate the underlying exception.
+
+## Planned Stremio service
+
+Stremio support is being built as a stream-only delivery option backed by Jellyfin. It is not a live customer service until the addon runtime is released and explicitly enabled.
