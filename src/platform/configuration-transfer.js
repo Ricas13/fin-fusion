@@ -1,23 +1,103 @@
 'use strict';
-const crypto=require('crypto');
-const core=require('./configuration-transfer-v1');
-const {query,transaction}=require('../db');
-const FORMAT=core.FORMAT||'steam-fusion-portable-configuration';
-const VERSION=2;
-const MAX_DOCUMENT_BYTES=1024*1024;
-const EXTRA_SETTINGS=['reseller_defaults_v2','trial_free_policy','commerce_policy'];
-function object(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{}}
-function text(value,max=500){return String(value==null?'':value).trim().slice(0,max)}
-function integer(value,min,max,nullable=true){if(value==null&&nullable)return null;const n=Number(value);if(!Number.isInteger(n)||n<min||n>max)throw new core.ConfigurationValidationError(`Expected integer between ${min} and ${max}.`);return n}
-function bool(value){return value===true}
-function digestDocument(document){return crypto.createHash('sha256').update(JSON.stringify(document),'utf8').digest('hex')}
-function v1Settings(settings){const allowed=new Set(['platform','storefront','storefront_features','reseller_defaults','admin_defaults','referral_program']);return Object.fromEntries(Object.entries(settings||{}).filter(([key])=>allowed.has(key)))}
-function asV1(document){return{format:FORMAT,version:1,configuration:{settings:v1Settings(document.configuration.settings),plans:document.configuration.plans||[],notifications:document.configuration.notifications||[]},excluded:document.excluded||[]}}
-function normalizeTier(source,index){const path=`resellerTiers[${index}]`,code=text(source.code,50).toLowerCase(),name=text(source.name,80);if(!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code))throw new core.ConfigurationValidationError('Invalid reseller tier code.',`${path}.code`);if(!name)throw new core.ConfigurationValidationError('Tier name is required.',`${path}.name`);const currency=text(source.currency,3).toUpperCase();if(!/^[A-Z]{3}$/.test(currency))throw new core.ConfigurationValidationError('Invalid currency.',`${path}.currency`);return{code,name,description:text(source.description,500),monthly_price_minor:integer(source.monthly_price_minor,0,100000000,false),currency,seat_limit:integer(source.seat_limit,1,100000,false),grace_days:integer(source.grace_days??0,0,30,false),sort_order:integer(source.sort_order??100,0,10000,false),visible:source.visible!==false,active:source.active!==false,providerMappings:Array.isArray(source.providerMappings)?source.providerMappings.slice(0,4).map((m,i)=>{const provider=text(m.provider,20);if(!['stripe','paypal'].includes(provider))throw new core.ConfigurationValidationError('Unsupported reseller provider.',`${path}.providerMappings[${i}]`);return{provider,externalId:text(m.externalId,200),active:m.active!==false}}):[],planRules:Array.isArray(source.planRules)?source.planRules.slice(0,500).map((r,i)=>({planCode:text(r.planCode,80),allowCustomer:r.allowCustomer===true,allowOwner:r.allowOwner===true,allowTrial:r.allowTrial===true,active:r.active!==false})).filter(r=>r.planCode):[]}}
-function normalizeDirectMappings(value){if(!Array.isArray(value))return[];return value.slice(0,1000).map((m,i)=>{const provider=text(m.provider,20),mode=text(m.checkoutMode,20);if(!['stripe','paypal'].includes(provider))throw new core.ConfigurationValidationError('Unsupported payment provider.',`directPaymentMappings[${i}].provider`);if(!['payment','subscription'].includes(mode))throw new core.ConfigurationValidationError('Unsupported checkout mode.',`directPaymentMappings[${i}].checkoutMode`);const planCode=text(m.planCode,80),externalId=text(m.externalId,200);if(!planCode)throw new core.ConfigurationValidationError('Plan code is required.',`directPaymentMappings[${i}].planCode`);return{planCode,provider,checkoutMode:mode,externalId,active:m.active!==false,metadata:object(m.metadata)}})}
-function normalizeAutomation(value){if(!Array.isArray(value))return[];return value.slice(0,100).map((j,i)=>({jobKey:text(j.jobKey,100),enabled:j.enabled!==false,intervalSeconds:integer(j.intervalSeconds,30,86400,false)})).filter(j=>j.jobKey)}
-function parseDocument(input){const raw=typeof input==='string'?input:JSON.stringify(input);if(Buffer.byteLength(raw||'','utf8')>MAX_DOCUMENT_BYTES)throw new core.ConfigurationValidationError('Configuration document exceeds 1 MiB.');let parsed;try{parsed=typeof input==='string'?JSON.parse(input):input}catch{throw new core.ConfigurationValidationError('Configuration is not valid JSON.')}if(parsed?.version===1)return core.parseDocument(parsed);if(!parsed||parsed.format!==FORMAT||parsed.version!==VERSION||!object(parsed.configuration))throw new core.ConfigurationValidationError(`Expected ${FORMAT} version ${VERSION}.`);const base=core.parseDocument(asV1(parsed));const inputPlans=Array.isArray(parsed.configuration.plans)?parsed.configuration.plans:[];const byCode=new Map(inputPlans.map(p=>[String(p.code||'').toLowerCase(),p]));const plans=base.configuration.plans.map(plan=>{const extra=byCode.get(plan.code.toLowerCase())||{};return{...plan,request_movie_quota_limit:integer(extra.request_movie_quota_limit,0,100000,true),request_movie_quota_days:integer(extra.request_movie_quota_days,1,3650,true),request_tv_quota_limit:integer(extra.request_tv_quota_limit,0,100000,true),request_tv_quota_days:integer(extra.request_tv_quota_days,1,3650,true)}});const settings={...base.configuration.settings};for(const key of EXTRA_SETTINGS)if(Object.prototype.hasOwnProperty.call(parsed.configuration.settings||{},key))settings[key]=object(parsed.configuration.settings[key]);return{format:FORMAT,version:VERSION,configuration:{settings,plans,notifications:base.configuration.notifications,resellerTiers:(parsed.configuration.resellerTiers||[]).map(normalizeTier),directPaymentMappings:normalizeDirectMappings(parsed.configuration.directPaymentMappings),automation:normalizeAutomation(parsed.configuration.automation)},excluded:Array.isArray(parsed.excluded)?parsed.excluded.slice(0,100).map(v=>text(v,200)):[]}}
-async function exportPortableConfiguration(){const base=await core.exportPortableConfiguration();const[quotaRows,extraSettings,tiers,mappings,rules,directMappings,automation]=await Promise.all([query(`SELECT code,request_movie_quota_limit,request_movie_quota_days,request_tv_quota_limit,request_tv_quota_days FROM plans ORDER BY code`),query(`SELECT setting_key,setting_value FROM platform_settings WHERE setting_key=ANY($1::text[]) ORDER BY setting_key`,[EXTRA_SETTINGS]),query(`SELECT id,code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active FROM reseller_tiers ORDER BY sort_order,code`),query(`SELECT rp.tier_id,rp.provider,rp.external_id,rp.active FROM reseller_tier_provider_prices rp ORDER BY rp.tier_id,rp.provider`),query(`SELECT rr.tier_id,p.code plan_code,rr.active,rr.allow_customer,rr.allow_owner,rr.allow_trial FROM reseller_tier_plan_rules rr JOIN plans p ON p.id=rr.plan_id ORDER BY rr.tier_id,p.code`),query(`SELECT p.code plan_code,pp.provider,pp.checkout_mode,pp.external_id,pp.active,pp.metadata FROM plan_provider_prices pp JOIN plans p ON p.id=pp.plan_id ORDER BY p.code,pp.provider,pp.checkout_mode`),query(`SELECT job_key,enabled,interval_seconds FROM automation_job_state ORDER BY job_key`)]);const quota=new Map(quotaRows.rows.map(r=>[r.code,r])),plans=base.configuration.plans.map(p=>({...p,...quota.get(p.code)}));const providerByTier=new Map(),rulesByTier=new Map();for(const row of mappings.rows){if(!providerByTier.has(String(row.tier_id)))providerByTier.set(String(row.tier_id),[]);providerByTier.get(String(row.tier_id)).push({provider:row.provider,externalId:row.external_id,active:row.active})}for(const row of rules.rows){if(!rulesByTier.has(String(row.tier_id)))rulesByTier.set(String(row.tier_id),[]);rulesByTier.get(String(row.tier_id)).push({planCode:row.plan_code,active:row.active,allowCustomer:row.allow_customer,allowOwner:row.allow_owner,allowTrial:row.allow_trial})}const settings={...base.configuration.settings};for(const row of extraSettings.rows)settings[row.setting_key]=row.setting_value;return{format:FORMAT,version:VERSION,exportedAt:new Date().toISOString(),configuration:{settings,plans,notifications:base.configuration.notifications,resellerTiers:tiers.rows.map(t=>({code:t.code,name:t.name,description:t.description,monthly_price_minor:Number(t.monthly_price_minor),currency:String(t.currency).trim(),seat_limit:Number(t.seat_limit),grace_days:Number(t.grace_days||0),sort_order:Number(t.sort_order),visible:t.visible,active:t.active,providerMappings:providerByTier.get(String(t.id))||[],planRules:rulesByTier.get(String(t.id))||[]})),directPaymentMappings:directMappings.rows.map(m=>({planCode:m.plan_code,provider:m.provider,checkoutMode:m.checkout_mode,externalId:m.external_id,active:m.active,metadata:m.metadata||{}})),automation:automation.rows.map(j=>({jobKey:j.job_key,enabled:j.enabled,intervalSeconds:Number(j.interval_seconds)}))},excluded:['payment provider credentials and webhook secrets','Jellyfin URLs/API keys and server identities','customers/resellers/subscriptions/payment transactions','sessions/audit/auth history','email/request-service API credentials','branding binary assets']}}
-async function previewImport(input){const document=parseDocument(input);if(document.version===1)return core.previewImport(document);const codes=document.configuration.plans.map(p=>p.code),tierCodes=document.configuration.resellerTiers.map(t=>t.code);const[existingPlans,existingTiers,serverSlugs]=await Promise.all([codes.length?query(`SELECT code FROM plans WHERE code=ANY($1::text[])`,[codes]):{rows:[]},tierCodes.length?query(`SELECT code FROM reseller_tiers WHERE code=ANY($1::text[])`,[tierCodes]):{rows:[]},query(`SELECT slug FROM jellyfin_servers`)]);const planSet=new Set(existingPlans.rows.map(r=>r.code)),tierSet=new Set(existingTiers.rows.map(r=>r.code)),legacy=await core.previewImport(asV1(document)),warnings=[...legacy.warnings];for(const tier of document.configuration.resellerTiers)for(const rule of tier.planRules)if(!document.configuration.plans.some(p=>p.code===rule.planCode)&&!planSet.has(rule.planCode))warnings.push(`Reseller tier ${tier.code} references plan ${rule.planCode}, which does not exist in this import/current installation.`);return{document,digest:digestDocument(document),warnings,summary:{...legacy.summary,plansCreate:document.configuration.plans.filter(p=>!planSet.has(p.code)).length,plansUpdate:document.configuration.plans.filter(p=>planSet.has(p.code)).length,resellerTiersCreate:document.configuration.resellerTiers.filter(t=>!tierSet.has(t.code)).length,resellerTiersUpdate:document.configuration.resellerTiers.filter(t=>tierSet.has(t.code)).length,directPaymentMappings:document.configuration.directPaymentMappings.length,automationJobs:document.configuration.automation.length,serverSlugsAvailable:serverSlugs.rows.length}}
-async function applyImport(input,actorUserId=null){const document=parseDocument(input);if(document.version===1)return core.applyImport(document,actorUserId);const baseResult=await core.applyImport(asV1(document),actorUserId);await transaction(async client=>{for(const plan of document.configuration.plans){await client.query(`UPDATE plans SET request_movie_quota_limit=$2,request_movie_quota_days=$3,request_tv_quota_limit=$4,request_tv_quota_days=$5,updated_at=NOW() WHERE code=$1`,[plan.code,plan.request_movie_quota_limit,plan.request_movie_quota_days,plan.request_tv_quota_limit,plan.request_tv_quota_days])}for(const key of EXTRA_SETTINGS){if(Object.prototype.hasOwnProperty.call(document.configuration.settings,key))await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[key,JSON.stringify(document.configuration.settings[key]),actorUserId])}for(const tier of document.configuration.resellerTiers){const saved=await client.query(`INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,monthly_price_minor=EXCLUDED.monthly_price_minor,currency=EXCLUDED.currency,seat_limit=EXCLUDED.seat_limit,grace_days=EXCLUDED.grace_days,sort_order=EXCLUDED.sort_order,visible=EXCLUDED.visible,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[tier.code,tier.name,tier.description,tier.monthly_price_minor,tier.currency,tier.seat_limit,tier.grace_days,tier.sort_order,tier.visible,tier.active]);const tierId=saved.rows[0].id;for(const map of tier.providerMappings){if(map.externalId)await client.query(`INSERT INTO reseller_tier_provider_prices(tier_id,provider,external_id,active) VALUES($1,$2,$3,$4) ON CONFLICT(tier_id,provider) DO UPDATE SET external_id=EXCLUDED.external_id,active=EXCLUDED.active,updated_at=NOW()`,[tierId,map.provider,map.externalId,map.active])}if(tier.planRules.length){await client.query(`DELETE FROM reseller_tier_plan_rules WHERE tier_id=$1`,[tierId]);for(const rule of tier.planRules){const plan=await client.query(`SELECT id FROM plans WHERE code=$1`,[rule.planCode]);if(plan.rowCount)await client.query(`INSERT INTO reseller_tier_plan_rules(tier_id,plan_id,active,allow_customer,allow_owner,allow_trial) VALUES($1,$2,$3,$4,$5,$6)`,[tierId,plan.rows[0].id,rule.active,rule.allowCustomer,rule.allowOwner,rule.allowTrial])}}}for(const map of document.configuration.directPaymentMappings){const plan=await client.query(`SELECT id FROM plans WHERE code=$1`,[map.planCode]);if(plan.rowCount&&map.externalId)await client.query(`INSERT INTO plan_provider_prices(plan_id,provider,external_id,active,checkout_mode,metadata) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(plan_id,provider,checkout_mode) DO UPDATE SET external_id=EXCLUDED.external_id,active=EXCLUDED.active,metadata=EXCLUDED.metadata,updated_at=NOW()`,[plan.rows[0].id,map.provider,map.externalId,map.active,map.checkoutMode,JSON.stringify(map.metadata||{})])}for(const job of document.configuration.automation){await client.query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(job_key) DO UPDATE SET enabled=EXCLUDED.enabled,interval_seconds=EXCLUDED.interval_seconds,updated_at=NOW()`,[job.jobKey,job.enabled,job.intervalSeconds])}await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.configuration.import.v2','configuration',$2,$3::jsonb)`,[actorUserId,digestDocument(document),JSON.stringify({version:VERSION,resellerTiers:document.configuration.resellerTiers.length,directPaymentMappings:document.configuration.directPaymentMappings.length,automationJobs:document.configuration.automation.length})])});return{...baseResult,summary:{...baseResult.summary,resellerTiers:document.configuration.resellerTiers.length,directPaymentMappings:document.configuration.directPaymentMappings.length,automationJobs:document.configuration.automation.length}}}
-module.exports={...core,FORMAT,VERSION,MAX_DOCUMENT_BYTES,parseDocument,digestDocument,exportPortableConfiguration,previewImport,applyImport};
+
+const core = require('./configuration-transfer-v2-core');
+const { query, transaction } = require('../db');
+
+const DRIFT_KEY = 'jellyfin_drift_policy';
+
+function object(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function sourceDocument(input) {
+    if (input && typeof input === 'object') return input;
+    try { return JSON.parse(String(input || '{}')); }
+    catch (_) { return {}; }
+}
+
+function normalizeDriftPolicy(value) {
+    const source = object(value);
+    const clamp = (input, fallback, min, max) => {
+        const n = Number.parseInt(input, 10);
+        return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+    };
+    const normalized = {
+        healthyMinutes: clamp(source.healthyMinutes, 360, 30, 1440),
+        driftMinutes: clamp(source.driftMinutes, 60, 15, 720),
+        failureBaseMinutes: clamp(source.failureBaseMinutes, 15, 5, 360),
+        failureMaxMinutes: clamp(source.failureMaxMinutes, 360, 15, 1440),
+        batchSize: clamp(source.batchSize, 100, 1, 1000)
+    };
+    if (normalized.failureMaxMinutes < normalized.failureBaseMinutes) {
+        normalized.failureMaxMinutes = normalized.failureBaseMinutes;
+    }
+    return normalized;
+}
+
+function parseDocument(input) {
+    const parsed = core.parseDocument(input);
+    if (parsed.version !== 2) return parsed;
+    const source = sourceDocument(input);
+    const incoming = source?.configuration?.settings?.[DRIFT_KEY];
+    if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)) {
+        parsed.configuration.settings[DRIFT_KEY] = normalizeDriftPolicy(incoming);
+    }
+    return parsed;
+}
+
+async function exportPortableConfiguration() {
+    const document = await core.exportPortableConfiguration();
+    if (document.version !== 2) return document;
+    const result = await query(`SELECT setting_value FROM platform_settings WHERE setting_key=$1`, [DRIFT_KEY]);
+    if (result.rowCount) {
+        document.configuration.settings[DRIFT_KEY] = normalizeDriftPolicy(result.rows[0].setting_value);
+    }
+    return document;
+}
+
+async function previewImport(input) {
+    const document = parseDocument(input);
+    if (document.version !== 2) return core.previewImport(document);
+    const result = await core.previewImport(document);
+    return {
+        ...result,
+        document,
+        digest: core.digestDocument(document),
+        summary: {
+            ...result.summary,
+            driftPolicy: Object.prototype.hasOwnProperty.call(document.configuration.settings, DRIFT_KEY) ? 1 : 0
+        }
+    };
+}
+
+async function applyImport(input, actorUserId = null) {
+    const document = parseDocument(input);
+    const result = await core.applyImport(document, actorUserId);
+    if (document.version !== 2 || !Object.prototype.hasOwnProperty.call(document.configuration.settings, DRIFT_KEY)) return result;
+
+    const policy = normalizeDriftPolicy(document.configuration.settings[DRIFT_KEY]);
+    await transaction(async client => {
+        await client.query(`
+            INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at)
+            VALUES($1,$2::jsonb,$3,NOW())
+            ON CONFLICT(setting_key) DO UPDATE SET
+              setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()
+        `, [DRIFT_KEY, JSON.stringify(policy), actorUserId]);
+        await client.query(`
+            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+            VALUES($1,'admin.configuration.import.drift_policy','platform_setting',$2,$3::jsonb)
+        `, [actorUserId, DRIFT_KEY, JSON.stringify(policy)]);
+    });
+    return {
+        ...result,
+        summary: { ...(result.summary || {}), driftPolicy: 1 }
+    };
+}
+
+module.exports = {
+    ...core,
+    parseDocument,
+    exportPortableConfiguration,
+    previewImport,
+    applyImport
+};
