@@ -42,7 +42,6 @@ const originalPost = express.application.post;
 const currentListen = express.application.listen;
 
 const resellerGetRoutes = {
-    '/reseller': resellerPortal.dashboardPage,
     '/reseller/expiring-clients': resellerPortal.expiringClientsRedirect,
     '/reseller/expired-clients': resellerPortal.expiredClientsRedirect,
     '/reseller/credit-history': resellerPortal.creditHistoryPage,
@@ -77,6 +76,10 @@ express.application.get = function staffGet(path, ...handlers) {
     }
     if (path === '/logout' && handlers.length) return originalGet.call(this, path, controller.logout);
     if (path === '/admin' && handlers.length) return originalGet.call(this, path, dashboard.dashboardPage);
+    // The legacy app still declares GET /reseller. Do not register it on the
+    // PostgreSQL application: platform-preload mounts reseller-monthly-portal as
+    // the canonical monthly-first dashboard during application composition.
+    if (path === '/reseller' && handlers.length) return this;
     if (resellerGetRoutes[path] && handlers.length) {
         return originalGet.call(this, path, resellerPortal.gate, resellerPortal.noStore, resellerGetRoutes[path]);
     }
