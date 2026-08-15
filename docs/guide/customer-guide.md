@@ -1,31 +1,37 @@
-# Customer Guide
+# Customer guide
+
+The customer portal is the place to review your CAPTaINFiN account and the service attached to it.
 
 ## Your account
 
-The customer portal shows your current service entitlement, account status and the features available with your plan.
+Your portal identity is separate from the Jellyfin account used for media playback. Your CAPTaINFiN portal password is not automatically reused as your Jellyfin password.
+
+Depending on the configured security options, you may also be able to enable two-factor authentication for the customer portal.
+
+## Your subscription
+
+The portal can show the active plan, service period and actions made available by that subscription. Commercial terms for an existing paid-through period are kept with the subscription rather than silently changing because the public catalogue was edited later.
 
 ## Jellyfin access
 
-Your Jellyfin account is provisioned according to your active CAPTaINFiN entitlement and assigned server. Jellyfin credentials are separate from your CAPTaINFiN portal password.
+If your service includes normal Jellyfin access, CAPTaINFiN provisions or reconciles a Jellyfin account on an eligible server. New accounts may require you to set a separate Jellyfin password before using it.
 
-If CAPTaINFiN indicates that Jellyfin password setup is required, use the dedicated Jellyfin password action in your account rather than reusing your portal password.
+## Library visibility
 
-## Libraries
-
-Available libraries are controlled by the plan and administrator policy. Where library selection is enabled, you can choose from the libraries your entitlement permits.
+Your plan controls the libraries you are entitled to use. Where customer library selection is enabled, you may choose a smaller visible set from those entitled libraries. You cannot use the selection screen to grant yourself a library outside the plan.
 
 ## Requests
 
-If a request service is enabled, CAPTaINFiN can provide access using the configuration chosen by the administrator. Availability depends on the active plan and service configuration.
+If a request service is configured, CAPTaINFiN can provide request-service access according to your plan. Request-site credentials may be managed separately from both your portal and Jellyfin credentials.
 
-## Security
+## Password reset
 
-You can manage your portal password and, when available, optional two-factor authentication from the security area.
-
-## Subscriptions
-
-Paid access, trials and free plans are shown according to the active commercial entitlement. Cancelling renewal does not necessarily end an already-paid service period immediately.
+Email password reset changes the CAPTaINFiN portal password only. Transactional email must be configured for browser password-reset delivery.
 
 ## Stremio
 
-Stremio access is planned as a separate CAPTaINFiN service option. This section will be expanded when the Stremio service is released.
+Stremio is being prepared as a future stream-only service backed by Jellyfin. It is not a live customer feature until the dedicated addon runtime is released. When available, its addon installation credential will be separate from your portal and Jellyfin passwords.
+
+## Getting support
+
+When contacting support, describe the page/action and your portal username. Do not send passwords, 2FA recovery codes or API keys.
