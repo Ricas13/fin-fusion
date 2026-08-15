@@ -18,6 +18,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run syntax
+      - name: Enforce literal 71-item acceptance contract
+        run: node scripts/full-sweep-71-smoke.js
       - name: Enforce static coherence contract
         run: node scripts/platform-coherence-static-smoke.js
       - name: Inspect exact assembled route contract
@@ -59,7 +61,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Apply complete migration chain
+      - name: Apply complete migration chain through current head
         run: npm run db:migrate
       - name: Verify cross-feature database invariants
         run: node scripts/platform-coherence-db-smoke.js
