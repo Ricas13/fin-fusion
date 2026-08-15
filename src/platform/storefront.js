@@ -1,11 +1,328 @@
 'use strict';
-const {query}=require('../db');
-const customers=require('../customers');
-const {esc}=require('./admin-html');
-const runtimeSettings=require('./runtime-settings');
-const branding=require('./branding');
-async function settings(){const r=await query(`SELECT setting_key,setting_value FROM platform_settings WHERE setting_key IN ('storefront','storefront_features')`);const m=Object.fromEntries(r.rows.map(x=>[x.setting_key,x.setting_value]));return{copy:m.storefront||{},features:Array.isArray(m.storefront_features)?m.storefront_features:[]}}
-function planCard(p,target){const price=Number(p.price_minor)===0?'Free':`${esc(p.currency||'USD')} ${(Number(p.price_minor)/100).toFixed(Number(p.price_minor)%100?2:0)}`;return `<article class="plan"><h3>${esc(p.name)}</h3><div class="desc">${esc(p.description||'')}</div><div class="price">${price}</div><div class="currency">${esc(p.billing_interval==='trial'?'Trial':String(p.billing_interval||'').replace('_',' '))}</div><ul><li>${esc(p.streams)} concurrent stream${Number(p.streams)===1?'':'s'}</li><li>${p.allow_downloads?'Downloads included':'Downloads unavailable'}</li></ul><a class="btn alt" href="${target}">${target==='/account'?'Choose in account':target==='/account/register'?'Create account':'Sign in'}</a></article>`}
-function disabledPage(site){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><style>html,body{margin:0;min-height:100%;background:#0d0f12;color:#f4f7fa;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.closed{min-height:100vh;display:grid;place-items:center;padding:24px}.closedCard{width:min(520px,100%);border:1px solid #28303a;border-radius:16px;background:#121820;padding:28px}.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:20px}.brand img{width:38px;height:38px;border-radius:9px;object-fit:cover}.muted{color:#8794a5;line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.actions a{color:#d9e0e8;text-decoration:none;border:1px solid #32404d;border-radius:8px;padding:9px 12px}</style></head><body><main class="closed"><section class="closedCard"><div class="brand"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></div><h1>Storefront not enabled</h1><p class="muted">This installation is not currently publishing a public storefront. Existing customers and administrators can still sign in.</p><div class="actions"><a href="/account/login">Customer sign in</a><a href="/login">Administration</a></div></section></main></body></html>`}
-async function storefrontPage(req,res){try{await runtimeSettings.ensureLoaded();const site=process.env.SITE_NAME||'CAPTaINFiN';if(!runtimeSettings.storefrontEnabled()){res.setHeader('Cache-Control','no-store, private, max-age=0');return res.status(404).send(disabledPage(site))}const [plans,store]=await Promise.all([customers.listPublicPlans(),settings()]);const open=runtimeSettings.publicRegistrationOpen(),logged=Boolean(req.session?.customerId),target=logged?'/account':open?'/account/register':'/account/login';const planMarkup=plans.length?plans.map(p=>planCard(p,target)).join(''):`<div class="notice">No public plans are available yet. An administrator can publish plans from Commerce → Plans.</div>`;res.setHeader('Cache-Control','public, max-age=60');return res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(site)} · Store</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><style>html,body{margin:0;background:#0d0f12;color:#f4f7fa;min-height:100vh}.brandLockup{display:inline-flex;align-items:center;gap:9px}.brandLockup img{width:30px;height:30px;border-radius:8px;object-fit:cover}</style><link rel="stylesheet" href="/css/storefront.css"></head><body><div class="wrap"><header class="top"><a class="brand brandLockup" href="/"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></a><div class="actions"><a class="btn alt" href="/account/login">Sign in</a>${logged?'<a class="btn" href="/account">My account</a>':open?'<a class="btn" href="/account/register">Get started</a>':''}</div></header></div><main><section class="hero"><div class="wrap"><div class="eyebrow">Customer access</div><h1>${esc(store.copy.heroTitle||'Welcome')}</h1><p>${esc(store.copy.heroSubtitle||'Plans and access are managed by this service.')}</p><div class="heroBtns"><a class="btn" href="${target}">${logged?'Open my account':open?'Get started':'Sign in'}</a><a class="btn alt" href="#plans">View plans</a></div></div></section>${store.features.length?`<section class="section"><div class="wrap"><h2>${esc(store.copy.featureTitle||'Features')}</h2><div class="features">${store.features.map((f,i)=>`<div class="feature"><div class="mark">${String(i+1).padStart(2,'0')}</div><strong>${esc(f)}</strong></div>`).join('')}</div></div></section>`:''}<section class="section" id="plans"><div class="wrap"><h2>Plans</h2><div class="pricing">${planMarkup}</div>${open?'':`<div class="notice">Public registration is closed. Existing customers can still sign in, and administrators can onboard customers by invitation.</div>`}</div></section></main><footer class="footer"><div class="wrap"><span>© ${new Date().getFullYear()} ${esc(site)}</span><span><a href="/account/login">Customer sign in</a> · <a href="/login">Administration</a></span></div></footer></body></html>`)}catch(e){console.error('Storefront failed:',e.message);return res.status(500).send('Store temporarily unavailable')}}
-module.exports={storefrontPage,settings,disabledPage};
+
+const { query } = require('../db');
+const customers = require('../customers');
+const { esc } = require('./admin-html');
+const runtimeSettings = require('./runtime-settings');
+const branding = require('./branding');
+
+const DEFAULT_FEATURES = [
+    'A huge movie and TV library',
+    'Multiple concurrent streams on paid plans',
+    'Downloads available on supported plans',
+    'Watch on TVs, phones, tablets and browsers',
+    'One simple self-service customer account',
+    'Request new content from one central place'
+];
+
+async function settings() {
+    const result = await query(`
+        SELECT setting_key,setting_value
+        FROM platform_settings
+        WHERE setting_key IN ('storefront','storefront_features')
+    `);
+    const values = Object.fromEntries(result.rows.map(row => [row.setting_key, row.setting_value]));
+    return {
+        copy: values.storefront || {},
+        features: Array.isArray(values.storefront_features) && values.storefront_features.length
+            ? values.storefront_features
+            : DEFAULT_FEATURES
+    };
+}
+
+function money(minor, currency = 'USD') {
+    const amount = Number(minor || 0) / 100;
+    if (!amount) return 'Free';
+    try {
+        return new Intl.NumberFormat('en', {
+            style: 'currency',
+            currency: currency || 'USD',
+            minimumFractionDigits: Number(minor) % 100 ? 2 : 0,
+            maximumFractionDigits: 2
+        }).format(amount);
+    } catch (_) {
+        return `${currency || 'USD'} ${amount.toFixed(Number(minor) % 100 ? 2 : 0)}`;
+    }
+}
+
+function intervalLabel(plan) {
+    const labels = {
+        trial: 'trial',
+        month: 'month',
+        '6_months': '6 months',
+        year: 'year',
+        custom: plan.duration_days ? `${plan.duration_days} days` : 'access period'
+    };
+    return labels[plan.billing_interval] || String(plan.billing_interval || '').replace(/_/g, ' ');
+}
+
+function billingMonths(plan) {
+    if (plan.billing_interval === 'month') return 1;
+    if (plan.billing_interval === '6_months') return 6;
+    if (plan.billing_interval === 'year') return 12;
+    if (plan.duration_days && Number(plan.duration_days) >= 25) return Number(plan.duration_days) / 30.4375;
+    return null;
+}
+
+function monthlyBaseline(plans, currency) {
+    const monthly = plans.find(plan =>
+        plan.billing_interval === 'month'
+        && Number(plan.price_minor || 0) > 0
+        && String(plan.currency || 'USD') === String(currency || 'USD')
+    );
+    return monthly ? Number(monthly.price_minor) : null;
+}
+
+function savingForPlan(plan, plans) {
+    const months = billingMonths(plan);
+    if (!months || months <= 1 || Number(plan.price_minor || 0) <= 0) return 0;
+    const baseline = monthlyBaseline(plans, plan.currency);
+    if (!baseline) return 0;
+    return Math.max(0, Math.round(baseline * months - Number(plan.price_minor)));
+}
+
+function monthlyEquivalent(plan) {
+    const months = billingMonths(plan);
+    if (!months || months <= 1 || Number(plan.price_minor || 0) <= 0) return null;
+    return Math.round(Number(plan.price_minor) / months);
+}
+
+function bestValueCode(plans) {
+    let best = { code: null, saving: 0 };
+    for (const plan of plans) {
+        const saving = savingForPlan(plan, plans);
+        if (saving > best.saving) best = { code: plan.code, saving };
+    }
+    return best.code;
+}
+
+function targetForPlan(plan, { logged, registrationOpen }) {
+    if (logged) return '/account#plans';
+    if (registrationOpen) return '/account/register';
+    return '/account/login?next=' + encodeURIComponent('/account#plans');
+}
+
+function ctaForPlan(plan, { logged, registrationOpen }) {
+    if (logged) return Number(plan.price_minor || 0) === 0 ? 'Choose this plan' : 'Continue in account';
+    if (registrationOpen) return plan.billing_interval === 'trial' ? 'Start free trial' : 'Get started';
+    return 'Sign in to choose';
+}
+
+function quotaLine(plan) {
+    const movie = Number(plan.movie_request_limit || 0);
+    const tv = Number(plan.tv_request_limit || 0);
+    if (!movie && !tv) return '';
+    const bits = [];
+    if (movie) bits.push(`${movie} movie request${movie === 1 ? '' : 's'}`);
+    if (tv) bits.push(`${tv} TV request${tv === 1 ? '' : 's'}`);
+    return `<li>${esc(bits.join(' + '))}</li>`;
+}
+
+function planCard(plan, plans, context, featuredCode) {
+    const featured = featuredCode && String(plan.code) === String(featuredCode);
+    const saving = savingForPlan(plan, plans);
+    const equivalent = monthlyEquivalent(plan);
+    const target = targetForPlan(plan, context);
+    const price = money(plan.price_minor, plan.currency);
+    const interval = intervalLabel(plan);
+    const paid = Number(plan.price_minor || 0) > 0;
+    const description = plan.description || (plan.billing_interval === 'trial'
+        ? 'Try the service before choosing a paid plan.'
+        : 'Streaming access managed from your customer account.');
+
+    const badge = featured
+        ? '<span class="planBadge featuredBadge">Best value</span>'
+        : saving > 0
+            ? `<span class="planBadge">Save ${esc(money(saving, plan.currency))}</span>`
+            : plan.billing_interval === 'trial'
+                ? '<span class="planBadge trialBadge">Try it first</span>'
+                : '';
+
+    const equivalentText = equivalent
+        ? `<div class="planEquivalent">About ${esc(money(equivalent, plan.currency))} / month</div>`
+        : '<div class="planEquivalent">&nbsp;</div>';
+
+    return `<article class="planCard ${featured ? 'featured' : ''}">
+        <div class="planGlow" aria-hidden="true"></div>
+        <div class="planCardTop">
+            <div><div class="planName">${esc(plan.name)}</div><div class="planInterval">${esc(interval)}</div></div>
+            ${badge}
+        </div>
+        <p class="planDescription">${esc(description)}</p>
+        <div class="planPriceRow"><span class="planPrice">${esc(price)}</span>${paid ? `<span class="planPer">/ ${esc(interval)}</span>` : ''}</div>
+        ${equivalentText}
+        <ul class="planFeatures">
+            <li>${esc(plan.streams)} concurrent stream${Number(plan.streams) === 1 ? '' : 's'}</li>
+            <li>${plan.allow_downloads ? 'Downloads included' : 'Streaming access'}</li>
+            ${plan.allow_video_transcoding ? '<li>Video transcoding available</li>' : '<li>Direct playback focused</li>'}
+            ${quotaLine(plan)}
+        </ul>
+        <a class="storeBtn ${featured ? 'primary' : 'secondary'} full" href="${esc(target)}">${esc(ctaForPlan(plan, context))}</a>
+    </article>`;
+}
+
+function featureIcon(index) {
+    const icons = [
+        '<path d="M4 7h16v10H4z"/><path d="m9 7 2-3h2l2 3"/><path d="M8 12h8"/>',
+        '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h5"/>',
+        '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
+        '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>',
+        '<circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/>',
+        '<path d="M4 6h16v12H4z"/><path d="m9 10 3 2 3-2M9 14h6"/>'
+    ];
+    return `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[index % icons.length]}</svg>`;
+}
+
+function heroVisual() {
+    return `<div class="heroVisual" aria-hidden="true">
+        <div class="visualOrb orbOne"></div><div class="visualOrb orbTwo"></div>
+        <div class="screenMock">
+            <div class="screenTop"><span></span><span></span><span></span></div>
+            <div class="screenHero"><div class="screenLogo">CF</div><div><b>Ready when you are</b><small>Movies · Series · More</small></div></div>
+            <div class="posterRow">
+                <div class="poster p1"><span>FILM</span></div><div class="poster p2"><span>SERIES</span></div><div class="poster p3"><span>NEW</span></div><div class="poster p4"><span>4K</span></div>
+            </div>
+            <div class="screenLines"><i></i><i></i><i></i></div>
+        </div>
+        <div class="floatingChip chipOne"><b>3</b><span>streams</span></div>
+        <div class="floatingChip chipTwo"><b>✓</b><span>downloads</span></div>
+    </div>`;
+}
+
+function disabledPage(site) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><style>html,body{margin:0;min-height:100%;background:#080b10;color:#f4f7fa;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.closed{min-height:100vh;display:grid;place-items:center;padding:24px}.closedCard{width:min(520px,100%);border:1px solid #28303a;border-radius:18px;background:#10161e;padding:30px}.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:20px}.brand img{width:38px;height:38px;border-radius:9px;object-fit:cover}.muted{color:#8794a5;line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.actions a{color:#d9e0e8;text-decoration:none;border:1px solid #32404d;border-radius:9px;padding:10px 13px}</style></head><body><main class="closed"><section class="closedCard"><div class="brand"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></div><h1>Storefront not enabled</h1><p class="muted">This installation is not currently publishing a public storefront. Existing customers and administrators can still sign in.</p><div class="actions"><a href="/account/login">Customer sign in</a><a href="/login">Administration</a></div></section></main></body></html>`;
+}
+
+function renderStorefront({ site, plans, store, registrationOpen, logged }) {
+    const context = { logged, registrationOpen };
+    const paidPlans = plans.filter(plan => Number(plan.price_minor || 0) > 0);
+    const maxStreams = Math.max(1, ...plans.map(plan => Number(plan.streams || 1)));
+    const hasTrial = plans.some(plan => plan.billing_interval === 'trial');
+    const hasDownloads = plans.some(plan => plan.allow_downloads);
+    const featuredCode = bestValueCode(plans);
+    const planMarkup = plans.length
+        ? plans.map(plan => planCard(plan, plans, context, featuredCode)).join('')
+        : '<div class="storeNotice">No public plans are available yet.</div>';
+    const features = store.features.length ? store.features : DEFAULT_FEATURES;
+    const primaryTarget = logged ? '/account' : registrationOpen ? '/account/register' : '/account/login';
+    const primaryLabel = logged ? 'Open my account' : registrationOpen ? (hasTrial ? 'Start free trial' : 'Get started') : 'Customer sign in';
+    const announcement = String(store.copy.announcement || '').trim();
+    const supportEmail = String(store.copy.supportEmail || '').trim();
+    const cheapestPaid = paidPlans.slice().sort((a, b) => {
+        const am = monthlyEquivalent(a) || Number(a.price_minor || 0);
+        const bm = monthlyEquivalent(b) || Number(b.price_minor || 0);
+        return am - bm;
+    })[0] || null;
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#070a0f">
+    <title>${esc(site)} · Stream your way</title>
+    <meta name="description" content="${esc(store.copy.heroSubtitle || 'Simple streaming access with flexible plans and one customer account.')}">
+    <link rel="icon" href="${esc(branding.assetUrl('favicon'))}">
+    <link rel="stylesheet" href="/css/storefront.css">
+</head>
+<body>
+<div class="siteBackdrop" aria-hidden="true"><div class="backdropGlow glowA"></div><div class="backdropGlow glowB"></div><div class="backdropGrid"></div></div>
+<header class="storeHeader">
+    <div class="storeWrap headerInner">
+        <a class="storeBrand" href="/" aria-label="${esc(site)} home"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></a>
+        <nav class="storeNav" aria-label="Main navigation"><a href="#features">Features</a><a href="#plans">Plans</a><a href="#how">How it works</a></nav>
+        <div class="headerActions"><a class="storeBtn ghost" href="/account/login">Sign in</a>${logged ? '<a class="storeBtn primary small" href="/account">My account</a>' : registrationOpen ? '<a class="storeBtn primary small" href="/account/register">Get started</a>' : ''}</div>
+    </div>
+</header>
+<main>
+    <section class="heroSection">
+        <div class="storeWrap heroGrid">
+            <div class="heroCopy">
+                ${announcement ? `<div class="announcement"><span>New</span>${esc(announcement)}</div>` : '<div class="heroEyebrow"><span class="liveDot"></span>Entertainment on your terms</div>'}
+                <h1>${esc(store.copy.heroTitle || 'Your entertainment. One simple subscription.')}</h1>
+                <p class="heroLead">${esc(store.copy.heroSubtitle || 'Stream movies and TV with flexible access, multiple concurrent streams and a simple customer account.')}</p>
+                <div class="heroActions"><a class="storeBtn primary large" href="${esc(primaryTarget)}">${esc(primaryLabel)} <span aria-hidden="true">→</span></a><a class="storeBtn secondary large" href="#plans">Compare plans</a></div>
+                <div class="heroProof">
+                    <div><strong>${maxStreams}</strong><span>max concurrent streams</span></div>
+                    <div><strong>${hasDownloads ? 'Yes' : '—'}</strong><span>download options</span></div>
+                    <div><strong>${hasTrial ? '24h' : `${plans.length}`}</strong><span>${hasTrial ? 'trial available' : 'plans available'}</span></div>
+                </div>
+            </div>
+            ${heroVisual()}
+        </div>
+        <div class="storeWrap trustStrip">
+            <span>One account</span><i></i><span>Multiple devices</span><i></i><span>Simple plan management</span><i></i><span>Central content requests</span>${cheapestPaid ? `<div class="trustPrice">Plans from <strong>${esc(money(monthlyEquivalent(cheapestPaid) || cheapestPaid.price_minor, cheapestPaid.currency))}</strong> / month</div>` : ''}
+        </div>
+    </section>
+
+    <section class="storeSection featureSection" id="features">
+        <div class="storeWrap">
+            <div class="sectionIntro"><div class="sectionKicker">Built around the way you watch</div><h2>${esc(store.copy.featureTitle || 'Everything you need to watch your way')}</h2><p>Simple access without a complicated customer experience.</p></div>
+            <div class="featureGrid">${features.slice(0, 6).map((feature, index) => `<article class="featureCard"><div class="featureIcon">${featureIcon(index)}</div><div class="featureNumber">0${index + 1}</div><h3>${esc(feature)}</h3></article>`).join('')}</div>
+        </div>
+    </section>
+
+    <section class="storeSection experienceSection">
+        <div class="storeWrap experienceGrid">
+            <div class="experienceVisual" aria-hidden="true"><div class="device desktop"><div class="deviceScreen"><span class="playCircle">▶</span><div class="mediaGradient"></div></div></div><div class="device phone"><div class="phoneNotch"></div><div class="phoneScreen"><span class="playCircle smallPlay">▶</span></div></div></div>
+            <div class="experienceCopy"><div class="sectionKicker">Watch wherever you are</div><h2>Your account follows you from screen to screen.</h2><p>Use your Jellyfin access on compatible TVs, browsers, phones and tablets. Your plan and account stay in one place.</p><div class="deviceTags"><span>Smart TV</span><span>Browser</span><span>iPhone / iPad</span><span>Android</span><span>Tablet</span></div></div>
+        </div>
+    </section>
+
+    <section class="storeSection pricingSection" id="plans">
+        <div class="storeWrap">
+            <div class="sectionIntro"><div class="sectionKicker">Straightforward pricing</div><h2>Choose the access that fits you.</h2><p>No mystery tiers. Compare the plans available right now.</p></div>
+            <div class="pricingGrid">${planMarkup}</div>
+            ${registrationOpen ? '' : '<div class="storeNotice"><strong>Already a customer?</strong> Sign in to manage or renew your access. New customers can currently join by invitation.</div>'}
+        </div>
+    </section>
+
+    <section class="storeSection howSection" id="how">
+        <div class="storeWrap">
+            <div class="sectionIntro"><div class="sectionKicker">Three simple steps</div><h2>From account to watching in minutes.</h2></div>
+            <div class="stepsGrid">
+                <article class="stepCard"><span>01</span><h3>${registrationOpen ? 'Create your account' : 'Sign in or use your invite'}</h3><p>${registrationOpen ? 'Set up your customer account and choose how you want to access the service.' : 'Existing customers can sign in. New customers can join with an invitation from the service administrator.'}</p></article>
+                <article class="stepCard"><span>02</span><h3>Choose your plan</h3><p>Compare stream limits, downloads and plan duration, then choose the option that works for you.</p></article>
+                <article class="stepCard"><span>03</span><h3>Open Jellyfin and watch</h3><p>Your streaming access is managed from one customer portal, including account settings and content requests.</p></article>
+            </div>
+        </div>
+    </section>
+
+    <section class="finalCtaSection">
+        <div class="storeWrap finalCta"><div><div class="sectionKicker">Ready when you are</div><h2>${logged ? 'Everything is waiting in your account.' : registrationOpen ? 'Start watching your way.' : 'Already have access?'}</h2><p>${logged ? 'Open your customer portal to manage your plan and streaming access.' : registrationOpen ? 'Create an account, choose your access and get started.' : 'Sign in to your customer portal to manage your plan, Jellyfin access and requests.'}</p></div><a class="storeBtn primary large" href="${esc(primaryTarget)}">${esc(primaryLabel)} <span aria-hidden="true">→</span></a></div>
+    </section>
+</main>
+<footer class="storeFooter"><div class="storeWrap footerGrid"><div><a class="storeBrand footerBrand" href="/"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></a><p>Simple streaming access, managed from one place.</p></div><div class="footerLinks"><div><strong>Account</strong><a href="/account/login">Customer sign in</a>${registrationOpen ? '<a href="/account/register">Create account</a>' : ''}</div><div><strong>Help</strong>${supportEmail ? `<a href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>` : '<span>Contact your service administrator</span>'}</div></div></div><div class="storeWrap footerBottom"><span>© ${new Date().getFullYear()} ${esc(site)}</span><a href="/login">Administration</a></div></footer>
+</body></html>`;
+}
+
+async function storefrontPage(req, res) {
+    try {
+        await runtimeSettings.ensureLoaded();
+        const site = runtimeSettings.siteName ? runtimeSettings.siteName() : (process.env.SITE_NAME || 'CAPTaINFiN');
+        if (!runtimeSettings.storefrontEnabled()) {
+            res.setHeader('Cache-Control', 'no-store, private, max-age=0');
+            return res.status(404).send(disabledPage(site));
+        }
+        const [plans, store] = await Promise.all([customers.listPublicPlans(), settings()]);
+        const registrationOpen = runtimeSettings.publicRegistrationOpen();
+        const logged = Boolean(req.session?.customerId);
+        res.setHeader('Cache-Control', logged ? 'no-store, private, max-age=0' : 'public, max-age=60');
+        return res.send(renderStorefront({ site, plans, store, registrationOpen, logged }));
+    } catch (error) {
+        console.error('Storefront failed:', error.message);
+        return res.status(500).send('Store temporarily unavailable');
+    }
+}
+
+module.exports = {
+    storefrontPage,
+    settings,
+    disabledPage,
+    renderStorefront,
+    planCard,
+    savingForPlan,
+    monthlyEquivalent,
+    bestValueCode
+};
