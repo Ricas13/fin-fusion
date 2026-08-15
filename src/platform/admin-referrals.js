@@ -3,14 +3,10 @@
 const express = require('express');
 const { query } = require('../db');
 const csrf = require('../auth/csrf');
-const auth = require('../auth/service');
 const referrals = require('../referrals');
+const runtimeSettings = require('./runtime-settings');
 const { esc, layout } = require('./admin-html');
 const { sendCsv } = require('./export');
-
-function site() {
-    return process.env.SITE_NAME || 'CAPTaINFiN';
-}
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -27,10 +23,6 @@ function csrfInput(req) {
     return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
 }
 
-function stepInput() {
-    return `<div class="formGroup"><label>Authenticator / recovery code <span class="muted">(only needed if 2FA is enabled)</span></label><input class="input" name="code" autocomplete="one-time-code"></div>`;
-}
-
 function notice(req) {
     return `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`;
 }
@@ -41,10 +33,6 @@ function pill(text, kind = '') {
 
 function date(v) {
     return v ? new Date(v).toLocaleString() : 'never';
-}
-
-async function requireStep(req) {
-    return auth.verifySecondFactor(req.session.authUserId, req.body.code, req);
 }
 
 async function listRedemptions() {
@@ -80,7 +68,6 @@ function redemptionCard(req, row) {
             <form method="post" action="/admin/referrals/${esc(row.id)}/resolve">
                 ${csrfInput(req)}
                 <div class="formGroup"><label>Resolution note</label><input class="input" name="note" maxlength="200" placeholder="e.g. granted manually via reseller credit"></div>
-                ${stepInput()}
                 <button class="button secondary">Mark resolved</button>
             </form>
         </div>` : ''}
@@ -88,6 +75,7 @@ function redemptionCard(req, row) {
 }
 
 async function page(req) {
+    await runtimeSettings.ensureLoaded();
     const [rows, settings] = await Promise.all([listRedemptions(), referrals.loadSettings()]);
     const rewarded = rows.filter(r => r.status === 'rewarded').length;
     const unfulfilled = rows.filter(r => r.status === 'unfulfilled').length;
@@ -106,7 +94,6 @@ async function page(req) {
                     <div class="formGroup"><label>Reward days <span class="muted">(added to referrer's active subscription)</span></label><input class="input" type="number" min="1" max="365" name="rewardDays" value="${esc(settings.rewardDays)}"></div>
                     <div class="formGroup"><label class="toggleRow"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''}><span>Referral program enabled</span></label></div>
                 </div>
-                ${stepInput()}
                 <button class="button">Save settings</button>
             </form>
         </section>
@@ -116,7 +103,7 @@ async function page(req) {
         </section>`;
 
     return layout({
-        siteName: site(),
+        siteName: runtimeSettings.siteName(),
         active: 'referrals',
         title: 'Referrals',
         subtitle: 'Referral codes, attribution and rewards',
@@ -159,7 +146,6 @@ function createAdminReferralsRouter() {
     router.post('/admin/referrals/settings', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
-            if (!(await requireStep(req))) throw new Error('verification');
             const rewardDays = Number.parseInt(req.body.rewardDays, 10);
             if (!Number.isFinite(rewardDays) || rewardDays < 1 || rewardDays > 365) throw new Error('Enter a reward of 1-365 days.');
             const enabled = req.body.enabled === 'on';
@@ -174,14 +160,13 @@ function createAdminReferralsRouter() {
             `, [req.session.authUserId, JSON.stringify({ rewardDays, enabled })]);
             return res.redirect('/admin/referrals?message=' + encodeURIComponent('Referral settings saved.'));
         } catch (error) {
-            return res.redirect('/admin/referrals?error=' + encodeURIComponent(error.message === 'verification' ? 'Verification failed.' : error.message));
+            return res.redirect('/admin/referrals?error=' + encodeURIComponent(error.message));
         }
     });
 
     router.post('/admin/referrals/:id/resolve', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
-            if (!(await requireStep(req))) throw new Error('verification');
             const note = String(req.body.note || '').trim().slice(0, 200) || 'Resolved manually by admin';
             const updated = await query(`
                 UPDATE referral_redemptions SET status='rewarded',rewarded_at=NOW(),reward_note=$2
@@ -194,7 +179,7 @@ function createAdminReferralsRouter() {
             `, [req.session.authUserId, req.params.id, JSON.stringify({ note })]);
             return res.redirect('/admin/referrals?message=' + encodeURIComponent('Referral marked resolved.'));
         } catch (error) {
-            return res.redirect('/admin/referrals?error=' + encodeURIComponent(error.message === 'verification' ? 'Verification failed.' : 'Could not resolve referral.'));
+            return res.redirect('/admin/referrals?error=' + encodeURIComponent('Could not resolve referral.'));
         }
     });
 

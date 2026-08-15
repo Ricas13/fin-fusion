@@ -3,13 +3,9 @@
 const express = require('express');
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
-const auth = require('../auth/service');
+const runtimeSettings = require('./runtime-settings');
 const { esc, layout } = require('./admin-html');
 const { sendCsv } = require('./export');
-
-function site() {
-    return process.env.SITE_NAME || 'CAPTaINFiN';
-}
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -24,10 +20,6 @@ function noStore(_req, res, next) {
 
 function csrfInput(req) {
     return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
-}
-
-function stepInput() {
-    return `<div class="formGroup"><label>Authenticator / recovery code <span class="muted">(only needed if 2FA is enabled)</span></label><input class="input" name="code" autocomplete="one-time-code"></div>`;
 }
 
 function notice(req) {
@@ -46,10 +38,6 @@ function integer(value, min, max, fallback = null) {
     if (value === undefined || value === null || String(value).trim() === '') return fallback;
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
-}
-
-async function requireStep(req) {
-    return auth.verifySecondFactor(req.session.authUserId, req.body.code, req);
 }
 
 async function listCodes() {
@@ -83,7 +71,6 @@ function codeCard(req, row) {
             <form method="post" action="/admin/discounts/${esc(row.id)}/toggle">
                 ${csrfInput(req)}
                 <input type="hidden" name="active" value="${row.active ? 'false' : 'true'}">
-                ${stepInput()}
                 <button class="button ${row.active ? 'btn-danger' : 'btn-success'}">${row.active ? 'Disable code' : 'Enable code'}</button>
             </form>
         </div>
@@ -91,6 +78,7 @@ function codeCard(req, row) {
 }
 
 async function page(req) {
+    await runtimeSettings.ensureLoaded();
     const rows = await listCodes();
     const active = rows.filter(r => r.active).length;
     const totalRedemptions = rows.reduce((sum, r) => sum + Number(r.redemption_count || 0), 0);
@@ -117,7 +105,6 @@ async function page(req) {
                     <div class="formGroup"><label>Expires</label><input class="input" type="date" name="expiresAt"></div>
                 </div>
                 <div class="formGroup"><label>Description</label><input class="input" name="description" maxlength="200"></div>
-                ${stepInput()}
                 <button class="button">Create discount code</button>
             </form>
         </section>
@@ -127,7 +114,7 @@ async function page(req) {
         </section>`;
 
     return layout({
-        siteName: site(),
+        siteName: runtimeSettings.siteName(),
         active: 'discounts',
         title: 'Discount codes',
         subtitle: 'Promo codes for direct checkout',
@@ -172,7 +159,6 @@ function createAdminDiscountsRouter() {
     router.post('/admin/discounts', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
-            if (!(await requireStep(req))) throw new Error('verification');
             const code = text(req.body.code, 40).toUpperCase();
             if (!/^[A-Z0-9-]{3,40}$/.test(code)) throw new Error('Enter a valid code (letters, numbers, dashes).');
             const discountType = req.body.discountType === 'fixed' ? 'fixed' : 'percent';
@@ -211,7 +197,7 @@ function createAdminDiscountsRouter() {
             return res.redirect('/admin/discounts?message=' + encodeURIComponent('Discount code created.'));
         } catch (error) {
             console.error('Discount create failed:', error.message);
-            const msg = error.code === '23505' ? 'That code already exists.' : error.message === 'verification' ? 'Verification failed.' : error.message;
+            const msg = error.code === '23505' ? 'That code already exists.' : error.message;
             return res.redirect('/admin/discounts?error=' + encodeURIComponent(msg));
         }
     });
@@ -219,7 +205,6 @@ function createAdminDiscountsRouter() {
     router.post('/admin/discounts/:id/toggle', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
-            if (!(await requireStep(req))) throw new Error('verification');
             const active = String(req.body.active) === 'true';
             const updated = await query('UPDATE discount_codes SET active=$2,updated_at=NOW() WHERE id=$1 RETURNING code', [req.params.id, active]);
             if (!updated.rowCount) throw new Error('missing');
@@ -229,7 +214,7 @@ function createAdminDiscountsRouter() {
             `, [req.session.authUserId, req.params.id, JSON.stringify({ active })]);
             return res.redirect('/admin/discounts?message=' + encodeURIComponent(active ? 'Code enabled.' : 'Code disabled.'));
         } catch (error) {
-            return res.redirect('/admin/discounts?error=' + encodeURIComponent(error.message === 'verification' ? 'Verification failed.' : 'Discount code could not be updated.'));
+            return res.redirect('/admin/discounts?error=' + encodeURIComponent('Discount code could not be updated.'));
         }
     });
 

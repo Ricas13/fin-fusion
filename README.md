@@ -1,218 +1,234 @@
-# 🎬 Steam Fusion - Jellyfin Reseller Management Platform
+# CAPTaINFiN / Steam Fusion
 
-A comprehensive reseller management panel for Jellyfin media servers. Built for businesses that need to manage multiple resellers, clients, and subscriptions.
+CAPTaINFiN is a self-hosted Jellyfin customer, reseller, subscription, billing and fleet-management platform. This fork has moved well beyond the original JSON-file Steam Fusion application: PostgreSQL is the system of record, Jellyfin servers are managed as a fleet, customer and reseller commerce are separate, background automation runs in dedicated workers, and the public storefront/admin/customer/reseller experiences are all database-backed.
 
-![License](https://img.shields.io/badge/License-MIT-yellow) ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green) ![Jellyfin](https://img.shields.io/badge/Jellyfin-10.8%2B-purple)
+## What it manages
 
-## ✨ Features
+- Multiple Jellyfin servers, health, libraries, capacity and fleet-aware placement.
+- Direct customers, invitations, imported Jellyfin users, account claims and one-time activation links.
+- Customer plans with stream/download/transcoding/library/request policies.
+- Stripe and PayPal one-time or recurring customer checkout.
+- Monthly reseller tiers with active-customer entitlement limits, recurring billing, grace handling and tier-specific downstream plan catalogues.
+- Central Seerr/Overseerr account synchronisation and per-plan request quotas.
+- Transactional email, Telegram notifications and encrypted delivery outbox.
+- Provisioning/reconciliation, billing verification, entitlement expiry, reseller-estate enforcement and other singleton automation jobs.
+- Playback/activity metrics, live fleet streams, reseller sales ledger and recurring-commerce reporting.
+- Portable non-secret configuration export/import for clean installs and migration.
 
-### Admin Dashboard
-- **Reseller Management**: Create, edit, disable, and delete reseller accounts
-- **Credit System**: Add credits to resellers for client creation
-- **Client Overview**: View all clients across all resellers
-- **Expiry Management**: Edit client expiry dates manually
-- **Client Transfer**: Move clients between resellers
-- **Notes System**: Add notes to clients for tracking
-- **Login Tracking**: View reseller login history with IP and country
-- **Search & Sort**: Find clients quickly, sort by various fields
-- **Backup System**: Download database backups
-- **Credit History**: Track all credit transactions
+## Architecture
 
-### Reseller Dashboard
-- **Trial Creation**: Create new trial clients (costs 1 credit)
-- **Trial Extension**: Extend clients by 1 or 3 months
-- **Password Reset**: Reset client passwords instantly
-- **Client Management**: View and manage all their clients
-- **Notes**: Add notes to individual clients
-- **Expiry Alerts**: See clients expiring within 3 days
-- **Expired View**: View all expired clients
-- **Credit History**: Track their credit transactions
+The supported runtime is:
 
-### Automation
-- **Cron Jobs**: Automatic expiry checking every 5 minutes
-- **Telegram Notifications**: Alerts for expired clients and low credits
-- **Jellyfin Integration**: Real-time user creation and management
+```text
+Browser / reverse proxy
+        |
+        v
+   app (Node 22 / Express)
+        |
+        +---- PostgreSQL 17
+        |
+        +---- Jellyfin fleet
+        |
+        +---- Stripe / PayPal / SMTP / Seerr (optional)
 
-## 🛠️ Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| **Backend** | Node.js, Express.js |
-| **Frontend** | EJS templates, vanilla JavaScript |
-| **Database** | JSON file-based (no external DB needed) |
-| **Authentication** | bcrypt password hashing, express-session |
-| **API** | Jellyfin REST API |
-| **Notifications** | Telegram Bot API |
-
-## 📋 Prerequisites
-
-- Node.js 18 or higher
-- Jellyfin server (version 10.8+)
-- Jellyfin API key
-- Telegram bot token (optional, for notifications)
-
-## 🚀 Quick Start
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/pythonandyou/steam-fusion.git
-cd steam-fusion
+   automation-worker  -> singleton scheduled platform jobs
+   activity-worker    -> Jellyfin playback/activity collection and policy enforcement
 ```
 
-### 2. Install Dependencies
+PostgreSQL is authoritative. `db/data.json`, the original single-server JSON scripts and the historical Express preload monkey-patches are not the production architecture.
+
+## Requirements
+
+- Docker Engine + Docker Compose is the recommended deployment path.
+- PostgreSQL 17 is included in the Compose stack.
+- A reverse proxy terminating HTTPS is recommended for public deployments.
+- At least one Jellyfin server is required before accounts can actually be provisioned, but a clean installation can start with zero servers, plans, customers, resellers or payment providers.
+
+## Quick start
 
 ```bash
-npm install
-```
-
-### 3. Configure Environment
-
-```bash
+git clone https://github.com/Ricas13/steam-fusion.git captainfin
+cd captainfin
 cp .env.example .env
-# Edit .env with your settings
 ```
 
-Required environment variables:
-```env
-JELLYFIN_URL=http://your-jellyfin-server:8096
-JELLYFIN_API_KEY=your-api-key
-SESSION_SECRET=your-random-secret
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-secure-password
-```
-
-### 4. Run the Server
+Generate independent high-entropy values for every encryption/session key in `.env`, set the PostgreSQL passwords/URLs, then start the stack:
 
 ```bash
-node app.js
+docker compose up -d --build
 ```
 
-The panel will be available at `http://localhost:3030`
+The `migrate` service applies schema migrations and bootstraps an unattended administrator only when both `ADMIN_USERNAME` and `ADMIN_PASSWORD` are supplied. Otherwise open the app and follow the one-time browser setup flow.
 
-### 5. First Login
+The app listens on `127.0.0.1:3030` by default. Put your HTTPS reverse proxy in front of it rather than exposing the container directly to the internet.
 
-Use the admin credentials you set in `.env`:
-- Default: `admin` / `admin123` (change this immediately!)
+## First-run setup
 
-## 📁 Project Structure
+A genuinely blank database starts safely with customer-facing features off. The setup flow creates the first native administrator and permanently locks the installer afterwards.
 
-```
-steam-fusion/
-├── app.js                 # Main Express application
-├── check-expired.js       # Cron job for expiry checking
-├── import_users.js        # Bulk user import utility
-├── package.json           # Dependencies
-├── .env.example           # Environment template
-├── db/
-│   └── data.json          # JSON database
-├── views/
-│   ├── login.ejs          # Login page
-│   ├── admin/
-│   │   └── dashboard.ejs  # Admin dashboard
-│   └── reseller/
-│       └── dashboard.ejs  # Reseller dashboard
-└── public/
-    └── logo.jpg          # Branding asset
-```
+Recommended order in Administration:
 
-## 🔧 Configuration
+1. **Setup / Configuration Health** — review readiness and dependency warnings.
+2. **Branding / General / Reseller Settings** — set installation identity and commercial defaults.
+3. **Servers / Libraries** — add Jellyfin servers, test them and synchronise libraries.
+4. **Plans / Reseller Plans** — create customer plans and optional monthly reseller tiers.
+5. **Payments** — configure encrypted browser-managed Stripe/PayPal credentials and plan/tier mappings.
+6. **Notifications** — configure SMTP and/or Telegram.
+7. **Automation** — confirm the dedicated worker is reporting successful runs.
+8. **Storefront / Registration** — enable public-facing features only when the installation is ready.
 
-### Jellyfin Setup
-
-1. Go to Jellyfin Dashboard → API Keys
-2. Create a new API key
-3. Copy the key to your `.env` file
-
-### Telegram Bot (Optional)
-
-1. Create a bot via [@BotFather](https://t.me/botfather)
-2. Get your chat ID by messaging [@userinfobot](https://t.me/userinfobot)
-3. Add credentials to `.env`
-
-### Cron Jobs
-
-The system includes automatic expiry checking. To enable:
+## Services
 
 ```bash
-# Add to crontab (every 5 minutes)
-*/5 * * * * cd /path/to/steam-fusion && node check-expired.js
+docker compose ps
 ```
 
-## 📊 Database Schema
+The normal stack contains:
 
-### Clients
-```javascript
-{
-  id: Number,
-  username: String,
-  password: String,
-  jellyfinId: String,
-  resellerId: Number,
-  trialStart: Date,
-  trialEnd: Date,
-  isPaid: Boolean,
-  note: String,
-  expired: Boolean
-}
+- `steam-fusion` — web/admin/customer/reseller application.
+- `steam-fusion-automation` — scheduled singleton jobs using PostgreSQL advisory locks.
+- `steam-fusion-activity` — Jellyfin activity/fleet metrics worker with a restricted DB role.
+- `steam-fusion-postgres` — PostgreSQL.
+- `migrate` — one-shot schema migration/bootstrap service.
+
+`recovery-tools` is an opt-in Compose profile for encrypted backup/restore operations.
+
+## Database migrations
+
+Application containers depend on the one-shot migrate service. To run migrations manually:
+
+```bash
+npm run db:migrate
 ```
 
-### Resellers
-```javascript
-{
-  id: Number,
-  username: String,
-  password: String (bcrypt hash),
-  credits: Number,
-  active: Boolean,
-  createdAt: Date,
-  createdBy: Number,
-  lastLogin: Date,
-  lastIp: String
-}
+Migrations are checksum-tracked. Do not edit an already-applied migration; add a new numbered migration.
+
+## Security model
+
+- Native PostgreSQL-backed staff/customer identities with bcrypt password hashes.
+- PostgreSQL-backed sessions and persistent login throttling.
+- Optional administrator/reseller TOTP with recovery codes; global enforcement is configurable.
+- One-time activation, invitation, claim, verification and reset links store validation hashes rather than plaintext tokens.
+- Jellyfin/payment/request/email credentials are encrypted at rest using purpose-specific installation keys.
+- CSRF/origin protection is applied to authenticated state-changing routes.
+- Provider webhooks require provider signature verification and idempotent processing.
+- CAPTaINFiN-managed access uses independent composable holds so billing/admin/reseller restrictions cannot accidentally clear one another.
+- Provider-managed recurring subscriptions are never silently rewritten into manual/reseller-credit entitlements.
+
+Never reuse `DATA_ENCRYPTION_KEY`, `JELLYFIN_ENCRYPTION_KEY`, `AUTH_ENCRYPTION_KEY`, `ACTIVITY_ENCRYPTION_KEY` or `BACKUP_ENCRYPTION_KEY`.
+
+## Customer commerce
+
+Direct plans may be one-time, recurring, trial or free. Server-side audience checks prevent reseller-only plans from being purchased through customer endpoints.
+
+Existing recurring customers use controlled plan changes instead of creating overlapping recurring subscriptions:
+
+- Stripe upgrades can be applied immediately with provider proration.
+- Stripe downgrades can be scheduled for period end.
+- PayPal plan changes preserve the current paid-through period and require a new authorisation when the replacement subscription starts.
+
+Customer portal users can inspect their subscription/payment history and provider references without seeing secrets.
+
+## Reseller commerce
+
+Monthly reseller billing is the primary reseller model. Each tier defines:
+
+- Monthly price/currency.
+- Active customer entitlement limit.
+- Optional payment grace period.
+- Stripe/PayPal recurring product mapping.
+- Optional explicit downstream customer-plan catalogue.
+
+Commercial terms are snapshotted into each reseller subscription, so later tier edits do not silently change an already-paid agreement. A reseller's own Jellyfin account, when allowed, consumes one active entitlement.
+
+Legacy regular/trial credits remain visible only as a migration/history compatibility path.
+
+## Automation
+
+Recurring mutation work is not run by every web replica. The dedicated automation worker owns jobs such as:
+
+- Jellyfin health checks.
+- Entitlement expiry/reconciliation.
+- Customer billing verification.
+- Scheduled customer plan changes.
+- Reseller billing verification and estate transitions.
+- Request-user synchronisation.
+- Transactional email outbox delivery.
+- Bulk-job processing and stale-job recovery.
+
+Administration → Automation shows enabled state, interval, last run, last success, duration, processed count, errors and a safe **Run now** request.
+
+## Configuration export/import
+
+Administration can export a versioned portable configuration document containing non-secret business configuration such as plans, request quotas, reseller tiers, tier plan rules, provider mapping references, storefront settings and automation schedules.
+
+Exports deliberately exclude secrets, customer/reseller identities, provider customer/subscription identities, sessions, audit/auth history and branding binary assets.
+
+Version 2 imports remain backward-compatible with version 1 files.
+
+## Backups
+
+Use the encrypted PostgreSQL backup tooling rather than copying application state files:
+
+```bash
+npm run db:backup
 ```
 
-## 🔒 Security Features
+Restore tooling is available through the `recovery-tools` Compose profile. Test restores before relying on a backup strategy.
 
-- bcrypt password hashing
-- Session-based authentication
-- API key protection
-- Input validation
-- No downloads allowed for trial users
-- Hidden trial users from login screen
+## Production checks
 
-## 📈 Business Model
+Static/smoke checks:
 
-This system supports a reseller business model:
-1. Admin creates reseller accounts and allocates credits
-2. Resellers use credits to create trial accounts for their clients
-3. Resellers can extend trials by purchasing more credits
-4. Expired accounts are automatically disabled
+```bash
+npm ci
+npm run check
+```
 
-## 🤝 Contributing
+Production-readiness audit:
 
-Contributions are welcome! Please feel free to submit issues or pull requests.
+```bash
+node scripts/production-readiness.js
+```
 
-## 📝 License
+The readiness audit uses the same browser-managed integration status and Jellyfin placement logic as the application. A blank install may legitimately have no servers or plans; those become operational warnings rather than startup corruption.
 
-This project is open source and available under the [MIT License](LICENSE).
+## Supported start commands
 
-## 👤 Author
+Production:
 
-**Rudi** - [pythonandyou](https://github.com/pythonandyou)
+```bash
+npm start
+```
 
----
+Development:
 
-## 🎯 Roadmap
+```bash
+npm run dev
+```
 
-- [ ] WhatsApp integration for notifications
-- [ ] Payment gateway integration
-- [ ] Content request system
-- [ ] Multi-server support
-- [ ] Usage statistics and reports
-- [ ] Email notifications
-- [ ] Two-factor authentication
+Both execute `src/application.js`, the single explicit application-composition root. `app.js`, `secure-start.js` and the old preload filenames remain thin/no-op compatibility entrypoints only so older deployment commands fail safely during upgrades.
 
----
+## Project structure
 
-*Built with ❤️ for the Jellyfin reseller community*
+```text
+src/application.js            explicit Express composition
+src/auth/                     authentication, sessions, 2FA, activation/setup
+src/entitlements/             effective subscription + composable access holds
+src/jellyfin/                 registry, placement, provisioning, reconciliation
+src/payments/                 Stripe/PayPal, lifecycle, checkout intents, billing
+src/resellers/                monthly reseller entitlement and commercial policy
+src/integrations/             request service, SMTP/outbox and integrations
+src/automation/               singleton job registry/health
+src/platform/                 admin/customer/reseller/storefront routes and UI
+db/migrations/                immutable PostgreSQL migrations
+scripts/                      supported operations/workers/smoke checks
+```
+
+## Legacy migration note
+
+The project originated from a small JSON-file Steam Fusion reseller panel. Legacy JSON import remains available for migration purposes, but the JSON database and old single-server expiry/import scripts are not supported runtime components.
+
+## License
+
+MIT. See `LICENSE`.

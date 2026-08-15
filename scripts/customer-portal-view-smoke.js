@@ -28,6 +28,8 @@ const ejs = require('ejs');
         stripeEnabled: false,
         paypalEnabled: false,
         overseerrUrl: null,
+        requestAccess: null,
+        requestSyncConfigured: false,
         libraryEntitlement: ['Movies', 'TV'],
         librarySelection: ['Movies'],
         csrfToken: 'csrf-test',

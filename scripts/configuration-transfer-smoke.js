@@ -54,10 +54,26 @@ async function server(slug, name) {
 
     const exported = await transfer.exportPortableConfiguration();
     assert.strictEqual(exported.format, transfer.FORMAT);
-    assert.strictEqual(exported.version, 1);
+    assert.strictEqual(exported.version, 2);
+    assert(Array.isArray(exported.configuration.resellerTiers), 'v2 export must include reseller tiers');
+    assert(Array.isArray(exported.configuration.directPaymentMappings), 'v2 export must include direct payment mappings');
+    assert(Array.isArray(exported.configuration.automation), 'v2 export must include automation settings');
     assert.strictEqual(exported.configuration.plans.length, 1);
     assert.strictEqual(exported.configuration.plans[0].serverPool[0].serverSlug, 'premium-a');
     assert.strictEqual(exported.configuration.settings.platform.requireAdminTwoFactor, undefined, 'security policy must not be portable');
+
+    // Keep a regression for the documented V1 compatibility path as V2 becomes canonical.
+    const legacy = {
+        format: exported.format,
+        version: 1,
+        configuration: {
+            settings: { platform: exported.configuration.settings.platform },
+            plans: exported.configuration.plans,
+            notifications: exported.configuration.notifications
+        },
+        excluded: exported.excluded
+    };
+    assert.strictEqual(transfer.parseDocument(legacy).version, 1, 'v1 portable documents must remain importable');
 
     const serialized = JSON.stringify(exported);
     for (const forbidden of ['test-not-a-real-secret', 'base_url', 'api_key_encrypted', 'provider_subscription_id']) {
@@ -110,9 +126,9 @@ async function server(slug, name) {
     assert.strictEqual(platform.rows[0].setting_value.siteName, 'Portable Target');
     assert.strictEqual(platform.rows[0].setting_value.requireAdminTwoFactor, true, 'non-portable security setting must survive merge import');
 
-    const audit = await query("SELECT metadata FROM audit_log WHERE action='admin.configuration.import' ORDER BY id DESC LIMIT 1");
-    assert.strictEqual(audit.rowCount, 1);
-    assert.strictEqual(audit.rows[0].metadata.version, 1);
+    const audit = await query("SELECT metadata FROM audit_log WHERE action='admin.configuration.import.v2' ORDER BY id DESC LIMIT 1");
+    assert.strictEqual(audit.rowCount, 1, 'v2 import must emit its v2 audit event');
+    assert(Object.prototype.hasOwnProperty.call(audit.rows[0].metadata, 'automationJobs'), 'v2 import audit must include the v2 preview summary');
 
     const bad = JSON.parse(JSON.stringify(exported));
     bad.configuration.plans[0].streams = 0;

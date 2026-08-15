@@ -4,8 +4,9 @@ const bcrypt = require('bcryptjs');
 const { query, transaction, getPool } = require('../src/db');
 const monthly = require('../src/resellers/monthly');
 const resellerJobs = require('../src/resellers/jobs');
+const accessHolds = require('../src/entitlements/access-holds');
 const portal = require('../src/platform/reseller-monthly-portal');
-const storefront = require('../src/platform/reseller-storefront');
+const storefront = require('../src/platform/storefront');
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -87,7 +88,7 @@ async function main() {
         assert(Number(stats.primary.amount_minor) === 650 && Number(stats.primary.sales) === 1, 'Reseller downstream revenue analytics are incorrect');
 
         const section = storefront.resellerSection([{ ...tier, provider_prices: [{ provider: 'stripe', active: true }] }], 'support@example.com');
-        assert(section.includes('Smoke Business') && section.includes('2 active Jellyfin accounts') && section.includes('/ month'), 'Public reseller tier card did not render dynamically');
+        assert(section.includes('Smoke Business') && section.includes('2 active customer entitlements') && section.includes('/ month'), 'Public reseller tier card did not render dynamically through the canonical storefront');
 
         const mapping = await monthly.providerMapping(tier.id, 'stripe');
         assert(mapping?.external_id === 'price_smoke_monthly', 'Recurring Stripe tier mapping did not resolve');
@@ -101,30 +102,48 @@ async function main() {
         const paidThrough = (await query('SELECT status,cancel_at_period_end FROM reseller_subscriptions WHERE id=$1', [manual.id])).rows[0];
         assert(paidThrough.status === 'active' && paidThrough.cancel_at_period_end === true, 'Paid-through cancellation revoked reseller entitlement early');
 
-        await query(`UPDATE customers SET access_paused_at=NOW(),access_hold_reason=$2 WHERE id=$1`, [child.id, `${monthly.MANUAL_HOLD_PREFIX}${reseller.id}`]);
+        await accessHolds.addHold({
+            customerId: child.id,
+            type: 'reseller_manual',
+            sourceKey: reseller.id,
+            reason: 'Smoke manual reseller suspension',
+            metadata: { resellerId: reseller.id }
+        });
+        assert(await monthly.seatUsage(reseller.id) === 2, 'Suspending customer access incorrectly freed a commercially occupied reseller seat');
+        const heldThird = (await query(`INSERT INTO customers(reseller_id,display_name) VALUES($1,'Smoke held third') RETURNING id`, [reseller.id])).rows[0];
+        let heldSeatFreed = false;
+        try {
+            await transaction(client => monthly.assertSeatAvailable(client, reseller.id, heldThird.id));
+            heldSeatFreed = true;
+        } catch (error) {
+            if (!/tier is full/i.test(error.message)) throw error;
+        }
+        assert(!heldSeatFreed, 'A temporary access hold allowed the reseller to recycle a still-entitled seat');
+        await query('DELETE FROM customers WHERE id=$1', [heldThird.id]);
+
         await query(`UPDATE reseller_subscriptions SET status='expired',cancel_at_period_end=FALSE,current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1`, [manual.id]);
         await monthly.reconcileEstate(reseller.id);
-        const held = await query('SELECT id,access_paused_at,access_hold_reason FROM customers WHERE id=ANY($1::uuid[]) ORDER BY id', [[owner.id, child.id]]);
-        const ownerHeld = held.rows.find(x => String(x.id) === String(owner.id));
-        const childHeld = held.rows.find(x => String(x.id) === String(child.id));
-        assert(ownerHeld.access_paused_at && ownerHeld.access_hold_reason === `${monthly.ESTATE_HOLD_PREFIX}${reseller.id}`, 'Expired reseller subscription did not suspend owner access');
-        assert(childHeld.access_hold_reason === `${monthly.MANUAL_HOLD_PREFIX}${reseller.id}`, 'Estate suspension overwrote an intentional manual customer hold');
+
+        const ownerHolds = await accessHolds.activeHolds(owner.id);
+        const childHolds = await accessHolds.activeHolds(child.id);
+        assert(ownerHolds.some(h => h.hold_type === 'reseller_subscription' && String(h.source_key) === String(reseller.id)), 'Expired reseller subscription did not add the estate hold to owner access');
+        assert(childHolds.some(h => h.hold_type === 'reseller_manual' && String(h.source_key) === String(reseller.id)), 'Estate suspension overwrote the independent manual customer hold');
+        assert(childHolds.some(h => h.hold_type === 'reseller_subscription' && String(h.source_key) === String(reseller.id)), 'Estate suspension did not coexist with the manual customer hold');
 
         await query(`UPDATE reseller_subscriptions SET status='active',current_period_end=NOW()+INTERVAL '30 days' WHERE id=$1`, [manual.id]);
         await monthly.reconcileEstate(reseller.id);
-        const restored = await query('SELECT id,access_paused_at,access_hold_reason FROM customers WHERE id=ANY($1::uuid[])', [[owner.id, child.id]]);
-        const ownerRestored = restored.rows.find(x => String(x.id) === String(owner.id));
-        const childStillHeld = restored.rows.find(x => String(x.id) === String(child.id));
-        assert(!ownerRestored.access_paused_at && !ownerRestored.access_hold_reason, 'Restored reseller payment did not restore estate-created hold');
-        assert(childStillHeld.access_paused_at && childStillHeld.access_hold_reason === `${monthly.MANUAL_HOLD_PREFIX}${reseller.id}`, 'Payment restoration incorrectly cleared an independent manual hold');
+        const ownerRestored = await accessHolds.activeHolds(owner.id);
+        const childStillHeld = await accessHolds.activeHolds(child.id);
+        assert(!ownerRestored.some(h => h.hold_type === 'reseller_subscription'), 'Restored reseller payment did not release the estate-created hold');
+        assert(childStillHeld.length === 1 && childStillHeld[0].hold_type === 'reseller_manual', 'Payment restoration incorrectly cleared or duplicated an independent manual hold');
 
         // Deployment safety: a legacy reseller that has never entered the monthly
-        // subscription model must not be touched by the new recurring job.
+        // subscription model must not be touched by the recurring monthly job.
         const legacyCustomer = (await query(`INSERT INTO customers(reseller_id,display_name) VALUES($1,'Legacy child') RETURNING *`, [legacy.reseller.id])).rows[0];
         await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days')`, [legacyCustomer.id, plan.id]);
         await resellerJobs.reconcileSubscribedEstates();
-        const legacyState = (await query('SELECT access_paused_at,access_hold_reason FROM customers WHERE id=$1', [legacyCustomer.id])).rows[0];
-        assert(!legacyState.access_paused_at && !legacyState.access_hold_reason, 'Monthly reseller deployment suspended a legacy reseller with no monthly subscription record');
+        const legacyHolds = await accessHolds.activeHolds(legacyCustomer.id);
+        assert(legacyHolds.length === 0, 'Monthly reseller deployment suspended a legacy reseller with no monthly subscription record');
 
         console.log('monthly reseller tiers smoke: ok');
     } finally {
