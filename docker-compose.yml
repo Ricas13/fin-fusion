@@ -3,7 +3,7 @@ services:
     build: .
     restart: "no"
     env_file: .env
-    command: ["sh", "-c", "npm run db:migrate && npm run auth:bootstrap"]
+    command: ["sh", "-c", "npm run db:migrate && if [ -n \"${ACTIVITY_DB_PASSWORD:-}\" ]; then npm run db:activity-role; else echo 'ACTIVITY_DB_PASSWORD not set; skipping dedicated activity role configuration'; fi && npm run auth:bootstrap"]
     depends_on:
       postgres:
         condition: service_healthy

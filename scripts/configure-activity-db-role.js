@@ -9,6 +9,7 @@ async function main(){const password=String(process.env.ACTIVITY_DB_PASSWORD||''
  GRANT SELECT(id,customer_id,server_id,jellyfin_user_id,disabled) ON jellyfin_accounts TO steamfusion_activity;
  GRANT SELECT(id,customer_id,plan_id,status,current_period_end,created_at,starts_at,superseded_by,service_extension_days) ON subscriptions TO steamfusion_activity;
  GRANT SELECT(id,code,streams,active) ON plans TO steamfusion_activity;
+ GRANT SELECT(id,access_paused_at) ON customers TO steamfusion_activity;
  GRANT SELECT(setting_key,setting_value) ON platform_settings TO steamfusion_activity;
  GRANT SELECT,INSERT,UPDATE,DELETE ON active_playback_sessions TO steamfusion_activity;GRANT SELECT,INSERT,UPDATE,DELETE ON playback_history TO steamfusion_activity;GRANT SELECT,INSERT,UPDATE,DELETE ON stream_policy_events TO steamfusion_activity;GRANT SELECT,INSERT,UPDATE ON jellyfin_server_metrics TO steamfusion_activity;GRANT USAGE,SELECT ON SEQUENCE playback_history_id_seq TO steamfusion_activity;GRANT USAGE,SELECT ON SEQUENCE stream_policy_events_id_seq TO steamfusion_activity;
  `);console.log('Configured steamfusion_activity with least-privilege grants')}finally{client.release();await pool.end()}}
