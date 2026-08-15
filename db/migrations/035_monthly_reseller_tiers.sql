@@ -92,4 +92,43 @@ ALTER TABLE resellers
     ADD COLUMN IF NOT EXISTS estate_suspended_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS estate_suspend_reason TEXT;
 
+-- Cancelling renewal must not revoke a period that has already been paid for.
+-- Provider adapters may report "cancelled" immediately; while the paid-through
+-- timestamp is still in the future, keep the internal entitlement active and
+-- remember that it must stop at period end.
+CREATE OR REPLACE FUNCTION normalize_reseller_paid_through_status()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.status='cancelled' AND NEW.cancel_at_period_end=TRUE AND NEW.current_period_end>NOW() THEN
+        NEW.status := 'active';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS reseller_paid_through_status_trigger ON reseller_subscriptions;
+CREATE TRIGGER reseller_paid_through_status_trigger
+BEFORE INSERT OR UPDATE OF status,cancel_at_period_end,current_period_end
+ON reseller_subscriptions
+FOR EACH ROW EXECUTE FUNCTION normalize_reseller_paid_through_status();
+
+-- "Active" controls availability to new resellers. Existing paid subscribers
+-- are grandfathered: an administrator cannot archive a tier while a live paid
+-- subscription still depends on it.
+CREATE OR REPLACE FUNCTION protect_live_reseller_tier()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.active=TRUE AND NEW.active=FALSE AND EXISTS (
+        SELECT 1 FROM reseller_subscriptions rs
+        WHERE rs.tier_id=OLD.id AND rs.status='active' AND rs.current_period_end>NOW()
+    ) THEN
+        RAISE EXCEPTION 'Cannot archive reseller tier while active subscriptions still use it';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS protect_live_reseller_tier_trigger ON reseller_tiers;
+CREATE TRIGGER protect_live_reseller_tier_trigger
+BEFORE UPDATE OF active ON reseller_tiers
+FOR EACH ROW EXECUTE FUNCTION protect_live_reseller_tier();
+
 COMMIT;
