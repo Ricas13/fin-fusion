@@ -21,9 +21,9 @@ function createResellerMonthlyPortalRouter() {
     return router;
 }
 
-// Compatibility API used by older integrations/smokes.  Keep one analytics
-// implementation: all historical revenue/customer/playback aggregation comes
-// from the canonical reseller service and this facade only adapts its shape.
+// Compatibility API used by older integrations/smokes. Keep one analytics
+// implementation: historical aggregation comes from the canonical reseller
+// service and this facade only adapts the previous public shape.
 async function analytics(resellerId, rng) {
     const start = new Date(rng?.start || Date.now() - 30 * 86400000);
     const end = new Date(rng?.end || Date.now());
@@ -46,8 +46,9 @@ async function analytics(resellerId, rng) {
     const byDay = new Map(series.map(point => [point.key, point]));
     for (const row of stats.daily || []) {
         if (String(row.currency || '').trim() !== String(primary.currency || '').trim()) continue;
-        const key = new Date(row.day).toISOString().slice(0,10);
-        const point = byDay.get(key);
+        const parsed = new Date(row.sale_day);
+        if (!Number.isFinite(parsed.getTime())) continue;
+        const point = byDay.get(parsed.toISOString().slice(0,10));
         if (point) point.value += Number(row.amount_minor || 0);
     }
     return {
