@@ -8,9 +8,11 @@ const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
 const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminConfigurationHealthRouter } = require('./admin-configuration-health');
+const { createAdminConfigurationTransferRouter } = require('./admin-configuration-transfer');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
+const { createResellerLedgerRouter } = require('./reseller-ledger');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
@@ -23,7 +25,11 @@ function ensureFleetSnapshot() {
 
 function pruneRoutes(router, paths) {
     if (!router?.stack) return router;
-    router.stack = router.stack.filter(layer => !(layer.route && paths.has(String(layer.route.path))));
+    router.stack = router.stack.filter(layer => {
+        if (layer.route && paths.has(String(layer.route.path))) return false;
+        if (layer.handle?.stack) pruneRoutes(layer.handle, paths);
+        return true;
+    });
     return router;
 }
 
@@ -32,11 +38,13 @@ function createRouter() {
     const router = express.Router();
     router.use(createAccountActivationRouter());
     router.use(createResellerSecurityRouter());
+    router.use(createResellerLedgerRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
     router.use(createAdminCommerceRouter());
     router.use(createAdminConfigurationHealthRouter());
+    router.use(createAdminConfigurationTransferRouter());
     router.use(createAdminResellerSettingsRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
@@ -51,7 +59,11 @@ function createRouter() {
         '/account/checkout/stripe',
         '/account/checkout/paypal',
         '/account/paypal/return',
-        '/account/stripe/portal'
+        '/account/stripe/portal',
+        '/admin/configuration',
+        '/admin/configuration/export',
+        '/admin/configuration/preview',
+        '/admin/configuration/apply'
     ]));
     router.use(legacy);
     return router;
