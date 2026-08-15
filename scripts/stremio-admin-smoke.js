@@ -15,6 +15,8 @@ assert(nav.includes("['stremio-settings','Stremio','/admin/settings/stremio']"),
 assert(page.includes('Foundation only:'),'Admin page must clearly state that the production addon runtime is not live');
 assert(page.includes("status='active'"),'Server eligibility removal must check active Stremio entitlements');
 assert(page.includes("'admin.stremio.server_eligibility'"),'Server eligibility changes must be audited');
+assert(page.includes("routeRateLimit.middleware({scope:'admin-stremio-settings'"),'Stremio admin mutations must use the shared persistent rate limiter');
+assert(/router\.post\('\/admin\/settings\/stremio\/servers\/:id',stremioMutationLimit,/.test(page),'Server eligibility mutation must apply the Stremio rate limiter');
 assert(migration.includes("service_type IN ('jellyfin','stremio','bundle')"),'Plan service type constraint is missing');
 assert(migration.includes('token_hash TEXT'),'Stremio entitlements must store a token hash field');
 assert(!migration.includes('token_plaintext'),'Stremio schema must not introduce plaintext token storage');

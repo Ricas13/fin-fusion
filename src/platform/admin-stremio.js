@@ -3,9 +3,11 @@
 const express=require('express');
 const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
+const routeRateLimit=require('../security/route-rate-limit');
 const runtimeSettings=require('./runtime-settings');
 const {layout,esc}=require('./admin-html');
 
+const stremioMutationLimit=routeRateLimit.middleware({scope:'admin-stremio-settings',max:20,windowSeconds:300});
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
@@ -52,7 +54,7 @@ function createAdminStremioRouter(){
     const router=express.Router();
     router.use('/admin/settings/stremio',gate,noStore);
     router.get('/admin/settings/stremio',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){return next(error);}});
-    router.post('/admin/settings/stremio/servers/:id',async(req,res)=>{
+    router.post('/admin/settings/stremio/servers/:id',stremioMutationLimit,async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid security token');
         try{
             const enabled=String(req.body.enabled)==='1';
