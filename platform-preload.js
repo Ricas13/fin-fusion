@@ -204,6 +204,7 @@ realExpress.application.listen = function platformListen(...args) {
         const { createAdminOriginalSettingsRouter } = require('./src/platform/admin-original-settings');
         const { createAdminBrandingRouter } = require('./src/platform/admin-branding');
         const { createBrandingRouter } = require('./src/platform/branding');
+        const { createResellerStorefrontRouter } = require('./src/platform/reseller-storefront');
         const { createAdminPreviewRouter } = require('./src/platform/admin-preview');
         const { createAdminResellerSummaryRouter } = require('./src/platform/admin-reseller-summary');
         const { createAdminResellersRouter } = require('./src/platform/admin-resellers');
@@ -222,6 +223,7 @@ realExpress.application.listen = function platformListen(...args) {
         const resellerPortal = require('./src/platform/reseller-portal');
         this.use(customerLoginThrottle);
         this.use(createBrandingRouter());
+        this.use(createResellerStorefrontRouter());
         this.use(createInviteOnboardingRouter());
         this.use(createCustomerClaimRouter());
         this.use(createCustomerPasswordSyncRouter());
