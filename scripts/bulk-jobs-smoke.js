@@ -161,8 +161,9 @@ async function main() {
 
     // Crash/retry semantics (review fix): a 'running' item that's been stuck
     // past the stale threshold must be reclaimed as failed (never silently
-    // re-run automatically), and extend_entitlement must apply the exact same
-    // target expiry no matter how many times its job item is retried.
+    // re-run automatically). extend_entitlement records provider-independent
+    // service time in an idempotent extension ledger instead of rewriting the
+    // provider-owned current_period_end.
     const extendPlan = await query(`
         INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
         VALUES($1,'Bulk smoke extend plan','direct','custom',30,0,'USD',1,'premium',TRUE,TRUE)
@@ -195,30 +196,44 @@ async function main() {
     if (afterReclaim.rows[0].status !== 'failed') throw new Error('A stale running item must be marked failed, never silently left running or re-queued automatically');
     if (afterReclaim.rows[0].previous_state !== null) throw new Error('Reclaiming a stale item must not fabricate previous_state');
 
-    // Explicit admin retry (not automatic) picks it up and runs it. Note:
-    // extend_entitlement's handler also calls reconcileCustomer(), which will
-    // itself fail here (this smoke environment has no live Jellyfin server to
-    // reach) -- that's expected and is a SEPARATE concern from the property
-    // under test. previous_state is persisted and the subscription mutated
-    // BEFORE that downstream call, so the idempotency guarantee holds
-    // regardless of whether Jellyfin reconciliation succeeds afterward.
+    // Explicit admin retry (not automatic) picks it up and runs it. The
+    // extension transaction must commit before downstream Jellyfin
+    // reconciliation, and retrying the same item must reuse the unique ledger
+    // reference rather than grant more service time.
     await bulkJobs.retryFailedItems(extendJob.job.id, null);
     await bulkWorker.processBatch();
-    const subAfterFirst = await query('SELECT current_period_end FROM subscriptions WHERE id=$1', [extendSub.rows[0].id]);
+    const subAfterFirst = await query('SELECT current_period_end,service_extension_days FROM subscriptions WHERE id=$1', [extendSub.rows[0].id]);
     const expiryAfterFirst = new Date(subAfterFirst.rows[0].current_period_end).getTime();
-    if (expiryAfterFirst <= originalExpiry.getTime()) throw new Error('The subscription mutation should commit before any downstream reconciliation step');
-    const itemAfterFirst = await query('SELECT previous_state FROM background_job_items WHERE id=$1', [extendItemId]);
-    if (!itemAfterFirst.rows[0].previous_state?.targetExpiry) throw new Error('The computed target expiry must be persisted to previous_state before mutating');
+    const extensionDaysAfterFirst = Number(subAfterFirst.rows[0].service_extension_days || 0);
+    if (expiryAfterFirst !== originalExpiry.getTime()) throw new Error('Administrative service extensions must not rewrite provider-owned current_period_end');
+    if (extensionDaysAfterFirst !== 30) throw new Error('The service extension must commit before any downstream reconciliation step');
+    const ledgerAfterFirst = await query(`
+        SELECT COUNT(*)::int AS n,COALESCE(SUM(days),0)::int AS days
+        FROM subscription_service_extension_events
+        WHERE subscription_id=$1 AND source='admin_bulk' AND reference_id LIKE $2
+    `, [extendSub.rows[0].id, `bulk:${extendItemId}:%`]);
+    if (Number(ledgerAfterFirst.rows[0].n) !== 1 || Number(ledgerAfterFirst.rows[0].days) !== 30) {
+        throw new Error('The bulk extension must persist one idempotent service-extension ledger event');
+    }
 
     // Force a second run of the SAME item (simulating e.g. an operator
     // re-running it after an ambiguous outcome, or a genuine retry) and
-    // confirm the target expiry does not move again -- proving the mutation
-    // itself is idempotent, independent of whatever else the handler does.
+    // confirm neither the service-extension total nor its ledger moves again.
     await query(`UPDATE background_job_items SET status='pending' WHERE id=$1`, [extendItemId]);
     await bulkWorker.processBatch();
-    const subAfterSecond = await query('SELECT current_period_end FROM subscriptions WHERE id=$1', [extendSub.rows[0].id]);
+    const subAfterSecond = await query('SELECT current_period_end,service_extension_days FROM subscriptions WHERE id=$1', [extendSub.rows[0].id]);
     const expiryAfterSecond = new Date(subAfterSecond.rows[0].current_period_end).getTime();
-    if (expiryAfterSecond !== expiryAfterFirst) throw new Error('Re-running extend_entitlement must not extend the subscription a second time');
+    const extensionDaysAfterSecond = Number(subAfterSecond.rows[0].service_extension_days || 0);
+    if (expiryAfterSecond !== expiryAfterFirst) throw new Error('Re-running extend_entitlement must not mutate current_period_end');
+    if (extensionDaysAfterSecond !== extensionDaysAfterFirst) throw new Error('Re-running extend_entitlement must not grant service time a second time');
+    const ledgerAfterSecond = await query(`
+        SELECT COUNT(*)::int AS n,COALESCE(SUM(days),0)::int AS days
+        FROM subscription_service_extension_events
+        WHERE subscription_id=$1 AND source='admin_bulk' AND reference_id LIKE $2
+    `, [extendSub.rows[0].id, `bulk:${extendItemId}:%`]);
+    if (Number(ledgerAfterSecond.rows[0].n) !== 1 || Number(ledgerAfterSecond.rows[0].days) !== extensionDaysAfterFirst) {
+        throw new Error('Re-running extend_entitlement must reuse the existing idempotency ledger event');
+    }
 
     // Claim-token CAS regression test (review fix): claim A -> reclaim
     // (stale) -> retry/claim B -> late finish from claim A. The late
