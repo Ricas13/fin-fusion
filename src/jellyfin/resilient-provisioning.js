@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 const base = require('./provisioning');
 const control = require('./reconciliation-control');
+const accessHolds = require('../entitlements/access-holds');
 
 function stateDetail(entitlement, outcome) {
     const account = outcome?.account || null;
@@ -41,45 +42,59 @@ async function reconcileAccount(accountId) {
     return reconcileCustomer(result.rows[0].customer_id);
 }
 
-async function holdAccess(customerId, reason) {
-    await query('UPDATE customers SET access_paused_at=NOW(),access_hold_reason=$2 WHERE id=$1', [customerId, reason]);
+function adminHoldType(reason) {
+    if (reason === 'disabled') return 'admin_disabled';
+    if (reason === 'suspended') return 'admin_suspended';
+    return 'admin_hold';
+}
+async function holdAccess(customerId, reason='suspended', actorUserId=null) {
+    const type=adminHoldType(String(reason||'suspended'));
+    await accessHolds.addHold({customerId,type,sourceKey:'admin',reason:String(reason||type).slice(0,500),actorUserId});
     return reconcileCustomer(customerId);
 }
-
-async function releaseAccess(customerId) {
-    await query('UPDATE customers SET access_paused_at=NULL,access_hold_reason=NULL WHERE id=$1', [customerId]);
+async function releaseAccess(customerId, actorUserId=null) {
+    await accessHolds.releaseAllAdminHolds(customerId,actorUserId);
     return reconcileCustomer(customerId);
 }
 
 async function setJellyfinPassword(customerId, accountId, newPassword) {
-    const result = await base.setJellyfinPassword(customerId, accountId, newPassword);
-    await query(`
-        UPDATE jellyfin_accounts
-        SET password_setup_required=FALSE,updated_at=NOW()
-        WHERE id=$1 AND customer_id=$2
-    `, [accountId, customerId]);
-    return result;
+    return base.setJellyfinPassword(customerId, accountId, newPassword);
 }
 
+async function maybeAutoDowngrade(customerId){
+    const lifecycle=require('../payments/lifecycle');
+    try{return await lifecycle.autoDowngradeEligibleCustomer(customerId)}
+    catch(error){console.error(`Automatic free-tier downgrade failed for ${customerId}:`,error.message);return null}
+}
 async function expireSubscriptionsAndReconcile() {
     const expired = await transaction(async client => {
-        const rows = await client.query(`
+        const rows=await client.query(`
             WITH expired AS (
                 UPDATE subscriptions
-                SET status='expired',updated_at=NOW()
-                WHERE status IN ('active','trialing','past_due') AND current_period_end <= NOW()
-                RETURNING customer_id
+                SET status='expired',service_extension_days=0,updated_at=NOW()
+                WHERE superseded_by IS NULL
+                  AND (
+                    (status IN('active','trialing','past_due','paused','cancelled')
+                     AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW())
+                    OR
+                    (status='expired' AND COALESCE(service_extension_days,0)>0
+                     AND current_period_end+(service_extension_days||' days')::interval<=NOW())
+                  )
+                RETURNING customer_id,plan_id,source
             )
-            SELECT DISTINCT customer_id FROM expired
+            SELECT DISTINCT e.customer_id,BOOL_OR(p.price_minor>0) AS had_paid_expiry
+            FROM expired e JOIN plans p ON p.id=e.plan_id
+            GROUP BY e.customer_id
         `);
-        return rows.rows.map(row => row.customer_id);
+        return rows.rows;
     });
-    for (const customerId of expired) {
-        try {
-            await reconcileCustomer(customerId);
-        } catch (error) {
-            console.error(`Entitlement reconcile failed for ${customerId}:`, error.message);
-        }
+    for (const row of expired) {
+        const customerId=row.customer_id;
+        let downgraded=null;
+        if(row.had_paid_expiry)downgraded=await maybeAutoDowngrade(customerId);
+        if(downgraded)continue;
+        try { await reconcileCustomer(customerId); }
+        catch (error) { console.error(`Entitlement reconcile failed for ${customerId}:`, error.message); }
     }
     return expired.length;
 }
