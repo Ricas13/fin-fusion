@@ -7,9 +7,8 @@ function externalScriptTag(openTag){return /\bsrc\s*=/i.test(openTag);}
 
 // Admin body fragments are server-generated HTML with escaped dynamic values.
 // Until the last legacy inline behaviours are physically removed from every
-// fragment, discard inline script elements before rendering. This deliberately
-// scans tag boundaries instead of attempting multi-character HTML sanitization
-// with regex replacement. External <script src=...> elements are preserved.
+// fragment, discard inline script elements before rendering. External scripts
+// remain allowed because the application CSP only permits same-origin scripts.
 function stripInlineScripts(body){
     const html=String(body||'');
     const lower=html.toLowerCase();
@@ -23,12 +22,7 @@ function stripInlineScripts(body){
             continue;
         }
         const openEnd=html.indexOf('>',start+7);
-        if(openEnd<0){
-            // A server-generated malformed script tag is safer omitted than
-            // passed through to browser error-recovery parsing.
-            out+=html.slice(cursor,start);
-            break;
-        }
+        if(openEnd<0){out+=html.slice(cursor,start);break;}
         const openTag=html.slice(start,openEnd+1);
         if(externalScriptTag(openTag)){
             out+=html.slice(cursor,openEnd+1);
@@ -36,23 +30,92 @@ function stripInlineScripts(body){
             continue;
         }
         const closeStart=lower.indexOf('</script',openEnd+1);
-        if(closeStart<0){
-            out+=html.slice(cursor,start);
-            break;
-        }
+        if(closeStart<0){out+=html.slice(cursor,start);break;}
         const closeEnd=html.indexOf('>',closeStart+8);
-        if(closeEnd<0){
-            out+=html.slice(cursor,start);
-            break;
-        }
+        if(closeEnd<0){out+=html.slice(cursor,start);break;}
         out+=html.slice(cursor,start);
         cursor=closeEnd+1;
     }
     return out;
 }
 
-function layout(options={}){
-    return core.layout({...options,body:stripInlineScripts(options.body)});
+const SETTING_HELP=Object.freeze({
+    'Hero title':'The main headline customers see at the top of the public storefront.',
+    'Hero subtitle':'Short supporting copy that explains the service beneath the main storefront headline.',
+    'Features heading':'Heading shown above the storefront feature list.',
+    'Support email':'Public contact address customers can use when they need help.',
+    'Announcement':'Optional short message displayed prominently on the storefront.',
+    'Features · one per line':'Each non-empty line becomes one public feature item.',
+    'Default customer plan':'Preselected plan for manual administrator customer workflows; it does not change existing customers.',
+    'Default server class':'Initial server class used when an administrator creates or configures server placement manually.',
+    'Default server priority':'Lower-priority values are considered after higher-priority placement choices according to the placement policy.',
+    'Default max users · 0 = unlimited':'Convenience capacity default for newly configured servers. Zero means no explicit user-count ceiling.',
+    'Expiring-soon window · days':'How many days before service expiry a customer is treated as expiring soon in administrator views.',
+    'Recent customers on dashboard':'Maximum number of recently changed customers shown on the dashboard summary.',
+    'Site name':'The customer-facing platform name used in page titles, emails and portal branding.',
+    'Default monthly tier':'Tier preselected when a new reseller is created. Existing resellers are not changed.',
+    'Default ledger currency':'Three-letter currency used for new reseller downstream sales ledgers.',
+    'Default downstream payment methods':'Comma-separated labels resellers can select when recording how a customer paid them.',
+    'Username':'Portal username used for sign-in and administrative identification.',
+    'Email':'Contact/login email for the account when email-based features are enabled.',
+    'Initial monthly tier':'Optional reseller tier activated when the reseller is created.',
+    'Manual entitlement months':'Number of months granted when creating a manual reseller entitlement.',
+    'Ledger currency':'Currency used for this reseller’s downstream sales reporting.',
+    'Payment methods':'Comma-separated payment labels this reseller can use when recording customer sales.',
+    'Name':'Human-readable name shown in administrator and customer-facing interfaces.',
+    'Description':'Plain-language explanation of what this item or plan provides.',
+    'Audience':'Controls whether the plan can be offered directly, through resellers, or through both channels.',
+    'Billing interval':'Commercial renewal cadence used by checkout and subscription workflows.',
+    'Duration (days)':'Access period used when this plan creates a time-limited entitlement.',
+    'Server class':'Default server pool class eligible to host customers on this plan.',
+    'Sort order':'Controls relative display order; lower values appear earlier where sorting uses this field.',
+    'Concurrent streams':'Maximum simultaneous playback sessions allowed by this plan policy.',
+    'Price':'Catalogue price before any eligible discount or referral adjustment.',
+    'Currency':'Three-letter ISO currency used for catalogue pricing and payment-provider validation.',
+    'Stripe price ID':'Stripe-side recurring price or product mapping used for new Stripe checkouts.',
+    'PayPal plan/product ID':'PayPal-side mapping used for new PayPal checkout or subscription flows.',
+    'Base URL':'Internal service URL CAPTaINFiN uses when making server-to-server requests.',
+    'Public URL':'Externally reachable URL customers and playback clients should use.',
+    'API key':'Credential CAPTaINFiN uses for authenticated server-to-server requests. Treat it as a secret.',
+    'Priority':'Placement preference used when more than one eligible server can host a customer.',
+    'Max users':'Optional server capacity limit used by placement decisions.',
+    'SMTP host':'Mail server hostname used for transactional email delivery.',
+    'SMTP port':'Mail server TCP port used by the configured SMTP security mode.',
+    'From email':'Sender address customers see on transactional emails.',
+    'From name':'Display name customers see alongside the transactional email sender address.',
+    'Username / API key':'Authentication identity used by the integration when required.',
+    'Retention days':'How long eligible records or backups are retained before automated cleanup.',
+    'Public base URL':'Canonical HTTPS origin used to build customer-facing links and callbacks.',
+    'Support email address':'Address shown to customers for account, service or legal support.',
+    'Terms URL':'Public URL containing the service terms customers should be able to review.',
+    'Privacy URL':'Public URL containing the privacy information customers should be able to review.',
+    'Impact confirmation':'Safety confirmation required before changing a setting with live customer impact.'
+});
+
+function decorateSettingHelp(body){
+    let html=String(body||'');
+    for(const [label,help] of Object.entries(SETTING_HELP)){
+        const marker=`<label>${label}</label>`;
+        let cursor=0;
+        while(true){
+            const at=html.indexOf(marker,cursor);
+            if(at<0)break;
+            const after=at+marker.length;
+            const groupEnd=html.indexOf('</div>',after);
+            const scope=html.slice(after,groupEnd<0?Math.min(html.length,after+700):Math.min(groupEnd,after+700));
+            if(!/(?:inlineHelp|fieldHelp|settings-hint)/.test(scope)){
+                const addition=`<div class="fieldHelp">${core.esc(help)}</div>`;
+                html=html.slice(0,after)+addition+html.slice(after);
+                cursor=after+addition.length;
+            }else cursor=after;
+        }
+    }
+    return html;
 }
 
-module.exports={...core,layout,stripInlineScripts};
+function layout(options={}){
+    const safeBody=stripInlineScripts(options.body);
+    return core.layout({...options,body:decorateSettingHelp(safeBody)});
+}
+
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,SETTING_HELP};
