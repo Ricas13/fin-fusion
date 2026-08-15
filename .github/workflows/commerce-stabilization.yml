@@ -1,0 +1,56 @@
+name: Commerce Stabilization
+
+on:
+  pull_request:
+    paths:
+      - 'db/migrations/036_free_claim_subscription_source.sql'
+      - 'staff-auth-preload.js'
+      - 'src/payments/lifecycle.js'
+      - 'src/platform/storefront.js'
+      - 'src/platform/reseller-storefront.js'
+      - 'src/platform/reseller-monthly-portal.js'
+      - 'scripts/commerce-stabilization-smoke.js'
+      - '.github/workflows/commerce-stabilization.yml'
+  workflow_dispatch:
+
+jobs:
+  commerce-stabilization:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SESSION_SECRET: 4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check staff-auth-preload.js
+          node --check src/payments/lifecycle.js
+          node --check src/platform/storefront.js
+          node --check src/platform/reseller-storefront.js
+          node --check scripts/commerce-stabilization-smoke.js
+      - name: Apply database migrations
+        run: npm run db:migrate
+      - name: Canonical routes, storefront and audience enforcement smoke
+        run: node scripts/commerce-stabilization-smoke.js
