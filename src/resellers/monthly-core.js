@@ -29,8 +29,8 @@ function statusIsEntitled(row) {
 
 async function listTiers({ visibleOnly = false, activeOnly = false } = {}) {
     const clauses = [];
-    if (visibleOnly) clauses.push('visible=TRUE');
-    if (activeOnly) clauses.push('active=TRUE');
+    if (visibleOnly) clauses.push('t.visible=TRUE');
+    if (activeOnly) clauses.push('t.active=TRUE');
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const result = await query(`
         SELECT t.*,
