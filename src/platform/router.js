@@ -50,7 +50,12 @@ function createRouter(){
     router.use(createCustomerPaymentReturnRouter());
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
-    pruneRoutes(legacy,new Set(['/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal','/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences']));
+    pruneRoutes(legacy,new Set([
+        '/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal',
+        '/account/jellyfin/:accountId/password',
+        '/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences',
+        '/admin/plans/:id/commerce','/admin/plans/:id/provider'
+    ]));
     router.use(legacy);return router;
 }
 module.exports={...core,createRouter,ensureFleetSnapshot,pruneRoutes};
