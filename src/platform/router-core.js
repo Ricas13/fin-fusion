@@ -14,12 +14,13 @@ const policy = require('../jellyfin/policy');
 const csrf = require('../auth/csrf');
 const { createAdminActionsRouter } = require('./admin-actions');
 const runtimeSettings = require('./runtime-settings');
+const operationsSettings = require('./operations-settings');
 
-function absoluteUrl(req, path) {
-    const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
-    const proto = forwardedProto || req.protocol;
-    const host = req.get('x-forwarded-host') || req.get('host');
-    return `${proto}://${host}${path}`;
+async function absoluteUrl(req, path) {
+    // Legacy routes are currently pruned from the live router, but keep their
+    // URL generation fail-closed as well: if one is ever re-mounted, external
+    // links still come from the same canonical origin as the modern routers.
+    return operationsSettings.absoluteUrl(req, path);
 }
 
 function requireCustomer(req, res, next) {
@@ -81,7 +82,7 @@ function createRouter() {
             if (runtimeSettings.requireEmailVerification()) {
                 const verification = await customers.createAccountToken(created.user.id, 'email_verify', 24 * 60);
                 const site = runtimeSettings.siteName();
-                const url = absoluteUrl(req, `/account/verify-email?token=${encodeURIComponent(verification.token)}`);
+                const url = await absoluteUrl(req, `/account/verify-email?token=${encodeURIComponent(verification.token)}`);
                 await emailOutbox.enqueue({
                     type: 'email_verification',
                     to: created.user.email,
@@ -173,7 +174,7 @@ function createRouter() {
             const reset = await customers.createPasswordReset(req.body.identity, 60);
             if (reset) {
                 const site = runtimeSettings.siteName();
-                const url = absoluteUrl(req, `/account/reset-password?token=${encodeURIComponent(reset.token)}`);
+                const url = await absoluteUrl(req, `/account/reset-password?token=${encodeURIComponent(reset.token)}`);
                 await emailOutbox.enqueue({
                     type: 'password_reset',
                     to: reset.email,
@@ -330,8 +331,8 @@ function createRouter() {
                 planCode: req.body.planCode,
                 email: portal?.customer?.login_email || portal?.customer?.email,
                 discountCode: req.body.discountCode || null,
-                successUrl: absoluteUrl(req, '/account?message=Payment%20received'),
-                cancelUrl: absoluteUrl(req, '/account?error=Checkout%20cancelled')
+                successUrl: await absoluteUrl(req, '/account?message=Payment%20received'),
+                cancelUrl: await absoluteUrl(req, '/account?error=Checkout%20cancelled')
             });
             return res.redirect(303, checkout.url);
         } catch (error) {
@@ -341,7 +342,7 @@ function createRouter() {
 
     router.post('/account/stripe/portal', requireCustomer, async (req, res) => {
         try {
-            const portal = await stripe.createCustomerPortal({ customerId: req.session.customerId, returnUrl: absoluteUrl(req, '/account') });
+            const portal = await stripe.createCustomerPortal({ customerId: req.session.customerId, returnUrl: await absoluteUrl(req, '/account') });
             return res.redirect(303, portal.url);
         } catch (error) {
             return res.redirect('/account?error=' + encodeURIComponent(error.message));
@@ -354,8 +355,8 @@ function createRouter() {
                 customerId: req.session.customerId,
                 planCode: req.body.planCode,
                 discountCode: req.body.discountCode || null,
-                returnUrl: absoluteUrl(req, '/account/paypal/return'),
-                cancelUrl: absoluteUrl(req, '/account?error=PayPal%20checkout%20cancelled')
+                returnUrl: await absoluteUrl(req, '/account/paypal/return'),
+                cancelUrl: await absoluteUrl(req, '/account?error=PayPal%20checkout%20cancelled')
             });
             req.session.pendingPayPal = { id: checkout.id, mode: checkout.mode };
             return res.redirect(303, checkout.url);
