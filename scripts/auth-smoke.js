@@ -14,7 +14,7 @@ const USERNAME = 'ci-auth-smoke-admin';
 const STARTUP_SECRET = 'ci-auth-smoke-session-secret-2026-0123456789abcdef';
 function mockReq(sessionID = 'ci-auth-smoke-session') { return { ip:'127.0.0.1', sessionID, get(name){ return String(name).toLowerCase()==='user-agent'?'steam-fusion-auth-smoke/1':''; } }; }
 function applicationStatus(overrides){
-  return spawnSync(process.execPath,['-e',"require('./src/application').createApplication()"],{
+  return spawnSync(process.execPath,['-e',"require('./src/application').createApplication(); process.exit(0)"],{
     cwd:process.cwd(),
     env:{...process.env,SESSION_SECRET:STARTUP_SECRET,...overrides},
     encoding:'utf8'
