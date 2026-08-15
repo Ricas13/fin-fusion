@@ -15,6 +15,7 @@ const { createAccountActivationRouter } = require('./account-activation-router')
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
 const { createResellerExportRouter } = require('./reseller-export');
+const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
@@ -25,6 +26,7 @@ function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
     router.use(createAccountActivationRouter());
+    router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
     router.use(createResellerSecurityRouter());
     router.get('/reseller/sales',(req,res)=>res.redirect(302,'/reseller/ledger'));
