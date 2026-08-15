@@ -17,15 +17,14 @@ const { createResellerExportRouter } = require('./reseller-export');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
-let fleetStarted = false;
-function ensureFleetSnapshot() { if (!fleetStarted) { fleetStarted = true; placement.startFleetSnapshotRefresh(); } }
-function pruneRoutes(router, paths) { if (!router?.stack) return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router; }
-
-function createRouter() {
-    ensureFleetSnapshot();
-    const router = express.Router();
+let fleetStarted=false;
+function ensureFleetSnapshot(){if(!fleetStarted){fleetStarted=true;placement.startFleetSnapshotRefresh();}}
+function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router;}
+function createRouter(){
+    ensureFleetSnapshot();const router=express.Router();
     router.use(createAccountActivationRouter());
     router.use(createResellerSecurityRouter());
+    router.get('/reseller/sales',(req,res)=>res.redirect(302,'/reseller/ledger'));
     router.use(createResellerLedgerRouter());
     router.use(createResellerExportRouter());
     router.use(createAdminAutomationRouter());
@@ -40,7 +39,6 @@ function createRouter() {
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set(['/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal','/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply']));
-    router.use(legacy);
-    return router;
+    router.use(legacy);return router;
 }
 module.exports={...core,createRouter,ensureFleetSnapshot,pruneRoutes};
