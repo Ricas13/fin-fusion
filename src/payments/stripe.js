@@ -42,14 +42,17 @@ async function ensureStripeCoupon(discount,plan) {
     else {params.amount_off=discount.fixed_off_minor;params.currency=String(discount.currency||plan.currency||'usd').toLowerCase();}
     const coupon=await stripe.coupons.create(params);await query('UPDATE discount_codes SET stripe_coupon_id=$1,updated_at=NOW() WHERE id=$2',[coupon.id,discount.id]);return coupon.id;
 }
-async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,discountCode=null,checkoutMode=null}) {
+async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,discountCode=null,checkoutMode=null,idempotencyKey=null}) {
     const plan=await lifecycle.getProviderPlan(planCode,'stripe',checkoutMode);if(!plan)throw new Error('This plan is not configured for the selected Stripe payment type');
     const stripe=await getStripe(),stripeCustomerId=await ensureStripeCustomer(customerId,email),mode=plan.checkout_mode==='subscription'?'subscription':'payment';
-    const metadata={internal_customer_id:customerId,internal_plan_id:plan.id,internal_plan_code:plan.code};
+    const metadata={internal_customer_id:customerId,internal_plan_id:plan.id,internal_plan_code:plan.code,...(idempotencyKey?{internal_checkout_intent_id:String(idempotencyKey)}:{})};
     const params={mode,customer:stripeCustomerId,line_items:[{price:plan.external_id,quantity:1}],success_url:successUrl,cancel_url:cancelUrl,metadata,integration_identifier:randomIntegrationIdentifier()};
     if(discountCode){const discount=await discounts.validateForCheckout({code:discountCode,planId:plan.id,planCode,customerId});if(discount.discount_type==='fixed'&&discount.currency&&String(discount.currency).toUpperCase()!==String(plan.currency).toUpperCase())throw new Error("That discount code's currency does not match this plan");const couponId=await ensureStripeCoupon(discount,plan);params.discounts=[{coupon:couponId}];metadata.internal_discount_code_id=discount.id;}
     if(mode==='subscription')params.subscription_data={metadata};else params.payment_intent_data={metadata};
-    const session=await stripe.checkout.sessions.create(params);return{id:session.id,url:session.url,mode};
+    const session=idempotencyKey
+        ? await stripe.checkout.sessions.create(params,{idempotencyKey:`checkout-${String(idempotencyKey)}`})
+        : await stripe.checkout.sessions.create(params);
+    return{id:session.id,url:session.url,mode};
 }
 async function createCustomerPortal({customerId,returnUrl}) {
     const mapping=await lifecycle.findPaymentCustomer(customerId,'stripe');if(!mapping)throw new Error('No Stripe customer exists for this account');
