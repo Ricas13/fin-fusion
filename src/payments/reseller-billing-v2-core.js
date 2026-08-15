@@ -11,12 +11,12 @@ function withState(url, intent) { const target=new URL(url);target.searchParams.
 
 async function createStripeCheckout(input) {
     const intent=await intents.createIntent({scope:'reseller',resellerId:input.resellerId,tierId:input.tierId,provider:'stripe',checkoutMode:'subscription'});
-    try { const checkout=await core.createStripeCheckout({...input,successUrl:withState(input.successUrl,intent)});await intents.attachProviderCheckout(intent.id,checkout.id);return{...checkout,intentId:intent.id,state:intent.nonce}; }
+    try { const checkout=await core.createStripeCheckout({...input,successUrl:withState(input.successUrl,intent),idempotencyKey:intent.id});await intents.attachProviderCheckout(intent.id,checkout.id);return{...checkout,intentId:intent.id,state:intent.nonce}; }
     catch(error){await intents.consume({intentId:intent.id,nonce:intent.nonce,state:'failed'}).catch(()=>{});throw error;}
 }
 async function createPayPalCheckout(input) {
     const intent=await intents.createIntent({scope:'reseller',resellerId:input.resellerId,tierId:input.tierId,provider:'paypal',checkoutMode:'subscription'});
-    try { const checkout=await core.createPayPalCheckout({...input,returnUrl:withState(input.returnUrl,intent)});await intents.attachProviderCheckout(intent.id,checkout.id);return{...checkout,intentId:intent.id,state:intent.nonce}; }
+    try { const checkout=await core.createPayPalCheckout({...input,returnUrl:withState(input.returnUrl,intent),idempotencyKey:intent.id});await intents.attachProviderCheckout(intent.id,checkout.id);return{...checkout,intentId:intent.id,state:intent.nonce}; }
     catch(error){await intents.consume({intentId:intent.id,nonce:intent.nonce,state:'failed'}).catch(()=>{});throw error;}
 }
 async function activatePayPalCheckout({subscriptionId,intentId,state}) {
