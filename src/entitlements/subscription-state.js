@@ -15,18 +15,12 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        s.current_period_end + (COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at
- FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id
- WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW()
-   AND (
-     (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
-     OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
-         AND s.current_period_end+(s.service_extension_days||' days')::interval>NOW())
-   )
-   AND ($2::boolean OR c.access_paused_at IS NULL)
- ORDER BY CASE s.status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 WHEN 'past_due' THEN 2 WHEN 'paused' THEN 3 ELSE 4 END,
-          CASE WHEN s.source IN('stripe','paypal') THEN 0 WHEN s.source IN('reseller_sale','reseller_credit') THEN 1 WHEN s.source IN('manual','admin_grant') THEN 2 WHEN s.source='free_claim' THEN 3 ELSE 4 END,
-          (s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval) DESC,s.created_at DESC LIMIT 1
+        e.access_expires_at,e.blocked
+ FROM effective_customer_entitlements e
+ JOIN subscriptions s ON s.id=e.subscription_id
+ JOIN plans p ON p.id=e.plan_id
+ WHERE e.customer_id=$1 AND ($2::boolean OR e.blocked=FALSE)
+ LIMIT 1
  `,[customerId,Boolean(includeBlocked)]);return result.rows[0]||null}
 async function assertNoOtherLiveRecurring(client,customerId,excludeId=null){const result=await client.query(`SELECT id,source,provider_subscription_id,status,current_period_end FROM subscriptions WHERE customer_id=$1 AND superseded_by IS NULL AND id<>COALESCE($2::uuid,'00000000-0000-0000-0000-000000000000'::uuid) AND source IN('stripe','paypal') AND status IN('active','trialing','past_due','paused') AND current_period_end>NOW() AND ((source='stripe' AND COALESCE(provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\') OR (source='paypal' AND COALESCE(provider_subscription_id,'') LIKE 'I-%')) LIMIT 1 FOR UPDATE`,[customerId,excludeId]);if(result.rowCount)throw new Error('A recurring subscription is already active for this customer. Change or cancel it instead of creating another one.')}
 function assertSafeSourceRewrite(existing,targetSource){if(recurringProvider(existing)&&!['stripe','paypal'].includes(String(targetSource||'')))throw new Error('A provider-managed recurring subscription cannot be converted into a manual or reseller subscription. Cancel/change provider billing through the billing workflow first.')}
