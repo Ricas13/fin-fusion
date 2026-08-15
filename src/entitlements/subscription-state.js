@@ -38,6 +38,7 @@ async function effectiveSubscription(customerId, { client = null, includeBlocked
         WHERE s.customer_id=$1
           AND s.superseded_by IS NULL
           AND s.status IN ('active','trialing','past_due','paused')
+          AND s.starts_at<=NOW()
           AND s.current_period_end>NOW()
           AND p.active=TRUE
           AND ($2::boolean OR c.access_paused_at IS NULL)
