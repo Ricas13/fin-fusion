@@ -2,14 +2,13 @@
 const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
-const auth=require('../auth/service');
+const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 const customerFilters=require('./customer-filters');
 const bulkJobs=require('./bulk-jobs');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
-function site(){return process.env.SITE_NAME||'CAPTAiNFiN'}
 function t(v,max=200){return String(v||'').trim().slice(0,max)}
 
 // key, label, { highImpact, fields } -- fields are gathered on the preview
@@ -121,10 +120,9 @@ function previewPage(req,action,selection,summary,idempotencyKey){
         ${selectionHidden}
         ${fieldForm(action)}
         ${meta.highImpact?`<div class="formGroup"><label>Type CONFIRM to proceed</label><input class="input" name="confirmWord" required></div>`:''}
-        <div class="formGroup narrow"><label>Authenticator / recovery code <span class="muted">(only if 2FA is enabled)</span></label><input class="input" name="code" autocomplete="one-time-code"></div>
         <div class="buttonRow"><button class="button ${meta.highImpact?'btn-danger':''}">Confirm and run</button><a class="button secondary" href="/admin/users">Cancel</a></div>
     </form></section>`;
-    return layout({siteName:site(),active:'users',title:'Bulk action preview',subtitle:meta.label,body});
+    return layout({siteName:runtimeSettings.siteName(),active:'users',title:'Bulk action preview',subtitle:meta.label,body});
 }
 
 function createAdminBulkCustomersRouter(){
@@ -134,6 +132,7 @@ function createAdminBulkCustomersRouter(){
     r.post('/admin/customers/bulk/preview',async(req,res,next)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
         try{
+            await runtimeSettings.ensureLoaded();
             const action=t(req.body.action,40);
             if(!ACTION_MAP.has(action))return res.redirect('/admin/users?error='+encodeURIComponent('Choose a valid bulk action.'));
             const selection=parseSelectionInput(req.body);
@@ -151,7 +150,6 @@ function createAdminBulkCustomersRouter(){
             const action=t(req.body.action,40);
             const meta=ACTION_MAP.get(action);
             if(!meta)throw new Error('validation');
-            if(!(await auth.verifySecondFactor(req.session.authUserId,req.body.code,req)))throw new Error('verification');
             if(meta.highImpact&&String(req.body.confirmWord||'').trim()!=='CONFIRM')throw new Error('confirm_word');
             const selection=parseSelectionInput(req.body);
             const ids=await resolveSelection(selection,null);
@@ -169,7 +167,7 @@ function createAdminBulkCustomersRouter(){
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.bulk.'||$2,'background_job',$3,$4::jsonb)`,[req.session.authUserId,action,job.id,JSON.stringify({affected:summary.safe.length,excluded:summary.unsafe.length,params})]);
             return res.redirect(`/admin/jobs/${encodeURIComponent(job.id)}?message=`+encodeURIComponent(reused?'This bulk action was already submitted.':'Bulk action queued.'));
         }catch(error){
-            const message=error.message==='verification'?'Verification failed.':error.message==='confirm_word'?'Type CONFIRM exactly to proceed with a high-impact action.':error.message==='empty'?'No customers matched your selection.':'Bulk action could not be started safely.';
+            const message=error.message==='confirm_word'?'Type CONFIRM exactly to proceed with a high-impact action.':error.message==='empty'?'No customers matched your selection.':'Bulk action could not be started safely.';
             return res.redirect('/admin/users?error='+encodeURIComponent(message));
         }
     });
