@@ -69,8 +69,8 @@ async function checkoutContract(session) {
     const stripe=await getStripe();
     const verified=await stripe.checkout.sessions.retrieve(session.id,{expand:['line_items.data.price']});
     if(!['paid','no_payment_required'].includes(verified.payment_status))throw new Error('Stripe Checkout session is not paid');
-    const priceId=verified.line_items?.data?.[0]?.price?.id||null;
-    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:priceId,amountMinor:verified.amount_total,currency:verified.currency});
+    const price=verified.line_items?.data?.[0]?.price||null,priceId=price?.id||null;
+    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:priceId,amountMinor:verified.mode==='payment'?verified.amount_total:null,currency:verified.mode==='payment'?verified.currency:price?.currency});
     return{session:verified,customerId,planId,priceId,...contract};
 }
 async function activateCheckoutSession(session) {
