@@ -40,7 +40,7 @@ function createRouter(){
     router.use(createCustomerPaymentReturnRouter());
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
-    pruneRoutes(legacy,new Set(['/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal','/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply']));
+    pruneRoutes(legacy,new Set(['/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal','/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences']));
     router.use(legacy);return router;
 }
 module.exports={...core,createRouter,ensureFleetSnapshot,pruneRoutes};
