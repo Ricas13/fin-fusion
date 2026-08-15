@@ -2,7 +2,6 @@
 
 const core = require('./lifecycle-core');
 const { query, transaction } = require('../db');
-const { reconcileCustomer } = require('../jellyfin/resilient-provisioning');
 const state = require('../entitlements/subscription-state');
 const commerce = require('./commerce-control');
 
@@ -129,7 +128,7 @@ async function startFreeTrial(customerId, planCode) {
             VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
         return row.rows[0];
     });
-    await reconcileCustomer(customerId);
+    await core.reconcileCommittedCustomer(customerId, 'Trial');
     return created;
 }
 
@@ -153,7 +152,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode})]);
         return row.rows[0];
     });
-    await reconcileCustomer(customerId);
+    await core.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan');
     return created;
 }
 

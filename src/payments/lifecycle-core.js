@@ -30,6 +30,19 @@ function mapProviderStatus(provider, status) {
     return 'past_due';
 }
 
+// Subscription/payment state is committed before Jellyfin provisioning. The
+// resilient provisioning layer records the concrete problem for operators, so
+// a temporary placement/API failure must not turn an already-committed sale,
+// trial or free claim into a false transaction failure for the caller/provider.
+async function reconcileCommittedCustomer(customerId, context = 'Entitlement') {
+    try {
+        return await reconcileCustomer(customerId);
+    } catch (error) {
+        console.error(`${context} provisioning pending for ${customerId}:`, error.message);
+        return null;
+    }
+}
+
 async function getProviderOptions(planCode, provider) {
     const result = await query(`
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
@@ -155,7 +168,7 @@ async function startFreeTrial(customerId, planCode = null) {
         `, [created.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
         return created.rows[0];
     });
-    await reconcileCustomer(customerId);
+    await reconcileCommittedCustomer(customerId, 'Trial');
     return subscription;
 }
 
@@ -189,7 +202,7 @@ async function claimFreePlan(customerId, planCode) {
         `, [created.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
         return created.rows[0];
     });
-    await reconcileCustomer(customerId);
+    await reconcileCommittedCustomer(customerId, 'Free plan');
     return subscription;
 }
 
@@ -306,7 +319,7 @@ async function activatePurchase({
     });
 
     if (providerCustomerId) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
-    await reconcileCustomer(customerId);
+    await reconcileCommittedCustomer(customerId, 'Paid subscription');
     try {
         await referrals.rewardIfQualifying(customerId);
     } catch (error) {
@@ -326,7 +339,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
         WHERE source=$4 AND provider_subscription_id=$5
         RETURNING *
     `, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
-    if (result.rowCount) await reconcileCustomer(result.rows[0].customer_id);
+    if (result.rowCount) await reconcileCommittedCustomer(result.rows[0].customer_id, 'Provider subscription');
     return result.rows[0] || null;
 }
 
@@ -334,6 +347,7 @@ module.exports = {
     PAYMENT_EVENT_LEASE_MINUTES,
     addPlanDuration,
     mapProviderStatus,
+    reconcileCommittedCustomer,
     getProviderOptions,
     getProviderPlan,
     getProviderPlanByExternalId,
