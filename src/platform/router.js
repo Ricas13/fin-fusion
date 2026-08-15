@@ -11,6 +11,7 @@ const { createAdminConfigurationHealthRouter } = require('./admin-configuration-
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
+const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 let fleetStarted = false;
@@ -37,6 +38,7 @@ function createRouter() {
     router.use(createAdminCommerceRouter());
     router.use(createAdminConfigurationHealthRouter());
     router.use(createAdminResellerSettingsRouter());
+    router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
 
     router.use('/account', (req, res, next) => {
