@@ -26,7 +26,7 @@ async function results(term){
                 SELECT plan_id,status,provider_subscription_id
                 FROM subscriptions
                 WHERE customer_id=c.id
-                ORDER BY COALESCE(access_expires_at,current_period_end) DESC,created_at DESC
+                ORDER BY (current_period_end + (COALESCE(service_extension_days,0) * INTERVAL '1 day')) DESC,created_at DESC
                 LIMIT 1
             ) s ON TRUE
             LEFT JOIN plans p ON p.id=s.plan_id
@@ -43,7 +43,7 @@ async function results(term){
             ORDER BY c.display_name NULLS LAST,c.id
             LIMIT 75`,[pattern]),
         query(`SELECT r.id,u.username,u.email,rs.status,COALESCE(rs.tier_name_snapshot,rt.name) tier_name,
-                   COALESCE(rs.tier_code_snapshot,rt.code) tier_code,rs.provider_subscription_id,rs.source
+                   rt.code tier_code,rs.provider_subscription_id,rs.source
             FROM resellers r
             JOIN app_users u ON u.id=r.user_id
             LEFT JOIN LATERAL(
@@ -59,7 +59,7 @@ async function results(term){
                OR COALESCE(u.email,'') ILIKE $1
                OR COALESCE(rs.provider_subscription_id,'') ILIKE $1
                OR COALESCE(rs.tier_name_snapshot,rt.name,'') ILIKE $1
-               OR COALESCE(rs.tier_code_snapshot,rt.code,'') ILIKE $1
+               OR COALESCE(rt.code,'') ILIKE $1
             ORDER BY u.username
             LIMIT 75`,[pattern]),
         query(`SELECT id,name,slug,base_url,public_url,health_status,server_class,placement_mode
@@ -104,8 +104,7 @@ async function results(term){
             ORDER BY s.updated_at DESC
             LIMIT 75`,[pattern]),
         query(`SELECT rs.id,rs.reseller_id,rs.source,rs.status,rs.provider_customer_id,rs.provider_subscription_id,
-                   u.username,u.email,COALESCE(rs.tier_name_snapshot,rt.name) tier_name,
-                   COALESCE(rs.tier_code_snapshot,rt.code) tier_code
+                   u.username,u.email,COALESCE(rs.tier_name_snapshot,rt.name) tier_name,rt.code tier_code
             FROM reseller_subscriptions rs
             JOIN resellers r ON r.id=rs.reseller_id
             JOIN app_users u ON u.id=r.user_id
@@ -115,7 +114,7 @@ async function results(term){
                OR COALESCE(rs.provider_subscription_id,'') ILIKE $1
                OR COALESCE(rs.provider_customer_id,'') ILIKE $1
                OR COALESCE(rs.tier_name_snapshot,rt.name,'') ILIKE $1
-               OR COALESCE(rs.tier_code_snapshot,rt.code,'') ILIKE $1
+               OR COALESCE(rt.code,'') ILIKE $1
             ORDER BY rs.updated_at DESC
             LIMIT 75`,[pattern])
     ]);
