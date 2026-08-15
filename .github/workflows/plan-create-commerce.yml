@@ -1,0 +1,50 @@
+name: Plan Creation Commerce
+
+on:
+  pull_request:
+    paths:
+      - 'src/platform/admin-catalog-shell.js'
+      - 'public/js/admin-plan-create.js'
+      - 'scripts/plan-create-commerce-smoke.js'
+      - 'db/migrations/**'
+      - '.github/workflows/plan-create-commerce.yml'
+  workflow_dispatch:
+
+jobs:
+  plan-create:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Syntax
+        run: |
+          node --check src/platform/admin-catalog-shell.js
+          node --check public/js/admin-plan-create.js
+          node --check scripts/plan-create-commerce-smoke.js
+      - name: Apply database migrations
+        run: npm run db:migrate
+      - name: Plan pricing, frequency and reseller credit smoke
+        run: node scripts/plan-create-commerce-smoke.js
