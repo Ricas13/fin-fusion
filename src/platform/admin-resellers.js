@@ -1,267 +1,82 @@
 'use strict';
 
-const express = require('express');
-const crypto = require('crypto');
-const bcrypt = require('bcryptjs');
-const { query, transaction } = require('../db');
-const csrf = require('../auth/csrf');
-const auth = require('../auth/service');
-const { esc, layout } = require('./admin-html');
+const express=require('express');
+const crypto=require('crypto');
+const bcrypt=require('bcryptjs');
+const {query,transaction}=require('../db');
+const csrf=require('../auth/csrf');
+const activation=require('../auth/account-activation');
+const monthly=require('../resellers/monthly');
+const resellerBilling=require('../payments/reseller-billing');
+const accessHolds=require('../entitlements/access-holds');
+const provisioning=require('../jellyfin/provisioning');
+const runtimeSettings=require('./runtime-settings');
+const {esc,layout}=require('./admin-html');
 
-function site() {
-    return process.env.SITE_NAME || 'CAPTaINFiN';
-}
+function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
+function noStore(_q,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
+function text(value,max=500){return String(value||'').trim().slice(0,max)}
+function integer(value,min,max,fallback=0){const n=parseInt(value,10);return Number.isFinite(n)&&n>=min&&n<=max?n:fallback}
+function bool(value){return ['1','true','on','yes'].includes(String(value||'').toLowerCase())}
+function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
+function redirect(res,path,key,message){return res.redirect(`${path}?${key}=${encodeURIComponent(message)}`)}
+function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
+function date(value){return value?new Date(value).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'—'}
+function dt(value){return value?new Date(value).toLocaleString('en-GB'):'—'}
+function money(minor,currency='GBP'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`}}
+function baseUrl(req){const proto=req.get('x-forwarded-proto')?.split(',')[0]?.trim()||req.protocol;const host=req.get('x-forwarded-host')||req.get('host');return `${proto}://${host}`}
 
-function gate(req, res, next) {
-    if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
-    return res.redirect('/login?session=expired');
-}
+async function defaults(){const result=await query(`SELECT setting_value FROM platform_settings WHERE setting_key='reseller_defaults_v2'`);const value=result.rows[0]?.setting_value||{};return{ledgerCurrency:/^[A-Z]{3}$/.test(String(value.ledgerCurrency||'GBP').toUpperCase())?String(value.ledgerCurrency||'GBP').toUpperCase():'GBP',paymentMethods:Array.isArray(value.paymentMethods)&&value.paymentMethods.length?value.paymentMethods:['Cash','Bank transfer','PayPal','Stripe','Other'],ownerAccountAllowed:value.ownerAccountAllowed!==false,defaultTierId:value.defaultTierId||''}}
 
-function text(value, max = 500) {
-    return String(value || '').trim().slice(0, max);
-}
+async function listResellers(){const result=await query(`
+ SELECT r.id,r.user_id,r.credits,r.trial_credits,r.note,r.created_at,r.estate_suspended_at,r.estate_suspend_reason,r.ledger_currency,r.allowed_payment_methods,r.owner_account_allowed,
+        u.username,u.email,u.active,u.last_login_at,u.totp_enabled,
+        COUNT(DISTINCT c.id)::int customers,
+        COUNT(DISTINCT c.id) FILTER(WHERE c.access_paused_at IS NULL AND EXISTS(SELECT 1 FROM subscriptions sx WHERE sx.customer_id=c.id AND sx.superseded_by IS NULL AND sx.status IN ('active','trialing','past_due','paused') AND sx.current_period_end>NOW()))::int active_seats,
+        COUNT(DISTINCT aps.jellyfin_session_id)::int live_streams,
+        rs.id subscription_id,rs.tier_id,rs.status subscription_status,rs.source subscription_source,rs.current_period_end,rs.cancel_at_period_end,rs.provider_subscription_id,rs.grace_until,
+        COALESCE(rs.tier_name_snapshot,rt.name) tier_name,COALESCE(rs.seat_limit_snapshot,rt.seat_limit) seat_limit,
+        COALESCE(rs.monthly_price_minor_snapshot,rt.monthly_price_minor) monthly_price_minor,COALESCE(rs.currency_snapshot,rt.currency) billing_currency,
+        COALESCE(SUM(CASE WHEN sale.sale_type='refund' THEN -sale.amount_minor WHEN sale.sale_type IN ('sale','adjustment') THEN sale.amount_minor ELSE 0 END),0)::bigint downstream_revenue_minor,
+        EXISTS(SELECT 1 FROM account_activation_tokens a WHERE a.user_id=r.user_id AND a.purpose='reseller_activation' AND a.used_at IS NULL AND a.revoked_at IS NULL AND a.expires_at>NOW()) activation_pending
+ FROM resellers r JOIN app_users u ON u.id=r.user_id
+ LEFT JOIN customers c ON c.reseller_id=r.id
+ LEFT JOIN active_playback_sessions aps ON aps.customer_id=c.id
+ LEFT JOIN LATERAL(SELECT * FROM reseller_subscriptions WHERE reseller_id=r.id ORDER BY CASE WHEN status='active' AND current_period_end>NOW() THEN 0 ELSE 1 END,current_period_end DESC LIMIT 1)rs ON TRUE
+ LEFT JOIN reseller_tiers rt ON rt.id=rs.tier_id
+ LEFT JOIN reseller_sales sale ON sale.reseller_id=r.id AND sale.voided_at IS NULL AND sale.created_at>=date_trunc('month',NOW())
+ GROUP BY r.id,u.id,rs.id,rt.id ORDER BY u.username
+ `);return result.rows}
 
-function integer(value, min, max, fallback = 0) {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
-}
+function statusPill(row){if(!row.active)return'<span class="pill bad">Portal disabled</span>';if(row.estate_suspended_at)return'<span class="pill bad">Estate suspended</span>';if(row.subscription_status==='past_due'&&row.grace_until&&new Date(row.grace_until)>new Date())return'<span class="pill warn">Billing grace</span>';if(row.subscription_status==='active'&&row.current_period_end&&new Date(row.current_period_end)>new Date())return'<span class="pill good">Active</span>';return'<span class="pill warn">No active entitlement</span>'}
+function resellerRow(row){const limit=Number(row.seat_limit||0),used=Number(row.active_seats||0),pct=limit?Math.round(used/limit*100):0;return `<tr><td data-label="Reseller"><strong>${esc(row.username)}</strong><div class="subText">${esc(row.email||'No email')}</div>${row.activation_pending?'<div class="subText">Activation pending</div>':''}</td><td data-label="Tier">${esc(row.tier_name||'No tier')}<div class="subText">${row.monthly_price_minor!=null?esc(money(row.monthly_price_minor,row.billing_currency))+'/mo':'—'}</div></td><td data-label="Seats">${used}${limit?` / ${limit}`:''}<div class="subText">${pct}% used · ${esc(row.live_streams||0)} streams now</div></td><td data-label="Billing">${esc(row.subscription_status||'none')}<div class="subText">${row.current_period_end?'to '+esc(date(row.current_period_end)):'No paid-through date'}</div></td><td data-label="Revenue">${esc(money(row.downstream_revenue_minor,row.ledger_currency))}<div class="subText">reported this month</div></td><td data-label="Status">${statusPill(row)}</td><td data-label=""><div class="buttonRow"><a class="button secondary btn-sm" href="/admin/reseller-management/${esc(row.id)}">Details</a>${row.activation_pending?`<a class="button secondary btn-sm" href="/admin/reseller-management/${esc(row.id)}/activation">Activation</a>`:''}</div></td></tr>`}
 
-function csrfInput(req) {
-    return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
-}
+async function listPage(req){await runtimeSettings.ensureLoaded();const [rows,defs,tiers,mrr]=await Promise.all([listResellers(),defaults(),monthly.listTiers({activeOnly:true}),query(`SELECT COALESCE(rs.currency_snapshot,rt.currency) currency,SUM(COALESCE(rs.monthly_price_minor_snapshot,rt.monthly_price_minor))::bigint amount_minor,COUNT(*)::int subscriptions FROM reseller_subscriptions rs JOIN reseller_tiers rt ON rt.id=rs.tier_id WHERE rs.status='active' AND rs.current_period_end>NOW() GROUP BY 1 ORDER BY 1`)]);const customers=rows.reduce((sum,row)=>sum+Number(row.customers||0),0),seats=rows.reduce((sum,row)=>sum+Number(row.active_seats||0),0),mrrLabel=mrr.rows.length?mrr.rows.map(r=>money(r.amount_minor,r.currency)).join(' + '):'—';const body=`${notice(req)}<div class="metrics"><div class="metric"><div class="metricLabel">Resellers</div><div class="metricValue">${rows.length}</div></div><div class="metric"><div class="metricLabel">Customer records</div><div class="metricValue">${customers}</div></div><div class="metric"><div class="metricLabel">Active entitlements</div><div class="metricValue">${seats}</div></div><div class="metric"><div class="metricLabel">Reseller MRR</div><div class="metricValue" style="font-size:18px">${esc(mrrLabel)}</div><div class="subText">currencies never combined</div></div></div>
+ <section class="section"><div class="sectionHead"><h2>Create reseller</h2><span class="muted">Activation link · no administrator-visible password</span></div><form class="formPanel" method="post" action="/admin/reseller-management/create">${token(req)}<div class="formGrid"><div class="formGroup"><label>Username</label><input class="input" name="username" required pattern="[A-Za-z0-9._-]{3,40}"></div><div class="formGroup"><label>Email</label><input class="input" type="email" name="email"><div class="inlineHelp">When email is configured, the activation link is queued automatically.</div></div><div class="formGroup"><label>Initial monthly tier</label><select class="input" name="tierId"><option value="">No entitlement yet</option>${tiers.map(t=>`<option value="${esc(t.id)}" ${String(t.id)===String(defs.defaultTierId)?'selected':''}>${esc(t.name)} · ${esc(t.seat_limit)} entitlements · ${esc(money(t.monthly_price_minor,t.currency))}/mo</option>`).join('')}</select></div><div class="formGroup"><label>Manual entitlement months</label><input class="input" type="number" name="months" min="1" max="36" value="1"></div><div class="formGroup"><label>Ledger currency</label><input class="input" name="ledgerCurrency" maxlength="3" value="${esc(defs.ledgerCurrency)}"></div><div class="formGroup"><label>Payment methods</label><input class="input" name="paymentMethods" value="${esc(defs.paymentMethods.join(', '))}"><div class="inlineHelp">Comma-separated methods visible in the reseller portal.</div></div></div><label class="checkRow"><input type="checkbox" name="ownerAccountAllowed" value="1" ${defs.ownerAccountAllowed?'checked':''}> Allow reseller to create their own Jellyfin account (uses one entitlement)</label><button class="button">Create reseller & activation link</button></form></section>
+ <section class="section"><div class="sectionHead"><h2>Resellers</h2><span class="muted">Monthly entitlement is the primary commercial model; legacy credits remain available from each detail page.</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Reseller</th><th>Tier</th><th>Seats</th><th>Billing</th><th>Revenue MTD</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(resellerRow).join('')}</tbody></table></div>`:'<div class="empty">No resellers yet.</div>'}</section>`;return layout({siteName:runtimeSettings.siteName(),active:'resellers',title:'Resellers',subtitle:'Monthly subscriptions, estates, revenue and portal access',body})}
 
-function stepInput() {
-    return `<div class="formGroup"><label>Authenticator / recovery code <span class="muted">(only needed if 2FA is enabled)</span></label><input class="input" name="code" autocomplete="one-time-code"></div>`;
-}
+async function resellerDetail(id){const result=await query(`SELECT r.*,u.username,u.email,u.active,u.last_login_at,u.totp_enabled FROM resellers r JOIN app_users u ON u.id=r.user_id WHERE r.id=$1`,[id]);if(!result.rowCount)return null;const reseller=result.rows[0],[sub,seats,customers,sales]=await Promise.all([monthly.currentSubscription(id),monthly.seatUsage(id),monthly.listManagedCustomers(id),monthly.salesAnalytics(id,{from:new Date(Date.now()-30*86400000),to:new Date()})]);return{reseller,sub,seats,customers,sales}}
+async function detailPage(req){await runtimeSettings.ensureLoaded();const d=await resellerDetail(req.params.id);if(!d)return null;const r=d.reseller,sub=d.sub,entitled=sub&&((sub.status==='active'&&new Date(sub.current_period_end)>new Date())||(sub.status==='past_due'&&sub.grace_until&&new Date(sub.grace_until)>new Date()));const revenue=(d.sales.totals||[]).map(x=>money(x.amount_minor,x.currency)).join(' + ')||'—';const body=`${notice(req)}<div class="profileHero"><div class="profileIdentity"><h1>${esc(r.username)}</h1><div class="profileMeta"><span>${esc(r.email||'No email')}</span><span>·</span><span>${esc(d.customers.length)} customer records</span><span>·</span><span>${esc(d.seats)} active entitlements</span></div></div><div class="profileActions">${r.active?'<span class="pill good">Portal active</span>':'<span class="pill bad">Portal disabled</span>'}${r.estate_suspended_at?'<span class="pill bad">Estate suspended</span>':''}</div></div>
+ <div class="summaryGrid"><div class="summaryCard"><div class="summaryLabel">Tier</div><div class="summaryValue">${esc(sub?.tier_name||'None')}</div><div class="summarySub">${sub?`${esc(sub.status)} · paid to ${esc(date(sub.current_period_end))}`:'No parent entitlement'}</div></div><div class="summaryCard"><div class="summaryLabel">Seats</div><div class="summaryValue">${esc(d.seats)}${sub?.seat_limit?` / ${esc(sub.seat_limit)}`:''}</div><div class="summarySub">active customer entitlements</div></div><div class="summaryCard"><div class="summaryLabel">30-day downstream revenue</div><div class="summaryValue">${esc(revenue)}</div><div class="summarySub">reseller-reported</div></div><div class="summaryCard"><div class="summaryLabel">Renewal</div><div class="summaryValue">${sub?.cancel_at_period_end?'Stopping':'On'}</div><div class="summarySub">${esc(sub?.source||'manual')}</div></div></div>
+ <section class="section"><div class="sectionHead"><h2>Independent controls</h2><span class="muted">Changing one control does not silently change the others.</span></div><div class="serverGrid"><article class="serverCard"><strong>Portal login</strong><p class="muted">Enable or disable this reseller's CAPTaINFiN sign-in only. Child customer access is unchanged.</p><form method="post" action="/admin/reseller-management/${esc(r.id)}/portal-status">${token(req)}<input type="hidden" name="active" value="${r.active?'false':'true'}"><button class="button ${r.active?'btn-danger':'btn-success'}">${r.active?'Disable portal login':'Enable portal login'}</button></form></article><article class="serverCard"><strong>Customer estate</strong><p class="muted">Administrator hold independent of parent billing and individual reseller suspensions.</p><form method="post" action="/admin/reseller-management/${esc(r.id)}/estate">${token(req)}<input type="hidden" name="suspended" value="${r.estate_suspended_at?'false':'true'}"><button class="button ${r.estate_suspended_at?'btn-success':'btn-danger'}">${r.estate_suspended_at?'Restore admin estate hold':'Suspend whole estate'}</button></form></article><article class="serverCard"><strong>Recurring renewal</strong><p class="muted">Paid-through access remains valid after renewal is stopped.</p>${sub&&['stripe','paypal'].includes(sub.source)?`<form method="post" action="/admin/reseller-management/${esc(r.id)}/renewal">${token(req)}<input type="hidden" name="enabled" value="${sub.cancel_at_period_end?'true':'false'}"><button class="button secondary">${sub.cancel_at_period_end?'Resume renewal':'Stop renewal'}</button></form>`:'<div class="emptyCompact">Manual/no recurring provider subscription.</div>'}</article></div></section>
+ <section class="section"><div class="sectionHead"><h2>Configuration</h2></div><form class="formPanel" method="post" action="/admin/reseller-management/${esc(r.id)}/settings">${token(req)}<div class="formGrid"><div class="formGroup"><label>Ledger currency</label><input class="input" name="ledgerCurrency" maxlength="3" value="${esc(r.ledger_currency||'GBP')}"></div><div class="formGroup"><label>Payment methods</label><input class="input" name="paymentMethods" value="${esc((r.allowed_payment_methods||[]).join(', '))}"></div></div><label class="checkRow"><input type="checkbox" name="ownerAccountAllowed" value="1" ${r.owner_account_allowed?'checked':''}> Allow reseller-owned Jellyfin account</label><button class="button secondary">Save reseller settings</button></form></section>
+ <section class="section"><div class="sectionHead"><h2>Legacy credit ledger</h2><span class="muted">Compatibility only</span></div><div class="metrics"><div class="metric"><div class="metricLabel">Regular credits</div><div class="metricValue">${esc(r.credits)}</div></div><div class="metric"><div class="metricLabel">Trial credits</div><div class="metricValue">${esc(r.trial_credits)}</div></div></div><form class="formPanel" method="post" action="/admin/reseller-management/${esc(r.id)}/credits">${token(req)}<div class="formGrid"><div class="formGroup"><label>Regular adjustment</label><input class="input" type="number" name="regularDelta" min="-100000" max="100000" value="0"></div><div class="formGroup"><label>Trial adjustment</label><input class="input" type="number" name="trialDelta" min="-20" max="20" value="0"></div><div class="formGroup"><label>Reason</label><input class="input" name="note" maxlength="200"></div></div><button class="button secondary">Record legacy adjustment</button></form></section>`;return layout({siteName:runtimeSettings.siteName(),active:'resellers',title:r.username,subtitle:'Reseller 360 · billing, estate and portal controls',body,action:'<a class="button secondary" href="/admin/reseller-management">Back</a>'})}
 
-function notice(value, kind = '') {
-    return value ? `<div class="notice ${kind}">${esc(value)}</div>` : '';
-}
+async function activationPage(req){await runtimeSettings.ensureLoaded();const r=await query(`SELECT r.id,r.user_id,u.username,u.email FROM resellers r JOIN app_users u ON u.id=r.user_id WHERE r.id=$1`,[req.params.id]);if(!r.rowCount)return null;const active=await activation.activeForUser(r.rows[0].user_id,'reseller_activation');const url=active?activation.activationUrl(baseUrl(req),active.raw):'';const body=`${notice(req)}<section class="section"><div class="sectionHead"><h2>${esc(r.rows[0].username)}</h2><span class="muted">${esc(r.rows[0].email||'No email')}</span></div>${active?`<div class="formPanel"><label>Active one-time link</label><div class="codeBox">${esc(url)}</div><p class="muted">Expires ${esc(dt(active.expires_at))}. Creating a new link revokes this one.</p></div>`:'<div class="empty">No active activation link. The account may already be activated or the link expired.</div>'}<form class="formPanel" method="post" action="/admin/reseller-management/${esc(req.params.id)}/activation">${token(req)}<div class="formGroup"><label>Link lifetime (days)</label><input class="input" type="number" name="days" min="1" max="30" value="7"></div><button class="button">Create / rotate activation link</button></form></section>`;return layout({siteName:runtimeSettings.siteName(),active:'resellers',title:'Reseller activation',subtitle:'One-time password setup link',body})}
 
-function redirect(res, key, message) {
-    return res.redirect('/admin/reseller-management?' + key + '=' + encodeURIComponent(message));
-}
+async function setAdminEstate(resellerId,suspended,actor){const ids=(await query('SELECT id FROM customers WHERE reseller_id=$1 ORDER BY id',[resellerId])).rows.map(x=>x.id);for(const id of ids){if(suspended)await accessHolds.addHold({customerId:id,type:'admin_estate',sourceKey:resellerId,reason:'Estate suspended by administrator',actorUserId:actor,metadata:{resellerId}});else await accessHolds.releaseHold({customerId:id,type:'admin_estate',sourceKey:resellerId,actorUserId:actor});try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Admin estate reconcile failed for ${id}:`,error.message)}}await query(`UPDATE resellers SET estate_suspended_at=$2,estate_suspend_reason=$3 WHERE id=$1`,[resellerId,suspended?new Date():null,suspended?'Suspended by administrator':null]);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'reseller',$3,$4::jsonb)`,[actor,suspended?'admin.reseller.estate.suspend':'admin.reseller.estate.restore',resellerId,JSON.stringify({customers:ids.length})]);return ids.length}
 
-async function requireStep(req) {
-    return auth.verifySecondFactor(req.session.authUserId, req.body.code, req);
-}
+function createAdminResellersRouter(){const router=express.Router();router.use('/admin/reseller-management',gate,noStore);router.use((req,res,next)=>req.method==='POST'?(csrf.verify(req)?next():res.status(403).send('Invalid security token')):next());
+ router.get('/admin/reseller-management',async(req,res,next)=>{try{return res.send(await listPage(req))}catch(e){next(e)}});
+ router.get('/admin/reseller-management/:id',async(req,res,next)=>{try{const page=await detailPage(req);return page?res.send(page):res.status(404).send('Reseller not found')}catch(e){next(e)}});
+ router.get('/admin/reseller-management/:id/activation',async(req,res,next)=>{try{const page=await activationPage(req);return page?res.send(page):res.status(404).send('Reseller not found')}catch(e){next(e)}});
+ router.post('/admin/reseller-management/create',async(req,res)=>{try{const username=text(req.body.username,40),email=text(req.body.email,254).toLowerCase()||null;if(!/^[A-Za-z0-9._-]{3,40}$/.test(username)||(email&&!email.includes('@')))throw new Error('Check the username and email.');const currency=text(req.body.ledgerCurrency,3).toUpperCase();if(!/^[A-Z]{3}$/.test(currency))throw new Error('Ledger currency must be a three-letter code.');const methods=text(req.body.paymentMethods,500).split(',').map(v=>text(v,50)).filter(Boolean).slice(0,20);if(!methods.length)throw new Error('Configure at least one reseller payment method.');const randomHash=await bcrypt.hash(crypto.randomBytes(32).toString('base64url'),12);const created=await transaction(async client=>{const user=await client.query(`INSERT INTO app_users(email,username,password_hash,role,active,email_verified_at) VALUES($1,$2,$3,'reseller',FALSE,CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END) RETURNING id`,[email,username,randomHash]);const row=await client.query(`INSERT INTO resellers(user_id,credits,trial_credits,ledger_currency,allowed_payment_methods,owner_account_allowed) VALUES($1,0,0,$2,$3,$4) RETURNING id`,[user.rows[0].id,currency,methods,bool(req.body.ownerAccountAllowed)]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.reseller.create','reseller',$2,$3::jsonb)`,[req.session.authUserId,row.rows[0].id,JSON.stringify({activationRequired:true,ledgerCurrency:currency})]);return{userId:user.rows[0].id,resellerId:row.rows[0].id}});if(req.body.tierId)await monthly.createManualTierSubscription({resellerId:created.resellerId,tierId:req.body.tierId,months:integer(req.body.months,1,36,1),actorUserId:req.session.authUserId});const act=await activation.create({userId:created.userId,purpose:'reseller_activation',ttlDays:7,createdBy:req.session.authUserId});await runtimeSettings.ensureLoaded();const queued=await activation.queueEmail({activation:act,baseUrl:baseUrl(req),siteName:runtimeSettings.siteName()}).catch(error=>({queued:false,reason:error.message}));return redirect(res,`/admin/reseller-management/${created.resellerId}/activation`,'message',queued.queued?'Reseller created. Activation email queued.':'Reseller created. Copy the activation link below.')}catch(error){console.error('Reseller create failed:',error.message);return redirect(res,'/admin/reseller-management','error',error.code==='23505'?'That username or email already exists.':error.message)}});
+ router.post('/admin/reseller-management/:id/activation',async(req,res)=>{try{const found=await query('SELECT user_id FROM resellers WHERE id=$1',[req.params.id]);if(!found.rowCount)throw new Error('Reseller not found.');const act=await activation.create({userId:found.rows[0].user_id,purpose:'reseller_activation',ttlDays:integer(req.body.days,1,30,7),createdBy:req.session.authUserId});await runtimeSettings.ensureLoaded();const queued=await activation.queueEmail({activation:act,baseUrl:baseUrl(req),siteName:runtimeSettings.siteName()}).catch(()=>({queued:false}));return redirect(res,`/admin/reseller-management/${req.params.id}/activation`,'message',queued.queued?'Activation link rotated and email queued.':'Activation link rotated. Copy the new link below.')}catch(error){return redirect(res,`/admin/reseller-management/${req.params.id}/activation`,'error',error.message)}});
+ router.post('/admin/reseller-management/:id/portal-status',async(req,res)=>{try{const active=bool(req.body.active);await transaction(async client=>{const found=await client.query('SELECT user_id FROM resellers WHERE id=$1 FOR UPDATE',[req.params.id]);if(!found.rowCount)throw new Error('Reseller not found.');await client.query('UPDATE app_users SET active=$2,session_version=session_version+1,updated_at=NOW() WHERE id=$1',[found.rows[0].user_id,active]);if(!active)await client.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE user_id=$1',[found.rows[0].user_id]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.reseller.portal_status','reseller',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({active})])});return redirect(res,`/admin/reseller-management/${req.params.id}`,'message',active?'Reseller portal enabled. Child estate unchanged.':'Reseller portal disabled. Child estate unchanged.')}catch(error){return redirect(res,`/admin/reseller-management/${req.params.id}`,'error',error.message)}});
+ router.post('/admin/reseller-management/:id/estate',async(req,res)=>{try{const suspended=bool(req.body.suspended),count=await setAdminEstate(req.params.id,suspended,req.session.authUserId);return redirect(res,`/admin/reseller-management/${req.params.id}`,'message',suspended?`Administrator estate hold applied to ${count} customer records.`:`Administrator estate hold removed from ${count} customer records.`)}catch(error){return redirect(res,`/admin/reseller-management/${req.params.id}`,'error',error.message)}});
+ router.post('/admin/reseller-management/:id/renewal',async(req,res)=>{try{const enabled=bool(req.body.enabled);if(enabled)await resellerBilling.resumeRenewal(req.params.id);else await resellerBilling.cancelRenewal(req.params.id);return redirect(res,`/admin/reseller-management/${req.params.id}`,'message',enabled?'Recurring renewal resumed.':'Recurring renewal stopped; paid-through access remains valid.')}catch(error){return redirect(res,`/admin/reseller-management/${req.params.id}`,'error',error.message)}});
+ router.post('/admin/reseller-management/:id/settings',async(req,res)=>{try{const currency=text(req.body.ledgerCurrency,3).toUpperCase(),methods=text(req.body.paymentMethods,500).split(',').map(v=>text(v,50)).filter(Boolean).slice(0,20);if(!/^[A-Z]{3}$/.test(currency)||!methods.length)throw new Error('Check ledger currency and payment methods.');await query(`UPDATE resellers SET ledger_currency=$2,allowed_payment_methods=$3,owner_account_allowed=$4 WHERE id=$1`,[req.params.id,currency,methods,bool(req.body.ownerAccountAllowed)]);return redirect(res,`/admin/reseller-management/${req.params.id}`,'message','Reseller commercial settings saved.')}catch(error){return redirect(res,`/admin/reseller-management/${req.params.id}`,'error',error.message)}});
+ router.post('/admin/reseller-management/:id/credits',async(req,res)=>{try{const regular=integer(req.body.regularDelta,-100000,100000,0),trial=integer(req.body.trialDelta,-20,20,0),note=text(req.body.note,200);if(!regular&&!trial)throw new Error('Enter a legacy credit adjustment.');await transaction(async client=>{const updated=await client.query(`UPDATE resellers SET credits=credits+$2,trial_credits=trial_credits+$3 WHERE id=$1 AND credits+$2>=0 AND trial_credits+$3 BETWEEN 0 AND 20 RETURNING id`,[req.params.id,regular,trial]);if(!updated.rowCount)throw new Error('That adjustment would create an invalid balance.');if(regular)await client.query(`INSERT INTO credit_transactions(reseller_id,amount,transaction_type,note,created_by) VALUES($1,$2,'adjustment',$3,$4)`,[req.params.id,regular,note,req.session.authUserId]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.reseller.legacy_credits','reseller',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({regularDelta:regular,trialDelta:trial,note})])});return redirect(res,`/admin/reseller-management/${req.params.id}`,'message','Legacy credit ledger updated.')}catch(error){return redirect(res,`/admin/reseller-management/${req.params.id}`,'error',error.message)}});
+ return router}
 
-async function loadDefaults() {
-    const result = await query("SELECT setting_value FROM platform_settings WHERE setting_key='reseller_defaults'");
-    const value = result.rows[0]?.setting_value || {};
-    return {
-        credits: integer(value.credits, 0, 100000, 0),
-        trialCredits: integer(value.trialCredits, 0, 20, 0)
-    };
-}
-
-async function listResellers() {
-    const result = await query(`
-        SELECT r.id,r.user_id,r.credits,r.trial_credits,r.note,r.created_at,
-               u.username,u.email,u.active,u.last_login_at,
-               COUNT(c.id)::int AS customers
-        FROM resellers r
-        JOIN app_users u ON u.id=r.user_id
-        LEFT JOIN customers c ON c.reseller_id=r.id
-        GROUP BY r.id,u.id
-        ORDER BY u.username
-    `);
-    return result.rows;
-}
-
-function resellerCard(req, row) {
-    const statusClass = row.active ? 'good' : 'bad';
-    const statusText = row.active ? 'Active' : 'Disabled';
-    return `<div class="serverCard">
-        <div class="serverTop">
-            <div><strong>${esc(row.username)}</strong><div class="subText">${esc(row.email || 'No email')}</div></div>
-            <span class="pill ${statusClass}">${statusText}</span>
-        </div>
-        <div class="serverStats">
-            <div><span class="metricMini">${esc(row.credits)}</span><span class="subText">regular credits</span></div>
-            <div><span class="metricMini">${esc(row.trial_credits)}</span><span class="subText">trial credits</span></div>
-            <div><span class="metricMini">${esc(row.customers)}</span><span class="subText">customers</span></div>
-            <div><span class="metricMini">${esc(row.last_login_at ? new Date(row.last_login_at).toLocaleDateString() : 'Never')}</span><span class="subText">last login</span></div>
-        </div>
-        <div class="formPanel">
-            <form method="post" action="/admin/reseller-management/${esc(row.id)}/credits">
-                ${csrfInput(req)}
-                <div class="formGrid">
-                    <div class="formGroup"><label>Regular credit adjustment</label><input class="input" type="number" name="regularDelta" min="-100000" max="100000" value="0"></div>
-                    <div class="formGroup"><label>Trial credit adjustment</label><input class="input" type="number" name="trialDelta" min="-20" max="20" value="0"></div>
-                </div>
-                <div class="formGroup"><label>Reason</label><input class="input" name="note" maxlength="200" placeholder="Optional audit note"></div>
-                ${stepInput()}
-                <button class="button secondary">Apply credit adjustment</button>
-            </form>
-            <hr class="divider">
-            <form method="post" action="/admin/reseller-management/${esc(row.id)}/status">
-                ${csrfInput(req)}
-                <input type="hidden" name="active" value="${row.active ? 'false' : 'true'}">
-                ${stepInput()}
-                <button class="button ${row.active ? 'btn-danger' : 'btn-success'}">${row.active ? 'Disable reseller' : 'Enable reseller'}</button>
-            </form>
-        </div>
-    </div>`;
-}
-
-async function page(req) {
-    const [rows, defaults] = await Promise.all([listResellers(), loadDefaults()]);
-    const totalCredits = rows.reduce((sum, row) => sum + Number(row.credits || 0), 0);
-    const trialCredits = rows.reduce((sum, row) => sum + Number(row.trial_credits || 0), 0);
-    const customers = rows.reduce((sum, row) => sum + Number(row.customers || 0), 0);
-
-    const body = `${notice(req.query.message, 'success')}${notice(req.query.error, 'error')}
-        <div class="metrics">
-            <div class="metric"><div class="metricLabel">Resellers</div><div class="metricValue">${rows.length}</div></div>
-            <div class="metric"><div class="metricLabel">Customers</div><div class="metricValue">${customers}</div></div>
-            <div class="metric"><div class="metricLabel">Regular credits</div><div class="metricValue">${totalCredits}</div></div>
-            <div class="metric"><div class="metricLabel">Trial credits</div><div class="metricValue">${trialCredits}</div></div>
-        </div>
-        <section class="section">
-            <div class="sectionHead"><h2>Create reseller</h2><span class="muted">Uses configured reseller defaults</span></div>
-            <form class="formPanel" method="post" action="/admin/reseller-management/create">
-                ${csrfInput(req)}
-                <div class="formGrid">
-                    <div class="formGroup"><label>Username</label><input class="input" name="username" required pattern="[A-Za-z0-9._-]{3,40}"></div>
-                    <div class="formGroup"><label>Email</label><input class="input" type="email" name="email"></div>
-                    <div class="formGroup"><label>Initial regular credits</label><input class="input" type="number" min="0" max="100000" name="credits" value="${esc(defaults.credits)}"></div>
-                    <div class="formGroup"><label>Initial trial credits</label><input class="input" type="number" min="0" max="20" name="trialCredits" value="${esc(defaults.trialCredits)}"></div>
-                </div>
-                ${stepInput()}
-                <button class="button">Create reseller</button>
-            </form>
-        </section>
-        <section class="section">
-            <div class="sectionHead"><h2>Manage resellers</h2><span class="muted">${rows.length} total</span></div>
-            ${rows.length ? `<div class="serverGrid">${rows.map(row => resellerCard(req, row)).join('')}</div>` : '<div class="empty">No resellers yet.</div>'}
-        </section>`;
-
-    return layout({
-        siteName: site(),
-        active: 'resellers',
-        title: 'Resellers',
-        subtitle: 'Accounts, customers, credits and access',
-        body
-    });
-}
-
-function createAdminResellersRouter() {
-    const router = express.Router();
-    router.use('/admin/reseller-management', gate);
-
-    router.get('/admin/reseller-management', async (req, res, next) => {
-        try {
-            res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-            return res.send(await page(req));
-        } catch (error) {
-            return next(error);
-        }
-    });
-
-    router.post('/admin/reseller-management/create', async (req, res) => {
-        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
-        try {
-            if (!(await requireStep(req))) return redirect(res, 'error', 'Authenticator verification failed.');
-            const username = text(req.body.username, 40);
-            const email = text(req.body.email, 254).toLowerCase() || null;
-            if (!/^[A-Za-z0-9._-]{3,40}$/.test(username) || (email && !email.includes('@'))) {
-                return redirect(res, 'error', 'Check the username and email.');
-            }
-            const credits = integer(req.body.credits, 0, 100000, 0);
-            const trialCredits = integer(req.body.trialCredits, 0, 20, 0);
-            const temporaryPassword = crypto.randomBytes(18).toString('base64url') + 'A1!';
-            const hash = await bcrypt.hash(temporaryPassword, 12);
-
-            await transaction(async client => {
-                const user = await client.query(`
-                    INSERT INTO app_users(email,username,password_hash,role,active,email_verified_at)
-                    VALUES($1,$2,$3,'reseller',TRUE,CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END)
-                    RETURNING id
-                `, [email, username, hash]);
-                const reseller = await client.query(
-                    'INSERT INTO resellers(user_id,credits,trial_credits) VALUES($1,$2,$3) RETURNING id',
-                    [user.rows[0].id, credits, trialCredits]
-                );
-                if (credits) {
-                    await client.query(`
-                        INSERT INTO credit_transactions(reseller_id,amount,transaction_type,note,created_by)
-                        VALUES($1,$2,'add','Initial balance',$3)
-                    `, [reseller.rows[0].id, credits, req.session.authUserId]);
-                }
-                await client.query(`
-                    INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-                    VALUES($1,'admin.reseller.create','reseller',$2,$3::jsonb)
-                `, [req.session.authUserId, reseller.rows[0].id, JSON.stringify({ credits, trialCredits })]);
-            });
-
-            const body = `<div class="notice success">Reseller created.</div><section class="section"><div class="formPanel"><p><strong>Username:</strong> ${esc(username)}</p><p><strong>Temporary password:</strong></p><div class="codeBox">${esc(temporaryPassword)}</div><p class="muted">This password is shown once. Share it securely and ask the reseller to change it.</p><a class="button" href="/admin/reseller-management">Back to Resellers</a></div></section>`;
-            res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-            return res.send(layout({ siteName: site(), active: 'resellers', title: 'Reseller created', body }));
-        } catch (error) {
-            console.error('Reseller create failed:', error.message);
-            return redirect(res, 'error', error.code === '23505' ? 'That username or email already exists.' : 'Reseller could not be created safely.');
-        }
-    });
-
-    router.post('/admin/reseller-management/:id/credits', async (req, res) => {
-        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
-        try {
-            if (!(await requireStep(req))) return redirect(res, 'error', 'Authenticator verification failed.');
-            const regularDelta = integer(req.body.regularDelta, -100000, 100000, 0);
-            const trialDelta = integer(req.body.trialDelta, -20, 20, 0);
-            const note = text(req.body.note, 200);
-            if (!regularDelta && !trialDelta) return redirect(res, 'error', 'Enter a credit adjustment first.');
-
-            await transaction(async client => {
-                const updated = await client.query(`
-                    UPDATE resellers
-                    SET credits=credits+$2,trial_credits=trial_credits+$3
-                    WHERE id=$1 AND credits+$2>=0 AND trial_credits+$3 BETWEEN 0 AND 20
-                    RETURNING credits,trial_credits
-                `, [req.params.id, regularDelta, trialDelta]);
-                if (!updated.rowCount) throw new Error('invalid_balance');
-                if (regularDelta) {
-                    await client.query(`
-                        INSERT INTO credit_transactions(reseller_id,amount,transaction_type,note,created_by)
-                        VALUES($1,$2,'adjustment',$3,$4)
-                    `, [req.params.id, regularDelta, note, req.session.authUserId]);
-                }
-                await client.query(`
-                    INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-                    VALUES($1,'admin.reseller.credits','reseller',$2,$3::jsonb)
-                `, [req.session.authUserId, req.params.id, JSON.stringify({ regularDelta, trialDelta, note })]);
-            });
-            return redirect(res, 'message', 'Credits updated.');
-        } catch (error) {
-            return redirect(res, 'error', error.message === 'invalid_balance' ? 'That adjustment would create an invalid balance.' : 'Credits could not be updated safely.');
-        }
-    });
-
-    router.post('/admin/reseller-management/:id/status', async (req, res) => {
-        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
-        try {
-            if (!(await requireStep(req))) return redirect(res, 'error', 'Authenticator verification failed.');
-            const active = String(req.body.active) === 'true';
-            await transaction(async client => {
-                const found = await client.query('SELECT user_id FROM resellers WHERE id=$1 FOR UPDATE', [req.params.id]);
-                if (!found.rowCount) throw new Error('missing');
-                const userId = found.rows[0].user_id;
-                await client.query('UPDATE app_users SET active=$2,session_version=session_version+1,updated_at=NOW() WHERE id=$1', [userId, active]);
-                await client.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE user_id=$1', [userId]);
-                await client.query('DELETE FROM user_sessions us USING auth_sessions s WHERE us.sid=s.session_id AND s.user_id=$1', [userId]);
-                await client.query(`
-                    INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-                    VALUES($1,'admin.reseller.status','reseller',$2,$3::jsonb)
-                `, [req.session.authUserId, req.params.id, JSON.stringify({ active })]);
-            });
-            return redirect(res, 'message', active ? 'Reseller enabled.' : 'Reseller disabled and existing sessions revoked.');
-        } catch (error) {
-            return redirect(res, 'error', 'Reseller status could not be changed safely.');
-        }
-    });
-
-    return router;
-}
-
-module.exports = { createAdminResellersRouter, listResellers };
+module.exports={createAdminResellersRouter,listResellers,resellerDetail,setAdminEstate};
