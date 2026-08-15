@@ -8,7 +8,6 @@ const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
 const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminConfigurationHealthRouter } = require('./admin-configuration-health');
-const { createAdminConfigurationTransferRouter } = require('./admin-configuration-transfer');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
@@ -44,7 +43,6 @@ function createRouter() {
     router.use(createAdminEventsRouter());
     router.use(createAdminCommerceRouter());
     router.use(createAdminConfigurationHealthRouter());
-    router.use(createAdminConfigurationTransferRouter());
     router.use(createAdminResellerSettingsRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
