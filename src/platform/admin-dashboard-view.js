@@ -157,7 +157,7 @@ function operationalAlerts(s) {
         [`${number(o.offline_servers)} offline server${Number(o.offline_servers) === 1 ? '' : 's'}`, Number(o.offline_servers) ? 'bad' : '', '/admin/servers'],
         [`${number(o.provisioning_problems)} provisioning problem${Number(o.provisioning_problems) === 1 ? '' : 's'}`, Number(o.provisioning_problems) ? 'warn' : '', '/admin/provisioning'],
         [`${number(o.payment_errors_24h)} payment error${Number(o.payment_errors_24h) === 1 ? '' : 's'} · 24h`, Number(o.payment_errors_24h) ? 'warn' : '', '/admin/payments'],
-        [`${number(o.pending_requests)} pending request${Number(o.pending_requests) === 1 ? '' : 's'}`, '', '/admin/request-users']
+        [`${number(o.request_sync_problems)} request sync problem${Number(o.request_sync_problems) === 1 ? '' : 's'}`, Number(o.request_sync_problems) ? 'warn' : '', '/admin/request-users']
     ];
     return `<div class="dashboardAlertRow">${items.map(([text, kind, href]) => `<a class="dashboardAlert ${kind}" href="${href}" style="text-decoration:none"><strong>${esc(text.split(' ')[0])}</strong>${esc(text.slice(text.indexOf(' ') + 1))}</a>`).join('')}</div>`;
 }
@@ -216,7 +216,7 @@ function contentTable(s) {
 function renewalsCard(s) {
     const totals = s.renewalTotals.length ? s.renewalTotals.map(row => money(row.minor, row.currency)).join(' + ') : '—';
     const body = s.renewals.length ? `<table class="analyticsTable"><thead><tr><th>Renewal</th><th>Customer</th><th class="numeric">Amount</th></tr></thead><tbody>${s.renewals.map(row => `<tr><td><strong>${esc(shortDate(row.current_period_end))}</strong><span class="sub">${esc(row.source)} · ${esc(row.plan_name)}</span></td><td><a href="/admin/users/${esc(row.customer_id)}">${esc(row.name)}</a></td><td class="numeric">${esc(money(row.price_minor, row.currency))}</td></tr>`).join('')}</tbody></table>` : '<div class="analyticsEmpty">No automatic renewals are due in this forecast window.</div>';
-    return analyticsCard('Revenue future', `Expected automatic renewals in the next ${s.forecastDays} day${s.forecastDays === 1 ? '' : 's'}`, body, { className: 'wide', stat: { value: totals, label: `${number(s.renewals.length)} renewals shown` } });
+    return analyticsCard('Revenue future', `Expected automatic renewals in the next ${s.forecastDays} day${s.forecastDays === 1 ? '' : 's'}`, body, { className: 'wide', stat: { value: totals, label: `${number(s.renewalCount)} automatic renewals` } });
 }
 
 function recentPaymentsCard(s) {
