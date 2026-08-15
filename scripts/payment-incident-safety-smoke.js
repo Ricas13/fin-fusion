@@ -78,6 +78,18 @@ function main() {
         if (!source.includes(required)) throw new Error(`Current-state provider verification is missing ${required}`);
     }
 
+    // Generic provider status "resolved" is ambiguous (especially for PayPal):
+    // only an explicitly merchant-winning webhook may use the automatic restore
+    // path. A plain resolved status must preserve the existing hold until current
+    // provider evidence proves recovery.
+    const incidentSource = fs.readFileSync(require.resolve('../src/payments/incidents'), 'utf8');
+    if (!incidentSource.includes("if(status==='won')action='restore'")) {
+        throw new Error('Automatic incident restore is not restricted to explicit merchant wins.');
+    }
+    if (!incidentSource.includes("else if(status==='resolved')action='preserve'")) {
+        throw new Error('Ambiguous resolved incidents are not forced to preserve access holds.');
+    }
+
     console.log('Payment incident safety smoke test passed.');
 }
 
