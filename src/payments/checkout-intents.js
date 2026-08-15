@@ -5,12 +5,14 @@ const { query, transaction } = require('../db');
 
 function hash(raw) { return crypto.createHash('sha256').update(String(raw)).digest('hex'); }
 function rawNonce() { return crypto.randomBytes(32).toString('base64url'); }
+function safeSnapshot(value){if(!value||typeof value!=='object'||Array.isArray(value))return{};const json=JSON.stringify(value);if(Buffer.byteLength(json,'utf8')>32768)throw new Error('Checkout commercial snapshot is too large.');return value;}
 
-async function createIntent({ scope, customerId = null, resellerId = null, planId = null, tierId = null, provider, checkoutMode = 'subscription', ttlMinutes = 30 }) {
+async function createIntent({ scope, customerId = null, resellerId = null, planId = null, tierId = null, provider, checkoutMode = 'subscription', ttlMinutes = 30, commercialSnapshot = {} }) {
     if (!['customer','reseller'].includes(scope)) throw new Error('Invalid checkout scope.');
     if (!['stripe','paypal'].includes(provider)) throw new Error('Invalid checkout provider.');
     if (!['payment','subscription'].includes(checkoutMode)) throw new Error('Invalid checkout mode.');
     const nonce = rawNonce();
+    const snapshot=safeSnapshot(commercialSnapshot);
     const expires = new Date(Date.now() + Math.max(5, Math.min(60, Number(ttlMinutes) || 30)) * 60000);
     const row = await transaction(async client => {
         const ownerColumn = scope === 'customer' ? 'customer_id' : 'reseller_id';
@@ -22,9 +24,9 @@ async function createIntent({ scope, customerId = null, resellerId = null, planI
             FROM billing_checkout_intents WHERE ${ownerColumn}=$1 AND state='open' LIMIT 1 FOR UPDATE`, [ownerId]);
         if (existing.rowCount) throw new Error('A checkout is already in progress. Finish or cancel it before starting another one.');
         const created = await client.query(`INSERT INTO billing_checkout_intents(
-            scope,customer_id,reseller_id,plan_id,tier_id,provider,checkout_mode,nonce_hash,expires_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [scope, customerId, resellerId, planId, tierId, provider, checkoutMode, hash(nonce), expires]);
+            scope,customer_id,reseller_id,plan_id,tier_id,provider,checkout_mode,nonce_hash,expires_at,commercial_snapshot)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) RETURNING *`,
+        [scope, customerId, resellerId, planId, tierId, provider, checkoutMode, hash(nonce), expires, JSON.stringify(snapshot)]);
         return created.rows[0];
     });
     return { ...row, nonce };
@@ -81,6 +83,7 @@ async function completeVerifiedProvider(provider, providerCheckoutId, state = 'c
     return result.rows[0] || null;
 }
 
+async function findProviderIntent(provider,providerCheckoutId){if(!['stripe','paypal'].includes(provider))return null;const r=await query(`SELECT * FROM billing_checkout_intents WHERE provider=$1 AND provider_checkout_id=$2 ORDER BY created_at DESC LIMIT 1`,[provider,String(providerCheckoutId||'')]);return r.rows[0]||null;}
 async function getOpenForOwner(scope, ownerId) {
     const column = scope === 'customer' ? 'customer_id' : 'reseller_id';
     const result = await query(`SELECT * FROM billing_checkout_intents
@@ -95,4 +98,4 @@ async function cancelForOwner(scope, ownerId) {
     return result.rowCount;
 }
 
-module.exports = { createIntent, attachProviderCheckout, verify, consume, completeVerifiedProvider, getOpenForOwner, cancelForOwner, hash };
+module.exports = { createIntent, attachProviderCheckout, verify, consume, completeVerifiedProvider, findProviderIntent, getOpenForOwner, cancelForOwner, hash };
