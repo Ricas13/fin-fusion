@@ -18,6 +18,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run syntax
+      - name: Enforce static coherence contract
+        run: node scripts/platform-coherence-static-smoke.js
       - name: Inspect exact assembled route contract
         run: node scripts/assembled-app-smoke.js
 
