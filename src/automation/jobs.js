@@ -8,6 +8,7 @@ const requestServiceSettings = require('../integrations/request-service-settings
 const emailSettings = require('../integrations/email-settings');
 const emailOutbox = require('../integrations/email-outbox');
 const billingControl = require('../payments/billing-control');
+const customerPlanChange = require('../payments/customer-plan-change');
 const resellerJobs = require('../resellers/jobs');
 require('../platform/bulk-operations');
 
@@ -21,9 +22,7 @@ const jobs = {
         const active = await reconcileActiveEntitlements();
         return { ...active, expired, processed: Number(expired || 0) + Number(active.total || 0) };
     },
-    async bulk_jobs() {
-        return bulkWorker.processBatch();
-    },
+    async bulk_jobs() { return bulkWorker.processBatch(); },
     async stale_reclaim() {
         const reclaimed = await bulkWorker.reclaimStaleRunningItems();
         return { processed: Number(reclaimed || 0), reclaimed: Number(reclaimed || 0) };
@@ -40,15 +39,10 @@ const jobs = {
         const result = await requestUserSync.syncAll();
         return { ...result, processed: Number(result.total || 0) };
     },
-    async billing() {
-        return billingControl.syncDue({ all: false, limit: 100 });
-    },
-    async reseller_billing() {
-        return resellerJobs.syncProviderSubscriptions();
-    },
-    async reseller_estates() {
-        return resellerJobs.reconcileSubscribedEstates();
-    }
+    async billing() { return billingControl.syncDue({ all: false, limit: 100 }); },
+    async plan_changes() { return customerPlanChange.applyDueStripe(); },
+    async reseller_billing() { return resellerJobs.syncProviderSubscriptions(); },
+    async reseller_estates() { return resellerJobs.reconcileSubscribedEstates(); }
 };
 
 function names() { return Object.keys(jobs); }
@@ -57,5 +51,4 @@ async function run(jobKey) {
     if (!job) throw new Error(`Unknown automation job: ${jobKey}`);
     return job();
 }
-
 module.exports = { jobs, names, run };
