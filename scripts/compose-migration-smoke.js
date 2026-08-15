@@ -19,10 +19,15 @@ const app = serviceBlock('app', 'activity-worker');
 const activity = serviceBlock('activity-worker', 'recovery-tools');
 
 assert.match(migrate, /npm run db:migrate/, 'migrate service must run db:migrate');
+assert.match(migrate, /npm run db:activity-role/, 'migrate service must refresh the restricted activity database role when configured');
 assert.match(migrate, /npm run auth:bootstrap/, 'migrate service must bootstrap a native administrator when required');
 assert(
-    migrate.indexOf('npm run db:migrate') < migrate.indexOf('npm run auth:bootstrap'),
-    'database migrations must complete before native administrator bootstrap'
+    migrate.indexOf('npm run db:migrate') < migrate.indexOf('npm run db:activity-role'),
+    'database migrations must complete before activity role grants are refreshed'
+);
+assert(
+    migrate.indexOf('npm run db:activity-role') < migrate.indexOf('npm run auth:bootstrap'),
+    'activity role grants must be refreshed before native administrator bootstrap'
 );
 assert.match(migrate, /postgres:\n\s+condition:\s+service_healthy/, 'migrate must wait for healthy postgres');
 assert.match(migrate, /restart:\s+"no"/, 'migrate must be a one-shot service');
