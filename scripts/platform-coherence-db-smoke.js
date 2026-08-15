@@ -2,6 +2,7 @@
 require('dotenv').config();
 const crypto=require('crypto');
 const {getPool}=require('../src/db');
+const subscriptionState=require('../src/entitlements/subscription-state');
 function assert(value,message){if(!value)throw new Error(message)}
 async function expectConstraint(client,sql,params,label){await client.query('SAVEPOINT expected_failure');try{await client.query(sql,params);throw new Error(`${label}: expected database rejection`)}catch(error){await client.query('ROLLBACK TO SAVEPOINT expected_failure');if(String(error.message).includes('expected database rejection'))throw error}finally{await client.query('RELEASE SAVEPOINT expected_failure').catch(()=>{})}}
 async function main(){
@@ -15,6 +16,12 @@ async function main(){
   const free=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW(),NOW()+INTERVAL '30 days') RETURNING id`,[customer.id,plan.id])).rows[0];
   assert(free.id,'free_claim must be accepted by the source constraint');
   await client.query(`UPDATE subscriptions SET status='expired' WHERE id=$1`,[free.id]);
+
+  const future=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()+INTERVAL '1 day',NOW()+INTERVAL '31 days') RETURNING id`,[customer.id,plan.id])).rows[0];
+  const premature=await subscriptionState.effectiveSubscription(customer.id,{client,includeBlocked:true});
+  assert(!premature,'a future-dated subscription must not become effective before starts_at');
+  await client.query(`UPDATE subscriptions SET status='expired' WHERE id=$1`,[future.id]);
+
   await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`sub_${suffix}_one`]);
   await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`I-${suffix}-two`],'overlapping recurring customer subscription');
 
