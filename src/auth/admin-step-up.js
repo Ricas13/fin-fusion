@@ -9,13 +9,17 @@ const MUTATION_PATTERNS=[
  /^\/admin\/customers\/bulk\//,
  /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|libraries|policy|reseller|sessions)/,
  /^\/admin\/customer(?:s)?\/[^/]+\//,
+ /^\/admin\/plans(?:\/|$)/,
+ /^\/admin\/reseller-tiers(?:\/|$)/,
+ /^\/admin\/reseller-management\/[^/]+\/(?:subscription|tier|dunning|suspend|restore|grace)/,
  /^\/admin\/discounts(?:\/|$)/,
  /^\/admin\/referrals(?:\/|$)/,
  /^\/admin\/configuration\/apply$/,
  /^\/admin\/server-migrations\//,
  /^\/admin\/servers(?:\/|$)/,
  /^\/admin\/provider-mappings(?:\/|$)/,
- /^\/admin\/commerce\/reconciliation\//,
+ /^\/admin\/payments(?:\/|$)/,
+ /^\/admin\/commerce\/(?:policy|risk-policy|reconciliation\/|incidents\/[^/]+\/(?:resolve|reopen))/,
  /^\/admin\/backups\/(?:restore|run|verify)/
 ];
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
