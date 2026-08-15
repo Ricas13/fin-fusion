@@ -109,6 +109,18 @@ async function main() {
             reason: 'Smoke manual reseller suspension',
             metadata: { resellerId: reseller.id }
         });
+        assert(await monthly.seatUsage(reseller.id) === 2, 'Suspending customer access incorrectly freed a commercially occupied reseller seat');
+        const heldThird = (await query(`INSERT INTO customers(reseller_id,display_name) VALUES($1,'Smoke held third') RETURNING id`, [reseller.id])).rows[0];
+        let heldSeatFreed = false;
+        try {
+            await transaction(client => monthly.assertSeatAvailable(client, reseller.id, heldThird.id));
+            heldSeatFreed = true;
+        } catch (error) {
+            if (!/tier is full/i.test(error.message)) throw error;
+        }
+        assert(!heldSeatFreed, 'A temporary access hold allowed the reseller to recycle a still-entitled seat');
+        await query('DELETE FROM customers WHERE id=$1', [heldThird.id]);
+
         await query(`UPDATE reseller_subscriptions SET status='expired',cancel_at_period_end=FALSE,current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1`, [manual.id]);
         await monthly.reconcileEstate(reseller.id);
 
