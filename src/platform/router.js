@@ -12,6 +12,7 @@ const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
+const { createResellerExportRouter } = require('./reseller-export');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
@@ -38,6 +39,7 @@ function createRouter() {
     router.use(createAccountActivationRouter());
     router.use(createResellerSecurityRouter());
     router.use(createResellerLedgerRouter());
+    router.use(createResellerExportRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
