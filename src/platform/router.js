@@ -6,6 +6,8 @@ const placement = require('../jellyfin/placement');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
+const { createAdminCommerceRouter } = require('./admin-commerce');
+const { createAdminConfigurationHealthRouter } = require('./admin-configuration-health');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
@@ -32,6 +34,8 @@ function createRouter() {
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
+    router.use(createAdminCommerceRouter());
+    router.use(createAdminConfigurationHealthRouter());
     router.use(createAdminResellerSettingsRouter());
     router.use(createCustomerPaymentReturnRouter());
 
