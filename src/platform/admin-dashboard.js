@@ -25,7 +25,7 @@ async function dashboardPage(req, res) {
         return res.send(layout({
             siteName: process.env.SITE_NAME || 'CAPTaINFiN',
             active: 'dashboard',
-            title: 'Dashboard',
+            title: 'Admin Dashboard',
             subtitle: `Business and streaming performance · ${range.label}`,
             body: renderDashboard(stats),
             action: primaryAction(stats)
