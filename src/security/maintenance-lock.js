@@ -1,10 +1,23 @@
 'use strict';
 
-const { getPool } = require('../db');
+const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('../db-locks');
 
+// Whole-request / whole-job advisory locks are intentionally kept off the main
+// application pool. A state-changing request can need several normal DB queries
+// while it holds this session-level lock; using the same finite pool for both
+// can deadlock under concurrency (all clients held as guards, none left for the
+// guarded work). Advisory locks are database-global, so a dedicated pool gives
+// the same restore exclusion without starving normal transactions.
+const lockPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Math.max(2, Math.min(32, Number(process.env.MAINTENANCE_LOCK_POOL_MAX || 12))),
+    idleTimeoutMillis: 30000,
+    allowExitOnIdle: true
+});
+
 async function acquireSharedMaintenanceLock({ tryOnly = true } = {}) {
-    const client = await getPool().connect();
+    const client = await lockPool.connect();
     let locked = false;
     let released = false;
     const release = async () => {
@@ -83,4 +96,8 @@ async function requestMaintenanceGuard(req, res, next) {
     }
 }
 
-module.exports = { acquireSharedMaintenanceLock, withMaintenanceSharedLock, requestMaintenanceGuard };
+async function closeMaintenanceLockPool() {
+    await lockPool.end();
+}
+
+module.exports = { acquireSharedMaintenanceLock, withMaintenanceSharedLock, requestMaintenanceGuard, closeMaintenanceLockPool };
