@@ -7,6 +7,7 @@ const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
 const { createAccountActivationRouter } = require('./account-activation-router');
+const { createResellerSecurityRouter } = require('./reseller-security');
 
 let fleetStarted = false;
 function ensureFleetSnapshot() {
@@ -19,6 +20,7 @@ function createRouter() {
     ensureFleetSnapshot();
     const router = express.Router();
     router.use(createAccountActivationRouter());
+    router.use(createResellerSecurityRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
