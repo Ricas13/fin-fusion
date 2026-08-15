@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const csrf = require('../auth/csrf');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const requestUsers = require('../integrations/request-user-sync');
 
@@ -16,6 +17,7 @@ function createCustomerPasswordSyncRouter() {
     // the CAPTaINFiN portal can be applied to both Jellyfin and the central
     // request service. The plaintext password is never stored by CAPTaINFiN.
     router.post('/account/jellyfin/:accountId/password', requireCustomer, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const password = String(req.body.password || '');
         try {
             await provisioning.setJellyfinPassword(req.session.customerId, req.params.accountId, password);
