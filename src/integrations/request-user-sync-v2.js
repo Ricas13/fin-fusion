@@ -11,7 +11,7 @@ async function apiRequest(path,{method='GET',body=null,timeoutMs=10000}={}){cons
 function validEmail(value){const email=String(value||'').trim().toLowerCase();return email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:null}
 function cleanUsername(value){const username=String(value||'').trim().replace(/[^A-Za-z0-9._-]/g,'_').replace(/^_+|_+$/g,'').slice(0,40);return username||'user'}
 function fallbackEmail(customerId){const compact=String(customerId||'').replace(/[^a-f0-9]/gi,'').toLowerCase().slice(0,24)||crypto.randomBytes(8).toString('hex');return `cf-${compact}@captainfin.invalid`}
-function quotaLimit(value){const n=Number(value);return Number.isInteger(n)&&n>0?n:null}
+function quotaLimit(value){const n=Number(value);return Number.isInteger(n)&&n>0?n:0}
 function quotaDays(value){const n=Number(value);return Number.isInteger(n)&&n>0?n:30}
 
 async function syncCandidates(){const result=await query(`
