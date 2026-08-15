@@ -28,10 +28,25 @@ function assertAudience(plan, channel) {
     return plan;
 }
 
+/**
+ * Resolve an already-purchased entitlement.
+ *
+ * IMPORTANT: plans.active/plans.visible are catalogue-sale controls. They must
+ * never invalidate a paid-through subscription merely because an administrator
+ * retired or hid the plan after sale. New acquisition paths enforce catalogue
+ * availability before creating the subscription; this resolver intentionally
+ * does not.
+ */
 async function effectiveSubscription(customerId, { client = null, includeBlocked = false } = {}) {
     const db = client || { query };
     const result = await db.query(`
-        SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id
+        SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
+               COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
+               COALESCE(s.plan_code_snapshot,p.code) AS contract_plan_code,
+               COALESCE(s.price_minor_snapshot,p.price_minor) AS contract_price_minor,
+               COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
+               COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
+               COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
         JOIN customers c ON c.id=s.customer_id
@@ -40,7 +55,6 @@ async function effectiveSubscription(customerId, { client = null, includeBlocked
           AND s.status IN ('active','trialing','past_due','paused')
           AND s.starts_at<=NOW()
           AND s.current_period_end>NOW()
-          AND p.active=TRUE
           AND ($2::boolean OR c.access_paused_at IS NULL)
         ORDER BY
           CASE s.status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 WHEN 'past_due' THEN 2 ELSE 3 END,
