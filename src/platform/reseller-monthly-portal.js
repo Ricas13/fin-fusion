@@ -1,65 +1,17 @@
 'use strict';
 
-const core = require('./reseller-monthly-portal-core');
-const monthly = require('../resellers/monthly');
-const { query } = require('../db');
-
-function pruneRoutes(router, paths) {
-    if (!router?.stack) return router;
-    router.stack = router.stack.filter(layer => {
-        if (layer.route && paths.has(String(layer.route.path))) return false;
-        if (layer.handle?.stack) pruneRoutes(layer.handle, paths);
-        return true;
-    });
-    return router;
-}
-
-function createResellerMonthlyPortalRouter() {
-    const router = core.createResellerMonthlyPortalRouter();
-    // Dedicated canonical routers own tier changes and the append-only ledger.
-    pruneRoutes(router, new Set(['/reseller/billing/tier','/reseller/sales']));
-    return router;
-}
-
-// Compatibility API used by older integrations/smokes. Keep one analytics
-// implementation: historical aggregation comes from the canonical reseller
-// service and this facade only adapts the previous public shape.
-async function analytics(resellerId, rng) {
-    const start = new Date(rng?.start || Date.now() - 30 * 86400000);
-    const end = new Date(rng?.end || Date.now());
-    const days = Math.max(1, Math.min(45, Number(rng?.days) || Math.ceil((end - start) / 86400000) || 30));
-    const [stats, live] = await Promise.all([
-        monthly.salesAnalytics(resellerId, { from: start, to: end }),
-        query(`SELECT COUNT(DISTINCT aps.jellyfin_session_id)::int streams
-               FROM active_playback_sessions aps
-               JOIN customers c ON c.id=aps.customer_id
-               WHERE c.reseller_id=$1`, [resellerId])
-    ]);
-    const totals = Array.isArray(stats.totals) ? stats.totals : [];
-    const primary = totals.slice().sort((a,b) => Number(b.amount_minor||0) - Number(a.amount_minor||0))[0]
-        || { currency: 'GBP', amount_minor: 0, sales: 0 };
-    const series = [];
-    for (let i=days-1;i>=0;i--) {
-        const d = new Date(end.getTime() - i*86400000);
-        series.push({ key: d.toISOString().slice(0,10), value: 0 });
-    }
-    const byDay = new Map(series.map(point => [point.key, point]));
-    for (const row of stats.daily || []) {
-        if (String(row.currency || '').trim() !== String(primary.currency || '').trim()) continue;
-        const parsed = new Date(row.sale_day);
-        if (!Number.isFinite(parsed.getTime())) continue;
-        const point = byDay.get(parsed.toISOString().slice(0,10));
-        if (point) point.value += Number(row.amount_minor || 0);
-    }
-    return {
-        totals,
-        primary,
-        newCustomers: Number(stats.newCustomers || 0),
-        playback: stats.playback || {},
-        liveStreams: Number(live.rows[0]?.streams || 0),
-        top: stats.topCustomers || [],
-        series
-    };
-}
-
-module.exports = { ...core, createResellerMonthlyPortalRouter, pruneRoutes, analytics };
+const core=require('./reseller-monthly-portal-core');
+const monthly=require('../resellers/monthly');
+const resellerSettings=require('../resellers/settings');
+const csrf=require('../auth/csrf');
+const runtimeSettings=require('./runtime-settings');
+const branding=require('./branding');
+const {esc}=require('./admin-html');
+const {query}=require('../db');
+function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true});return router}
+function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
+function shell(site,title,body){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · ${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"><style>body{background:#0c1117}.wrap{max-width:980px;margin:auto;padding:22px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.danger{border-color:#76383d;background:#2a1518}.choice{padding:12px;border:1px solid #29323d;border-radius:8px;margin:8px 0;display:block}</style></head><body><main class="wrap"><header class="top"><a href="/reseller"><strong>${esc(site)} · Reseller</strong></a><a class="button secondary btn-sm" href="/reseller">Dashboard</a></header>${body}</main></body></html>`}
+async function managePage(req){await runtimeSettings.ensureLoaded();const reseller=await core.resolveReseller(req.session.authUserId),customer=await monthly.getResellerCustomer(reseller.id,req.params.id);if(!customer)return null;const subscription=await monthly.currentSubscription(reseller.id),entitlement=await monthly.resellerEntitlement(reseller.id),cfg=await resellerSettings.forReseller(reseller.id);if(!entitlement.active)throw new Error('Your reseller subscription is not active.');const plans=await resellerSettings.eligiblePlans(subscription.tier_id),current=(await query(`SELECT s.plan_id,p.code,p.name,s.current_period_end FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.status IN('active','trialing','past_due','paused') AND s.starts_at<=NOW() AND s.current_period_end>NOW() ORDER BY s.current_period_end DESC LIMIT 1`,[customer.id])).rows[0]||null;const future=(await query(`SELECT p.name,s.starts_at,s.current_period_end FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.status IN('active','trialing') AND s.starts_at>NOW() ORDER BY s.starts_at LIMIT 1`,[customer.id])).rows[0]||null;const notice=`${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`;const body=`${notice}<h1>Manage ${esc(customer.display_name||customer.jellyfin_username||'customer')}</h1><p class="muted">Suspending access is temporary and <strong>does not release a commercial seat</strong>. Ending service closes reseller-managed entitlements and releases the seat.</p>${future?`<div class="notice warn"><strong>Future change already scheduled:</strong> ${esc(future.name)} from ${esc(new Date(future.starts_at).toLocaleDateString('en-GB'))} to ${esc(new Date(future.current_period_end).toLocaleDateString('en-GB'))}.</div>`:''}<section class="section"><div class="sectionHead"><h2>Renew or change plan</h2><span class="muted">Current: ${esc(current?.name||'No active plan')}</span></div><form class="formPanel" method="post" action="/reseller/customer/${esc(customer.id)}/renew">${token(req)}<div class="formGrid"><div class="formGroup"><label>Access plan</label><select class="input" name="planCode">${plans.map(p=>`<option value="${esc(p.code)}" ${String(p.id)===String(current?.plan_id)?'selected':''}>${esc(p.name)} · ${esc(p.duration_days||30)} days</option>`).join('')}</select></div><div class="formGroup"><label>Amount charged (${esc(cfg.ledgerCurrency)})</label><input class="input" type="number" name="amount" min="0" step="0.01" value="0.00"></div><div class="formGroup"><label>Payment method</label><select class="input" name="paymentMethod">${cfg.paymentMethods.map(m=>`<option>${esc(m)}</option>`).join('')}</select></div><div class="formGroup"><label>Note</label><input class="input" name="note" maxlength="500"></div></div><input type="hidden" name="currency" value="${esc(cfg.ledgerCurrency)}"><label class="choice"><input type="radio" name="changeMode" value="period_end" checked> <strong>At paid-through date</strong><div class="muted">Same-plan renewals extend access. A different plan begins when current paid access ends.</div></label><label class="choice"><input type="radio" name="changeMode" value="immediate"> <strong>Change immediately</strong><div class="muted">Ends the current reseller entitlement now and applies the selected plan immediately. Use only when that is what the customer asked for.</div></label><button class="button">Record sale & apply lifecycle</button></form></section><section class="section danger"><div class="sectionHead"><h2>End service / release seat</h2></div><p>This is different from Suspend. It ends current and future reseller-managed access immediately. It does not automatically create a refund in the sales ledger.</p><form method="post" action="/reseller/customer/${esc(customer.id)}/end-service">${token(req)}<div class="formGroup"><label>Reason</label><input class="input" name="reason" maxlength="500" value="Customer service ended"></div><label class="checkRow"><input type="checkbox" name="confirm" value="1" required> I understand this releases the customer's commercial seat and removes streaming entitlement.</label><button class="button btn-danger">End service & release seat</button></form></section>`;return shell(runtimeSettings.siteName(),`Manage ${customer.display_name||'customer'}`,body)}
+function createResellerMonthlyPortalRouter(){const router=core.createResellerMonthlyPortalRouter();pruneRoutes(router,new Set(['/reseller/billing/tier','/reseller/sales','/reseller/customer/:id/renew']));router.get('/reseller/customer/:id/renew',async(req,res,next)=>{try{const html=await managePage(req);return html?res.send(html):res.status(404).send('Customer not found')}catch(e){next(e)}});router.post('/reseller/customer/:id/renew',async(req,res)=>{try{const reseller=await core.resolveReseller(req.session.authUserId),result=await monthly.createOrRenewCustomer({resellerId:reseller.id,customerId:req.params.id,planCode:req.body.planCode,amount:req.body.amount,currency:req.body.currency,paymentMethod:req.body.paymentMethod,note:req.body.note,changeMode:req.body.changeMode,actorUserId:req.session.authUserId});const messages={renewal:'Customer sale recorded and existing access extended.',scheduled_plan_change:'Sale recorded; the new plan is scheduled for the current paid-through date.',immediate_plan_change:'Sale recorded; plan changed immediately.',new:'Customer entitlement created.'};return res.redirect('/reseller?message='+encodeURIComponent(messages[result.operation]||'Customer lifecycle updated.'))}catch(e){return res.redirect(`/reseller/customer/${encodeURIComponent(req.params.id)}/renew?error=${encodeURIComponent(e.message)}`)}});router.post('/reseller/customer/:id/end-service',async(req,res)=>{try{if(req.body.confirm!=='1')throw new Error('Confirm that you want to end service.');const reseller=await core.resolveReseller(req.session.authUserId),result=await monthly.endCustomerService({resellerId:reseller.id,customerId:req.params.id,actorUserId:req.session.authUserId,reason:req.body.reason});return res.redirect('/reseller?message='+encodeURIComponent(`Customer service ended. Seat released; ${result.seatUsage} seats are now in use.`))}catch(e){return res.redirect(`/reseller/customer/${encodeURIComponent(req.params.id)}/renew?error=${encodeURIComponent(e.message)}`)}});return router}
+async function analytics(resellerId,rng){const start=new Date(rng?.start||Date.now()-30*86400000),end=new Date(rng?.end||Date.now()),days=Math.max(1,Math.min(45,Number(rng?.days)||Math.ceil((end-start)/86400000)||30)),[stats,live]=await Promise.all([monthly.salesAnalytics(resellerId,{from:start,to:end}),query(`SELECT COUNT(DISTINCT aps.jellyfin_session_id)::int streams FROM active_playback_sessions aps JOIN customers c ON c.id=aps.customer_id WHERE c.reseller_id=$1`,[resellerId])]),totals=Array.isArray(stats.totals)?stats.totals:[],primary=totals.slice().sort((a,b)=>Number(b.amount_minor||0)-Number(a.amount_minor||0))[0]||{currency:'GBP',amount_minor:0,sales:0},series=[];for(let i=days-1;i>=0;i--){const d=new Date(end.getTime()-i*86400000);series.push({key:d.toISOString().slice(0,10),value:0})}const byDay=new Map(series.map(point=>[point.key,point]));for(const row of stats.daily||[]){if(String(row.currency||'').trim()!==String(primary.currency||'').trim())continue;const parsed=new Date(row.sale_day);if(!Number.isFinite(parsed.getTime()))continue;const point=byDay.get(parsed.toISOString().slice(0,10));if(point)point.value+=Number(row.amount_minor||0)}return{totals,primary,newCustomers:Number(stats.newCustomers||0),playback:stats.playback||{},liveStreams:Number(live.rows[0]?.streams||0),top:stats.topCustomers||[],series}}
+module.exports={...core,createResellerMonthlyPortalRouter,pruneRoutes,analytics,managePage};
