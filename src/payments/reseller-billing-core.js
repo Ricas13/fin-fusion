@@ -119,13 +119,18 @@ async function ensureStripeCustomer(resellerId) {
     return customer.id;
 }
 
-async function createStripeCheckout({ resellerId, tierId, successUrl, cancelUrl }) {
+async function createStripeCheckout({ resellerId, tierId, successUrl, cancelUrl, idempotencyKey = null }) {
     const mapping = await monthly.providerMapping(tierId, 'stripe');
     if (!mapping) throw new Error('This reseller tier is not configured for Stripe recurring billing.');
     const customerId = await ensureStripeCustomer(resellerId);
     const client = await stripe();
-    const metadata = { billing_scope: 'reseller', internal_reseller_id: resellerId, internal_reseller_tier_id: tierId };
-    const session = await client.checkout.sessions.create({
+    const metadata = {
+        billing_scope: 'reseller',
+        internal_reseller_id: resellerId,
+        internal_reseller_tier_id: tierId,
+        ...(idempotencyKey ? { internal_checkout_intent_id: String(idempotencyKey) } : {})
+    };
+    const params = {
         mode: 'subscription',
         customer: customerId,
         line_items: [{ price: mapping.external_id, quantity: 1 }],
@@ -133,16 +138,19 @@ async function createStripeCheckout({ resellerId, tierId, successUrl, cancelUrl 
         cancel_url: cancelUrl,
         metadata,
         subscription_data: { metadata }
-    });
+    };
+    const session = idempotencyKey
+        ? await client.checkout.sessions.create(params, { idempotencyKey: `reseller-checkout-${String(idempotencyKey)}` })
+        : await client.checkout.sessions.create(params);
     return { id: session.id, url: session.url };
 }
 
-async function createPayPalCheckout({ resellerId, tierId, returnUrl, cancelUrl }) {
+async function createPayPalCheckout({ resellerId, tierId, returnUrl, cancelUrl, idempotencyKey = null }) {
     const mapping = await monthly.providerMapping(tierId, 'paypal');
     if (!mapping) throw new Error('This reseller tier is not configured for PayPal recurring billing.');
     const subscription = await paypalApi('/v1/billing/subscriptions', {
         method: 'POST',
-        requestId: crypto.randomUUID(),
+        requestId: idempotencyKey ? String(idempotencyKey) : crypto.randomUUID(),
         body: {
             plan_id: mapping.external_id,
             custom_id: paypalCustomId(resellerId, tierId),
