@@ -54,9 +54,7 @@ async function notify(resellerId, eventType, title, detail, dedupe) {
 async function lifecycleTransitions(rows, summary) {
     for (const row of rows) {
         try {
-            const grace = Boolean(
-                row.subscription_status === 'past_due' && row.grace_until && new Date(row.grace_until) > new Date()
-            );
+            const grace = Boolean(row.subscription_status === 'past_due' && row.grace_until && new Date(row.grace_until) > new Date());
             const suspended = Boolean(row.estate_suspended_at);
             const band = utilizationBand(row.seats_used, row.seat_limit);
             const old = await query('SELECT * FROM reseller_notification_state WHERE reseller_id=$1', [row.reseller_id]);
@@ -94,8 +92,11 @@ async function lifecycleTransitions(rows, summary) {
                     `Your monthly reseller tier is now ${row.tier_name || 'the updated tier'} with ${row.seat_limit} active customer entitlements.`]);
             }
             if (!prior.grace_active && grace) {
+                const graceEnds = new Date(row.grace_until).toLocaleString('en-GB');
                 messages.push(['reseller.grace.started','Reseller payment grace started',
-                    `A payment grace period is active until ${new Date(row.grace_until).toLocaleString('en-GB')}.`]);
+                    `A payment grace period is active until ${graceEnds}.`]);
+                messages.push(['reseller.suspension.scheduled','Estate suspension scheduled',
+                    `If billing is not restored by ${graceEnds}, your reseller Jellyfin account and the Jellyfin accounts you manage will be suspended automatically. Accounts are preserved and can be restored after payment returns.`]);
             }
             if (!prior.estate_suspended && suspended) {
                 messages.push(['reseller.estate.suspended','Reseller estate suspended',
@@ -111,10 +112,8 @@ async function lifecycleTransitions(rows, summary) {
             }
 
             for (const [event,title,detail] of messages) {
-                const outcome = await notify(
-                    row.reseller_id,event,title,detail,
-                    `${event}:${row.reseller_id}:${row.tier_id||'none'}:${row.subscription_status||'none'}:${band}:${row.current_period_end||''}`
-                );
+                const outcome = await notify(row.reseller_id,event,title,detail,
+                    `${event}:${row.reseller_id}:${row.tier_id||'none'}:${row.subscription_status||'none'}:${band}:${row.current_period_end||''}`);
                 if (outcome?.error) summary.failed += 1; else summary.notifications += 1;
             }
 
@@ -164,12 +163,10 @@ async function downstreamExpiryWarnings(summary) {
             if (!claim.rowCount) continue;
 
             const end = new Date(row.current_period_end).toLocaleString('en-GB');
-            const outcome = await notify(
-                row.reseller_id,'reseller.customer.expiring',
+            const outcome = await notify(row.reseller_id,'reseller.customer.expiring',
                 `${row.display_name || 'Customer'} access expires soon`,
                 `${row.display_name || 'Customer'} (${row.plan_name || 'plan'}) expires ${end}. Renew or intentionally allow the entitlement to end.`,
-                `reseller.customer.expiring:${row.subscription_id}:${days}`
-            );
+                `reseller.customer.expiring:${row.subscription_id}:${days}`);
             if (outcome?.error) {
                 summary.failed += 1;
                 await query('DELETE FROM reseller_customer_expiry_notices WHERE id=$1', [claim.rows[0].id]).catch(()=>{});
