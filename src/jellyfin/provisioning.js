@@ -1,6 +1,6 @@
 'use strict';
 
-// The policy/Jellyfin mechanics remain in provisioning-core.  This facade owns
+// The policy/Jellyfin mechanics remain in provisioning-core. This facade owns
 // entitlement and access-state semantics so every caller observes the same
 // composable holds and effective-subscription rules.
 const core = require('./provisioning-core');
@@ -52,6 +52,18 @@ async function releaseAccess(customerId, actorUserId = null) {
     return reconcileCustomer(customerId);
 }
 
+async function maybeAutoDowngrade(customerId) {
+    // Loaded lazily to avoid a module cycle during application startup:
+    // lifecycle -> resilient-provisioning -> provisioning.
+    const lifecycle = require('../payments/lifecycle');
+    try {
+        return await lifecycle.autoDowngradeEligibleCustomer(customerId);
+    } catch (error) {
+        console.error(`Automatic free-tier downgrade failed for ${customerId}:`, error.message);
+        return null;
+    }
+}
+
 async function expireSubscriptionsAndReconcile() {
     const expired = await transaction(async client => {
         const rows = await client.query(`
@@ -61,12 +73,20 @@ async function expireSubscriptionsAndReconcile() {
                 WHERE superseded_by IS NULL
                   AND status IN ('active','trialing','past_due','paused')
                   AND current_period_end<=NOW()
-                RETURNING customer_id
-            ) SELECT DISTINCT customer_id FROM expired
+                RETURNING customer_id,plan_id,source
+            )
+            SELECT DISTINCT e.customer_id,
+                   BOOL_OR(p.price_minor>0) AS had_paid_expiry
+            FROM expired e JOIN plans p ON p.id=e.plan_id
+            GROUP BY e.customer_id
         `);
-        return rows.rows.map(row => row.customer_id);
+        return rows.rows;
     });
-    for (const customerId of expired) {
+    for (const row of expired) {
+        const customerId = row.customer_id;
+        let downgraded = null;
+        if (row.had_paid_expiry) downgraded = await maybeAutoDowngrade(customerId);
+        if (downgraded) continue; // claimFreePlan already reconciles the account.
         try { await reconcileCustomer(customerId); }
         catch (error) { console.error(`Entitlement reconcile failed for ${customerId}:`, error.message); }
     }
