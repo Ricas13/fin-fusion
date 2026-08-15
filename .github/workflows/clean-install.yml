@@ -8,15 +8,11 @@ on:
       - 'scripts/bootstrap-admin.js'
       - 'scripts/rotate-first-run-claim.js'
       - 'scripts/clean-install-smoke.js'
+      - 'src/application.js'
       - 'src/auth/first-run-setup.js'
       - 'src/auth/first-run-controller.js'
       - 'views/auth/first-run-*.ejs'
-      - 'src/platform/setup-readiness.js'
-      - 'src/platform/admin-setup.js'
-      - 'src/platform/admin-dashboard*'
-      - 'src/platform/runtime-settings.js'
-      - 'src/platform/storefront.js'
-      - 'src/platform/admin-original-settings.js'
+      - 'src/platform/**'
       - 'src/customers.js'
       - 'views/customer/dashboard.ejs'
       - 'staff-auth-preload.js'
@@ -117,9 +113,18 @@ jobs:
               ready=1
               break
             fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo 'Application process exited before the first-run endpoint became ready.'
+              break
+            fi
             sleep 1
           done
-          test "$ready" = 1
+          if [ "$ready" != 1 ]; then
+            echo '=== APPLICATION STARTUP LOG ==='
+            cat /tmp/clean-start.log || true
+            echo '=== END APPLICATION STARTUP LOG ==='
+            exit 1
+          fi
           cat /tmp/clean-start.log
           grep -q 'Steam Fusion running' /tmp/clean-start.log
           grep -q 'Jellyfin: not configured' /tmp/clean-start.log
@@ -134,13 +139,9 @@ jobs:
           csrf=$(sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' /tmp/claim.html | head -1)
           test -n "$csrf"
 
-          curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt \
-            -X POST \
-            --data-urlencode "_csrf=$csrf" \
-            --data-urlencode "setupCode=$claim" \
-            -D /tmp/claim-post.headers \
-            -o /tmp/claim-post.html \
-            http://127.0.0.1:3031/setup/claim
+          curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt -X POST \
+            --data-urlencode "_csrf=$csrf" --data-urlencode "setupCode=$claim" \
+            -D /tmp/claim-post.headers -o /tmp/claim-post.html http://127.0.0.1:3031/setup/claim
           grep -qi '^location: /setup' /tmp/claim-post.headers
 
           curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt http://127.0.0.1:3031/setup -o /tmp/setup.html
@@ -148,17 +149,14 @@ jobs:
           csrf2=$(sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' /tmp/setup.html | head -1)
           test -n "$csrf2"
 
-          curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt \
-            -X POST \
+          curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt -X POST \
             --data-urlencode "_csrf=$csrf2" \
             --data-urlencode "siteName=Browser Test Streams" \
             --data-urlencode "username=browseradmin" \
             --data-urlencode "email=browseradmin@example.test" \
             --data-urlencode "password=Browser-First-Run-Password-2026!" \
             --data-urlencode "passwordConfirm=Browser-First-Run-Password-2026!" \
-            -D /tmp/setup-post.headers \
-            -o /tmp/setup-post.html \
-            http://127.0.0.1:3031/setup/complete
+            -D /tmp/setup-post.headers -o /tmp/setup-post.html http://127.0.0.1:3031/setup/complete
           grep -qi '^location: /admin' /tmp/setup-post.headers
 
           curl -fsS -b /tmp/cookies.txt http://127.0.0.1:3031/admin -o /tmp/admin.html
