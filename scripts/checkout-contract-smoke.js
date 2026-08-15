@@ -13,7 +13,7 @@ async function expectReject(fn,pattern){let error=null;try{await fn();}catch(e){
 async function main(){
     const suffix=crypto.randomBytes(4).toString('hex');
     const customer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Contract ${suffix}`,`contract-${suffix}@example.invalid`])).rows[0];
-    const plan=(await query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,server_class,active,visible) VALUES($1,$2,'direct','monthly',30,600,'USD',3,TRUE,FALSE,FALSE,FALSE,FALSE,'premium',TRUE,TRUE) RETURNING *`,[`contract-${suffix}`,`Contract ${suffix}`])).rows[0];
+    const plan=(await query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,server_class,active,visible) VALUES($1,$2,'direct','month',30,600,'USD',3,TRUE,FALSE,FALSE,FALSE,FALSE,'premium',TRUE,TRUE) RETURNING *`,[`contract-${suffix}`,`Contract ${suffix}`])).rows[0];
     const mapping=`price_contract_${suffix}`;
     await query(`INSERT INTO plan_provider_prices(plan_id,provider,external_id,checkout_mode,active) VALUES($1,'stripe',$2,'payment',TRUE)`,[plan.id,mapping]);
     const choice={mode:'payment',planCode:plan.code,plan:{...plan,external_id:mapping}};
