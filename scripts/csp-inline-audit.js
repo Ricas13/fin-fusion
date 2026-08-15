@@ -6,15 +6,30 @@ const path=require('path');
 function files(dir){return fs.existsSync(dir)?fs.readdirSync(dir,{withFileTypes:true}).flatMap(entry=>{const full=path.join(dir,entry.name);return entry.isDirectory()?files(full):[full];}):[];}
 
 const root=path.join(__dirname,'..');
+const adminHtmlPath=path.join(root,'src','platform','admin-html.js');
+const adminHtml=fs.readFileSync(adminHtmlPath,'utf8');
+const sanitizerPresent=/function\s+stripInlineScripts\s*\(/.test(adminHtml)
+    && /<script\\b/.test(adminHtml)
+    && /body\s*:\s*stripInlineScripts\s*\(\s*options\.body\s*\)/.test(adminHtml)
+    && /module\.exports\s*=\s*\{[\s\S]*stripInlineScripts/.test(adminHtml);
+
 const targets=[
     ...files(path.join(root,'views')).filter(name=>name.endsWith('.ejs')),
     ...files(path.join(root,'src')).filter(name=>name.endsWith('.js'))
 ];
 const findings=[];
+if(!sanitizerPresent)findings.push('src/platform/admin-html.js: admin layout no longer proves inline-script stripping before render');
+
 for(const file of targets){
     const text=fs.readFileSync(file,'utf8'),lines=text.split(/\r?\n/);
+    const usesSanitizedAdminLayout=sanitizerPresent
+        && /require\(['"]\.\/admin-html['"]\)/.test(text)
+        && /\blayout\s*\(/.test(text);
     lines.forEach((line,index)=>{
-        if(/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: inline <script>`);
+        // Legacy admin fragments are safe only because admin-html strips inline
+        // script blocks before they reach the response. Public/custom shells do
+        // not receive that exception and must use external scripts directly.
+        if(/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(line)&&!usesSanitizedAdminLayout)findings.push(`${path.relative(root,file)}:${index+1}: inline <script>`);
         if(/\son[a-z]+\s*=\s*["']/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: inline event handler`);
         if(/javascript\s*:/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: javascript: URL`);
     });

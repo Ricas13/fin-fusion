@@ -4,6 +4,11 @@ require('dotenv').config();
 const crypto=require('crypto');
 const {query,getPool}=require('../src/db');
 const intents=require('../src/payments/checkout-intents');
+// This smoke verifies the immutable commercial contract only. Provisioning has
+// its own dedicated matrix and may legitimately be pending when no Jellyfin
+// server is placeable, so do not make this contract test depend on a live fleet.
+const provisioning=require('../src/jellyfin/resilient-provisioning');
+provisioning.reconcileCustomer=async()=>({active:true,account:null});
 const lifecycle=require('../src/payments/lifecycle');
 const {commercialSnapshot}=require('../src/platform/flexible-checkout');
 

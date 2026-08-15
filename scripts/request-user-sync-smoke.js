@@ -36,7 +36,9 @@ async function makeCustomer({username,email=null,serverIds,planId}){const user=a
 (async()=>{
     const address=await listen(),requestUrl=`http://127.0.0.1:${address.port}`;
     await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_at) VALUES('platform',$1::jsonb,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=platform_settings.setting_value||EXCLUDED.setting_value,updated_at=NOW()`,[JSON.stringify({overseerrUrl:requestUrl})]);
-    await operationsSettings.save({...operationsSettings.DEFAULTS,outboundTrustedHosts:['127.0.0.1']});
+    // Private destinations require both the explicit master opt-in and an
+    // allowlisted host. Production defaults remain deny-by-default.
+    await operationsSettings.save({...operationsSettings.DEFAULTS,allowPrivateIntegrations:true,outboundTrustedHosts:['127.0.0.1']});
     await runtimeSettings.reload();
     const requestSettings=require('../src/integrations/request-service-settings');
     await requestSettings.useEnvironment();

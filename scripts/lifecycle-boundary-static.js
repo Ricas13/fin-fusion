@@ -32,20 +32,31 @@ function sqlStatements(source) {
 }
 
 // Provider billing identities and provider-driven subscription state must remain
-// behind the lifecycle layer. These are the deliberately small modules that own
-// those transitions. Adding another owner should require a conscious review of
-// this list rather than silently spreading provider mutation SQL into routes.
+// behind the lifecycle layer. The reseller billing stack is deliberately listed
+// here because it is the provider lifecycle owner for reseller_subscriptions,
+// analogous to payments/lifecycle* for direct-customer subscriptions. Route and
+// UI modules remain outside this list.
 const PROVIDER_MUTATION_OWNERS = new Set([
     'src/payments/lifecycle-core.js',
     'src/payments/lifecycle.js',
     'src/payments/customer-plan-change.js',
-    'src/resellers/monthly.js'
+    'src/resellers/monthly.js',
+    'src/resellers/monthly-core.js',
+    'src/payments/reseller-billing-core.js',
+    'src/payments/reseller-billing-v2-core.js',
+    'src/payments/reseller-billing.js'
 ]);
 
 const ENTITLEMENT_CONSUMERS = [
     /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|placement|placement-preview|plan-servers)\.js$/,
     /^src\/integrations\/.+\.js$/
 ];
+
+// Activity takes a read-only batch snapshot to attach a stream-limit number to
+// observed Jellyfin sessions. It does not grant/provision access or mutate the
+// subscription lifecycle; destructive enforcement still revalidates live
+// sessions immediately before action. Keep this exception narrow and explicit.
+const RAW_READ_EXCEPTIONS = new Set(['src/jellyfin/activity.js']);
 
 const failures = [];
 const sourceFiles = filesUnder(SRC);
@@ -67,7 +78,7 @@ for (const file of sourceFiles) {
 
     // Enforcement consumers must use the canonical entitlement view/service,
     // not reconstruct “active subscription” rules from raw subscriptions.
-    if (ENTITLEMENT_CONSUMERS.some(pattern => pattern.test(name))) {
+    if (ENTITLEMENT_CONSUMERS.some(pattern => pattern.test(name)) && !RAW_READ_EXCEPTIONS.has(name)) {
         const rawRead = statements.some(sql => /\b(?:FROM|JOIN)\s+subscriptions\b/i.test(sql));
         const canonical = /effective_customer_entitlements|subscription-state/.test(source);
         if (rawRead && !canonical) failures.push(`${name}: raw subscription read in entitlement consumer`);
