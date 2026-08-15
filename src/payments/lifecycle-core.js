@@ -210,9 +210,15 @@ async function activatePurchase({
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
 
     const subscription = await transaction(async client => {
-        const planResult = await client.query('SELECT * FROM plans WHERE id=$1 AND active=TRUE', [planId]);
+        // A verified provider may renew an agreement after the catalogue plan was
+        // hidden/archived. Catalogue availability is enforced when checkout is
+        // created; provider confirmation must not revoke an existing contract.
+        const planResult = await client.query('SELECT * FROM plans WHERE id=$1', [planId]);
         if (!planResult.rowCount) throw new Error('Plan not found');
         const plan = planResult.rows[0];
+        const priceMap = await client.query(`SELECT external_id FROM plan_provider_prices
+            WHERE plan_id=$1 AND provider=$2 ORDER BY active DESC,updated_at DESC LIMIT 1`, [planId, provider]);
+        const providerPriceId = priceMap.rows[0]?.external_id || null;
         const startsAt = periodStart ? new Date(periodStart) : new Date();
         const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(plan, startsAt);
         const status = mapProviderStatus(provider, providerStatus);
@@ -228,18 +234,19 @@ async function activatePurchase({
             const updated = await client.query(`
                 UPDATE subscriptions
                 SET customer_id=$1,plan_id=$2,status=$3,starts_at=$4,current_period_end=$5,
-                    cancel_at_period_end=$6,provider_customer_id=COALESCE($7,provider_customer_id),updated_at=NOW()
-                WHERE id=$8 RETURNING *
-            `, [customerId, planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, existing.rows[0].id]);
+                    cancel_at_period_end=$6,provider_customer_id=COALESCE($7,provider_customer_id),
+                    provider_price_id_snapshot=COALESCE($8,provider_price_id_snapshot),updated_at=NOW()
+                WHERE id=$9 RETURNING *
+            `, [customerId, planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, existing.rows[0].id]);
             row = updated.rows[0];
         } else {
             const inserted = await client.query(`
                 INSERT INTO subscriptions(
                     customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,
-                    provider_customer_id,provider_subscription_id
-                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    provider_customer_id,provider_subscription_id,provider_price_id_snapshot
+                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 RETURNING *
-            `, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId]);
+            `, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId]);
             row = inserted.rows[0];
         }
 
@@ -259,7 +266,7 @@ async function activatePurchase({
         await client.query(`
             INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)
-        `, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, status })]);
+        `, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status })]);
         return row;
     });
 
