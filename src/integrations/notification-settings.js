@@ -1,0 +1,20 @@
+'use strict';
+
+const { query, transaction } = require('../db');
+const { encryptWithEnv, decryptWithEnv } = require('../security/purpose-crypto');
+
+const KEY='notification_delivery_v1';
+const SECRET_ENV='DATA_ENCRYPTION_KEY';
+const SECRET_PREFIX='telegram1';
+let cache=null;
+function bool(v){return v===true||v==='true'||v==='1'||v==='on'}
+function clean(v,n=300){return String(v||'').trim().slice(0,n)}
+function environment(){const token=clean(process.env.TELEGRAM_BOT_TOKEN,500),chatId=clean(process.env.TELEGRAM_CHAT_ID,120);return{source:'environment',telegramEnabled:Boolean(token&&chatId),telegramToken:token,telegramTokenConfigured:Boolean(token),telegramChatId:chatId}}
+async function load(){const r=await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[KEY]);if(!r.rowCount)return environment();const v=r.rows[0].setting_value||{},token=v.telegramTokenEncrypted?decryptWithEnv(v.telegramTokenEncrypted,SECRET_ENV,SECRET_PREFIX):'';return{source:'browser',telegramEnabled:Boolean(v.telegramEnabled),telegramToken:token,telegramTokenConfigured:Boolean(token),telegramChatId:clean(v.telegramChatId,120),updatedAt:v.updatedAt||null}}
+async function get(){if(!cache)cache=await load();return{...cache}}
+async function reload(){cache=await load();return get()}
+async function status(){const cfg=await get();return{source:cfg.source,telegramEnabled:cfg.telegramEnabled,telegramConfigured:Boolean(cfg.telegramEnabled&&cfg.telegramToken&&cfg.telegramChatId),telegramTokenConfigured:Boolean(cfg.telegramToken),telegramChatId:cfg.telegramChatId||'',updatedAt:cfg.updatedAt||null}}
+async function save(input,actorUserId=null){const existing=(await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[KEY])).rows[0]?.setting_value||{};let encrypted=existing.telegramTokenEncrypted||null;if(bool(input.clearTelegramToken))encrypted=null;else if(clean(input.telegramToken,500))encrypted=encryptWithEnv(clean(input.telegramToken,500),SECRET_ENV,SECRET_PREFIX);const value={telegramEnabled:bool(input.telegramEnabled),telegramChatId:clean(input.telegramChatId,120),telegramTokenEncrypted:encrypted,updatedAt:new Date().toISOString()};if(value.telegramEnabled&&(!value.telegramChatId||!value.telegramTokenEncrypted))throw new Error('Telegram bot token and chat ID are required when Telegram is enabled.');await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by) VALUES($1,$2::jsonb,$3) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[KEY,JSON.stringify(value),actorUserId]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.notifications.delivery.update','platform_setting',$2,$3::jsonb)`,[actorUserId,KEY,JSON.stringify({telegramEnabled:value.telegramEnabled,telegramChatId:value.telegramChatId,tokenChanged:Boolean(input.telegramToken),tokenCleared:bool(input.clearTelegramToken)})])});return reload()}
+async function sendTelegram(text,{chatId=null}={}){const cfg=await get();if(!cfg.telegramEnabled||!cfg.telegramToken||!(chatId||cfg.telegramChatId))throw new Error('Telegram delivery is not configured.');const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);try{const response=await fetch(`https://api.telegram.org/bot${cfg.telegramToken}/sendMessage`,{method:'POST',redirect:'error',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chatId||cfg.telegramChatId,text:String(text||'').slice(0,3500)})});if(!response.ok){const detail=await response.text().catch(()=>'');throw new Error(`Telegram HTTP ${response.status}${detail?`: ${detail.slice(0,160)}`:''}`)}return{ok:true}}finally{clearTimeout(timer)}}
+async function testTelegram(){const started=Date.now();await sendTelegram('CAPTaINFiN notification test — Telegram delivery is working.');return{ok:true,latencyMs:Date.now()-started}}
+module.exports={KEY,get,reload,status,save,sendTelegram,testTelegram,environment};
