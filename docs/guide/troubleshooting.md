@@ -1,25 +1,43 @@
 # Troubleshooting and FAQ
 
-## I see `Request failed.`
+## I see “Request failed.”
 
-This means the server encountered an unexpected error while handling the page or action. An administrator should use the request ID and server logs to find the underlying exception. The platform should not treat this message as a substitute for fixing the failed route.
+An unexpected server-side error reached the generic safety handler. Refresh once, note the page/action you were using, and contact the administrator if it repeats.
 
-## My Jellyfin password does not match my CAPTaINFiN password
+Administrators should use the application logs and request ID to locate the underlying exception. Avoid replacing the generic production error with raw database or stack-trace details in the browser.
 
-This is expected. CAPTaINFiN portal credentials and Jellyfin credentials are intentionally separate.
+## I cannot sign in
 
-## I cannot receive a verification or reset email
+Check that you are using the correct portal for your account type and the correct portal password. Jellyfin credentials are separate and do not necessarily sign you into CAPTaINFiN.
 
-Transactional email must be configured and working before email-dependent workflows can complete. Contact the administrator if email delivery is unavailable.
+If the account uses 2FA, use the current authenticator code or an unused recovery code. Repeated failed attempts may trigger a temporary rate limit.
 
-## A service is paid but provisioning is pending
+## Password reset email does not arrive
 
-Commercial entitlement and Jellyfin provisioning are separate stages. A confirmed entitlement may remain pending while the platform waits for an eligible server or retries provisioning.
+Browser password reset depends on transactional email being configured. If email delivery is unavailable, contact the administrator rather than repeatedly requesting resets.
 
-## Why is 2FA not required?
+## Jellyfin password does not match my portal password
 
-Two-factor authentication can be optional or mandatory depending on the policy configured for the account role.
+This is expected. CAPTaINFiN intentionally separates portal credentials from Jellyfin credentials. Use the Jellyfin password setup/change action provided in your account portal.
 
-## Why can I not use a private integration URL?
+## My libraries are missing
 
-CAPTaINFiN blocks private and sensitive network destinations by default. Administrators must explicitly permit trusted private integrations.
+Library visibility is constrained by the active plan and by the customer's allowed selection. A customer cannot select a library the plan does not entitle.
+
+Administrators should also confirm that the assigned Jellyfin server exposes the expected library and that provisioning reconciliation is healthy.
+
+## A reseller cannot add another customer
+
+Check the reseller subscription state and seat usage. A temporary suspension/hold does not release the commercial seat; end an unused downstream service or move the reseller to a tier with more capacity.
+
+## A server is unavailable for placement
+
+Check that it is enabled, healthy, in the correct server class, below configured capacity, and eligible for the selected plan. Also verify its internal base URL and API credentials.
+
+## Stremio does not appear for customers
+
+The Stremio work in the current foundation release is not a production addon. Server eligibility, delivery types and entitlement storage can be prepared, but customer installation/playback should not be expected until the dedicated addon runtime is released.
+
+## Where can I get help?
+
+Use the support contact configured by the administrator. Never send passwords, 2FA recovery codes, Jellyfin API keys or payment-provider secrets in a support message.
