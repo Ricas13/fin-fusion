@@ -34,14 +34,18 @@ async function lastDiscountUse() {
     const p=await plan('discount'),a=await customer('discount-a'),b=await customer('discount-b');
     const ia=await intents.createIntent({scope:'customer',customerId:a.id,planId:p.id,provider:'stripe',checkoutMode:'payment',commercialSnapshot:snapshot(p)});
     const ib=await intents.createIntent({scope:'customer',customerId:b.id,planId:p.id,provider:'stripe',checkoutMode:'payment',commercialSnapshot:snapshot(p)});
-    await query(`INSERT INTO discount_codes(code,discount_type,percent_off,max_redemptions,per_customer_limit,active) VALUES($1,'percent',10,1,1,TRUE)`,[code('LASTONE')]);
+    // Real discount creation normalizes codes before persistence. This fixture
+    // inserts directly into PostgreSQL, so mirror that invariant explicitly or
+    // both racers are rejected as an invalid mixed-case code before contention.
+    const lastOne=discounts.normalizeCode(code('LASTONE'));
+    await query(`INSERT INTO discount_codes(code,discount_type,percent_off,max_redemptions,per_customer_limit,active) VALUES($1,'percent',10,1,1,TRUE)`,[lastOne]);
     const attempts=await Promise.allSettled([
-        discounts.reserveForIntent({code:code('LASTONE'),planCode:p.code,customerId:a.id,checkoutIntentId:ia.id,baseMinor:p.price_minor}),
-        discounts.reserveForIntent({code:code('LASTONE'),planCode:p.code,customerId:b.id,checkoutIntentId:ib.id,baseMinor:p.price_minor})
+        discounts.reserveForIntent({code:lastOne,planCode:p.code,customerId:a.id,checkoutIntentId:ia.id,baseMinor:p.price_minor}),
+        discounts.reserveForIntent({code:lastOne,planCode:p.code,customerId:b.id,checkoutIntentId:ib.id,baseMinor:p.price_minor})
     ]);
     assert.strictEqual(attempts.filter(x=>x.status==='fulfilled').length,1,'Concurrent last-use discount allowed more than one reservation');
     assert.strictEqual(attempts.filter(x=>x.status==='rejected').length,1,'Concurrent last-use discount did not reject the losing reservation');
-    const count=await query(`SELECT COUNT(*)::int n FROM discount_checkout_reservations r JOIN discount_codes d ON d.id=r.discount_code_id WHERE d.code=$1 AND r.state='reserved'`,[code('LASTONE')]);
+    const count=await query(`SELECT COUNT(*)::int n FROM discount_checkout_reservations r JOIN discount_codes d ON d.id=r.discount_code_id WHERE d.code=$1 AND r.state='reserved'`,[lastOne]);
     assert.strictEqual(Number(count.rows[0].n),1,'Discount reservation cap is not reflected in persisted state');
 }
 

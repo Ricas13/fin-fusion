@@ -22,6 +22,7 @@ if(!sanitizerPresent)findings.push('src/platform/admin-html.js: admin layout no 
 
 for(const file of targets){
     const text=fs.readFileSync(file,'utf8'),lines=text.split(/\r?\n/);
+    const isSanitizerFile=path.resolve(file)===path.resolve(adminHtmlPath);
     const usesSanitizedAdminLayout=sanitizerPresent
         && /require\(['"]\.\/admin-html['"]\)/.test(text)
         && /\blayout\s*\(/.test(text);
@@ -29,7 +30,8 @@ for(const file of targets){
         // Legacy admin fragments are safe only because admin-html strips inline
         // script blocks before they reach the response. Public/custom shells do
         // not receive that exception and must use external scripts directly.
-        if(/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(line)&&!usesSanitizedAdminLayout)findings.push(`${path.relative(root,file)}:${index+1}: inline <script>`);
+        // Do not treat the sanitizer's own /<script.../ regex literal as HTML.
+        if(!isSanitizerFile&&/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(line)&&!usesSanitizedAdminLayout)findings.push(`${path.relative(root,file)}:${index+1}: inline <script>`);
         if(/\son[a-z]+\s*=\s*["']/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: inline event handler`);
         if(/javascript\s*:/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: javascript: URL`);
     });

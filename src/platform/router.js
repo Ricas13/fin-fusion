@@ -51,12 +51,11 @@ function createRouter(){
     router.use(createAdminAbuseProtectionRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
-    // The only surviving legacy account mutations that do not own their own
-    // route-level CSRF middleware are trial/free activation. Protect those
-    // explicitly instead of wrapping every logged-in /account POST in a broad
-    // compatibility fallback.
-    router.post('/account/trial/start',mutationGuard);
-    router.post('/account/claim-free/:planCode',mutationGuard);
+    // These surviving legacy mutation routes are owned by router-core. Apply
+    // path-specific middleware here without registering a second POST route,
+    // preserving one route owner while still enforcing CSRF before legacy code.
+    router.use('/account/trial/start',(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
+    router.use('/account/claim-free/:planCode',(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set([
         '/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
