@@ -101,6 +101,11 @@ assert(/checkout\.sessions\.create\(params,\s*\{\s*idempotencyKey/.test(stripeBi
 const paypalBilling = read('src/payments/paypal.js');
 assert(/providerRequestId\s*=\s*idempotencyKey/.test(paypalBilling), 'PayPal checkout must derive PayPal-Request-Id from the local checkout intent');
 
+const customerPlanChange = read('src/payments/customer-plan-change.js');
+assert(!/effective_at<=NOW\(\)\+INTERVAL\s*'15 minutes'/.test(customerPlanChange), 'scheduled customer plan changes must not alter entitlements before the paid-through boundary');
+assert(customerPlanChange.includes("effective_at<=NOW()"), 'scheduled Stripe plan changes must become due only at the paid-through boundary');
+assert(customerPlanChange.includes('scheduledStripeSubscription'), 'due plan changes must resolve their recorded subscription even immediately after its previous period ends');
+
 const resellerBilling = read('src/payments/reseller-billing-v2-core.js');
 for (const fn of ['requestTierChange', 'cancelPendingTierChange', 'applyDueTierChanges', 'validateTierMapping']) {
     assert(resellerBilling.includes(fn), `reseller billing is missing ${fn}`);
