@@ -67,7 +67,7 @@ function redemptionCard(req, row) {
         ${row.status === 'unfulfilled' ? `<div class="formPanel">
             <form method="post" action="/admin/referrals/${esc(row.id)}/resolve">
                 ${csrfInput(req)}
-                <div class="formGroup"><label>Resolution note</label><input class="input" name="note" maxlength="200" placeholder="e.g. granted manually via reseller credit"></div>
+                <div class="formGroup"><label>Resolution note</label><input class="input" name="note" maxlength="200" placeholder="e.g. reviewed and resolved manually"></div>
                 <button class="button secondary">Mark resolved</button>
             </form>
         </div>` : ''}
@@ -87,11 +87,13 @@ async function page(req) {
             <div class="metric"><div class="metricLabel">Needs attention</div><div class="metricValue">${unfulfilled}</div></div>
         </div>
         <section class="section">
-            <div class="sectionHead"><h2>Reward settings</h2><span class="muted">Applied when a referred customer activates their first paid subscription</span></div>
+            <div class="sectionHead"><h2>Reward settings</h2><span class="muted">Only a genuine positive-value Stripe/PayPal activation qualifies; same email/payment identities are rejected.</span></div>
             <form class="formPanel" method="post" action="/admin/referrals/settings">
                 ${csrfInput(req)}
                 <div class="formGrid">
                     <div class="formGroup"><label>Reward days <span class="muted">(added to referrer's active subscription)</span></label><input class="input" type="number" min="1" max="365" name="rewardDays" value="${esc(settings.rewardDays)}"></div>
+                    <div class="formGroup"><label>Qualification delay (days)</label><input class="input" type="number" min="0" max="90" name="qualificationDelayDays" value="${esc(settings.qualificationDelayDays)}"><div class="inlineHelp">Minimum age of the referred paid subscription before the reward can be granted.</div></div>
+                    <div class="formGroup"><label>Refund/dispute window (days)</label><input class="input" type="number" min="0" max="90" name="refundWindowDays" value="${esc(settings.refundWindowDays)}"><div class="inlineHelp">Reward waits at least this long and remains pending while a payment-risk hold is open.</div></div>
                     <div class="formGroup"><label class="toggleRow"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''}><span>Referral program enabled</span></label></div>
                 </div>
                 <button class="button">Save settings</button>
@@ -106,7 +108,7 @@ async function page(req) {
         siteName: runtimeSettings.siteName(),
         active: 'referrals',
         title: 'Referrals',
-        subtitle: 'Referral codes, attribution and rewards',
+        subtitle: 'Referral codes, attribution and delayed paid-event rewards',
         body,
         action: '<a class="button secondary" href="/admin/referrals/export">Export CSV</a>'
     });
@@ -147,17 +149,22 @@ function createAdminReferralsRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             const rewardDays = Number.parseInt(req.body.rewardDays, 10);
+            const qualificationDelayDays = Number.parseInt(req.body.qualificationDelayDays, 10);
+            const refundWindowDays = Number.parseInt(req.body.refundWindowDays, 10);
             if (!Number.isFinite(rewardDays) || rewardDays < 1 || rewardDays > 365) throw new Error('Enter a reward of 1-365 days.');
+            if (!Number.isFinite(qualificationDelayDays) || qualificationDelayDays < 0 || qualificationDelayDays > 90) throw new Error('Enter a qualification delay of 0-90 days.');
+            if (!Number.isFinite(refundWindowDays) || refundWindowDays < 0 || refundWindowDays > 90) throw new Error('Enter a refund/dispute window of 0-90 days.');
             const enabled = req.body.enabled === 'on';
+            const value = { rewardDays, qualificationDelayDays, refundWindowDays, enabled };
             await query(`
                 INSERT INTO platform_settings(setting_key,setting_value,updated_by)
                 VALUES('referral_program',$1::jsonb,$2)
                 ON CONFLICT(setting_key) DO UPDATE SET setting_value=$1::jsonb,updated_by=$2,updated_at=NOW()
-            `, [JSON.stringify({ rewardDays, enabled }), req.session.authUserId]);
+            `, [JSON.stringify(value), req.session.authUserId]);
             await query(`
                 INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                 VALUES($1,'admin.referrals.settings',NULL,NULL,$2::jsonb)
-            `, [req.session.authUserId, JSON.stringify({ rewardDays, enabled })]);
+            `, [req.session.authUserId, JSON.stringify(value)]);
             return res.redirect('/admin/referrals?message=' + encodeURIComponent('Referral settings saved.'));
         } catch (error) {
             return res.redirect('/admin/referrals?error=' + encodeURIComponent(error.message));
