@@ -1,6 +1,6 @@
 'use strict';
 
-const OPERATIONAL_STALE_SECONDS=120;
+const OPERATIONAL_STALE_SECONDS=90;
 const BACKUP_STALE_SECONDS=180;
 
 function thresholdSeconds(workerKey){
