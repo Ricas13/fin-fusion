@@ -90,7 +90,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     `, [customer.rows[0].id, planId]);
     const account = await query(`
         INSERT INTO jellyfin_accounts(
-            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,password_reset_required
+            customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary,password_setup_required
         ) VALUES($1,$2,$3,$4,FALSE,TRUE,FALSE) RETURNING *
     `, [customer.rows[0].id, sourceServer.id, remoteId, username]);
     state(sourceServer.id).users.set(remoteId, { id: remoteId, name: username, disabled: false, password: 'unknown-source-password' });
@@ -122,7 +122,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     assert.strictEqual(completed.target_password_reset_required, true);
 
     const accountsAfterMove = await query(`
-        SELECT id,server_id,disabled,is_primary,password_reset_required,jellyfin_user_id
+        SELECT id,server_id,disabled,is_primary,password_setup_required,jellyfin_user_id
         FROM jellyfin_accounts WHERE customer_id=$1 ORDER BY is_primary DESC
     `, [first.customerId]);
     assert.strictEqual(accountsAfterMove.rowCount, 2);
@@ -130,7 +130,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     const old = accountsAfterMove.rows.find(row => String(row.server_id) === String(source.id));
     assert.strictEqual(String(primary.server_id), String(target.id));
     assert.strictEqual(primary.disabled, false);
-    assert.strictEqual(primary.password_reset_required, true);
+    assert.strictEqual(primary.password_setup_required, true);
     assert.strictEqual(old.disabled, true);
     assert.strictEqual(old.is_primary, false);
 
@@ -144,8 +144,8 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
 
     // A successful customer-set password clears the post-migration prompt.
     await resilient.setJellyfinPassword(first.customerId, primary.id, 'New-Migration-Password-2026!');
-    const passwordFlag = await query('SELECT password_reset_required FROM jellyfin_accounts WHERE id=$1', [primary.id]);
-    assert.strictEqual(passwordFlag.rows[0].password_reset_required, false);
+    const passwordFlag = await query('SELECT password_setup_required FROM jellyfin_accounts WHERE id=$1', [primary.id]);
+    assert.strictEqual(passwordFlag.rows[0].password_setup_required, false);
 
     const rolledBack = await migration.rollbackMigration(created.id, null);
     assert.strictEqual(rolledBack.status, 'rolled_back');
