@@ -4,6 +4,7 @@ const express = require('express');
 const core = require('./router-core');
 const placement = require('../jellyfin/placement');
 const publicAbuseProtection = require('../security/public-abuse-protection');
+const { createPublicHelpRouter } = require('./public-help');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
@@ -29,6 +30,7 @@ function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
     router.use(publicAbuseProtection.middleware);
+    router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
