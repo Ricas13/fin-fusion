@@ -2,27 +2,38 @@
 
 const express = require('express');
 const csrf = require('../auth/csrf');
+const {query}=require('../db');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const requestUsers = require('../integrations/request-user-sync');
+const runtimeSettings=require('./runtime-settings');
 
 function requireCustomer(req, res, next) {
     if (req.session?.customerId && req.session?.customerUserId) return next();
     return res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account'));
 }
+function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function pending(customerId){const r=await query(`SELECT ja.id,ja.jellyfin_username,js.name server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.password_setup_required=TRUE ORDER BY ja.is_primary DESC,ja.created_at`,[customerId]);return r.rows;}
+async function setupPage(req,accounts,error=null){await runtimeSettings.ensureLoaded();return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Set Jellyfin password · ${esc(runtimeSettings.siteName())}</title><link rel="stylesheet" href="/css/customer-portal.css"><style>main{max-width:760px;margin:32px auto;padding:22px}.panel{padding:20px;margin:14px 0}.field{margin:12px 0}</style></head><body><main><h1>Choose your Jellyfin password</h1><p>Your streaming account was created with a one-time bootstrap credential that CAPTaINFiN never displays or stores. Choose a password you know before opening Jellyfin.</p>${error?`<div class="notice error">${esc(error)}</div>`:''}${accounts.map(a=>`<section class="panel"><h2>${esc(a.jellyfin_username)}</h2><p>${esc(a.server_name)}</p><form method="post" action="/account/jellyfin/${esc(a.id)}/password"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="setup" value="1"><div class="field"><label>New Jellyfin password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button primary">Save Jellyfin password</button></form></section>`).join('')}</main></body></html>`;}
 
 function createCustomerPasswordSyncRouter() {
     const router = express.Router();
+    // Mounted before the main customer router. Fresh CAPTaINFiN-created
+    // Jellyfin identities must receive a customer-owned password before the
+    // normal account dashboard can present an unusable "Open Jellyfin" button.
+    router.get('/account',requireCustomer,async(req,res,next)=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return next();return res.redirect('/account/jellyfin/setup');}catch(error){return next(error)}});
+    router.get('/account/jellyfin/setup',requireCustomer,async(req,res,next)=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return res.redirect('/account');return res.send(await setupPage(req,accounts));}catch(error){next(error)}});
 
-    // Mounted before the legacy customer router so a password entered once in
-    // the CAPTaINFiN portal can be applied to both Jellyfin and the central
-    // request service. The plaintext password is never stored by CAPTaINFiN.
     router.post('/account/jellyfin/:accountId/password', requireCustomer, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const password = String(req.body.password || '');
+        if(password.length<12||password.length>200)return res.redirect('/account/jellyfin/setup?error='+encodeURIComponent('Jellyfin password must be between 12 and 200 characters.'));
+        if(req.body.confirmPassword!==undefined&&password!==String(req.body.confirmPassword||''))return res.redirect('/account/jellyfin/setup?error='+encodeURIComponent('Jellyfin passwords do not match.'));
         try {
             await provisioning.setJellyfinPassword(req.session.customerId, req.params.accountId, password);
+            await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.session.customerId]);
         } catch (error) {
-            return res.redirect('/account?error=' + encodeURIComponent(error.message || 'Jellyfin password could not be updated.'));
+            const target=req.body.setup==='1'?'/account/jellyfin/setup':'/account';
+            return res.redirect(target+'?error=' + encodeURIComponent(error.message || 'Jellyfin password could not be updated.'));
         }
 
         try {
@@ -45,4 +56,4 @@ function createCustomerPasswordSyncRouter() {
     return router;
 }
 
-module.exports = { createCustomerPasswordSyncRouter };
+module.exports = { createCustomerPasswordSyncRouter,pending,setupPage };
