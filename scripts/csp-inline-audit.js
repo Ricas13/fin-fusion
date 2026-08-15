@@ -8,10 +8,14 @@ function files(dir){return fs.existsSync(dir)?fs.readdirSync(dir,{withFileTypes:
 const root=path.join(__dirname,'..');
 const adminHtmlPath=path.join(root,'src','platform','admin-html.js');
 const adminHtml=fs.readFileSync(adminHtmlPath,'utf8');
+const directSanitizedRender=/body\s*:\s*stripInlineScripts\s*\(\s*options\.body\s*\)/.test(adminHtml);
+const decoratedSanitizedRender=/const\s+safeBody\s*=\s*stripInlineScripts\s*\(\s*options\.body\s*\)\s*;[\s\S]*body\s*:\s*decorateSettingHelp\s*\(\s*safeBody\s*\)/.test(adminHtml)
+    && /function\s+decorateSettingHelp\s*\(/.test(adminHtml)
+    && /core\.esc\s*\(\s*help\s*\)/.test(adminHtml);
 const sanitizerPresent=/function\s+stripInlineScripts\s*\(/.test(adminHtml)
     && /indexOf\(\s*['"]<script['"]/.test(adminHtml)
     && /function\s+externalScriptTag\s*\(/.test(adminHtml)
-    && /body\s*:\s*stripInlineScripts\s*\(\s*options\.body\s*\)/.test(adminHtml)
+    && (directSanitizedRender||decoratedSanitizedRender)
     && /module\.exports\s*=\s*\{[\s\S]*stripInlineScripts/.test(adminHtml)
     && !/stripInlineScripts[\s\S]*?\.replace\(\s*\/<script/i.test(adminHtml);
 
