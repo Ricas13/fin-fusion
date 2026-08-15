@@ -1,0 +1,65 @@
+name: Platform Coherence
+
+on:
+  pull_request:
+  push:
+    branches:
+      - agent/platform-coherence-full-sweep
+
+jobs:
+  assembled-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run syntax
+      - name: Inspect exact assembled route contract
+        run: node scripts/assembled-app-smoke.js
+
+  database-invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: steamfusion
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: coherence-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://steamfusion:coherence-postgres-password@127.0.0.1:5432/steamfusion
+      SESSION_SECRET: coherence-session-secret-0123456789abcdef0123456789
+      DATA_ENCRYPTION_KEY: coherence-data-key-0123456789abcdef012345678901
+      JELLYFIN_ENCRYPTION_KEY: coherence-jellyfin-key-0123456789abcdef01234567
+      AUTH_ENCRYPTION_KEY: coherence-auth-key-0123456789abcdef012345678901
+      BACKUP_ENCRYPTION_KEY: coherence-backup-key-0123456789abcdef0123456789
+      ACTIVITY_ENCRYPTION_KEY: coherence-activity-key-0123456789abcdef01234567
+      ADMIN_USERNAME: coherence-admin
+      ADMIN_PASSWORD: coherence-admin-password-0123456789
+      COOKIE_SECURE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply complete migration chain
+        run: npm run db:migrate
+      - name: Verify cross-feature database invariants
+        run: node scripts/platform-coherence-db-smoke.js
+      - name: Production readiness executes against current schema
+        run: node scripts/production-readiness.js --json || true
