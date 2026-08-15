@@ -19,6 +19,7 @@ const { createAccountActivationRouter } = require('./account-activation-router')
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
 const { createResellerExportRouter } = require('./reseller-export');
+const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
@@ -32,6 +33,7 @@ function createRouter(){
     router.use(publicAbuseProtection.middleware);
     router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
+    router.use(createCustomerPublicAuthRouter());
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
     router.use(createResellerSecurityRouter());
@@ -53,6 +55,7 @@ function createRouter(){
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set([
+        '/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
         '/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal',
         '/account/jellyfin/:accountId/password',
         '/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences',
