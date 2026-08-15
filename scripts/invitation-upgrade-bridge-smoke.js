@@ -1,0 +1,25 @@
+'use strict';
+
+const fs=require('fs');
+const path=require('path');
+const assert=require('assert');
+const root=path.resolve(__dirname,'..');
+const migrations=fs.readdirSync(path.join(root,'db','migrations')).filter(f=>f.endsWith('.sql')).sort();
+const before='035a_bridge_invitation_subscription_source.sql';
+const coherence='036_platform_coherence.sql';
+const after='036a_restore_invitation_subscription_source.sql';
+const next='037_activation_and_plan_transitions.sql';
+for(const file of [before,coherence,after,next])assert(migrations.includes(file),`${file} must exist`);
+assert(migrations.indexOf(before)<migrations.indexOf(coherence),'invitation bridge must run before migration 036');
+assert(migrations.indexOf(coherence)<migrations.indexOf(after),'invitation restore must run after migration 036');
+assert(migrations.indexOf(after)<migrations.indexOf(next),'invitation restore must run before migration 037');
+const pre=fs.readFileSync(path.join(root,'db','migrations',before),'utf8');
+const post=fs.readFileSync(path.join(root,'db','migrations',after),'utf8');
+assert(/WHERE source='invitation'/.test(pre),'bridge must capture only invitation subscriptions');
+assert(/SET source='migration'/.test(pre),'bridge must use an already-valid temporary source');
+assert(/migration_036_invitation_source_bridge/.test(pre),'bridge must persist exact subscription IDs');
+assert(/'invitation'/.test(post),'restore constraint must allow invitation');
+assert(/SET source='invitation'/.test(post),'restore migration must restore invitation source');
+assert(/FROM migration_036_invitation_source_bridge/.test(post),'restore must target only captured subscription IDs');
+assert(/DROP TABLE migration_036_invitation_source_bridge/.test(post),'bridge table must be removed after restoration');
+console.log('invitation upgrade bridge ordering and preservation contract OK');
