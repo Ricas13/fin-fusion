@@ -1,12 +1,15 @@
 BEGIN;
 
 -- Make reseller catalogue semantics explicit rather than inferring behavior from
--- whether rule rows happen to exist.
+-- whether rule rows happen to exist. Existing tiers with explicit rules retain
+-- that behavior on upgrade; all others are explicitly all-eligible.
 ALTER TABLE reseller_tiers
     ADD COLUMN IF NOT EXISTS catalogue_mode TEXT NOT NULL DEFAULT 'all_eligible';
 ALTER TABLE reseller_tiers DROP CONSTRAINT IF EXISTS reseller_tiers_catalogue_mode_check;
 ALTER TABLE reseller_tiers ADD CONSTRAINT reseller_tiers_catalogue_mode_check
     CHECK (catalogue_mode IN ('all_eligible','allowlist'));
+UPDATE reseller_tiers rt SET catalogue_mode='allowlist'
+WHERE EXISTS(SELECT 1 FROM reseller_tier_plan_rules r WHERE r.tier_id=rt.id AND r.active=TRUE);
 
 -- Business identity used on reseller receipts/exports.
 ALTER TABLE resellers
