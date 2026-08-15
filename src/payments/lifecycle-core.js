@@ -225,9 +225,6 @@ async function activatePurchase({
     const contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
 
     const subscription = await transaction(async client => {
-        // New checkout activation uses the provider-verified commercial contract;
-        // provider renewals without a checkout snapshot preserve the snapshot
-        // already stored on the subscription.
         const planResult = await client.query('SELECT * FROM plans WHERE id=$1', [planId]);
         if (!planResult.rowCount) throw new Error('Plan not found');
         const plan = planResult.rows[0];
@@ -286,7 +283,7 @@ async function activatePurchase({
 
         const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
         const appliedMinor = contract
-            ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor || 0))
+            ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0))
             : discountAmountAppliedMinor;
         if (effectiveDiscountCodeId) {
             await client.query('SAVEPOINT discount_redemption');
