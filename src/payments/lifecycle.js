@@ -1,8 +1,15 @@
 'use strict';
 
 const core = require('./lifecycle-core');
-const { query } = require('../db');
+const { query, transaction } = require('../db');
+const { reconcileCustomer } = require('../jellyfin/resilient-provisioning');
 const state = require('../entitlements/subscription-state');
+
+function addPlanDuration(plan, from = new Date()) {
+    return new Date(from.getTime() + Number(plan.duration_days || 30) * 86400000);
+}
+
+function permanentEnd() { return new Date('9999-12-31T23:59:59.000Z'); }
 
 async function getProviderOptions(planCode, provider) {
     const result = await query(`
@@ -58,47 +65,112 @@ async function trialPolicy() {
         trialMode: ['once_ever','once_per_plan','before_paid'].includes(value.trialMode) ? value.trialMode : 'once_ever',
         freeMode: ['once_per_plan','renewable','permanent'].includes(value.freeMode) ? value.freeMode : 'once_per_plan',
         paidCanClaimFree: value.paidCanClaimFree === true,
-        downgradeToFree: value.downgradeToFree === true
+        downgradeToFree: value.downgradeToFree === true,
+        downgradeFreePlanCode: String(value.downgradeFreePlanCode || '').trim()
     };
+}
+
+async function saveTrialPolicy(input, actorUserId = null) {
+    const value = {
+        trialMode: ['once_ever','once_per_plan','before_paid'].includes(input.trialMode) ? input.trialMode : 'once_ever',
+        freeMode: ['once_per_plan','renewable','permanent'].includes(input.freeMode) ? input.freeMode : 'once_per_plan',
+        paidCanClaimFree: input.paidCanClaimFree === true,
+        downgradeToFree: input.downgradeToFree === true,
+        downgradeFreePlanCode: String(input.downgradeFreePlanCode || '').trim()
+    };
+    if (value.downgradeToFree) {
+        const target = await query(`SELECT code FROM plans WHERE code=$1 AND active=TRUE AND visible=TRUE AND price_minor=0 AND billing_interval<>'trial' AND audience IN ('direct','both')`, [value.downgradeFreePlanCode]);
+        if (!target.rowCount) throw new Error('Choose an active direct free plan for automatic downgrade.');
+    } else value.downgradeFreePlanCode = '';
+    await transaction(async client => {
+        await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('trial_free_policy',$1::jsonb)
+            ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`, [JSON.stringify(value)]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+            VALUES($1,'admin.commerce.trial_free_policy','platform_setting','trial_free_policy',$2::jsonb)`, [actorUserId, JSON.stringify(value)]);
+    });
+    return value;
 }
 
 async function enforceTrialEligibility(customerId, plan) {
     const policy = await trialPolicy();
     if (policy.trialMode === 'once_per_plan') {
-        const prior = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND status<>'cancelled' LIMIT 1`, [customerId, plan.id]);
+        const prior = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 LIMIT 1`, [customerId, plan.id]);
         if (prior.rowCount) throw new Error('This trial has already been used.');
-    } else {
-        const priorTrial = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-            WHERE s.customer_id=$1 AND p.billing_interval='trial' LIMIT 1`, [customerId]);
-        if (priorTrial.rowCount) throw new Error('A trial has already been used on this account.');
-        if (policy.trialMode === 'before_paid') {
-            const paid = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-                WHERE s.customer_id=$1 AND p.billing_interval<>'trial' AND p.price_minor>0 LIMIT 1`, [customerId]);
-            if (paid.rowCount) throw new Error('Trials are only available before the first paid subscription.');
-        }
+        return policy;
     }
+    const priorTrial = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        WHERE s.customer_id=$1 AND p.billing_interval='trial' LIMIT 1`, [customerId]);
+    if (priorTrial.rowCount) throw new Error('A trial has already been used on this account.');
+    if (policy.trialMode === 'before_paid') {
+        const paid = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 AND p.billing_interval<>'trial' AND p.price_minor>0 LIMIT 1`, [customerId]);
+        if (paid.rowCount) throw new Error('Trials are only available before the first paid subscription.');
+    }
+    return policy;
 }
 
 async function startFreeTrial(customerId, planCode) {
     const plan = await assertDirectPlan(planCode, { trial: true });
     await enforceTrialEligibility(customerId, plan);
-    return core.startFreeTrial(customerId, planCode);
+    const created = await transaction(async client => {
+        const live = await client.query(`SELECT s.* FROM subscriptions s WHERE s.customer_id=$1 AND s.superseded_by IS NULL
+            AND s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW()
+            ORDER BY s.current_period_end DESC LIMIT 1 FOR UPDATE`, [customerId]);
+        if (live.rowCount) throw new Error('An active entitlement already exists. Change or cancel it before starting a trial.');
+        const startsAt = new Date(), endsAt = addPlanDuration(plan, startsAt);
+        const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'trialing','manual',$3,$4) RETURNING *`, [customerId, plan.id, startsAt, endsAt]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
+        return row.rows[0];
+    });
+    await reconcileCustomer(customerId);
+    return created;
 }
 
-async function claimFreePlan(customerId, planCode) {
+async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
     const plan = await assertDirectPlan(planCode, { free: true });
     const policy = await trialPolicy();
-    if (!policy.paidCanClaimFree) {
-        const paid = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+    const created = await transaction(async client => {
+        const prior = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`, [customerId, plan.id]);
+        if (policy.freeMode !== 'renewable' && prior.rowCount) throw new Error('Free access on this plan has already been claimed.');
+
+        const livePaid = await client.query(`SELECT s.* FROM subscriptions s JOIN plans p ON p.id=s.plan_id
             WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.status IN ('active','trialing','past_due','paused')
-              AND s.current_period_end>NOW() AND p.price_minor>0 LIMIT 1`, [customerId]);
-        if (paid.rowCount) throw new Error('Free access cannot be claimed while a paid entitlement is active.');
+              AND s.current_period_end>NOW() AND p.price_minor>0
+            ORDER BY s.current_period_end DESC LIMIT 1 FOR UPDATE OF s`, [customerId]);
+        if (livePaid.rowCount && !policy.paidCanClaimFree && !automatic) throw new Error('Free access cannot be claimed while a paid entitlement is active.');
+
+        const liveFree = await client.query(`SELECT s.* FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.status IN ('active','trialing','past_due','paused')
+              AND s.current_period_end>NOW() AND p.price_minor=0
+            ORDER BY s.current_period_end DESC LIMIT 1 FOR UPDATE OF s`, [customerId]);
+        if (liveFree.rowCount && String(liveFree.rows[0].plan_id) === String(plan.id)) throw new Error('You already have free access on this plan.');
+
+        const startsAt = livePaid.rowCount ? new Date(livePaid.rows[0].current_period_end) : new Date();
+        const endsAt = policy.freeMode === 'permanent' ? permanentEnd() : addPlanDuration(plan, startsAt);
+        const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
+            VALUES($1,$2,'active','free_claim',$3,$4) RETURNING *`, [customerId, plan.id, startsAt, endsAt]);
+        if (liveFree.rowCount) await state.markSuperseded(client, { subscriptionId: liveFree.rows[0].id, replacementId: row.rows[0].id, reason: automatic ? 'automatic_free_downgrade' : 'free_plan_change' });
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
+            VALUES($1,'subscription',$2,$3::jsonb)`, [automatic ? 'subscription.free.auto_downgrade' : 'subscription.free.claim', row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code, startsAt, endsAt, freeMode: policy.freeMode })]);
+        return row.rows[0];
+    });
+    await reconcileCustomer(customerId);
+    return created;
+}
+
+async function autoDowngradeEligibleCustomer(customerId) {
+    const policy = await trialPolicy();
+    if (!policy.downgradeToFree || !policy.downgradeFreePlanCode) return null;
+    const live = await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND superseded_by IS NULL
+        AND status IN ('active','trialing','past_due','paused') AND starts_at<=NOW() AND current_period_end>NOW() LIMIT 1`, [customerId]);
+    if (live.rowCount) return null;
+    try { return await claimFreePlan(customerId, policy.downgradeFreePlanCode, { automatic: true }); }
+    catch (error) {
+        if (/already been claimed/i.test(error.message)) return null;
+        throw error;
     }
-    if (policy.freeMode !== 'renewable') {
-        const prior = await query('SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source=\'free_claim\' LIMIT 1', [customerId, plan.id]);
-        if (prior.rowCount) throw new Error('Free access on this plan has already been claimed.');
-    }
-    return core.claimFreePlan(customerId, planCode);
 }
 
 async function activatePurchase(input) {
@@ -120,5 +192,7 @@ module.exports = {
     startFreeTrial,
     claimFreePlan,
     activatePurchase,
-    trialPolicy
+    trialPolicy,
+    saveTrialPolicy,
+    autoDowngradeEligibleCustomer
 };
