@@ -2,5 +2,8 @@
 const previous=require('./reseller-billing-v2-core');
 const legacy=require('./reseller-billing-core');
 const intents=require('./checkout-intents');
+const {query}=require('../db');
+function parsedBody(raw){try{return JSON.parse(Buffer.isBuffer(raw)?raw.toString('utf8'):String(raw||'{}'))}catch{return{}}}
 async function activatePayPalCheckout({subscriptionId,intentId,state,resellerId=null}){const verified=await intents.verify({intentId,nonce:state,providerCheckoutId:subscriptionId,scope:'reseller',provider:'paypal',ownerId:resellerId||null});const activated=await legacy.activatePayPalSubscription(subscriptionId);const actual=activated?.reseller_id||verified.reseller_id;if(String(actual)!==String(verified.reseller_id))throw new Error('PayPal subscription does not match the reseller checkout.');await intents.consume({intentId,nonce:state,providerCheckoutId:subscriptionId,state:'completed',scope:'reseller',provider:'paypal',ownerId:verified.reseller_id});return activated}
-module.exports={...previous,activatePayPalCheckout};
+async function processPayPalWebhook(rawBody,headers){const result=await legacy.processPayPalWebhook(rawBody,headers);const event=parsedBody(rawBody),resource=event?.resource||{};if(event.event_type==='PAYMENT.SALE.REFUNDED'&&resource.billing_agreement_id){await query(`UPDATE reseller_subscriptions SET status='active',updated_at=NOW() WHERE source='paypal' AND provider_subscription_id=$1 AND current_period_end>NOW()`,[resource.billing_agreement_id]);await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) SELECT 'reseller.payment.refund','reseller',reseller_id,$2::jsonb FROM reseller_subscriptions WHERE source='paypal' AND provider_subscription_id=$1 ORDER BY created_at DESC LIMIT 1`,[resource.billing_agreement_id,JSON.stringify({provider:'paypal',eventId:event.id,policy:'preserve_paid_through'})])}return result}
+module.exports={...previous,activatePayPalCheckout,processPayPalWebhook};
