@@ -384,8 +384,8 @@ async function analyticsData(range) {
             SELECT
                 (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE AND health_status='offline') offline_servers,
                 (SELECT COUNT(*)::int FROM payment_events WHERE processing_error IS NOT NULL AND created_at>NOW()-INTERVAL '24 hours') payment_errors_24h,
-                (SELECT COUNT(*)::int FROM customer_reconciliation_state WHERE status IN ('blocked','failed')) provisioning_problems,
-                (SELECT COUNT(*)::int FROM content_requests WHERE status='pending') pending_requests
+                (SELECT COUNT(*)::int FROM customer_provisioning_state WHERE status IN ('blocked','failed')) provisioning_problems,
+                (SELECT COUNT(*)::int FROM request_user_sync WHERE status='failed') request_sync_problems
         `)
     ]);
 
@@ -453,6 +453,7 @@ async function analyticsData(range) {
         topContent: topContent.rows,
         topReferrers: topReferrers.rows,
         renewals: renewals.rows.slice(0, 12),
+        renewalCount: renewals.rows.length,
         renewalTotals: [...renewalTotals.entries()].map(([currency, minor]) => ({ currency, minor })),
         forecastDays: range.days,
         operational: operational.rows[0] || {}
