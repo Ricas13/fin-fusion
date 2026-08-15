@@ -37,7 +37,9 @@ for (const migration of [
     '041_reseller_ledger_adjustments.sql',
     '042_jellyfin_policy_drift.sql',
     '043_reseller_dunning.sql',
-    '044_recurring_trigger_fix.sql'
+    '044_recurring_trigger_fix.sql',
+    '045_payment_incidents.sql',
+    '046_restore_invitation_subscription_source.sql'
 ]) assert(exists(`db/migrations/${migration}`), `missing coherence migration ${migration}`);
 
 const application = read('src/application.js');
@@ -91,10 +93,23 @@ for (const policy of ['once_ever', 'once_per_plan', 'before_paid', 'renewable', 
     assert(lifecycle.includes(policy), `free/trial policy is missing ${policy}`);
 }
 
+const directCheckout = read('src/platform/flexible-checkout.js');
+assert(/idempotencyKey\s*:\s*intent\.id/.test(directCheckout), 'direct checkout must pass the durable local intent ID to payment providers');
+const stripeBilling = read('src/payments/stripe.js');
+assert(stripeBilling.includes('internal_checkout_intent_id'), 'Stripe checkout must preserve the local intent ID in provider metadata');
+assert(/checkout\.sessions\.create\(params,\s*\{\s*idempotencyKey/.test(stripeBilling), 'Stripe checkout must use a provider idempotency key');
+const paypalBilling = read('src/payments/paypal.js');
+assert(/providerRequestId\s*=\s*idempotencyKey/.test(paypalBilling), 'PayPal checkout must derive PayPal-Request-Id from the local checkout intent');
+
 const resellerBilling = read('src/payments/reseller-billing-v2-core.js');
 for (const fn of ['requestTierChange', 'cancelPendingTierChange', 'applyDueTierChanges', 'validateTierMapping']) {
     assert(resellerBilling.includes(fn), `reseller billing is missing ${fn}`);
 }
+assert(/idempotencyKey\s*:\s*intent\.id/.test(resellerBilling), 'reseller checkout must pass the durable local intent ID to its provider core');
+const resellerBillingCore = read('src/payments/reseller-billing-core.js');
+assert(resellerBillingCore.includes('internal_checkout_intent_id'), 'reseller Stripe checkout must preserve the local intent ID in provider metadata');
+assert(resellerBillingCore.includes('reseller-checkout-'), 'reseller Stripe checkout must use a stable provider idempotency key');
+assert(/requestId:\s*idempotencyKey\s*\?/.test(resellerBillingCore), 'reseller PayPal checkout must use the local intent ID as PayPal-Request-Id');
 
 const drift = read('src/jellyfin/drift-control.js');
 assert(drift.includes("method:'GET'") || drift.includes("method: 'GET'"), 'drift audit must explicitly use read-only Jellyfin GET');
