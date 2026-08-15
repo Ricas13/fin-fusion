@@ -3,6 +3,7 @@
 const express = require('express');
 const core = require('./router-core');
 const placement = require('../jellyfin/placement');
+const publicAbuseProtection = require('../security/public-abuse-protection');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
@@ -12,6 +13,7 @@ const { createAdminConfigurationHealthRouter } = require('./admin-configuration-
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
+const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
@@ -26,6 +28,7 @@ function ensureFleetSnapshot(){if(!fleetStarted){fleetStarted=true;placement.sta
 function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router;}
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
+    router.use(publicAbuseProtection.middleware);
     router.use(createAccountActivationRouter());
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
@@ -42,6 +45,7 @@ function createRouter(){
     router.use(createAdminResellerSettingsRouter());
     router.use(createAdminResellerDunningRouter());
     router.use(createAdminNotificationPreferencesRouter());
+    router.use(createAdminAbuseProtectionRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
