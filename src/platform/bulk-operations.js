@@ -77,12 +77,21 @@ registerHandler('retry_failed',async item=>{const failed=await query(`SELECT jel
 registerHandler('revoke_sessions',async item=>{const sessions=await query(`SELECT server_id,jellyfin_session_id FROM active_playback_sessions WHERE customer_id=$1`,[item.customer_id]),registry=require('../jellyfin/registry');let revoked=0;for(const session of sessions.rows){try{await registry.request(session.server_id,`/Sessions/${encodeURIComponent(session.jellyfin_session_id)}/Logout`,{method:'POST'});revoked++}catch(_){}}await query('DELETE FROM active_playback_sessions WHERE customer_id=$1',[item.customer_id]);await auditItem('admin.bulk.revoke_sessions',item.customer_id,{revoked});return{revoked}});
 
 registerHandler('reseller_assign',async item=>{
-    const resellerId=String(item.params?.resellerId||''),resellerResult=await query('SELECT id FROM resellers WHERE id=$1',[resellerId]);if(!resellerResult.rowCount)throw new Error('Target reseller not found');
-    const customer=await query('SELECT reseller_id FROM customers WHERE id=$1',[item.customer_id]);if(!customer.rowCount)throw new Error('Customer not found');if(String(customer.rows[0].reseller_id||'')===resellerId)return{resellerId,unchanged:true};
-    const entitlement=await subscriptionState.effectiveSubscription(item.customer_id,{includeBlocked:true});if(entitlement?.source==='reseller_sale'){
-        const parent=await monthly.currentSubscription(resellerId);if(!parent||!monthly.statusIsEntitled(parent))throw new Error('Target reseller has no active parent subscription for this commercial entitlement');const used=await monthly.seatUsage(resellerId),limit=Number(parent.seat_limit||parent.seat_limit_snapshot||0);if(used>=limit)throw new Error(`Target reseller has no free seats (${used}/${limit}).`);
-    }
-    await query('UPDATE customers SET reseller_id=$2 WHERE id=$1',[item.customer_id,resellerId]);await auditItem('admin.bulk.reseller_assign',item.customer_id,{resellerId});return{resellerId};
+    const resellerId=String(item.params?.resellerId||'');
+    const assignment=await transaction(async client=>{
+        // Lock the reseller row so this capacity decision serializes with normal
+        // reseller customer creation/resume, which uses the same row lock.
+        const reseller=await client.query('SELECT id FROM resellers WHERE id=$1 FOR UPDATE',[resellerId]);if(!reseller.rowCount)throw new Error('Target reseller not found');
+        const customer=await client.query('SELECT reseller_id FROM customers WHERE id=$1 FOR UPDATE',[item.customer_id]);if(!customer.rowCount)throw new Error('Customer not found');if(String(customer.rows[0].reseller_id||'')===resellerId)return{resellerId,unchanged:true};
+        const live=await client.query(`SELECT EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW() AND ((s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW()) OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND s.current_period_end+(s.service_extension_days||' days')::interval>NOW()))) AS active`,[item.customer_id]);
+        if(Boolean(live.rows[0]?.active)){
+            const parent=await monthly.currentSubscription(resellerId,client);if(!parent||!monthly.statusIsEntitled(parent))throw new Error('Target reseller has no active parent subscription for this commercial entitlement');
+            const used=await monthly.seatUsage(resellerId,client),pending=await client.query(`SELECT rt.seat_limit FROM reseller_subscriptions rs JOIN reseller_tiers rt ON rt.id=rs.pending_tier_id WHERE rs.reseller_id=$1 AND rs.pending_tier_id IS NOT NULL AND rs.status IN ('active','past_due') AND rs.current_period_end>NOW() ORDER BY rs.current_period_end DESC,rs.created_at DESC LIMIT 1`,[resellerId]),currentLimit=Number(parent.seat_limit||parent.seat_limit_snapshot||0),pendingLimit=pending.rowCount?Number(pending.rows[0].seat_limit):currentLimit,limit=Math.min(currentLimit,pendingLimit);
+            if(used>=limit)throw new Error(`Target reseller has no free seats (${used}/${limit}).`);
+        }
+        await client.query('UPDATE customers SET reseller_id=$2 WHERE id=$1',[item.customer_id,resellerId]);return{resellerId};
+    });
+    await auditItem('admin.bulk.reseller_assign',item.customer_id,assignment);return assignment;
 });
 registerHandler('reseller_detach',async item=>{const entitlement=await subscriptionState.effectiveSubscription(item.customer_id,{includeBlocked:true});if(entitlement?.source==='reseller_sale')throw new Error('End the reseller-provided customer service before detaching the reseller; detaching alone would orphan a commercial entitlement.');await query('UPDATE customers SET reseller_id=NULL WHERE id=$1',[item.customer_id]);await auditItem('admin.bulk.reseller_detach',item.customer_id,{});return{}});
 
