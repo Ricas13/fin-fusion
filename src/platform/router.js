@@ -10,7 +10,6 @@ const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
 const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminPaymentReconciliationRouter } = require('./admin-payment-reconciliation');
-const { createAdminConfigurationHealthRouter } = require('./admin-configuration-health');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
@@ -43,9 +42,9 @@ function createRouter(){
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
+    router.get('/admin/configuration-health',(req,res)=>res.redirect(302,'/admin/setup'));
     router.use(createAdminPaymentReconciliationRouter());
     router.use(createAdminCommerceRouter());
-    router.use(createAdminConfigurationHealthRouter());
     router.use(createAdminResellerSettingsRouter());
     router.use(createAdminResellerDunningRouter());
     router.use(createAdminNotificationPreferencesRouter());
