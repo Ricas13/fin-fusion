@@ -10,8 +10,10 @@
 </head>
 <body><main class="card">
   <h1><%= siteName %></h1><div class="muted">Customer account</div>
+  <% if (typeof message !== 'undefined' && message) { %><div class="muted"><%= message %></div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
   <form method="post" action="/account/login">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="next" value="<%= next %>">
     <label>Email or username</label><input name="identity" autocomplete="username" required>
     <label>Password</label><input type="password" name="password" autocomplete="current-password" required>
