@@ -81,29 +81,34 @@ CREATE INDEX IF NOT EXISTS operational_worker_heartbeat_idx
 ALTER TABLE automation_job_state
     ADD COLUMN IF NOT EXISTS force_run_requested BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Durable multi-channel notification delivery. Email keeps its specialised
--- outbox, while non-email channels use this queue so provider/network failures
--- are retryable and observable instead of disappearing synchronously.
-CREATE TABLE IF NOT EXISTS notification_outbox (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    channel TEXT NOT NULL CHECK (channel IN ('telegram','webhook')),
-    event_type TEXT NOT NULL,
-    destination TEXT,
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','sending','sent','dead','cancelled')),
-    attempts INTEGER NOT NULL DEFAULT 0,
-    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_attempt_at TIMESTAMPTZ,
-    sent_at TIMESTAMPTZ,
-    last_error TEXT,
-    dedupe_key TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_unique
-    ON notification_outbox(channel,dedupe_key) WHERE dedupe_key IS NOT NULL;
-CREATE INDEX IF NOT EXISTS notification_outbox_due_idx
-    ON notification_outbox(state,next_attempt_at) WHERE state='pending';
+-- Migration 034 already created notification_outbox for durable email delivery.
+-- Extend that canonical table instead of creating an incompatible second shape.
+-- Existing email rows/worker contracts stay valid; non-email channels can use
+-- event_type/destination/payload and the same status/retry lifecycle.
+ALTER TABLE notification_outbox
+    ADD COLUMN IF NOT EXISTS event_type TEXT,
+    ADD COLUMN IF NOT EXISTS destination TEXT,
+    ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+UPDATE notification_outbox
+SET event_type=COALESCE(event_type,message_type),
+    destination=COALESCE(destination,recipient_email)
+WHERE event_type IS NULL OR destination IS NULL;
+
+ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_channel_check;
+ALTER TABLE notification_outbox
+    ADD CONSTRAINT notification_outbox_channel_check
+    CHECK (channel IN ('email','telegram','webhook'));
+ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_status_check;
+ALTER TABLE notification_outbox
+    ADD CONSTRAINT notification_outbox_status_check
+    CHECK (status IN ('pending','sending','sent','failed','dead','cancelled'));
+ALTER TABLE notification_outbox
+    ALTER COLUMN recipient_email DROP NOT NULL,
+    ALTER COLUMN payload_encrypted DROP NOT NULL;
+
+CREATE INDEX IF NOT EXISTS notification_outbox_channel_status_idx
+    ON notification_outbox(channel,status,next_attempt_at);
 
 -- Operational incidents need workflow state, not only detection.
 ALTER TABLE payment_incidents
