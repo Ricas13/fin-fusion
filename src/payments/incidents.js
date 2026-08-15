@@ -12,14 +12,12 @@ const DEFAULTS = Object.freeze({
     failedRenewalAction: 'provider_state'
 });
 
-function cleanAction(value, allowed, fallback) {
-    return allowed.includes(String(value || '')) ? String(value) : fallback;
-}
+function cleanAction(value, allowed, fallback) { return allowed.includes(String(value || '')) ? String(value) : fallback; }
 async function policy() {
     const result = await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1', [POLICY_KEY]);
     const value = result.rows[0]?.setting_value || {};
     return {
-        refundAction: cleanAction(value.refundAction, ['preserve','suspend'], DEFAULTS.refundAction),
+        refundAction: cleanAction(value.refundAction, ['preserve','suspend_full_refund'], DEFAULTS.refundAction),
         disputeAction: cleanAction(value.disputeAction, ['preserve','suspend'], DEFAULTS.disputeAction),
         chargebackAction: cleanAction(value.chargebackAction, ['preserve','suspend'], DEFAULTS.chargebackAction),
         failedRenewalAction: 'provider_state'
@@ -27,7 +25,7 @@ async function policy() {
 }
 async function savePolicy(input, actorUserId = null) {
     const value = {
-        refundAction: cleanAction(input.refundAction, ['preserve','suspend'], DEFAULTS.refundAction),
+        refundAction: cleanAction(input.refundAction, ['preserve','suspend_full_refund'], DEFAULTS.refundAction),
         disputeAction: cleanAction(input.disputeAction, ['preserve','suspend'], DEFAULTS.disputeAction),
         chargebackAction: cleanAction(input.chargebackAction, ['preserve','suspend'], DEFAULTS.chargebackAction),
         failedRenewalAction: 'provider_state'
@@ -70,23 +68,21 @@ async function applyHold(identity, provider, caseId, reason) {
     const sourceKey = holdSource(provider, caseId), ids = identity.scope === 'direct' && identity.customerId
         ? [identity.customerId]
         : identity.scope === 'reseller' && identity.resellerId ? await resellerCustomerIds(identity.resellerId) : [];
-    for (const customerId of ids) {
-        await accessHolds.addHold({ customerId, type: 'payment_risk', sourceKey, reason, metadata: { provider, caseId, scope: identity.scope } });
-    }
-    await reconcileMany(ids);
-    return ids.length;
+    for (const customerId of ids) await accessHolds.addHold({ customerId, type: 'payment_risk', sourceKey, reason, metadata: { provider, caseId, scope: identity.scope } });
+    await reconcileMany(ids); return ids.length;
 }
 async function releaseHold(identity, provider, caseId) {
     const sourceKey = holdSource(provider, caseId), ids = identity.scope === 'direct' && identity.customerId
         ? [identity.customerId]
         : identity.scope === 'reseller' && identity.resellerId ? await resellerCustomerIds(identity.resellerId) : [];
     for (const customerId of ids) await accessHolds.releaseHold({ customerId, type: 'payment_risk', sourceKey });
-    await reconcileMany(ids);
-    return ids.length;
+    await reconcileMany(ids); return ids.length;
 }
 
-function policyAction(kind, cfg) {
-    if (kind === 'refund') return cfg.refundAction;
+function policyAction(kind, cfg, metadata) {
+    if (kind === 'refund') {
+        return cfg.refundAction === 'suspend_full_refund' && metadata?.fullRefund === true ? 'suspend' : 'preserve';
+    }
     if (kind === 'dispute') return cfg.disputeAction;
     if (kind === 'chargeback') return cfg.chargebackAction;
     return cfg.failedRenewalAction;
@@ -98,9 +94,8 @@ async function record({ provider, eventId, caseId = null, kind, status = 'open',
     if (!['refund','dispute','chargeback','failed_renewal'].includes(kind)) throw new Error('Unsupported payment incident type.');
     const resolvedIdentity = identity || await identityFromProviderSubscription(provider, providerSubscriptionId);
     const cfg = await policy();
-    let action = policyAction(kind, cfg);
+    let action = policyAction(kind, cfg, metadata);
     if (['resolved','won'].includes(status)) action = 'restore';
-    if (status === 'recorded' && kind === 'refund' && action !== 'suspend') action = 'preserve';
 
     const inserted = await query(`INSERT INTO payment_incidents(
         provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,customer_id,reseller_id,
@@ -136,5 +131,4 @@ async function recent(limit = 100) {
         ORDER BY pi.created_at DESC LIMIT $1`, [Math.max(1,Math.min(500,Number(limit)||100))]);
     return result.rows;
 }
-
 module.exports = { policy, savePolicy, record, recent, identityFromProviderSubscription, identityFromMetadata, holdSource };
