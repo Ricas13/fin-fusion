@@ -4,6 +4,7 @@ const { layout } = require('./admin-html');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange } = require('./admin-dashboard-analytics');
 const { renderDashboard } = require('./admin-dashboard-view');
+const runtimeSettings = require('./runtime-settings');
 
 function isNativeAdmin(req) {
     return Boolean(req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId);
@@ -20,10 +21,11 @@ async function dashboardPage(req, res) {
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
     res.setHeader('Pragma', 'no-cache');
     try {
+        await runtimeSettings.ensureLoaded();
         const range = dashboardRange(req.query || {});
         const stats = await dashboardData(range);
         return res.send(layout({
-            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+            siteName: runtimeSettings.siteName(),
             active: 'dashboard',
             title: 'Admin Dashboard',
             subtitle: `Business and streaming performance · ${range.label}`,
@@ -33,7 +35,7 @@ async function dashboardPage(req, res) {
     } catch (error) {
         console.error('Admin dashboard failed:', error.message);
         return res.status(500).render('auth/message', {
-            siteName: process.env.SITE_NAME || 'CAPTaINFiN',
+            siteName: runtimeSettings.siteName(),
             title: 'Dashboard unavailable',
             message: 'The administration dashboard could not be loaded safely.',
             link: '/admin/setup',
