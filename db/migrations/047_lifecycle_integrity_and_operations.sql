@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS operational_worker_state (
 CREATE INDEX IF NOT EXISTS operational_worker_heartbeat_idx
     ON operational_worker_state(last_heartbeat_at DESC);
 
+-- A manual "Run now" is a one-shot force request. This lets an administrator
+-- intentionally execute a disabled job without silently enabling its schedule.
+ALTER TABLE automation_job_state
+    ADD COLUMN IF NOT EXISTS force_run_requested BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Durable multi-channel notification delivery. Email keeps its specialised
 -- outbox, while non-email channels use this queue so provider/network failures
 -- are retryable and observable instead of disappearing synchronously.
