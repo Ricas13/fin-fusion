@@ -7,7 +7,7 @@ on:
       - 'src/resellers/**'
       - 'src/payments/reseller-billing.js'
       - 'src/platform/reseller-monthly-portal.js'
-      - 'src/platform/reseller-storefront.js'
+      - 'src/platform/storefront.js'
       - 'src/platform/admin-reseller-tiers.js'
       - 'src/platform/webhooks.js'
       - 'src/platform/admin-html.js'
@@ -52,7 +52,7 @@ jobs:
           node --check src/payments/reseller-billing.js
           node --check src/platform/admin-reseller-tiers.js
           node --check src/platform/reseller-monthly-portal.js
-          node --check src/platform/reseller-storefront.js
+          node --check src/platform/storefront.js
           node --check src/platform/webhooks.js
           node --check platform-preload.js
           node --check scripts/monthly-reseller-tiers-smoke.js
