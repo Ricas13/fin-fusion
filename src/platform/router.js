@@ -6,6 +6,7 @@ const placement = require('../jellyfin/placement');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
+const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
@@ -31,11 +32,9 @@ function createRouter() {
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
+    router.use(createAdminResellerSettingsRouter());
     router.use(createCustomerPaymentReturnRouter());
 
-    // Every authenticated customer mutation must provide the synchronizer token
-    // or pass strict same-origin Fetch Metadata/Origin validation. This covers
-    // older forms while they are progressively updated with hidden CSRF fields.
     router.use('/account', (req, res, next) => {
         if (req.method === 'POST' && req.session?.customerId && req.session?.customerUserId) return mutationGuard(req, res, next);
         return next();
