@@ -8,12 +8,19 @@ const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
+const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 let fleetStarted = false;
 function ensureFleetSnapshot() {
     if (fleetStarted) return;
     fleetStarted = true;
     placement.startFleetSnapshotRefresh();
+}
+
+function pruneRoutes(router, paths) {
+    if (!router?.stack) return router;
+    router.stack = router.stack.filter(layer => !(layer.route && paths.has(String(layer.route.path))));
+    return router;
 }
 
 function createRouter() {
@@ -24,8 +31,25 @@ function createRouter() {
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
-    router.use(core.createRouter());
+    router.use(createCustomerPaymentReturnRouter());
+
+    // Every authenticated customer mutation must provide the synchronizer token
+    // or pass strict same-origin Fetch Metadata/Origin validation. This covers
+    // older forms while they are progressively updated with hidden CSRF fields.
+    router.use('/account', (req, res, next) => {
+        if (req.method === 'POST' && req.session?.customerId && req.session?.customerUserId) return mutationGuard(req, res, next);
+        return next();
+    });
+
+    const legacy = core.createRouter();
+    pruneRoutes(legacy, new Set([
+        '/account/checkout/stripe',
+        '/account/checkout/paypal',
+        '/account/paypal/return',
+        '/account/stripe/portal'
+    ]));
+    router.use(legacy);
     return router;
 }
 
-module.exports = { ...core, createRouter, ensureFleetSnapshot };
+module.exports = { ...core, createRouter, ensureFleetSnapshot, pruneRoutes };
