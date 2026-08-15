@@ -98,9 +98,9 @@ async function stripeCurrentState(incident) {
     if (['dispute', 'chargeback'].includes(incident.incident_type)) {
         if (!incident.provider_case_id) throw new Error('This incident has no Stripe dispute ID to verify.');
         const dispute = await stripeGet(key, `/v1/disputes/${encodeURIComponent(incident.provider_case_id)}`);
-        const reference = incident.provider_subscription_id
-            || await stripeReferenceFromDispute(key, dispute)
+        const reference = await stripeReferenceFromDispute(key, dispute)
             || event?.reference
+            || incident.provider_subscription_id
             || null;
         const status = String(dispute.status || '').toLowerCase();
         return {
@@ -148,7 +148,7 @@ async function stripeCurrentState(incident) {
     // reconciliation/audit trail.
     if (!event && incident.provider_event_id) event = await stripeEvent(incident.provider_event_id, key);
     return {
-        reference: incident.provider_subscription_id || event?.reference || null,
+        reference: event?.reference || incident.provider_subscription_id || null,
         eventType: event?.eventType || null,
         objectId: event?.objectId || incident.provider_case_id || null,
         providerStatus: event?.providerStatus || null,
@@ -242,7 +242,7 @@ async function paypalCurrentState(incident) {
             || null;
         const merchantWon = paypalMerchantWon(outcome);
         return {
-            reference: incident.provider_subscription_id || event?.reference || null,
+            reference: event?.reference || incident.provider_subscription_id || null,
             eventType: event?.eventType || null,
             objectId: dispute.dispute_id || dispute.id || incident.provider_case_id,
             providerStatus: status || null,
@@ -281,7 +281,7 @@ async function paypalCurrentState(incident) {
 
     if (!event && incident.provider_event_id) event = await paypalEvent(incident.provider_event_id, auth);
     return {
-        reference: incident.provider_subscription_id || event?.reference || null,
+        reference: event?.reference || incident.provider_subscription_id || null,
         eventType: event?.eventType || null,
         objectId: event?.objectId || incident.provider_case_id || null,
         providerStatus: event?.providerStatus || null,
@@ -334,7 +334,7 @@ async function reconcile(incidentId, actorUserId = null) {
             ? await paypalCurrentState(incident)
             : (() => { throw new Error('Unsupported provider.'); })();
 
-    const reference = incident.provider_subscription_id || current.reference || null;
+    const reference = current.reference || incident.provider_subscription_id || null;
     const match = await localMatch(incident.provider, reference);
     assertMatchIdentity(incident, match);
 
