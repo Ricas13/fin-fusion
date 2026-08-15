@@ -12,6 +12,7 @@ const { createAdminEventsRouter } = require('./admin-events');
 const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminPaymentReconciliationRouter } = require('./admin-payment-reconciliation');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
+const { createAdminStremioRouter } = require('./admin-stremio');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection');
@@ -48,6 +49,7 @@ function createRouter(){
     router.use(createAdminPaymentReconciliationRouter());
     router.use(createAdminCommerceRouter());
     router.use(createAdminResellerSettingsRouter());
+    router.use(createAdminStremioRouter());
     router.use(createAdminResellerDunningRouter());
     router.use(createAdminNotificationPreferencesRouter());
     router.use(createAdminAbuseProtectionRouter());
