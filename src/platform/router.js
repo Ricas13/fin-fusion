@@ -16,6 +16,7 @@ const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
 const { createResellerExportRouter } = require('./reseller-export');
 const { createCustomerHistoryRouter } = require('./customer-history');
+const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 let fleetStarted=false;
@@ -24,6 +25,7 @@ function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
     router.use(createAccountActivationRouter());
+    router.use(createCustomerSecurityRouter());
     router.use(createResellerSecurityRouter());
     router.get('/reseller/sales',(req,res)=>res.redirect(302,'/reseller/ledger'));
     router.use(createResellerLedgerRouter());
@@ -40,7 +42,7 @@ function createRouter(){
     router.use(createCustomerPaymentReturnRouter());
     router.use('/account',(req,res,next)=>req.method==='POST'&&req.session?.customerId&&req.session?.customerUserId?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
-    pruneRoutes(legacy,new Set(['/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal','/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences']));
+    pruneRoutes(legacy,new Set(['/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal','/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences']));
     router.use(legacy);return router;
 }
 module.exports={...core,createRouter,ensureFleetSnapshot,pruneRoutes};
