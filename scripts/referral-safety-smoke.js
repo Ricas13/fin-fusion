@@ -5,6 +5,7 @@ const assert=require('assert');
 const crypto=require('crypto');
 const {query,getPool}=require('../src/db');
 const referrals=require('../src/referrals');
+const incidents=require('../src/payments/incidents');
 
 const suffix=crypto.randomBytes(6).toString('hex');
 const email=name=>`ref-${name}-${suffix}@example.invalid`;
@@ -33,6 +34,21 @@ async function main(){
     assert.strictEqual(zeroResult?.reason,'no_qualifying_paid_event','Zero-value provider checkout qualified for a referral reward');
     const zeroRedemption=await query(`SELECT status FROM referral_redemptions WHERE referred_customer_id=$1`,[zeroReferred.id]);
     assert.strictEqual(zeroRedemption.rows[0]?.status,'pending','Zero-value referral should remain pending for a future qualifying paid event');
+
+    // A refund/chargeback recorded against the qualifying provider purchase
+    // disqualifies the reward even if the site's refund policy preserves access.
+    const refundReferrer=await customer('refund-referrer'),refundReferred=await customer('refund-referred');
+    const refundReferrerSub=await subscription(refundReferrer.id,refPlan.id,{source:'manual'});
+    const refundCode=await referrals.ensureReferralCode(refundReferrer.id);
+    assert(await referrals.attributeReferral(refundReferred.id,refundCode),'Refund test referral was not attributed');
+    const refundedPurchase=await subscription(refundReferred.id,paidPlan.id,{source:'stripe',discountedMinor:500,daysAgo:2});
+    await incidents.record({provider:'stripe',eventId:`evt_refund_${suffix}`,caseId:`ch_refund_${suffix}`,kind:'refund',status:'recorded',identity:{scope:'direct',customerId:refundReferred.id,resellerId:null},providerSubscriptionId:refundedPurchase.provider_subscription_id,amountMinor:500,currency:'GBP',metadata:{fullRefund:true}});
+    const refundResult=await referrals.rewardIfQualifying(refundReferred.id);
+    assert.strictEqual(refundResult?.reason,'payment_reversed','Refunded qualifying payment still earned a referral reward');
+    const refundRedemption=await query(`SELECT status FROM referral_redemptions WHERE referred_customer_id=$1`,[refundReferred.id]);
+    assert.strictEqual(refundRedemption.rows[0]?.status,'unfulfilled','Refunded referral was not disqualified');
+    const refundReferrerAfter=await query(`SELECT service_extension_days FROM subscriptions WHERE id=$1`,[refundReferrerSub.id]);
+    assert.strictEqual(Number(refundReferrerAfter.rows[0]?.service_extension_days||0),0,'Refunded referral extended the referrer subscription');
 
     // Positive provider payment after the configured window grants exactly one
     // provider-independent extension; reprocessing is idempotent.
