@@ -56,6 +56,18 @@ async function consume({ intentId, nonce, providerCheckoutId = null, state = 'co
     });
 }
 
+// Used only after the corresponding webhook signature has been successfully
+// verified.  It intentionally does not accept unsigned browser input.
+async function completeVerifiedProvider(provider, providerCheckoutId, state = 'completed') {
+    if (!['stripe','paypal'].includes(provider)) throw new Error('Invalid checkout provider.');
+    if (!['completed','cancelled','failed'].includes(state)) throw new Error('Invalid checkout completion state.');
+    const result = await query(`UPDATE billing_checkout_intents
+        SET state=$3,completed_at=CASE WHEN $3='completed' THEN NOW() ELSE completed_at END,updated_at=NOW()
+        WHERE provider=$1 AND provider_checkout_id=$2 AND state='open' AND expires_at>NOW()
+        RETURNING *`, [provider, String(providerCheckoutId || ''), state]);
+    return result.rows[0] || null;
+}
+
 async function getOpenForOwner(scope, ownerId) {
     const column = scope === 'customer' ? 'customer_id' : 'reseller_id';
     const result = await query(`SELECT * FROM billing_checkout_intents
@@ -63,4 +75,11 @@ async function getOpenForOwner(scope, ownerId) {
     return result.rows[0] || null;
 }
 
-module.exports = { createIntent, attachProviderCheckout, consume, getOpenForOwner, hash };
+async function cancelForOwner(scope, ownerId) {
+    const column = scope === 'customer' ? 'customer_id' : 'reseller_id';
+    const result = await query(`UPDATE billing_checkout_intents SET state='cancelled',updated_at=NOW()
+        WHERE ${column}=$1 AND state='open' RETURNING id`, [ownerId]);
+    return result.rowCount;
+}
+
+module.exports = { createIntent, attachProviderCheckout, consume, completeVerifiedProvider, getOpenForOwner, cancelForOwner, hash };
