@@ -1,179 +1,19 @@
 'use strict';
 
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const { query, getPool } = require('../src/db');
-
-const ROOT = path.resolve(__dirname, '..');
-const results = [];
-
-function record(level, code, message) {
-    results.push({ level, code, message });
-}
-
-function present(name) {
-    return Boolean(String(process.env[name] || '').trim());
-}
-
-function secretLooksStrong(name) {
-    const value = String(process.env[name] || '');
-    return value.length >= 32 && !/change[-_ ]?(me|this)|example|placeholder|your[-_]/i.test(value);
-}
-
-function hostAllowlist(name) {
-    return new Set(String(process.env[name] || '')
-        .split(',')
-        .map(value => value.trim().toLowerCase())
-        .filter(Boolean));
-}
-
-function checkEnvironment() {
-    if (!present('DATABASE_URL')) record('critical', 'database.missing', 'DATABASE_URL is not configured.');
-    if (!secretLooksStrong('SESSION_SECRET')) record('critical', 'session.weak', 'SESSION_SECRET is missing, too short, or looks like a placeholder.');
-
-    for (const key of ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY', 'BACKUP_ENCRYPTION_KEY']) {
-        if (!secretLooksStrong(key)) record('critical', `secret.${key.toLowerCase()}`, `${key} is missing, too short, or looks like a placeholder.`);
-    }
-
-    const encryptionValues = ['DATA_ENCRYPTION_KEY', 'JELLYFIN_ENCRYPTION_KEY', 'AUTH_ENCRYPTION_KEY', 'BACKUP_ENCRYPTION_KEY']
-        .map(name => String(process.env[name] || ''))
-        .filter(Boolean);
-    if (new Set(encryptionValues).size !== encryptionValues.length) {
-        record('critical', 'secret.reuse', 'Purpose-specific encryption keys, including the backup key, must not reuse the same value.');
-    }
-
-    if (present('STRIPE_RESTRICTED_KEY') || present('STRIPE_API_KEY')) {
-        if (!present('STRIPE_WEBHOOK_SECRET')) record('critical', 'stripe.webhook', 'Stripe is enabled but STRIPE_WEBHOOK_SECRET is not configured.');
-    }
-
-    if (present('PAYPAL_CLIENT_ID') || present('PAYPAL_CLIENT_SECRET')) {
-        if (!(present('PAYPAL_CLIENT_ID') && present('PAYPAL_CLIENT_SECRET'))) {
-            record('critical', 'paypal.credentials', 'PayPal configuration is incomplete.');
-        }
-        if (!present('PAYPAL_WEBHOOK_ID')) record('critical', 'paypal.webhook', 'PayPal is enabled but PAYPAL_WEBHOOK_ID is not configured.');
-    }
-
-    if (String(process.env.NODE_ENV || '').toLowerCase() === 'production' && !present('JELLYFIN_ALLOWED_HOSTS')) {
-        record('critical', 'jellyfin.allowlist', 'JELLYFIN_ALLOWED_HOSTS is required in production so outbound Jellyfin requests fail closed to approved hosts only.');
-    }
-
-    if (String(process.env.NODE_ENV || '').toLowerCase() !== 'production') {
-        record('warning', 'node_env', 'NODE_ENV is not set to production.');
-    }
-}
-
-function migrationFiles() {
-    const dir = path.join(ROOT, 'db', 'migrations');
-    return fs.readdirSync(dir).filter(name => /^\d+_.*\.sql$/.test(name)).sort();
-}
-
-async function checkDatabase() {
-    if (!present('DATABASE_URL')) return;
-
-    const migrations = migrationFiles();
-    const applied = await query('SELECT filename, checksum FROM schema_migrations ORDER BY filename');
-    const appliedNames = new Set(applied.rows.map(row => row.filename));
-    const missing = migrations.filter(name => !appliedNames.has(name));
-    if (missing.length) record('critical', 'migrations.pending', `Pending database migrations: ${missing.join(', ')}`);
-
-    const users = await query(`
-        SELECT
-            COUNT(*) FILTER (WHERE role='admin' AND active=TRUE) AS active_admins,
-            COUNT(*) FILTER (WHERE role='admin' AND active=TRUE AND totp_enabled=TRUE) AS admins_with_2fa
-        FROM app_users
-    `);
-    if (Number(users.rows[0]?.active_admins || 0) < 1) record('critical', 'admin.none', 'No active administrator account exists.');
-    if (Number(users.rows[0]?.active_admins || 0) > 0 && Number(users.rows[0]?.admins_with_2fa || 0) < 1) {
-        record('warning', 'admin.2fa', 'No active administrator currently has two-factor authentication enabled.');
-    }
-
-    const servers = await query(`
-        SELECT
-            COUNT(*) FILTER (WHERE enabled=TRUE) AS enabled,
-            COUNT(*) FILTER (WHERE enabled=TRUE AND (api_key_encrypted IS NULL OR api_key_encrypted='')) AS missing_keys,
-            COUNT(*) FILTER (WHERE enabled=TRUE AND public_url IS NOT NULL AND public_url !~ '^https://') AS insecure_public_urls
-        FROM jellyfin_servers
-    `);
-    if (Number(servers.rows[0]?.enabled || 0) < 1) record('critical', 'jellyfin.none', 'No enabled Jellyfin server is configured.');
-    if (Number(servers.rows[0]?.missing_keys || 0) > 0) record('critical', 'jellyfin.keys', 'One or more enabled Jellyfin servers have no encrypted API key.');
-    if (Number(servers.rows[0]?.insecure_public_urls || 0) > 0) record('critical', 'jellyfin.https', 'One or more enabled Jellyfin public URLs are not HTTPS.');
-
-    const allowedJellyfinHosts = hostAllowlist('JELLYFIN_ALLOWED_HOSTS');
-    if (allowedJellyfinHosts.size) {
-        const configuredServers = await query('SELECT name,base_url FROM jellyfin_servers WHERE enabled=TRUE ORDER BY name');
-        const unapproved = [];
-        for (const server of configuredServers.rows) {
-            try {
-                const hostname = new URL(server.base_url).hostname.toLowerCase();
-                if (!allowedJellyfinHosts.has(hostname)) unapproved.push(server.name);
-            } catch (_) {
-                unapproved.push(server.name);
-            }
-        }
-        if (unapproved.length) {
-            record('critical', 'jellyfin.unapproved_hosts', `Enabled Jellyfin servers are outside JELLYFIN_ALLOWED_HOSTS: ${unapproved.join(', ')}`);
-        }
-    }
-
-    const plans = await query(`
-        SELECT COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE active=TRUE AND visible=TRUE AND audience IN ('direct','both')) AS public_total
-        FROM plans
-    `);
-    if (Number(plans.rows[0]?.total || 0) < 1) record('critical', 'plans.none', 'No plans are configured.');
-    if (Number(plans.rows[0]?.public_total || 0) < 1) record('warning', 'plans.public_none', 'No active visible direct-customer plan is available.');
-
-    const stale = await query(`
-        SELECT COUNT(*) AS count
-        FROM subscriptions
-        WHERE status IN ('active','trialing') AND current_period_end < NOW()
-    `);
-    if (Number(stale.rows[0]?.count || 0) > 0) record('critical', 'subscriptions.stale', 'Expired subscriptions are still marked active or trialing; run entitlement reconciliation before production.');
-
-    const paymentErrors = await query(`
-        SELECT COUNT(*) AS count
-        FROM payment_events
-        WHERE processed_at IS NULL AND processing_error IS NOT NULL
-    `);
-    if (Number(paymentErrors.rows[0]?.count || 0) > 0) record('warning', 'payments.failed_events', 'Unprocessed payment webhook events with errors require review.');
-
-    const requestFailures = await query(`
-        SELECT COUNT(*) AS count
-        FROM content_requests
-        WHERE status='failed' AND created_at > NOW() - INTERVAL '7 days'
-    `);
-    if (Number(requestFailures.rows[0]?.count || 0) > 0) record('warning', 'requests.failed_recently', 'Media requests have failed within the last seven days.');
-}
-
-async function main() {
-    checkEnvironment();
-    try {
-        await checkDatabase();
-    } catch (error) {
-        record('critical', 'database.audit_failed', `Database readiness audit failed: ${error.message}`);
-    }
-
-    const critical = results.filter(item => item.level === 'critical');
-    const warnings = results.filter(item => item.level === 'warning');
-    const output = {
-        ready: critical.length === 0,
-        criticalCount: critical.length,
-        warningCount: warnings.length,
-        checks: results
-    };
-
-    if (process.argv.includes('--json')) {
-        console.log(JSON.stringify(output, null, 2));
-    } else {
-        console.log(`CAPTAiNFiN production readiness: ${output.ready ? 'READY' : 'NOT READY'}`);
-        for (const item of results) console.log(`[${item.level.toUpperCase()}] ${item.code}: ${item.message}`);
-        if (!results.length) console.log('No readiness issues detected.');
-    }
-
-    if (!output.ready) process.exitCode = 1;
-}
-
-main()
-    .catch(error => { console.error(error.message); process.exitCode = 1; })
-    .finally(async () => { try { await getPool().end(); } catch (_) {} });
+const fs=require('fs');
+const path=require('path');
+const {query,getPool}=require('../src/db');
+const providerSettings=require('../src/payments/provider-settings');
+const requestSettings=require('../src/integrations/request-service-settings');
+const emailSettings=require('../src/integrations/email-settings');
+const runtimeSettings=require('../src/platform/runtime-settings');
+const ROOT=path.resolve(__dirname,'..'),results=[];
+function record(level,code,message){results.push({level,code,message})}
+function present(name){return Boolean(String(process.env[name]||'').trim())}
+function secretLooksStrong(name){const value=String(process.env[name]||'');return value.length>=32&&!/change[-_ ]?(me|this)|example|placeholder|your[-_]/i.test(value)}
+function checkEnvironment(){if(!present('DATABASE_URL'))record('critical','database.missing','DATABASE_URL is not configured.');if(!secretLooksStrong('SESSION_SECRET'))record('critical','session.weak','SESSION_SECRET is missing, too short, or looks like a placeholder.');for(const key of['DATA_ENCRYPTION_KEY','JELLYFIN_ENCRYPTION_KEY','AUTH_ENCRYPTION_KEY','BACKUP_ENCRYPTION_KEY'])if(!secretLooksStrong(key))record('critical',`secret.${key.toLowerCase()}`,`${key} is missing, too short, or looks like a placeholder.`);const encryption=['DATA_ENCRYPTION_KEY','JELLYFIN_ENCRYPTION_KEY','AUTH_ENCRYPTION_KEY','BACKUP_ENCRYPTION_KEY'].map(name=>String(process.env[name]||'')).filter(Boolean);if(new Set(encryption).size!==encryption.length)record('critical','secret.reuse','Purpose-specific encryption keys must not reuse the same value.');if(String(process.env.NODE_ENV||'').toLowerCase()!=='production')record('warning','node_env','NODE_ENV is not set to production.');if(process.env.COOKIE_SECURE==='false')record('warning','cookie.secure','COOKIE_SECURE=false is not recommended for an HTTPS production deployment.');}
+function migrationFiles(){return fs.readdirSync(path.join(ROOT,'db','migrations')).filter(name=>/^\d+_.*\.sql$/.test(name)).sort()}
+async function checkDatabase(){if(!present('DATABASE_URL'))return;await Promise.all([runtimeSettings.ensureLoaded().catch(()=>{}),providerSettings.ensureLoaded().catch(()=>{}),requestSettings.ensureLoaded().catch(()=>{})]);const migrations=migrationFiles(),applied=await query('SELECT filename FROM schema_migrations ORDER BY filename'),appliedNames=new Set(applied.rows.map(r=>r.filename)),missing=migrations.filter(name=>!appliedNames.has(name));if(missing.length)record('critical','migrations.pending',`Pending database migrations: ${missing.join(', ')}`);const users=await query(`SELECT COUNT(*) FILTER(WHERE role='admin' AND active=TRUE)::int active_admins,COUNT(*) FILTER(WHERE role='admin' AND active=TRUE AND totp_enabled=TRUE)::int admins_with_2fa FROM app_users`);if(Number(users.rows[0]?.active_admins||0)<1)record('critical','admin.none','No active administrator account exists.');if(Number(users.rows[0]?.active_admins||0)>0&&Number(users.rows[0]?.admins_with_2fa||0)<1)record('warning','admin.2fa','No active administrator currently has 2FA enabled.');const servers=await query(`SELECT COUNT(*) FILTER(WHERE enabled=TRUE)::int enabled,COUNT(*) FILTER(WHERE enabled=TRUE AND(api_key_encrypted IS NULL OR api_key_encrypted=''))::int missing_keys,COUNT(*) FILTER(WHERE enabled=TRUE AND public_url IS NOT NULL AND public_url !~ '^https://')::int insecure_public_urls FROM jellyfin_servers`);if(Number(servers.rows[0]?.enabled||0)<1)record('warning','jellyfin.none','No enabled Jellyfin server is configured; provisioning will remain pending until one is added.');if(Number(servers.rows[0]?.missing_keys||0)>0)record('critical','jellyfin.keys','One or more enabled Jellyfin servers have no encrypted API key.');if(Number(servers.rows[0]?.insecure_public_urls||0)>0)record('warning','jellyfin.https','One or more enabled Jellyfin public URLs are not HTTPS.');const plans=await query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE active=TRUE AND visible=TRUE AND audience IN('direct','both'))::int direct_total,COUNT(*) FILTER(WHERE active=TRUE AND audience IN('reseller','both'))::int reseller_total FROM plans`);if(Number(plans.rows[0]?.total||0)<1)record('warning','plans.none','No plans are configured. This is valid for a blank install but no customer can be provisioned.');const stale=await query(`SELECT COUNT(*)::int count FROM subscriptions WHERE superseded_by IS NULL AND status IN('active','trialing') AND current_period_end<NOW()`);if(Number(stale.rows[0]?.count||0)>0)record('critical','subscriptions.stale','Expired subscriptions are still marked active/trialing; check automation worker entitlement health.');const paymentErrors=await query(`SELECT COUNT(*)::int count FROM payment_events WHERE processed_at IS NULL AND processing_error IS NOT NULL`);if(Number(paymentErrors.rows[0]?.count||0)>0)record('warning','payments.failed_events','Unprocessed payment webhook events with errors require review.');const provisioning=await query(`SELECT COUNT(*) FILTER(WHERE status='failed')::int failed,COUNT(*) FILTER(WHERE status='blocked')::int blocked FROM customer_provisioning_state`);if(Number(provisioning.rows[0]?.failed||0)>0)record('warning','provisioning.failed',`${provisioning.rows[0].failed} customer provisioning state(s) are failed.`);const auto=await query(`SELECT COUNT(*) FILTER(WHERE enabled=TRUE)::int enabled,COUNT(*) FILTER(WHERE last_error IS NOT NULL)::int errors,MAX(last_success_at)last_success FROM automation_job_state`);if(Number(auto.rows[0]?.enabled||0)>0&&!auto.rows[0]?.last_success)record('warning','automation.never_run','Automation jobs are enabled but no successful worker run is recorded yet.');if(Number(auto.rows[0]?.errors||0)>0)record('warning','automation.errors',`${auto.rows[0].errors} automation job(s) currently show an error.`);const directMap=await query(`SELECT provider,COUNT(*)::int n FROM plan_provider_prices pp JOIN plans p ON p.id=pp.plan_id WHERE pp.active=TRUE AND p.active=TRUE AND p.audience IN('direct','both') GROUP BY provider`),resellerMap=await query(`SELECT provider,COUNT(*)::int n FROM reseller_tier_provider_prices rp JOIN reseller_tiers rt ON rt.id=rp.tier_id WHERE rp.active=TRUE AND rt.active=TRUE GROUP BY provider`);const direct=Object.fromEntries(directMap.rows.map(r=>[r.provider,Number(r.n)])),reseller=Object.fromEntries(resellerMap.rows.map(r=>[r.provider,Number(r.n)]));for(const provider of['stripe','paypal']){const status=await providerSettings.status(provider).catch(error=>({enabled:false,configured:false,error:error.message}));if(status.enabled&&!status.configured)record('warning',`${provider}.incomplete`,`${provider} is enabled but not fully configured.`);if(status.configured&&Number(direct[provider]||0)===0&&Number(reseller[provider]||0)===0)record('warning',`${provider}.unmapped`,`${provider} credentials are configured but no active direct plan or reseller tier mapping exists.`)}const requestStatus=await requestSettings.status().catch(error=>({enabled:false,configured:false,error:error.message}));if(requestStatus.enabled&&!requestStatus.configured)record('warning','request_service.incomplete','Request service is enabled but URL/API key configuration is incomplete.');const mail=await emailSettings.status().catch(error=>({enabled:false,configured:false,error:error.message}));if(mail.enabled&&!mail.configured)record('warning','email.incomplete','Transactional email is enabled but SMTP configuration is incomplete.');if(runtimeSettings.requireEmailVerification()&&!mail.configured)record('critical','email.verification_requires_mail','Email verification is required but transactional email is not configured.');const dependency=await query(`SELECT COUNT(*)::int no_server FROM plans p WHERE p.active=TRUE AND NOT EXISTS(SELECT 1 FROM plan_jellyfin_servers ps JOIN jellyfin_servers js ON js.id=ps.server_id WHERE ps.plan_id=p.id AND ps.enabled=TRUE AND js.enabled=TRUE)`);if(Number(dependency.rows[0]?.no_server||0)>0&&Number(servers.rows[0]?.enabled||0)>0)record('warning','plans.no_eligible_server',`${dependency.rows[0].no_server} active plan(s) have no eligible enabled Jellyfin server mapping.`)}
+async function main(){checkEnvironment();try{await checkDatabase()}catch(error){record('critical','database.audit_failed',`Database readiness audit failed: ${error.message}`)}const critical=results.filter(i=>i.level==='critical'),warnings=results.filter(i=>i.level==='warning'),output={ready:critical.length===0,criticalCount:critical.length,warningCount:warnings.length,checks:results};if(process.argv.includes('--json'))console.log(JSON.stringify(output,null,2));else{console.log(`CAPTaINFiN production readiness: ${output.ready?'READY':'NOT READY'}`);for(const item of results)console.log(`[${item.level.toUpperCase()}] ${item.code}: ${item.message}`);if(!results.length)console.log('No readiness issues detected.')}if(!output.ready)process.exitCode=1}
+main().catch(error=>{console.error(error.message);process.exitCode=1}).finally(async()=>{try{await getPool().end()}catch{}});
