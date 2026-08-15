@@ -21,7 +21,7 @@ function createCustomerPasswordSyncRouter() {
     // Jellyfin identities must receive a customer-owned password before the
     // normal account dashboard can present an unusable "Open Jellyfin" button.
     router.get('/account',requireCustomer,async(req,res,next)=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return next();return res.redirect('/account/jellyfin/setup');}catch(error){return next(error)}});
-    router.get('/account/jellyfin/setup',requireCustomer,async(req,res,next)=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return res.redirect('/account');return res.send(await setupPage(req,accounts));}catch(error){next(error)}});
+    router.get('/account/jellyfin/setup',requireCustomer,async(req,res,next)=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return res.redirect('/account');return res.send(await setupPage(req,accounts,req.query.error||null));}catch(error){next(error)}});
 
     router.post('/account/jellyfin/:accountId/password', requireCustomer, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
