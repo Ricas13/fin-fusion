@@ -62,10 +62,10 @@ async function mirrorUrl(baseUrl) {
 }
 async function syncAutomationSchedule({enabled,syncIntervalMinutes}) {
     const result=await query(`UPDATE automation_job_state
-        SET interval_seconds=$2,enabled=$3,
-            next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
-            force_run_requested=CASE WHEN $3 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
-        WHERE job_key='request_users' RETURNING *`, ['request_users', syncIntervalMinutes*60, Boolean(enabled)]);
+        SET interval_seconds=$1,enabled=$2,
+            next_run_at=CASE WHEN $2 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
+            force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
+        WHERE job_key='request_users' RETURNING *`, [syncIntervalMinutes*60, Boolean(enabled)]);
     if(!result.rowCount){
         await query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at)
             VALUES('request_users',$1,$2,CASE WHEN $1 THEN NOW() ELSE NULL END)`,[Boolean(enabled),syncIntervalMinutes*60]);
@@ -112,10 +112,10 @@ async function save(input, actorUserId = null) {
             sync_interval_minutes=EXCLUDED.sync_interval_minutes,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,
         [enabled, baseUrl || null, nextApiKey ? encryptString(nextApiKey) : null, syncIntervalMinutes, actorUserId]);
         const schedule=await client.query(`UPDATE automation_job_state
-            SET interval_seconds=$2,enabled=$3,
-                next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
-                force_run_requested=CASE WHEN $3 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
-            WHERE job_key='request_users' RETURNING job_key`,['request_users',syncIntervalMinutes*60,enabled]);
+            SET interval_seconds=$1,enabled=$2,
+                next_run_at=CASE WHEN $2 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
+                force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
+            WHERE job_key='request_users' RETURNING job_key`,[syncIntervalMinutes*60,enabled]);
         if(!schedule.rowCount)await client.query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at) VALUES('request_users',$1,$2,CASE WHEN $1 THEN NOW() ELSE NULL END)`,[enabled,syncIntervalMinutes*60]);
     });
     cache = { source: 'database', enabled, baseUrl, apiKey: nextApiKey, syncIntervalMinutes, updatedAt: new Date() };
