@@ -52,7 +52,7 @@ for (const key of ['policy_drift', 'reseller_notifications', 'reseller_billing',
 }
 
 const compose = read('docker-compose.yml');
-assert(/automation-worker:[\s\S]*automation:worker/.test(compose), 'Compose must run the dedicated automation worker');
+assert(/automation-worker:[\s\S]*scripts\/automation-worker\.js/.test(compose), 'Compose must run the dedicated automation worker');
 assert(!/captainfin_proxy/.test(compose), 'unused captainfin_proxy network must not return');
 
 const readiness = read('scripts/production-readiness.js');
