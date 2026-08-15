@@ -59,6 +59,80 @@ CREATE INDEX IF NOT EXISTS stremio_entitlements_server_idx
     ON stremio_entitlements(server_id, status)
     WHERE server_id IS NOT NULL;
 
+-- Protect the future runtime from cross-account entitlement wiring. The
+-- subscription is the commercial owner; any assigned Jellyfin account must
+-- belong to the same customer and server. Active delivery must also have a
+-- server, restricted Jellyfin identity and install credential already assigned.
+CREATE OR REPLACE FUNCTION enforce_stremio_entitlement_integrity()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    subscription_customer UUID;
+    subscription_service TEXT;
+    account_customer UUID;
+    account_server UUID;
+    server_allowed BOOLEAN;
+BEGIN
+    SELECT customer_id, service_type_snapshot
+      INTO subscription_customer, subscription_service
+      FROM subscriptions
+     WHERE id=NEW.subscription_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Stremio entitlement subscription not found';
+    END IF;
+    IF subscription_customer IS DISTINCT FROM NEW.customer_id THEN
+        RAISE EXCEPTION 'Stremio entitlement customer does not own subscription';
+    END IF;
+    IF subscription_service NOT IN ('stremio','bundle') THEN
+        RAISE EXCEPTION 'Subscription does not include Stremio delivery';
+    END IF;
+
+    IF NEW.server_id IS NOT NULL AND NEW.status <> 'revoked' THEN
+        SELECT stremio_enabled INTO server_allowed
+          FROM jellyfin_servers
+         WHERE id=NEW.server_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Stremio entitlement server not found';
+        END IF;
+        IF server_allowed IS NOT TRUE THEN
+            RAISE EXCEPTION 'Jellyfin server is not eligible for Stremio delivery';
+        END IF;
+    END IF;
+
+    IF NEW.jellyfin_account_id IS NOT NULL THEN
+        SELECT customer_id, server_id
+          INTO account_customer, account_server
+          FROM jellyfin_accounts
+         WHERE id=NEW.jellyfin_account_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Stremio entitlement Jellyfin account not found';
+        END IF;
+        IF account_customer IS DISTINCT FROM NEW.customer_id THEN
+            RAISE EXCEPTION 'Stremio Jellyfin account belongs to another customer';
+        END IF;
+        IF NEW.server_id IS NULL OR account_server IS DISTINCT FROM NEW.server_id THEN
+            RAISE EXCEPTION 'Stremio Jellyfin account does not belong to assigned server';
+        END IF;
+    END IF;
+
+    IF NEW.status='active' AND
+       (NEW.server_id IS NULL OR NEW.jellyfin_account_id IS NULL OR NEW.token_hash IS NULL) THEN
+        RAISE EXCEPTION 'Active Stremio entitlement requires server, Jellyfin account and install credential';
+    END IF;
+
+    IF NEW.status='revoked' THEN
+        NEW.revoked_at := COALESCE(NEW.revoked_at,NOW());
+    ELSIF NEW.revoked_at IS NOT NULL THEN
+        RAISE EXCEPTION 'Only revoked Stremio entitlements may have revoked_at set';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS stremio_entitlements_integrity ON stremio_entitlements;
+CREATE TRIGGER stremio_entitlements_integrity
+BEFORE INSERT OR UPDATE ON stremio_entitlements
+FOR EACH ROW EXECUTE FUNCTION enforce_stremio_entitlement_integrity();
+
 -- Extend the subscription snapshot trigger introduced by the lifecycle
 -- integrity migrations. Explicitly supplied snapshots still win; otherwise the
 -- current plan value is copied when the subscription is created or plan_id is

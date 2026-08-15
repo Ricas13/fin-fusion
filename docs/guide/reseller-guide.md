@@ -14,7 +14,7 @@ Recorded downstream sales are operational records for the reseller estate. Payme
 
 ## Reseller-owned account
 
-Administrators can allow or prevent a reseller from having a reseller-owned Jellyfin account. This is separate from customer seats and follows the configured reseller policy.
+Administrators can allow or prevent a reseller from having a reseller-owned Jellyfin account. When enabled and used, that owner account consumes one active entitlement from the reseller's available capacity, just like another live downstream service.
 
 ## Billing and dunning
 

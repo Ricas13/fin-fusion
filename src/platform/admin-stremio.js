@@ -62,8 +62,8 @@ function createAdminStremioRouter(){
                 const server=await client.query('SELECT id,name,stremio_enabled FROM jellyfin_servers WHERE id=$1 FOR UPDATE',[req.params.id]);
                 if(!server.rowCount)throw new Error('Jellyfin server not found.');
                 if(!enabled){
-                    const active=await client.query(`SELECT COUNT(*)::int n FROM stremio_entitlements WHERE server_id=$1 AND status='active'`,[req.params.id]);
-                    if(Number(active.rows[0]?.n||0)>0)throw new Error('Move or revoke active Stremio entitlements before removing this server from Stremio eligibility.');
+                    const assigned=await client.query(`SELECT COUNT(*)::int n FROM stremio_entitlements WHERE server_id=$1 AND status IN ('pending','active','suspended')`,[req.params.id]);
+                    if(Number(assigned.rows[0]?.n||0)>0)throw new Error('Move or revoke assigned Stremio entitlements before removing this server from Stremio eligibility.');
                 }
                 await client.query('UPDATE jellyfin_servers SET stremio_enabled=$2,updated_at=NOW() WHERE id=$1',[req.params.id,enabled]);
                 await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.stremio.server_eligibility','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({enabled})]);
