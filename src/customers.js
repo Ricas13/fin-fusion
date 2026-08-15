@@ -1,242 +1,28 @@
 'use strict';
-
-const crypto = require('crypto');
-const bcrypt = require('bcryptjs');
-const { query, transaction } = require('./db');
-const referrals = require('./referrals');
-const runtimeSettings = require('./platform/runtime-settings');
-
-function cleanEmail(value) {
-    const email = String(value || '').trim().toLowerCase();
-    if (!email || !email.includes('@') || email.length > 254) throw new Error('A valid email address is required');
-    return email;
-}
-
-function cleanUsername(value) {
-    const username = String(value || '').trim();
-    if (!/^[A-Za-z0-9._-]{3,40}$/.test(username)) {
-        throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');
-    }
-    return username;
-}
-
-function validatePassword(password) {
-    if (typeof password !== 'string' || password.length < 12 || password.length > 200) {
-        throw new Error('Password must be between 12 and 200 characters');
-    }
-}
-
-async function registerCustomer({ email, username, password, referralCode }) {
-    email = cleanEmail(email);
-    username = cleanUsername(username);
-    validatePassword(password);
-
-    await runtimeSettings.ensureLoaded();
-    if (!runtimeSettings.publicRegistrationOpen()) {
-        throw new Error('Public registration is currently disabled');
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const verifyImmediately = !runtimeSettings.requireEmailVerification();
-
-    const created = await transaction(async client => {
-        const exists = await client.query(
-            'SELECT 1 FROM app_users WHERE lower(email)=lower($1) OR lower(username)=lower($2) LIMIT 1',
-            [email, username]
-        );
-        if (exists.rowCount) throw new Error('An account already exists with that email or username');
-
-        const userResult = await client.query(`
-            INSERT INTO app_users(email,username,password_hash,role,email_verified_at)
-            VALUES($1,$2,$3,'customer',CASE WHEN $4 THEN NOW() ELSE NULL END)
-            RETURNING id,email,username,role,active,email_verified_at,created_at
-        `, [email, username, passwordHash, verifyImmediately]);
-
-        const user = userResult.rows[0];
-        const customerResult = await client.query(`
-            INSERT INTO customers(user_id,display_name,email)
-            VALUES($1,$2,$3)
-            RETURNING *
-        `, [user.id, username, email]);
-
-        await client.query(`
-            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-            VALUES($1,'customer.register','customer',$2,$3::jsonb)
-        `, [user.id, customerResult.rows[0].id, JSON.stringify({ emailVerified: verifyImmediately })]);
-
-        return { user, customer: customerResult.rows[0] };
-    });
-
-    if (referralCode) {
-        try {
-            const referralSettings = await referrals.loadSettings();
-            if (referralSettings.enabled) await referrals.attributeReferral(created.customer.id, referralCode);
-        } catch (error) {
-            console.error('Referral attribution failed:', error.message);
-        }
-    }
-    return created;
-}
-
-async function authenticateCustomer(identity, password) {
-    identity = String(identity || '').trim();
-    if (!identity || typeof password !== 'string') return null;
-
-    const result = await query(`
-        SELECT u.id AS user_id,u.email,u.username,u.password_hash,u.active,u.email_verified_at,
-               c.id AS customer_id,c.display_name
-        FROM app_users u
-        JOIN customers c ON c.user_id=u.id
-        WHERE u.role='customer' AND (lower(u.email)=lower($1) OR lower(u.username)=lower($1))
-        LIMIT 1
-    `, [identity]);
-    if (!result.rowCount || !result.rows[0].active) return null;
-
-    const row = result.rows[0];
-    if (!(await bcrypt.compare(password, row.password_hash))) return null;
-    await runtimeSettings.ensureLoaded();
-    if (runtimeSettings.requireEmailVerification() && !row.email_verified_at) {
-        const error = new Error('Please verify your email address before signing in');
-        error.code = 'EMAIL_NOT_VERIFIED';
-        throw error;
-    }
-
-    await query('UPDATE app_users SET last_login_at=NOW(),updated_at=NOW() WHERE id=$1', [row.user_id]);
-    return {
-        userId: row.user_id,
-        customerId: row.customer_id,
-        email: row.email,
-        username: row.username,
-        displayName: row.display_name
-    };
-}
-
-async function getCustomerPortal(customerId) {
-    const customerResult = await query(`
-        SELECT c.*,u.email AS login_email,u.username AS login_username,u.email_verified_at
-        FROM customers c LEFT JOIN app_users u ON u.id=c.user_id
-        WHERE c.id=$1
-    `, [customerId]);
-    if (!customerResult.rowCount) return null;
-
-    const [subscriptions, accounts, providers, referralSettings] = await Promise.all([
-        query(`
-            SELECT s.*,p.code AS plan_code,p.name AS plan_name,p.streams,p.allow_downloads,
-                   p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class
-            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-            WHERE s.customer_id=$1 ORDER BY s.created_at DESC
-        `, [customerId]),
-        query(`
-            SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.is_primary,ja.password_reset_required,
-                   ja.last_activity_at,ja.last_policy_sync,
-                   js.name AS server_name,js.public_url,js.server_class
-            FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
-            WHERE ja.customer_id=$1
-            ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at DESC
-        `, [customerId]),
-        query(`SELECT pc.provider,pc.provider_customer_id FROM payment_customers pc WHERE pc.customer_id=$1`, [customerId]),
-        referrals.loadSettings()
-    ]);
-
-    const referralCode = referralSettings.enabled ? await referrals.ensureReferralCode(customerId) : null;
-
-    return {
-        customer: customerResult.rows[0],
-        subscriptions: subscriptions.rows,
-        accounts: accounts.rows,
-        providers: providers.rows,
-        referralCode,
-        referralsEnabled: referralSettings.enabled
-    };
-}
-
-async function listPublicPlans() {
-    const result = await query(`
-        SELECT p.*,
-               COALESCE(jsonb_agg(
-                   jsonb_build_object('provider',pp.provider,'checkoutMode',pp.checkout_mode,'configured',TRUE)
-               ) FILTER (WHERE pp.id IS NOT NULL AND pp.active=TRUE),'[]'::jsonb) AS payment_options
-        FROM plans p
-        LEFT JOIN plan_provider_prices pp ON pp.plan_id=p.id
-        WHERE p.active=TRUE AND p.visible=TRUE AND p.audience IN ('direct','both')
-        GROUP BY p.id
-        ORDER BY p.sort_order ASC,p.price_minor ASC
-    `);
-    return result.rows;
-}
-
-async function createAccountToken(userId, tokenType, ttlMinutes) {
-    if (!['email_verify', 'password_reset'].includes(tokenType)) throw new Error('Unsupported token type');
-    const raw = crypto.randomBytes(32).toString('base64url');
-    const hash = crypto.createHash('sha256').update(raw).digest('hex');
-    const expiresAt = new Date(Date.now() + ttlMinutes * 60000);
-
-    await transaction(async client => {
-        await client.query(`
-            UPDATE account_tokens SET consumed_at=NOW()
-            WHERE user_id=$1 AND token_type=$2 AND consumed_at IS NULL
-        `, [userId, tokenType]);
-        await client.query(`
-            INSERT INTO account_tokens(user_id,token_type,token_hash,expires_at)
-            VALUES($1,$2,$3,$4)
-        `, [userId, tokenType, hash, expiresAt]);
-    });
-    return { token: raw, expiresAt };
-}
-
-async function createPasswordReset(identity, ttlMinutes = 60) {
-    identity = String(identity || '').trim();
-    if (!identity) return null;
-    const result = await query(`
-        SELECT u.id AS user_id,u.email,u.username
-        FROM app_users u
-        JOIN customers c ON c.user_id=u.id
-        WHERE u.role='customer' AND u.active=TRUE
-          AND (lower(COALESCE(u.email,''))=lower($1) OR lower(u.username)=lower($1))
-        LIMIT 1
-    `, [identity]);
-    if (!result.rowCount || !result.rows[0].email) return null;
-    const token = await createAccountToken(result.rows[0].user_id, 'password_reset', ttlMinutes);
-    return { ...result.rows[0], ...token };
-}
-
-async function consumeAccountToken(rawToken, tokenType) {
-    const hash = crypto.createHash('sha256').update(String(rawToken || '')).digest('hex');
-    return transaction(async client => {
-        const found = await client.query(`
-            SELECT * FROM account_tokens
-            WHERE token_hash=$1 AND token_type=$2 AND consumed_at IS NULL AND expires_at>NOW()
-            FOR UPDATE
-        `, [hash, tokenType]);
-        if (!found.rowCount) return null;
-        await client.query('UPDATE account_tokens SET consumed_at=NOW() WHERE id=$1', [found.rows[0].id]);
-        return found.rows[0];
-    });
-}
-
-async function verifyEmail(rawToken) {
-    const token = await consumeAccountToken(rawToken, 'email_verify');
-    if (!token) return false;
-    await query('UPDATE app_users SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1', [token.user_id]);
-    return true;
-}
-
-async function resetSitePassword(rawToken, newPassword) {
-    validatePassword(newPassword);
-    const token = await consumeAccountToken(rawToken, 'password_reset');
-    if (!token) return false;
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-    await query('UPDATE app_users SET password_hash=$1,password_changed_at=NOW(),updated_at=NOW() WHERE id=$2', [passwordHash, token.user_id]);
-    return true;
-}
-
-module.exports = {
-    registerCustomer,
-    authenticateCustomer,
-    getCustomerPortal,
-    listPublicPlans,
-    createAccountToken,
-    createPasswordReset,
-    verifyEmail,
-    resetSitePassword
-};
+const crypto=require('crypto');
+const bcrypt=require('bcryptjs');
+const {query,transaction}=require('./db');
+const referrals=require('./referrals');
+const runtimeSettings=require('./platform/runtime-settings');
+const operations=require('./platform/operations-settings');
+function cleanEmail(value){const email=String(value||'').trim().toLowerCase();if(!email||!email.includes('@')||email.length>254)throw new Error('A valid email address is required');return email}
+function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');return username}
+function cleanDisplayName(value){const name=String(value||'').trim().slice(0,100);if(!name)throw new Error('Display name is required');return name}
+function validatePassword(password){if(typeof password!=='string'||password.length<12||password.length>200)throw new Error('Password must be between 12 and 200 characters')}
+function userAgentHash(req){return crypto.createHash('sha256').update(String(req?.get?.('user-agent')||'')).digest('hex')}
+async function registerCustomer({email,username,password,referralCode}){email=cleanEmail(email);username=cleanUsername(username);validatePassword(password);await runtimeSettings.ensureLoaded();if(!runtimeSettings.publicRegistrationOpen())throw new Error('Public registration is currently disabled');const passwordHash=await bcrypt.hash(password,12),verifyImmediately=!runtimeSettings.requireEmailVerification(),created=await transaction(async client=>{const exists=await client.query('SELECT 1 FROM app_users WHERE lower(email)=lower($1) OR lower(username)=lower($2) LIMIT 1',[email,username]);if(exists.rowCount)throw new Error('An account already exists with that email or username');const user=(await client.query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',CASE WHEN $4 THEN NOW() ELSE NULL END) RETURNING id,email,username,role,active,email_verified_at,created_at,session_version`,[email,username,passwordHash,verifyImmediately])).rows[0],customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,username,email])).rows[0];await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.register','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({emailVerified:verifyImmediately})]);return{user,customer}});if(referralCode){try{const settings=await referrals.loadSettings();if(settings.enabled)await referrals.attributeReferral(created.customer.id,referralCode)}catch(error){console.error('Referral attribution failed:',error.message)}}return created}
+async function authenticateCustomer(identity,password){identity=String(identity||'').trim();if(!identity||typeof password!=='string')return null;const result=await query(`SELECT u.id AS user_id,u.email,u.username,u.password_hash,u.active,u.email_verified_at,u.session_version,c.id AS customer_id,c.display_name FROM app_users u JOIN customers c ON c.user_id=u.id WHERE u.role='customer' AND(lower(u.email)=lower($1) OR lower(u.username)=lower($1)) LIMIT 1`,[identity]);if(!result.rowCount||!result.rows[0].active)return null;const row=result.rows[0];if(!(await bcrypt.compare(password,row.password_hash)))return null;await runtimeSettings.ensureLoaded();if(runtimeSettings.requireEmailVerification()&&!row.email_verified_at){const error=new Error('Please verify your email address before signing in');error.code='EMAIL_NOT_VERIFIED';throw error}await query('UPDATE app_users SET last_login_at=NOW(),updated_at=NOW() WHERE id=$1',[row.user_id]);return{userId:row.user_id,customerId:row.customer_id,email:row.email,username:row.username,displayName:row.display_name,sessionVersion:Number(row.session_version||1)}}
+async function registerCustomerSession(req,account){const cfg=await operations.get().catch(()=>operations.DEFAULTS),hours=Math.max(1,Math.min(24*365,Number(cfg.customerSessionHours||168))),expiresAt=new Date(Date.now()+hours*3600000),ua=userAgentHash(req);await query(`INSERT INTO auth_sessions(session_id,user_id,role,session_version,user_agent_hash,expires_at) VALUES($1,$2,'customer',$3,$4,$5) ON CONFLICT(session_id) DO UPDATE SET user_id=EXCLUDED.user_id,role='customer',session_version=EXCLUDED.session_version,user_agent_hash=EXCLUDED.user_agent_hash,last_seen_at=NOW(),expires_at=EXCLUDED.expires_at,revoked_at=NULL`,[req.sessionID,account.userId,Number(account.sessionVersion||1),ua,expiresAt]);req.session.customerSessionVersion=Number(account.sessionVersion||1);req.session.cookie.maxAge=hours*3600000;return expiresAt}
+async function validateCustomerSession(req){if(!req.session?.customerUserId)return{valid:true};const r=await query(`SELECT s.session_version,s.user_agent_hash,s.expires_at,s.revoked_at,u.active,u.session_version current_version FROM auth_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.session_id=$1 AND s.user_id=$2 AND s.role='customer'`,[req.sessionID,req.session.customerUserId]);if(!r.rowCount)return{valid:false,reason:'session_not_registered'};const row=r.rows[0];if(!row.active||row.revoked_at||new Date(row.expires_at)<=new Date())return{valid:false,reason:'session_inactive'};if(Number(row.session_version)!==Number(row.current_version)||Number(req.session.customerSessionVersion)!==Number(row.current_version))return{valid:false,reason:'session_version_mismatch'};if(row.user_agent_hash&&row.user_agent_hash!==userAgentHash(req)){await query('UPDATE auth_sessions SET revoked_at=NOW() WHERE session_id=$1',[req.sessionID]);return{valid:false,reason:'user_agent_changed'}};await query(`UPDATE auth_sessions SET last_seen_at=NOW() WHERE session_id=$1 AND last_seen_at<NOW()-INTERVAL '5 minutes'`,[req.sessionID]);return{valid:true}}
+async function listCustomerSessions(userId){const r=await query(`SELECT session_id,user_agent_hash,created_at,last_seen_at,expires_at,revoked_at FROM auth_sessions WHERE user_id=$1 AND role='customer' ORDER BY last_seen_at DESC LIMIT 50`,[userId]);return r.rows}
+async function revokeOtherCustomerSessions(userId,currentSessionId){return transaction(async client=>{const rows=await client.query(`SELECT session_id FROM auth_sessions WHERE user_id=$1 AND role='customer' AND session_id<>$2 AND revoked_at IS NULL`,[userId,currentSessionId]),ids=rows.rows.map(r=>r.session_id);await client.query(`UPDATE auth_sessions SET revoked_at=NOW() WHERE user_id=$1 AND role='customer' AND session_id<>$2 AND revoked_at IS NULL`,[userId,currentSessionId]);if(ids.length)await client.query(`DELETE FROM user_sessions WHERE sid=ANY($1::text[])`,[ids]);return ids.length})}
+async function changePortalPassword(userId,currentPassword,newPassword,currentSessionId){validatePassword(newPassword);const r=await query(`SELECT password_hash FROM app_users WHERE id=$1 AND role='customer' AND active=TRUE`,[userId]);if(!r.rowCount||!(await bcrypt.compare(String(currentPassword||''),r.rows[0].password_hash)))throw new Error('Current password was not accepted.');if(await bcrypt.compare(newPassword,r.rows[0].password_hash))throw new Error('New password must be different from the current password.');const hash=await bcrypt.hash(newPassword,12);return transaction(async client=>{const updated=await client.query(`UPDATE app_users SET password_hash=$2,password_changed_at=NOW(),session_version=session_version+1,updated_at=NOW() WHERE id=$1 RETURNING session_version`,[userId,hash]),version=Number(updated.rows[0].session_version),other=await client.query(`SELECT session_id FROM auth_sessions WHERE user_id=$1 AND role='customer' AND session_id<>$2`,[userId,currentSessionId]),ids=other.rows.map(x=>x.session_id);await client.query(`UPDATE auth_sessions SET revoked_at=NOW() WHERE user_id=$1 AND role='customer' AND session_id<>$2 AND revoked_at IS NULL`,[userId,currentSessionId]);await client.query(`UPDATE auth_sessions SET session_version=$3,last_seen_at=NOW() WHERE user_id=$1 AND session_id=$2`,[userId,currentSessionId,version]);if(ids.length)await client.query(`DELETE FROM user_sessions WHERE sid=ANY($1::text[])`,[ids]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.password.change','app_user',$1,$2::jsonb)`,[userId,JSON.stringify({revokedSessions:ids.length})]);return{sessionVersion:version,revokedSessions:ids.length}})}
+async function updateProfile(customerId,userId,{displayName,email}){const name=cleanDisplayName(displayName),nextEmail=cleanEmail(email);await runtimeSettings.ensureLoaded();return transaction(async client=>{const current=await client.query(`SELECT u.email,c.email customer_email FROM customers c JOIN app_users u ON u.id=c.user_id WHERE c.id=$1 AND u.id=$2 FOR UPDATE OF c,u`,[customerId,userId]);if(!current.rowCount)throw new Error('Customer account not found.');const changed=String(current.rows[0].email||'').toLowerCase()!==nextEmail;if(changed){const duplicate=await client.query(`SELECT 1 FROM app_users WHERE lower(email)=lower($1) AND id<>$2 LIMIT 1`,[nextEmail,userId]);if(duplicate.rowCount)throw new Error('That email address is already in use.')}await client.query(`UPDATE customers SET display_name=$2,email=$3,updated_at=NOW() WHERE id=$1`,[customerId,name,nextEmail]);await client.query(`UPDATE app_users SET email=$2,email_verified_at=CASE WHEN $3 THEN NULL ELSE email_verified_at END,updated_at=NOW() WHERE id=$1`,[userId,nextEmail,changed&&runtimeSettings.requireEmailVerification()]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.profile.update','customer',$2,$3::jsonb)`,[userId,customerId,JSON.stringify({displayName:name,emailChanged:changed})]);return{displayName:name,email:nextEmail,emailChanged:changed,needsVerification:Boolean(changed&&runtimeSettings.requireEmailVerification())}})}
+async function getCustomerPortal(customerId){const customerResult=await query(`SELECT c.*,u.email AS login_email,u.username AS login_username,u.email_verified_at,u.password_changed_at FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE c.id=$1`,[customerId]);if(!customerResult.rowCount)return null;const[subscriptions,accounts,providers,referralSettings]=await Promise.all([query(`SELECT s.*,COALESCE(s.plan_code_snapshot,p.code) AS plan_code,COALESCE(s.plan_name_snapshot,p.name) AS plan_name,p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 ORDER BY s.created_at DESC`,[customerId]),query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.is_primary,ja.password_reset_required,ja.last_activity_at,ja.last_policy_sync,js.name AS server_name,js.public_url,js.server_class FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at DESC`,[customerId]),query(`SELECT pc.provider,pc.provider_customer_id FROM payment_customers pc WHERE pc.customer_id=$1`,[customerId]),referrals.loadSettings()]),referralCode=referralSettings.enabled?await referrals.ensureReferralCode(customerId):null;return{customer:customerResult.rows[0],subscriptions:subscriptions.rows,accounts:accounts.rows,providers:providers.rows,referralCode,referralsEnabled:referralSettings.enabled}}
+async function listPublicPlans(){const result=await query(`SELECT p.*,COALESCE(jsonb_agg(jsonb_build_object('provider',pp.provider,'checkoutMode',pp.checkout_mode,'configured',TRUE)) FILTER(WHERE pp.id IS NOT NULL AND pp.active=TRUE),'[]'::jsonb) AS payment_options FROM plans p LEFT JOIN plan_provider_prices pp ON pp.plan_id=p.id WHERE p.active=TRUE AND p.visible=TRUE AND p.archived_at IS NULL AND p.audience IN('direct','both') GROUP BY p.id ORDER BY p.sort_order,p.price_minor`);return result.rows}
+async function createAccountToken(userId,tokenType,ttlMinutes){if(!['email_verify','password_reset'].includes(tokenType))throw new Error('Unsupported token type');const raw=crypto.randomBytes(32).toString('base64url'),hash=crypto.createHash('sha256').update(raw).digest('hex'),expiresAt=new Date(Date.now()+ttlMinutes*60000);await transaction(async client=>{await client.query(`UPDATE account_tokens SET consumed_at=NOW() WHERE user_id=$1 AND token_type=$2 AND consumed_at IS NULL`,[userId,tokenType]);await client.query(`INSERT INTO account_tokens(user_id,token_type,token_hash,expires_at) VALUES($1,$2,$3,$4)`,[userId,tokenType,hash,expiresAt])});return{token:raw,expiresAt}}
+async function createPasswordReset(identity,ttlMinutes=60){identity=String(identity||'').trim();if(!identity)return null;const result=await query(`SELECT u.id AS user_id,u.email,u.username FROM app_users u JOIN customers c ON c.user_id=u.id WHERE u.role='customer' AND u.active=TRUE AND(lower(COALESCE(u.email,''))=lower($1) OR lower(u.username)=lower($1)) LIMIT 1`,[identity]);if(!result.rowCount||!result.rows[0].email)return null;return{...result.rows[0],...await createAccountToken(result.rows[0].user_id,'password_reset',ttlMinutes)}}
+async function consumeAccountToken(rawToken,tokenType){const hash=crypto.createHash('sha256').update(String(rawToken||'')).digest('hex');return transaction(async client=>{const found=await client.query(`SELECT * FROM account_tokens WHERE token_hash=$1 AND token_type=$2 AND consumed_at IS NULL AND expires_at>NOW() FOR UPDATE`,[hash,tokenType]);if(!found.rowCount)return null;await client.query('UPDATE account_tokens SET consumed_at=NOW() WHERE id=$1',[found.rows[0].id]);return found.rows[0]})}
+async function verifyEmail(rawToken){const token=await consumeAccountToken(rawToken,'email_verify');if(!token)return false;await query('UPDATE app_users SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1',[token.user_id]);return true}
+async function resetSitePassword(rawToken,newPassword){validatePassword(newPassword);const token=await consumeAccountToken(rawToken,'password_reset');if(!token)return false;const passwordHash=await bcrypt.hash(newPassword,12);await transaction(async client=>{await client.query(`UPDATE app_users SET password_hash=$1,password_changed_at=NOW(),session_version=session_version+1,updated_at=NOW() WHERE id=$2`,[passwordHash,token.user_id]);const sessions=await client.query(`SELECT session_id FROM auth_sessions WHERE user_id=$1 AND role='customer'`,[token.user_id]),ids=sessions.rows.map(r=>r.session_id);await client.query(`UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE user_id=$1 AND role='customer'`,[token.user_id]);if(ids.length)await client.query(`DELETE FROM user_sessions WHERE sid=ANY($1::text[])`,[ids]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.password.reset','app_user',$1,$2::jsonb)`,[token.user_id,JSON.stringify({revokedSessions:ids.length})])});return true}
+module.exports={registerCustomer,authenticateCustomer,registerCustomerSession,validateCustomerSession,listCustomerSessions,revokeOtherCustomerSessions,changePortalPassword,updateProfile,getCustomerPortal,listPublicPlans,createAccountToken,createPasswordReset,verifyEmail,resetSitePassword};
