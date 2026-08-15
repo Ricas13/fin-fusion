@@ -4,6 +4,7 @@ const express = require('express');
 const core = require('./router-core');
 const placement = require('../jellyfin/placement');
 const publicAbuseProtection = require('../security/public-abuse-protection');
+const routeRateLimit = require('../security/route-rate-limit');
 const { createPublicHelpRouter } = require('./public-help');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
@@ -24,6 +25,7 @@ const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
+const trialFreeLimit=routeRateLimit.middleware({scope:'customer-trial-free',max:12,windowSeconds:300});
 let fleetStarted=false;
 function ensureFleetSnapshot(){if(!fleetStarted){fleetStarted=true;placement.startFleetSnapshotRefresh();}}
 function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router;}
@@ -53,9 +55,10 @@ function createRouter(){
     router.use(createCustomerPaymentReturnRouter());
     // These surviving legacy mutation routes are owned by router-core. Apply
     // path-specific middleware here without registering a second POST route,
-    // preserving one route owner while still enforcing CSRF before legacy code.
-    router.use('/account/trial/start',(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
-    router.use('/account/claim-free/:planCode',(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
+    // preserving one route owner while still enforcing CSRF and shared rate
+    // limits before legacy code.
+    router.use('/account/trial/start',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
+    router.use('/account/claim-free/:planCode',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set([
         '/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
