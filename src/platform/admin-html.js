@@ -12,7 +12,7 @@ const groups = [
     ['dashboard', 'Dashboard', [['dashboard', 'Dashboard', '/admin']]],
     ['people', 'People', [['users', 'Customers', '/admin/users'], ['jellyfin-import', 'Jellyfin Import', '/admin/jellyfin-import'], ['customer-claims', 'Customer Claims', '/admin/customer-claims'], ['invitations', 'Invitations', '/admin/invitations'], ['resellers', 'Resellers', '/admin/reseller-management'], ['activity', 'Activity', '/admin/activity']]],
     ['servers', 'Servers', [['servers', 'Servers', '/admin/servers'], ['libraries', 'Libraries', '/admin/libraries']]],
-    ['commerce', 'Commerce', [['plans', 'Plans', '/admin/plans'], ['payments', 'Payments', '/admin/payments'], ['billing', 'Billing', '/admin/billing'], ['discounts', 'Discounts', '/admin/discounts'], ['referrals', 'Referrals', '/admin/referrals']]],
+    ['commerce', 'Commerce', [['plans', 'Plans', '/admin/plans'], ['reseller-tiers', 'Reseller Plans', '/admin/reseller-tiers'], ['payments', 'Payments', '/admin/payments'], ['billing', 'Billing', '/admin/billing'], ['discounts', 'Discounts', '/admin/discounts'], ['referrals', 'Referrals', '/admin/referrals']]],
     ['automation', 'Automation', [['provisioning', 'Provisioning', '/admin/provisioning'], ['notifications', 'Notifications', '/admin/notifications']]],
     ['settings', 'Settings', [['setup', 'Setup', '/admin/setup'], ['settings', 'General', '/admin/settings'], ['branding', 'Branding', '/admin/settings/branding']]]
 ];
