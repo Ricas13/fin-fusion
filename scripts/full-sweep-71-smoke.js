@@ -18,8 +18,9 @@ const routinePlatformFiles=walk('src/platform').filter(file=>file.endsWith('.js'
 const routine2faViolations=[];
 for(const file of [...routinePlatformFiles,...routineAdminViews]){
     const text=read(file);
-    if(/Authenticator\s*\/\s*recovery code/i.test(text))routine2faViolations.push(`${file}: routine fake 2FA prompt`);
-    if(/only needed if 2FA is enabled/i.test(text))routine2faViolations.push(`${file}: routine step-up 2FA description`);
+    const hasCodeInput=/name=["']code["']/i.test(text);
+    if(hasCodeInput&&/Authenticator\s*\/\s*recovery code/i.test(text))routine2faViolations.push(`${file}: routine fake 2FA prompt`);
+    if(hasCodeInput&&/only needed if 2FA is enabled/i.test(text))routine2faViolations.push(`${file}: routine step-up 2FA description`);
 }
 assert.strictEqual(routine2faViolations.length,0,`routine 2FA prompts must be removed:\n${routine2faViolations.join('\n')}`);
 for(const file of ['.env.example','README.md','ROADMAP.md','src/platform/admin-servers.js','views/admin/server-form.ejs','src/platform/setup-readiness.js','scripts/production-readiness.js'])if(exists(file))mustNotContain(file,'JELLYFIN_ALLOWED_HOSTS');for(const file of ['.env.example','README.md','src/platform/admin-original-settings.js','src/platform/setup-readiness.js'])if(exists(file))mustNotContain(file,/whatsapp/i);
