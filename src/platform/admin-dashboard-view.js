@@ -148,7 +148,7 @@ function analyticsCard(title, subtitle, body, options = {}) {
 function setupCompact(s) {
     const setup = s.setup;
     if (!setup || setup.configuredCount >= setup.totalCount) return '';
-    return `<div class="setupCompact"><div><strong>Platform setup is not complete</strong><br><span>${esc(setup.configuredCount)} of ${esc(setup.totalCount)} optional setup areas currently configured.</span></div><a class="button secondary" href="/admin/setup">Open Setup</a></div>`;
+    return `<div class="setupCompact"><div><strong>Platform setup is not complete</strong><br><span>${esc(setup.configuredCount)} / ${esc(setup.totalCount)} configured · finish the optional setup areas when you are ready.</span></div><a class="button secondary" href="/admin/setup">Open Setup</a></div>`;
 }
 
 function operationalAlerts(s) {
