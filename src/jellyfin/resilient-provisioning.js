@@ -55,7 +55,7 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
     const result = await base.setJellyfinPassword(customerId, accountId, newPassword);
     await query(`
         UPDATE jellyfin_accounts
-        SET password_reset_required=FALSE,updated_at=NOW()
+        SET password_setup_required=FALSE,updated_at=NOW()
         WHERE id=$1 AND customer_id=$2
     `, [accountId, customerId]);
     return result;
