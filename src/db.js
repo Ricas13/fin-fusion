@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { RESTORE_MAINTENANCE_LOCK } = require('./db-locks');
 
 let pool;
 
@@ -24,19 +25,40 @@ function getPool() {
     return pool;
 }
 
+function isMutationSql(text) {
+    const sql = String(text || '').replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, '').trim();
+    if (/^(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COMMENT|REFRESH|REINDEX|CLUSTER)\b/i.test(sql)) return true;
+    return /^WITH\b/i.test(sql) && /\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql);
+}
+
 async function query(text, params = []) {
-    return getPool().query(text, params);
+    if (!isMutationSql(text)) return getPool().query(text, params);
+
+    const client = await getPool().connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock_shared($1::bigint)', [RESTORE_MAINTENANCE_LOCK]);
+        const result = await client.query(text, params);
+        await client.query('COMMIT');
+        return result;
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 async function transaction(fn) {
     const client = await getPool().connect();
     try {
         await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock_shared($1::bigint)', [RESTORE_MAINTENANCE_LOCK]);
         const result = await fn(client);
         await client.query('COMMIT');
         return result;
     } catch (err) {
-        await client.query('ROLLBACK');
+        try { await client.query('ROLLBACK'); } catch (_) {}
         throw err;
     } finally {
         client.release();
@@ -49,4 +71,4 @@ async function healthcheck() {
     return { ok: true, latencyMs: Date.now() - started, now: result.rows[0].now };
 }
 
-module.exports = { getPool, query, transaction, healthcheck };
+module.exports = { getPool, query, transaction, healthcheck, isMutationSql };
