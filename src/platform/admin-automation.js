@@ -9,13 +9,16 @@ const runtimeSettings = require('./runtime-settings');
 const LABELS = {
     health: ['Jellyfin health', 'Checks configured servers and updates health status.'],
     entitlements: ['Entitlements', 'Expires due subscriptions and reconciles active customer access.'],
+    policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTaINFiN policy with live managed Jellyfin users.'],
     bulk_jobs: ['Bulk operations', 'Processes queued bulk customer actions.'],
     stale_reclaim: ['Stale job reclaim', 'Recovers abandoned running bulk items safely.'],
     email_outbox: ['Transactional email', 'Delivers due messages from the encrypted outbox.'],
     request_users: ['Request users', 'Synchronises CAPTaINFiN customer access to Seerr/Overseerr.'],
     billing: ['Customer billing', 'Re-verifies recurring direct-customer provider subscriptions.'],
-    reseller_billing: ['Reseller billing', 'Re-verifies Stripe/PayPal reseller subscriptions.'],
-    reseller_estates: ['Reseller estates', 'Applies parent reseller entitlement changes to child customers.']
+    plan_changes: ['Customer plan changes', 'Applies scheduled direct-customer plan changes at their billing boundary.'],
+    reseller_billing: ['Reseller billing', 'Re-verifies Stripe/PayPal reseller subscriptions and applies due tier changes.'],
+    reseller_estates: ['Reseller estates', 'Applies parent reseller entitlement changes to child customers.'],
+    reseller_notifications: ['Reseller lifecycle notifications', 'Emits billing, grace, estate and seat-utilisation transition notifications without blocking billing.']
 };
 
 function gate(req,res,next){ return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
