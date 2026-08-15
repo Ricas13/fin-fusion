@@ -2,6 +2,7 @@
 
 const { expireSubscriptionsAndReconcile } = require('../jellyfin/provisioning');
 const { reconcileActiveEntitlements, healthcheckAllServers } = require('../jellyfin/jobs');
+const drift = require('../jellyfin/drift-control');
 const bulkWorker = require('../jellyfin/bulk-worker');
 const requestUserSync = require('../integrations/request-user-sync');
 const requestServiceSettings = require('../integrations/request-service-settings');
@@ -10,6 +11,7 @@ const emailOutbox = require('../integrations/email-outbox');
 const billingControl = require('../payments/billing-control');
 const customerPlanChange = require('../payments/customer-plan-change');
 const resellerJobs = require('../resellers/jobs');
+const resellerNotifications = require('../resellers/notification-job');
 require('../platform/bulk-operations');
 
 const jobs = {
@@ -21,6 +23,10 @@ const jobs = {
         const expired = await expireSubscriptionsAndReconcile();
         const active = await reconcileActiveEntitlements();
         return { ...active, expired, processed: Number(expired || 0) + Number(active.total || 0) };
+    },
+    async policy_drift() {
+        const result = await drift.auditDue({ all: false });
+        return { ...result, processed: Number(result.total || 0), failed: Number(result.unreachable || 0) };
     },
     async bulk_jobs() { return bulkWorker.processBatch(); },
     async stale_reclaim() {
@@ -42,7 +48,8 @@ const jobs = {
     async billing() { return billingControl.syncDue({ all: false, limit: 100 }); },
     async plan_changes() { return customerPlanChange.applyDueStripe(); },
     async reseller_billing() { return resellerJobs.syncProviderSubscriptions(); },
-    async reseller_estates() { return resellerJobs.reconcileSubscribedEstates(); }
+    async reseller_estates() { return resellerJobs.reconcileSubscribedEstates(); },
+    async reseller_notifications() { return resellerNotifications.process(); }
 };
 
 function names() { return Object.keys(jobs); }
