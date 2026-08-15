@@ -36,6 +36,7 @@ async function getProviderOptions(planCode, provider) {
         FROM plans p
         JOIN plan_provider_prices pp ON pp.plan_id=p.id
         WHERE p.code=$1 AND p.active=TRUE AND p.visible=TRUE
+          AND p.audience IN ('direct','both')
           AND pp.provider=$2 AND pp.active=TRUE
         ORDER BY CASE pp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END
     `, [planCode, provider]);
@@ -49,6 +50,7 @@ async function getProviderPlan(planCode, provider, checkoutMode = null) {
         FROM plans p
         JOIN plan_provider_prices pp ON pp.plan_id=p.id
         WHERE p.code=$1 AND p.active=TRUE AND p.visible=TRUE
+          AND p.audience IN ('direct','both')
           AND pp.provider=$2 AND pp.active=TRUE
           AND ($3::text IS NULL OR pp.checkout_mode=$3)
         ORDER BY CASE pp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END
@@ -62,6 +64,7 @@ async function getProviderPlanByExternalId(provider, externalId) {
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
         FROM plan_provider_prices pp JOIN plans p ON p.id=pp.plan_id
         WHERE pp.provider=$1 AND pp.external_id=$2 AND pp.active=TRUE
+          AND p.audience IN ('direct','both')
         LIMIT 1
     `, [provider, externalId]);
     return result.rows[0] || null;
@@ -164,6 +167,7 @@ async function claimFreePlan(customerId, planCode) {
         const planResult = await client.query(`
             SELECT * FROM plans
             WHERE code=$1 AND active=TRUE AND visible=TRUE AND price_minor=0 AND billing_interval<>'trial'
+              AND audience IN ('direct','both')
             LIMIT 1
         `, [planCode]);
         if (!planResult.rowCount) throw new Error('This free plan is not available');
@@ -210,7 +214,7 @@ async function activatePurchase({
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
 
     const subscription = await transaction(async client => {
-        const planResult = await client.query('SELECT * FROM plans WHERE id=$1 AND active=TRUE', [planId]);
+        const planResult = await client.query("SELECT * FROM plans WHERE id=$1 AND active=TRUE AND audience IN ('direct','both')", [planId]);
         if (!planResult.rowCount) throw new Error('Plan not found');
         const plan = planResult.rows[0];
         const startsAt = periodStart ? new Date(periodStart) : new Date();
