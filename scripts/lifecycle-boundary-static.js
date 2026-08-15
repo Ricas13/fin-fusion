@@ -18,6 +18,19 @@ function filesUnder(dir) {
 
 function rel(file) { return path.relative(ROOT, file).split(path.sep).join('/'); }
 
+// Extract SQL text passed directly to query()/client.query(). The earlier
+// checker combined unrelated SQL statements from the same source file, which
+// could falsely flag a safe manual UPDATE merely because another SELECT in the
+// file mentioned provider_subscription_id. Lifecycle ownership is a statement
+// invariant, so inspect each SQL statement independently.
+function sqlStatements(source) {
+    const statements = [];
+    const re = /\b(?:query|client\.query)\s*\(\s*([`'"])([\s\S]*?)\1/g;
+    let match;
+    while ((match = re.exec(source))) statements.push(match[2]);
+    return statements;
+}
+
 // Provider billing identities and provider-driven subscription state must remain
 // behind the lifecycle layer. These are the deliberately small modules that own
 // those transitions. Adding another owner should require a conscious review of
@@ -35,23 +48,27 @@ const ENTITLEMENT_CONSUMERS = [
 ];
 
 const failures = [];
-for (const file of filesUnder(SRC)) {
+const sourceFiles = filesUnder(SRC);
+for (const file of sourceFiles) {
     const name = rel(file);
     const source = fs.readFileSync(file, 'utf8');
+    const statements = sqlStatements(source);
 
-    // Flag SQL that mutates provider-backed subscription rows outside the
-    // lifecycle owners. This intentionally keys on both the table mutation and
-    // provider identity/state markers to avoid blocking harmless reporting SQL.
-    const mutatesSubscription = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:subscriptions|reseller_subscriptions)\b/i.test(source);
-    const touchesProviderState = /\b(?:provider_subscription_id|provider_customer_id|provider_status|pending_provider_|source\s*=\s*['"](?:stripe|paypal)['"])/i.test(source);
-    if (mutatesSubscription && touchesProviderState && !PROVIDER_MUTATION_OWNERS.has(name)) {
-        failures.push(`${name}: provider-backed subscription mutation outside lifecycle owner`);
+    if (!PROVIDER_MUTATION_OWNERS.has(name)) {
+        for (const sql of statements) {
+            const mutatesSubscription = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:subscriptions|reseller_subscriptions)\b/i.test(sql);
+            const touchesProviderState = /\b(?:provider_subscription_id|provider_customer_id|provider_status|pending_provider_|source\s*=\s*['"](?:stripe|paypal)['"])/i.test(sql);
+            if (mutatesSubscription && touchesProviderState) {
+                failures.push(`${name}: provider-backed subscription mutation outside lifecycle owner`);
+                break;
+            }
+        }
     }
 
     // Enforcement consumers must use the canonical entitlement view/service,
     // not reconstruct “active subscription” rules from raw subscriptions.
     if (ENTITLEMENT_CONSUMERS.some(pattern => pattern.test(name))) {
-        const rawRead = /\b(?:FROM|JOIN)\s+subscriptions\b/i.test(source);
+        const rawRead = statements.some(sql => /\b(?:FROM|JOIN)\s+subscriptions\b/i.test(sql));
         const canonical = /effective_customer_entitlements|subscription-state/.test(source);
         if (rawRead && !canonical) failures.push(`${name}: raw subscription read in entitlement consumer`);
     }
@@ -76,4 +93,4 @@ if (failures.length) {
     for (const failure of failures) console.error(` - ${failure}`);
     process.exit(1);
 }
-console.log(`Lifecycle boundary static check passed (${filesUnder(SRC).length} source files scanned).`);
+console.log(`Lifecycle boundary static check passed (${sourceFiles.length} source files scanned).`);
