@@ -38,8 +38,10 @@ async function main(){
     await query(`UPDATE plans SET price_minor=9900,duration_days=365,streams=1,allow_downloads=FALSE,active=FALSE,visible=FALSE,archived_at=NOW(),updated_at=NOW() WHERE id=$1`,[plan.id]);
     const started=new Date();
     const subscription=await lifecycle.activatePurchase({customerId:customer.id,planId:plan.id,provider:'stripe',providerSubscriptionId:`pi_contract_${suffix}`,providerStatus:'active',periodStart:started,commercialSnapshot:verified.snapshot});
-    expect(subscription.price_minor_snapshot===600,'Subscription price snapshot drifted to the edited catalogue.');
-    expect(subscription.duration_days_snapshot===30,'Subscription duration snapshot drifted to the edited catalogue.');
+    // price_minor_snapshot is BIGINT in PostgreSQL; node-postgres intentionally
+    // returns int8 values as strings unless a global parser is configured.
+    expect(Number(subscription.price_minor_snapshot)===600,'Subscription price snapshot drifted to the edited catalogue.');
+    expect(Number(subscription.duration_days_snapshot)===30,'Subscription duration snapshot drifted to the edited catalogue.');
     expect(subscription.commercial_snapshot?.streams===3,'Subscription lost the sold entitlement policy.');
     const days=(new Date(subscription.current_period_end)-started)/86400000;
     expect(days>29.9&&days<30.1,`One-time entitlement duration drifted to ${days} days.`);
