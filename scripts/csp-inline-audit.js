@@ -9,16 +9,18 @@ const root=path.join(__dirname,'..');
 const adminHtmlPath=path.join(root,'src','platform','admin-html.js');
 const adminHtml=fs.readFileSync(adminHtmlPath,'utf8');
 const sanitizerPresent=/function\s+stripInlineScripts\s*\(/.test(adminHtml)
-    && /<script\\b/.test(adminHtml)
+    && /indexOf\(\s*['"]<script['"]/.test(adminHtml)
+    && /function\s+externalScriptTag\s*\(/.test(adminHtml)
     && /body\s*:\s*stripInlineScripts\s*\(\s*options\.body\s*\)/.test(adminHtml)
-    && /module\.exports\s*=\s*\{[\s\S]*stripInlineScripts/.test(adminHtml);
+    && /module\.exports\s*=\s*\{[\s\S]*stripInlineScripts/.test(adminHtml)
+    && !/stripInlineScripts[\s\S]*?\.replace\(\s*\/<script/i.test(adminHtml);
 
 const targets=[
     ...files(path.join(root,'views')).filter(name=>name.endsWith('.ejs')),
     ...files(path.join(root,'src')).filter(name=>name.endsWith('.js'))
 ];
 const findings=[];
-if(!sanitizerPresent)findings.push('src/platform/admin-html.js: admin layout no longer proves inline-script stripping before render');
+if(!sanitizerPresent)findings.push('src/platform/admin-html.js: admin layout no longer proves deterministic inline-script stripping before render');
 
 for(const file of targets){
     const text=fs.readFileSync(file,'utf8'),lines=text.split(/\r?\n/);
@@ -30,7 +32,8 @@ for(const file of targets){
         // Legacy admin fragments are safe only because admin-html strips inline
         // script blocks before they reach the response. Public/custom shells do
         // not receive that exception and must use external scripts directly.
-        // Do not treat the sanitizer's own /<script.../ regex literal as HTML.
+        // The sanitizer source itself contains the literal "<script" as scanner
+        // input and is therefore excluded from rendered-source findings.
         if(!isSanitizerFile&&/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(line)&&!usesSanitizedAdminLayout)findings.push(`${path.relative(root,file)}:${index+1}: inline <script>`);
         if(/\son[a-z]+\s*=\s*["']/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: inline event handler`);
         if(/javascript\s*:/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: javascript: URL`);
