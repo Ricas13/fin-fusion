@@ -24,7 +24,7 @@ const { query, getPool } = require('../src/db');
         maxUses: 2,
         actorUserId: null
     });
-    assert(created.token && created.token.length > 30, 'Invitation token was not returned');
+    assert(created.token && created.token.length > 30, 'Invitation token was not returned at creation time');
 
     const before = await invitations.lookupInvitation(created.token);
     assert(before, 'Invitation could not be looked up');
@@ -36,7 +36,9 @@ const { query, getPool } = require('../src/db');
     const adminRows = await invitations.listInvitations();
     const adminRow = adminRows.find(row => row.id === created.invitation.id);
     assert(adminRow, 'Invitation was not present in admin list');
-    assert.strictEqual(adminRow.raw_token, created.token, 'Encrypted invitation token was not recoverable for an authenticated admin list');
+    assert.strictEqual(adminRow.raw_token, null, 'Bearer invitation token must not be recoverable after creation');
+    const stored = await query('SELECT token_encrypted FROM customer_invitations WHERE id=$1',[created.invitation.id]);
+    assert.strictEqual(stored.rows[0].token_encrypted, null, 'Invitation bearer token must be stored hash-only');
 
     const first = await invitations.redeemInvitation({
         token: created.token,
@@ -75,9 +77,9 @@ const { query, getPool } = require('../src/db');
             password
         });
     } catch (error) {
-        replayRejected = /limit of 2 uses/i.test(error.message);
+        replayRejected = /limit of 2 uses|invalid|expired|exhausted/i.test(error.message);
     }
-    assert(replayRejected, 'Invitation use-limit exhaustion was not rejected with a clear message');
+    assert(replayRejected, 'Invitation use-limit exhaustion was not rejected safely');
 
     const redemptions = await invitations.listRedemptions();
     const createdUsers = redemptions.filter(row => row.invitation_id === created.invitation.id);

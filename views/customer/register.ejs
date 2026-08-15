@@ -15,9 +15,10 @@
   <% if (error) { %><div class="error"><%= error %></div><% } %>
   <% if (registrationOpen) { %>
   <form method="post" action="/account/register">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label>Email</label><input type="email" name="email" autocomplete="email" required>
     <label>Username</label><input name="username" minlength="3" maxlength="40" autocomplete="username" required>
-    <label>Site password</label><input type="password" name="password" minlength="12" autocomplete="new-password" required>
+    <label>Site password</label><input type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required>
     <p class="muted">This is your portal password. Your Jellyfin password is managed separately and is never stored here.</p>
     <% if (referralsEnabled) { %><label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"><% } %>
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-theme="dark"></div></div><% } %>

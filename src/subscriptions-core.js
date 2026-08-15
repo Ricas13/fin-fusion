@@ -121,29 +121,28 @@ async function createResellerClient({ resellerId, username, planCode, actorUserI
     return { subscription, reconcile, reconcileError };
 }
 
+// Legacy compatibility entry point. Provider-backed subscription state is no
+// longer mutated here; it delegates to the canonical payment lifecycle owner so
+// duplicate event leasing, reconciliation and provider-state mapping stay in
+// one place.
 async function applyProviderState({ provider, providerEventId, eventType, payload, providerSubscriptionId, status, periodEnd }) {
     if (!['stripe', 'paypal'].includes(provider)) throw new Error('Unsupported provider');
-
-    return transaction(async client => {
-        const event = await client.query(`
-            INSERT INTO payment_events(provider,provider_event_id,event_type,payload)
-            VALUES($1,$2,$3,$4::jsonb)
-            ON CONFLICT(provider,provider_event_id) DO NOTHING
-            RETURNING id
-        `, [provider, providerEventId, eventType, JSON.stringify(payload)]);
-
-        if (!event.rowCount) return { duplicate: true };
-
-        const sub = await client.query(`
-            UPDATE subscriptions
-            SET status=$1,current_period_end=COALESCE($2,current_period_end),updated_at=NOW()
-            WHERE source=$3 AND provider_subscription_id=$4
-            RETURNING *
-        `, [status, periodEnd || null, provider, providerSubscriptionId]);
-
-        await client.query('UPDATE payment_events SET processed_at=NOW() WHERE id=$1', [event.rows[0].id]);
-        return { duplicate: false, subscription: sub.rows[0] || null };
-    });
+    const lifecycle = require('./payments/lifecycle');
+    const event = await lifecycle.beginPaymentEvent({ provider, eventId: providerEventId, eventType, payload });
+    if (!event) return { duplicate: true };
+    try {
+        const subscription = await lifecycle.updateProviderSubscription({
+            provider,
+            providerSubscriptionId,
+            providerStatus: status,
+            periodEnd: periodEnd || null
+        });
+        await lifecycle.finishPaymentEvent(event);
+        return { duplicate: false, subscription };
+    } catch (error) {
+        await lifecycle.finishPaymentEvent(event, error);
+        throw error;
+    }
 }
 
 module.exports = { getPlanByCode, createManualSubscription, extendWithResellerCredits, createResellerClient, applyProviderState };

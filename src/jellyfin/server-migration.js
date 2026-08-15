@@ -48,7 +48,7 @@ async function migrationForId(migrationId) {
                dst.name AS target_server_name,dst.slug AS target_server_slug,
                sa.jellyfin_username AS source_username,
                ta.jellyfin_username AS target_username,
-               ta.password_reset_required AS target_password_reset_required
+               ta.password_setup_required AS target_password_reset_required
         FROM customer_server_migrations m
         JOIN customers c ON c.id=m.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id
@@ -141,7 +141,7 @@ async function createMigration(customerId, targetServerId, actorUserId) {
                 username: check.source.jellyfin_username,
                 effectiveStreams: check.effective.technical.streams,
                 visibleLibraryCount: check.effective.visibleNames.length,
-                passwordResetRequiredAfterMove: true
+                passwordSetupRequiredAfterMove: true
             }),
             actorUserId || null
         ]);
@@ -211,9 +211,9 @@ async function executeMigration(migrationId) {
             makePrimary: false
         });
         await query(`
-            UPDATE jellyfin_accounts SET password_reset_required=TRUE,updated_at=NOW() WHERE id=$1
+            UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1
         `, [targetAccount.id]);
-        targetAccount.password_reset_required = true;
+        targetAccount.password_setup_required = true;
         await query(`
             UPDATE customer_server_migrations
             SET target_account_id=$2,detail=detail || $3::jsonb,updated_at=NOW()
@@ -239,7 +239,7 @@ async function executeMigration(migrationId) {
             targetUsername: targetAccount.jellyfin_username,
             sourceDisabled: true,
             primaryAccountId: targetAccount.id,
-            passwordResetRequired: true
+            passwordSetupRequired: true
         })]);
         await query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
@@ -297,7 +297,7 @@ async function rollbackMigration(migrationId, actorUserId) {
     const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
     const sourceLibraries = await provisioning.resolveLibraryAccessForServer(source.server_id, effective.unrestricted, effective.visibleNames, false);
     if (sourceLibraries.missing.length) {
-        throw new ServerMigrationError('ROLLBACK_LIBRARIES_MISSING', `Original server is missing required libraries: ${sourceLibraries.missing.join(', ')}`);
+        throw new ServerMigrationError('ROLLBACK_LIBRARIES_MISSING', `Original server is missing required libraries: ${sourceLibraries.missing.join(', ')}`, 'preflight');
     }
 
     let sourceEnabled = false;
@@ -342,7 +342,7 @@ async function listMigrations(limit = 100) {
                dst.name AS target_server_name,dst.slug AS target_server_slug,
                sa.jellyfin_username AS source_username,
                ta.jellyfin_username AS target_username,
-               ta.password_reset_required AS target_password_reset_required
+               ta.password_setup_required AS target_password_reset_required
         FROM customer_server_migrations m
         JOIN customers c ON c.id=m.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id

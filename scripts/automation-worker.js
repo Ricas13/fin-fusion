@@ -4,6 +4,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const pkg = require('../package.json');
 const { query, getPool } = require('../src/db');
+const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
 const providerSettings = require('../src/payments/provider-settings');
@@ -47,7 +48,12 @@ async function dueJobs() {
 async function runOne(row) {
     const jobKey = row.job_key;
     try {
-        const result = await jobHealth.runSingleton(jobKey, () => jobRegistry.run(jobKey), { force: Boolean(row.force_run_requested) });
+        const guarded = await withMaintenanceSharedLock(
+            () => jobHealth.runSingleton(jobKey, () => jobRegistry.run(jobKey), { force: Boolean(row.force_run_requested) }),
+            { skipIfBusy: true }
+        );
+        if (guarded?.skipped && guarded?.reason === 'database_maintenance') return;
+        const result = guarded;
         if (result?.skipped) return;
         const value = result?.value || {};
         const failed = Number(value.failed || 0);

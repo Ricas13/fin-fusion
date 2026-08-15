@@ -50,9 +50,17 @@
         return sameOrigin(form.action || window.location.href);
     }
 
+    function appendBulkSelections(form, data) {
+        if (form.id !== 'bulkForm') return;
+        const table = document.getElementById('customersTable');
+        if (!table) return;
+        table.querySelectorAll('.rowCheck:checked').forEach(control => data.append('customerId', control.value));
+    }
+
     function urlencodedBody(form, submitter) {
         const params = new URLSearchParams();
         const data = new FormData(form);
+        appendBulkSelections(form, data);
         if (submitter?.name && !data.has(submitter.name)) data.append(submitter.name, submitter.value || '');
         for (const [key, value] of data.entries()) {
             if (typeof File !== 'undefined' && value instanceof File) continue;
@@ -140,7 +148,88 @@
         }
     }
 
+    function confirmSubmit(event) {
+        if (event.defaultPrevented) return;
+        const form = event.target instanceof HTMLFormElement ? event.target : null;
+        const message = form?.dataset?.confirm;
+        if (message && !window.confirm(message)) event.preventDefault();
+    }
+
+    async function copyLink(button) {
+        const value = button.getAttribute('data-copy-link');
+        if (!value) return;
+        const old = button.textContent;
+        try {
+            await navigator.clipboard.writeText(value);
+            button.textContent = 'Copied';
+            button.classList.add('copyDone');
+            window.setTimeout(() => {
+                button.textContent = old;
+                button.classList.remove('copyDone');
+            }, 1400);
+        } catch (_) {
+            window.prompt('Copy link', value);
+        }
+    }
+
+    async function uploadBrandAsset(button) {
+        const kind = button.dataset.brandUpload;
+        if (!kind) return;
+        const fileInput = document.getElementById(`${kind}File`);
+        const status = document.getElementById(`${kind}Status`);
+        const file = fileInput?.files?.[0];
+        if (!file) {
+            if (status) status.textContent = 'Choose a file first.';
+            return;
+        }
+        const csrfToken = button.dataset.csrfToken || '';
+        button.disabled = true;
+        if (status) status.textContent = 'Uploading…';
+        try {
+            const response = await fetch(`/admin/settings/branding/${encodeURIComponent(kind)}`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': file.type || 'application/octet-stream',
+                    'X-CSRF-Token': csrfToken
+                },
+                body: file
+            });
+            const result = await response.json().catch(() => ({ ok: false, error: 'Unexpected server response.' }));
+            if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed.');
+            window.location.reload();
+        } catch (error) {
+            if (status) status.textContent = error.message || 'Upload failed.';
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    document.addEventListener('submit', confirmSubmit, true);
+
+    document.addEventListener('click', event => {
+        const copy = event.target.closest?.('[data-copy-link]');
+        if (copy) {
+            event.preventDefault();
+            copyLink(copy);
+            return;
+        }
+        const upload = event.target.closest?.('[data-brand-upload]');
+        if (upload) {
+            event.preventDefault();
+            uploadBrandAsset(upload);
+        }
+    });
+
     document.addEventListener('DOMContentLoaded', () => {
+        const all = document.getElementById('checkAllPage');
+        const table = document.getElementById('customersTable');
+        if (all && table) {
+            all.addEventListener('change', () => {
+                table.querySelectorAll('.rowCheck').forEach(control => { control.checked = all.checked; });
+            });
+        }
+
         document.querySelectorAll('form').forEach(form => {
             if (shouldEnhance(form)) form.addEventListener('submit', submitEnhanced);
             form.addEventListener('input', event => {

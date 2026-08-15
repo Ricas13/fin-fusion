@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const invitations = require('../src/invitations');
 
 const token = 'example-invite-token';
@@ -35,5 +37,11 @@ assert.strictEqual(invitations.remainingUses({ max_uses: null, use_count: 2 }), 
 assert.match(invitations.limitReachedMessage({ max_uses: 5, use_count: 5 }), /limit of 5 uses/i);
 assert.strictEqual(invitations.statusFor({ expires_at: past, max_uses: 5, use_count: 0 }), 'expired');
 assert.strictEqual(invitations.statusFor({ expires_at: future, revoked_at: new Date(), max_uses: 5, use_count: 0 }), 'revoked');
+
+// Invitation signup creates the portal credential only. A newly provisioned
+// Jellyfin identity keeps its unexposed random bootstrap password and remains
+// password_setup_required until the customer explicitly chooses a media password.
+const invitationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'invitations.js'), 'utf8');
+assert.doesNotMatch(invitationSource, /setJellyfinPassword\s*\([^)]*\bpassword\b/i, 'Invitation onboarding must never reuse the portal password for Jellyfin');
 
 console.log('invitations smoke: ok');

@@ -53,8 +53,8 @@ function formPage(req, invitation, values = {}, error = null) {
             <input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
             ${emailField}
             <div class="field"><label>Username</label><input class="input" name="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" autocomplete="username" required value="${esc(values.username || '')}"><div class="help">3–40 characters. Letters, numbers, dot, underscore and dash.</div></div>
-            <div class="field"><label>Password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required><div class="help">At least 12 characters. When Jellyfin provisioning succeeds, this becomes your Jellyfin password too.</div></div>
-            <div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div>
+            <div class="field"><label>Portal password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required><div class="help">At least 12 characters. This is only your CAPTaINFiN portal password. Jellyfin uses a separate password that you choose after provisioning.</div></div>
+            <div class="field"><label>Confirm portal password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div>
             <button class="button" type="submit">Create account</button>
         </form>
     </section>`;
@@ -111,7 +111,7 @@ function createInviteOnboardingRouter() {
             req.session.customerUsername = redeemed.user.username;
             const message = redeemed.provisioningError
                 ? 'Your account is ready. Jellyfin access is pending server provisioning and can be retried by an administrator.'
-                : 'Welcome! Your account and Jellyfin access are ready.';
+                : 'Welcome! Your portal account is ready. If Jellyfin was newly provisioned, choose its separate password from your account page before signing in to Jellyfin.';
             return res.redirect('/account?message=' + encodeURIComponent(message));
         } catch (error) { return next(error); }
     });

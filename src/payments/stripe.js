@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const lifecycle = require('./lifecycle');
 const discounts = require('./discounts');
 const incidents = require('./incidents');
+const checkoutIntents = require('./checkout-intents');
 const providerSettings = require('./provider-settings');
 const { query } = require('../db');
 
@@ -62,18 +63,29 @@ function extractInvoiceSubscriptionId(invoice) {
     const direct=typeof invoice?.subscription==='string'?invoice.subscription:invoice?.subscription?.id;if(direct)return direct;
     const parent=invoice?.parent?.subscription_details?.subscription;return typeof parent==='string'?parent:parent?.id||null;
 }
+async function checkoutContract(session) {
+    const customerId=session.metadata?.internal_customer_id,planId=session.metadata?.internal_plan_id;
+    if(!customerId||!planId)throw new Error('Stripe Checkout session is missing internal metadata');
+    const stripe=await getStripe();
+    const verified=await stripe.checkout.sessions.retrieve(session.id,{expand:['line_items.data.price']});
+    if(!['paid','no_payment_required'].includes(verified.payment_status))throw new Error('Stripe Checkout session is not paid');
+    const price=verified.line_items?.data?.[0]?.price||null,priceId=price?.id||null;
+    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:priceId,amountMinor:verified.mode==='payment'?verified.amount_total:null,currency:verified.mode==='payment'?verified.currency:price?.currency});
+    return{session:verified,customerId,planId,priceId,...contract};
+}
 async function activateCheckoutSession(session) {
     if(!['paid','no_payment_required'].includes(session.payment_status))return null;
-    const customerId=session.metadata?.internal_customer_id,planId=session.metadata?.internal_plan_id,discountCodeId=session.metadata?.internal_discount_code_id||null;
-    if(!customerId||!planId)throw new Error('Stripe Checkout session is missing internal metadata');
-    const providerCustomerId=typeof session.customer==='string'?session.customer:session.customer?.id;
-    if(session.mode==='subscription'){
-        const subscriptionId=typeof session.subscription==='string'?session.subscription:session.subscription?.id;if(!subscriptionId)throw new Error('Stripe Checkout subscription ID is missing');
+    const contract=await checkoutContract(session),verified=contract.session,customerId=contract.customerId,planId=contract.planId;
+    const providerCustomerId=typeof verified.customer==='string'?verified.customer:verified.customer?.id;
+    if(verified.mode==='subscription'){
+        const subscriptionId=typeof verified.subscription==='string'?verified.subscription:verified.subscription?.id;if(!subscriptionId)throw new Error('Stripe Checkout subscription ID is missing');
         const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price']}),period=subscriptionPeriod(subscription);
-        return lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),discountCodeId});
+        const subscriptionPrice=subscription.items?.data?.[0]?.price?.id||null;
+        if(contract.snapshot.providerMappingId&&subscriptionPrice&&String(contract.snapshot.providerMappingId)!==String(subscriptionPrice))throw new Error('Stripe subscription price does not match the checkout contract.');
+        return lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot});
     }
-    const paymentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id||session.id;
-    return lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:paymentId,providerStatus:'active',discountCodeId});
+    const paymentId=typeof verified.payment_intent==='string'?verified.payment_intent:verified.payment_intent?.id||verified.id;
+    return lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:paymentId,providerStatus:'active',commercialSnapshot:contract.snapshot});
 }
 async function syncSubscription(subscriptionId,statusOverride=null) {
     const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price']}),period=subscriptionPeriod(subscription);
@@ -122,4 +134,4 @@ async function processWebhook(rawBody,signature) {
         await lifecycle.finishPaymentEvent(eventRow);return{duplicate:false,type:event.type};
     }catch(error){await lifecycle.finishPaymentEvent(eventRow,error);throw error;}
 }
-module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,subscriptionPeriod,incidentContextForCharge};
+module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession};

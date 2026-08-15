@@ -1,7 +1,8 @@
 'use strict';
 
 const core = require('./configuration-transfer-v2-core');
-const { query, transaction } = require('../db');
+const atomic = require('./configuration-transfer-atomic');
+const { query } = require('../db');
 
 const DRIFT_KEY = 'jellyfin_drift_policy';
 const RISK_KEY = 'payment_risk_policy';
@@ -43,16 +44,16 @@ async function exportPortableConfiguration() {
     return document;
 }
 async function previewImport(input) {
-    const document=parseDocument(input);if(document.version!==2)return core.previewImport(document);
-    const result=await core.previewImport(document),settings=document.configuration.settings;
-    return {...result,document,digest:core.digestDocument(document),summary:{...result.summary,driftPolicy:Object.prototype.hasOwnProperty.call(settings,DRIFT_KEY)?1:0,paymentRiskPolicy:Object.prototype.hasOwnProperty.call(settings,RISK_KEY)?1:0}};
+    const document=parseDocument(input);const result=await core.previewImport(document),settings=document.configuration.settings;
+    const providerMappings=(document.configuration.directPaymentMappings||[]).filter(x=>x.active).length+(document.configuration.resellerTiers||[]).flatMap(t=>t.providerMappings||[]).filter(x=>x.active).length;
+    const warnings=[...(result.warnings||[])];
+    if(providerMappings)warnings.push(`${providerMappings} imported payment-provider mapping(s) requested active state. They will be imported inactive and must pass remote verification before sales use them.`);
+    if(document.version!==2)return{...result,document,warnings};
+    return {...result,document,digest:core.digestDocument(document),warnings:[...new Set(warnings)],summary:{...result.summary,driftPolicy:Object.prototype.hasOwnProperty.call(settings,DRIFT_KEY)?1:0,paymentRiskPolicy:Object.prototype.hasOwnProperty.call(settings,RISK_KEY)?1:0,providerMappingsPendingVerification:providerMappings}};
 }
 async function applyImport(input,actorUserId=null) {
-    const document=parseDocument(input),result=await core.applyImport(document,actorUserId);if(document.version!==2)return result;
-    const settings=document.configuration.settings,changes=[];
-    if(Object.prototype.hasOwnProperty.call(settings,DRIFT_KEY))changes.push([DRIFT_KEY,normalizeDriftPolicy(settings[DRIFT_KEY]),'admin.configuration.import.drift_policy']);
-    if(Object.prototype.hasOwnProperty.call(settings,RISK_KEY))changes.push([RISK_KEY,normalizeRiskPolicy(settings[RISK_KEY]),'admin.configuration.import.payment_risk_policy']);
-    if(changes.length)await transaction(async client=>{for(const[key,value,action]of changes){await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[key,JSON.stringify(value),actorUserId]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'platform_setting',$3,$4::jsonb)`,[actorUserId,action,key,JSON.stringify(value)]);}});
-    return {...result,summary:{...(result.summary||{}),driftPolicy:changes.some(([key])=>key===DRIFT_KEY)?1:0,paymentRiskPolicy:changes.some(([key])=>key===RISK_KEY)?1:0}};
+    const preview=await previewImport(input),document=preview.document;
+    const summary=await atomic.applyImport(document,{actorUserId,digest:preview.digest,previewSummary:preview.summary});
+    return{digest:preview.digest,warnings:preview.warnings,summary};
 }
 module.exports={...core,parseDocument,exportPortableConfiguration,previewImport,applyImport,normalizeDriftPolicy,normalizeRiskPolicy};

@@ -43,7 +43,7 @@ async function importedCustomer({ name, email, jellyfinUsername, serverName, ser
 
     const stored = await query(`SELECT token_hash,token_encrypted,email_lock,consumed_at,revoked_at FROM customer_account_claims WHERE id=$1`, [created.claim.id]);
     assert.strictEqual(stored.rows[0].token_hash, claims.hashToken(created.token));
-    assert.notStrictEqual(stored.rows[0].token_encrypted, created.token, 'raw claim token must not be stored plaintext');
+    assert.strictEqual(stored.rows[0].token_encrypted, null, 'claim bearer token must be stored hash-only');
     assert.strictEqual(stored.rows[0].email_lock, 'alice@example.test');
 
     const lookup = await claims.lookupClaim(created.token);
@@ -101,9 +101,9 @@ async function importedCustomer({ name, email, jellyfinUsername, serverName, ser
             password: 'Another-Very-Strong-Password-2026!'
         });
     } catch (error) {
-        replayRejected = /already been claimed/i.test(error.message);
+        replayRejected = /invalid|expired|already been claimed/i.test(error.message);
     }
-    assert(replayRejected, 'claim token replay was not rejected');
+    assert(replayRejected, 'claim token replay was not rejected safely');
 
     const second = await importedCustomer({
         name: 'Legacy Bob',

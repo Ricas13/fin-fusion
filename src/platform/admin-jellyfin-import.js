@@ -30,7 +30,17 @@ function notice(req) {
 function pill(label, kind = '') { return `<span class="pill ${kind}">${esc(label)}</span>`; }
 
 async function planOptions() {
-    const result = await query(`SELECT id,name,code,server_class,billing_interval,duration_days FROM plans WHERE active=TRUE ORDER BY sort_order,name`);
+    const result = await query(`
+        SELECT id,name,code,server_class,billing_interval,duration_days
+        FROM plans
+        WHERE active=TRUE
+          AND visible=TRUE
+          AND archived_at IS NULL
+          AND audience IN ('direct','both')
+          AND (effective_from IS NULL OR effective_from<=NOW())
+          AND (effective_until IS NULL OR effective_until>NOW())
+        ORDER BY sort_order,name
+    `);
     return result.rows;
 }
 
@@ -100,7 +110,7 @@ async function page(req) {
     const safety = `<section class="card"><div class="card-header"><div><h2 class="card-title">Safe adoption of existing accounts</h2><div class="muted">Import links CAPTaINFiN to the Jellyfin account that already exists. It never recreates that Jellyfin user and never reads or resets their password.</div></div></div><div class="card-body"><div class="compact-item"><div><div class="compact-title">Create customer</div><div class="compact-meta">Creates a CAPTaINFiN customer record and adopts the selected Jellyfin identity. Portal login remains unclaimed until you create/claim one separately.</div></div></div><div class="compact-item"><div><div class="compact-title">Optional plan</div><div class="compact-meta">Assign a current plan and migration subscription during import, or leave the plan blank for inventory-only adoption.</div></div></div><div class="compact-item"><div><div class="compact-title">Policy is opt-in</div><div class="compact-meta">By default the import does not touch Jellyfin policy. Tick Apply plan policy now only when you want CAPTaINFiN to immediately enforce the selected plan.</div></div></div></div></section>`;
     const bulk = counts.unmanaged ? `<section class="section"><div class="sectionHead"><div><h2>Import selected users</h2><div class="muted">Use one plan for this batch. Run separate batches when Free/Premium users need different plans.</div></div></div><form id="importForm" method="post" action="/admin/jellyfin-import/bulk" class="formPanel">${csrfInput(req)}<div class="formGrid"><div class="formGroup"><label>Plan</label>${planSelect(plans)}<div class="inlineHelp">Blank means no subscription is created.</div></div><div class="formGroup"><label>Expiry override (optional)</label><input class="input" type="date" name="expiresAt"><div class="inlineHelp">Blank uses the plan duration from today.</div></div></div><label class="toggleRow"><input type="checkbox" name="applyPolicy"><span>Apply selected plan policy immediately after each import</span></label><div class="buttonRow"><button class="button" type="submit">Import selected</button><button class="button secondary" type="button" id="selectAllImports">Select all unmanaged</button></div></form></section>` : '';
     const table = `<section class="section"><div class="sectionHead"><div><h2>Jellyfin users</h2><div class="muted">Discovery is read-only. Jellyfin administrators cannot be imported.</div></div><span class="muted">${rows.length} shown</span></div>${rows.length ? `<div class="tableWrap"><table class="dataTable importTable"><thead><tr><th></th><th>User</th><th>Server</th><th>Jellyfin</th><th>Last activity</th><th>CAPTaINFiN</th><th class="right">Action</th></tr></thead><tbody>${rows.map(row => rowHtml(req, row)).join('')}</tbody></table></div>` : '<div class="empty">No Jellyfin users were returned by the selected server(s).</div>'}</section>`;
-    const script = `<script>(function(){var button=document.getElementById('selectAllImports');var form=document.getElementById('importForm');if(button){button.addEventListener('click',function(){document.querySelectorAll('.importCheck').forEach(function(box){box.checked=true})})}if(form){form.addEventListener('submit',function(){document.querySelectorAll('.importCheck:checked').forEach(function(box){var hidden=document.createElement('input');hidden.type='hidden';hidden.name='selected';hidden.value=box.value;form.appendChild(hidden)})})}})();</script>`;
+    const script = '<script src="/js/admin-jellyfin-import.js" defer></script>';
     const styles = '<style>.importTable{min-width:1120px}.metricValue.smallish{font-size:22px}.compactButtons{justify-content:flex-end}.compactButtons form{margin:0}.inlineForm{display:inline}.compactPanel{margin-bottom:16px}</style>';
     return layout({ siteName: runtimeSettings.siteName(), active: 'jellyfin-import', title: 'Import Jellyfin Users', subtitle: 'Adopt existing Jellyfin accounts without recreating users or changing passwords', body: `${styles}${notice(req)}${failureNotice}${serverSelect}${metrics}${safety}${bulk}${table}${script}` });
 }
