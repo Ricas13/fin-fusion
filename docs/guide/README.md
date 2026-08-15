@@ -1,20 +1,20 @@
 # CAPTaINFiN Guide
 
-Welcome to the user-facing CAPTaINFiN documentation.
+Welcome to the CAPTaINFiN user guide. This documentation is written for customers, resellers and administrators using the platform day to day.
 
-This guide is written for customers, resellers and administrators. It intentionally excludes private operational secrets, internal security runbooks and development-only implementation details.
+Use the navigation to find the guide for your role:
 
-## Start here
-
-- [Getting Started](getting-started.md)
-- [Customer Guide](customer-guide.md)
-- [Reseller Guide](reseller-guide.md)
-- [Administrator Guide](administrator-guide.md)
-- [Troubleshooting and FAQ](troubleshooting.md)
-- [Glossary](glossary.md)
+- **Customers** — account access, subscriptions, Jellyfin credentials, library visibility and security.
+- **Resellers** — reseller subscriptions, seats, downstream customers, sales records and estate controls.
+- **Administrators** — plans, servers, libraries, payments, automation, security and platform settings.
+- **Stremio** — foundation/roadmap information for the future stream-only addon service.
 
 ## Documentation principles
 
-Each CAPTaINFiN setting should have a short explanation directly in the platform. This guide provides the deeper explanation, examples and troubleshooting steps behind those controls.
+The guide documents supported product behaviour, not internal engineering runbooks. Security-sensitive infrastructure details, raw credentials and private operational procedures should not be published here.
 
-Documentation should describe the released platform rather than planned behaviour. Future features should be clearly marked as planned until they are available in production.
+Where the product is still in development, the documentation says so explicitly instead of presenting planned behaviour as live.
+
+## GitBook
+
+This directory is the GitBook source root. The repository-level `.gitbook.yaml` points GitBook here, while `SUMMARY.md` controls the sidebar structure.
