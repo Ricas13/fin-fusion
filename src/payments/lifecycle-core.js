@@ -8,7 +8,7 @@ const referrals = require('../referrals');
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 
 function addPlanDuration(plan, from = new Date()) {
-    const days = Number(plan.duration_days || 30);
+    const days = Number(plan.duration_days || plan.durationDays || 30);
     return new Date(from.getTime() + days * 86400000);
 }
 
@@ -193,6 +193,19 @@ async function claimFreePlan(customerId, planCode) {
     return subscription;
 }
 
+function purchaseSnapshot(snapshot, { provider, planId }) {
+    if (!snapshot) return null;
+    if (typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Invalid checkout commercial snapshot');
+    if (snapshot.kind !== 'direct_plan') throw new Error('Unsupported checkout commercial snapshot');
+    if (String(snapshot.planId || '') !== String(planId)) throw new Error('Checkout contract plan does not match activation plan');
+    if (snapshot.provider !== provider) throw new Error('Checkout contract provider does not match activation provider');
+    const durationDays = Number(snapshot.durationDays);
+    const priceMinor = Number(snapshot.priceMinor);
+    if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650) throw new Error('Checkout contract duration is invalid');
+    if (!Number.isInteger(priceMinor) || priceMinor < 0) throw new Error('Checkout contract price is invalid');
+    return { ...snapshot, durationDays, priceMinor };
+}
+
 async function activatePurchase({
     customerId,
     planId,
@@ -204,23 +217,27 @@ async function activatePurchase({
     periodEnd = null,
     cancelAtPeriodEnd = false,
     discountCodeId = null,
-    discountAmountAppliedMinor = 0
+    discountAmountAppliedMinor = 0,
+    commercialSnapshot = null
 }) {
     if (!['stripe', 'paypal'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
+    const contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
 
     const subscription = await transaction(async client => {
-        // A verified provider may renew an agreement after the catalogue plan was
-        // hidden/archived. Catalogue availability is enforced when checkout is
-        // created; provider confirmation must not revoke an existing contract.
+        // New checkout activation uses the provider-verified commercial contract;
+        // provider renewals without a checkout snapshot preserve the snapshot
+        // already stored on the subscription.
         const planResult = await client.query('SELECT * FROM plans WHERE id=$1', [planId]);
         if (!planResult.rowCount) throw new Error('Plan not found');
         const plan = planResult.rows[0];
-        const priceMap = await client.query(`SELECT external_id FROM plan_provider_prices
-            WHERE plan_id=$1 AND provider=$2 ORDER BY active DESC,updated_at DESC LIMIT 1`, [planId, provider]);
+        const priceMap = contract?.providerMappingId
+            ? { rows: [{ external_id: contract.providerMappingId }] }
+            : await client.query(`SELECT external_id FROM plan_provider_prices
+                WHERE plan_id=$1 AND provider=$2 ORDER BY active DESC,updated_at DESC LIMIT 1`, [planId, provider]);
         const providerPriceId = priceMap.rows[0]?.external_id || null;
         const startsAt = periodStart ? new Date(periodStart) : new Date();
-        const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(plan, startsAt);
+        const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(contract || plan, startsAt);
         const status = mapProviderStatus(provider, providerStatus);
 
         const existing = await client.query(`
@@ -229,32 +246,53 @@ async function activatePurchase({
             LIMIT 1 FOR UPDATE
         `, [provider, providerSubscriptionId]);
 
+        const snapshotJson = contract ? JSON.stringify(contract) : null;
+        const planNameSnapshot = contract?.planName || plan.name;
+        const planCodeSnapshot = contract?.planCode || plan.code;
+        const priceMinorSnapshot = contract?.priceMinor ?? plan.price_minor;
+        const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
+        const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
+        const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
         let row;
         if (existing.rowCount) {
             const updated = await client.query(`
                 UPDATE subscriptions
                 SET customer_id=$1,plan_id=$2,status=$3,starts_at=$4,current_period_end=$5,
                     cancel_at_period_end=$6,provider_customer_id=COALESCE($7,provider_customer_id),
-                    provider_price_id_snapshot=COALESCE($8,provider_price_id_snapshot),updated_at=NOW()
-                WHERE id=$9 RETURNING *
-            `, [customerId, planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, existing.rows[0].id]);
+                    provider_price_id_snapshot=COALESCE($8,provider_price_id_snapshot),
+                    plan_name_snapshot=CASE WHEN $9::jsonb IS NULL THEN plan_name_snapshot ELSE $10 END,
+                    plan_code_snapshot=CASE WHEN $9::jsonb IS NULL THEN plan_code_snapshot ELSE $11 END,
+                    price_minor_snapshot=CASE WHEN $9::jsonb IS NULL THEN price_minor_snapshot ELSE $12 END,
+                    currency_snapshot=CASE WHEN $9::jsonb IS NULL THEN currency_snapshot ELSE $13 END,
+                    billing_interval_snapshot=CASE WHEN $9::jsonb IS NULL THEN billing_interval_snapshot ELSE $14 END,
+                    duration_days_snapshot=CASE WHEN $9::jsonb IS NULL THEN duration_days_snapshot ELSE $15 END,
+                    commercial_snapshot=CASE WHEN $9::jsonb IS NULL THEN commercial_snapshot ELSE $9::jsonb END,
+                    updated_at=NOW()
+                WHERE id=$16 RETURNING *
+            `, [customerId, planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, existing.rows[0].id]);
             row = updated.rows[0];
         } else {
             const inserted = await client.query(`
                 INSERT INTO subscriptions(
                     customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,
-                    provider_customer_id,provider_subscription_id,provider_price_id_snapshot
-                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    provider_customer_id,provider_subscription_id,provider_price_id_snapshot,
+                    plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,
+                    billing_interval_snapshot,duration_days_snapshot,commercial_snapshot
+                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb))
                 RETURNING *
-            `, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId]);
+            `, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson]);
             row = inserted.rows[0];
         }
 
-        if (discountCodeId) {
+        const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
+        const appliedMinor = contract
+            ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor || 0))
+            : discountAmountAppliedMinor;
+        if (effectiveDiscountCodeId) {
             await client.query('SAVEPOINT discount_redemption');
             try {
                 await discounts.redeemForSubscriptionTx(client, {
-                    discountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: discountAmountAppliedMinor
+                    discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor
                 });
                 await client.query('RELEASE SAVEPOINT discount_redemption');
             } catch (error) {
@@ -266,7 +304,7 @@ async function activatePurchase({
         await client.query(`
             INSERT INTO audit_log(action,entity_type,entity_id,metadata)
             VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)
-        `, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status })]);
+        `, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status, checkoutContract: Boolean(contract) })]);
         return row;
     });
 
@@ -308,6 +346,7 @@ module.exports = {
     finishPaymentEvent,
     startFreeTrial,
     claimFreePlan,
+    purchaseSnapshot,
     activatePurchase,
     updateProviderSubscription
 };
