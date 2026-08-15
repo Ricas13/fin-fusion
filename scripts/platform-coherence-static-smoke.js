@@ -36,7 +36,8 @@ for (const migration of [
     '040_branding_assets.sql',
     '041_reseller_ledger_adjustments.sql',
     '042_jellyfin_policy_drift.sql',
-    '043_reseller_dunning.sql'
+    '043_reseller_dunning.sql',
+    '044_recurring_trigger_fix.sql'
 ]) assert(exists(`db/migrations/${migration}`), `missing coherence migration ${migration}`);
 
 const application = read('src/application.js');
