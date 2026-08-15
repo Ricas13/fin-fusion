@@ -23,7 +23,7 @@ jobs:
 
   database-invariants:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
@@ -61,5 +61,7 @@ jobs:
         run: npm run db:migrate
       - name: Verify cross-feature database invariants
         run: node scripts/platform-coherence-db-smoke.js
+      - name: Verify Jellyfin policy drift is read-only and isolated
+        run: node scripts/jellyfin-drift-smoke.js
       - name: Production readiness executes against current schema
         run: node scripts/production-readiness.js --json || true
