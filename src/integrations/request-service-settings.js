@@ -1,6 +1,6 @@
 'use strict';
 
-const { query } = require('../db');
+const { query, transaction } = require('../db');
 const { encryptString, decryptString } = require('../crypto');
 const runtimeSettings = require('../platform/runtime-settings');
 
@@ -25,48 +25,34 @@ function cleanBaseUrl(value) {
     return parsed.toString().replace(/\/$/, '');
 }
 
-function originalEnvApiKey() {
-    return ENV_SEERR_API_KEY || ENV_OVERSEERR_API_KEY;
-}
+function originalEnvApiKey() { return ENV_SEERR_API_KEY || ENV_OVERSEERR_API_KEY; }
 
 function envConfig() {
     const baseUrl = cleanBaseUrl(runtimeSettings.overseerrUrl() || ENV_REQUEST_URL || '');
     const apiKey = originalEnvApiKey();
     return {
-        source: 'environment',
-        enabled: Boolean(baseUrl && apiKey),
-        baseUrl,
-        apiKey,
-        syncIntervalMinutes: Math.max(5, Math.min(1440, Math.round(ENV_SYNC_INTERVAL_MS / 60000) || 15)),
-        updatedAt: null
+        source: 'environment', enabled: Boolean(baseUrl && apiKey), baseUrl, apiKey,
+        syncIntervalMinutes: Math.max(5, Math.min(1440, Math.round(ENV_SYNC_INTERVAL_MS / 60000) || 15)), updatedAt: null
     };
 }
 
 function decodeRow(row) {
     let apiKey = '';
     if (row.api_key_encrypted) apiKey = decryptString(row.api_key_encrypted) || '';
-
-    // Migration 030 creates an unclaimed row (updated_by=NULL) from the old
-    // Platform Settings URL. Keep any existing env API key working until an
-    // administrator explicitly saves the new browser-managed settings form.
     const migratedCompatibilityRow = !row.updated_by && !row.api_key_encrypted;
     if (!apiKey && migratedCompatibilityRow) apiKey = originalEnvApiKey();
-
     const baseUrl = cleanBaseUrl(row.base_url || '');
-    const enabled = migratedCompatibilityRow
-        ? Boolean(baseUrl && apiKey)
-        : Boolean(row.enabled);
-
+    const enabled = migratedCompatibilityRow ? Boolean(baseUrl && apiKey) : Boolean(row.enabled);
     return {
-        source: migratedCompatibilityRow ? 'environment-migration' : 'database',
-        enabled,
-        baseUrl,
-        apiKey: String(apiKey || '').trim(),
-        syncIntervalMinutes: Number(row.sync_interval_minutes) || 15,
+        source: migratedCompatibilityRow ? 'environment-migration' : 'database', enabled, baseUrl,
+        apiKey: String(apiKey || '').trim(), syncIntervalMinutes: Number(row.sync_interval_minutes) || 15,
         updatedAt: row.updated_at || null
     };
 }
 
+// Compatibility bridge for integrations that still read env at call time. Each
+// process loads the same encrypted DB row for itself; the database remains the
+// canonical source rather than another process's environment.
 function applyRuntime(cfg) {
     const activeKey = cfg?.enabled ? String(cfg.apiKey || '').trim() : '';
     process.env.SEERR_API_KEY = activeKey;
@@ -75,13 +61,10 @@ function applyRuntime(cfg) {
 }
 
 async function mirrorUrl(baseUrl) {
-    await query(`
-        INSERT INTO platform_settings(setting_key,setting_value,updated_at)
-        VALUES('platform',$1::jsonb,NOW())
-        ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value=platform_settings.setting_value || EXCLUDED.setting_value,
-            updated_at=NOW()
-    `, [JSON.stringify({ overseerrUrl: baseUrl || '' })]);
+    await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_at)
+        VALUES('platform',$1::jsonb,NOW()) ON CONFLICT(setting_key) DO UPDATE SET
+        setting_value=platform_settings.setting_value || EXCLUDED.setting_value,updated_at=NOW()`,
+    [JSON.stringify({ overseerrUrl: baseUrl || '' })]);
     await runtimeSettings.reload();
 }
 
@@ -97,34 +80,20 @@ async function load() {
     return loading;
 }
 
-async function ensureLoaded() {
-    if (!cache) await load();
-    return cache;
-}
-
-function peek() {
-    return cache || envConfig();
-}
-
-async function get() {
-    await ensureLoaded();
-    return peek();
-}
-
-function configured(cfg) {
-    return Boolean(cfg?.enabled && cfg?.baseUrl && cfg?.apiKey);
-}
+async function ensureLoaded() { if (!cache) await load(); return cache; }
+function peek() { return cache || envConfig(); }
+async function get() { await ensureLoaded(); return peek(); }
+function configured(cfg) { return Boolean(cfg?.enabled && cfg?.baseUrl && cfg?.apiKey); }
 
 async function status() {
     const cfg = await get();
+    const schedule = await query(`SELECT enabled,interval_seconds,last_success_at,last_error,next_run_at
+        FROM automation_job_state WHERE job_key='request_users'`).catch(() => ({ rows: [] }));
+    const job = schedule.rows[0] || null;
     return {
-        source: cfg.source,
-        enabled: Boolean(cfg.enabled),
-        configured: configured(cfg),
-        baseUrl: cfg.baseUrl || '',
-        apiKeyConfigured: Boolean(cfg.apiKey),
-        syncIntervalMinutes: Number(cfg.syncIntervalMinutes) || 15,
-        updatedAt: cfg.updatedAt || null
+        source: cfg.source, enabled: Boolean(cfg.enabled), configured: configured(cfg), baseUrl: cfg.baseUrl || '',
+        apiKeyConfigured: Boolean(cfg.apiKey), syncIntervalMinutes: job ? Math.round(Number(job.interval_seconds || 900)/60) : Number(cfg.syncIntervalMinutes)||15,
+        updatedAt: cfg.updatedAt || null, automation: job
     };
 }
 
@@ -134,21 +103,23 @@ async function save(input, actorUserId = null) {
     const baseUrl = cleanBaseUrl(input.baseUrl || '');
     const syncIntervalMinutes = Math.max(5, Math.min(1440, parseInt(input.syncIntervalMinutes, 10) || 15));
     const nextApiKey = input.clearApiKey ? '' : (String(input.apiKey || '').trim() || current.apiKey || '');
-
     if (enabled && !baseUrl) throw new Error('Request service URL is required while the integration is enabled.');
     if (enabled && !nextApiKey) throw new Error('Request service API key is required while the integration is enabled.');
 
-    await query(`
-        INSERT INTO request_service_settings(id,enabled,base_url,api_key_encrypted,sync_interval_minutes,updated_by,updated_at)
-        VALUES(1,$1,$2,$3,$4,$5,NOW())
-        ON CONFLICT(id) DO UPDATE SET
-            enabled=EXCLUDED.enabled,
-            base_url=EXCLUDED.base_url,
-            api_key_encrypted=EXCLUDED.api_key_encrypted,
-            sync_interval_minutes=EXCLUDED.sync_interval_minutes,
-            updated_by=EXCLUDED.updated_by,
-            updated_at=NOW()
-    `, [enabled, baseUrl || null, nextApiKey ? encryptString(nextApiKey) : null, syncIntervalMinutes, actorUserId]);
+    await transaction(async client => {
+        await client.query(`INSERT INTO request_service_settings(id,enabled,base_url,api_key_encrypted,sync_interval_minutes,updated_by,updated_at)
+            VALUES(1,$1,$2,$3,$4,$5,NOW()) ON CONFLICT(id) DO UPDATE SET enabled=EXCLUDED.enabled,
+            base_url=EXCLUDED.base_url,api_key_encrypted=EXCLUDED.api_key_encrypted,
+            sync_interval_minutes=EXCLUDED.sync_interval_minutes,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,
+        [enabled, baseUrl || null, nextApiKey ? encryptString(nextApiKey) : null, syncIntervalMinutes, actorUserId]);
+        // Automation is the one scheduler. Keep the legacy request-service
+        // interval column mirrored for compatibility/export, but drive the job
+        // itself from automation_job_state.
+        await client.query(`UPDATE automation_job_state SET interval_seconds=$2,
+            enabled=CASE WHEN $3 THEN enabled ELSE FALSE END,
+            next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,updated_at=NOW()
+            WHERE job_key='request_users'`, ['request_users', syncIntervalMinutes * 60, enabled]);
+    });
 
     cache = { source: 'database', enabled, baseUrl, apiKey: nextApiKey, syncIntervalMinutes, updatedAt: new Date() };
     applyRuntime(cache);
@@ -164,6 +135,7 @@ async function useEnvironment(actorUserId = null) {
     await runtimeSettings.ensureLoaded();
     cache = envConfig();
     applyRuntime(cache);
+    await query(`UPDATE automation_job_state SET interval_seconds=$2,updated_at=NOW() WHERE job_key='request_users'`, ['request_users', cache.syncIntervalMinutes*60]).catch(()=>{});
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                  VALUES($1,'admin.request_service.use_environment','request_service','central','{}'::jsonb)`, [actorUserId]);
     return status();
@@ -173,42 +145,17 @@ async function testConnection() {
     const cfg = await get();
     if (!cfg.baseUrl) throw new Error('Request service URL is not configured.');
     if (!cfg.apiKey) throw new Error('Request service API key is not configured.');
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 10000);
     try {
         const url = new URL('/api/v1/user?take=1&skip=0&sort=displayname', `${cfg.baseUrl}/`);
-        const response = await fetch(url, {
-            method: 'GET',
-            redirect: 'error',
-            signal: controller.signal,
-            headers: { Accept: 'application/json', 'X-Api-Key': cfg.apiKey }
-        });
-        if (!response.ok) {
-            let detail = '';
-            try {
-                const body = await response.json();
-                detail = body?.message ? `: ${body.message}` : '';
-            } catch (_) {}
-            throw new Error(`Request service returned HTTP ${response.status}${detail}`);
-        }
-        const body = await response.json().catch(() => ({}));
-        return {
-            ok: true,
-            message: 'Connected successfully. The request-service URL and API key are valid.',
-            usersVisible: Number(body?.pageInfo?.results ?? (Array.isArray(body?.results) ? body.results.length : 0))
-        };
-    } catch (error) {
-        if (error?.name === 'AbortError') throw new Error('Request service connection timed out after 10 seconds.');
-        throw error;
-    } finally {
-        clearTimeout(timer);
-    }
+        const response = await fetch(url, { method:'GET', redirect:'error', signal:controller.signal,
+            headers:{ Accept:'application/json','X-Api-Key':cfg.apiKey } });
+        if (!response.ok) { let detail=''; try{const body=await response.json();detail=body?.message?`: ${body.message}`:'';}catch(_){} throw new Error(`Request service returned HTTP ${response.status}${detail}`); }
+        const body=await response.json().catch(()=>({}));
+        return { ok:true,message:'Connected successfully. The request-service URL and API key are valid.',usersVisible:Number(body?.pageInfo?.results ?? (Array.isArray(body?.results)?body.results.length:0)) };
+    } catch(error) { if(error?.name==='AbortError')throw new Error('Request service connection timed out after 10 seconds.'); throw error; }
+    finally { clearTimeout(timer); }
 }
 
-function syncIntervalMs() {
-    const cfg = peek();
-    return Math.max(5, Number(cfg.syncIntervalMinutes) || 15) * 60000;
-}
-
-module.exports = { cleanBaseUrl, ensureLoaded, get, peek, status, save, useEnvironment, configured, testConnection, syncIntervalMs };
+function syncIntervalMs() { const cfg=peek(); return Math.max(5,Number(cfg.syncIntervalMinutes)||15)*60000; }
+module.exports={cleanBaseUrl,ensureLoaded,get,peek,status,save,useEnvironment,configured,testConnection,syncIntervalMs};
