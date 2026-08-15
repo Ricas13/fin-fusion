@@ -23,11 +23,11 @@ function requireAtLeast(entries,method,path,n=1){const actual=count(entries,meth
 const app=createApplication();
 const entries=routeEntries(app._router?.stack||[]);
 
-// Route-shadowing contracts: these must have a single canonical owner in the
-// fully assembled production app, not merely in an isolated router test.
 for(const [method,path] of [
     ['GET','/'],
     ['GET','/reseller'],
+    ['GET','/reseller/security'],
+    ['GET','/reseller/ledger'],
     ['POST','/account/checkout/stripe'],
     ['POST','/account/checkout/paypal'],
     ['GET','/account/paypal/return'],
@@ -39,6 +39,10 @@ for(const [method,path] of [
     ['GET','/admin/events'],
     ['GET','/admin/commerce'],
     ['GET','/admin/configuration-health'],
+    ['GET','/admin/configuration'],
+    ['GET','/admin/configuration/export'],
+    ['POST','/admin/configuration/preview'],
+    ['POST','/admin/configuration/apply'],
     ['GET','/account/history']
 ]) requireExactly(entries,method,path);
 
@@ -52,7 +56,7 @@ for(const [method,path] of [
 ]) requireAtLeast(entries,method,path);
 
 const duplicateCritical=[];
-const criticalPrefixes=['/reseller','/account/checkout','/account/paypal/return','/admin/reseller-management'];
+const criticalPrefixes=['/reseller','/account/checkout','/account/paypal/return','/admin/reseller-management','/admin/configuration'];
 const grouped=new Map();
 for(const entry of entries){const key=`${entry.method} ${entry.path}`;grouped.set(key,(grouped.get(key)||0)+1)}
 for(const [key,n] of grouped)if(n>1&&criticalPrefixes.some(prefix=>key.includes(` ${prefix}`)))duplicateCritical.push(`${key} x${n}`);
