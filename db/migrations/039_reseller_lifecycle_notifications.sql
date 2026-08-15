@@ -11,9 +11,6 @@ CREATE TABLE IF NOT EXISTS reseller_notification_state (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- A reseller can receive several expiry warnings for the same downstream
--- entitlement (7d, 3d and 1d), but never the same threshold twice.  Keeping
--- this in PostgreSQL makes the observer safe across worker restarts/replicas.
 CREATE TABLE IF NOT EXISTS reseller_customer_expiry_notices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reseller_id UUID NOT NULL REFERENCES resellers(id) ON DELETE CASCADE,
@@ -35,6 +32,7 @@ INSERT INTO notification_preferences(event_type) VALUES
  ('reseller.subscription.cancelled'),
  ('reseller.payment.failed'),
  ('reseller.grace.started'),
+ ('reseller.suspension.scheduled'),
  ('reseller.estate.suspended'),
  ('reseller.estate.restored'),
  ('reseller.seat_usage'),
