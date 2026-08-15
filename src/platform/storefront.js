@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const customers = require('../customers');
+const monthly = require('../resellers/monthly');
 const { esc } = require('./admin-html');
 const runtimeSettings = require('./runtime-settings');
 const branding = require('./branding');
@@ -65,12 +66,12 @@ function billingMonths(plan) {
 }
 
 function monthlyBaseline(plans, currency) {
-    const monthly = plans.find(plan =>
+    const monthlyPlan = plans.find(plan =>
         plan.billing_interval === 'month'
         && Number(plan.price_minor || 0) > 0
         && String(plan.currency || 'USD') === String(currency || 'USD')
     );
-    return monthly ? Number(monthly.price_minor) : null;
+    return monthlyPlan ? Number(monthlyPlan.price_minor) : null;
 }
 
 function savingForPlan(plan, plans) {
@@ -161,6 +162,23 @@ function planCard(plan, plans, context, featuredCode) {
     </article>`;
 }
 
+function resellerSection(tiers, supportEmail) {
+    if (!tiers.length) return '';
+    const contact = supportEmail
+        ? `mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent('CAPTaINFiN reseller account')}`
+        : '/login';
+    const cards = tiers.map((tier, index) => `<article class="planCard ${index === 1 && tiers.length >= 3 ? 'featured' : ''}">
+        <div class="planGlow" aria-hidden="true"></div>
+        <div class="planCardTop"><div><div class="planName">${esc(tier.name)}</div><div class="planInterval">monthly reseller plan</div></div>${index === 1 && tiers.length >= 3 ? '<span class="planBadge featuredBadge">Popular</span>' : ''}</div>
+        <p class="planDescription">${esc(tier.description || 'Run your own managed customer estate with recurring monthly capacity.')}</p>
+        <div class="planPriceRow"><span class="planPrice">${esc(money(tier.monthly_price_minor, tier.currency))}</span><span class="planPer">/ month</span></div>
+        <div class="planEquivalent">Recurring monthly reseller access</div>
+        <ul class="planFeatures"><li>Up to ${esc(tier.seat_limit)} active Jellyfin account${Number(tier.seat_limit) === 1 ? '' : 's'}</li><li>Your own Jellyfin account counts as one</li><li>Reseller revenue &amp; customer dashboard</li><li>Automatic Jellyfin provisioning</li><li>Manual downstream customer sales</li></ul>
+        <a class="storeBtn ${index === 1 && tiers.length >= 3 ? 'primary' : 'secondary'} full" href="${esc(contact)}">${supportEmail ? 'Apply to become a reseller' : 'Reseller sign in'}</a>
+    </article>`).join('');
+    return `<section class="storeSection pricingSection" id="resellers"><div class="storeWrap"><div class="sectionIntro"><div class="sectionKicker">Build your own customer base</div><h2>Monthly reseller plans.</h2><p>Pay a fixed amount every month for an active-customer allowance. Reseller accounts are approved by the service administrator.</p></div><div class="pricingGrid">${cards}</div><div class="storeNotice"><strong>How reseller access works:</strong> your reseller subscription stays recurring monthly. If it becomes unpaid or expires, your reseller-managed Jellyfin estate is suspended until the subscription is restored.</div></div></section>`;
+}
+
 function featureIcon(index) {
     const icons = [
         '<path d="M4 7h16v10H4z"/><path d="m9 7 2-3h2l2 3"/><path d="M8 12h8"/>',
@@ -193,7 +211,7 @@ function disabledPage(site) {
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><style>html,body{margin:0;min-height:100%;background:#080b10;color:#f4f7fa;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.closed{min-height:100vh;display:grid;place-items:center;padding:24px}.closedCard{width:min(520px,100%);border:1px solid #28303a;border-radius:18px;background:#10161e;padding:30px}.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:20px}.brand img{width:38px;height:38px;border-radius:9px;object-fit:cover}.muted{color:#8794a5;line-height:1.6}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.actions a{color:#d9e0e8;text-decoration:none;border:1px solid #32404d;border-radius:9px;padding:10px 13px}</style></head><body><main class="closed"><section class="closedCard"><div class="brand"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></div><h1>Storefront not enabled</h1><p class="muted">This installation is not currently publishing a public storefront. Existing customers and administrators can still sign in.</p><div class="actions"><a href="/account/login">Customer sign in</a><a href="/login">Administration</a></div></section></main></body></html>`;
 }
 
-function renderStorefront({ site, plans, store, registrationOpen, logged }) {
+function renderStorefront({ site, plans, store, registrationOpen, logged, resellerTiers = [] }) {
     const context = { logged, registrationOpen };
     const paidPlans = plans.filter(plan => Number(plan.price_minor || 0) > 0);
     const maxStreams = Math.max(1, ...plans.map(plan => Number(plan.streams || 1)));
@@ -208,6 +226,8 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
     const primaryLabel = logged ? 'Open my account' : registrationOpen ? (hasTrial ? 'Start free trial' : 'Get started') : 'Customer sign in';
     const announcement = String(store.copy.announcement || '').trim();
     const supportEmail = String(store.copy.supportEmail || '').trim();
+    const resellerMarkup = resellerSection(resellerTiers, supportEmail);
+    const resellerNav = resellerTiers.length ? '<a href="#resellers">Resellers</a>' : '';
     const cheapestPaid = paidPlans.slice().sort((a, b) => {
         const am = monthlyEquivalent(a) || Number(a.price_minor || 0);
         const bm = monthlyEquivalent(b) || Number(b.price_minor || 0);
@@ -231,7 +251,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
 <header class="storeHeader">
     <div class="storeWrap headerInner">
         <a class="storeBrand" href="/" aria-label="${esc(site)} home"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></a>
-        <nav class="storeNav" aria-label="Main navigation"><a href="#features">Features</a><a href="#plans">Plans</a><a href="#how">How it works</a></nav>
+        <nav class="storeNav" aria-label="Main navigation"><a href="#features">Features</a><a href="#plans">Plans</a>${resellerNav}<a href="#how">How it works</a></nav>
         <div class="headerActions"><a class="storeBtn ghost" href="/account/login">Sign in</a>${logged ? '<a class="storeBtn primary small" href="/account">My account</a>' : registrationOpen ? '<a class="storeBtn primary small" href="/account/register">Get started</a>' : ''}</div>
     </div>
 </header>
@@ -278,6 +298,8 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
         </div>
     </section>
 
+    ${resellerMarkup}
+
     <section class="storeSection howSection" id="how">
         <div class="storeWrap">
             <div class="sectionIntro"><div class="sectionKicker">Three simple steps</div><h2>From account to watching in minutes.</h2></div>
@@ -305,11 +327,15 @@ async function storefrontPage(req, res) {
             res.setHeader('Cache-Control', 'no-store, private, max-age=0');
             return res.status(404).send(disabledPage(site));
         }
-        const [plans, store] = await Promise.all([customers.listPublicPlans(), settings()]);
+        const [plans, store, resellerTiers] = await Promise.all([
+            customers.listPublicPlans(),
+            settings(),
+            monthly.listTiers({ visibleOnly: true, activeOnly: true })
+        ]);
         const registrationOpen = runtimeSettings.publicRegistrationOpen();
         const logged = Boolean(req.session?.customerId);
         res.setHeader('Cache-Control', logged ? 'no-store, private, max-age=0' : 'public, max-age=60');
-        return res.send(renderStorefront({ site, plans, store, registrationOpen, logged }));
+        return res.send(renderStorefront({ site, plans, store, registrationOpen, logged, resellerTiers }));
     } catch (error) {
         console.error('Storefront failed:', error.message);
         return res.status(500).send('Store temporarily unavailable');
@@ -321,6 +347,7 @@ module.exports = {
     settings,
     disabledPage,
     renderStorefront,
+    resellerSection,
     planCard,
     savingForPlan,
     monthlyEquivalent,
