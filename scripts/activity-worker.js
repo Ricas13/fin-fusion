@@ -1,67 +1,23 @@
 'use strict';
 
 require('dotenv').config();
+const fs=require('fs');
 
-if (!process.env.ACTIVITY_DATABASE_URL) throw new Error('ACTIVITY_DATABASE_URL is required');
-if (!process.env.JELLYFIN_ENCRYPTION_KEY) throw new Error('JELLYFIN_ENCRYPTION_KEY is required');
-if (!process.env.ACTIVITY_ENCRYPTION_KEY) throw new Error('ACTIVITY_ENCRYPTION_KEY is required');
-
-process.env.DATABASE_URL = process.env.ACTIVITY_DATABASE_URL;
-process.env.DATA_ENCRYPTION_KEY = process.env.ACTIVITY_ENCRYPTION_KEY;
-process.env.ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN = 'false';
-
-const { getPool } = require('../src/db');
-const activity = require('../src/jellyfin/activity');
-const fleetMetrics = require('../src/jellyfin/fleet-metrics');
-
-const intervalSeconds = Math.max(10, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 30)));
-const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
-let lastFleetRun = 0;
-let shuttingDown = false;
-
-async function refreshFleetMetricsIfDue() {
-    const now = Date.now();
-    if (now - lastFleetRun < fleetIntervalSeconds * 1000) return;
-    lastFleetRun = now;
-    const results = await fleetMetrics.refreshAll();
-    const failures = results.filter(result => !result.ok);
-    const streams = results.filter(result => result.ok).reduce((sum, result) => sum + Number(result.activeStreams || 0), 0);
-    if (failures.length) {
-        console.warn(`Fleet metrics: ${failures.length}/${results.length} server(s) unavailable; observed streams=${streams}`);
-    }
-}
-
-async function run() {
-    while (!shuttingDown) {
-        const started = Date.now();
-        try {
-            const result = await activity.runActivityPolicyCycle();
-            if (!result.skipped) {
-                console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now() - started}`);
-            }
-        } catch (error) {
-            console.error('Activity cycle failed:', error.message);
-        }
-        try {
-            await refreshFleetMetricsIfDue();
-        } catch (error) {
-            console.error('Fleet metrics refresh failed:', error.message);
-        }
-        await new Promise(resolve => setTimeout(resolve, intervalSeconds * 1000));
-    }
-}
-
-async function shutdown() {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    try { await getPool().end(); } catch (_) {}
-}
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-run().catch(async error => {
-    console.error('Activity worker fatal error:', error.message);
-    try { await getPool().end(); } catch (_) {}
-    process.exit(1);
-});
+if(!process.env.ACTIVITY_DATABASE_URL)throw new Error('ACTIVITY_DATABASE_URL is required');
+if(!process.env.JELLYFIN_ENCRYPTION_KEY)throw new Error('JELLYFIN_ENCRYPTION_KEY is required');
+if(!process.env.ACTIVITY_ENCRYPTION_KEY)throw new Error('ACTIVITY_ENCRYPTION_KEY is required');
+process.env.DATABASE_URL=process.env.ACTIVITY_DATABASE_URL;
+process.env.DATA_ENCRYPTION_KEY=process.env.ACTIVITY_ENCRYPTION_KEY;
+process.env.ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN='false';
+const{getPool}=require('../src/db');
+const activity=require('../src/jellyfin/activity');
+const fleetMetrics=require('../src/jellyfin/fleet-metrics');
+const intervalSeconds=Math.max(10,Math.min(300,Number(process.env.STREAM_POLICY_POLL_SECONDS||30))),fleetIntervalSeconds=Math.max(30,Math.min(900,Number(process.env.FLEET_METRICS_POLL_SECONDS||60))),HEARTBEAT_FILE=process.env.ACTIVITY_HEARTBEAT_FILE||'/tmp/activity-heartbeat';
+let lastFleetRun=0,shuttingDown=false,sleepTimer=null,sleepResolve=null;
+function heartbeat(){try{fs.writeFileSync(HEARTBEAT_FILE,new Date().toISOString(),{mode:0o600})}catch(error){console.warn('Activity heartbeat write failed:',error.message)}}
+async function refreshFleetMetricsIfDue(){const now=Date.now();if(now-lastFleetRun<fleetIntervalSeconds*1000)return;lastFleetRun=now;const results=await fleetMetrics.refreshAll(),failures=results.filter(result=>!result.ok),streams=results.filter(result=>result.ok).reduce((sum,result)=>sum+Number(result.activeStreams||0),0);if(failures.length)console.warn(`Fleet metrics: ${failures.length}/${results.length} server(s) unavailable; observed streams=${streams}`)}
+function sleep(ms){return new Promise(resolve=>{sleepResolve=resolve;sleepTimer=setTimeout(()=>{sleepTimer=null;sleepResolve=null;resolve()},ms)})}
+async function run(){heartbeat();while(!shuttingDown){const started=Date.now();try{const result=await activity.runActivityPolicyCycle();if(!result.skipped)console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now()-started}`)}catch(error){console.error('Activity cycle failed:',error.message)}try{await refreshFleetMetricsIfDue()}catch(error){console.error('Fleet metrics refresh failed:',error.message)}heartbeat();if(!shuttingDown)await sleep(intervalSeconds*1000)}heartbeat();try{await getPool().end()}catch(_){}}
+function requestShutdown(signal){if(shuttingDown)return;shuttingDown=true;console.log(`Activity worker draining (${signal})`);if(sleepTimer){clearTimeout(sleepTimer);sleepTimer=null;const resolve=sleepResolve;sleepResolve=null;resolve?.()}}
+process.on('SIGTERM',()=>requestShutdown('SIGTERM'));process.on('SIGINT',()=>requestShutdown('SIGINT'));
+run().catch(async error=>{console.error('Activity worker fatal error:',error.message);process.exitCode=1;try{await getPool().end()}catch(_){}});
