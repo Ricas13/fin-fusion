@@ -1,11 +1,12 @@
 'use strict';
 const {query}=require('../db');
+const workerHealth=require('../automation/worker-health');
 function key(prefix,id){return `${prefix}:${id}`}
 function item({key,title,area,severity='warning',detail='',href='',createdAt=null,sourceStatus='open'}){return{key,title,area,severity,detail,href,createdAt,sourceStatus}}
 async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,provisioning,notifications,backups,protectedActivations]=await Promise.all([
  query(`SELECT id,incident_type,incident_status,provider,provider_event_id,customer_id,reseller_id,created_at FROM payment_incidents WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`SELECT job_key,last_status,last_error,last_finished_at,enabled FROM automation_job_state WHERE enabled=TRUE AND (last_status='failed' OR (last_finished_at IS NOT NULL AND last_finished_at<NOW()-INTERVAL '2 days')) ORDER BY job_key`).catch(()=>({rows:[]})),
- query(`SELECT worker_key,last_heartbeat_at,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int age FROM operational_worker_state WHERE last_heartbeat_at<NOW()-INTERVAL '2 minutes'`).catch(()=>({rows:[]})),
+ query(`SELECT worker_key,last_heartbeat_at FROM operational_worker_state ORDER BY worker_key`).catch(()=>({rows:[]})),
  query(`SELECT id,name,health_status,last_health_check FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN('offline','degraded') ORDER BY name`).catch(()=>({rows:[]})),
  query(`SELECT id,customer_id,action,status,detail,started_at FROM provisioning_runs WHERE status='failed' AND started_at>NOW()-INTERVAL '7 days' ORDER BY started_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`SELECT id,channel,event_type,message_type,status,last_error,created_at FROM notification_outbox WHERE status IN('failed','dead') ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
@@ -14,7 +15,7 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  ]);
  for(const r of incidents.rows)out.push(item({key:key('payment',r.id),title:`${r.provider||'Payment'} ${r.incident_type||'incident'}`,area:'Payments',severity:'critical',detail:`${r.incident_status||'open'} · ${r.provider_event_id||r.id}`,href:`/admin/commerce?incident=${encodeURIComponent(r.id)}#incident-${encodeURIComponent(r.id)}`,createdAt:r.created_at}));
  for(const r of jobs.rows)out.push(item({key:key('job',r.job_key),title:`Automation job: ${r.job_key}`,area:'Automation',severity:r.last_status==='failed'?'critical':'warning',detail:r.last_error||`Last completed ${r.last_finished_at||'never'}`,href:`/admin/automation?job=${encodeURIComponent(r.job_key)}#job-${encodeURIComponent(r.job_key)}`,createdAt:r.last_finished_at}));
- for(const r of workers.rows)out.push(item({key:key('worker',r.worker_key),title:`Worker heartbeat stale: ${r.worker_key}`,area:'Automation',severity:'critical',detail:`Heartbeat age ${r.age}s`,href:`/admin/automation?worker=${encodeURIComponent(r.worker_key)}`,createdAt:r.last_heartbeat_at}));
+ for(const r of workers.rows){const state=workerHealth.describe(r.worker_key,r.last_heartbeat_at);if(state.stale)out.push(item({key:key('worker',r.worker_key),title:`Worker heartbeat stale: ${r.worker_key}`,area:'Automation',severity:'critical',detail:`Heartbeat age ${state.ageSeconds}s · threshold ${state.thresholdSeconds}s`,href:`/admin/automation?worker=${encodeURIComponent(r.worker_key)}`,createdAt:r.last_heartbeat_at}))}
  for(const r of servers.rows)out.push(item({key:key('server',r.id),title:`${r.name} is ${r.health_status}`,area:'Servers',severity:r.health_status==='offline'?'critical':'warning',detail:`Last health check ${r.last_health_check||'never'}`,href:`/admin/servers/${r.id}/edit`,createdAt:r.last_health_check}));
  for(const r of provisioning.rows)out.push(item({key:key('provisioning',r.id),title:`Provisioning failed: ${r.action}`,area:'Customers',severity:'critical',detail:r.detail?.error||'Provisioning run failed',href:`/admin/users/${r.customer_id}?tab=access#provisioning-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
  for(const r of notifications.rows)out.push(item({key:key('notification',r.id),title:`${r.channel} notification ${r.status}`,area:'Notifications',severity:r.status==='dead'?'critical':'warning',detail:r.last_error||r.event_type||r.message_type||'',href:`${r.channel==='email'?'/admin/notifications':'/admin/notifications/preferences'}?outboxId=${encodeURIComponent(r.id)}#outbox-${encodeURIComponent(r.id)}`,createdAt:r.created_at}));
