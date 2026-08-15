@@ -52,11 +52,11 @@ async function seatUsage(resellerId, client = null) {
         SELECT COUNT(DISTINCT c.id)::int AS used
         FROM customers c
         WHERE c.reseller_id=$1
-          AND NOT EXISTS (SELECT 1 FROM customer_access_holds h WHERE h.customer_id=c.id AND h.released_at IS NULL)
           AND EXISTS (
               SELECT 1 FROM subscriptions s
               WHERE s.customer_id=c.id AND s.superseded_by IS NULL
-                AND s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW()
+                AND s.status IN ('active','trialing','past_due','paused')
+                AND s.starts_at<=NOW() AND s.current_period_end>NOW()
           )
     `, [resellerId]);
     return Number(result.rows[0]?.used || 0);
@@ -65,9 +65,9 @@ async function seatUsage(resellerId, client = null) {
 async function customerActive(customerId, client) {
     const result = await client.query(`SELECT EXISTS(
         SELECT 1 FROM customers c WHERE c.id=$1
-          AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=c.id AND h.released_at IS NULL)
           AND EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id AND s.superseded_by IS NULL
-            AND s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+            AND s.status IN ('active','trialing','past_due','paused')
+            AND s.starts_at<=NOW() AND s.current_period_end>NOW())
     ) AS active`, [customerId]);
     return Boolean(result.rows[0]?.active);
 }
