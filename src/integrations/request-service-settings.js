@@ -26,7 +26,6 @@ function cleanBaseUrl(value) {
 }
 
 function originalEnvApiKey() { return ENV_SEERR_API_KEY || ENV_OVERSEERR_API_KEY; }
-
 function envConfig() {
     const baseUrl = cleanBaseUrl(runtimeSettings.overseerrUrl() || ENV_REQUEST_URL || '');
     const apiKey = originalEnvApiKey();
@@ -35,7 +34,6 @@ function envConfig() {
         syncIntervalMinutes: Math.max(5, Math.min(1440, Math.round(ENV_SYNC_INTERVAL_MS / 60000) || 15)), updatedAt: null
     };
 }
-
 function decodeRow(row) {
     let apiKey = '';
     if (row.api_key_encrypted) apiKey = decryptString(row.api_key_encrypted) || '';
@@ -49,17 +47,12 @@ function decodeRow(row) {
         updatedAt: row.updated_at || null
     };
 }
-
-// Compatibility bridge for integrations that still read env at call time. Each
-// process loads the same encrypted DB row for itself; the database remains the
-// canonical source rather than another process's environment.
 function applyRuntime(cfg) {
     const activeKey = cfg?.enabled ? String(cfg.apiKey || '').trim() : '';
     process.env.SEERR_API_KEY = activeKey;
     process.env.OVERSEERR_API_KEY = '';
     process.env.REQUEST_USER_SYNC_INTERVAL_MS = String(Math.max(5, Number(cfg?.syncIntervalMinutes) || 15) * 60000);
 }
-
 async function mirrorUrl(baseUrl) {
     await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_at)
         VALUES('platform',$1::jsonb,NOW()) ON CONFLICT(setting_key) DO UPDATE SET
@@ -67,7 +60,17 @@ async function mirrorUrl(baseUrl) {
     [JSON.stringify({ overseerrUrl: baseUrl || '' })]);
     await runtimeSettings.reload();
 }
-
+async function syncAutomationSchedule({enabled,syncIntervalMinutes}) {
+    const result=await query(`UPDATE automation_job_state
+        SET interval_seconds=$2,enabled=$3,
+            next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
+            force_run_requested=CASE WHEN $3 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
+        WHERE job_key='request_users' RETURNING *`, ['request_users', syncIntervalMinutes*60, Boolean(enabled)]);
+    if(!result.rowCount){
+        await query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at)
+            VALUES('request_users',$1,$2,CASE WHEN $1 THEN NOW() ELSE NULL END)`,[Boolean(enabled),syncIntervalMinutes*60]);
+    }
+}
 async function load() {
     if (loading) return loading;
     loading = (async () => {
@@ -79,12 +82,10 @@ async function load() {
     })().finally(() => { loading = null; });
     return loading;
 }
-
 async function ensureLoaded() { if (!cache) await load(); return cache; }
 function peek() { return cache || envConfig(); }
 async function get() { await ensureLoaded(); return peek(); }
 function configured(cfg) { return Boolean(cfg?.enabled && cfg?.baseUrl && cfg?.apiKey); }
-
 async function status() {
     const cfg = await get();
     const schedule = await query(`SELECT enabled,interval_seconds,last_success_at,last_error,next_run_at
@@ -96,7 +97,6 @@ async function status() {
         updatedAt: cfg.updatedAt || null, automation: job
     };
 }
-
 async function save(input, actorUserId = null) {
     const current = await get();
     const enabled = Boolean(input.enabled);
@@ -105,22 +105,19 @@ async function save(input, actorUserId = null) {
     const nextApiKey = input.clearApiKey ? '' : (String(input.apiKey || '').trim() || current.apiKey || '');
     if (enabled && !baseUrl) throw new Error('Request service URL is required while the integration is enabled.');
     if (enabled && !nextApiKey) throw new Error('Request service API key is required while the integration is enabled.');
-
     await transaction(async client => {
         await client.query(`INSERT INTO request_service_settings(id,enabled,base_url,api_key_encrypted,sync_interval_minutes,updated_by,updated_at)
             VALUES(1,$1,$2,$3,$4,$5,NOW()) ON CONFLICT(id) DO UPDATE SET enabled=EXCLUDED.enabled,
             base_url=EXCLUDED.base_url,api_key_encrypted=EXCLUDED.api_key_encrypted,
             sync_interval_minutes=EXCLUDED.sync_interval_minutes,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,
         [enabled, baseUrl || null, nextApiKey ? encryptString(nextApiKey) : null, syncIntervalMinutes, actorUserId]);
-        // Automation is the one scheduler. Keep the legacy request-service
-        // interval column mirrored for compatibility/export, but drive the job
-        // itself from automation_job_state.
-        await client.query(`UPDATE automation_job_state SET interval_seconds=$2,
-            enabled=CASE WHEN $3 THEN enabled ELSE FALSE END,
-            next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,updated_at=NOW()
-            WHERE job_key='request_users'`, ['request_users', syncIntervalMinutes * 60, enabled]);
+        const schedule=await client.query(`UPDATE automation_job_state
+            SET interval_seconds=$2,enabled=$3,
+                next_run_at=CASE WHEN $3 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
+                force_run_requested=CASE WHEN $3 THEN force_run_requested ELSE FALSE END,updated_at=NOW()
+            WHERE job_key='request_users' RETURNING id`,['request_users',syncIntervalMinutes*60,enabled]);
+        if(!schedule.rowCount)await client.query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at) VALUES('request_users',$1,$2,CASE WHEN $1 THEN NOW() ELSE NULL END)`,[enabled,syncIntervalMinutes*60]);
     });
-
     cache = { source: 'database', enabled, baseUrl, apiKey: nextApiKey, syncIntervalMinutes, updatedAt: new Date() };
     applyRuntime(cache);
     await mirrorUrl(baseUrl);
@@ -129,18 +126,16 @@ async function save(input, actorUserId = null) {
         [actorUserId, JSON.stringify({ enabled, baseUrl, apiKeyConfigured: Boolean(nextApiKey), syncIntervalMinutes })]);
     return status();
 }
-
 async function useEnvironment(actorUserId = null) {
     await query('DELETE FROM request_service_settings WHERE id=1');
     await runtimeSettings.ensureLoaded();
     cache = envConfig();
     applyRuntime(cache);
-    await query(`UPDATE automation_job_state SET interval_seconds=$2,updated_at=NOW() WHERE job_key='request_users'`, ['request_users', cache.syncIntervalMinutes*60]).catch(()=>{});
+    await syncAutomationSchedule({enabled:cache.enabled,syncIntervalMinutes:cache.syncIntervalMinutes}).catch(()=>{});
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                  VALUES($1,'admin.request_service.use_environment','request_service','central','{}'::jsonb)`, [actorUserId]);
     return status();
 }
-
 async function testConnection() {
     const cfg = await get();
     if (!cfg.baseUrl) throw new Error('Request service URL is not configured.');
@@ -156,6 +151,5 @@ async function testConnection() {
     } catch(error) { if(error?.name==='AbortError')throw new Error('Request service connection timed out after 10 seconds.'); throw error; }
     finally { clearTimeout(timer); }
 }
-
 function syncIntervalMs() { const cfg=peek(); return Math.max(5,Number(cfg.syncIntervalMinutes)||15)*60000; }
-module.exports={cleanBaseUrl,ensureLoaded,get,peek,status,save,useEnvironment,configured,testConnection,syncIntervalMs};
+module.exports={cleanBaseUrl,ensureLoaded,get,peek,status,save,useEnvironment,configured,testConnection,syncIntervalMs,syncAutomationSchedule};
