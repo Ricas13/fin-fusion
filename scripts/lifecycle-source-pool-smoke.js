@@ -1,0 +1,35 @@
+'use strict';
+const assert=require('assert');const fs=require('fs');const path=require('path');const read=f=>fs.readFileSync(path.join(__dirname,'..',f),'utf8');
+const migration=read('db/migrations/076_jellyfin_lifecycle_and_stremio_sources.sql');
+const lifecycle=read('src/automation/jellyfin-lifecycle.js');
+const policy=read('src/entitlements/plan-lifecycle-policy.js');
+const reseller=read('src/resellers/monthly.js');
+const sourcePool=read('src/stremio/source-pool.js');
+const runtime=read('src/stremio/runtime.js');
+const admin=read('src/platform/admin-inactivity-policy.js');
+const sourceAdmin=read('src/platform/admin-stremio-sources.js');
+const router=read('src/platform/router.js');
+
+assert(migration.includes('jellyfin_lifecycle_v2'),'Global Jellyfin lifecycle v2 settings must exist');
+for(const fragment of ['"freeNoPlaybackDays":7','"freeDeleteAfterDisabledDays":7','"trialDeleteAfterDisabledDays":30','"paidDeleteAfterDisabledDays":30','"resellerDeleteAfterDisabledDays":30'])assert(migration.includes(fragment),`Missing lifecycle default ${fragment}`);
+assert(migration.includes('jellyfin_account_lifecycle'),'Durable Jellyfin lifecycle ledger must exist');
+assert(lifecycle.includes("cause==='free_inactivity'")&&lifecycle.includes("cause==='trial_expired'")&&lifecycle.includes("cause==='reseller_delinquent'"),'Lifecycle must distinguish free, trial and reseller causes');
+assert(lifecycle.includes("cause='payment_delinquent'")||lifecycle.includes("cause='payment_delinquent'" )||lifecycle.includes("cause='payment_delinquent'"),'Paid delinquency cause must be recorded');
+assert(lifecycle.includes('delete_due_at')&&lifecycle.includes('disabled_at'),'Deletion clock must be based on disable timestamp');
+assert(!/DELETE\s+FROM\s+customers/i.test(lifecycle),'Lifecycle automation must never delete portal customers');
+assert(!/UPDATE\s+customers\s+SET\s+.*(?:disabled|active|status|archived)/is.test(lifecycle),'Lifecycle automation must never disable/archive portal customers');
+assert(admin.includes('Portal identity invariant'),'Admin UI must state the portal identity invariant');
+assert(policy.includes('deleteAfterDisabledDays'),'Plans must support post-disable deletion override');
+assert(reseller.includes("ESTATE_HOLD='reseller_subscription'")&&reseller.includes('estateCustomerIds'),'Reseller suspension must continue to cover the full estate');
+
+for(const table of ['stremio_sources','stremio_source_accounts','stremio_source_media_index','stremio_stream_requests'])assert(migration.includes(table),`Missing ${table}`);
+assert(sourcePool.includes("encryptWithEnv(rawToken,TOKEN_ENV,TOKEN_PREFIX)"),'Source account tokens must be encrypted');
+assert(sourcePool.includes('outbound.assertSafeIntegrationUrl'),'External sources must pass outbound SSRF policy');
+assert(sourcePool.includes("['priority','random','weighted_random']")||sourcePool.includes("['priority','random','weighted_random'].includes"),'Source selection strategies must be constrained');
+assert(sourcePool.includes('portalCustomerAttributed:true'),'Stream requests must retain CAPTaINFiN customer attribution');
+assert(sourcePool.includes("upstreamVisibility:'bridge_account'"),'Upstream visibility must explicitly use configured bridge identity');
+assert(!/hide.*jellyfin|conceal.*jellyfin|spoof.*user/i.test(sourcePool),'Source pool must not implement upstream concealment/spoofing');
+assert(runtime.includes('sourcePool.streamsFor')&&runtime.indexOf('sourcePool.streamsFor')<runtime.indexOf('jellyfin.streamsFor'),'Source pool must run first with legacy Stremio fallback');
+assert(sourceAdmin.includes('explicitly authorized')&&sourceAdmin.includes('No upstream activity-concealment'),'Operator UI must explain authorized/non-concealed behavior');
+assert(router.includes('createAdminStremioSourcesRouter'),'Source-pool admin router must be mounted');
+console.log('Jellyfin lifecycle + Stremio source-pool smoke: ok');
