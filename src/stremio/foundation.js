@@ -12,6 +12,12 @@ function normalizeServiceType(value){
 }
 function allowsJellyfin(value){const type=normalizeServiceType(value);return type==='jellyfin'||type==='bundle';}
 function allowsStremio(value){const type=normalizeServiceType(value);return type==='stremio'||type==='bundle';}
+function runtimeReady(){return String(process.env.STREMIO_RUNTIME_ENABLED||'').toLowerCase()==='true';}
+function assertAcquirable(plan,{context='acquisition'}={}){
+    const type=normalizeServiceType(plan?.service_type||plan?.serviceType||'jellyfin');
+    if(allowsStremio(type)&&!runtimeReady())throw new Error(`Stremio delivery is not available for ${context} until the production addon runtime is enabled.`);
+    return plan;
+}
 
 function hashInstallCredential(raw){
     const token=String(raw||'').trim();
@@ -88,4 +94,4 @@ function streamDisplayFromFilename(filename,{prefix='CF ⚡'}={}){
     };
 }
 
-module.exports={SERVICE_TYPES,normalizeServiceType,allowsJellyfin,allowsStremio,hashInstallCredential,issueInstallCredential,parseFilenameMetadata,streamDisplayFromFilename};
+module.exports={SERVICE_TYPES,normalizeServiceType,allowsJellyfin,allowsStremio,runtimeReady,assertAcquirable,hashInstallCredential,issueInstallCredential,parseFilenameMetadata,streamDisplayFromFilename};
