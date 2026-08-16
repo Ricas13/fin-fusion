@@ -5,6 +5,7 @@ const customers=require('../customers');
 const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const requestUserSync=require('../integrations/request-user-sync');
 const runtimeSettings=require('./runtime-settings');
 const productReadiness=require('./product-readiness');
@@ -37,17 +38,23 @@ function createCustomerDashboardRouter(){
   r.get('/account',requireCustomer,async(req,res,next)=>{
     try{
       await runtimeSettings.ensureLoaded();
+      // A global dormant-user cleanup never removes the CAPTaINFiN customer.
+      // Returning to the portal is an explicit signal that an entitled customer
+      // wants service again. The helper intentionally looks through the cleanup
+      // hold, releases only that hold type and then provisions fresh Jellyfin access.
+      const restored=await cleanupReturn.restoreReturningCustomer(req.session.customerId,{reconcile:provisioning.reconcileCustomer}).catch(error=>({restored:false,error:error.message}));
       const [portalRaw,plans,currentPlan,requestAccess,requestConfig]=await Promise.all([
         customers.getCustomerPortal(req.session.customerId),sellablePlans(),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration()
       ]);
       const portal=await hideInternalAccounts(req.session.customerId,portalRaw),delivery=deliveryType(currentPlan),hasJellyfin=['jellyfin','bundle'].includes(delivery),hasStremio=['stremio','bundle'].includes(delivery);
+      const restoreMessage=restored.restored?'Your inactive Jellyfin user was cleaned up previously. A fresh Jellyfin account has now been provisioned because you returned to your CAPTaINFiN account.':null;
       if(delivery==='stremio'){
-        return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||null});
+        return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
       }
       const effective=currentPlan&&hasJellyfin?await provisioning.effectivePolicyForCustomer(req.session.customerId,currentPlan):null;
       const libraryEntitlement=effective?effective.entitlementRows.filter(row=>row.effective).map(row=>row.name):[],librarySelection=effective?effective.visibleNames:[];
-      const welcome=onboardingMessage(portal,currentPlan,delivery),message=req.query.message||welcome||((hasStremio&&delivery==='bundle')?'Your plan also includes Stremio. Open /account/stremio to create or manage your private installation.':null);
-      return res.render('customer/dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryEntitlement,librarySelection,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||null,deliveryType:delivery,hasJellyfin,hasStremio});
+      const welcome=onboardingMessage(portal,currentPlan,delivery),message=req.query.message||restoreMessage||welcome||((hasStremio&&delivery==='bundle')?'Your plan also includes Stremio. Open /account/stremio to create or manage your private installation.':null);
+      return res.render('customer/dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryEntitlement,librarySelection,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||restored.error||null,deliveryType:delivery,hasJellyfin,hasStremio});
     }catch(error){return next(error);}
   });
   return r;

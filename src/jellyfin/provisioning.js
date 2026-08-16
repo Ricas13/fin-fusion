@@ -4,6 +4,7 @@ const core=require('./provisioning-core');
 const {query,transaction}=require('../db');
 const subscriptionState=require('../entitlements/subscription-state');
 const accessHolds=require('../entitlements/access-holds');
+const inactivityHoldReconciliation=require('../entitlements/inactivity-hold-reconciliation');
 function safeLog(value,max=500){return String(value==null?'':value).replace(/[\r\n\t\u2028\u2029]+/g,' ').slice(0,max)}
 async function currentEntitlement(customerId){return subscriptionState.effectiveSubscription(customerId)}
 async function syncAccess(customerId){await accessHolds.syncLegacySummary(customerId)}
@@ -25,6 +26,11 @@ async function notifyNewJellyfinAccess(customerId,account){
   }catch(error){console.warn('Jellyfin onboarding notification failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});}
 }
 async function reconcileCustomer(customerId){
+  // A plan-specific inactivity hold belongs only to the free plan that created
+  // it. Release it before policy calculation if the customer has since moved
+  // to a different/free-disabled/paid entitlement. Manual and cleanup holds are
+  // deliberately untouched here.
+  await inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId);
   await syncAccess(customerId);
   // Detect only accounts created by this reconciliation. Existing/imported
   // Jellyfin users keep their current credential state, while a newly-created
