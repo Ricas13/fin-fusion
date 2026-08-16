@@ -10,6 +10,7 @@ const root = path.join(__dirname, '..');
 const deployScript = fs.readFileSync(path.join(root, 'scripts', 'deploy-production.sh'), 'utf8');
 const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
 const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+const verifyDeployment = fs.readFileSync(path.join(root, 'scripts', 'verify-deployment.js'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -43,6 +44,9 @@ assert(/another CAPTaINFiN production deployment is already running/.test(deploy
 assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'backup and recovery containers must support the host backup owner identity');
 assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
+assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must include operation failure state, not heartbeat only');
+assert(verifyDeployment.includes("add('backup worker', backupHealthy"), 'deployment verification must include the backup worker');
+assert(verifyDeployment.includes('backupWorker.last_error'), 'deployment verification must fail on an active backup error');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
