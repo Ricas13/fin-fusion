@@ -95,6 +95,13 @@ function writeAtomic(file, content, mode) {
   fs.chmodSync(file, mode);
 }
 
+function numericId(value, envName) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (!/^\d+$/.test(raw)) throw new Error(`${envName} must be a numeric UID/GID`);
+  return Number(raw);
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const envFile = path.resolve(options.envFile);
@@ -108,7 +115,7 @@ function main() {
   const ownerUrl = parsePgUrl(ownerRaw, 'DATABASE_URL');
   const ownerPassword = decodedPassword(ownerUrl);
   const seenPasswords = new Map();
-  const generated = [];
+  const updates = [];
 
   for (const [envName, role] of ROLE_URLS) {
     let raw = getValue(content, envName);
@@ -116,7 +123,7 @@ function main() {
       if (!options.write) throw new Error(`${envName} is missing; run this command with --write to generate it safely`);
       raw = generatedRuntimeUrl(ownerUrl, role);
       content = setValue(content, envName, raw);
-      generated.push(envName);
+      updates.push(envName);
     }
 
     const { password } = validateRuntimeUrl(raw, envName, role, ownerUrl);
@@ -127,15 +134,39 @@ function main() {
     seenPasswords.set(password, envName);
   }
 
+  let backupUid = numericId(getValue(content, 'BACKUP_PUID'), 'BACKUP_PUID');
+  let backupGid = numericId(getValue(content, 'BACKUP_PGID'), 'BACKUP_PGID');
+  if (options.write && (backupUid === null || backupGid === null)) {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+    const gid = typeof process.getgid === 'function' ? process.getgid() : null;
+    if (Number.isInteger(uid) && uid > 0 && Number.isInteger(gid) && gid >= 0) {
+      if (backupUid === null) {
+        content = setValue(content, 'BACKUP_PUID', String(uid));
+        backupUid = uid;
+        updates.push('BACKUP_PUID');
+      }
+      if (backupGid === null) {
+        content = setValue(content, 'BACKUP_PGID', String(gid));
+        backupGid = gid;
+        updates.push('BACKUP_PGID');
+      }
+    }
+  }
+
   if (content !== original) {
     const backup = backupPath(envFile);
     fs.copyFileSync(envFile, backup);
     fs.chmodSync(backup, 0o600);
     writeAtomic(envFile, content, stat.mode & 0o777);
-    console.log(`Updated ${envFile} with ${generated.length} isolated runtime database URL(s).`);
+    console.log(`Updated ${envFile} with ${updates.length} deployment value(s): ${updates.join(', ')}.`);
     console.log(`Previous environment file saved as ${backup}.`);
   } else {
-    console.log(`Runtime database URLs are already valid in ${envFile}.`);
+    console.log(`Runtime database URLs and deployment identity are already valid in ${envFile}.`);
+  }
+  if (backupUid === null || backupGid === null) {
+    console.warn('BACKUP_PUID/BACKUP_PGID are not set; Compose will use the image default UID/GID 1000:1000.');
+  } else {
+    console.log(`Backup containers will run as UID:GID ${backupUid}:${backupGid}.`);
   }
   console.log('Runtime database credential preflight passed.');
 }
