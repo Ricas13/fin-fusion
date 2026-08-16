@@ -13,6 +13,7 @@ const baseCss=read('public/css/admin-original-base.css');
 const componentCss=read('public/css/admin-original-components.css');
 const refinementCss=read('public/css/admin-visual-refinement.css');
 const plans=read('src/platform/admin-plans-list.js');
+const formFeedback=read('public/js/admin-form-feedback.js');
 
 assert(html.includes('decorateSettingHelp'),'Shared admin renderer must decorate settings with helper descriptions');
 assert(html.includes('SETTING_HELP'),'Shared setting-help registry must exist');
@@ -39,5 +40,9 @@ assert(refinementCss.includes('.planListToolbar{display:grid'),'Plan filters mus
 assert(refinementCss.includes('.planListFilteredEmpty{display:none'),'Filtered-empty feedback must be hidden while plans are visible');
 assert(refinementCss.includes('.chartEmpty{height:108px}'),'Empty dashboard charts must not dominate vertical space');
 assert(plans.includes('data-plan-table-wrap'),'Plan filtering must be able to hide the table when no rows match');
+assert(formFeedback.includes("actionPath(form) === '/admin/notifications/preferences/delivery'"),'Notification credential forms must use native browser submission for reliable CSRF handling');
+assert(formFeedback.includes('submitter?.formAction'),'Enhanced forms must honor per-button formaction targets');
+assert(formFeedback.includes("'X-CSRF-Token': csrfToken"),'Enhanced admin POSTs must mirror the CSRF token in the request header');
+assert(formFeedback.includes('async function responseMessage(response)'),'Admin form errors must surface the server rejection reason instead of a generic HTTP status');
 
 console.log('admin UX foundation smoke: ok');
