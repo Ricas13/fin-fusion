@@ -125,6 +125,11 @@ async function grantApp(client) {
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
     await client.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+
+    // Readiness needs to compare the latest migration filename, but the web
+    // process must never be able to forge or delete migration history.
+    await client.query(`REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM ${role}`);
+    await client.query(`GRANT SELECT ON schema_migrations TO ${role}`);
 }
 
 async function grantAutomation(client) {
@@ -136,7 +141,7 @@ async function grantAutomation(client) {
     // The automation worker performs lifecycle work across many commercial and
     // provisioning tables, but it has no business reading login/session/TOTP
     // material or mutating staff/customer identities directly.
-    for (const table of ['auth_totp_enrollments','auth_recovery_codes','auth_sessions','auth_events','login_rate_limits']) {
+    for (const table of ['auth_totp_enrollments','auth_recovery_codes','auth_sessions','auth_events','login_rate_limits','schema_migrations','user_sessions']) {
         const exists = await client.query('SELECT to_regclass($1) AS table_name', [`public.${table}`]);
         if (exists.rows[0]?.table_name) await client.query(`REVOKE ALL ON ${table} FROM ${role}`);
     }
