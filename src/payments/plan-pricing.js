@@ -43,7 +43,7 @@ async function resolvePrice(planId,currency,{allowFallback=true}={}){
   const fallback=await query(`SELECT * FROM plan_prices WHERE plan_id=$1 AND active=TRUE ORDER BY is_default DESC,created_at LIMIT 1`,[planId]);
   return fallback.rows[0]||null;
 }
-async function decoratePlans(plans,currency,{allowFallback=true}={}){
+async function decoratePlans(plans,currency,{allowFallback=false}={}){
   const rows=Array.isArray(plans)?plans:[];
   if(!rows.length)return[];
   const wanted=cleanCurrency(currency,'GBP'),ids=rows.map(p=>p.id),prices=await query(`SELECT * FROM plan_prices WHERE plan_id=ANY($1::uuid[]) AND active=TRUE ORDER BY is_default DESC,currency`,[ids]);
