@@ -67,7 +67,7 @@ const resellerTiers=[{id:'r1',code:'reseller',name:'Reseller 50',description:'Ma
 const page = renderStorefront({ site: 'CAPTaINFiN', plans, store, registrationOpen: false, logged: false,resellerTiers,support:{supportEmail:'support@example.test'} });
 for (const expected of [
     'heroSection','pricingGrid','finalCta','Your entertainment. One simple subscription.',
-    'Choose the access that fits you.','Stremio add-ons & plans.','Reseller plans.','0 spots available · Sold out','support@example.test'
+    'Choose the access that fits you.','Stremio add-ons &amp; plans.','Reseller plans.','0 spots available · Sold out','support@example.test'
 ]) assert.ok(page.includes(expected), `rendered storefront should include ${expected}`);
 assert.ok(page.indexOf('heroSection') < page.indexOf('id="plans"'), 'hero should appear before main plan inventory');
 assert.ok(page.indexOf('id="plans"') < page.indexOf('id="stremio"'), 'main plans should appear before Stremio');
