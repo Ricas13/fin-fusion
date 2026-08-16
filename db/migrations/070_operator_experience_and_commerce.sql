@@ -66,6 +66,14 @@ ALTER TABLE notification_preferences
     ADD COLUMN IF NOT EXISTS discord_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS whatsapp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Migration 047 extended the original email-only outbox to Telegram/webhook.
+-- Keep one durable queue and explicitly admit the two first-class channels used
+-- by the operator notification matrix.
+ALTER TABLE notification_outbox DROP CONSTRAINT IF EXISTS notification_outbox_channel_check;
+ALTER TABLE notification_outbox
+    ADD CONSTRAINT notification_outbox_channel_check
+    CHECK (channel IN ('email','telegram','webhook','discord','whatsapp'));
+
 INSERT INTO platform_settings(setting_key,setting_value)
 VALUES
 ('reporting_currency_v1', jsonb_build_object(
