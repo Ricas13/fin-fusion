@@ -16,7 +16,9 @@ assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must
 for (const token of [
   'prepare-production-env.js --write',
   'docker compose config',
-  'pg_dump',
+  'docker compose --profile recovery build',
+  'BACKUP_DIR=/backups/predeploy',
+  'recovery-tools npm run db:backup',
   'docker compose run --rm --no-deps migrate',
   'docker compose up -d --no-deps app automation-worker activity-worker backup-worker',
   'npm run verify:deployment'
@@ -27,12 +29,14 @@ for (const token of [
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
   deployScript.indexOf('docker compose config'),
-  deployScript.indexOf('pg_dump'),
+  deployScript.indexOf('docker compose --profile recovery build'),
+  deployScript.indexOf('recovery-tools npm run db:backup'),
   deployScript.indexOf('docker compose run --rm --no-deps migrate'),
   deployScript.indexOf('docker compose up -d --no-deps app automation-worker activity-worker backup-worker'),
   deployScript.indexOf('npm run verify:deployment')
 ];
-assert(order.every((value, index) => value >= 0 && (index === 0 || value > order[index - 1])), 'deployment safety operations must remain in prepare -> config -> backup -> migrate -> recreate -> verify order');
+assert(order.every((value, index) => value >= 0 && (index === 0 || value > order[index - 1])), 'deployment safety operations must remain in prepare -> config -> build -> encrypted backup -> migrate -> recreate -> verify order');
+assert(!deployScript.includes('> "$backup"'), 'deployment helper must not create a raw plaintext pg_dump on the host');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'captainfin-deploy-'));
 try {
