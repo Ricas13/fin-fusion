@@ -21,7 +21,10 @@ const MUTATION_PATTERNS=[
  /^\/admin\/provider-mappings(?:\/|$)/,
  /^\/admin\/payments(?:\/|$)/,
  /^\/admin\/commerce\/(?:policy|risk-policy|reconciliation\/|incidents\/[^/]+\/(?:resolve|reopen))/,
- /^\/admin\/backups\/(?:restore|run|verify)/
+ /^\/admin\/backups\/(?:restore|run|verify)/,
+ /^\/admin\/settings\/(?:registration|abuse-protection|stremio)(?:\/|$)/,
+ /^\/admin\/operations(?:\/|$)/,
+ /^\/admin\/security\/2fa-policy$/
 ];
 const stepUpViewLimit=routeRateLimit.middleware({scope:'admin-step-up-view',max:60,windowSeconds:60});
 const stepUpVerifyLimit=routeRateLimit.middleware({scope:'admin-step-up-verify',max:8,windowSeconds:600});
