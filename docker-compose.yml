@@ -222,7 +222,7 @@ services:
     volumes:
       - ./backups:/backups
     healthcheck:
-      test: ["CMD", "node", "-e", "const{Client}=require('pg');const c=new Client({connectionString:process.env.DATABASE_URL});c.connect().then(()=>c.query(\"SELECT EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age FROM backup_worker_state WHERE worker_key='database_backup'\")).then(r=>{const ok=r.rowCount&&Number(r.rows[0].age)<180;return c.end().then(()=>process.exit(ok?0:1))}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "scripts/backup-healthcheck.js"]
       interval: 60s
       timeout: 10s
       retries: 3
