@@ -1,5 +1,4 @@
 'use strict';
-
 const net=require('net');
 const { query, transaction } = require('../db');
 const KEY='operations_v1';
@@ -17,6 +16,6 @@ async function get(){return cache||reload()}
 function peek(){return cache||DEFAULTS}
 async function save(input,actorUserId=null){const value=normalize(input);await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[KEY,JSON.stringify(value)]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.operations.update','platform_setting',$2,$3::jsonb)`,[actorUserId,KEY,JSON.stringify({...value,publicBaseUrl:value.publicBaseUrl||null})])});cache=value;return value}
 function requestBase(req){const proto=req.protocol||'http',host=req.get('host');if(!host)throw new Error('Request host is unavailable.');return `${proto}://${host}`}
-async function absoluteUrl(req,path,{requireCanonical=String(process.env.NODE_ENV||'').toLowerCase()==='production'}={}){const cfg=await get();let base=cfg.publicBaseUrl;if(requireCanonical&&!base)throw new Error('Public base URL must be configured before external links can be issued in production.');if(!base)base=requestBase(req);const parsed=new URL(base);if(requireCanonical&&parsed.protocol!=='https:')throw new Error('Public base URL must use HTTPS in production.');return new URL(String(path||'/'),`${base.replace(/\/$/,'')}/`).toString()}
+async function absoluteUrl(req,path,{requireCanonical=String(process.env.NODE_ENV||'').toLowerCase()==='production'}={}){const cfg=await get(),production=String(process.env.NODE_ENV||'').toLowerCase()==='production',canonical=production||Boolean(requireCanonical);let base=cfg.publicBaseUrl;if(canonical&&!base)throw new Error('Public base URL must be configured before external links can be issued in production.');if(!base)base=requestBase(req);const parsed=new URL(base);if(canonical&&parsed.protocol!=='https:')throw new Error('Public base URL must use HTTPS in production.');return new URL(String(path||'/'),`${base.replace(/\/$/,'')}/`).toString()}
 async function publicOriginReady(){const cfg=await get();if(!cfg.publicBaseUrl)return{ready:false,reason:'Public base URL is not configured.'};try{const parsed=new URL(cfg.publicBaseUrl);if(String(process.env.NODE_ENV||'').toLowerCase()==='production'&&parsed.protocol!=='https:')return{ready:false,reason:'Public base URL must use HTTPS in production.'};return{ready:true,origin:parsed.origin}}catch{return{ready:false,reason:'Public base URL is invalid.'}}}
 module.exports={KEY,DEFAULTS,normalize,reload,get,peek,save,absoluteUrl,publicOriginReady,hostList,cidrList};
