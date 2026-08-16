@@ -38,6 +38,8 @@ for (const token of [
   assert(deployScript.includes(token), `deployment script must contain ${token}`);
 }
 assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety copies must be ignored by git');
+assert(gitignore.includes('.env.before-*'), 'older env safety copies must be ignored by git');
+assert(gitignore.includes('.deploy-production.lock'), 'deployment lock state must be ignored by git');
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
 assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
 assert(/another CAPTaINFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
