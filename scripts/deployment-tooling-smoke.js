@@ -9,6 +9,7 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const deployScript = fs.readFileSync(path.join(root, 'scripts', 'deploy-production.sh'), 'utf8');
 const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
+const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -39,6 +40,9 @@ assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
 assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
 assert(/another CAPTaINFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
+assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'backup and recovery containers must support the host backup owner identity');
+assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
+assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
@@ -83,6 +87,13 @@ try {
     assert.notStrictEqual(password, 'owner-secret', `${key} must not reuse the owner password`);
     assert(!passwords.has(password), `${key} must have a unique password`);
     passwords.add(password);
+  }
+
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const gid = typeof process.getgid === 'function' ? process.getgid() : null;
+  if (Number.isInteger(uid) && uid > 0 && Number.isInteger(gid) && gid >= 0) {
+    assert(content.includes(`BACKUP_PUID=${uid}`), 'environment preparation must persist the deployment user UID for backup bind mounts');
+    assert(content.includes(`BACKUP_PGID=${gid}`), 'environment preparation must persist the deployment user GID for backup bind mounts');
   }
 
   const before = fs.readFileSync(envFile, 'utf8');
