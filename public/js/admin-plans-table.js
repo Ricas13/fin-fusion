@@ -10,6 +10,7 @@
     const rows = Array.from(tbody.querySelectorAll('[data-plan-row]')).map((row, index) => ({ row, index }));
     const search = document.querySelector('[data-plan-search]');
     const status = document.querySelector('[data-plan-status]');
+    const delivery = document.querySelector('[data-plan-delivery]');
     const price = document.querySelector('[data-plan-price]');
     const billing = document.querySelector('[data-plan-billing]');
     const server = document.querySelector('[data-plan-server]');
@@ -45,6 +46,7 @@
         const needle = normalized(search?.value);
         if (needle && !normalized(row.dataset.search).includes(needle)) return false;
         if (status?.value && row.dataset.status !== status.value) return false;
+        if (delivery?.value && row.dataset.delivery !== delivery.value) return false;
         if (price?.value && row.dataset.priceType !== price.value) return false;
         if (billing?.value && row.dataset.billing !== billing.value) return false;
         if (server?.value && row.dataset.serverClass !== server.value) return false;
@@ -72,13 +74,14 @@
         }
     }
 
-    for (const control of [search, status, price, billing, server]) {
+    for (const control of [search, status, delivery, price, billing, server]) {
         control?.addEventListener(control === search ? 'input' : 'change', render);
     }
 
     reset?.addEventListener('click', () => {
         if (search) search.value = '';
         if (status) status.value = '';
+        if (delivery) delivery.value = '';
         if (price) price.value = '';
         if (billing) billing.value = '';
         if (server) server.value = '';
