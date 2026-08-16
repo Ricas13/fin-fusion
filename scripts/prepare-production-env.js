@@ -130,7 +130,7 @@ function main() {
   if (content !== original) {
     const backup = backupPath(envFile);
     fs.copyFileSync(envFile, backup);
-    fs.chmodSync(backup, stat.mode & 0o777);
+    fs.chmodSync(backup, 0o600);
     writeAtomic(envFile, content, stat.mode & 0o777);
     console.log(`Updated ${envFile} with ${generated.length} isolated runtime database URL(s).`);
     console.log(`Previous environment file saved as ${backup}.`);
