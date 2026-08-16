@@ -6,10 +6,10 @@
 }
 
 /* Stronger hierarchy without turning the control centre into a toy. */
-.panel,.card,.metricCard,.tableCard,.sectionCard {
+.panel,.card,.metricCard,.tableCard,.sectionCard,.analyticsCard {
   transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
-.panel:hover,.card:hover,.metricCard:hover,.tableCard:hover,.sectionCard:hover {
+.panel:hover,.card:hover,.metricCard:hover,.tableCard:hover,.sectionCard:hover,.analyticsCard:hover {
   border-color: rgba(76,201,240,.24);
   box-shadow: 0 12px 34px rgba(0,0,0,.14);
 }
@@ -73,6 +73,21 @@
 
 .emptyAction { display:grid;place-items:center;text-align:center;min-height:130px;padding:20px;border:1px dashed #2c3744;border-radius:10px;color:var(--muted); }
 .emptyAction strong { color:#dfe6ed;margin-bottom:4px; }
+
+.forecastCard { margin-bottom:18px;border-color:rgba(76,201,240,.16)!important;background:linear-gradient(145deg,rgba(76,201,240,.035),rgba(57,217,138,.018) 45%,transparent 72%); }
+.forecastChart { overflow-x:auto;margin:16px 0 7px;padding:8px 2px 0; }
+.forecastChart svg { display:block;width:100%;min-width:620px;height:auto; }
+.forecastGrowth { fill:rgba(76,201,240,.28);stroke:rgba(76,201,240,.55);stroke-width:1; }
+.forecastKnown { fill:rgba(57,217,138,.78);stroke:rgba(57,217,138,.92);stroke-width:1; }
+.forecastBaseline { stroke:#2b3745;stroke-width:1; }
+.forecastAxis { fill:#778596;font-size:9px; }
+.forecastLegend { display:flex;gap:18px;flex-wrap:wrap;margin:8px 0 10px;color:#8d9bab;font-size:11px; }
+.forecastLegend span { display:inline-flex;align-items:center;gap:6px; }
+.forecastLegend i { width:9px;height:9px;border-radius:3px;background:rgba(76,201,240,.38);border:1px solid rgba(76,201,240,.65); }
+.forecastLegend i.known { background:rgba(57,217,138,.78);border-color:rgba(57,217,138,.92); }
+.reportingCurrency { display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin-top:12px; }
+.reportingCurrency label { display:grid;gap:5px;color:#98a5b4;font-size:11px;font-weight:700; }
+.reportingCurrency select { min-width:90px; }
 
 /* Give mouse users a little confirmation that controls are interactive. */
 button,.button,.btn,a.adminTab,a.operatorTab { transition:transform .12s ease,filter .12s ease,background .12s ease,border-color .12s ease; }
