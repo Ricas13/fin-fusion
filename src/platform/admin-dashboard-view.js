@@ -165,11 +165,11 @@ function operationalAlerts(s) {
 function revenueCard(s) {
     const currency = s.revenue.primaryCurrency;
     const body = `${barChart(s.revenue.series, 'revenue_minor', value => money(value, currency))}${s.revenue.currencies.length > 1 ? `<div class="currencyBreakdown">${s.revenue.currencies.map(row => `<span class="currencyPill">${esc(row.currency)} ${esc(money(row.minor, row.currency))}</span>`).join('')}</div>` : ''}<div class="analyticsFootnote">Webhook-confirmed gross Stripe/PayPal payments only. Manual subscriptions, reseller credits and provider fees are not counted as revenue.</div>`;
-    return analyticsCard('Revenue history', `Successful provider payments · ${s.range.label}`, body, { className: 'wide', stat: { value: money(s.revenue.totalMinor, currency), label: 'gross revenue' } });
+    return analyticsCard('Revenue history', `Successful provider payments · ${s.range.label}`, body, { className: 'third', stat: { value: money(s.revenue.totalMinor, currency), label: 'gross revenue' } });
 }
 
 function customerGrowthCard(s) {
-    return analyticsCard('Customer base over time', 'Cumulative CAPTaINFiN customer accounts', areaChart(s.customerGrowth, 'total'), { className: 'narrow', stat: { value: number(s.current.customers), label: 'customers now' } });
+    return analyticsCard('Customer base over time', 'Cumulative CAPTaINFiN customer accounts', areaChart(s.customerGrowth, 'total'), { className: 'third', stat: { value: number(s.current.customers), label: 'customers now' } });
 }
 
 function playbackCard(s) {
@@ -230,7 +230,7 @@ function referrersCard(s) {
     return analyticsCard('Top referrers', `Referral redemptions · ${s.range.label}`, body, { className: 'full' });
 }
 
-function renderDashboard(s) {
+function renderDashboard(s,{prospectiveIncome=''}={}) {
     const avgSession = s.period.playbackSessions ? s.period.playbackSeconds / s.period.playbackSessions : 0;
     const otherCurrencies = s.revenue.currencies.filter(row => row.currency !== s.revenue.primaryCurrency);
     return `<link rel="stylesheet" href="/css/admin-dashboard-analytics.css">
@@ -250,9 +250,10 @@ function renderDashboard(s) {
         </div>
 
         <div class="analyticsSectionTitle"><h2>Business performance</h2><span>${esc(s.range.label)}</span></div>
-        <div class="analyticsGrid">
+        <div class="analyticsGrid businessPerformanceGrid">
             ${revenueCard(s)}
             ${customerGrowthCard(s)}
+            ${prospectiveIncome}
             ${playbackCard(s)}
             ${planMixCard(s)}
         </div>
