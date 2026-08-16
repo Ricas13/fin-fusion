@@ -1,0 +1,73 @@
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+
+const root = path.join(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const compose = read('docker-compose.yml');
+const roleScript = read('scripts/configure-runtime-db-roles.js');
+const verifyBackup = read('scripts/verify-backup.js');
+const sessionMigration = read('db/migrations/068_runtime_session_store.sql');
+
+function service(name) {
+    const marker = `  ${name}:\n`;
+    const start = compose.indexOf(marker);
+    assert(start >= 0, `missing compose service ${name}`);
+    const rest = compose.slice(start + marker.length);
+    const next = rest.search(/^  [a-zA-Z0-9][a-zA-Z0-9_-]*:\n/m);
+    return next < 0 ? compose.slice(start) : compose.slice(start, start + marker.length + next);
+}
+
+const migrate = service('migrate');
+const app = service('app');
+const automation = service('automation-worker');
+const activity = service('activity-worker');
+const backup = service('backup-worker');
+const recovery = service('recovery-tools');
+
+assert(/npm run db:migrate/.test(migrate) && /npm run db:runtime-roles/.test(migrate), 'migrate must refresh isolated runtime roles after schema migration');
+assert(migrate.indexOf('npm run db:migrate') < migrate.indexOf('npm run db:runtime-roles'), 'runtime grants must be refreshed after migrations');
+assert(migrate.indexOf('npm run db:runtime-roles') < migrate.indexOf('npm run auth:bootstrap'), 'runtime grants must be ready before application startup/bootstrap completes');
+
+for (const [name, block] of [['app', app], ['automation-worker', automation], ['activity-worker', activity], ['backup-worker', backup]]) {
+    assert(!/\benv_file\s*:/.test(block), `${name} must not inherit the privileged .env wholesale`);
+}
+assert(/DATABASE_URL:\s*\$\{APP_DATABASE_URL:\?/.test(app), 'app must use APP_DATABASE_URL');
+assert(/DATABASE_URL:\s*\$\{AUTOMATION_DATABASE_URL:\?/.test(automation), 'automation worker must use AUTOMATION_DATABASE_URL');
+assert(/ACTIVITY_DATABASE_URL:\s*\$\{ACTIVITY_DATABASE_URL:\?/.test(activity), 'activity worker must use ACTIVITY_DATABASE_URL');
+assert(/DATABASE_URL:\s*\$\{BACKUP_DATABASE_URL:\?/.test(backup), 'backup worker must use BACKUP_DATABASE_URL');
+assert(/BACKUP_VERIFY_DATABASE_URL:\s*\$\{BACKUP_VERIFY_DATABASE_URL:\?/.test(backup), 'backup worker must use a separate verification login');
+assert(/DATABASE_URL:\s*\$\{DATABASE_URL:\?/.test(recovery), 'recovery tools intentionally keep the owner/recovery credential');
+
+for (const secret of ['BACKUP_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ACTIVITY_DATABASE_URL','BACKUP_DATABASE_URL','BACKUP_VERIFY_DATABASE_URL']) {
+    assert(!app.includes(`${secret}:`), `app must not receive ${secret}`);
+}
+for (const secret of ['SESSION_SECRET','AUTH_ENCRYPTION_KEY','BACKUP_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ADMIN_PASSWORD']) {
+    assert(!automation.includes(`${secret}:`), `automation worker must not receive ${secret}`);
+}
+for (const secret of ['SESSION_SECRET','AUTH_ENCRYPTION_KEY','DATA_ENCRYPTION_KEY','JELLYFIN_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ADMIN_PASSWORD']) {
+    assert(!backup.includes(`${secret}:`), `backup worker must not receive ${secret}`);
+}
+
+for (const role of ['steamfusion_app','steamfusion_automation','steamfusion_activity','steamfusion_backup','steamfusion_backup_verify']) {
+    assert(roleScript.includes(role), `role bootstrap is missing ${role}`);
+}
+assert(/REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM \$\{role\}/.test(roleScript), 'web app must not be able to rewrite the migration ledger');
+assert(/'schema_migrations','user_sessions'/.test(roleScript), 'automation role must not receive migration/session-store access');
+assert(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO \$\{role\}/.test(roleScript), 'backup role must be read-capable for complete pg_dump snapshots');
+assert(/GRANT INSERT,UPDATE ON \$\{table\} TO \$\{role\}/.test(roleScript), 'backup role must write only its bookkeeping tables');
+assert(/createdb:\s*true/.test(roleScript) && /No schema\/table grants are intentional/.test(roleScript), 'restore verifier must use a CREATEDB-only identity with no production table grants');
+assert(/auth_totp_enrollments/.test(roleScript) && /auth_sessions/.test(roleScript), 'automation role must explicitly exclude authentication secrets');
+
+assert(/CREATE TABLE IF NOT EXISTS user_sessions/.test(sessionMigration), 'runtime session table must be migration-owned');
+for (const column of ['sid VARCHAR','sess JSON','expire TIMESTAMP']) assert(sessionMigration.includes(column), `session migration is missing ${column}`);
+assert(/PRIMARY KEY \(sid\)/.test(sessionMigration) && /user_sessions\(expire\)/.test(sessionMigration), 'session migration must include its key and expiry index');
+
+assert(/BACKUP_VERIFY_DATABASE_URL/.test(verifyBackup), 'restore verification must use the dedicated verifier credential');
+assert(!/fs\.existsSync\(input\)/.test(verifyBackup), 'backup verification must not use check-then-open file validation');
+assert(/O_NOFOLLOW/.test(verifyBackup) && /fstatSync\(fd\)/.test(verifyBackup) && /parseHeaderFromFd\(inputFd\)/.test(verifyBackup), 'backup verification must bind validation and decryption to one descriptor');
+assert(!/const adminUrl=dbUrlFor\(base,'postgres'\)/.test(verifyBackup), 'restore verification must not derive CREATE DATABASE access from the production backup login');
+
+console.log('runtime database isolation smoke: ok');

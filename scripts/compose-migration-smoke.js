@@ -6,34 +6,35 @@ const path = require('path');
 
 const compose = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
 
-function serviceBlock(name, nextName) {
-    const start = compose.indexOf(`  ${name}:\n`);
+function serviceBlock(name) {
+    const marker = `  ${name}:\n`;
+    const start = compose.indexOf(marker);
     assert(start >= 0, `missing ${name} service`);
-    const end = nextName ? compose.indexOf(`  ${nextName}:\n`, start + 1) : compose.length;
-    assert(end > start, `could not isolate ${name} service`);
-    return compose.slice(start, end);
+    const rest = compose.slice(start + marker.length);
+    const next = rest.search(/^  [a-zA-Z0-9][a-zA-Z0-9_-]*:\n/m);
+    return next < 0 ? compose.slice(start) : compose.slice(start, start + marker.length + next);
 }
 
-const migrate = serviceBlock('migrate', 'app');
-const app = serviceBlock('app', 'activity-worker');
-const activity = serviceBlock('activity-worker', 'recovery-tools');
-
+const migrate = serviceBlock('migrate');
 assert.match(migrate, /npm run db:migrate/, 'migrate service must run db:migrate');
-assert.match(migrate, /npm run db:activity-role/, 'migrate service must refresh the restricted activity database role when configured');
+assert.match(migrate, /npm run db:runtime-roles/, 'migrate service must refresh isolated runtime database roles');
 assert.match(migrate, /npm run auth:bootstrap/, 'migrate service must bootstrap a native administrator when required');
 assert(
-    migrate.indexOf('npm run db:migrate') < migrate.indexOf('npm run db:activity-role'),
-    'database migrations must complete before activity role grants are refreshed'
+    migrate.indexOf('npm run db:migrate') < migrate.indexOf('npm run db:runtime-roles'),
+    'database migrations must complete before runtime role grants are refreshed'
 );
 assert(
-    migrate.indexOf('npm run db:activity-role') < migrate.indexOf('npm run auth:bootstrap'),
-    'activity role grants must be refreshed before native administrator bootstrap'
+    migrate.indexOf('npm run db:runtime-roles') < migrate.indexOf('npm run auth:bootstrap'),
+    'runtime role grants must be refreshed before native administrator bootstrap'
 );
 assert.match(migrate, /postgres:\n\s+condition:\s+service_healthy/, 'migrate must wait for healthy postgres');
 assert.match(migrate, /restart:\s+"no"/, 'migrate must be a one-shot service');
+assert.match(migrate, /env_file:\s*\.env/, 'only the privileged one-shot migrate service may consume the complete .env');
 
-for (const [name, block] of [['app', app], ['activity-worker', activity]]) {
-    assert.match(block, /migrate:\n\s+condition:\s+service_completed_successfully/, `${name} must wait for migrations and bootstrap`);
+for (const name of ['app', 'automation-worker', 'activity-worker', 'backup-worker']) {
+    const block = serviceBlock(name);
+    assert.match(block, /migrate:\n\s+condition:\s+service_completed_successfully/, `${name} must wait for migrations and role bootstrap`);
+    assert(!/\benv_file\s*:/.test(block), `${name} must not inherit the privileged .env wholesale`);
 }
 
 console.log('compose migration smoke: ok');

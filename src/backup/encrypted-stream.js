@@ -34,28 +34,32 @@ function buildHeader({ salt, iv, createdAt = new Date().toISOString() }) {
   return Buffer.concat([MAGIC, metadata]);
 }
 
+function parseHeaderFromFd(fd) {
+  const maxHeader = Buffer.alloc(4096);
+  const bytes = fs.readSync(fd, maxHeader, 0, maxHeader.length, 0);
+  const data = maxHeader.subarray(0, bytes);
+  if (!data.subarray(0, MAGIC.length).equals(MAGIC)) {
+    throw new Error('Invalid CAPTaINFiN backup header');
+  }
+  const newline = data.indexOf(0x0a, MAGIC.length);
+  if (newline === -1) throw new Error('Incomplete CAPTaINFiN backup header');
+  const metadata = JSON.parse(data.subarray(MAGIC.length, newline).toString('utf8'));
+  if (metadata.version !== 1 || metadata.cipher !== 'aes-256-gcm' || metadata.kdf !== 'scrypt') {
+    throw new Error('Unsupported CAPTaINFiN backup format');
+  }
+  return {
+    metadata,
+    headerBytes: newline + 1,
+    header: data.subarray(0, newline + 1),
+    salt: Buffer.from(metadata.salt, 'base64'),
+    iv: Buffer.from(metadata.iv, 'base64')
+  };
+}
+
 function parseHeader(filePath) {
   const fd = fs.openSync(filePath, 'r');
   try {
-    const maxHeader = Buffer.alloc(4096);
-    const bytes = fs.readSync(fd, maxHeader, 0, maxHeader.length, 0);
-    const data = maxHeader.subarray(0, bytes);
-    if (!data.subarray(0, MAGIC.length).equals(MAGIC)) {
-      throw new Error('Invalid CAPTaINFiN backup header');
-    }
-    const newline = data.indexOf(0x0a, MAGIC.length);
-    if (newline === -1) throw new Error('Incomplete CAPTaINFiN backup header');
-    const metadata = JSON.parse(data.subarray(MAGIC.length, newline).toString('utf8'));
-    if (metadata.version !== 1 || metadata.cipher !== 'aes-256-gcm' || metadata.kdf !== 'scrypt') {
-      throw new Error('Unsupported CAPTaINFiN backup format');
-    }
-    return {
-      metadata,
-      headerBytes: newline + 1,
-      header: data.subarray(0, newline + 1),
-      salt: Buffer.from(metadata.salt, 'base64'),
-      iv: Buffer.from(metadata.iv, 'base64')
-    };
+    return parseHeaderFromFd(fd);
   } finally {
     fs.closeSync(fd);
   }
@@ -72,26 +76,26 @@ function createEncryptionContext(secret = requireBackupKey()) {
 }
 
 function createDecryptionContext(filePath, secret = requireBackupKey()) {
-  const { metadata, headerBytes, header, salt, iv } = parseHeader(filePath);
-  const stat = fs.statSync(filePath);
-  if (stat.size <= headerBytes + TAG_BYTES) throw new Error('Backup payload is truncated');
-  const tag = Buffer.alloc(TAG_BYTES);
   const fd = fs.openSync(filePath, 'r');
   try {
+    const { metadata, headerBytes, header, salt, iv } = parseHeaderFromFd(fd);
+    const stat = fs.fstatSync(fd);
+    if (stat.size <= headerBytes + TAG_BYTES) throw new Error('Backup payload is truncated');
+    const tag = Buffer.alloc(TAG_BYTES);
     fs.readSync(fd, tag, 0, TAG_BYTES, stat.size - TAG_BYTES);
+    const key = deriveKey(secret, salt);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
+    decipher.setAAD(header);
+    decipher.setAuthTag(tag);
+    return {
+      metadata,
+      decipher,
+      payloadStart: headerBytes,
+      payloadEnd: stat.size - TAG_BYTES - 1
+    };
   } finally {
     fs.closeSync(fd);
   }
-  const key = deriveKey(secret, salt);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
-  decipher.setAAD(header);
-  decipher.setAuthTag(tag);
-  return {
-    metadata,
-    decipher,
-    payloadStart: headerBytes,
-    payloadEnd: stat.size - TAG_BYTES - 1
-  };
 }
 
 module.exports = {
@@ -99,5 +103,6 @@ module.exports = {
   requireBackupKey,
   createEncryptionContext,
   createDecryptionContext,
-  parseHeader
+  parseHeader,
+  parseHeaderFromFd
 };
