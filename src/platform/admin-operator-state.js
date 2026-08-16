@@ -28,11 +28,16 @@ async function snapshot(){
 
 function createAdminOperatorStateRouter(){
   const router=express.Router();
-  router.get('/admin/api/operator-state/unread',gate,unreadLimit,async(_req,res)=>{
+  // Mount abuse protection before authorization, matching the security shape
+  // used by the other admin control surfaces. The route handlers below never
+  // execute until both the shared persistent limiter and the admin gate pass.
+  router.use('/admin/api/operator-state/unread',unreadLimit,gate);
+  router.get('/admin/api/operator-state/unread',async(_req,res)=>{
     try{res.setHeader('Cache-Control','no-store, private');res.json({ok:true,...await snapshot()});}
     catch(error){console.error('operator unread snapshot failed:',error.message);res.status(500).json({ok:false,error:'snapshot_failed'});}
   });
-  router.post('/admin/reporting-currency',gate,reportingCurrencyLimit,async(req,res)=>{
+  router.use('/admin/reporting-currency',reportingCurrencyLimit,gate);
+  router.post('/admin/reporting-currency',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{const saved=await reporting.saveCurrency(req.body.currency,req.session.authUserId);return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
     catch(error){return res.redirect('/admin?error='+encodeURIComponent(error.message||'Reporting currency could not be changed.'));}
