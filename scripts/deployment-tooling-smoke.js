@@ -10,6 +10,7 @@ const root = path.join(__dirname, '..');
 const deployScript = fs.readFileSync(path.join(root, 'scripts', 'deploy-production.sh'), 'utf8');
 const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
 const syntax = spawnSync('bash', ['-n', path.join(root, 'scripts', 'deploy-production.sh')], { encoding: 'utf8' });
 assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must pass bash -n');
@@ -28,6 +29,7 @@ for (const token of [
   assert(deployScript.includes(token), `deployment script must contain ${token}`);
 }
 assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety copies must be ignored by git');
+assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
