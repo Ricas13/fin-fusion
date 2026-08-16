@@ -9,11 +9,16 @@ const attention=read('src/platform/attention.js');
 const admin=read('src/platform/admin-attention.js');
 const operator=read('src/platform/admin-operator-state.js');
 const migration=read('db/migrations/051_attention_workflow.sql');
+const repair=read('db/migrations/073_attention_workflow_runtime_repair.sql');
 
 assert(migration.includes('CREATE TABLE IF NOT EXISTS attention_workflow'),'Attention workflow migration must define the canonical workflow table');
+assert(repair.includes('CREATE TABLE IF NOT EXISTS attention_workflow'),'Upgrade repair must recreate the canonical attention workflow table if a legacy rollout is incomplete');
+assert(repair.includes('ADD COLUMN IF NOT EXISTS acknowledged_at'),'Upgrade repair must restore acknowledgement columns');
 assert(!attention.includes('attention_state'),'Attention runtime must not query the non-existent attention_state table');
 assert(attention.includes('attention_workflow'),'Attention runtime must use the canonical attention_workflow table');
 assert(attention.includes('fingerprint=ANY($1::text[])'),'Attention state lookup must join live findings by workflow fingerprint');
+assert(attention.includes("Attention workflow state unavailable:"),'Attention list must remain readable if workflow state is temporarily unavailable during a rolling upgrade');
+assert(attention.includes("return[];"),'Attention state failure must fall back to open live findings rather than fail the whole page');
 assert(attention.includes("acknowledged_at!=null?'acknowledged':'open'"),'Attention status must derive from acknowledgement state while the source remains authoritative');
 assert(attention.includes("href:`/admin/servers/${r.id}/edit`"),'Server health findings must deep-link to the real server edit route');
 assert(attention.includes("href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`"),'Backup findings must deep-link to the matching backup run');
