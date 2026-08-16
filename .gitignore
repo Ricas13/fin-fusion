@@ -2,6 +2,7 @@
 .env
 *.env.local
 .env.pre-runtime-roles-*.bak
+.env.before-*
 
 # Database files - contains user data
 db/
@@ -15,6 +16,9 @@ backups/
 # Logs
 *.log
 npm-debug.log*
+
+# Deployment runtime state
+.deploy-production.lock
 
 # Dependencies
 node_modules/
