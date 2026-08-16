@@ -20,7 +20,7 @@ const forced=[
   '/admin/settings?section=general','/admin/profile','/admin/profile/notifications',
   '/admin/notifications/preferences','/admin/notifications/email','/admin/notifications',
   '/admin/settings/branding','/admin/settings?section=integrations','/admin/settings?section=security',
-  '/admin/operations','/admin/backups','/admin/settings?section=advanced'
+  '/admin/operations','/admin/backups','/admin/configuration'
 ];
 
 function slug(value){return String(value).replace(/^https?:\/\/[^/]+/,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,110)||'admin';}
@@ -176,9 +176,11 @@ async function main(){
     }
     await assertWorkflow(page,'/admin/provisioning',['Provisioning','Policy drift']);
     await assertWorkflow(page,'/admin/provisioning/drift',['Provisioning','Policy drift']);
+    await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
+    await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/provisioning','/admin/notifications/preferences','/admin/profile','/admin/operations']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/provisioning','/admin/notifications/preferences','/admin/profile','/admin/operations','/admin/backups']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
