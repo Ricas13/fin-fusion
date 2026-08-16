@@ -29,6 +29,7 @@ const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
+const { createCustomerCommunicationsRouter,createMessagingBotWebhookRouter } = require('./customer-communications');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 const trialFreeLimit=routeRateLimit.middleware({scope:'customer-trial-free',max:12,windowSeconds:300});
@@ -38,11 +39,15 @@ function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
     router.use(publicAbuseProtection.middleware);
+    // Bot updates do not trust a typed handle: Telegram links one-time customer
+    // tokens to the chat identity supplied by Telegram itself.
+    router.use(createMessagingBotWebhookRouter());
     router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
     router.use(createCustomerPublicAuthRouter());
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
+    router.use(createCustomerCommunicationsRouter());
     router.use(createCustomerStremioRouter());
     router.use(createCustomerDashboardRouter());
     router.use(createResellerSecurityRouter());
