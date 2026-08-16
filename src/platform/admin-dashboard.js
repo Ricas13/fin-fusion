@@ -28,12 +28,13 @@ async function dashboardPage(req, res) {
         await runtimeSettings.ensureLoaded();
         const range = dashboardRange(req.query || {});
         const [stats,prospect] = await Promise.all([dashboardData(range),forecast.data({weeks:12})]);
+        const prospectiveIncome=forecast.renderCompact(prospect,csrf.token(req));
         return res.send(layout({
             siteName: runtimeSettings.siteName(),
             active: 'dashboard',
             title: 'Admin Dashboard',
             subtitle: `Business and streaming performance · ${range.label}`,
-            body: `${messageBlock(req)}${forecast.render(prospect,csrf.token(req))}${renderDashboard(stats)}`,
+            body: `${messageBlock(req)}${renderDashboard(stats,{prospectiveIncome})}`,
             action: primaryAction(stats)
         }));
     } catch (error) {
