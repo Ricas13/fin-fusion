@@ -164,5 +164,29 @@ async function safeFetch(raw,{purpose='integration',method='GET',headers={},body
   });
 }
 
+// Streaming variant used only when the caller must relay a potentially large
+// response body. It keeps the same SSRF/DNS-rebinding protections as safeFetch,
+// but resolves as soon as upstream response headers arrive instead of buffering.
+async function safeStream(raw,{purpose='integration stream',method='GET',headers={},timeoutMs=15000,signal=null}={}){
+  const checked=await assertSafeIntegrationUrl(raw,{purpose}),parsed=new URL(checked.url),address=checked.addresses.find(value=>net.isIP(value)===4)||checked.addresses[0],family=net.isIP(address);
+  if(!family)throw new Error(`${purpose} destination did not resolve to an IP address.`);
+  const transport=parsed.protocol==='https:'?https:http;
+  return new Promise((resolve,reject)=>{
+    let settled=false;
+    const lookup=(_hostname,options,callback)=>{if(typeof options==='function'){callback=options;options={};}if(options?.all)return callback(null,[{address,family}]);return callback(null,address,family);};
+    const request=transport.request(parsed,{method:String(method||'GET').toUpperCase(),headers,lookup},response=>{
+      if(settled){response.destroy();return;}
+      settled=true;clearTimeout(timer);if(abortHandler&&signal)signal.removeEventListener?.('abort',abortHandler);
+      resolve({status:Number(response.statusCode||0),ok:Number(response.statusCode||0)>=200&&Number(response.statusCode||0)<300,headers:response.headers,stream:response,request});
+    });
+    const timer=setTimeout(()=>{const error=new Error(`${purpose} request timed out before response headers.`);error.name='AbortError';request.destroy(error)},Math.max(1000,Math.min(60000,Number(timeoutMs)||15000)));
+    const fail=error=>{clearTimeout(timer);if(abortHandler&&signal)signal.removeEventListener?.('abort',abortHandler);if(!settled){settled=true;reject(error)}};
+    request.on('error',fail);
+    let abortHandler=null;
+    if(signal){abortHandler=()=>{const error=new Error('The operation was aborted.');error.name='AbortError';request.destroy(error)};if(signal.aborted)abortHandler();else signal.addEventListener('abort',abortHandler,{once:true});}
+    request.end();
+  });
+}
+
 function clearCache(){cache.clear();}
-module.exports={classify,resolveHost,addressTrustedByCidrs,assertSafeIntegrationUrl,safeFetch,clearCache,mappedIpv4};
+module.exports={classify,resolveHost,addressTrustedByCidrs,assertSafeIntegrationUrl,safeFetch,safeStream,clearCache,mappedIpv4};
