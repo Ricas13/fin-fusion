@@ -3,6 +3,7 @@
 const core=require('./admin-html-core');
 const notificationWorkflow=require('./notification-workflow-tabs');
 const provisioningWorkflow=require('./provisioning-workflow-tabs');
+const backupWorkflow=require('./backup-workflow-tabs');
 
 function scriptBoundary(ch){return ch===undefined||/[\s/>]/.test(ch);}
 function externalScriptTag(openTag){return /\bsrc\s*=/i.test(openTag);}
@@ -52,8 +53,6 @@ const SETTING_HELP=Object.freeze({
     'Default server class':'Initial server class used when an administrator creates or configures server placement manually.',
     'Default server priority':'Lower-priority values are considered after higher-priority placement choices according to the placement policy.',
     'Default max users · 0 = unlimited':'Convenience capacity default for newly configured servers. Zero means no explicit user-count ceiling.',
-    'Expiring-soon window · days':'How many days before service expiry a customer is treated as expiring soon in administrator views.',
-    'Recent customers on dashboard':'Maximum number of recently changed customers shown on the dashboard summary.',
     'Site name':'The customer-facing platform name used in page titles, emails and portal branding.',
     'Default monthly tier':'Tier preselected when a new reseller is created. Existing resellers are not changed.',
     'Default ledger currency':'Three-letter currency used for new reseller downstream sales ledgers.',
@@ -135,16 +134,22 @@ function provisioningTabsFor(options={}){
     if(active==='policy-drift')return provisioningWorkflow.tabs('drift');
     return'';
 }
+function backupTabsFor(options={}){
+    const active=String(options.active||'');
+    if(active==='backups')return backupWorkflow.tabs('backups');
+    if(active==='configuration-transfer')return backupWorkflow.tabs('transfer');
+    return'';
+}
 
 function notificationTestScriptFor(options={}){
     return String(options.title||'')==='My notification preferences'?'<script src="/js/admin-personal-notification-tests.js" defer></script>':'';
 }
 
 function layout(options={}){
-    const workflow=notificationTabsFor(options)+provisioningTabsFor(options);
+    const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+backupTabsFor(options);
     options={...options,body:workflow+String(options.body||'')+notificationTestScriptFor(options)};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,notificationTestScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,backupTabsFor,notificationTestScriptFor,SETTING_HELP};
