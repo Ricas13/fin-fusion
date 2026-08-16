@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS attention_workflow (
 );
 
 ALTER TABLE attention_workflow
+    ADD COLUMN IF NOT EXISTS fingerprint TEXT,
     ADD COLUMN IF NOT EXISTS category TEXT,
     ADD COLUMN IF NOT EXISTS severity TEXT,
     ADD COLUMN IF NOT EXISTS title TEXT,
@@ -36,6 +37,11 @@ ALTER TABLE attention_workflow
     ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- ON CONFLICT(fingerprint) needs a non-partial unique key even on a repaired
+-- legacy table. PostgreSQL still permits multiple NULL fingerprints while any
+-- actual runtime fingerprint remains unique.
+CREATE UNIQUE INDEX IF NOT EXISTS attention_workflow_fingerprint_unique_idx
+    ON attention_workflow(fingerprint);
 CREATE INDEX IF NOT EXISTS attention_workflow_open_idx
     ON attention_workflow(cleared_at,severity,last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS attention_workflow_assignee_idx
