@@ -9,6 +9,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const compose = read('docker-compose.yml');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
 const verifyBackup = read('scripts/verify-backup.js');
+const sessionMigration = read('db/migrations/068_runtime_session_store.sql');
 
 function service(name) {
     const marker = `  ${name}:\n`;
@@ -53,12 +54,20 @@ for (const secret of ['SESSION_SECRET','AUTH_ENCRYPTION_KEY','DATA_ENCRYPTION_KE
 for (const role of ['steamfusion_app','steamfusion_automation','steamfusion_activity','steamfusion_backup','steamfusion_backup_verify']) {
     assert(roleScript.includes(role), `role bootstrap is missing ${role}`);
 }
+assert(/REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM \$\{role\}/.test(roleScript), 'web app must not be able to rewrite the migration ledger');
+assert(/'schema_migrations','user_sessions'/.test(roleScript), 'automation role must not receive migration/session-store access');
 assert(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO \$\{role\}/.test(roleScript), 'backup role must be read-capable for complete pg_dump snapshots');
 assert(/GRANT INSERT,UPDATE ON \$\{table\} TO \$\{role\}/.test(roleScript), 'backup role must write only its bookkeeping tables');
 assert(/createdb:\s*true/.test(roleScript) && /No schema\/table grants are intentional/.test(roleScript), 'restore verifier must use a CREATEDB-only identity with no production table grants');
 assert(/auth_totp_enrollments/.test(roleScript) && /auth_sessions/.test(roleScript), 'automation role must explicitly exclude authentication secrets');
 
+assert(/CREATE TABLE IF NOT EXISTS user_sessions/.test(sessionMigration), 'runtime session table must be migration-owned');
+for (const column of ['sid VARCHAR','sess JSON','expire TIMESTAMP']) assert(sessionMigration.includes(column), `session migration is missing ${column}`);
+assert(/PRIMARY KEY \(sid\)/.test(sessionMigration) && /user_sessions\(expire\)/.test(sessionMigration), 'session migration must include its key and expiry index');
+
 assert(/BACKUP_VERIFY_DATABASE_URL/.test(verifyBackup), 'restore verification must use the dedicated verifier credential');
+assert(!/fs\.existsSync\(input\)/.test(verifyBackup), 'backup verification must not use check-then-open file validation');
+assert(/O_NOFOLLOW/.test(verifyBackup) && /fstatSync\(fd\)/.test(verifyBackup) && /parseHeaderFromFd\(inputFd\)/.test(verifyBackup), 'backup verification must bind validation and decryption to one descriptor');
 assert(!/const adminUrl=dbUrlFor\(base,'postgres'\)/.test(verifyBackup), 'restore verification must not derive CREATE DATABASE access from the production backup login');
 
 console.log('runtime database isolation smoke: ok');
