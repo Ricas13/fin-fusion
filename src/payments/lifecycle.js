@@ -3,6 +3,7 @@
 const core = require('./lifecycle-core');
 const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
+const capacity = require('../entitlements/plan-capacity');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 
@@ -17,6 +18,7 @@ async function getProviderOptions(planCode, provider) {
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
         FROM plans p JOIN plan_provider_prices pp ON pp.plan_id=p.id
         WHERE p.code=$1 AND ${availableWindowSql('p')}
+          AND ${capacity.acquisitionSql('p')}
           AND p.audience IN ('direct','both')
           AND pp.provider=$2 AND pp.active=TRUE
         ORDER BY CASE pp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END
@@ -30,6 +32,7 @@ async function getProviderPlan(planCode, provider, checkoutMode = null) {
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
         FROM plans p JOIN plan_provider_prices pp ON pp.plan_id=p.id
         WHERE p.code=$1 AND ${availableWindowSql('p')}
+          AND ${capacity.acquisitionSql('p')}
           AND p.audience IN ('direct','both')
           AND pp.provider=$2 AND pp.active=TRUE
           AND ($3::text IS NULL OR pp.checkout_mode=$3)
@@ -42,8 +45,8 @@ async function getProviderPlan(planCode, provider, checkoutMode = null) {
 }
 
 // This resolver is used for signed provider events after money may already have
-// moved. Catalogue/mapping retirement blocks NEW checkout, not fulfilment of an
-// already-authorised provider object that still references this external ID.
+// moved. Catalogue/mapping retirement or a slot becoming full blocks NEW
+// checkout, not fulfilment of an already-authorised provider object.
 async function getProviderPlanByExternalId(provider, externalId) {
     const result = await query(`
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata,pp.active AS mapping_active
@@ -57,8 +60,8 @@ async function getProviderPlanByExternalId(provider, externalId) {
 }
 
 async function assertDirectPlan(planCode, { free = false, trial = false } = {}) {
-    const result = await query(`SELECT * FROM plans p WHERE p.code=$1 AND ${availableWindowSql('p')} LIMIT 1`, [String(planCode || '').trim()]);
-    if (!result.rowCount) throw new Error('Plan is not available.');
+    const result = await query(`SELECT * FROM plans p WHERE p.code=$1 AND ${availableWindowSql('p')} AND ${capacity.acquisitionSql('p')} LIMIT 1`, [String(planCode || '').trim()]);
+    if (!result.rowCount) throw new Error('Plan is not available or is currently sold out.');
     const plan = state.assertAudience(result.rows[0], 'customer');
     stremio.assertAcquirable(plan,{context:trial?'new trial':free?'new free claim':'new customer acquisition'});
     if (free && (Number(plan.price_minor) !== 0 || plan.billing_interval === 'trial')) throw new Error('This free plan is not available.');
@@ -124,6 +127,7 @@ async function startFreeTrial(customerId, planCode) {
     await enforceTrialEligibility(customerId, plan);
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
+        await capacity.lockAndAssert(client,plan.id,plan.name||'This trial');
         const live = await client.query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`, [customerId]);
         if (live.rowCount) throw new Error('An active entitlement already exists. Change or cancel it before starting a trial.');
         const startsAt = new Date(), endsAt = addPlanDuration(plan, startsAt);
@@ -143,6 +147,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
     const policy = await trialPolicy();
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
+        await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan');
         const prior = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`, [customerId, plan.id]);
         if (policy.freeMode !== 'renewable' && prior.rowCount) throw new Error('Free access on this plan has already been claimed.');
         const liveResult=await client.query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);
@@ -168,17 +173,16 @@ async function autoDowngradeEligibleCustomer(customerId) {
     if (live.rowCount) return null;
     try { return await claimFreePlan(customerId, policy.downgradeFreePlanCode, { automatic: true }); }
     catch (error) {
-        if (/already been claimed/i.test(error.message)) return null;
+        if (/already been claimed|sold out|not available/i.test(error.message)) return null;
         throw error;
     }
 }
 
 async function activatePurchase(input) {
     // Provider callbacks run only after provider authentication/signature checks.
-    // At this point catalogue retirement must not strand a paid customer. The
-    // Stremio runtime gate applies only when this provider object would create a
-    // NEW local subscription; existing provider subscriptions remain replayable
-    // and synchronisable if the addon runtime is temporarily disabled later.
+    // At this point catalogue retirement/capacity changes must not strand a paid
+    // customer. Capacity is therefore enforced before checkout starts, while an
+    // already-authorised provider object is always fulfilled idempotently.
     const planResult = await query('SELECT * FROM plans WHERE id=$1', [input.planId]);
     if (!planResult.rowCount) throw new Error('Plan not found.');
     const plan=state.assertAudience(planResult.rows[0], 'customer');
