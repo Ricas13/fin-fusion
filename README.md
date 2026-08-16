@@ -62,6 +62,14 @@ The `migrate` service applies schema migrations and bootstraps an unattended adm
 
 The app listens on `127.0.0.1:3030` by default. Put your HTTPS reverse proxy in front of it rather than exposing the container directly to the internet.
 
+For upgrades of an existing production installation, use the supported SSH-resilient deployment command instead of a direct Compose rebuild:
+
+```bash
+bash scripts/deploy-production.sh
+```
+
+That command prepares runtime DB identities, persists the host backup UID/GID, serialises image builds to reduce peak resource usage, makes an encrypted pre-deploy backup, migrates first, recreates runtime services only after migration success, and verifies the live deployment. See `docs/PRODUCTION_DEPLOYMENT.md`.
+
 ## First-run setup
 
 A genuinely blank database starts safely with customer-facing features off. The setup flow creates the first native administrator and permanently locks the installer afterwards.
