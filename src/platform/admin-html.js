@@ -124,9 +124,9 @@ function notificationTabsFor(options={}){
 }
 
 function layout(options={}){
+    options={...options,body:notificationTabsFor(options)+String(options.body||'')};
     const safeBody=stripInlineScripts(options.body);
-    const body=notificationTabsFor(options)+decorateSettingHelp(safeBody);
-    return core.layout({...options,body});
+    return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
 module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,SETTING_HELP};
