@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Stremio · <%= siteName %></title><link rel="stylesheet" href="/css/customer-portal.css"></head>
+<body><main class="portal-shell">
+  <p><a href="/account">← Account</a></p>
+  <section class="panel">
+    <div class="section-heading"><div><span class="eyebrow">STREAMING APP</span><h1>Stremio</h1><p>Your Stremio installation is tied to this subscription. It does not expose your Jellyfin login or the server administrator key.</p></div><span class="status-pill <%= status==='active'?'success':status==='pending'?'warning':'' %>"><%= statusLabel %></span></div>
+    <% if (message) { %><div class="notice success"><%= message %></div><% } %>
+    <% if (error) { %><div class="notice error"><%= error %></div><% } %>
+    <% if (!eligible) { %><div class="notice warning">Your current plan does not include Stremio.</div><% } else if (!runtimeReady) { %><div class="notice warning">Stremio delivery is not enabled by the administrator yet.</div><% } %>
+    <% if (credential && manifestUrl) { %>
+      <div class="notice success"><strong>Installation link created.</strong> This raw credential is shown only now. If you lose it, rotate the installation.</div>
+      <div class="field"><label>Addon manifest URL</label><input class="input" type="text" readonly value="<%= manifestUrl %>" onclick="this.select()"></div>
+      <p><a class="button primary" href="<%= stremioUrl %>">Install in Stremio</a></p>
+    <% } %>
+    <% if (eligible && runtimeReady) { %>
+      <div class="grid two">
+        <div class="detail-card"><span>Concurrent streams</span><strong><%= streamLimit %></strong><small>Enforced by the dedicated Stremio Jellyfin identity, with CAPTaINFiN admission checks as an additional guard.</small></div>
+        <div class="detail-card"><span>Installation</span><strong><%= status==='active'?'Active':status==='revoked'?'Revoked':'Not installed' %></strong><small><%= tokenHint?('Credential hint '+tokenHint):'No stored raw credential' %></small></div>
+      </div>
+      <form method="post" action="/account/stremio/install" style="margin-top:18px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary"><%= status==='active'?'Rotate installation':'Create installation' %></button></form>
+      <% if (status==='active') { %><form method="post" action="/account/stremio/revoke" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary">Revoke installation</button></form><% } %>
+    <% } %>
+  </section>
+  <section class="panel"><h2>How it works</h2><div class="grid three"><div class="detail-card"><strong>1. Install</strong><small>Use the one-time installation link above.</small></div><div class="detail-card"><strong>2. Pick a movie or episode</strong><small>CAPTaINFiN supplies only streams you are entitled to access.</small></div><div class="detail-card"><strong>3. Play</strong><small>Video travels directly from the assigned Jellyfin server to Stremio.</small></div></div></section>
+</main></body></html>
