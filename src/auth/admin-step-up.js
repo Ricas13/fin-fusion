@@ -8,7 +8,7 @@ const routeRateLimit=require('../security/route-rate-limit');
 const WINDOW_MS=Math.max(2,Math.min(30,Number(process.env.ADMIN_STEP_UP_MINUTES||10)))*60*1000;
 const MUTATION_PATTERNS=[
  /^\/admin\/customers\/bulk\//,
- /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|libraries|policy|reseller|sessions)/,
+ /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|library-overrides|profile|policy|reseller|sessions)/,
  /^\/admin\/customer(?:s)?\/[^/]+\//,
  /^\/admin\/plans(?:\/|$)/,
  /^\/admin\/reseller-tiers(?:\/|$)/,
@@ -16,7 +16,7 @@ const MUTATION_PATTERNS=[
  /^\/admin\/discounts(?:\/|$)/,
  /^\/admin\/referrals(?:\/|$)/,
  /^\/admin\/configuration\/apply$/,
- /^\/admin\/server-migrations\//,
+ /^\/admin\/provisioning\/migrations\//,
  /^\/admin\/servers(?:\/|$)/,
  /^\/admin\/provider-mappings(?:\/|$)/,
  /^\/admin\/payments(?:\/|$)/,
