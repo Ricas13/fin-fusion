@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { Client } = require('pg');
-const { parseHeaderFromFd, createDecipherFromHeader, requireBackupKey } = require('../src/backup/encrypted-stream');
+const { parseHeaderFromFd, requireBackupKey } = require('../src/backup/encrypted-stream');
 const { postgresProcessEnv } = require('../src/backup/postgres-env');
 const { query, getPool } = require('../src/db');
 
