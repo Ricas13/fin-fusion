@@ -1,11 +1,10 @@
 'use strict';
 
-const csrf=require('../auth/csrf');
 const { layout } = require('./admin-html');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange } = require('./admin-dashboard-analytics');
 const { renderDashboard } = require('./admin-dashboard-view');
-const forecast=require('./admin-revenue-forecast');
+const reportingCurrency=require('./reporting-currency');
 const runtimeSettings = require('./runtime-settings');
 
 function isNativeAdmin(req) {
@@ -25,16 +24,16 @@ async function dashboardPage(req, res) {
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
     res.setHeader('Pragma', 'no-cache');
     try {
-        await runtimeSettings.ensureLoaded();
+        await Promise.all([runtimeSettings.ensureLoaded(),reportingCurrency.refreshRates().catch(()=>null)]);
         const range = dashboardRange(req.query || {});
-        const [stats,prospect] = await Promise.all([dashboardData(range),forecast.data({weeks:12})]);
-        const prospectiveIncome=forecast.renderCompact(prospect,csrf.token(req));
+        const reporting=await reportingCurrency.getForUser(req.session.authUserId);
+        const stats=await dashboardData(range,reporting);
         return res.send(layout({
             siteName: runtimeSettings.siteName(),
             active: 'dashboard',
             title: 'Admin Dashboard',
-            subtitle: `Business and streaming performance · ${range.label}`,
-            body: `${messageBlock(req)}<link rel="stylesheet" href="/css/admin-dashboard-forecast-compact.css">${renderDashboard(stats,{prospectiveIncome})}`,
+            subtitle: `Business and streaming performance · ${range.label} · ${reporting.currency}`,
+            body: `${messageBlock(req)}${renderDashboard(stats)}`,
             action: primaryAction(stats)
         }));
     } catch (error) {
