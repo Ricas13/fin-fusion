@@ -8,8 +8,8 @@ const groups=Object.freeze([
   {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['resellers','Resellers','/admin/reseller-management'],['activity','Playback & Activity','/admin/activity']]},
   {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]},
-  {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['policy-drift','Policy Drift','/admin/provisioning/drift'],['notifications','Notifications','/admin/notifications'],['automation-jobs','Jobs','/admin/automation']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['branding','Branding','/admin/settings/branding'],['settings-commerce','Commerce','/admin/settings?section=commerce'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups','/admin/backups'],['settings-advanced','Advanced','/admin/settings?section=advanced']]}
+  {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['policy-drift','Policy Drift','/admin/provisioning/drift'],['notification-gateway','Notification gateway','/admin/notifications'],['automation-jobs','Jobs','/admin/automation']]},
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['notification-settings','Notifications','/admin/notifications/preferences'],['my-notifications','My Notifications','/admin/profile/notifications'],['branding','Branding','/admin/settings/branding'],['settings-commerce','Commerce','/admin/settings?section=commerce'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups','/admin/backups'],['settings-advanced','Advanced','/admin/settings?section=advanced']]}
 ]);
 
 // Workflow pages can stay grouped/breadcrumbed without consuming sidebar space.
@@ -22,7 +22,8 @@ const aliases=Object.freeze({
   'customer-claims':'users',
   'reseller-tiers':'plans',
   'provider-mappings':'payments',
-  'notification-events':'notifications',
+  'notifications':'notification-settings',
+  'notification-events':'notification-settings',
   'payment-reconciliation':'commerce-overview',
   'configuration-health':'settings-general',
   'setup':'settings-general',
