@@ -13,4 +13,10 @@ COPY . .
 
 USER node
 EXPOSE 3030
-CMD ["npm", "start"]
+
+# Do not inherit the node:alpine docker-entrypoint wrapper. CAPTaINFiN's
+# Compose services provide their own explicit commands (app/workers/migrate),
+# and invoking those commands directly avoids the wrapper terminating the
+# long-running worker processes during production startup.
+ENTRYPOINT []
+CMD ["node", "src/application.js"]
