@@ -11,6 +11,7 @@ const deployScript = fs.readFileSync(path.join(root, 'scripts', 'deploy-producti
 const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
 const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
 const verifyDeployment = fs.readFileSync(path.join(root, 'scripts', 'verify-deployment.js'), 'utf8');
+const backupWorker = fs.readFileSync(path.join(root, 'scripts', 'backup-worker.js'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -49,6 +50,8 @@ assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup a
 assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must include operation failure state, not heartbeat only');
 assert(verifyDeployment.includes("add('backup worker', backupHealthy"), 'deployment verification must include the backup worker');
 assert(verifyDeployment.includes('backupWorker.last_error'), 'deployment verification must fail on an active backup error');
+assert(backupWorker.includes('SELECT last_success_at,next_run_at,last_error FROM backup_worker_state'), 'backup due logic must inspect persisted failure state');
+assert(backupWorker.includes('if(row.last_error)return true;'), 'a worker restart must immediately retry a previously failed backup');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
