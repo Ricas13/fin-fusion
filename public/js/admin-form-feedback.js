@@ -41,12 +41,25 @@
         catch (_) { return false; }
     }
 
+    function actionUrl(form, submitter = null) {
+        return submitter?.formAction || form.action || window.location.href;
+    }
+
+    function actionPath(form) {
+        try { return new URL(form.action || window.location.href, window.location.href).pathname; }
+        catch (_) { return ''; }
+    }
+
     function shouldEnhance(form) {
         if (String(form.method || 'get').toLowerCase() !== 'post') return false;
         if (form.dataset.nativeSubmit === 'true') return false;
         if (form.target && form.target !== '_self') return false;
         if (String(form.enctype || '').toLowerCase() === 'multipart/form-data') return false;
         if (form.querySelector('input[type="file"]')) return false;
+        // Credential forms intentionally use the browser's native form submission.
+        // This preserves native formaction behaviour for the Validate buttons and
+        // avoids an AJAX layer between the browser session and CSRF verification.
+        if (actionPath(form) === '/admin/notifications/preferences/delivery') return false;
         return sameOrigin(form.action || window.location.href);
     }
 
@@ -84,6 +97,14 @@
         URL.revokeObjectURL(url);
     }
 
+    async function responseMessage(response) {
+        try {
+            const text = (await response.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text && text.length < 300) return text;
+        } catch (_) {}
+        return `Request failed (${response.status}).`;
+    }
+
     async function submitEnhanced(event) {
         if (event.defaultPrevented) return;
         const form = event.currentTarget;
@@ -99,19 +120,22 @@
 
         try {
             const data = urlencodedBody(form, submitter);
-            const response = await fetch(form.action || window.location.href, {
-                method: 'POST',
+            const target = actionUrl(form, submitter);
+            const csrfToken = form.querySelector('input[name="_csrf"]')?.value || '';
+            const response = await fetch(target, {
+                method: String(submitter?.formMethod || form.method || 'POST').toUpperCase(),
                 body: data.toString(),
                 credentials: 'same-origin',
                 redirect: 'follow',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
                     'X-CAPTAINFIN-AJAX-FORM': '1',
                     'Accept': 'text/html,application/xhtml+xml,application/json'
                 }
             });
 
-            const finalUrl = new URL(response.url || form.action || window.location.href, window.location.href);
+            const finalUrl = new URL(response.url || target, window.location.href);
             const error = finalUrl.searchParams.get('error');
             const field = finalUrl.searchParams.get('field');
             if (error) {
@@ -126,13 +150,7 @@
             }
 
             if (!response.ok) {
-                let message = `Request failed (${response.status}).`;
-                const type = response.headers.get('content-type') || '';
-                if (type.includes('text/plain')) {
-                    const text = (await response.text()).trim();
-                    if (text && text.length < 300) message = text;
-                }
-                showFeedback(form, message, null);
+                showFeedback(form, await responseMessage(response), null);
                 return;
             }
 
