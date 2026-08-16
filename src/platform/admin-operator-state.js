@@ -6,7 +6,13 @@ const csrf=require('../auth/csrf');
 const reporting=require('./reporting-currency');
 const routeRateLimit=require('../security/route-rate-limit');
 
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.status(401).json({ok:false,error:'unauthorized'});}
+function gate(req,res,next){
+  if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId){
+    res.locals.operatorActorUserId=req.session.authUserId;
+    return next();
+  }
+  return res.status(401).json({ok:false,error:'unauthorized'});
+}
 function epoch(value){return value?new Date(value).getTime():0;}
 const unreadLimit=routeRateLimit.middleware({scope:'admin-operator-unread',max:120,windowSeconds:60});
 const reportingCurrencyLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
@@ -28,9 +34,9 @@ async function snapshot(){
 
 function createAdminOperatorStateRouter(){
   const router=express.Router();
-  // Mount abuse protection before authorization, matching the security shape
-  // used by the other admin control surfaces. The route handlers below never
-  // execute until both the shared persistent limiter and the admin gate pass.
+  // Persistent abuse protection runs before authorization. The authorization
+  // middleware then exposes only the already-validated actor id to handlers,
+  // keeping authentication/session inspection out of the business endpoints.
   router.use('/admin/api/operator-state/unread',unreadLimit,gate);
   router.get('/admin/api/operator-state/unread',async(_req,res)=>{
     try{res.setHeader('Cache-Control','no-store, private');res.json({ok:true,...await snapshot()});}
@@ -39,7 +45,7 @@ function createAdminOperatorStateRouter(){
   router.use('/admin/reporting-currency',reportingCurrencyLimit,gate);
   router.post('/admin/reporting-currency',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const saved=await reporting.saveCurrency(req.body.currency,req.session.authUserId);return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
+    try{const saved=await reporting.saveCurrency(req.body.currency,res.locals.operatorActorUserId);return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
     catch(error){return res.redirect('/admin?error='+encodeURIComponent(error.message||'Reporting currency could not be changed.'));}
   });
   return router;
