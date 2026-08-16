@@ -4,6 +4,7 @@ const core = require('./lifecycle-core');
 const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
 const commerce = require('./commerce-control');
+const stremio = require('../stremio/foundation');
 
 function addPlanDuration(plan, from = new Date()) {
     return new Date(from.getTime() + Number(plan.duration_days || 30) * 86400000);
@@ -35,7 +36,9 @@ async function getProviderPlan(planCode, provider, checkoutMode = null) {
         ORDER BY CASE pp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END
         LIMIT 1
     `, [planCode, provider, mode]);
-    return result.rows[0] || null;
+    const plan=result.rows[0]||null;
+    if(plan)stremio.assertAcquirable(plan,{context:`new ${provider} checkout`});
+    return plan;
 }
 
 // This resolver is used for signed provider events after money may already have
@@ -57,6 +60,7 @@ async function assertDirectPlan(planCode, { free = false, trial = false } = {}) 
     const result = await query(`SELECT * FROM plans p WHERE p.code=$1 AND ${availableWindowSql('p')} LIMIT 1`, [String(planCode || '').trim()]);
     if (!result.rowCount) throw new Error('Plan is not available.');
     const plan = state.assertAudience(result.rows[0], 'customer');
+    stremio.assertAcquirable(plan,{context:trial?'new trial':free?'new free claim':'new customer acquisition'});
     if (free && (Number(plan.price_minor) !== 0 || plan.billing_interval === 'trial')) throw new Error('This free plan is not available.');
     if (trial && plan.billing_interval !== 'trial') throw new Error('This trial is not available.');
     return plan;
@@ -85,6 +89,7 @@ async function saveTrialPolicy(input, actorUserId = null) {
     if (value.downgradeToFree) {
         const target = await query(`SELECT code FROM plans p WHERE code=$1 AND ${availableWindowSql('p')} AND price_minor=0 AND billing_interval<>'trial' AND audience IN ('direct','both')`, [value.downgradeFreePlanCode]);
         if (!target.rowCount) throw new Error('Choose an active direct free plan for automatic downgrade.');
+        stremio.assertAcquirable((await query('SELECT service_type FROM plans WHERE code=$1',[value.downgradeFreePlanCode])).rows[0],{context:'automatic free downgrade'});
     } else value.downgradeFreePlanCode = '';
     await transaction(async client => {
         await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('trial_free_policy',$1::jsonb)
@@ -170,12 +175,16 @@ async function autoDowngradeEligibleCustomer(customerId) {
 
 async function activatePurchase(input) {
     // Provider callbacks run only after provider authentication/signature checks.
-    // At this point catalogue retirement must not strand a paid customer.
+    // At this point catalogue retirement must not strand a paid customer. The
+    // Stremio runtime gate applies only when this provider object would create a
+    // NEW local subscription; existing provider subscriptions remain replayable
+    // and synchronisable if the addon runtime is temporarily disabled later.
     const planResult = await query('SELECT * FROM plans WHERE id=$1', [input.planId]);
     if (!planResult.rowCount) throw new Error('Plan not found.');
-    state.assertAudience(planResult.rows[0], 'customer');
+    const plan=state.assertAudience(planResult.rows[0], 'customer');
+    const same = input.providerSubscriptionId ? await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider,input.providerSubscriptionId]) : {rowCount:0};
+    if(!same.rowCount)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
     if (state.recurringProvider({ source: input.provider, provider_subscription_id: input.providerSubscriptionId })) {
-        const same = await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider, input.providerSubscriptionId]);
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId);
     }
     return core.activatePurchase(input);

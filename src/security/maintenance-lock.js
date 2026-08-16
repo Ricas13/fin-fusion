@@ -8,11 +8,14 @@ const { RESTORE_MAINTENANCE_LOCK } = require('../db-locks');
 // while it holds this session-level lock; using the same finite pool for both
 // can deadlock under concurrency (all clients held as guards, none left for the
 // guarded work). Advisory locks are database-global, so a dedicated pool gives
-// the same restore exclusion without starving normal transactions.
+// the same restore exclusion without starving normal transactions. Connection
+// acquisition is bounded too: pool exhaustion must degrade like a busy restore,
+// not leave a checkout or admin mutation waiting forever.
 const lockPool = new Pool({
     connectionString: process.env.DATABASE_URL,
     max: Math.max(2, Math.min(32, Number(process.env.MAINTENANCE_LOCK_POOL_MAX || 12))),
     idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: Math.max(1000, Math.min(30000, Number(process.env.MAINTENANCE_LOCK_CONNECTION_TIMEOUT_MS || 5000))),
     allowExitOnIdle: true
 });
 

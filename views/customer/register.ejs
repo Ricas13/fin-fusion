@@ -12,6 +12,7 @@
 <body><main class="card">
   <h1>Create <%= siteName %> account</h1>
   <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. Use an invitation link if one was provided to you.</div><% } %>
+  <% if (registrationOpen && verificationRequired) { %><div class="notice"><strong>Email verification first.</strong> Your details are held temporarily; the customer account is not created until you open the verification link sent to your email.</div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
   <% if (registrationOpen) { %>
   <form method="post" action="/account/register">
@@ -22,7 +23,7 @@
     <p class="muted">This is your portal password. Your Jellyfin password is managed separately and is never stored here.</p>
     <% if (referralsEnabled) { %><label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"><% } %>
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-theme="dark"></div></div><% } %>
-    <button type="submit">Create account</button>
+    <button type="submit"><%= verificationRequired ? 'Send verification link' : 'Create account' %></button>
   </form>
   <% } %>
   <p class="muted">Already registered? <a href="/account/login">Sign in</a></p>

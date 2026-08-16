@@ -8,7 +8,7 @@ const routeRateLimit=require('../security/route-rate-limit');
 const WINDOW_MS=Math.max(2,Math.min(30,Number(process.env.ADMIN_STEP_UP_MINUTES||10)))*60*1000;
 const MUTATION_PATTERNS=[
  /^\/admin\/customers\/bulk\//,
- /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|libraries|policy|reseller|sessions)/,
+ /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|library-overrides|profile|policy|reseller|sessions)/,
  /^\/admin\/customer(?:s)?\/[^/]+\//,
  /^\/admin\/plans(?:\/|$)/,
  /^\/admin\/reseller-tiers(?:\/|$)/,
@@ -16,12 +16,15 @@ const MUTATION_PATTERNS=[
  /^\/admin\/discounts(?:\/|$)/,
  /^\/admin\/referrals(?:\/|$)/,
  /^\/admin\/configuration\/apply$/,
- /^\/admin\/server-migrations\//,
+ /^\/admin\/provisioning\/migrations\//,
  /^\/admin\/servers(?:\/|$)/,
  /^\/admin\/provider-mappings(?:\/|$)/,
  /^\/admin\/payments(?:\/|$)/,
  /^\/admin\/commerce\/(?:policy|risk-policy|reconciliation\/|incidents\/[^/]+\/(?:resolve|reopen))/,
- /^\/admin\/backups\/(?:restore|run|verify)/
+ /^\/admin\/backups\/(?:restore|run|verify)/,
+ /^\/admin\/settings\/(?:registration|abuse-protection|stremio)(?:\/|$)/,
+ /^\/admin\/operations(?:\/|$)/,
+ /^\/admin\/security\/2fa-policy$/
 ];
 const stepUpViewLimit=routeRateLimit.middleware({scope:'admin-step-up-view',max:60,windowSeconds:60});
 const stepUpVerifyLimit=routeRateLimit.middleware({scope:'admin-step-up-verify',max:8,windowSeconds:600});
