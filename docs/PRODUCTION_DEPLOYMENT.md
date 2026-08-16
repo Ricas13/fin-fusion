@@ -22,12 +22,13 @@ The deployment command performs the following sequence:
 2. Validates `.env` and generates any missing isolated runtime DB URLs with independent high-entropy passwords.
 3. Saves the old `.env` before adding generated runtime credentials.
 4. Validates the full Docker Compose configuration.
-5. Creates a compressed-format PostgreSQL pre-deploy backup when an existing database container is present.
+5. Starts/waits for PostgreSQL without recreating an existing database container.
 6. Builds the new images while the currently-running portal remains online.
-7. Runs database migrations, runtime-role creation/password rotation and administrator bootstrap in the one-shot migration container.
-8. Recreates the application and worker containers only after that one-shot migration step succeeds.
-9. Waits for Docker health checks on the web app, automation worker, activity worker and backup worker.
-10. Runs `npm run verify:deployment` from the live application container.
+7. Creates an **encrypted** pre-deploy PostgreSQL backup through the existing recovery tooling when this is an upgrade.
+8. Runs database migrations, runtime-role creation/password rotation and administrator bootstrap in the one-shot migration container.
+9. Recreates the application and worker containers only after that one-shot migration step succeeds.
+10. Waits for Docker health checks on the web app, automation worker, activity worker and backup worker.
+11. Runs `npm run verify:deployment` from the live application container.
 
 If a deployment step fails, the script exits non-zero and prints Compose state plus recent service logs.
 
@@ -77,13 +78,13 @@ The app should remain bound to `127.0.0.1:3030`; the public HTTPS endpoint shoul
 
 ## Pre-deploy backups
 
-Upgrade backups are written to:
+Upgrade backups are written to the existing mounted backup directory under:
 
 ```text
-backups/predeploy/steamfusion-YYYYMMDDTHHMMSSZ.dump
+backups/predeploy/captainfin-<timestamp>.pgdump.enc
 ```
 
-They are PostgreSQL custom-format dumps (`pg_dump -Fc`). Keep the normal encrypted scheduled backup system enabled as the primary backup mechanism; the pre-deploy dump is an additional upgrade safety point.
+They use the application's authenticated encrypted-backup format and `BACKUP_ENCRYPTION_KEY`; no raw database dump is intentionally left on the host by the deployment helper. Keep the normal encrypted scheduled backup system enabled as the primary backup mechanism; the pre-deploy backup is an additional upgrade safety point.
 
 ## Manual fallback sequence
 
@@ -92,10 +93,11 @@ If the deployment helper cannot be used, preserve the same ordering:
 ```bash
 node scripts/prepare-production-env.js --write
 docker compose config
-docker compose build app automation-worker activity-worker backup-worker migrate
+docker compose --profile recovery build app automation-worker activity-worker backup-worker migrate recovery-tools
+docker compose --profile recovery run --rm --no-deps -e BACKUP_DIR=/backups/predeploy recovery-tools npm run db:backup
 docker compose run --rm --no-deps migrate
 docker compose up -d --no-deps app automation-worker activity-worker backup-worker
 docker compose exec -T app npm run verify:deployment
 ```
 
-Take a database backup before the migration step. Never go directly from an older deployment to `docker compose up -d --build app` now that runtime DB isolation is part of the supported architecture.
+The backup command is for an existing installation; a genuinely fresh database has nothing to back up. Never go directly from an older deployment to `docker compose up -d --build app` now that runtime DB isolation is part of the supported architecture.
