@@ -40,7 +40,7 @@ async function customer360(customerId){
         query(`SELECT action,status,detail,started_at,completed_at FROM provisioning_runs WHERE customer_id=$1 ORDER BY started_at DESC LIMIT 100`,[customerId]),
         userId?query(`SELECT created_at,last_seen_at,expires_at,revoked_at,user_agent_hash FROM auth_sessions WHERE user_id=$1 ORDER BY last_seen_at DESC LIMIT 50`,[userId]):Promise.resolve({rows:[]}),
         userId?query(`SELECT event_type,success,identity_hint,user_agent_hash,created_at FROM auth_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`,[userId]):Promise.resolve({rows:[]}),
-        query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id=$1::text) OR (entity_type='subscription' AND entity_id IN (SELECT id::text FROM subscriptions WHERE customer_id=$1)) ORDER BY created_at DESC LIMIT 100`,[customerId])
+        query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id::text=$1::text) OR (entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1)) ORDER BY created_at DESC LIMIT 100`,[customerId])
     ]);
 
     const timeline=buildTimeline([
@@ -100,7 +100,7 @@ async function reseller360(resellerId){
         query(`SELECT cr.id,cr.customer_id,cr.media_type,cr.title,cr.request_text,cr.status,cr.created_at,cr.resolved_at,COALESCE(c.display_name,u.username,c.email,'Reseller') customer_name FROM content_requests cr LEFT JOIN customers c ON c.id=cr.customer_id LEFT JOIN app_users u ON u.id=c.user_id WHERE cr.reseller_id=$1 OR c.reseller_id=$1 ORDER BY cr.created_at DESC LIMIT 150`,[resellerId]),
         query(`SELECT created_at,last_seen_at,expires_at,revoked_at,user_agent_hash FROM auth_sessions WHERE user_id=$1 ORDER BY last_seen_at DESC LIMIT 50`,[reseller.user_id]),
         query(`SELECT event_type,success,identity_hint,user_agent_hash,created_at FROM auth_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`,[reseller.user_id]),
-        query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='reseller' AND entity_id=$1::text) OR actor_user_id=$2 ORDER BY created_at DESC LIMIT 150`,[resellerId,reseller.user_id]),
+        query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='reseller' AND entity_id::text=$1::text) OR actor_user_id=$2 ORDER BY created_at DESC LIMIT 150`,[resellerId,reseller.user_id]),
         query(`SELECT p.name,COUNT(*)::int subscriptions FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id WHERE c.reseller_id=$1 AND s.status IN ('active','trialing','past_due') AND s.current_period_end>NOW() GROUP BY p.id ORDER BY subscriptions DESC,p.name`,[resellerId])
     ]);
 
