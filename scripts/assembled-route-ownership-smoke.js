@@ -18,7 +18,7 @@ async function main(){
     const app=createApplication(),routes=walk(app._router?.stack),owners=new Map();
     for(const route of routes){const key=`${route.method} ${route.path}`;if(!owners.has(key))owners.set(key,[]);owners.get(key).push(route);}
     const duplicates=[...owners.entries()].filter(([key,rows])=>rows.length>1&&!ALLOW.has(key));
-    if(duplicates.length){console.error('Duplicate assembled route owners:');for(const[key,rows]of duplicates)console.error(`  ${key} x${rows.length}`);assert.fail(`${duplicates.length} duplicate method/path ownership conflict(s)`);}
+    if(duplicates.length){const detail=duplicates.map(([key,rows])=>`${key} x${rows.length}`).join(', ');console.error('Duplicate assembled route owners:');for(const[key,rows]of duplicates)console.error(`  ${key} x${rows.length}`);console.error(`::error title=Duplicate assembled route ownership::${detail}`);assert.fail(`${duplicates.length} duplicate method/path ownership conflict(s): ${detail}`);}
     for(const required of ['GET /','GET /admin','GET /account','GET /account/login','POST /account/login','GET /reseller','GET /admin/attention','GET /admin/backups','GET /admin/operations','GET /help'])assert(owners.has(required),`Required assembled route missing: ${required}`);
     console.log(`assembled route ownership OK: ${owners.size} unique method/path routes`);
   } finally {
