@@ -5,28 +5,46 @@ const base = require('./provisioning');
 const control = require('./reconciliation-control');
 const accessHolds = require('../entitlements/access-holds');
 
+function serviceType(entitlement){return String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin');}
 function stateDetail(entitlement, outcome) {
     const account = outcome?.account || null;
     return {
         subscriptionId: entitlement?.subscription_id || null,
         planId: entitlement?.plan_id || null,
         accountId: account?.id || null,
-        serverId: account?.server_id || null,
+        serverId: account?.server_id || outcome?.stremio?.serverId || null,
+        serviceType: serviceType(entitlement),
         result: {
             active: Boolean(outcome?.active),
             planCode: entitlement?.code || null,
             jellyfinAccountId: account?.id || null,
-            serverId: account?.server_id || null,
+            serverId: account?.server_id || outcome?.stremio?.serverId || null,
+            stremioStatus: outcome?.stremio?.status || null,
             reconciledAt: new Date().toISOString()
         }
     };
+}
+
+async function disableNormalAccounts(customerId){
+    const rows=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND account_purpose='jellyfin' AND disabled=FALSE`,[customerId]);
+    for(const account of rows.rows)await base.disableJellyfinAccount(account);
 }
 
 async function reconcileCustomer(customerId) {
     const entitlement = await base.currentEntitlement(customerId);
     await control.markCustomerRunning(customerId, entitlement);
     try {
-        const outcome = await base.reconcileCustomer(customerId);
+        const type=serviceType(entitlement),stremio=require('../stremio/entitlements');
+        let outcome;
+        if(entitlement&&type==='stremio'){
+            await disableNormalAccounts(customerId);
+            const s=await stremio.reconcileForCustomer(customerId,entitlement);
+            outcome={active:s.status==='active',account:null,stremio:s};
+        }else{
+            outcome=await base.reconcileCustomer(customerId);
+            if(entitlement&&type==='bundle')outcome.stremio=await stremio.reconcileForCustomer(customerId,entitlement);
+            else await stremio.suspend(customerId,'Current subscription does not include Stremio.');
+        }
         await control.markCustomerHealthy(customerId, stateDetail(entitlement, outcome));
         return outcome;
     } catch (error) {
@@ -58,6 +76,8 @@ async function releaseAccess(customerId, actorUserId=null) {
 }
 
 async function setJellyfinPassword(customerId, accountId, newPassword) {
+    const account=await query(`SELECT account_purpose FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2`,[accountId,customerId]);
+    if(account.rows[0]?.account_purpose==='stremio_internal')throw new Error('Internal Stremio Jellyfin credentials cannot be changed through customer password controls.');
     return base.setJellyfinPassword(customerId, accountId, newPassword);
 }
 
