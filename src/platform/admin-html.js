@@ -116,10 +116,10 @@ function decorateSettingHelp(body){
 
 function notificationTabsFor(options={}){
     const active=String(options.active||'');
-    if(!['notifications','notification-settings','my-notifications'].includes(active))return'';
+    if(!['notifications','notification-settings','my-notifications','my-profile'].includes(active))return'';
     const title=String(options.title||'');
     const subtitle=String(options.subtitle||'');
-    const selected=title==='My notification preferences'?'personal':/transactional email gateway/i.test(subtitle)?'email':'global';
+    const selected=active==='my-profile'?'profile':title==='My notification preferences'?'personal':/transactional email gateway/i.test(subtitle)?'email':'global';
     return notificationWorkflow.tabs(selected);
 }
 
