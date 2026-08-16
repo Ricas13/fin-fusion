@@ -26,6 +26,7 @@ const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
+const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 const trialFreeLimit=routeRateLimit.middleware({scope:'customer-trial-free',max:12,windowSeconds:300});
@@ -34,9 +35,6 @@ function ensureFleetSnapshot(){if(!fleetStarted){fleetStarted=true;placement.sta
 function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router;}
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
-    // Stremio is a bearer-token, GET-only public protocol surface. It is kept
-    // ahead of browser abuse/configuration routers so its CORS and neutral
-    // empty-stream semantics are not rewritten by portal middleware.
     router.use(createStremioRuntimeRouter());
     router.use(publicAbuseProtection.middleware);
     router.use(createPublicHelpRouter());
@@ -45,6 +43,7 @@ function createRouter(){
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
     router.use(createCustomerStremioRouter());
+    router.use(createCustomerDashboardRouter());
     router.use(createResellerSecurityRouter());
     router.get('/reseller/sales',(req,res)=>res.redirect(302,'/reseller/ledger'));
     router.use(createResellerLedgerRouter());
@@ -66,7 +65,7 @@ function createRouter(){
     router.use('/account/claim-free/:planCode',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set([
-        '/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
+        '/account','/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
         '/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal',
         '/account/jellyfin/:accountId/password',
         '/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences',
