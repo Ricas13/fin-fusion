@@ -19,7 +19,6 @@ const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning')
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection');
 const { createAdminOperatorStateRouter } = require('./admin-operator-state');
-const { createAdminInactivityPolicyRouter } = require('./admin-inactivity-policy');
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
@@ -56,7 +55,6 @@ function createRouter(){
     router.use(createResellerExportRouter());
     router.use(createAdminOperatorStateRouter());
     router.use(createAdminJellyfinLifecycleRouter());
-    router.use(createAdminInactivityPolicyRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
