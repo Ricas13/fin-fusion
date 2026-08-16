@@ -135,8 +135,8 @@ BEGIN
     IF NEW.source IN ('stripe','paypal')
        AND NEW.status IN ('active','trialing','past_due','paused')
        AND NEW.current_period_end > NOW()
-       AND ((NEW.source='stripe' AND COALESCE(NEW.provider_subscription_id,'') LIKE 'sub\_%' ESCAPE '\\')
-         OR (NEW.source='paypal' AND COALESCE(NEW.provider_subscription_id,'') LIKE 'I-%')) THEN
+       AND ((NEW.source='stripe' AND LEFT(COALESCE(NEW.provider_subscription_id,''),4)='sub_')
+         OR (NEW.source='paypal' AND LEFT(COALESCE(NEW.provider_subscription_id,''),2)='I-')) THEN
 
         SELECT COALESCE(is_addon,FALSE) INTO new_is_addon
           FROM plans WHERE id=NEW.plan_id;
@@ -151,8 +151,8 @@ BEGIN
                   AND s.source IN ('stripe','paypal')
                   AND s.status IN ('active','trialing','past_due','paused')
                   AND s.current_period_end>NOW()
-                  AND ((s.source='stripe' AND COALESCE(s.provider_subscription_id,'') LIKE 'sub\_%' ESCAPE '\\')
-                    OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') LIKE 'I-%'))
+                  AND ((s.source='stripe' AND LEFT(COALESCE(s.provider_subscription_id,''),4)='sub_')
+                    OR (s.source='paypal' AND LEFT(COALESCE(s.provider_subscription_id,''),2)='I-'))
             ) THEN
                 RAISE EXCEPTION 'Customer already has a live recurring subscription for this add-on';
             END IF;
@@ -166,8 +166,8 @@ BEGIN
               AND s.source IN ('stripe','paypal')
               AND s.status IN ('active','trialing','past_due','paused')
               AND s.current_period_end>NOW()
-              AND ((s.source='stripe' AND COALESCE(s.provider_subscription_id,'') LIKE 'sub\_%' ESCAPE '\\')
-                OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') LIKE 'I-%'))
+              AND ((s.source='stripe' AND LEFT(COALESCE(s.provider_subscription_id,''),4)='sub_')
+                OR (s.source='paypal' AND LEFT(COALESCE(s.provider_subscription_id,''),2)='I-'))
         ) THEN
             RAISE EXCEPTION 'Customer already has a live recurring primary provider subscription';
         END IF;
