@@ -4,6 +4,7 @@ const core = require('./lifecycle-core');
 const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
 const capacity = require('../entitlements/plan-capacity');
+const inactivityHolds = require('../entitlements/inactivity-hold-reconciliation');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 
@@ -138,6 +139,7 @@ async function startFreeTrial(customerId, planCode) {
             VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
         return row.rows[0];
     });
+    await inactivityHolds.releaseObsoleteForCustomer(customerId);
     await core.reconcileCommittedCustomer(customerId, 'Trial');
     return created;
 }
@@ -164,6 +166,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode})]);
         return row.rows[0];
     });
+    await inactivityHolds.releaseObsoleteForCustomer(customerId);
     await core.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan');
     return created;
 }
@@ -193,7 +196,13 @@ async function activatePurchase(input) {
     if (state.recurringProvider({ source: input.provider, provider_subscription_id: input.providerSubscriptionId })) {
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
-    return core.activatePurchase(input);
+    const activated=await core.activatePurchase(input);
+    // The provider activation is committed before this point. If a previous
+    // free-plan usage rule had disabled Jellyfin, it is now obsolete; release
+    // only that hold and immediately reconcile the paid entitlement.
+    const released=await inactivityHolds.releaseObsoleteForCustomer(input.customerId);
+    if(released)await core.reconcileCommittedCustomer(input.customerId,'Paid plan');
+    return activated;
 }
 
 module.exports = {
