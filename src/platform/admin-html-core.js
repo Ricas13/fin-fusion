@@ -29,7 +29,7 @@ function header(active,site){
   const current=activePage(active);
   const sections=nav.groups.map(group=>{
     const activeGroup=group.key===current.group.key;
-    const pages=group.pages.filter(page=>!page[3]).map(([key,label,url])=>`<a class="adminTab ${current.key===key?'active':''}" href="${esc(url)}" title="Open ${esc(label)}">${esc(label)}</a>`).join('');
+    const pages=group.pages.map(([key,label,url])=>`<a class="adminTab ${current.key===key?'active':''}" href="${esc(url)}" title="Open ${esc(label)}">${esc(label)}</a>`).join('');
     // The section label is a real link to the group's landing page. The page
     // reached by that click renders the active group open, so one click both
     // navigates and reveals the group's children. The chevron still permits
@@ -40,7 +40,7 @@ function header(active,site){
 }
 
 function layout(options={}){
-  const site=options.siteName||'CAPTaINFiN';
+  const site=options.siteName||'CAPTAiNFiN';
   const current=activePage(options.active);
   const docsAction='<a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a>';
   const topActions=`<div class="topBarActions">${docsAction}${options.action||''}</div>`;
