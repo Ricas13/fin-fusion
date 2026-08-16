@@ -19,6 +19,7 @@ const commerce=read('src/platform/admin-plan-payment-options.js');
 const storefront=read('src/platform/storefront.js');
 const communications=read('src/platform/customer-communications.js');
 const nav=read('src/platform/admin-nav.js');
+const navModel=require('../src/platform/admin-nav');
 const adminHtml=read('src/platform/admin-html.js');
 const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
@@ -51,11 +52,14 @@ assert(commerce.includes('Plan price changed; re-verification required.'),'Editi
 assert(storefront.includes('currencySwitcher(currency,currencies)'),'Storefront must provide one currency switcher rather than duplicate products');
 assert(storefront.includes('planPricing.decoratePlans(logicalPlans,currency)'),'Storefront must decorate logical products with the selected currency price');
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
-assert(nav.includes("['notification-settings','Notifications','/admin/notifications/preferences']"),'Global Notifications must remain under Settings');
-assert(nav.includes("['my-profile','My Profile','/admin/profile']"),'Administrators need a discoverable personal profile page');
-assert(!nav.includes("['my-notifications','My Notifications','/admin/profile/notifications']"),'Per-admin notifications must not be duplicated in the sidebar');
-assert(nav.includes("'my-notifications':Object.freeze"),'Per-admin notification preferences must remain discoverable from the My Profile workflow');
-assert(!nav.includes("['settings-commerce','Commerce','/admin/settings?section=commerce']"),'Unused Settings Commerce navigation must remain removed');
+const settingsGroup=navModel.groups.find(group=>group.key==='settings');
+const settingsKeys=settingsGroup?.pages?.map(page=>page[0])||[];
+assert(settingsKeys.includes('notification-settings'),'Global Notifications must remain under Settings');
+assert(settingsKeys.includes('my-profile'),'Administrators need a discoverable personal profile page');
+assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the sidebar');
+assert(navModel.hiddenPages?.['my-notifications'],'Per-admin notification preferences must remain discoverable from the My Profile workflow');
+assert(!settingsKeys.includes('settings-commerce'),'Unused Settings Commerce navigation must remain removed');
+assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 
 assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Global notification workflow must link back to global settings');
 assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Global notification workflow must expose the canonical email infrastructure route');
