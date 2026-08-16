@@ -20,9 +20,8 @@ The interactive command immediately starts the actual deployment as a detached `
 
 ```bash
 cd /opt/captainfin-store
-ls -1t logs/deploy-*.log | head -1
 LATEST="$(ls -1t logs/deploy-*.log | head -1)"
-tail -n 200 "$LATEST"
+tail -n 200 -f "$LATEST"
 ```
 
 A deployment lock prevents a second production rollout from starting over an active one.
@@ -39,8 +38,9 @@ The deployment command performs the following sequence:
 8. Creates an **encrypted** pre-deploy PostgreSQL backup through the existing recovery tooling when this is an upgrade.
 9. Runs database migrations, runtime-role creation/password rotation and administrator bootstrap in the one-shot migration container.
 10. Recreates the application and worker containers only after that one-shot migration step succeeds.
-11. Waits for Docker health checks on the web app, automation worker, activity worker and backup worker.
-12. Runs `npm run verify:deployment` from the live application container.
+11. The backup worker immediately retries a persisted failed backup after restart. This clears an old operational failure only after a new encrypted backup/verification succeeds.
+12. Waits for Docker health checks on the web app, automation worker, activity worker and backup worker.
+13. Runs `npm run verify:deployment` from the live application container. Backup failure state is a deployment blocker, not heartbeat-only success.
 
 If a deployment step fails, the detached process exits non-zero and the persistent log contains Compose state plus recent service logs.
 
@@ -92,6 +92,7 @@ After deployment, the command must finish with healthy containers and a passing 
 
 ```bash
 docker compose ps
+curl -fsS http://127.0.0.1:3030/health/ready
 docker compose exec -T app npm run verify:deployment
 ```
 
