@@ -40,7 +40,7 @@ async function logoutRestrictedToken(server,encryptedToken){
     const token=decryptWithEnv(encryptedToken,TOKEN_ENV,TOKEN_PREFIX),url=new URL('/Sessions/Logout',`${server.base_url}/`);
     const response=await outbound.safeFetch(url,{purpose:`Stremio restricted logout on ${server.name}`,method:'POST',timeoutMs:8000,headers:{Authorization:jellyfinAuthHeader(token),Accept:'application/json'}});
     return response.ok;
-  }catch(error){console.warn(`Stremio restricted logout failed on ${server.name}:`,error.message);return false;}
+  }catch(_error){console.warn('Stremio restricted Jellyfin logout failed.');return false;}
 }
 
 async function refreshRestrictedAccess(account,server,priorEncryptedToken=null){
@@ -103,7 +103,7 @@ async function current(customerId){
 
 async function suspend(customerId,reason='No active Stremio entitlement'){
   const rows=await query(`UPDATE stremio_entitlements SET status=CASE WHEN status='revoked' THEN status ELSE 'suspended' END,last_error=$2,updated_at=NOW() WHERE customer_id=$1 RETURNING jellyfin_account_id`,[customerId,String(reason).slice(0,1000)]);
-  for(const row of rows.rows){if(!row.jellyfin_account_id)continue;const a=await query(`SELECT * FROM jellyfin_accounts WHERE id=$1 AND account_purpose='stremio_internal'`,[row.jellyfin_account_id]);if(a.rowCount){try{await provisioning.disableJellyfinAccount(a.rows[0]);}catch(error){console.warn('Unable to disable Stremio internal Jellyfin account:',error.message);}}}
+  for(const row of rows.rows){if(!row.jellyfin_account_id)continue;const a=await query(`SELECT * FROM jellyfin_accounts WHERE id=$1 AND account_purpose='stremio_internal'`,[row.jellyfin_account_id]);if(a.rowCount){try{await provisioning.disableJellyfinAccount(a.rows[0]);}catch(_error){console.warn('Unable to disable a Stremio internal Jellyfin account.');}}}
   return{active:false,status:'suspended'};
 }
 
