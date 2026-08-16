@@ -1,6 +1,7 @@
 'use strict';
 
 const express=require('express');
+const {rateLimit,ipKeyGenerator}=require('express-rate-limit');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const reporting=require('./reporting-currency');
@@ -14,8 +15,15 @@ function gate(req,res,next){
   return res.status(401).json({ok:false,error:'unauthorized'});
 }
 function epoch(value){return value?new Date(value).getTime():0;}
-const unreadLimit=routeRateLimit.middleware({scope:'admin-operator-unread',max:120,windowSeconds:60});
-const reportingCurrencyLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
+function operatorKey(req){return req.session?.authUserId?`admin:${req.session.authUserId}`:`ip:${ipKeyGenerator(req.ip)}`;}
+
+// The in-process limiters are intentionally paired with the existing
+// PostgreSQL-backed limiters below. The memory layer sheds bursts immediately;
+// the persistent layer remains authoritative across process/container restarts.
+const unreadBurstLimit=rateLimit({windowMs:60_000,limit:120,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
+const reportingCurrencyBurstLimit=rateLimit({windowMs:60_000,limit:20,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
+const unreadPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-unread',max:120,windowSeconds:60});
+const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
 async function snapshot(){
   const [customers,resellers,attention,servers,payments]=await Promise.all([
@@ -34,15 +42,15 @@ async function snapshot(){
 
 function createAdminOperatorStateRouter(){
   const router=express.Router();
-  // Persistent abuse protection runs before authorization. The authorization
-  // middleware then exposes only the already-validated actor id to handlers,
-  // keeping authentication/session inspection out of the business endpoints.
-  router.use('/admin/api/operator-state/unread',unreadLimit,gate);
+  // Shed abusive bursts before the database-backed limiter and before the
+  // authorization gate. Handlers execute only after both limiter layers and
+  // the admin-session check have passed.
+  router.use('/admin/api/operator-state/unread',unreadBurstLimit,unreadPersistentLimit,gate);
   router.get('/admin/api/operator-state/unread',async(_req,res)=>{
     try{res.setHeader('Cache-Control','no-store, private');res.json({ok:true,...await snapshot()});}
     catch(error){console.error('operator unread snapshot failed:',error.message);res.status(500).json({ok:false,error:'snapshot_failed'});}
   });
-  router.use('/admin/reporting-currency',reportingCurrencyLimit,gate);
+  router.use('/admin/reporting-currency',reportingCurrencyBurstLimit,reportingCurrencyPersistentLimit,gate);
   router.post('/admin/reporting-currency',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{const saved=await reporting.saveCurrency(req.body.currency,res.locals.operatorActorUserId);return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
