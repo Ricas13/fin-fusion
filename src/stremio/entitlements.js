@@ -3,6 +3,7 @@
 const crypto=require('crypto');
 const {query,transaction}=require('../db');
 const provisioning=require('../jellyfin/provisioning-core');
+const subscriptionState=require('../entitlements/subscription-state');
 const registry=require('../jellyfin/registry');
 const planServers=require('../jellyfin/plan-servers');
 const outbound=require('../security/outbound-url-policy');
@@ -17,6 +18,14 @@ function internalUsername(customerId){return `cf_stremio_${String(customerId).re
 function randomPassword(){return crypto.randomBytes(32).toString('base64url');}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin user token');return `MediaBrowser Token="${token}"`;}
 function clientAuthorization(){return 'MediaBrowser Client="CAPTaINFiN Stremio", Device="CAPTaINFiN", DeviceId="captainfin-stremio", Version="1.0"';}
+
+async function entitledSubscription(customerId){
+  const addons=await subscriptionState.effectiveAddons(customerId);
+  const addon=addons.find(row=>['stremio','bundle'].includes(serviceType(row)));
+  if(addon)return addon;
+  const primary=await provisioning.currentEntitlement(customerId);
+  return primary&&['stremio','bundle'].includes(serviceType(primary))?primary:null;
+}
 
 async function selectServer(plan){
   const servers=(await planServers.eligibleServersForPlan(plan,{enabledOnly:true,forPlacement:true}))
@@ -95,7 +104,7 @@ async function prepareInternalAccount(customerId,plan,limit,{forceTokenRefresh=f
 }
 
 async function current(customerId){
-  const r=await query(`SELECT e.*,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code
+  const r=await query(`SELECT e.*,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code,p.is_addon
     FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id
     WHERE e.customer_id=$1 ORDER BY e.created_at DESC LIMIT 1`,[customerId]);
   return r.rows[0]||null;
@@ -108,7 +117,7 @@ async function suspend(customerId,reason='No active Stremio entitlement'){
 }
 
 async function reconcileForCustomer(customerId,entitlement=null,{forceTokenRefresh=false}={}){
-  const sub=entitlement||await provisioning.currentEntitlement(customerId);
+  const sub=entitlement||await entitledSubscription(customerId);
   if(!sub||!['stremio','bundle'].includes(serviceType(sub)))return suspend(customerId,'Stremio service is not currently entitled.');
   const limit=streamLimit(sub),prepared=await prepareInternalAccount(customerId,sub,limit,{forceTokenRefresh});
   const existing=await query(`SELECT * FROM stremio_entitlements WHERE subscription_id=$1`,[sub.subscription_id]);
@@ -125,12 +134,12 @@ async function reconcileForCustomer(customerId,entitlement=null,{forceTokenRefre
     }
   });
   const refreshed=await query(`SELECT status,token_hash FROM stremio_entitlements WHERE subscription_id=$1`,[sub.subscription_id]),row=refreshed.rows[0]||{};
-  return{active:row.status==='active'&&Boolean(row.token_hash),status:row.status||'pending',serverId:prepared.server.id,accountId:prepared.account.id};
+  return{active:row.status==='active'&&Boolean(row.token_hash),status:row.status||'pending',serverId:prepared.server.id,accountId:prepared.account.id,subscriptionId:sub.subscription_id,isAddon:Boolean(sub.is_addon)};
 }
 
 async function issueInstallation(customerId){
   foundation.assertAcquirable({service_type:'stremio'});
-  const sub=await provisioning.currentEntitlement(customerId);if(!sub||!['stremio','bundle'].includes(serviceType(sub)))throw new Error('Your current plan does not include Stremio.');
+  const sub=await entitledSubscription(customerId);if(!sub)throw new Error('Your current plan or add-on does not include Stremio.');
   // Rotating the addon URL also rotates the restricted Jellyfin session token,
   // so a copied old stream response cannot keep a long-lived playback bearer.
   await reconcileForCustomer(customerId,sub,{forceTokenRefresh:true});
@@ -160,11 +169,16 @@ async function revoke(customerId){
 
 async function findByInstallToken(raw){
   const token=String(raw||'');if(token.length<32)return null;const hash=foundation.hashInstallCredential(token);
-  const r=await query(`SELECT e.*,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,
+  const r=await query(`WITH effective AS (
+      SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_customer_entitlements
+      UNION ALL
+      SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_customer_addons
+    )
+    SELECT e.*,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.is_addon,
       ee.access_expires_at,ee.blocked,
       ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled account_disabled,js.base_url,js.public_url,js.name server_name,js.enabled server_enabled,js.stremio_enabled
     FROM stremio_entitlements e
-    JOIN effective_customer_entitlements ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
+    JOIN effective ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
     JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id
     JOIN jellyfin_accounts ja ON ja.id=e.jellyfin_account_id JOIN jellyfin_servers js ON js.id=e.server_id
     WHERE e.token_hash=$1 AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW()
@@ -180,4 +194,4 @@ async function markUse(id,kind){
   return query(`UPDATE stremio_entitlements SET last_stream_request_at=NOW(),last_used_at=NOW(),updated_at=NOW() WHERE id=$1`,[id]);
 }
 
-module.exports={TOKEN_ENV,TOKEN_PREFIX,serviceType,streamLimit,jellyfinAuthHeader,clientAuthorization,selectServer,authenticateRestrictedUser,logoutRestrictedToken,refreshRestrictedAccess,reconcileForCustomer,issueInstallation,revoke,current,findByInstallToken,accessToken,markUse,suspend};
+module.exports={TOKEN_ENV,TOKEN_PREFIX,serviceType,streamLimit,jellyfinAuthHeader,clientAuthorization,entitledSubscription,selectServer,authenticateRestrictedUser,logoutRestrictedToken,refreshRestrictedAccess,reconcileForCustomer,issueInstallation,revoke,current,findByInstallToken,accessToken,markUse,suspend};
