@@ -27,6 +27,7 @@ async function accounts(){
           AND sx.current_period_end+(COALESCE(sx.service_extension_days,0)||' days')::interval>NOW()
           AND sx.status IN('active','trialing','paused')
           AND COALESCE(px.service_type,'jellyfin') IN('jellyfin','bundle')
+          AND (js.server_class='custom' OR px.server_class=js.server_class)
       ) has_live_jellyfin_entitlement,
       lc.id lifecycle_id,lc.category lifecycle_category,lc.reason lifecycle_reason,lc.disabled_at lifecycle_disabled_at,
       lc.delete_after lifecycle_delete_after,lc.deleted_at lifecycle_deleted_at,lc.restored_at lifecycle_restored_at
@@ -43,6 +44,7 @@ async function accounts(){
              p.price_minor,p.billing_interval,COALESCE(p.service_type,'jellyfin') service_type,p.inactivity_policy
       FROM subscriptions s JOIN plans p ON p.id=s.plan_id
       WHERE s.customer_id=ja.customer_id AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
+        AND (js.server_class='custom' OR p.server_class=js.server_class)
       ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1
     ) sub ON TRUE
     LEFT JOIN jellyfin_account_lifecycle lc ON lc.account_id=ja.id AND lc.deleted_at IS NULL AND lc.restored_at IS NULL
@@ -54,7 +56,7 @@ async function accounts(){
 
 function classify(row,cfg){
   if(!row.subscription_id)return{shouldDisable:false,reason:'no_subscription_history'};
-  const category=policy.categoryFor({resellerId:row.reseller_id,billingInterval:row.billing_interval,priceMinor:row.price_minor,source:row.source});
+  const category=policy.categoryFor({resellerId:row.reseller_id,serverClass:row.server_class,billingInterval:row.billing_interval,priceMinor:row.price_minor,source:row.source});
   const plan={inactivity_policy:row.inactivity_policy||{}};
   const deletion=policy.deleteDays(cfg,category,plan);
   if(category==='reseller'&&row.estate_suspended_at)return{shouldDisable:true,category,deleteDays:deletion.days,policySource:deletion.source,reason:'reseller_entitlement_lapsed'};
@@ -114,7 +116,8 @@ async function restoreDeletedForEntitledCustomers(){
       AND (c.reseller_id IS NULL OR r.estate_suspended_at IS NULL)
       AND EXISTS(SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=lc.customer_id AND s.superseded_by IS NULL
         AND s.starts_at<=NOW() AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval>NOW()
-        AND s.status IN('active','trialing','paused') AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle'))`);
+        AND s.status IN('active','trialing','paused') AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
+        AND (lc.category<>'free' OR s.created_at>lc.deleted_at))`);
   let restored=0;
   for(const row of rows.rows){
     try{
