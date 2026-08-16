@@ -5,6 +5,7 @@ const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const registry = require('../jellyfin/registry');
 const runtimeSettings = require('./runtime-settings');
+const outbound = require('../security/outbound-url-policy');
 const { encryptWithEnv } = require('../security/purpose-crypto');
 
 const SERVER_CLASSES = new Set(['premium', 'free', 'custom']);
@@ -93,14 +94,14 @@ function parseServerForm(body, { apiKeyRequired = false } = {}) {
         paidEnabled: boolField(body.paidEnabled), apiKey: validateApiKey(body.apiKey, apiKeyRequired)
     };
 }
+function headerValue(headers,name){if(!headers)return'';if(typeof headers.get==='function')return headers.get(name)||'';return headers[String(name).toLowerCase()]||headers[name]||'';}
 async function probeCredentials(baseUrl, apiKey) {
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000);
     try {
-        const response = await fetch(`${baseUrl}/System/Info`, { method: 'GET', redirect: 'error', signal: controller.signal, headers: registry.authHeaders(apiKey) });
+        const response = await outbound.safeFetch(`${baseUrl}/System/Info`, { purpose: 'Jellyfin server validation', method: 'GET', timeoutMs: 5000, maxBytes: 1024*1024, headers: registry.authHeaders(apiKey) });
         if (response.status === 401) throw invalidField('apiKey', 'Jellyfin returned HTTP 401 — API key was not accepted.');
         if (response.status === 403) throw invalidField('baseUrl', 'Jellyfin returned HTTP 403 — request was blocked by the Jellyfin server or reverse proxy.');
         if (!response.ok) throw invalidField('baseUrl', `Jellyfin returned HTTP ${response.status} while validating the server.`);
-        if (!String(response.headers.get('content-type') || '').includes('application/json')) throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
+        if (!String(headerValue(response.headers,'content-type')).includes('application/json')) throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
         const info = await response.json();
         if (!info || typeof info !== 'object' || Array.isArray(info)) throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
         return info;
@@ -109,7 +110,7 @@ async function probeCredentials(baseUrl, apiKey) {
         if (error.name === 'AbortError') throw invalidField('baseUrl', 'Jellyfin validation timed out.');
         if (error.message.startsWith('Jellyfin ')) throw error;
         throw invalidField('baseUrl', 'Could not validate the Jellyfin server securely.');
-    } finally { clearTimeout(timer); }
+    }
 }
 async function serverList() {
     const result = await query(`
