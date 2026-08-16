@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS customer_communication_preferences (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Verified registration may be staged for up to an hour. Preserve optional
+-- contact choices in the staged record without creating a customer early.
+ALTER TABLE pending_registrations
+    ADD COLUMN IF NOT EXISTS communication_preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- Per-administrator read cursors power lightweight unread badges without
 -- coupling the navigation shell to every source table.
 CREATE TABLE IF NOT EXISTS admin_nav_read_state (
