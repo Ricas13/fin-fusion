@@ -2,6 +2,8 @@
 
 const core=require('./admin-html-core');
 const notificationWorkflow=require('./notification-workflow-tabs');
+const provisioningWorkflow=require('./provisioning-workflow-tabs');
+const backupWorkflow=require('./backup-workflow-tabs');
 
 function scriptBoundary(ch){return ch===undefined||/[\s/>]/.test(ch);}
 function externalScriptTag(openTag){return /\bsrc\s*=/i.test(openTag);}
@@ -51,8 +53,6 @@ const SETTING_HELP=Object.freeze({
     'Default server class':'Initial server class used when an administrator creates or configures server placement manually.',
     'Default server priority':'Lower-priority values are considered after higher-priority placement choices according to the placement policy.',
     'Default max users · 0 = unlimited':'Convenience capacity default for newly configured servers. Zero means no explicit user-count ceiling.',
-    'Expiring-soon window · days':'How many days before service expiry a customer is treated as expiring soon in administrator views.',
-    'Recent customers on dashboard':'Maximum number of recently changed customers shown on the dashboard summary.',
     'Site name':'The customer-facing platform name used in page titles, emails and portal branding.',
     'Default monthly tier':'Tier preselected when a new reseller is created. Existing resellers are not changed.',
     'Default ledger currency':'Three-letter currency used for new reseller downstream sales ledgers.',
@@ -120,8 +120,25 @@ function notificationTabsFor(options={}){
     const subtitle=String(options.subtitle||'');
     if(active==='my-profile')return notificationWorkflow.profileTabs('profile');
     if(active==='my-notifications'||title==='My notification preferences')return notificationWorkflow.profileTabs('personal');
+    if(active==='notification-gateway')return notificationWorkflow.globalTabs('health');
     if(!['notifications','notification-settings'].includes(active))return'';
-    return notificationWorkflow.globalTabs(/transactional email gateway/i.test(subtitle)?'email':'global');
+    const context=`${title} ${subtitle}`;
+    if(/transactional email gateway/i.test(context))return notificationWorkflow.globalTabs('email');
+    if(/delivery health|notification gateway|delivery queue|outbox health/i.test(context))return notificationWorkflow.globalTabs('health');
+    return notificationWorkflow.globalTabs('global');
+}
+
+function provisioningTabsFor(options={}){
+    const active=String(options.active||'');
+    if(active==='provisioning')return provisioningWorkflow.tabs('provisioning');
+    if(active==='policy-drift')return provisioningWorkflow.tabs('drift');
+    return'';
+}
+function backupTabsFor(options={}){
+    const active=String(options.active||'');
+    if(active==='backups')return backupWorkflow.tabs('backups');
+    if(active==='configuration-transfer')return backupWorkflow.tabs('transfer');
+    return'';
 }
 
 function notificationTestScriptFor(options={}){
@@ -129,9 +146,10 @@ function notificationTestScriptFor(options={}){
 }
 
 function layout(options={}){
-    options={...options,body:notificationTabsFor(options)+String(options.body||'')+notificationTestScriptFor(options)};
+    const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+backupTabsFor(options);
+    options={...options,body:workflow+String(options.body||'')+notificationTestScriptFor(options)};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,notificationTestScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,backupTabsFor,notificationTestScriptFor,SETTING_HELP};

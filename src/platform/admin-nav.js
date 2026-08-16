@@ -1,23 +1,24 @@
 'use strict';
 
-// Keep the navigation task-oriented. Technical implementation pages remain
-// addressable for compatibility, but are surfaced from the workflow that owns
-// them instead of competing for sidebar space.
+// Keep the primary navigation task-oriented. Diagnostic and implementation
+// pages remain addressable, but live inside the workflow that owns them rather
+// than competing with everyday destinations in the sidebar.
 const groups=Object.freeze([
-  {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention'],['search','Search','/admin/search'],['events','Events','/admin/events']]},
+  {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention'],['search','Search','/admin/search']]},
   {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['resellers','Resellers','/admin/reseller-management'],['activity','Playback & Activity','/admin/activity']]},
   {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]},
-  {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['policy-drift','Policy Drift','/admin/provisioning/drift'],['notification-gateway','Notification gateway','/admin/notifications'],['automation-jobs','Jobs','/admin/automation']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups','/admin/backups'],['settings-advanced','Advanced','/admin/settings?section=advanced']]}
+  {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit & events','/admin/events']]},
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups & Transfer','/admin/backups']]}
 ]);
 
 // Workflow pages can stay grouped/breadcrumbed without consuming sidebar space.
-// Billing is reached from the Commerce workflow tabs, and personal notification
-// routing is reached from My Profile rather than duplicated in the sidebar.
 const hiddenPages=Object.freeze({
   billing:Object.freeze({groupKey:'commerce',page:Object.freeze(['billing','Billing','/admin/billing'])}),
-  'my-notifications':Object.freeze({groupKey:'settings',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])})
+  'my-notifications':Object.freeze({groupKey:'settings',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
+  'policy-drift':Object.freeze({groupKey:'automation',page:Object.freeze(['policy-drift','Policy Drift','/admin/provisioning/drift'])}),
+  'notification-gateway':Object.freeze({groupKey:'settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
+  'configuration-transfer':Object.freeze({groupKey:'settings',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 
 const aliases=Object.freeze({
@@ -34,7 +35,6 @@ const aliases=Object.freeze({
   'reseller-settings':'settings-general',
   'stremio-settings':'settings-integrations',
   'abuse-protection':'settings-security',
-  'configuration-transfer':'settings-advanced',
   'jellyfin-import':'servers',
   'invitations':'plans'
 });

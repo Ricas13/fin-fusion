@@ -94,7 +94,7 @@ async function saveEmail(req,res){
       const changed=String(current.rows[0].email||'').toLowerCase()!==email;
       await client.query(`UPDATE app_users SET email=$2,email_verified_at=CASE WHEN $3 THEN NULL ELSE email_verified_at END,updated_at=NOW() WHERE id=$1`,[req.session.authUserId,email,changed]);
       await client.query(`UPDATE customers SET email=$2,updated_at=NOW() WHERE user_id=$1`,[req.session.authUserId,email]);
-      await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.profile.email.update','app_user',$1,$2::jsonb)`,[req.session.authUserId,JSON.stringify({changed})]);
+      await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.profile.email.update','app_user',$2,$3::jsonb)`,[req.session.authUserId,String(req.session.authUserId),JSON.stringify({changed})]);
     });
     return res.redirect('/admin/profile?message='+encodeURIComponent('Administrator email saved.'));
   }catch(error){return res.redirect('/admin/profile?error='+encodeURIComponent(error.message||'Email could not be saved.'));}

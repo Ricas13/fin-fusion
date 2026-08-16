@@ -43,12 +43,12 @@ async function resolvePrice(planId,currency,{allowFallback=true}={}){
   const fallback=await query(`SELECT * FROM plan_prices WHERE plan_id=$1 AND active=TRUE ORDER BY is_default DESC,created_at LIMIT 1`,[planId]);
   return fallback.rows[0]||null;
 }
-async function decoratePlans(plans,currency){
+async function decoratePlans(plans,currency,{allowFallback=false}={}){
   const rows=Array.isArray(plans)?plans:[];
   if(!rows.length)return[];
   const wanted=cleanCurrency(currency,'GBP'),ids=rows.map(p=>p.id),prices=await query(`SELECT * FROM plan_prices WHERE plan_id=ANY($1::uuid[]) AND active=TRUE ORDER BY is_default DESC,currency`,[ids]);
   const grouped=new Map();for(const price of prices.rows){const key=String(price.plan_id);if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(price);}
-  const selectedRows=rows.map(plan=>{const variants=grouped.get(String(plan.id))||[],selected=variants.find(x=>x.currency===wanted)||variants.find(x=>x.is_default)||variants[0]||null;return{plan,variants,selected};});
+  const selectedRows=rows.map(plan=>{const variants=grouped.get(String(plan.id))||[],exact=variants.find(x=>x.currency===wanted)||null,selected=exact||(allowFallback?(variants.find(x=>x.is_default)||variants[0]||null):null);return{plan,variants,selected};}).filter(row=>allowFallback||Boolean(row.selected));
   const priceIds=selectedRows.map(x=>x.selected?.id).filter(Boolean),mappingRows=priceIds.length?await query(`SELECT id,plan_price_id,provider,checkout_mode,external_id,verification_status FROM plan_provider_prices WHERE plan_price_id=ANY($1::uuid[]) AND active=TRUE ORDER BY provider,checkout_mode`,[priceIds]):{rows:[]};
   const mappings=new Map();for(const row of mappingRows.rows){const key=String(row.plan_price_id);if(!mappings.has(key))mappings.set(key,[]);mappings.get(key).push({id:row.id,provider:row.provider,checkoutMode:row.checkout_mode,externalId:row.external_id,configured:true,verificationStatus:row.verification_status});}
   return selectedRows.map(({plan,variants,selected})=>({...plan,price_minor:selected?Number(selected.price_minor):Number(plan.price_minor||0),currency:selected?.currency||cleanCurrency(plan.currency,'GBP'),plan_price_id:selected?.id||null,prices:variants.map(x=>({id:x.id,currency:x.currency,price_minor:Number(x.price_minor),active:Boolean(x.active),is_default:Boolean(x.is_default)})),payment_options:selected?mappings.get(String(selected.id))||[]:[]}));

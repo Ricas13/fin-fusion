@@ -58,8 +58,12 @@ assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP st
 
 const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
 assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
-const nav=text('src/platform/admin-nav.js'),settings=text('src/platform/admin-original-settings.js');
-for(const label of ['General','Branding','Commerce','Integrations','Security','Operations','Backups','Advanced'])assert(nav.includes(`'${label}'`),`Settings navigation is missing ${label}.`);
+const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js');
+const settingsGroup=navModel.groups.find(group=>group.key==='settings');
+assert(Boolean(settingsGroup),'Settings navigation group must exist.');
+const labels=settingsGroup.pages.map(page=>page[1]);
+for(const label of ['General','My Profile','Notifications','Branding','Integrations','Security','Operations','Backups & Transfer'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
+for(const obsolete of ['Commerce','Advanced','My Notifications'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
 assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verification/.test(settings),'Security settings must expose staged-registration state.');
 
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;
