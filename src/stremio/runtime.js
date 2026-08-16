@@ -16,7 +16,7 @@ function createStremioRuntimeRouter(){
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
     if(!enabled())return res.status(404).json({error:'Not found'});
     try{const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).json({error:'Not found'});await entitlements.markUse(e.id,'manifest');return res.json(manifest());}
-    catch(error){console.error('Stremio manifest request failed:',error.message);return res.status(503).json({error:'Temporarily unavailable'});}
+    catch(_error){console.error('Stremio manifest request failed.');return res.status(503).json({error:'Temporarily unavailable'});}
   });
   router.get('/stremio/:token/stream/:type/:videoId.json',streamLimit,async(req,res)=>{
     if(!enabled())return res.json({streams:[]});
@@ -24,7 +24,7 @@ function createStremioRuntimeRouter(){
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const streams=await jellyfin.streamsFor(e,String(req.params.type||''),String(req.params.videoId||''));
       await entitlements.markUse(e.id,'stream');return res.json({streams});
-    }catch(error){console.error('Stremio stream request failed:',error.message);return res.json({streams:[]});}
+    }catch(_error){console.error('Stremio stream request failed.');return res.json({streams:[]});}
   });
   return router;
 }
