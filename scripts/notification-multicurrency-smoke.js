@@ -22,6 +22,7 @@ const nav=read('src/platform/admin-nav.js');
 const adminHtml=read('src/platform/admin-html.js');
 const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
+const provisioning=read('src/jellyfin/provisioning.js');
 const platformRouter=read('src/platform/router.js');
 
 assert(migration.includes('CREATE TABLE IF NOT EXISTS plan_prices'),'Migration must create per-currency logical-plan prices');
@@ -55,6 +56,7 @@ assert(nav.includes("['my-profile','My Profile','/admin/profile']"),'Administrat
 assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Notification workflow must link back to global settings');
 assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Notification workflow must expose the canonical email infrastructure route');
 assert(notificationTabs.includes("['personal','My notifications','/admin/profile/notifications']"),'Notification workflow must link to personal event routing');
+assert(notificationTabs.includes("['profile','My profile','/admin/profile']"),'Notification workflow must expose personal account settings');
 assert(adminHtml.includes('notificationTabsFor(options={})')&&adminHtml.includes('notificationWorkflow.tabs(selected)'),'All notification layouts must keep workflow tabs visible');
 assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
 assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must resolve to the canonical email infrastructure page');
@@ -62,5 +64,11 @@ assert(adminProfile.includes("UPDATE app_users SET email=$2")&&adminProfile.incl
 assert(adminProfile.includes("INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note)"),'Personal media access must attach a customer record to the existing administrator user');
 assert(adminProfile.includes("'admin_grant'")&&adminProfile.includes('provisioning.reconcileCustomer(created.customerId)'),'Personal media access must use an explicit admin grant and the normal Jellyfin reconciliation path');
 assert(!adminProfile.includes("UPDATE app_users SET role='customer'"),'Creating personal media access must never demote the administrator account');
+assert(adminProfile.includes("r.post('/admin/profile/media/jellyfin/:accountId/password',setPersonalJellyfinPassword)"),'Personal admins must have a scoped Jellyfin password setup route');
+assert(adminProfile.includes('WHERE c.user_id=$1 AND ja.id=$2'),'Personal Jellyfin password updates must be ownership-scoped to the signed-in administrator');
+assert(adminProfile.includes('provisioning.setJellyfinPassword(row.customer_id,req.params.accountId,password)'),'Personal Jellyfin password updates must use the normal password service');
+assert(adminProfile.includes('autocomplete="new-password"')&&adminProfile.includes('confirmPassword'),'My Profile must provide password and confirmation fields without exposing a stored password');
+assert(provisioning.includes("row.user_role==='admin'&&row.registration_source==='admin_personal'"),'Provisioning must recognize role-preserving personal administrator media profiles');
+assert(provisioning.includes('Settings > My Profile'),'Personal administrator onboarding must direct password setup to My Profile instead of the customer portal');
 
 console.log('notification + multi-currency smoke: ok');
