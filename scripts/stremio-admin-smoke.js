@@ -5,6 +5,7 @@ const fs=require('fs');
 const path=require('path');
 
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const application=read('src/application.js');
 const router=read('src/platform/router.js');
 const nav=read('src/platform/admin-nav.js');
 const settings=read('src/platform/admin-original-settings.js');
@@ -15,7 +16,8 @@ const runtime=read('src/stremio/runtime.js');
 const foundation=read('src/stremio/foundation.js');
 
 assert(router.includes("createAdminStremioRouter"),'Stremio admin router must be mounted');
-assert(router.includes('createStremioRuntimeRouter'),'Stremio protocol runtime must be mounted');
+assert(application.includes('createStremioRuntimeRouter')&&application.includes('app.use(createStremioRuntimeRouter())'),'Stremio protocol runtime must have one canonical top-level owner');
+assert(!router.includes('createStremioRuntimeRouter'),'Platform router must not duplicate the top-level Stremio protocol owner');
 assert(nav.includes("'stremio-settings':'settings-integrations'"),'Stremio settings must map into the canonical Integrations settings group');
 assert(settings.includes('href="/admin/settings/stremio"')&&settings.includes('<strong>Stremio</strong>'),'Stremio must be discoverable from Settings → Integrations');
 assert(page.includes('Runtime disabled.')&&page.includes('Runtime ready.'),'Admin page must surface explicit fail-closed/runtime-ready states');
