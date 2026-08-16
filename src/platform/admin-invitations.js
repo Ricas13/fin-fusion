@@ -129,16 +129,15 @@ async function page(req) {
         created = `<div class="notice success inviteLinkNotice"><strong>Invitation ready.</strong><div class="inviteLinkRow"><input class="input" id="createdInviteLink" readonly value="${esc(url)}"><button class="button" type="button" data-copy-link="${esc(url)}">Copy link</button></div></div>`;
     }
     const styles = `<style>.invitationCreate{max-width:none}.inviteLinkRow{display:flex;gap:7px;margin-top:8px}.inviteLinkRow .input{flex:1}.invitationActions{display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap}.invitationActions form{margin:0}.invitationTable{min-width:1120px}.invitationUsersTable{min-width:920px}.inviteTabs{display:flex;gap:6px;margin:0 0 12px}.inviteTab{display:inline-flex;gap:7px;align-items:center;padding:8px 11px;border:1px solid #2a333d;border-radius:7px;color:#8e9bab;text-decoration:none;font-weight:700}.inviteTab span{font-size:9px;color:#6e7c8e}.inviteTab.active{color:#eef5f8;border-color:#29596a;background:#112833}.copyDone{border-color:#277452!important;color:#9ce8c1!important}@media(max-width:700px){.inviteLinkRow{align-items:stretch;flex-direction:column}.inviteTabs{overflow:auto}}</style>`;
-    const script = `<script>document.addEventListener('click',async function(event){const button=event.target.closest('[data-copy-link]');if(!button)return;const value=button.getAttribute('data-copy-link');try{await navigator.clipboard.writeText(value);const old=button.textContent;button.textContent='Copied';button.classList.add('copyDone');setTimeout(()=>{button.textContent=old;button.classList.remove('copyDone')},1400)}catch(_){window.prompt('Copy invitation link',value)}});</script>`;
     const selected = activeTab === 'users'
         ? redemptionsTable(redemptions)
         : `${createPanel(req, plans)}${invitationTable(req, rows)}`;
-    const body = `${notice(req)}${created}${styles}${tabs(activeTab, rows.length, redemptions.length)}${selected}${script}`;
+    const body = `${notice(req)}${created}${styles}${tabs(activeTab, rows.length, redemptions.length)}${selected}`;
     return layout({ siteName: site(), active: 'invitations', title: 'Invitations', subtitle: 'Secure customer onboarding and plan assignment', body });
 }
 
 function createAdminInvitationsRouter() {
-    const router = express.Router();
+    const router=express.Router();
     router.use('/admin/invitations', gate, noStore);
 
     router.get('/admin/invitations', async (req, res, next) => {
