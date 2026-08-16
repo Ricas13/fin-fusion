@@ -6,7 +6,8 @@ ENV NODE_ENV=production
 RUN apk add --no-cache postgresql-client
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force
 
 COPY . .
 
