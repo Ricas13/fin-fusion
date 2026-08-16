@@ -21,7 +21,8 @@ async function telemetryReady(){
   const age=Number(worker.rows[0]?.age_seconds??Infinity),enabled=Number(servers.rows[0]?.enabled||0),unsafe=Number(servers.rows[0]?.unsafe||0);
   return{ready:Number.isFinite(age)&&age<120&&enabled>0&&unsafe===0,activityWorkerAgeSeconds:Number.isFinite(age)?Math.round(age):null,enabledServers:enabled,unsafeServers:unsafe};
 }
-async function candidates(cfg=await get()){
+async function candidates(cfg=null){
+  cfg=cfg||await get();
   const lookbackDays=Math.max(cfg.inactiveDays,1),minimumCreated=new Date(Date.now()-cfg.minimumObservationHours*3600000);
   const result=await query(`
     WITH current_access AS (
