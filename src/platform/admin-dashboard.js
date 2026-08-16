@@ -34,7 +34,7 @@ async function dashboardPage(req, res) {
             active: 'dashboard',
             title: 'Admin Dashboard',
             subtitle: `Business and streaming performance · ${range.label}`,
-            body: `${messageBlock(req)}${renderDashboard(stats,{prospectiveIncome})}`,
+            body: `${messageBlock(req)}<link rel="stylesheet" href="/css/admin-dashboard-forecast-compact.css">${renderDashboard(stats,{prospectiveIncome})}`,
             action: primaryAction(stats)
         }));
     } catch (error) {
