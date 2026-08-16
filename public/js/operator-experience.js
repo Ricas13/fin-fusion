@@ -78,6 +78,24 @@
 
   // Payments, Notifications, Provisioning and Backups/Transfer now render their
   // workflow navigation server-side. Do not add a second client-side tab row.
+  if(path==='/admin/notifications/preferences'){
+    // Top workflow tabs own navigation now; avoid repeating those destinations
+    // inside the status row. The profile link remains available in the explanatory callout.
+    document.querySelectorAll('.buttonRow a[href="/admin/email"],.buttonRow a[href="/admin/profile/notifications"]').forEach(link=>link.remove());
+    // Legacy global destinations are retained for explicit manual/test callers,
+    // but normal event fan-out uses per-admin/per-customer identities. Keep the
+    // compatibility values without presenting them as required setup fields.
+    document.querySelectorAll('form[action="/admin/notifications/preferences/delivery"] .formGroup').forEach(group=>{
+      const legacyLabel=[...group.querySelectorAll(':scope > label')].find(label=>(label.textContent||'').trim().startsWith('Legacy global destination'));
+      const legacyInput=legacyLabel?.nextElementSibling;
+      if(!legacyLabel||!legacyInput||legacyInput.tagName!=='INPUT')return;
+      const details=document.createElement('details');details.className='operatorDisclosure notificationLegacyDestination';
+      const summary=document.createElement('summary');summary.textContent='Legacy/manual destination';
+      const body=document.createElement('div');body.className='operatorDisclosureBody';
+      legacyLabel.parentNode.insertBefore(details,legacyLabel);
+      body.append(legacyLabel,legacyInput);details.append(summary,body);
+    });
+  }
 
   if(path==='/admin/activity'){
     insertAfterHeader(tabs([['Live playback','/admin/activity'],['Inactivity rules','/admin/activity/inactivity-policy']],path));
