@@ -52,14 +52,17 @@ assert(storefront.includes('currencySwitcher(currency,currencies)'),'Storefront 
 assert(storefront.includes('planPricing.decoratePlans(logicalPlans,currency)'),'Storefront must decorate logical products with the selected currency price');
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
 assert(nav.includes("['notification-settings','Notifications','/admin/notifications/preferences']"),'Global Notifications must remain under Settings');
-assert(nav.includes("['my-notifications','My Notifications','/admin/profile/notifications']"),'Per-admin notification preferences must be discoverable separately');
-
 assert(nav.includes("['my-profile','My Profile','/admin/profile']"),'Administrators need a discoverable personal profile page');
-assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Notification workflow must link back to global settings');
-assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Notification workflow must expose the canonical email infrastructure route');
-assert(notificationTabs.includes("['personal','My notifications','/admin/profile/notifications']"),'Notification workflow must link to personal event routing');
-assert(notificationTabs.includes("['profile','My profile','/admin/profile']"),'Notification workflow must expose personal account settings');
-assert(adminHtml.includes('notificationTabsFor(options={})')&&adminHtml.includes('notificationWorkflow.tabs(selected)'),'All notification layouts must keep workflow tabs visible');
+assert(!nav.includes("['my-notifications','My Notifications','/admin/profile/notifications']"),'Per-admin notifications must not be duplicated in the sidebar');
+assert(nav.includes("'my-notifications':Object.freeze"),'Per-admin notification preferences must remain discoverable from the My Profile workflow');
+assert(!nav.includes("['settings-commerce','Commerce','/admin/settings?section=commerce']"),'Unused Settings Commerce navigation must remain removed');
+
+assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Global notification workflow must link back to global settings');
+assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Global notification workflow must expose the canonical email infrastructure route');
+assert(notificationTabs.includes("['profile','Profile','/admin/profile']"),'My Profile workflow must expose personal account settings');
+assert(notificationTabs.includes("['personal','Notifications','/admin/profile/notifications']"),'My Profile workflow must expose personal notification routing');
+assert(adminHtml.includes("notificationWorkflow.globalTabs"),'Global notification layouts must keep a stable global workflow tab set');
+assert(adminHtml.includes("notificationWorkflow.profileTabs('profile')")&&adminHtml.includes("notificationWorkflow.profileTabs('personal')"),'My Profile and My Notifications must share a stable personal workflow tab set');
 assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
 assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must resolve to the canonical email infrastructure page');
 assert(adminProfile.includes("UPDATE app_users SET email=$2")&&adminProfile.includes("UPDATE customers SET email=$2"),'Changing administrator email must also keep an attached personal customer profile in sync');
