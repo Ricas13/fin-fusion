@@ -8,7 +8,7 @@ const jellyfin=require('./jellyfin-runtime');
 const manifestLimit=routeRateLimit.middleware({scope:'stremio-manifest',max:60,windowSeconds:60});
 const streamLimit=routeRateLimit.middleware({scope:'stremio-stream',max:240,windowSeconds:60});
 function enabled(){return String(process.env.STREMIO_RUNTIME_ENABLED||'').toLowerCase()==='true';}
-function cors(_req,res,next){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type');res.setHeader('Cache-Control','no-store');next();}
+function cors(_req,res,next){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type');res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Cache-Control','no-store');next();}
 function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.0.0',name:'CAPTaINFiN',description:'Your CAPTaINFiN subscription streams through Stremio.',resources:[{name:'stream',types:['movie','series'],idPrefixes:['tt']}],types:['movie','series'],catalogs:[],behaviorHints:{configurable:false,p2p:false}};}
 
 function createStremioRuntimeRouter(){
