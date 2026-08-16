@@ -48,7 +48,7 @@ async function proxy(req,res){
   if(url.origin!==base.origin)throw new Error('Stremio gateway escaped configured source origin.');
   url.searchParams.set('Static','true');url.searchParams.set('MediaSourceId',String(grant.media_source_id));url.searchParams.set('UserId',String(grant.jellyfin_user_id));
   const range=validRange(req.headers.range),headers={Authorization:authHeader(token,`cfgw-${String(grant.customer_id).replace(/-/g,'').slice(0,20)}`),Accept:'*/*'};if(range)headers.Range=range;
-  const abort=new AbortController();req.on('close',()=>abort.abort());
+  const abort=new AbortController();res.on('close',()=>abort.abort());
   const upstream=await outbound.safeStream(url,{purpose:`Stremio stream gateway ${grant.source_name}`,method:req.method==='HEAD'?'HEAD':'GET',headers,timeoutMs:15000,signal:abort.signal});
   res.status(upstream.status);
   for(const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified','cache-control']){const value=upstream.headers?.[name];if(value!==undefined)res.setHeader(name,value);}
