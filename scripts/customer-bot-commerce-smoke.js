@@ -22,7 +22,7 @@ assert(shell.includes("paymentWorkflow.tabs(active)"),'Shared admin shell must r
 for(const title of ['Payments','Provider mappings','Billing'])assert(shell.includes(`'${title}'`),`Payment workflow must recognise ${title}`);
 
 assert(settings.includes("/users/@me/channels"),'Discord delivery must use the bot DM API');
-assert(settings.includes("scope','identify")===false,'Discord OAuth scope belongs in customer linking route, not notification settings');
+assert(!settings.includes("scope','identify"),'Discord OAuth scope belongs in customer linking route, not notification settings');
 assert(!settings.includes('discordWebhookUrl'),'Discord delivery must not depend on a webhook URL');
 assert(settings.includes("exchangeDiscordCode"),'Discord OAuth identity exchange must be implemented');
 assert(settings.includes("configureTelegramWebhook"),'Telegram bot update endpoint must be configured through the Bot API');
@@ -33,7 +33,7 @@ assert(dispatch.includes('telegram_chat_id'),'Customer Telegram delivery must us
 assert(dispatch.includes('discord_user_id'),'Customer Discord delivery must use the verified user id');
 assert(outbox.includes("settings.sendDiscord")&&outbox.includes("userId:row.destination"),'Outbox must pass each Discord destination to bot DM delivery');
 assert(registration.includes('name="whatsappOptIn"')&&registration.includes('name="telegramOptIn"')&&registration.includes('name="discordOptIn"'),'Registration must collect secondary-channel preferences');
-assert(registration.includes('international phone number'),'Registration must explain WhatsApp destination requirements');
+assert(registration.includes('+447700900123')&&registration.toLowerCase().includes('international format'),'Registration must explain the WhatsApp country-code destination format');
 assert(adminNotifications.includes('Discord bot')&&!adminNotifications.includes('Webhook URL'),'Admin notification setup must be bot-first');
 assert(migration.includes('telegram_chat_id')&&migration.includes('discord_user_id')&&migration.includes('customer_channel_link_tokens'),'Migration must persist verified bot identities and short-lived link tokens');
 
