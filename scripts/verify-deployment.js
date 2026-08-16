@@ -40,6 +40,19 @@ async function main() {
             add('automation worker', worker && Number(worker.age) < 90,
                 worker ? `instance=${worker.instance_id} heartbeat_age=${worker.age}s` : 'no heartbeat');
 
+            const backupWorker = (await query(`
+                SELECT instance_id,last_heartbeat_at,last_success_at,last_error,next_run_at,
+                       EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int AS age
+                FROM backup_worker_state WHERE worker_key='database_backup'
+            `)).rows[0];
+            const backupHealthy = backupWorker
+                && Number(backupWorker.age) < 180
+                && (!backupWorker.last_error || backupWorker.next_run_at === null);
+            add('backup worker', backupHealthy,
+                backupWorker
+                    ? `instance=${backupWorker.instance_id} heartbeat_age=${backupWorker.age}s last_success=${backupWorker.last_success_at || 'never'}${backupWorker.last_error ? ` error=${backupWorker.last_error}` : ''}`
+                    : 'no heartbeat');
+
             const jobs = await jobHealth.list();
             const critical = new Set(['billing', 'entitlements', 'reseller_billing', 'plan_changes', 'reseller_estates']);
             const bad = jobs.filter(job => critical.has(job.job_key) && ['failed', 'stale', 'missing'].includes(jobHealth.healthState(job)));
