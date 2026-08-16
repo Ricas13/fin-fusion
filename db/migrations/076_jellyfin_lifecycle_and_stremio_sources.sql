@@ -119,6 +119,25 @@ CREATE INDEX IF NOT EXISTS stremio_stream_requests_customer_idx
 CREATE INDEX IF NOT EXISTS stremio_stream_requests_source_idx
   ON stremio_stream_requests(source_id,requested_at DESC);
 
+-- Pooled bridge credentials never leave CAPTaINFiN. Each returned stream URL
+-- carries only an opaque random grant; the gateway injects the upstream token.
+CREATE TABLE IF NOT EXISTS stremio_stream_grants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash TEXT NOT NULL UNIQUE,
+  entitlement_id UUID NOT NULL REFERENCES stremio_entitlements(id) ON DELETE CASCADE,
+  customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  source_id UUID NOT NULL REFERENCES stremio_sources(id) ON DELETE CASCADE,
+  source_account_id UUID NOT NULL REFERENCES stremio_source_accounts(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  media_source_id TEXT NOT NULL,
+  filename TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS stremio_stream_grants_expiry_idx ON stremio_stream_grants(expires_at);
+CREATE INDEX IF NOT EXISTS stremio_stream_grants_customer_idx ON stremio_stream_grants(customer_id,created_at DESC);
+
 INSERT INTO platform_settings(setting_key,setting_value)
 VALUES('stremio_source_pool_v1','{"strategy":"weighted_random"}'::jsonb)
 ON CONFLICT(setting_key) DO NOTHING;
@@ -129,5 +148,7 @@ COMMENT ON TABLE stremio_source_accounts IS
 'Explicitly configured Jellyfin bridge identities used for Stremio source access; never arbitrary customer impersonation.';
 COMMENT ON TABLE stremio_stream_requests IS
 'CAPTaINFiN-side attribution of Stremio stream requests to the real portal customer and selected upstream source.';
+COMMENT ON TABLE stremio_stream_grants IS
+'Short-lived opaque playback grants. Upstream Jellyfin bridge tokens remain server-side and are never returned in Stremio addon JSON.';
 
 COMMIT;
