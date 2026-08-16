@@ -3,7 +3,7 @@
 const { layout } = require('./admin-html');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange } = require('./admin-dashboard-analytics');
-const { renderDashboard } = require('./admin-dashboard-view');
+const { renderDashboard } = require('./admin-dashboard-view-v2');
 const reportingCurrency=require('./reporting-currency');
 const runtimeSettings = require('./runtime-settings');
 
