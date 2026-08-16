@@ -20,7 +20,7 @@ assert(application.includes('createStremioRuntimeRouter')&&application.includes(
 assert(!router.includes('createStremioRuntimeRouter'),'Platform router must not duplicate the top-level Stremio protocol owner');
 assert(nav.includes("'stremio-settings':'settings-integrations'"),'Stremio settings must map into the canonical Integrations settings group');
 assert(settings.includes('href="/admin/settings/stremio"')&&settings.includes('<strong>Stremio</strong>'),'Stremio must be discoverable from Settings → Integrations');
-assert(page.includes('Runtime disabled.')&&page.includes('Runtime ready.'),'Admin page must surface explicit fail-closed/runtime-ready states');
+assert(page.includes('Runtime disabled / incomplete.')&&page.includes('Runtime ready.')&&page.includes('fail-closed'),'Admin page must surface explicit fail-closed/runtime-ready states');
 assert(foundation.includes('STREMIO_JELLYFIN_TOKEN_KEY')&&foundation.includes('runtimeReady'),'Runtime readiness must require the dedicated restricted-token key');
 assert(runtime.includes("STREMIO_RUNTIME_ENABLED")&&runtime.includes("if(!enabled())"),'Protocol surface must fail closed while disabled');
 assert(page.includes("status IN ('pending','active','suspended')"),'Server eligibility removal must protect all assigned non-revoked Stremio entitlements');

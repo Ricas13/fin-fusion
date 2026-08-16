@@ -67,9 +67,6 @@ async function importLegacy(kind) {
         if (result.rowCount) console.log(`Imported legacy ${kind} branding asset into PostgreSQL.`);
         return result.rows[0] || null;
     } catch (error) {
-        // During the migration window an old install may start before migration
-        // 040 has been applied. Serving the legacy file is safer than breaking
-        // branding; the next request after migrations will retry the import.
         if (error.code !== '42P01') console.warn(`Legacy branding import failed for ${kind}:`, error.message);
         return null;
     }
@@ -125,7 +122,10 @@ async function sendAsset(kind, _req, res) {
             const etag = `"${item.sha256}"`;
             if (res.req.headers['if-none-match'] === etag) return res.status(304).end();
             res.setHeader('Content-Type', item.mime_type);
-            res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+            // Favicons are exceptionally sticky in browsers. Revalidation plus
+            // the page-level version query makes an uploaded icon visible on the
+            // next navigation without sacrificing ETag efficiency.
+            res.setHeader('Cache-Control', kind === 'favicon' ? 'no-cache, must-revalidate' : 'public, max-age=300, must-revalidate');
             res.setHeader('ETag', etag);
             res.setHeader('X-Content-Type-Options', 'nosniff');
             return res.send(item.content);
@@ -133,13 +133,13 @@ async function sendAsset(kind, _req, res) {
         const legacy = legacyExisting(kind);
         if (legacy) {
             res.setHeader('Content-Type', mimeFor(legacy.ext));
-            res.setHeader('Cache-Control', 'public, max-age=60, must-revalidate');
+            res.setHeader('Cache-Control', kind === 'favicon' ? 'no-cache, must-revalidate' : 'public, max-age=60, must-revalidate');
             res.setHeader('X-Content-Type-Options', 'nosniff');
             return fs.createReadStream(legacy.file).pipe(res);
         }
         if (!fs.existsSync(DEFAULT_LOGO)) return res.status(404).end();
         res.setHeader('Content-Type', 'image/jpeg');
-        res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+        res.setHeader('Cache-Control', kind === 'favicon' ? 'no-cache, must-revalidate' : 'public, max-age=300, must-revalidate');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         return fs.createReadStream(DEFAULT_LOGO).pipe(res);
     } catch (error) {
@@ -153,6 +153,7 @@ function createBrandingRouter() {
 
     r.get('/branding/logo', (req, res) => sendAsset('logo', req, res));
     r.get('/branding/favicon', (req, res) => sendAsset('favicon', req, res));
+    r.get('/favicon.ico', (req, res) => sendAsset('favicon', req, res));
 
     const raw = express.raw({ type: () => true, limit: LOGO_MAX });
 

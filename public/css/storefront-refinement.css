@@ -1,0 +1,13 @@
+@media (hover:hover){
+  .planCard,.featureCard,.howCard,.deviceMock,.screenMock,.storeNotice{transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease,filter .18s ease}
+  .planCard:hover,.featureCard:hover,.howCard:hover{transform:translateY(-3px);border-color:rgba(64,203,239,.32);box-shadow:0 18px 48px rgba(0,0,0,.22)}
+  .storeBtn:hover{transform:translateY(-1px);filter:brightness(1.08)}
+  .storeNav a:hover{color:#eefaff;text-shadow:0 0 18px rgba(75,210,247,.34)}
+  .screenMock:hover{transform:perspective(900px) rotateY(-1deg) rotateX(1deg) translateY(-2px)}
+}
+.planCard,.featureCard,.howCard{position:relative;overflow:hidden}
+.planCard::after,.featureCard::after,.howCard::after{content:"";position:absolute;inset:-60% auto auto -35%;width:45%;height:220%;pointer-events:none;background:linear-gradient(100deg,transparent,rgba(255,255,255,.035),transparent);transform:rotate(18deg);transition:transform .45s ease}
+@media (hover:hover){.planCard:hover::after,.featureCard:hover::after,.howCard:hover::after{transform:translateX(320%) rotate(18deg)}}
+.storeBtn,.storeNav a{transition:transform .16s ease,filter .16s ease,color .16s ease,text-shadow .16s ease}
+.planBadge,.heroEyebrow,.announcement{backdrop-filter:blur(10px)}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}

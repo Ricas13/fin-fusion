@@ -1,9 +1,11 @@
 'use strict';
 
+const csrf=require('../auth/csrf');
 const { layout } = require('./admin-html');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange } = require('./admin-dashboard-analytics');
 const { renderDashboard } = require('./admin-dashboard-view');
+const forecast=require('./admin-revenue-forecast');
 const runtimeSettings = require('./runtime-settings');
 
 function isNativeAdmin(req) {
@@ -16,6 +18,8 @@ function primaryAction(stats) {
     return '<a class="button" href="/admin/users/new">+ Add customer</a>';
 }
 
+function messageBlock(req){return `${req.query.message?`<div class="notice success">${String(req.query.message).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</div>`:''}${req.query.error?`<div class="notice error">${String(req.query.error).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</div>`:''}`}
+
 async function dashboardPage(req, res) {
     if (!isNativeAdmin(req)) return res.redirect('/login?session=expired');
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
@@ -23,13 +27,13 @@ async function dashboardPage(req, res) {
     try {
         await runtimeSettings.ensureLoaded();
         const range = dashboardRange(req.query || {});
-        const stats = await dashboardData(range);
+        const [stats,prospect] = await Promise.all([dashboardData(range),forecast.data({weeks:12})]);
         return res.send(layout({
             siteName: runtimeSettings.siteName(),
             active: 'dashboard',
             title: 'Admin Dashboard',
             subtitle: `Business and streaming performance · ${range.label}`,
-            body: renderDashboard(stats),
+            body: `${messageBlock(req)}${forecast.render(prospect,csrf.token(req))}${renderDashboard(stats)}`,
             action: primaryAction(stats)
         }));
     } catch (error) {

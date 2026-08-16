@@ -16,13 +16,22 @@ function walk(dir, out = []) {
     return out;
 }
 
+function ghaEscape(value) {
+    return String(value || '').replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+}
+
 const files = walk(ROOT).sort();
 let failed = 0;
 for (const file of files) {
     const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
     if (result.status !== 0) {
         failed += 1;
-        process.stderr.write(`\nSyntax failure: ${path.relative(ROOT,file)}\n${result.stderr || result.stdout}`);
+        const relative = path.relative(ROOT,file).replace(/\\/g,'/');
+        const detail = String(result.stderr || result.stdout || 'Node syntax check failed').trim();
+        process.stderr.write(`\nSyntax failure: ${relative}\n${detail}\n`);
+        if (process.env.GITHUB_ACTIONS === 'true') {
+            process.stdout.write(`::error file=${ghaEscape(relative)},title=JavaScript syntax failure::${ghaEscape(detail.slice(0,3000))}\n`);
+        }
     }
 }
 console.log(`Checked ${files.length} JavaScript files; failures=${failed}`);
