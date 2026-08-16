@@ -6,11 +6,12 @@
   <title>Create account · <%= siteName %></title>
   <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><% } %>
   <style>
-    body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e5e7eb;min-height:100vh;display:grid;place-items:center}.card{width:min(460px,calc(100% - 32px));background:#111827;border:1px solid #263244;border-radius:18px;padding:28px;box-sizing:border-box;box-shadow:0 20px 60px #0006}.muted{color:#94a3b8}.error{background:#451a1a;border:1px solid #7f1d1d;padding:10px 12px;border-radius:10px;margin:16px 0}.notice{background:#172554;border:1px solid #1d4ed8;padding:12px;border-radius:10px}label{display:block;margin:16px 0 6px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:white}button{width:100%;margin-top:20px;padding:12px;border:0;border-radius:10px;font-weight:700;cursor:pointer}a{color:#7dd3fc}.captcha{margin-top:18px;display:flex;justify-content:center}
+    body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e5e7eb;min-height:100vh;display:grid;place-items:center;padding:30px 0}.card{width:min(520px,calc(100% - 32px));background:#111827;border:1px solid #263244;border-radius:18px;padding:28px;box-sizing:border-box;box-shadow:0 20px 60px #0006}.muted{color:#94a3b8}.error{background:#451a1a;border:1px solid #7f1d1d;padding:10px 12px;border-radius:10px;margin:16px 0}.notice{background:#172554;border:1px solid #1d4ed8;padding:12px;border-radius:10px}label{display:block;margin:16px 0 6px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:white}button{width:100%;margin-top:20px;padding:12px;border:0;border-radius:10px;font-weight:700;cursor:pointer}a{color:#7dd3fc}.captcha{margin-top:18px;display:flex;justify-content:center}.optional{margin-top:20px;border:1px solid #263244;border-radius:12px;padding:14px;background:#0d1524}.optional summary{cursor:pointer;font-weight:750;color:#cbd5e1}.check{display:flex;align-items:flex-start;gap:9px;margin-top:10px;color:#cbd5e1;font-size:13px}.check input{width:auto;margin-top:2px}.channel{padding-top:4px}.channel label{margin-top:12px}.mandatory{font-size:12px;color:#86efac;margin-top:8px}
   </style>
 </head>
 <body><main class="card">
   <h1>Create <%= siteName %> account</h1>
+  <p class="muted">Your portal account stays yours even when a trial or service access ends. You can return later to renew or choose another plan.</p>
   <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. Use an invitation link if one was provided to you.</div><% } %>
   <% if (registrationOpen && verificationRequired) { %><div class="notice"><strong>Email verification first.</strong> Your details are held temporarily; the customer account is not created until you open the verification link sent to your email.</div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
@@ -18,10 +19,18 @@
   <form method="post" action="/account/register">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label>Email</label><input type="email" name="email" autocomplete="email" required>
+    <div class="mandatory">Email is always used for account, invoice, registration and important payment messages.</div>
     <label>Username</label><input name="username" minlength="3" maxlength="40" autocomplete="username" required>
     <label>Site password</label><input type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required>
     <p class="muted">This is your portal password. Your Jellyfin password is managed separately and is never stored here.</p>
     <% if (referralsEnabled) { %><label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"><% } %>
+    <details class="optional">
+      <summary>Optional reminders on WhatsApp, Telegram or Discord</summary>
+      <p class="muted">These never replace email. Add only the channels you want us to use for optional subscription reminders and service updates.</p>
+      <div class="channel"><label>Phone number for WhatsApp</label><input name="phone" maxlength="32" autocomplete="tel" placeholder="+44 7..."><label class="check"><input type="checkbox" name="whatsappOptIn" value="1"><span>Send optional reminders to this number on WhatsApp</span></label></div>
+      <div class="channel"><label>Telegram username</label><input name="telegram" maxlength="64" placeholder="username"><label class="check"><input type="checkbox" name="telegramOptIn" value="1"><span>Send optional reminders on Telegram</span></label></div>
+      <div class="channel"><label>Discord handle</label><input name="discord" maxlength="100" placeholder="your Discord username"><label class="check"><input type="checkbox" name="discordOptIn" value="1"><span>Allow optional Discord reminders/DM workflow</span></label></div>
+    </details>
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-theme="dark"></div></div><% } %>
     <button type="submit"><%= verificationRequired ? 'Send verification link' : 'Create account' %></button>
   </form>
