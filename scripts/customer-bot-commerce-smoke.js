@@ -28,7 +28,7 @@ assert(!settings.includes("scope','identify"),'Discord OAuth scope belongs in cu
 assert(!settings.includes('discordWebhookUrl'),'Discord delivery must not depend on a webhook URL');
 assert(settings.includes("exchangeDiscordCode"),'Discord OAuth identity exchange must be implemented');
 assert(settings.includes("configureTelegramWebhook"),'Telegram bot update endpoint must be configured through the Bot API');
-assert(communications.includes("https://t.me/"),'Telegram customer linking must use a bot deep link');
+assert(communications.includes('telegramBotUsername')&&communications.includes('?start=${encodeURIComponent(issued.token)}'),'Telegram customer linking must build a bot deep link from configured bot identity plus an encoded one-time token');
 assert(communications.includes("r.post('/account/communications/telegram/start'"),'Telegram bot linking must start from a CSRF-protected POST');
 assert(communications.includes("r.post('/account/communications/discord/start'"),'Discord OAuth linking must start from a CSRF-protected POST');
 assert(communicationView.includes('method="post" action="/account/communications/telegram/start"'),'Telegram connect UI must submit a POST');
