@@ -34,6 +34,6 @@ assert(migration.includes('Stremio entitlement customer does not own subscriptio
 assert(migration.includes('Stremio Jellyfin account belongs to another customer'),'Jellyfin account/customer ownership mismatch must be rejected');
 assert(migration.includes('Stremio Jellyfin account does not belong to assigned server'),'Jellyfin account/server mismatch must be rejected');
 assert(runtimeMigration.includes('Active Stremio entitlement is incomplete'),'Runtime migration must require a complete active entitlement including restricted Jellyfin access');
-assert(runtimeMigration.includes("account_purpose<>'stremio_internal'"),'Runtime migration must require the dedicated internal Jellyfin identity');
+assert(runtimeMigration.includes("'stremio_internal'")&&runtimeMigration.includes('Stremio entitlement requires a dedicated internal Jellyfin account'),'Runtime migration must require and explicitly reject non-internal Jellyfin identities');
 
 console.log('stremio admin runtime smoke: ok');
