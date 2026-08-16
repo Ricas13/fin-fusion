@@ -48,11 +48,10 @@ async function decoratePlans(plans,currency){
   if(!rows.length)return[];
   const wanted=cleanCurrency(currency,'GBP'),ids=rows.map(p=>p.id),prices=await query(`SELECT * FROM plan_prices WHERE plan_id=ANY($1::uuid[]) AND active=TRUE ORDER BY is_default DESC,currency`,[ids]);
   const grouped=new Map();for(const price of prices.rows){const key=String(price.plan_id);if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(price);}
-  return rows.map(plan=>{
-    const variants=grouped.get(String(plan.id))||[];
-    const selected=variants.find(x=>x.currency===wanted)||variants.find(x=>x.is_default)||variants[0]||null;
-    return {...plan,price_minor:selected?Number(selected.price_minor):Number(plan.price_minor||0),currency:selected?.currency||cleanCurrency(plan.currency,'GBP'),plan_price_id:selected?.id||null,prices:variants.map(x=>({id:x.id,currency:x.currency,price_minor:Number(x.price_minor),active:Boolean(x.active),is_default:Boolean(x.is_default)}))};
-  });
+  const selectedRows=rows.map(plan=>{const variants=grouped.get(String(plan.id))||[],selected=variants.find(x=>x.currency===wanted)||variants.find(x=>x.is_default)||variants[0]||null;return{plan,variants,selected};});
+  const priceIds=selectedRows.map(x=>x.selected?.id).filter(Boolean),mappingRows=priceIds.length?await query(`SELECT id,plan_price_id,provider,checkout_mode,external_id,verification_status FROM plan_provider_prices WHERE plan_price_id=ANY($1::uuid[]) AND active=TRUE ORDER BY provider,checkout_mode`,[priceIds]):{rows:[]};
+  const mappings=new Map();for(const row of mappingRows.rows){const key=String(row.plan_price_id);if(!mappings.has(key))mappings.set(key,[]);mappings.get(key).push({id:row.id,provider:row.provider,checkoutMode:row.checkout_mode,externalId:row.external_id,configured:true,verificationStatus:row.verification_status});}
+  return selectedRows.map(({plan,variants,selected})=>({...plan,price_minor:selected?Number(selected.price_minor):Number(plan.price_minor||0),currency:selected?.currency||cleanCurrency(plan.currency,'GBP'),plan_price_id:selected?.id||null,prices:variants.map(x=>({id:x.id,currency:x.currency,price_minor:Number(x.price_minor),active:Boolean(x.active),is_default:Boolean(x.is_default)})),payment_options:selected?mappings.get(String(selected.id))||[]:[]}));
 }
 async function enabledCurrencies({publicOnly=true}={}){
   const r=await query(`SELECT DISTINCT pr.currency FROM plan_prices pr JOIN plans p ON p.id=pr.plan_id WHERE pr.active=TRUE ${publicOnly?"AND p.active=TRUE AND p.visible=TRUE AND p.archived_at IS NULL AND p.audience IN ('direct','both')":''} ORDER BY pr.currency`);
