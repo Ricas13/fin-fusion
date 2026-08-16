@@ -41,7 +41,7 @@ assert(refinementCss.includes('.planListFilteredEmpty{display:none'),'Filtered-e
 assert(refinementCss.includes('.chartEmpty{height:108px}'),'Empty dashboard charts must not dominate vertical space');
 assert(plans.includes('data-plan-table-wrap'),'Plan filtering must be able to hide the table when no rows match');
 assert(formFeedback.includes("actionPath(form) === '/admin/notifications/preferences/delivery'"),'Notification credential forms must use native browser submission for reliable CSRF handling');
-assert(formFeedback.includes('submitter?.formAction'),'Enhanced forms must honor per-button formaction targets');
+assert(formFeedback.includes("explicitSubmitterAttribute(submitter, 'formaction')"),'Enhanced forms must honor explicit per-button formaction targets without overriding ordinary form actions');
 assert(formFeedback.includes("'X-CSRF-Token': csrfToken"),'Enhanced admin POSTs must mirror the CSRF token in the request header');
 assert(formFeedback.includes('async function responseMessage(response)'),'Admin form errors must surface the server rejection reason instead of a generic HTTP status');
 

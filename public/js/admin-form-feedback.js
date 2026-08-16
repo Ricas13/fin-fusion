@@ -41,8 +41,22 @@
         catch (_) { return false; }
     }
 
+    function explicitSubmitterAttribute(submitter, name) {
+        if (!submitter || !submitter.hasAttribute?.(name)) return '';
+        return submitter.getAttribute(name) || '';
+    }
+
     function actionUrl(form, submitter = null) {
-        return submitter?.formAction || form.action || window.location.href;
+        // The DOM formAction property can resolve to the current document URL even
+        // when no formaction attribute was authored. Only an explicit attribute
+        // may override the parent form action.
+        const override = explicitSubmitterAttribute(submitter, 'formaction');
+        return override ? new URL(override, window.location.href).href : (form.action || window.location.href);
+    }
+
+    function actionMethod(form, submitter = null) {
+        const override = explicitSubmitterAttribute(submitter, 'formmethod');
+        return String(override || form.method || 'POST').toUpperCase();
     }
 
     function actionPath(form) {
@@ -114,7 +128,7 @@
         event.preventDefault();
         clearFeedback(form);
 
-        const submitter = event.submitter || form.querySelector('[type="submit"]');
+        const submitter = event.submitter || form.querySelector('[type="submit"],button:not([type])');
         const originalDisabled = submitter?.disabled;
         if (submitter) submitter.disabled = true;
 
@@ -123,7 +137,7 @@
             const target = actionUrl(form, submitter);
             const csrfToken = form.querySelector('input[name="_csrf"]')?.value || '';
             const response = await fetch(target, {
-                method: String(submitter?.formMethod || form.method || 'POST').toUpperCase(),
+                method: actionMethod(form, submitter),
                 body: data.toString(),
                 credentials: 'same-origin',
                 redirect: 'follow',
