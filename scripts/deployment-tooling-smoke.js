@@ -9,12 +9,14 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const deployScript = fs.readFileSync(path.join(root, 'scripts', 'deploy-production.sh'), 'utf8');
 const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
+const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 
 const syntax = spawnSync('bash', ['-n', path.join(root, 'scripts', 'deploy-production.sh')], { encoding: 'utf8' });
 assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must pass bash -n');
 
 for (const token of [
   'prepare-production-env.js --write',
+  '--user "$(id -u):$(id -g)"',
   'docker compose config',
   'docker compose --profile recovery build',
   'BACKUP_DIR=/backups/predeploy',
@@ -25,6 +27,7 @@ for (const token of [
 ]) {
   assert(deployScript.includes(token), `deployment script must contain ${token}`);
 }
+assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety copies must be ignored by git');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
@@ -45,6 +48,10 @@ try {
 
   const generated = spawnSync(process.execPath, [prepareScript, '--write', `--env-file=${envFile}`], { encoding: 'utf8' });
   assert.strictEqual(generated.status, 0, generated.stderr || 'runtime credential generation must succeed');
+
+  const backups = fs.readdirSync(tempDir).filter(name => name.startsWith('.env.pre-runtime-roles-') && name.endsWith('.bak'));
+  assert.strictEqual(backups.length, 1, 'environment preparation must create exactly one safety copy when it mutates .env');
+  assert.strictEqual(fs.statSync(path.join(tempDir, backups[0])).mode & 0o777, 0o600, 'environment safety copy must be owner-readable/writable only');
 
   const content = fs.readFileSync(envFile, 'utf8');
   const specs = [
