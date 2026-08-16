@@ -4,7 +4,7 @@ const { query } = require('../db');
 const stremioFoundation = require('../stremio/foundation');
 
 function serviceType(plan) {
-  const value = String(plan?.service_type || 'jellyfin').toLowerCase();
+  const value = String(plan?.service_type || plan?.service_type_snapshot || 'jellyfin').toLowerCase();
   return ['jellyfin', 'stremio', 'bundle'].includes(value) ? value : 'jellyfin';
 }
 
@@ -55,8 +55,37 @@ function evaluate(plan, ctx) {
   return { key: 'live', label: 'Live', kind: 'good', sellable: true, serviceType: delivery };
 }
 
+async function evaluatePlan(plan, ctx = null) {
+  return evaluate(plan, ctx || await context());
+}
+
+async function planByCode(code) {
+  const value = String(code || '').trim();
+  if (!value) return null;
+  const result = await query('SELECT * FROM plans WHERE code=$1 LIMIT 1', [value]);
+  return result.rows[0] || null;
+}
+
+async function assertSellablePlan(plan, ctx = null) {
+  if (!plan) throw new Error('This plan is not available for new sale.');
+  const readiness = await evaluatePlan(plan, ctx);
+  if (!readiness.sellable) {
+    const error = new Error(`This plan cannot be sold right now: ${readiness.label}.`);
+    error.code = `PLAN_${String(readiness.key || 'UNAVAILABLE').toUpperCase()}`;
+    error.readiness = readiness;
+    throw error;
+  }
+  return readiness;
+}
+
+async function assertSellableCode(code, ctx = null) {
+  const plan = await planByCode(code);
+  const readiness = await assertSellablePlan(plan, ctx);
+  return { plan, readiness };
+}
+
 function deliveryLabel(plan) {
   return ({ jellyfin: 'Jellyfin', stremio: 'Stremio', bundle: 'Jellyfin + Stremio' })[serviceType(plan)];
 }
 
-module.exports = { serviceType, catalogueState, stremioContext, context, evaluate, deliveryLabel };
+module.exports = { serviceType, catalogueState, stremioContext, context, evaluate, evaluatePlan, planByCode, assertSellablePlan, assertSellableCode, deliveryLabel };
