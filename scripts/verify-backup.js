@@ -89,7 +89,9 @@ async function main() {
         [input, path.basename(input)]
     )).rows[0]?.id || null;
 
-    const tempDir = fs.mkdtempSync(path.join(process.env.BACKUP_RESTORE_TMPDIR || os.tmpdir(), 'captainfin-verify-'));
+    const restoreRoot = path.resolve(process.env.BACKUP_RESTORE_TMPDIR || os.tmpdir());
+    fs.mkdirSync(restoreRoot, { recursive: true, mode: 0o700 });
+    const tempDir = fs.mkdtempSync(path.join(restoreRoot, 'captainfin-verify-'));
     const plain = path.join(tempDir, 'restore.pgdump');
     const databaseName = `captainfin_verify_${crypto.randomBytes(6).toString('hex')}`;
     const adminUrl = dbUrlFor(verifierBase, 'postgres');
