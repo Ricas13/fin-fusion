@@ -37,24 +37,67 @@ async function telemetryReady(){const[worker,servers]=await Promise.all([query(`
 function delivery(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
 function deletionDays(cause,plan,cfg){const p=planPolicy.normalize(plan?.inactivity_policy||{});if(p.deleteAfterDisabledDays!=null)return p.deleteAfterDisabledDays;if(cause==='free_inactivity')return cfg.freeDeleteAfterDisabledDays;if(cause==='trial_expired')return cfg.trialDeleteAfterDisabledDays;if(cause==='reseller_delinquent')return cfg.resellerDeleteAfterDisabledDays;return cfg.paidDeleteAfterDisabledDays;}
 
-async function freeCandidates(cfg){const r=await query(`
-  WITH current_access AS (
-    SELECT DISTINCT ON(s.customer_id) s.customer_id,s.id subscription_id,s.plan_id,s.starts_at,s.current_period_end,
-      p.code plan_code,p.name plan_name,p.price_minor,p.billing_interval,p.service_type,p.inactivity_policy
-    FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-    WHERE s.superseded_by IS NULL AND s.status IN('active','trialing','past_due','paused') AND s.starts_at<=NOW() AND s.current_period_end>NOW()
-      AND p.price_minor=0 AND p.billing_interval<>'trial' AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
-    ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
-  )
-  SELECT ca.*,ja.id account_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,ja.created_at account_created_at,ja.disabled,
-    ph.last_playback_at,
-    EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=ca.customer_id AND aps.server_id=ja.server_id) currently_playing,
-    EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=ca.customer_id AND h.hold_type=$1 AND h.source_key=('plan:'||ca.plan_id::text) AND h.released_at IS NULL) already_held
-  FROM current_access ca JOIN jellyfin_accounts ja ON ja.customer_id=ca.customer_id AND ja.account_purpose='jellyfin' AND ja.is_primary=TRUE
-  LEFT JOIN LATERAL(SELECT MAX(COALESCE(ended_at,last_seen_at,started_at)) last_playback_at FROM playback_history WHERE customer_id=ca.customer_id AND server_id=ja.server_id) ph ON TRUE
-  WHERE NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=ca.customer_id AND b.revoked_at IS NULL AND b.blocks_service_access=TRUE)
-`,[FREE_HOLD]);
-  const now=Date.now();return r.rows.map(row=>{const p=planPolicy.normalize(row.inactivity_policy||{}),days=p.noPlaybackDays??cfg.freeNoPlaybackDays,minHours=p.minimumObservationHours??cfg.minimumObservationHours,reference=new Date(row.last_playback_at||row.account_created_at||row.starts_at),ageHours=(now-new Date(row.account_created_at||row.starts_at).getTime())/3600000;const eligible=!row.disabled&&!row.currently_playing&&!row.already_held&&ageHours>=Math.max(minHours,days*24)&&reference.getTime()<=now-days*86400000;return{...row,policy:p,noPlaybackDays:days,referenceAt:reference,eligible};});
+async function freeCandidates(cfg){
+  const r=await query(`
+    WITH current_access AS (
+      SELECT DISTINCT ON(s.customer_id)
+        s.customer_id,s.id subscription_id,s.plan_id,s.starts_at,s.current_period_end,
+        p.code plan_code,p.name plan_name,p.price_minor,p.billing_interval,p.service_type,p.inactivity_policy,
+        CASE
+          WHEN LOWER(COALESCE(p.inactivity_policy->>'enabled','false')) IN('true','1','on','yes')
+           AND COALESCE(p.inactivity_policy->>'playbackWindowDays','') ~ '^[0-9]+$'
+          THEN LEAST(365,GREATEST(1,(p.inactivity_policy->>'playbackWindowDays')::int))
+          ELSE 7
+        END usage_window_days
+      FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+      WHERE s.superseded_by IS NULL AND s.status IN('active','trialing','past_due','paused')
+        AND s.starts_at<=NOW() AND s.current_period_end>NOW()
+        AND p.price_minor=0 AND p.billing_interval<>'trial'
+        AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
+      ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
+    )
+    SELECT ca.*,ja.id account_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,
+      ja.created_at account_created_at,ja.disabled,
+      ph.last_playback_at,COALESCE(ph.playback_seconds,0)::bigint playback_seconds,
+      EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=ca.customer_id AND aps.server_id=ja.server_id) currently_playing,
+      EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=ca.customer_id AND h.hold_type=$1 AND h.source_key=('plan:'||ca.plan_id::text) AND h.released_at IS NULL) already_held
+    FROM current_access ca
+    JOIN jellyfin_accounts ja ON ja.customer_id=ca.customer_id AND ja.account_purpose='jellyfin' AND ja.is_primary=TRUE
+    LEFT JOIN LATERAL(
+      SELECT
+        MAX(COALESCE(ended_at,last_seen_at,started_at)) last_playback_at,
+        COALESCE(SUM(
+          GREATEST(0,EXTRACT(EPOCH FROM(
+            LEAST(COALESCE(ended_at,last_seen_at),NOW())-
+            GREATEST(started_at,NOW()-(ca.usage_window_days*INTERVAL '1 day'))
+          ))) FILTER(WHERE COALESCE(ended_at,last_seen_at)>=NOW()-(ca.usage_window_days*INTERVAL '1 day')),0) playback_seconds
+      FROM playback_history ph
+      WHERE ph.customer_id=ca.customer_id AND ph.server_id=ja.server_id
+    ) ph ON TRUE
+    WHERE NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=ca.customer_id AND b.revoked_at IS NULL AND b.blocks_service_access=TRUE)
+  `,[FREE_HOLD]);
+  const now=Date.now();
+  return r.rows.map(row=>{
+    const p=planPolicy.normalize(row.inactivity_policy||{}),explicit=Boolean(p.enabled);
+    const noPlaybackDays=explicit?p.noPlaybackDays:cfg.freeNoPlaybackDays;
+    const minimumPlaybackMinutes=explicit?p.minimumPlaybackMinutes:null;
+    const playbackWindowDays=explicit?p.playbackWindowDays:Number(row.usage_window_days||7);
+    const minHours=explicit?p.minimumObservationHours:cfg.minimumObservationHours;
+    const firstAccount=new Date(row.account_created_at||row.starts_at),reference=new Date(row.last_playback_at||row.account_created_at||row.starts_at);
+    const ageHours=(now-firstAccount.getTime())/3600000,playbackMinutes=Number(row.playback_seconds||0)/60;
+    const common=!row.disabled&&!row.currently_playing&&!row.already_held;
+    const noPlaybackTriggered=noPlaybackDays!=null&&ageHours>=Math.max(minHours,noPlaybackDays*24)&&reference.getTime()<=now-noPlaybackDays*86400000;
+    const minimumPlaybackTriggered=minimumPlaybackMinutes!=null&&ageHours>=Math.max(minHours,playbackWindowDays*24)&&playbackMinutes<minimumPlaybackMinutes;
+    const triggers=[];
+    if(noPlaybackTriggered)triggers.push(`no playback for ${noPlaybackDays} days`);
+    if(minimumPlaybackTriggered)triggers.push(`${Math.round(playbackMinutes)}m playback < ${minimumPlaybackMinutes}m / ${playbackWindowDays}d`);
+    const reasons=[];
+    if(row.disabled)reasons.push('already disabled');
+    if(row.currently_playing)reasons.push('currently playing');
+    if(row.already_held)reasons.push('already held');
+    if(!triggers.length)reasons.push('usage requirement satisfied');
+    return{...row,policy:p,explicitPlanRule:explicit,noPlaybackDays,minimumPlaybackMinutes,playbackWindowDays,minimumObservationHours:minHours,playbackMinutes,referenceAt:reference,triggers,reasons,eligible:common&&triggers.length>0};
+  });
 }
 
 async function ensureLedger({account,cause,sourceKey,disabledAt,deleteDays,metadata={}}){const due=new Date(new Date(disabledAt).getTime()+deleteDays*86400000);const r=await query(`INSERT INTO jellyfin_account_lifecycle(account_id,customer_id,server_id,jellyfin_user_id,jellyfin_username,cause,source_key,disabled_at,delete_due_at,metadata)
@@ -63,37 +106,54 @@ async function ensureLedger({account,cause,sourceKey,disabledAt,deleteDays,metad
  DO UPDATE SET delete_due_at=EXCLUDED.delete_due_at,metadata=jellyfin_account_lifecycle.metadata||EXCLUDED.metadata,updated_at=NOW()
  RETURNING *`,[account.id,account.customer_id,account.server_id,account.jellyfin_user_id,account.jellyfin_username,cause,sourceKey,new Date(disabledAt),due,JSON.stringify({...metadata,portalAccountPreserved:true})]);return r.rows[0];}
 
-async function enforceFree(cfg,{actorUserId=null,forceDryRun=null}={}){const rows=await freeCandidates(cfg),eligible=rows.filter(x=>x.eligible);let disabled=0,wouldDisable=0;for(const row of eligible){const dryRun=forceDryRun===null?(row.policy.dryRun||cfg.dryRun):Boolean(forceDryRun),deleteDays=deletionDays('free_inactivity',row,cfg),metadata={planId:row.plan_id,planCode:row.plan_code,noPlaybackDays:row.noPlaybackDays,lastPlaybackAt:row.last_playback_at||null,deleteAfterDisabledDays:deleteDays};await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,dryRun?'jellyfin.lifecycle.would_disable_free':'jellyfin.lifecycle.disable_free',row.customer_id,JSON.stringify({...metadata,portalAccountPreserved:true})]);if(dryRun){wouldDisable++;continue;}await accessHolds.addHold({customerId:row.customer_id,type:FREE_HOLD,sourceKey:`plan:${row.plan_id}`,reason:`No Jellyfin playback for ${row.noPlaybackDays} days`,actorUserId,metadata});await provisioning.reconcileCustomer(row.customer_id);const account=(await query('SELECT * FROM jellyfin_accounts WHERE id=$1',[row.account_id])).rows[0];if(account?.disabled){await ensureLedger({account,cause:'free_inactivity',sourceKey:`plan:${row.plan_id}`,disabledAt:account.updated_at||new Date(),deleteDays,metadata});disabled++;}}
-return{processed:rows.length,eligible:eligible.length,disabled,wouldDisable};}
+async function enforceFree(cfg,{actorUserId=null,forceDryRun=null}={}){
+  const rows=await freeCandidates(cfg),eligible=rows.filter(x=>x.eligible);let disabled=0,wouldDisable=0;
+  for(const row of eligible){
+    const dryRun=forceDryRun===null?(cfg.dryRun||(row.explicitPlanRule&&row.policy.dryRun)):Boolean(forceDryRun),deleteDays=deletionDays('free_inactivity',row,cfg);
+    const metadata={planId:row.plan_id,planCode:row.plan_code,noPlaybackDays:row.noPlaybackDays,minimumPlaybackMinutes:row.minimumPlaybackMinutes,playbackWindowDays:row.playbackWindowDays,playbackMinutes:Math.round(row.playbackMinutes),triggers:row.triggers,lastPlaybackAt:row.last_playback_at||null,deleteAfterDisabledDays:deleteDays,ruleSource:row.explicitPlanRule?'plan_override':'global_default'};
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,dryRun?'jellyfin.lifecycle.would_disable_free':'jellyfin.lifecycle.disable_free',row.customer_id,JSON.stringify({...metadata,portalAccountPreserved:true})]);
+    if(dryRun){wouldDisable++;continue;}
+    await accessHolds.addHold({customerId:row.customer_id,type:FREE_HOLD,sourceKey:`plan:${row.plan_id}`,reason:`Free Jellyfin usage rule: ${row.triggers.join('; ')}`,actorUserId,metadata});
+    await provisioning.reconcileCustomer(row.customer_id);
+    const account=(await query('SELECT * FROM jellyfin_accounts WHERE id=$1',[row.account_id])).rows[0];
+    if(account?.disabled){await ensureLedger({account,cause:'free_inactivity',sourceKey:`plan:${row.plan_id}`,disabledAt:account.updated_at||new Date(),deleteDays,metadata});disabled++;}
+  }
+  return{processed:rows.length,eligible:eligible.length,disabled,wouldDisable};
+}
 
-async function classifyDisabled(cfg){const r=await query(`
- SELECT ja.*,c.reseller_id,rs.estate_suspended_at,
-   free_hold.source_key free_hold_source,
-   sub.id subscription_id,sub.status subscription_status,sub.current_period_end,sub.source subscription_source,
-   p.id plan_id,p.code plan_code,p.name plan_name,p.price_minor,p.billing_interval,p.service_type,p.inactivity_policy
- FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id
- LEFT JOIN resellers rs ON rs.id=c.reseller_id
- LEFT JOIN LATERAL(SELECT source_key FROM customer_access_holds h WHERE h.customer_id=ja.customer_id AND h.hold_type=$1 AND h.released_at IS NULL ORDER BY h.created_at DESC LIMIT 1) free_hold ON TRUE
- LEFT JOIN LATERAL(SELECT s.* FROM subscriptions s WHERE s.customer_id=ja.customer_id ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1) sub ON TRUE
- LEFT JOIN plans p ON p.id=sub.plan_id
- WHERE ja.account_purpose='jellyfin' AND ja.disabled=TRUE AND ja.is_primary=TRUE
-   AND NOT EXISTS(SELECT 1 FROM jellyfin_account_lifecycle l WHERE l.account_id=ja.id AND l.recovered_at IS NULL AND l.deleted_at IS NULL)
-`,[FREE_HOLD]);const out=[];for(const row of r.rows){let cause,sourceKey,disabledAt=row.updated_at||new Date();if(row.reseller_id&&row.estate_suspended_at){cause='reseller_delinquent';sourceKey=`reseller:${row.reseller_id}`;disabledAt=row.estate_suspended_at;}else if(row.free_hold_source){cause='free_inactivity';sourceKey=row.free_hold_source;}else if(row.billing_interval==='trial'){cause='trial_expired';sourceKey=`subscription:${row.subscription_id||'unknown'}`;disabledAt=row.current_period_end||disabledAt;}else if(Number(row.price_minor||0)>0||row.subscription_source){cause='payment_delinquent';sourceKey=`subscription:${row.subscription_id||'unknown'}`;disabledAt=row.current_period_end||disabledAt;}else continue;out.push({...row,cause,sourceKey,disabledAt,deleteDays:deletionDays(cause,row,cfg)});}return out;}
+async function classifyDisabled(cfg){
+  const r=await query(`
+    SELECT ja.*,c.reseller_id,rs.estate_suspended_at,
+      free_hold.source_key free_hold_source,
+      sub.id subscription_id,sub.status subscription_status,sub.current_period_end,sub.source subscription_source,
+      p.id plan_id,p.code plan_code,p.name plan_name,p.price_minor,p.billing_interval,p.service_type,p.inactivity_policy
+    FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id
+    LEFT JOIN resellers rs ON rs.id=c.reseller_id
+    LEFT JOIN LATERAL(SELECT source_key FROM customer_access_holds h WHERE h.customer_id=ja.customer_id AND h.hold_type=$1 AND h.released_at IS NULL ORDER BY h.created_at DESC LIMIT 1) free_hold ON TRUE
+    LEFT JOIN LATERAL(SELECT s.* FROM subscriptions s WHERE s.customer_id=ja.customer_id ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1) sub ON TRUE
+    LEFT JOIN plans p ON p.id=sub.plan_id
+    WHERE ja.account_purpose='jellyfin' AND ja.disabled=TRUE AND ja.is_primary=TRUE
+      AND NOT EXISTS(SELECT 1 FROM jellyfin_account_lifecycle l WHERE l.account_id=ja.id AND l.recovered_at IS NULL AND l.deleted_at IS NULL)
+  `,[FREE_HOLD]);
+  const out=[],now=Date.now();
+  for(const row of r.rows){
+    let cause,sourceKey,disabledAt=row.updated_at||new Date();
+    const periodEnd=row.current_period_end?new Date(row.current_period_end):null,endPassed=Boolean(periodEnd&&periodEnd.getTime()<=now),status=String(row.subscription_status||'');
+    if(row.reseller_id&&row.estate_suspended_at){cause='reseller_delinquent';sourceKey=`reseller:${row.reseller_id}`;disabledAt=row.estate_suspended_at;}
+    else if(row.free_hold_source){cause='free_inactivity';sourceKey=row.free_hold_source;}
+    else if(row.billing_interval==='trial'&&(endPassed||['expired','cancelled'].includes(status))){cause='trial_expired';sourceKey=`subscription:${row.subscription_id||'unknown'}`;disabledAt=row.current_period_end||disabledAt;}
+    else if(Number(row.price_minor||0)>0&&(endPassed||['past_due','expired','cancelled'].includes(status))){cause='payment_delinquent';sourceKey=`subscription:${row.subscription_id||'unknown'}`;disabledAt=row.current_period_end||disabledAt;}
+    else continue;
+    out.push({...row,cause,sourceKey,disabledAt,deleteDays:deletionDays(cause,row,cfg)});
+  }
+  return out;
+}
 
 async function recordDisabled(cfg){const rows=await classifyDisabled(cfg);let recorded=0;for(const row of rows){await ensureLedger({account:row,cause:row.cause,sourceKey:row.sourceKey,disabledAt:row.disabledAt,deleteDays:row.deleteDays,metadata:{planId:row.plan_id||null,planCode:row.plan_code||null,subscriptionId:row.subscription_id||null,deleteAfterDisabledDays:row.deleteDays}});recorded++;}return{processed:rows.length,recorded};}
-
-async function markRecoveries(){const r=await query(`UPDATE jellyfin_account_lifecycle l SET recovered_at=NOW(),updated_at=NOW(),metadata=metadata||'{"recovered":true}'::jsonb
- FROM jellyfin_accounts ja WHERE l.account_id=ja.id AND l.recovered_at IS NULL AND l.deleted_at IS NULL AND ja.disabled=FALSE RETURNING l.id`);return r.rowCount;}
-
-async function dueCandidates(){const r=await query(`SELECT l.*,ja.disabled,ja.account_purpose,
- EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=l.customer_id AND aps.server_id=l.server_id) currently_playing
- FROM jellyfin_account_lifecycle l LEFT JOIN jellyfin_accounts ja ON ja.id=l.account_id
- WHERE l.recovered_at IS NULL AND l.deleted_at IS NULL AND l.delete_due_at<=NOW() ORDER BY l.delete_due_at`);return r.rows.map(x=>({...x,eligible:Boolean(x.account_id)&&x.disabled===true&&x.account_purpose==='jellyfin'&&!x.currently_playing}));}
-async function deleteDue(cfg,{actorUserId=null,forceDryRun=null}={}){const rows=await dueCandidates(),eligible=rows.filter(x=>x.eligible);let deleted=0,wouldDelete=0,failed=0;for(const row of eligible){const dryRun=forceDryRun===null?cfg.dryRun:Boolean(forceDryRun);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'jellyfin_account',$3,$4::jsonb)`,[actorUserId,dryRun?'jellyfin.lifecycle.would_delete':'jellyfin.lifecycle.delete',row.account_id,JSON.stringify({cause:row.cause,disabledAt:row.disabled_at,deleteDueAt:row.delete_due_at,portalAccountPreserved:true})]);if(dryRun){wouldDelete++;continue;}try{await registry.request(row.server_id,`/Users/${encodeURIComponent(row.jellyfin_user_id)}`,{method:'DELETE'}).catch(error=>{if(!/404|not found/i.test(String(error.message||error)))throw error;});await transaction(async client=>{await client.query('UPDATE jellyfin_account_lifecycle SET account_id=NULL,deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[row.id]);await client.query('DELETE FROM jellyfin_accounts WHERE id=$1',[row.account_id]);});deleted++;}catch(error){failed++;console.error('Jellyfin lifecycle delete failed:',row.account_id,error.message);}}
-return{processed:rows.length,eligible:eligible.length,deleted,wouldDelete,failed};}
-
+async function markRecoveries(){const r=await query(`UPDATE jellyfin_account_lifecycle l SET recovered_at=NOW(),updated_at=NOW(),metadata=metadata||'{"recovered":true}'::jsonb FROM jellyfin_accounts ja WHERE l.account_id=ja.id AND l.recovered_at IS NULL AND l.deleted_at IS NULL AND ja.disabled=FALSE RETURNING l.id`);return r.rowCount;}
+async function dueCandidates(){const r=await query(`SELECT l.*,ja.disabled,ja.account_purpose,EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=l.customer_id AND aps.server_id=l.server_id) currently_playing FROM jellyfin_account_lifecycle l LEFT JOIN jellyfin_accounts ja ON ja.id=l.account_id WHERE l.recovered_at IS NULL AND l.deleted_at IS NULL AND l.delete_due_at<=NOW() ORDER BY l.delete_due_at`);return r.rows.map(x=>({...x,eligible:Boolean(x.account_id)&&x.disabled===true&&x.account_purpose==='jellyfin'&&!x.currently_playing}));}
+async function deleteDue(cfg,{actorUserId=null,forceDryRun=null}={}){const rows=await dueCandidates(),eligible=rows.filter(x=>x.eligible);let deleted=0,wouldDelete=0,failed=0;for(const row of eligible){const dryRun=forceDryRun===null?cfg.dryRun:Boolean(forceDryRun);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'jellyfin_account',$3,$4::jsonb)`,[actorUserId,dryRun?'jellyfin.lifecycle.would_delete':'jellyfin.lifecycle.delete',row.account_id,JSON.stringify({cause:row.cause,disabledAt:row.disabled_at,deleteDueAt:row.delete_due_at,portalAccountPreserved:true})]);if(dryRun){wouldDelete++;continue;}try{await registry.request(row.server_id,`/Users/${encodeURIComponent(row.jellyfin_user_id)}`,{method:'DELETE'}).catch(error=>{if(!/404|not found/i.test(String(error.message||error)))throw error;});await transaction(async client=>{await client.query('UPDATE jellyfin_account_lifecycle SET account_id=NULL,deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[row.id]);await client.query('DELETE FROM jellyfin_accounts WHERE id=$1',[row.account_id]);});deleted++;}catch(error){failed++;console.error('Jellyfin lifecycle delete failed:',row.account_id,error.message);}}return{processed:rows.length,eligible:eligible.length,deleted,wouldDelete,failed};}
 async function restoreReturningCustomer(customerId){const holds=await query(`SELECT hold_type,source_key FROM customer_access_holds WHERE customer_id=$1 AND hold_type=$2 AND released_at IS NULL`,[customerId,FREE_HOLD]);if(!holds.rowCount)return{restored:false};const entitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});if(!entitlement||!['jellyfin','bundle'].includes(delivery(entitlement)))return{restored:false,reason:'no_jellyfin_entitlement'};for(const h of holds.rows)await accessHolds.releaseHold({customerId,type:h.hold_type,sourceKey:h.source_key});await provisioning.reconcileCustomer(customerId);await query(`UPDATE jellyfin_account_lifecycle SET recovered_at=NOW(),updated_at=NOW(),metadata=metadata||'{"portalReturn":true}'::jsonb WHERE customer_id=$1 AND cause='free_inactivity' AND recovered_at IS NULL AND deleted_at IS NULL`,[customerId]);return{restored:true,released:holds.rowCount};}
-
 async function run(options={}){const cfg=await getSettings(),telemetry=await telemetryReady();if(!cfg.enabled)return{processed:0,skipped:'lifecycle_disabled',dryRun:true,telemetry};if(!telemetry.ready)return{processed:0,skipped:'telemetry_not_trustworthy',dryRun:true,telemetry};const free=await enforceFree(cfg,options),recorded=await recordDisabled(cfg),recovered=await markRecoveries(),deletions=await deleteDue(cfg,options);return{processed:Number(free.processed||0)+Number(recorded.processed||0)+Number(deletions.processed||0),free,recorded,recovered,deletions,dryRun:options.forceDryRun===true||cfg.dryRun,telemetry};}
 async function preview(){const cfg=await getSettings();return{settings:cfg,telemetry:await telemetryReady(),free:await freeCandidates(cfg),disabled:await classifyDisabled(cfg),due:await dueCandidates()};}
 
