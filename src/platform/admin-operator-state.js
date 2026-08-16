@@ -2,6 +2,8 @@
 
 const express=require('express');
 const {query}=require('../db');
+const csrf=require('../auth/csrf');
+const reporting=require('./reporting-currency');
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.status(401).json({ok:false,error:'unauthorized'});}
 function epoch(value){return value?new Date(value).getTime():0;}
@@ -26,6 +28,11 @@ function createAdminOperatorStateRouter(){
   router.get('/admin/api/operator-state/unread',gate,async(_req,res)=>{
     try{res.setHeader('Cache-Control','no-store, private');res.json({ok:true,...await snapshot()});}
     catch(error){console.error('operator unread snapshot failed:',error.message);res.status(500).json({ok:false,error:'snapshot_failed'});}
+  });
+  router.post('/admin/reporting-currency',gate,async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+    try{const saved=await reporting.saveCurrency(req.body.currency,req.session.authUserId);return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
+    catch(error){return res.redirect('/admin?error='+encodeURIComponent(error.message||'Reporting currency could not be changed.'));}
   });
   return router;
 }
