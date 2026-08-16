@@ -39,12 +39,12 @@ function validateForPlan(plan,input){
   if(!policy.enabled)return policy;
   const serviceType=String(plan?.service_type||'jellyfin');
   if(!['jellyfin','bundle'].includes(serviceType))throw new Error('Automatic inactivity rules apply only to Jellyfin or bundle plans.');
-  if(Number(plan?.price_minor||0)!==0)throw new Error('Automatic plan inactivity disabling is limited to free Jellyfin/bundle plans. Paid and trial users remain governed only by the global Jellyfin cleanup rule.');
+  if(Number(plan?.price_minor||0)!==0||String(plan?.billing_interval||'')==='trial')throw new Error('Automatic plan inactivity disabling is limited to free non-trial Jellyfin/bundle plans. Trial and paid users remain governed only by the global Jellyfin cleanup rule.');
   if(policy.noPlaybackDays==null&&policy.minimumPlaybackMinutes==null)throw new Error('Enable at least one usage rule: no-playback days or minimum playback minutes.');
   return policy;
 }
 
-async function getPlan(planId){const r=await query('SELECT id,code,name,price_minor,service_type,inactivity_policy FROM plans WHERE id=$1',[planId]);return r.rows[0]||null;}
+async function getPlan(planId){const r=await query('SELECT id,code,name,price_minor,billing_interval,service_type,inactivity_policy FROM plans WHERE id=$1',[planId]);return r.rows[0]||null;}
 async function save(planId,input,actorUserId=null){
   const plan=await getPlan(planId);if(!plan)throw new Error('Plan not found.');
   const value=validateForPlan(plan,input);
