@@ -42,16 +42,24 @@ async function resolveItem(entitlement,args){
   return item?{...item,id:String(item.Id),name:item.Name||indexed.name,path:item.Path||null,type:'Episode'}:null;
 }
 
-function sourceFilename(item,source){const path=String(source?.Path||item?.Path||'');return path?path.split(/[\\/]/).pop():`${item?.Name||'video'}.mkv`;}
-function sourceQuality(source,filename){
-  const parsed=foundation.streamDisplayFromFilename(filename),height=Number(source?.Height||source?.MediaStreams?.find(s=>s.Type==='Video')?.Height||0),bitrate=Number(source?.Bitrate||0);
-  let rank=0;if(parsed.quality==='4K'||height>=2000)rank=400;if(parsed.quality==='1080p'||height>=1000&&height<2000)rank=Math.max(rank,300);if(parsed.quality==='720p'||height>=700&&height<1000)rank=Math.max(rank,200);if(parsed.remux)rank+=35;if(parsed.source==='BluRay')rank+=20;if(parsed.source==='WEB-DL')rank+=10;rank+=Math.min(20,bitrate/5000000);
-  return{parsed,height,bitrate,rank};
+function basenameFromPath(value){
+  const raw=String(value||'').trim();if(!raw)return'';
+  try{const parsed=new URL(raw);return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop()||'');}catch(_){return raw.split(/[\\/]/).pop()||'';}
 }
-function enrichDescription(parsed,source){
-  const parts=[];const video=Array.isArray(source?.MediaStreams)?source.MediaStreams.find(s=>s.Type==='Video'):null,audio=Array.isArray(source?.MediaStreams)?source.MediaStreams.find(s=>s.Type==='Audio'):null;
-  if(parsed.detail)parts.push(parsed.detail);if(video?.DisplayTitle&&!parts.some(p=>p.includes(video.DisplayTitle)))parts.push(video.DisplayTitle);if(audio?.DisplayTitle)parts.push(audio.DisplayTitle);
-  if(Number(source?.Bitrate)>0)parts.push(`${(Number(source.Bitrate)/1000000).toFixed(1)} Mbps`);return parts.filter(Boolean).join(' · ');
+function sourceFilename(item,source){
+  const itemPath=String(item?.path||item?.Path||''),sourcePath=String(source?.Path||'');
+  const preferred=/\.strm(?:$|[?#])/i.test(itemPath)?itemPath:(sourcePath||itemPath);
+  return basenameFromPath(preferred)||`${item?.name||item?.Name||'video'}.mkv`;
+}
+function sourceQuality(source,filename){
+  const display=foundation.streamDisplayFromFilename(filename),meta=display.metadata||{},height=Number(source?.Height||source?.MediaStreams?.find(s=>s.Type==='Video')?.Height||0),bitrate=Number(source?.Bitrate||0);
+  let rank=0;if(meta.resolution==='4K'||height>=2000)rank=400;if(meta.resolution==='1080p'||height>=1000&&height<2000)rank=Math.max(rank,300);if(meta.resolution==='720p'||height>=700&&height<1000)rank=Math.max(rank,200);if(meta.source==='REMUX')rank+=35;if(meta.source==='BluRay')rank+=20;if(meta.source==='WEB-DL')rank+=10;rank+=Math.min(20,bitrate/5000000);
+  return{display,meta,height,bitrate,rank};
+}
+function enrichDescription(display,source){
+  const parts=String(display?.description||'').split('\n').map(v=>v.trim()).filter(Boolean),streams=Array.isArray(source?.MediaStreams)?source.MediaStreams:[],video=streams.find(s=>s.Type==='Video'),audio=streams.find(s=>s.Type==='Audio');
+  if(video?.DisplayTitle&&!parts.some(p=>p.includes(video.DisplayTitle)))parts.push(`📺 ${video.DisplayTitle}`);if(audio?.DisplayTitle&&!parts.some(p=>p.includes(audio.DisplayTitle)))parts.push(`🔊 ${audio.DisplayTitle}`);
+  if(Number(source?.Bitrate)>0)parts.push(`📶 ${(Number(source.Bitrate)/1000000).toFixed(1)} Mbps`);return parts.join('\n');
 }
 
 async function streamsFor(entitlement,type,videoId){
@@ -63,11 +71,10 @@ async function streamsFor(entitlement,type,videoId){
   const sources=(Array.isArray(playback?.MediaSources)?playback.MediaSources:[]).filter(source=>source&&source.Id&&source.SupportsDirectPlay!==false);
   const token=entitlements.accessToken(entitlement),publicBase=String(entitlement.public_url||'').replace(/\/$/,'');if(!publicBase)return[];
   return sources.map(source=>{
-    const filename=sourceFilename(item,source),q=sourceQuality(source,filename),display=q.parsed;
+    const filename=sourceFilename(item,source),q=sourceQuality(source,filename),quality=q.meta.resolution||(q.height?`${q.height}p`:'Direct');
     const streamUrl=new URL(`/Videos/${encodeURIComponent(item.id)}/stream`,`${publicBase}/`);streamUrl.searchParams.set('Static','true');streamUrl.searchParams.set('MediaSourceId',String(source.Id));
-    const quality=display.quality||(q.height?`${q.height}p`:'Direct');
-    return{rank:q.rank,stream:{name:`[CF ⚡] ${quality}`,description:enrichDescription(display,source)||'Direct Jellyfin stream',url:streamUrl.toString(),behaviorHints:{notWebReady:true,bingeGroup:`captainfin-${quality.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,proxyHeaders:{request:{Authorization:entitlements.jellyfinAuthHeader(token)}},filename,videoSize:Number(source.Size)>0?Number(source.Size):undefined}}};
+    return{rank:q.rank,stream:{name:`[CF ⚡] ${quality}`,description:enrichDescription(q.display,source)||'Direct Jellyfin stream',url:streamUrl.toString(),behaviorHints:{notWebReady:true,bingeGroup:`captainfin-${quality.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,proxyHeaders:{request:{Authorization:entitlements.jellyfinAuthHeader(token)}},filename,videoSize:Number(source.Size)>0?Number(source.Size):undefined}}};
   }).sort((a,b)=>b.rank-a.rank).map(row=>{const stream=row.stream;if(stream.behaviorHints.videoSize===undefined)delete stream.behaviorHints.videoSize;return stream;});
 }
 
-module.exports={restrictedRequest,activeStreamCount,admission,parseVideoId,resolveItem,streamsFor,sourceQuality};
+module.exports={restrictedRequest,activeStreamCount,admission,parseVideoId,resolveItem,streamsFor,sourceQuality,sourceFilename,basenameFromPath};
