@@ -10,6 +10,7 @@
 
 * [Customer guide](customer-guide.md)
 * [Account, passwords and security](privacy-and-security.md)
+* [Stremio service](stremio.md)
 
 ## Resellers
 
@@ -23,10 +24,7 @@
 * [Servers and libraries](admin-servers-and-libraries.md)
 * [Resellers and reseller tiers](admin-resellers.md)
 * [Security and access](admin-security.md)
-
-## Stremio
-
-* [Stremio service roadmap](stremio.md)
+* [Stremio service](stremio.md)
 
 ## Help
 
