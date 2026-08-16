@@ -28,5 +28,6 @@ assert(/createResellerServiceAwarePortalRouter/.test(business),'service-aware re
 assert(!/r\.get\('\/reseller/.test(ux)&&!/r\.post\('\/reseller/.test(ux),'compatibility layer must not create duplicate Express route owners');
 assert(/reseller-service-sale/.test(ux),'service-aware reseller mutations must have persistent route rate limiting');
 assert(/stremioCredentialGuard/.test(business)&&/there is no reseller-visible Jellyfin password/.test(business),'Stremio-only customers must block legacy Jellyfin credential/reset access at the backend boundary');
+assert(/reseller-business-settings/.test(business)&&/r\.post\('\/reseller\/settings',settingsMutationLimit/.test(business),'reseller business settings changes must use the persistent route limiter');
 
 console.log('reseller Stremio UX smoke: ok');
