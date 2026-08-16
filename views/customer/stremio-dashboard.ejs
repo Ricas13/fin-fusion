@@ -4,7 +4,7 @@
 <%
   function validDate(value){if(!value)return null;const d=new Date(value);return Number.isNaN(d.getTime())?null:d;}
   function formatDate(value){const d=validDate(value);return d?d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'Not available';}
-  function price(plan){if(Number(plan&&plan.price_minor||0)===0)return'Free';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'USD'}).format(Number(plan.price_minor||0)/100)}catch(_){return `${plan.currency||'USD'} ${(Number(plan.price_minor||0)/100).toFixed(2)`;}}
+  function price(plan){if(Number(plan&&plan.price_minor||0)===0)return'Free';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'USD'}).format(Number(plan.price_minor||0)/100)}catch(_){return `${plan.currency||'USD'} ${(Number(plan.price_minor||0)/100).toFixed(2)}`;}}
   function delivery(plan){const t=String(plan&&plan.service_type||'jellyfin');return t==='stremio'?'Stremio':t==='bundle'?'Jellyfin + Stremio':'Jellyfin';}
   const username=portal.customer.login_username||portal.customer.login_email||portal.customer.display_name||'Customer';
   const activeSubscription=Array.isArray(portal.subscriptions)?(portal.subscriptions.find(s=>['active','trialing','past_due','paused'].includes(String(s.status||'')))||portal.subscriptions[0]||null):null;
