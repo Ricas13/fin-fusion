@@ -35,6 +35,7 @@ for(const fragment of ['account_purpose','stremio_internal','stremio_media_index
 const entitlement=read('src/stremio/entitlements.js');
 assert(entitlement.includes('hashInstallCredential'),'install tokens must be hash-addressed');
 assert(entitlement.includes("STREMIO_JELLYFIN_TOKEN_KEY"),'restricted Jellyfin tokens need their own purpose key');
+assert(entitlement.includes('MediaBrowser Token'),'restricted playback token must be used as a Jellyfin user bearer, not an administrator API key');
 assert(entitlement.includes("account_purpose='stremio_internal'"),'runtime must use dedicated internal Jellyfin identities');
 assert(entitlement.includes('effective_customer_entitlements'),'addon bearer lookup must use authoritative effective access/hold state');
 assert(entitlement.includes('/Sessions/Logout'),'rotation/revocation must invalidate restricted Jellyfin sessions');
@@ -45,7 +46,7 @@ assert(runtimeSource.includes("Access-Control-Allow-Origin','*'"),'Stremio proto
 assert(runtimeSource.includes("Cross-Origin-Resource-Policy','cross-origin'"),'global same-origin CORP must be relaxed only on the addon surface');
 assert(runtimeSource.includes("scope:'stremio-stream'"),'stream endpoint must be protected by the shared persistent rate limiter');
 const streamSource=read('src/stremio/jellyfin-runtime.js');
-for(const fragment of ['proxyHeaders','notWebReady','MediaBrowser Token','stremio_media_index','active_playback_sessions'])assert(streamSource.includes(fragment),`stream runtime missing ${fragment}`);
+for(const fragment of ['proxyHeaders','notWebReady','stremio_media_index','active_playback_sessions'])assert(streamSource.includes(fragment),`stream runtime missing ${fragment}`);
 assert(streamSource.includes('SupportsDirectPlay'),'runtime must prefer direct-play sources rather than becoming a video proxy');
 
 const reconciliation=read('src/jellyfin/resilient-provisioning.js');
