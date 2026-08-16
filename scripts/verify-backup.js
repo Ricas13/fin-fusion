@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { Client } = require('pg');
-const { parseHeader, createDecipherFromHeader, requireBackupKey } = require('../src/backup/encrypted-stream');
+const { parseHeaderFromFd, createDecipherFromHeader, requireBackupKey } = require('../src/backup/encrypted-stream');
 const { postgresProcessEnv } = require('../src/backup/postgres-env');
 const { query, getPool } = require('../src/db');
 
@@ -51,6 +51,17 @@ async function mark(id, ok, note) {
     ]);
 }
 
+function openBackupDescriptor(filePath) {
+    const noFollow = Number(fs.constants.O_NOFOLLOW || 0);
+    const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+        fs.closeSync(fd);
+        throw new Error('Backup path is not a regular file.');
+    }
+    return { fd, stat };
+}
+
 async function main() {
     requireBackupKey();
     const verifierBase = String(process.env.BACKUP_VERIFY_DATABASE_URL || '').trim();
@@ -62,8 +73,17 @@ async function main() {
     }
 
     const record = process.argv[2] ? null : await latestBackup();
-    const input = path.resolve(process.argv[2] || record?.file_path || '');
-    if (!input || !fs.existsSync(input)) throw new Error('Backup file not found. Pass a .pgdump.enc path or create a managed backup first.');
+    const inputValue = process.argv[2] || record?.file_path || '';
+    if (!inputValue) throw new Error('Backup file not found. Pass a .pgdump.enc path or create a managed backup first.');
+    const input = path.resolve(inputValue);
+    let opened;
+    try { opened = openBackupDescriptor(input); }
+    catch (error) {
+        if (['ENOENT', 'ENOTDIR'].includes(error.code)) throw new Error('Backup file not found. Pass a .pgdump.enc path or create a managed backup first.');
+        throw error;
+    }
+    const { fd: inputFd, stat: inputStat } = opened;
+
     const runId = record?.id || (await query(
         `SELECT id FROM backup_runs WHERE file_path=$1 OR file_name=$2 ORDER BY started_at DESC LIMIT 1`,
         [input, path.basename(input)]
@@ -78,19 +98,23 @@ async function main() {
     let created = false;
 
     try {
-        const { header, headerLength } = parseHeader(input);
-        const decipher = createDecipherFromHeader(header);
-        const stat = fs.statSync(input);
-        const cipherStart = headerLength;
-        const cipherEnd = stat.size - 17;
-        if (cipherEnd < cipherStart) throw new Error('Encrypted backup is truncated.');
+        // Header, size, authentication tag and ciphertext all come from the same
+        // descriptor opened with O_NOFOLLOW. No check-then-reopen path remains for
+        // an attacker to swap between validation and decryption.
+        const { header, headerBytes, salt, iv } = parseHeaderFromFd(inputFd);
+        if (inputStat.size <= headerBytes + 16) throw new Error('Encrypted backup is truncated.');
         const tag = Buffer.alloc(16);
-        const fd = fs.openSync(input, 'r');
-        try { fs.readSync(fd, tag, 0, 16, stat.size - 16); }
-        finally { fs.closeSync(fd); }
+        fs.readSync(inputFd, tag, 0, tag.length, inputStat.size - tag.length);
+        const secret = requireBackupKey();
+        const key = crypto.scryptSync(secret, salt, 32, { N: 16384 });
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
+        decipher.setAAD(header);
         decipher.setAuthTag(tag);
+        const cipherStart = headerBytes;
+        const cipherEnd = inputStat.size - tag.length - 1;
+
         await pipeline(
-            fs.createReadStream(input, { start: cipherStart, end: cipherEnd }),
+            fs.createReadStream(input, { fd: inputFd, autoClose: false, start: cipherStart, end: cipherEnd }),
             decipher,
             fs.createWriteStream(plain, { mode: 0o600 })
         );
@@ -123,6 +147,7 @@ async function main() {
         await mark(runId, false, error.message).catch(() => {});
         throw error;
     } finally {
+        try { fs.closeSync(inputFd); } catch (_) {}
         if (created) {
             try {
                 if (!admin._connected) await admin.connect();
