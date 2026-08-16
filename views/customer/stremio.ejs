@@ -9,7 +9,7 @@
     <% if (!eligible) { %><div class="notice warning">Your current plan does not include Stremio.</div><% } else if (!runtimeReady) { %><div class="notice warning">Stremio delivery is not enabled by the administrator yet.</div><% } %>
     <% if (credential && manifestUrl) { %>
       <div class="notice success"><strong>Installation link created.</strong> This raw credential is shown only now. If you lose it, rotate the installation.</div>
-      <div class="field"><label>Addon manifest URL</label><input class="input" type="text" readonly value="<%= manifestUrl %>" onclick="this.select()"></div>
+      <div class="field"><label>Addon manifest URL</label><input class="input" type="text" readonly value="<%= manifestUrl %>"></div>
       <p><a class="button primary" href="<%= stremioUrl %>">Install in Stremio</a></p>
     <% } %>
     <% if (eligible && runtimeReady) { %>
