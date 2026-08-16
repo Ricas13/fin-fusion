@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const totp = require('../src/auth/totp');
 
 // RFC 6238 Appendix B SHA1 test secret, encoded as Base32.
@@ -38,4 +40,16 @@ assert.strictEqual(parsed.searchParams.get('algorithm'), 'SHA1');
 assert.strictEqual(parsed.searchParams.get('digits'), '6');
 assert.strictEqual(parsed.searchParams.get('period'), '30');
 
-console.log('TOTP RFC compatibility and enrollment URI smoke test passed.');
+const root = path.join(__dirname, '..');
+const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
+const controller = fs.readFileSync(path.join(root, 'src/auth/staff-controller.js'), 'utf8');
+const setupView = fs.readFileSync(path.join(root, 'views/auth/2fa-setup.ejs'), 'utf8');
+assert(dockerfile.includes('qrencode'), 'Production image must include the local QR encoder');
+assert(controller.includes("spawnSync('qrencode'"), '2FA setup must generate QR locally');
+assert(controller.includes('input:String(uri||\'\')'), 'TOTP secret URI must be passed over stdin, not exposed in a command argument');
+assert(controller.includes('data:image/svg+xml;base64,'), 'QR must be embedded locally without a third-party QR service');
+assert(setupView.includes('qrDataUri'), '2FA setup view must render the QR code');
+assert(setupView.includes("Can't scan it? Use the manual setup key"), 'Manual authenticator enrollment fallback must remain available');
+assert(!setupView.includes('<%= uri %>'), 'Raw otpauth URI should not clutter the enrollment screen');
+
+console.log('TOTP RFC compatibility, QR enrollment, and manual fallback smoke test passed.');
