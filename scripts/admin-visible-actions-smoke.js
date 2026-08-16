@@ -7,7 +7,8 @@ const path=require('path');
 const root=path.join(__dirname,'..');
 const platformDir=path.join(root,'src','platform');
 const publicFeedback=fs.readFileSync(path.join(root,'public','js','admin-form-feedback.js'),'utf8');
-const nav=fs.readFileSync(path.join(platformDir,'admin-nav.js'),'utf8');
+const navSource=fs.readFileSync(path.join(platformDir,'admin-nav.js'),'utf8');
+const navModel=require('../src/platform/admin-nav');
 const tabs=fs.readFileSync(path.join(platformDir,'notification-workflow-tabs.js'),'utf8');
 const html=fs.readFileSync(path.join(platformDir,'admin-html.js'),'utf8');
 
@@ -74,11 +75,15 @@ assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formactio
 assert(!publicFeedback.includes('submitter?.formAction || form.action'),'Reflected formAction must never override a form action implicitly');
 assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formmethod')"),'Enhanced forms must only honor explicit formmethod overrides');
 
-assert(nav.includes("['my-profile','My Profile','/admin/profile']"),'My Profile must remain a dedicated Settings sidebar item');
-assert(nav.includes("['notification-settings','Notifications','/admin/notifications/preferences']"),'Global Notifications must remain a Settings sidebar item');
-assert(!nav.includes("['my-notifications','My Notifications','/admin/profile/notifications']"),'My Notifications must not be duplicated in the Settings sidebar');
-assert(!nav.includes("['settings-commerce','Commerce','/admin/settings?section=commerce']"),'Unused Settings > Commerce must not be shown');
-assert(nav.includes("'my-notifications':Object.freeze"),'Personal notifications must remain addressable as a hidden My Profile workflow page');
+const settings=navModel.groups.find(group=>group.key==='settings');
+assert(settings,'Settings navigation group must exist');
+const visibleKeys=settings.pages.map(page=>page[0]);
+assert(visibleKeys.includes('my-profile'),'My Profile must remain a dedicated Settings sidebar item');
+assert(visibleKeys.includes('notification-settings'),'Global Notifications must remain a Settings sidebar item');
+assert(!visibleKeys.includes('my-notifications'),'My Notifications must not be duplicated in the Settings sidebar');
+assert(!visibleKeys.includes('settings-commerce'),'Unused Settings > Commerce must not be shown');
+assert(navModel.hiddenPages?.['my-notifications'],'Personal notifications must remain addressable as a hidden My Profile workflow page');
+assert(navSource.includes("'my-notifications':Object.freeze"),'Hidden personal notification workflow metadata must remain explicit');
 
 assert(tabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Global notification workflow must expose Global notifications');
 assert(tabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Global notification workflow must expose Email infrastructure');
