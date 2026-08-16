@@ -9,13 +9,15 @@ const groups=Object.freeze([
   {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['policy-drift','Policy Drift','/admin/provisioning/drift'],['notification-gateway','Notification gateway','/admin/notifications'],['automation-jobs','Jobs','/admin/automation']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['my-notifications','My Notifications','/admin/profile/notifications'],['branding','Branding','/admin/settings/branding'],['settings-commerce','Commerce','/admin/settings?section=commerce'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups','/admin/backups'],['settings-advanced','Advanced','/admin/settings?section=advanced']]}
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups','/admin/backups'],['settings-advanced','Advanced','/admin/settings?section=advanced']]}
 ]);
 
 // Workflow pages can stay grouped/breadcrumbed without consuming sidebar space.
-// Billing is reached from the Commerce workflow tabs, not duplicated here.
+// Billing is reached from the Commerce workflow tabs, and personal notification
+// routing is reached from My Profile rather than duplicated in the sidebar.
 const hiddenPages=Object.freeze({
-  billing:Object.freeze({groupKey:'commerce',page:Object.freeze(['billing','Billing','/admin/billing'])})
+  billing:Object.freeze({groupKey:'commerce',page:Object.freeze(['billing','Billing','/admin/billing'])}),
+  'my-notifications':Object.freeze({groupKey:'settings',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])})
 });
 
 const aliases=Object.freeze({
@@ -29,7 +31,7 @@ const aliases=Object.freeze({
   'setup':'settings-general',
   'settings':'settings-general',
   'support-policy':'settings-general',
-  'reseller-settings':'settings-commerce',
+  'reseller-settings':'settings-general',
   'stremio-settings':'settings-integrations',
   'abuse-protection':'settings-security',
   'configuration-transfer':'settings-advanced',
