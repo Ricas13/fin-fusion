@@ -11,12 +11,22 @@
         const frequency = form.querySelector('[data-plan-frequency]');
         const duration = form.querySelector('[data-plan-duration]');
         const durationHelp = form.querySelector('[data-duration-help]');
+        const service = form.querySelector('[data-plan-service]');
+        const jellyfinFields = form.querySelectorAll('[data-jellyfin-field]');
 
         function syncAudience() {
             if (!audience || !resellerFields) return;
             const enabled = audience.value === 'reseller' || audience.value === 'both';
             resellerFields.hidden = !enabled;
             resellerInputs.forEach(input => { input.disabled = !enabled; });
+        }
+
+        function syncService() {
+            const needsJellyfin = !service || service.value === 'jellyfin' || service.value === 'bundle';
+            jellyfinFields.forEach(field => {
+                field.hidden = !needsJellyfin;
+                field.querySelectorAll('input,select,textarea').forEach(input => { input.disabled = !needsJellyfin; });
+            });
         }
 
         function syncFrequency() {
@@ -35,8 +45,10 @@
         }
 
         audience?.addEventListener('change', syncAudience);
+        service?.addEventListener('change', syncService);
         frequency?.addEventListener('change', syncFrequency);
         syncAudience();
+        syncService();
         syncFrequency();
     }
 
