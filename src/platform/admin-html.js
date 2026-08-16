@@ -123,10 +123,14 @@ function notificationTabsFor(options={}){
     return notificationWorkflow.tabs(selected);
 }
 
+function notificationTestScriptFor(options={}){
+    return String(options.title||'')==='My notification preferences'?'<script src="/js/admin-personal-notification-tests.js" defer></script>':'';
+}
+
 function layout(options={}){
-    options={...options,body:notificationTabsFor(options)+String(options.body||'')};
+    options={...options,body:notificationTabsFor(options)+String(options.body||'')+notificationTestScriptFor(options)};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,notificationTestScriptFor,SETTING_HELP};

@@ -24,6 +24,8 @@ const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
 const provisioning=read('src/jellyfin/provisioning.js');
 const platformRouter=read('src/platform/router.js');
+const personalTests=read('src/platform/admin-personal-notification-tests.js');
+const personalTestUi=read('public/js/admin-personal-notification-tests.js');
 
 assert(migration.includes('CREATE TABLE IF NOT EXISTS plan_prices'),'Migration must create per-currency logical-plan prices');
 assert(migration.includes('UNIQUE(plan_id,currency)'),'A logical plan may have at most one price per currency');
@@ -70,5 +72,15 @@ assert(adminProfile.includes('provisioning.setJellyfinPassword(row.customer_id,r
 assert(adminProfile.includes('autocomplete="new-password"')&&adminProfile.includes('confirmPassword'),'My Profile must provide password and confirmation fields without exposing a stored password');
 assert(provisioning.includes("row.user_role==='admin'&&row.registration_source==='admin_personal'"),'Provisioning must recognize role-preserving personal administrator media profiles');
 assert(provisioning.includes('Settings > My Profile'),'Personal administrator onboarding must direct password setup to My Profile instead of the customer portal');
+
+assert(platformRouter.includes('createAdminPersonalNotificationTestsRouter'),'Personal notification test routes must be mounted in the assembled platform router');
+for(const channel of ['email','telegram','discord','whatsapp'])assert(personalTests.includes(`/admin/profile/notifications/test/${channel}`),`Personal ${channel} delivery must have a test route`);
+assert(personalTests.includes("notificationSettings.sendDiscord(testText(site,'Discord'),{userId:me.discord_user_id})"),'Discord test must send a real DM to the linked admin identity');
+assert(personalTests.includes("notificationSettings.sendTelegram(testText(site,'Telegram'),{chatId:me.telegram_chat_id})"),'Telegram test must send to the linked admin chat');
+assert(personalTests.includes("notificationSettings.sendWhatsapp(testText(site,'WhatsApp'),{to:me.phone_e164})"),'WhatsApp test must use the saved opted-in admin phone');
+assert(personalTests.includes("emailSettings.send({to:me.email"),'Email test must use the signed-in administrator email');
+assert(personalTests.includes("'admin.notifications.personal.test'"),'Personal delivery tests must be audit logged without masquerading as business events');
+assert(personalTestUi.includes('Send test Discord')&&personalTestUi.includes('Send test Telegram')&&personalTestUi.includes('Send test WhatsApp'),'My Notifications must expose real delivery test buttons');
+assert(adminHtml.includes('/js/admin-personal-notification-tests.js'),'The personal notification test controls must be loaded on My Notifications');
 
 console.log('notification + multi-currency smoke: ok');
