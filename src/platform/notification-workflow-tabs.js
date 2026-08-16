@@ -7,7 +7,8 @@ function render(items,active,label){
 function globalTabs(active='global'){
   return render([
     ['global','Global notifications','/admin/notifications/preferences'],
-    ['email','Email infrastructure','/admin/notifications/email']
+    ['email','Email infrastructure','/admin/notifications/email'],
+    ['health','Delivery health','/admin/notifications']
   ],active,'Notification settings workflow');
 }
 
@@ -18,8 +19,6 @@ function profileTabs(active='profile'){
   ],active,'My profile workflow');
 }
 
-// Compatibility for older callers. Global notification pages should use
-// globalTabs(), while personal account pages should use profileTabs().
 function tabs(active='global'){
   return ['profile','personal'].includes(active)?profileTabs(active):globalTabs(active);
 }
