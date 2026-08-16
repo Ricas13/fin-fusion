@@ -2,7 +2,6 @@
 
 const express=require('express');
 const crypto=require('crypto');
-const bcrypt=require('bcryptjs');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
@@ -82,7 +81,7 @@ async function prevalidatePortal(req,cfg){
 }
 function credentialsPage(site,username,password,message,portal,serviceType){
   const stremio=serviceType==='bundle'?'<div class="notice success"><strong>Stremio is included too.</strong> The customer manages their private Stremio installation from their CAPTaINFiN portal after activation.</div>':'';
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Access ready · ${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"></head><body><main style="max-width:760px;margin:40px auto;padding:20px"><section class="section"><div class="formPanel"><h1>Customer access ready</h1><p>${esc(message)}</p>${stremio}<p><strong>Jellyfin username</strong></p><div class="codeBox">${esc(username)}</div><p><strong>Jellyfin password</strong></p><div class="codeBox">${esc(password)}</div><p class="muted">Shown once. Share it securely and ask the customer to change it.</p>${portal?`<hr><p><strong>CAPTaINFiN portal activation</strong></p><p>${portal.queued?`Activation email queued to ${esc(portal.email)}.`:`Email could not be queued; share the one-time link below.`}</p><div class="codeBox">${esc(portal.activationLink)}</div>`:''}<p><a class="button" href="/reseller">Back to dashboard</a></p></div></section></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Access ready · ${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"></head><body><main style="max-width:760px;margin:40px auto;padding:20px"><section class="section"><div class="formPanel"><h1>Customer access ready</h1><p>${esc(message)}</p>${stremio}<p><strong>Jellyfin username</strong></p><div class="codeBox">${esc(username)}</div><p><strong>Jellyfin password</strong></p><div class="codeBox">${esc(password)}</div><p class="muted">Shown once. Share it securely and ask the customer to change it.</p>${portal?`<hr><p><strong>CAPTaINFiN portal activation</strong></p><p>${portal.queued?`Activation email queued to ${esc(portal.email)}.`:`Email could not be queued; share the one-time link below.`}</p><div class="codeBox">${esc(portal.activationLink)}</div>`:''}<p><a class="button" href="/reseller">Back to dashboard</a></p></div></section></main></body></html>`;
 }
 async function createCustomer(req,res){
   try{
@@ -101,12 +100,20 @@ async function renewCustomer(req,res){
     return res.redirect('/reseller?message='+encodeURIComponent(messages[result.operation]||'Customer lifecycle updated.'));
   }catch(error){return res.redirect(`/reseller/customer/${encodeURIComponent(req.params.id)}/renew?error=${encodeURIComponent(error.message)}`);}
 }
+function runLimited(middleware,req,res,handler){return middleware(req,res,error=>error?handler(error):handler());}
 function createResellerServiceAwarePortalRouter(){
-  const r=express.Router();r.use('/reseller',gate,noStore);
-  r.get('/reseller',async(req,res,next)=>{try{return res.send(await dashboard(req));}catch(error){next(error);}});
-  r.get('/reseller/customer/:id/renew',async(req,res,next)=>{try{const html=await manage(req);return html?res.send(html):res.status(404).send('Customer not found');}catch(error){next(error);}});
-  r.post('/reseller/customer/create',saleLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');return createCustomer(req,res);});
-  r.post('/reseller/customer/:id/renew',saleLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');return renewCustomer(req,res);});
+  const r=express.Router();
+  r.use('/reseller',gate,noStore,async(req,res,next)=>{
+    const path=String(req.path||'/'),method=String(req.method||'GET').toUpperCase();
+    try{
+      if(method==='GET'&&path==='/')return res.send(await dashboard(req));
+      const renew=path.match(/^\/customer\/([^/]+)\/renew$/);
+      if(method==='GET'&&renew){req.params.id=renew[1];const html=await manage(req);return html?res.send(html):res.status(404).send('Customer not found');}
+      if(method==='POST'&&path==='/customer/create')return runLimited(saleLimit,req,res,error=>{if(error)return next(error);if(!csrf.verify(req))return res.status(403).send('Invalid security token');return createCustomer(req,res);});
+      if(method==='POST'&&renew){req.params.id=renew[1];return runLimited(saleLimit,req,res,error=>{if(error)return next(error);if(!csrf.verify(req))return res.status(403).send('Invalid security token');return renewCustomer(req,res);});}
+      return next();
+    }catch(error){return next(error);}
+  });
   return r;
 }
 module.exports={createResellerServiceAwarePortalRouter,dashboard,manage,decorateOptions,decorateCreateForm,decorateOwnerForm,decorateCustomerActions,createCustomer,renewCustomer};
