@@ -1,0 +1,46 @@
+name: Stremio Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'src/stremio/**'
+      - 'src/application.js'
+      - 'src/jellyfin/resilient-provisioning.js'
+      - 'src/platform/admin-stremio.js'
+      - 'src/platform/customer-stremio.js'
+      - 'src/platform/customer-dashboard.js'
+      - 'src/platform/router.js'
+      - 'views/customer/stremio.ejs'
+      - 'db/migrations/069_stremio_runtime.sql'
+      - 'scripts/stremio-runtime-smoke.js'
+      - 'scripts/runtime-db-isolation-smoke.js'
+      - 'package.json'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.github/workflows/stremio-runtime.yml'
+  workflow_dispatch:
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Stremio runtime contract
+        run: node scripts/stremio-runtime-smoke.js
+      - name: Syntax check runtime modules
+        run: |
+          node --check src/application.js
+          node --check src/stremio/foundation.js
+          node --check src/stremio/entitlements.js
+          node --check src/stremio/media-index.js
+          node --check src/stremio/jellyfin-runtime.js
+          node --check src/stremio/runtime.js
+          node --check src/platform/customer-stremio.js
+          node --check src/platform/customer-dashboard.js
+          node --check src/platform/admin-stremio.js
+          node --check src/platform/router.js

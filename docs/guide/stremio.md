@@ -1,60 +1,116 @@
-# Stremio service roadmap
+# Stremio service
 
-> Stremio delivery is a **foundation/in-development feature**. Do not sell or advertise it as live until the addon runtime, playback bridge and platform-compatibility testing are complete.
+CAPTaINFiN can provide a **stream-only Stremio addon** backed by a Jellyfin server. Stremio keeps its normal metadata/catalogue experience; CAPTaINFiN supplies the eligible streams for a movie or episode.
 
-CAPTaINFiN is being prepared to offer a stream-only Stremio service backed by an assigned Jellyfin server.
+> Before selling Stremio access, an administrator must complete the runtime setup and test the intended Stremio clients. The runtime deliberately stays fail-closed until it is enabled, its dedicated encryption key is configured, an eligible Jellyfin server is available and the media index is ready.
 
-## Intended customer experience
+## Customer setup
 
-The customer browses movies and episodes using Stremio's normal metadata/catalogue experience. CAPTaINFiN does not need to publish a competing catalogue. When the customer opens a title, the CAPTaINFiN addon returns eligible Jellyfin-backed stream choices.
+If your plan includes Stremio:
 
-## User-specific access
+1. Sign in to the CAPTaINFiN customer portal.
+2. Open **Stremio**.
+3. Choose **Create installation**.
+4. Use **Install in Stremio**, or copy the manifest URL into Stremio manually.
+5. Open a movie or episode in Stremio. CAPTaINFiN stream choices appear alongside any other installed addons.
 
-Each active Stremio entitlement will use its own opaque installation credential. The credential identifies the customer entitlement, stream allowance and assigned Jellyfin service without exposing a CAPTaINFiN administrator API key.
+The raw addon credential is shown only when it is created or rotated. CAPTaINFiN stores a one-way hash rather than the raw installation credential.
 
-Credentials are designed to be rotatable and revocable. Stored bearer credentials should be represented by a one-way hash where possible.
+### Rotate an installation
 
-## Jellyfin relationship
+Use **Rotate installation** if the addon URL was exposed or you want to move to a new installation. Rotation invalidates the previous CAPTaINFiN addon credential and also replaces the restricted Jellyfin playback session token.
 
-Jellyfin remains the media/data plane. CAPTaINFiN is the control plane that decides whether the subscription is active, which server the customer belongs to and how many simultaneous streams are permitted.
+### Revoke an installation
 
-A Stremio-only customer may still need a restricted internal Jellyfin user so playback can be authorized without granting normal Jellyfin portal credentials.
+Use **Revoke installation** to stop Stremio access immediately. CAPTaINFiN invalidates the addon credential, logs out the restricted Jellyfin session and disables the hidden Stremio Jellyfin identity.
+
+## What credentials Stremio receives
+
+Stremio does **not** receive:
+
+- your normal Jellyfin password;
+- your normal Jellyfin user token;
+- a CAPTaINFiN administrator login; or
+- the Jellyfin administrator API key.
+
+CAPTaINFiN creates a dedicated internal Jellyfin identity for Stremio delivery. Its restricted playback token is encrypted at rest using a separate purpose key. The internal identity is hidden from normal customer Jellyfin account controls.
+
+## Stream limits
+
+The configured plan stream count is applied in three layers:
+
+1. the dedicated Jellyfin identity receives the matching active-session limit;
+2. CAPTaINFiN checks recent active playback before returning stream options; and
+3. the normal activity worker remains the post-start enforcement layer.
+
+This is defense in depth. Administrators should still validate the exact behaviour on the Stremio clients they intend to support before launch.
 
 ## Stream names
 
-`.strm` media may not have complete probed media information before playback. The addon therefore needs a graceful filename fallback.
+CAPTaINFiN enriches stream choices with Jellyfin media information when available and falls back to the `.strm` filename when needed.
 
-Examples:
+Examples of recognised filename information include:
 
-- `2160p`, `4K` or `UHD` → **4K**
-- `1080p` → **1080p**
-- `720p` → **720p**
+- `2160p`, `4K` or `UHD` → **4K**;
+- `1080p` and `720p`;
+- WEB-DL, WEBRip, BluRay and REMUX;
+- HEVC/H.265, AVC/H.264 and AV1;
+- Dolby Vision, HDR/HDR10/HDR10+;
+- TrueHD, Atmos, DTS-HD, DDP/E-AC-3 and common channel layouts; and
+- the release group at the end of a conventional release filename.
 
-Where reliable filename tokens exist, the display can also identify source, codec, HDR format, audio and release group. Information must not be invented when it cannot be determined.
-
-A future stream entry may look like:
+A stream may therefore appear as:
 
 ```text
 [CF ⚡] 4K
-
-WEB-DL • HEVC • Dolby Vision
-DDP Atmos
-MGE
+BluRay • HEVC • Dolby Vision
+TrueHD Atmos • 7.1
+FraMeSToR
 ```
 
-If Jellyfin already has probed media details, those details can enrich the entry. Filename-derived resolution remains the fallback.
+Unavailable information is left out rather than invented.
+
+## Administrator setup
+
+Open **Settings → Integrations → Stremio**.
+
+1. Configure a unique `STREMIO_JELLYFIN_TOKEN_KEY` and keep `STREMIO_RUNTIME_ENABLED=false` during preparation.
+2. Give each delivery Jellyfin server a public playback URL.
+3. Enable the intended Jellyfin server(s) for Stremio.
+4. Queue the media-index refresh and wait for **Ready** with a sensible IMDb title count.
+5. Enable the Stremio runtime.
+6. Change or create the intended plan delivery type: **Stremio** or **Bundle**.
+7. Use a controlled test customer to create an installation and test movie + episode playback on every client you intend to advertise.
+8. Only then make the Stremio plan publicly visible.
+
+Existing subscription service snapshots are not silently rewritten when an administrator changes a plan's delivery type.
+
+## Media index
+
+CAPTaINFiN maintains a local IMDb-to-Jellyfin index for each Stremio-enabled server. A successful refresh replaces stale entries only after the full scan completes, so a failed partial refresh does not destroy the last known-good index.
+
+The automation worker refreshes the index periodically. Administrators can also queue a full refresh from the Stremio settings page.
+
+## Playback path
+
+The data path is:
+
+```text
+Stremio
+  → CAPTaINFiN manifest/stream endpoint
+  → entitlement + stream-limit check
+  → local IMDb index
+  → restricted Jellyfin playback metadata
+  → direct Jellyfin media URL returned to Stremio
+  → Jellyfin streams the video directly to the client
+```
+
+CAPTaINFiN does not proxy high-bitrate video data.
+
+## Current limitations
+
+The runtime intentionally does not provide a CAPTaINFiN catalogue; it is stream-only. It also does not yet promise perfect Jellyfin watched/resume synchronization from Stremio. Header-based direct playback must be tested on the actual Stremio Desktop/mobile clients you intend to support before public sale.
 
 ## Commercial direction
 
-The current working concept is **$4/month per concurrent Stremio stream**. Pricing remains configurable and is not hard-coded into the addon foundation.
-
-## Not in the foundation release
-
-The foundation does not yet promise:
-
-- a production Stremio manifest/stream endpoint
-- live playback admission enforcement across every Stremio platform
-- perfect Jellyfin watch-progress synchronization
-- a CAPTaINFiN Stremio catalogue
-
-Those items require the dedicated addon/runtime project and end-to-end testing.
+The current working commercial model is **$4/month per concurrent Stremio stream**. Pricing is a product decision and is not hard-coded into the addon protocol.

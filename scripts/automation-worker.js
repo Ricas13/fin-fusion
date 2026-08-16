@@ -16,6 +16,7 @@ const MAX_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.AUTOMATION_WO
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS || 15000)));
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = String(process.env.COMMIT_SHA || process.env.GITHUB_SHA || '').slice(0, 80) || null;
+const DEFAULT_JOB_INTERVALS=Object.freeze({stremio_media_index:21600});
 let stopping = false;
 let running = new Set();
 let heartbeatTimer = null;
@@ -24,8 +25,9 @@ function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function ensureRows() {
     for (const jobKey of jobRegistry.names()) {
+        const interval=Number(DEFAULT_JOB_INTERVALS[jobKey]||300);
         await query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at)
-            VALUES($1,TRUE,300,NOW()) ON CONFLICT(job_key) DO NOTHING`, [jobKey]);
+            VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING`, [jobKey,interval]);
     }
 }
 

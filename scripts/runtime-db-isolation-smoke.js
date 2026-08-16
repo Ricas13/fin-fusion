@@ -40,13 +40,15 @@ assert(/ACTIVITY_DATABASE_URL:\s*\$\{ACTIVITY_DATABASE_URL:\?/.test(activity), '
 assert(/DATABASE_URL:\s*\$\{BACKUP_DATABASE_URL:\?/.test(backup), 'backup worker must use BACKUP_DATABASE_URL');
 assert(/BACKUP_VERIFY_DATABASE_URL:\s*\$\{BACKUP_VERIFY_DATABASE_URL:\?/.test(backup), 'backup worker must use a separate verification login');
 assert(/DATABASE_URL:\s*\$\{DATABASE_URL:\?/.test(recovery), 'recovery tools intentionally keep the owner/recovery credential');
+assert(/STREMIO_JELLYFIN_TOKEN_KEY:\s*\$\{STREMIO_JELLYFIN_TOKEN_KEY/.test(app), 'only the web runtime should receive the Stremio restricted-token purpose key');
 
 for (const secret of ['BACKUP_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ACTIVITY_DATABASE_URL','BACKUP_DATABASE_URL','BACKUP_VERIFY_DATABASE_URL']) {
     assert(!app.includes(`${secret}:`), `app must not receive ${secret}`);
 }
-for (const secret of ['SESSION_SECRET','AUTH_ENCRYPTION_KEY','BACKUP_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ADMIN_PASSWORD']) {
+for (const secret of ['SESSION_SECRET','AUTH_ENCRYPTION_KEY','BACKUP_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ADMIN_PASSWORD','STREMIO_JELLYFIN_TOKEN_KEY']) {
     assert(!automation.includes(`${secret}:`), `automation worker must not receive ${secret}`);
 }
+for (const block of [activity,backup]) assert(!block.includes('STREMIO_JELLYFIN_TOKEN_KEY:'),'activity/backup workers must not receive the Stremio token purpose key');
 for (const secret of ['SESSION_SECRET','AUTH_ENCRYPTION_KEY','DATA_ENCRYPTION_KEY','JELLYFIN_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY','ADMIN_PASSWORD']) {
     assert(!backup.includes(`${secret}:`), `backup worker must not receive ${secret}`);
 }

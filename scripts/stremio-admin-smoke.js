@@ -5,16 +5,24 @@ const fs=require('fs');
 const path=require('path');
 
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const application=read('src/application.js');
 const router=read('src/platform/router.js');
 const nav=read('src/platform/admin-nav.js');
 const settings=read('src/platform/admin-original-settings.js');
 const page=read('src/platform/admin-stremio.js');
 const migration=read('db/migrations/066_stremio_service_foundation.sql');
+const runtimeMigration=read('db/migrations/069_stremio_runtime.sql');
+const runtime=read('src/stremio/runtime.js');
+const foundation=read('src/stremio/foundation.js');
 
 assert(router.includes("createAdminStremioRouter"),'Stremio admin router must be mounted');
+assert(application.includes('createStremioRuntimeRouter')&&application.includes('app.use(createStremioRuntimeRouter())'),'Stremio protocol runtime must have one canonical top-level owner');
+assert(!router.includes('createStremioRuntimeRouter'),'Platform router must not duplicate the top-level Stremio protocol owner');
 assert(nav.includes("'stremio-settings':'settings-integrations'"),'Stremio settings must map into the canonical Integrations settings group');
-assert(settings.includes('href="/admin/settings/stremio"')&&settings.includes('<strong>Stremio</strong>'),'Stremio foundation must be discoverable from Settings → Integrations');
-assert(page.includes('Foundation only:'),'Admin page must clearly state that the production addon runtime is not live');
+assert(settings.includes('href="/admin/settings/stremio"')&&settings.includes('<strong>Stremio</strong>'),'Stremio must be discoverable from Settings → Integrations');
+assert(page.includes('Runtime disabled.')&&page.includes('Runtime ready.'),'Admin page must surface explicit fail-closed/runtime-ready states');
+assert(foundation.includes('STREMIO_JELLYFIN_TOKEN_KEY')&&foundation.includes('runtimeReady'),'Runtime readiness must require the dedicated restricted-token key');
+assert(runtime.includes("STREMIO_RUNTIME_ENABLED")&&runtime.includes("if(!enabled())"),'Protocol surface must fail closed while disabled');
 assert(page.includes("status IN ('pending','active','suspended')"),'Server eligibility removal must protect all assigned non-revoked Stremio entitlements');
 assert(page.includes("'admin.stremio.server_eligibility'"),'Server eligibility changes must be audited');
 assert(page.includes("routeRateLimit.middleware({scope:'admin-stremio-settings'"),'Stremio admin mutations must use the shared persistent rate limiter');
@@ -27,6 +35,7 @@ assert(migration.includes('enforce_stremio_entitlement_integrity'),'Database mus
 assert(migration.includes('Stremio entitlement customer does not own subscription'),'Subscription/customer ownership mismatch must be rejected');
 assert(migration.includes('Stremio Jellyfin account belongs to another customer'),'Jellyfin account/customer ownership mismatch must be rejected');
 assert(migration.includes('Stremio Jellyfin account does not belong to assigned server'),'Jellyfin account/server mismatch must be rejected');
-assert(migration.includes('Active Stremio entitlement requires server, Jellyfin account and install credential'),'Active entitlements must be fully assigned before use');
+assert(runtimeMigration.includes('Active Stremio entitlement is incomplete'),'Runtime migration must require a complete active entitlement including restricted Jellyfin access');
+assert(runtimeMigration.includes("'stremio_internal'")&&runtimeMigration.includes('Stremio entitlement requires a dedicated internal Jellyfin account'),'Runtime migration must require and explicitly reject non-internal Jellyfin identities');
 
-console.log('stremio admin foundation smoke: ok');
+console.log('stremio admin runtime smoke: ok');

@@ -24,6 +24,8 @@ const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
+const { createCustomerStremioRouter } = require('./customer-stremio');
+const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 const trialFreeLimit=routeRateLimit.middleware({scope:'customer-trial-free',max:12,windowSeconds:300});
@@ -38,6 +40,8 @@ function createRouter(){
     router.use(createCustomerPublicAuthRouter());
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
+    router.use(createCustomerStremioRouter());
+    router.use(createCustomerDashboardRouter());
     router.use(createResellerSecurityRouter());
     router.get('/reseller/sales',(req,res)=>res.redirect(302,'/reseller/ledger'));
     router.use(createResellerLedgerRouter());
@@ -55,15 +59,11 @@ function createRouter(){
     router.use(createAdminAbuseProtectionRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
-    // These surviving legacy mutation routes are owned by router-core. Apply
-    // path-specific middleware here without registering a second POST route,
-    // preserving one route owner while still enforcing CSRF and shared rate
-    // limits before legacy code.
     router.use('/account/trial/start',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
     router.use('/account/claim-free/:planCode',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set([
-        '/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
+        '/account','/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
         '/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal',
         '/account/jellyfin/:accountId/password',
         '/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences',
