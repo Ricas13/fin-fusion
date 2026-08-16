@@ -5,7 +5,7 @@
 // them instead of competing for sidebar space.
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention'],['search','Search','/admin/search'],['events','Events','/admin/events']]},
-  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['jellyfin-import','Jellyfin Import','/admin/jellyfin-import'],['invitations','Invitations','/admin/invitations'],['resellers','Resellers','/admin/reseller-management'],['activity','Playback & Activity','/admin/activity']]},
+  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['resellers','Resellers','/admin/reseller-management'],['activity','Playback & Activity','/admin/activity']]},
   {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['policy-drift','Policy Drift','/admin/provisioning/drift'],['notifications','Notifications','/admin/notifications'],['automation-jobs','Jobs','/admin/automation']]},
@@ -31,7 +31,9 @@ const aliases=Object.freeze({
   'reseller-settings':'settings-commerce',
   'stremio-settings':'settings-integrations',
   'abuse-protection':'settings-security',
-  'configuration-transfer':'settings-advanced'
+  'configuration-transfer':'settings-advanced',
+  'jellyfin-import':'servers',
+  'invitations':'plans'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function groupFor(active){
