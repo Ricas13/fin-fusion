@@ -18,6 +18,7 @@ const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning')
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection');
 const { createAdminOperatorStateRouter } = require('./admin-operator-state');
+const { createAdminInactivityPolicyRouter } = require('./admin-inactivity-policy');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
 const { createResellerLedgerRouter } = require('./reseller-ledger');
@@ -49,6 +50,7 @@ function createRouter(){
     router.use(createResellerLedgerRouter());
     router.use(createResellerExportRouter());
     router.use(createAdminOperatorStateRouter());
+    router.use(createAdminInactivityPolicyRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
