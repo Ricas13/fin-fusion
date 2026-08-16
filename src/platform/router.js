@@ -5,6 +5,7 @@ const core = require('./router-core');
 const placement = require('../jellyfin/placement');
 const publicAbuseProtection = require('../security/public-abuse-protection');
 const routeRateLimit = require('../security/route-rate-limit');
+const { createStremioRuntimeRouter } = require('../stremio/runtime');
 const { createPublicHelpRouter } = require('./public-help');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
@@ -34,6 +35,10 @@ function ensureFleetSnapshot(){if(!fleetStarted){fleetStarted=true;placement.sta
 function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router;}
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
+    // Stremio is a bearer-token, GET-only protocol surface. Keep it ahead of
+    // portal abuse/configuration middleware so its CORS and neutral empty-stream
+    // semantics remain stable for Stremio clients.
+    router.use(createStremioRuntimeRouter());
     router.use(publicAbuseProtection.middleware);
     router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
