@@ -7,11 +7,13 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const router=read('src/platform/router.js');
 const nav=read('src/platform/admin-nav.js');
+const settings=read('src/platform/admin-original-settings.js');
 const page=read('src/platform/admin-stremio.js');
 const migration=read('db/migrations/066_stremio_service_foundation.sql');
 
 assert(router.includes("createAdminStremioRouter"),'Stremio admin router must be mounted');
-assert(nav.includes("['stremio-settings','Stremio','/admin/settings/stremio']"),'Stremio foundation must be discoverable from Settings');
+assert(nav.includes("'stremio-settings':'settings-integrations'"),'Stremio settings must map into the canonical Integrations settings group');
+assert(settings.includes('href="/admin/settings/stremio"')&&settings.includes('<strong>Stremio</strong>'),'Stremio foundation must be discoverable from Settings → Integrations');
 assert(page.includes('Foundation only:'),'Admin page must clearly state that the production addon runtime is not live');
 assert(page.includes("status IN ('pending','active','suspended')"),'Server eligibility removal must protect all assigned non-revoked Stremio entitlements');
 assert(page.includes("'admin.stremio.server_eligibility'"),'Server eligibility changes must be audited');
