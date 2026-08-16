@@ -3,7 +3,7 @@ services:
     build: .
     restart: "no"
     env_file: .env
-    command: ["sh", "-c", "npm run db:migrate && if [ -n \"${ACTIVITY_DB_PASSWORD:-}\" ]; then npm run db:activity-role; else echo 'ACTIVITY_DB_PASSWORD not set; skipping dedicated activity role configuration'; fi && npm run auth:bootstrap"]
+    command: ["sh", "-c", "npm run db:migrate && npm run db:runtime-roles && npm run auth:bootstrap"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -21,7 +21,62 @@ services:
     build: .
     container_name: steam-fusion
     restart: unless-stopped
-    env_file: .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-3030}
+      SITE_NAME: ${SITE_NAME:-}
+      STOREFRONT_ENABLED: ${STOREFRONT_ENABLED:-false}
+      PUBLIC_REGISTRATION: ${PUBLIC_REGISTRATION:-false}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      ENTITLEMENT_JOB_INTERVAL_MS: ${ENTITLEMENT_JOB_INTERVAL_MS:-300000}
+      SERVER_HEALTH_INTERVAL_MS: ${SERVER_HEALTH_INTERVAL_MS:-300000}
+      DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL in .env}
+      DB_POOL_SIZE: ${APP_DB_POOL_SIZE:-10}
+      DB_SSL: ${DB_SSL:-false}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?set DATA_ENCRYPTION_KEY in .env}
+      JELLYFIN_ENCRYPTION_KEY: ${JELLYFIN_ENCRYPTION_KEY:?set JELLYFIN_ENCRYPTION_KEY in .env}
+      AUTH_ENCRYPTION_KEY: ${AUTH_ENCRYPTION_KEY:?set AUTH_ENCRYPTION_KEY in .env}
+      ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN: ${ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN:-false}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-steamfusion.sid}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      REQUIRE_ADMIN_2FA: ${REQUIRE_ADMIN_2FA:-false}
+      REQUIRE_RESELLER_2FA: ${REQUIRE_RESELLER_2FA:-false}
+      AUTH_FAILURE_LIMIT: ${AUTH_FAILURE_LIMIT:-5}
+      AUTH_LOCK_MINUTES: ${AUTH_LOCK_MINUTES:-15}
+      STAFF_SESSION_HOURS: ${STAFF_SESSION_HOURS:-12}
+      ADMIN_2FA_ENROLLMENT_TOKEN: ${ADMIN_2FA_ENROLLMENT_TOKEN:-}
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_PUBLIC_URL: ${JELLYFIN_PUBLIC_URL:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      LEGACY_SERVER_NAME: ${LEGACY_SERVER_NAME:-}
+      LEGACY_SERVER_SLUG: ${LEGACY_SERVER_SLUG:-}
+      LEGACY_SERVER_CLASS: ${LEGACY_SERVER_CLASS:-}
+      STREAM_POLICY_MODE: ${STREAM_POLICY_MODE:-observe}
+      STREAM_POLICY_ACTIVE_WINDOW_SECONDS: ${STREAM_POLICY_ACTIVE_WINDOW_SECONDS:-120}
+      STREAM_POLICY_GRACE_SECONDS: ${STREAM_POLICY_GRACE_SECONDS:-45}
+      STREAM_POLICY_CONFIRMATIONS: ${STREAM_POLICY_CONFIRMATIONS:-2}
+      STREAM_POLICY_COUNT_PAUSED: ${STREAM_POLICY_COUNT_PAUSED:-false}
+      STREAM_POLICY_ENFORCEMENT_ACK: ${STREAM_POLICY_ENFORCEMENT_ACK:-}
+      ACTIVITY_RETENTION_DAYS: ${ACTIVITY_RETENTION_DAYS:-90}
+      POLICY_EVENT_RETENTION_DAYS: ${POLICY_EVENT_RETENTION_DAYS:-365}
+      STRIPE_RESTRICTED_KEY: ${STRIPE_RESTRICTED_KEY:-}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      SMTP_URL: ${SMTP_URL:-}
+      SEERR_URL: ${SEERR_URL:-}
+      OVERSEERR_URL: ${OVERSEERR_URL:-}
+      SEERR_API_KEY: ${SEERR_API_KEY:-}
+      OVERSEERR_API_KEY: ${OVERSEERR_API_KEY:-}
+      REQUEST_USER_SYNC_INTERVAL_MS: ${REQUEST_USER_SYNC_INTERVAL_MS:-900000}
+      STREMIO_RUNTIME_ENABLED: ${STREMIO_RUNTIME_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +102,39 @@ services:
     container_name: steam-fusion-automation
     restart: unless-stopped
     command: ["node", "scripts/automation-worker.js"]
-    env_file: .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: ${AUTOMATION_DATABASE_URL:?set AUTOMATION_DATABASE_URL in .env}
+      DB_POOL_SIZE: ${AUTOMATION_DB_POOL_SIZE:-6}
+      DB_SSL: ${DB_SSL:-false}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?set DATA_ENCRYPTION_KEY in .env}
+      JELLYFIN_ENCRYPTION_KEY: ${JELLYFIN_ENCRYPTION_KEY:?set JELLYFIN_ENCRYPTION_KEY in .env}
+      ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN: ${ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN:-false}
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_PUBLIC_URL: ${JELLYFIN_PUBLIC_URL:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      LEGACY_SERVER_NAME: ${LEGACY_SERVER_NAME:-}
+      LEGACY_SERVER_SLUG: ${LEGACY_SERVER_SLUG:-}
+      LEGACY_SERVER_CLASS: ${LEGACY_SERVER_CLASS:-}
+      STRIPE_RESTRICTED_KEY: ${STRIPE_RESTRICTED_KEY:-}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      SMTP_URL: ${SMTP_URL:-}
+      SEERR_URL: ${SEERR_URL:-}
+      OVERSEERR_URL: ${OVERSEERR_URL:-}
+      SEERR_API_KEY: ${SEERR_API_KEY:-}
+      OVERSEERR_API_KEY: ${OVERSEERR_API_KEY:-}
+      REQUEST_USER_SYNC_INTERVAL_MS: ${REQUEST_USER_SYNC_INTERVAL_MS:-900000}
+      AUTOMATION_WORKER_POLL_MS: ${AUTOMATION_WORKER_POLL_MS:-15000}
+      AUTOMATION_WORKER_CONCURRENCY: ${AUTOMATION_WORKER_CONCURRENCY:-3}
+      AUTOMATION_WORKER_HEARTBEAT_MS: ${AUTOMATION_WORKER_HEARTBEAT_MS:-15000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,6 +180,7 @@ services:
       STREAM_POLICY_ENFORCEMENT_ACK: ${STREAM_POLICY_ENFORCEMENT_ACK:-}
       ACTIVITY_RETENTION_DAYS: ${ACTIVITY_RETENTION_DAYS:-90}
       POLICY_EVENT_RETENTION_DAYS: ${POLICY_EVENT_RETENTION_DAYS:-365}
+      FLEET_METRICS_POLL_SECONDS: ${FLEET_METRICS_POLL_SECONDS:-60}
     healthcheck:
       test: ["CMD", "node", "-e", "const fs=require('fs');try{const s=fs.statSync('/tmp/activity-heartbeat');process.exit(Date.now()-s.mtimeMs<120000?0:1)}catch{process.exit(1)}"]
       interval: 30s
@@ -112,15 +200,22 @@ services:
     container_name: steam-fusion-backup
     restart: unless-stopped
     command: ["node", "scripts/backup-worker.js"]
-    env_file: .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: ${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL in .env}
+      BACKUP_VERIFY_DATABASE_URL: ${BACKUP_VERIFY_DATABASE_URL:?set BACKUP_VERIFY_DATABASE_URL in .env}
+      DB_POOL_SIZE: ${BACKUP_DB_POOL_SIZE:-3}
+      DB_SSL: ${DB_SSL:-false}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY in .env}
+      BACKUP_DIR: /backups
+      BACKUP_RESTORE_TMPDIR: /tmp/restore
+      BACKUP_WORKER_POLL_MS: ${BACKUP_WORKER_POLL_MS:-60000}
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    environment:
-      BACKUP_DIR: /backups
-      BACKUP_RESTORE_TMPDIR: /tmp/restore
     volumes:
       - ./backups:/backups
     healthcheck:
