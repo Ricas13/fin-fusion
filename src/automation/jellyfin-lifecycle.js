@@ -1,13 +1,9 @@
 'use strict';
 
 const {query}=require('../db');
-const accessHolds=require('../entitlements/access-holds');
 const policy=require('../entitlements/jellyfin-lifecycle-policy');
 const provisioning=require('../jellyfin/provisioning');
 const registry=require('../jellyfin/registry');
-
-const HOLD_TYPE='jellyfin_lifecycle';
-function sourceKey(accountId){return`account:${accountId}`;}
 
 async function telemetryReady(){
   const [worker,servers]=await Promise.all([
@@ -20,8 +16,7 @@ async function telemetryReady(){
 
 async function accounts(){
   const r=await query(`
-    SELECT ja.id account_id,ja.customer_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled,ja.created_at,ja.last_activity_at,
-      js.name server_name,c.reseller_id,r.estate_suspended_at,
+    SELECT ja.*,ja.id account_id,js.name server_name,js.server_class,c.reseller_id,r.estate_suspended_at,
       ph.last_playback_at,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=ja.customer_id AND aps.server_id=ja.server_id) currently_playing,
       sub.subscription_id,sub.plan_id,sub.status subscription_status,sub.starts_at,sub.current_period_end,sub.source,
@@ -52,7 +47,6 @@ async function accounts(){
     ) sub ON TRUE
     LEFT JOIN jellyfin_account_lifecycle lc ON lc.account_id=ja.id AND lc.deleted_at IS NULL AND lc.restored_at IS NULL
     WHERE ja.account_purpose='primary'
-      AND NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=ja.customer_id AND b.revoked_at IS NULL)
     ORDER BY ja.customer_id,js.priority,ja.created_at
   `);
   return r.rows;
@@ -82,8 +76,7 @@ async function scheduleDisable(row,decision,cfg){
   const now=new Date(),deleteAfter=new Date(now.getTime()+decision.deleteDays*86400000),evidence={category:decision.category,reason:decision.reason,deleteAfterDisableDays:decision.deleteDays,policySource:decision.policySource,serverId:row.server_id,customerId:row.customer_id,dryRun:cfg.dryRun};
   await audit(cfg.dryRun?'jellyfin.lifecycle.would_disable':'jellyfin.lifecycle.disable',row,evidence);
   if(cfg.dryRun)return{changed:false,dryRun:true};
-  await accessHolds.addHold({customerId:row.customer_id,type:HOLD_TYPE,sourceKey:sourceKey(row.account_id),reason:`Jellyfin lifecycle: ${decision.reason}`,metadata:evidence});
-  await provisioning.reconcileCustomer(row.customer_id);
+  if(!row.disabled)await provisioning.disableJellyfinAccount(row);
   await query(`INSERT INTO jellyfin_account_lifecycle(account_id,customer_id,server_id,jellyfin_user_id,jellyfin_username,category,reason,policy_source,disabled_at,delete_after,metadata)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
     ON CONFLICT(account_id) DO UPDATE SET category=EXCLUDED.category,reason=EXCLUDED.reason,policy_source=EXCLUDED.policy_source,
@@ -97,9 +90,8 @@ async function restore(row,decision,cfg){
   if(!row.lifecycle_id)return{changed:false};
   await audit(cfg.dryRun?'jellyfin.lifecycle.would_restore':'jellyfin.lifecycle.restore',row,{priorReason:row.lifecycle_reason,decision:decision.reason,dryRun:cfg.dryRun});
   if(cfg.dryRun)return{changed:false,dryRun:true};
-  await accessHolds.releaseHold({customerId:row.customer_id,type:HOLD_TYPE,sourceKey:sourceKey(row.account_id)}).catch(()=>{});
-  await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),updated_at=NOW() WHERE id=$1`,[row.lifecycle_id]);
   await provisioning.reconcileCustomer(row.customer_id);
+  await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),updated_at=NOW() WHERE id=$1`,[row.lifecycle_id]);
   return{changed:true};
 }
 
@@ -116,16 +108,20 @@ async function deleteDue(row,decision,cfg){
 
 async function restoreDeletedForEntitledCustomers(){
   const rows=await query(`SELECT DISTINCT lc.customer_id FROM jellyfin_account_lifecycle lc
+    JOIN customers c ON c.id=lc.customer_id
+    LEFT JOIN resellers r ON r.id=c.reseller_id
     WHERE lc.deleted_at IS NOT NULL AND lc.restored_at IS NULL
+      AND (c.reseller_id IS NULL OR r.estate_suspended_at IS NULL)
       AND EXISTS(SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=lc.customer_id AND s.superseded_by IS NULL
         AND s.starts_at<=NOW() AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval>NOW()
         AND s.status IN('active','trialing','paused') AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle'))`);
   let restored=0;
   for(const row of rows.rows){
-    const holds=await query(`SELECT source_key FROM customer_access_holds WHERE customer_id=$1 AND hold_type=$2 AND released_at IS NULL`,[row.customer_id,HOLD_TYPE]);
-    for(const hold of holds.rows)await accessHolds.releaseHold({customerId:row.customer_id,type:HOLD_TYPE,sourceKey:hold.source_key}).catch(()=>{});
-    await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),updated_at=NOW() WHERE customer_id=$1 AND deleted_at IS NOT NULL AND restored_at IS NULL`,[row.customer_id]);
-    await provisioning.reconcileCustomer(row.customer_id).catch(()=>{});restored++;
+    try{
+      await provisioning.reconcileCustomer(row.customer_id);
+      await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),updated_at=NOW() WHERE customer_id=$1 AND deleted_at IS NOT NULL AND restored_at IS NULL`,[row.customer_id]);
+      restored++;
+    }catch(error){console.error('Jellyfin lifecycle reprovision failed:',{customerId:row.customer_id,error:String(error?.message||error).slice(0,500)});}
   }
   return restored;
 }
@@ -147,4 +143,4 @@ async function run(){
   return{processed:rows.length,disabled,deleted,restored,failed,dryRun:cfg.dryRun,telemetry};
 }
 
-module.exports={HOLD_TYPE,telemetryReady,accounts,classify,run};
+module.exports={telemetryReady,accounts,classify,run};
