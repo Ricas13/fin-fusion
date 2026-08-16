@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/stremio/**'
+      - 'src/application.js'
       - 'src/jellyfin/resilient-provisioning.js'
       - 'src/platform/admin-stremio.js'
       - 'src/platform/customer-stremio.js'
@@ -12,6 +13,8 @@ on:
       - 'views/customer/stremio.ejs'
       - 'db/migrations/069_stremio_runtime.sql'
       - 'scripts/stremio-runtime-smoke.js'
+      - 'scripts/runtime-db-isolation-smoke.js'
+      - 'package.json'
       - 'docker-compose.yml'
       - '.env.example'
       - '.github/workflows/stremio-runtime.yml'
@@ -31,6 +34,7 @@ jobs:
         run: node scripts/stremio-runtime-smoke.js
       - name: Syntax check runtime modules
         run: |
+          node --check src/application.js
           node --check src/stremio/foundation.js
           node --check src/stremio/entitlements.js
           node --check src/stremio/media-index.js
@@ -39,3 +43,4 @@ jobs:
           node --check src/platform/customer-stremio.js
           node --check src/platform/customer-dashboard.js
           node --check src/platform/admin-stremio.js
+          node --check src/platform/router.js
