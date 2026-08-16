@@ -22,6 +22,9 @@
     const header=document.querySelector('.pageHeader');
     if(header?.parentNode)header.insertAdjacentElement('afterend',node);
   }
+  function callout(html,kind=''){
+    const div=document.createElement('div');div.className=`operatorCallout ${kind}`;div.innerHTML=html;return div;
+  }
 
   // Customers and claims are one operator workflow. Keep the deep claim URL for
   // compatibility, but expose it as a page tab instead of a separate sidebar app.
@@ -61,6 +64,16 @@
       ['Bundles','/admin/plans?type=bundle'],
       ['Reseller','/admin/reseller-tiers']
     ],active));
+    // Old reseller-tier forms accepted an arbitrary three-letter code. Keep the
+    // backend compatibility but constrain the operator UI to the three supported
+    // commercial currencies.
+    if(path.startsWith('/admin/reseller-tiers')){
+      document.querySelectorAll('input[name="currency"]').forEach(input=>{
+        const select=document.createElement('select');select.className=input.className||'input';select.name='currency';
+        ['GBP','USD','EUR'].forEach(code=>{const option=document.createElement('option');option.value=code;option.textContent=code;if(String(input.value||'GBP').toUpperCase()===code)option.selected=true;select.appendChild(option);});
+        input.replaceWith(select);
+      });
+    }
   }
 
   if(path.startsWith('/admin/payments') || path.startsWith('/admin/provider-mappings')){
@@ -71,6 +84,16 @@
     insertAfterHeader(tabs([['Channels & health','/admin/notifications'],['Events & routing','/admin/notifications/preferences']],path));
   }
 
+  if(path==='/admin/activity'){
+    insertAfterHeader(tabs([['Live playback','/admin/activity'],['Inactivity rules','/admin/activity/inactivity-policy']],path));
+    const banner=document.querySelector('.statusBanner');
+    const info=callout('<strong>Where do the actual stream limits come from?</strong> Customer concurrency and delivery limits come from the customer’s <a href="/admin/plans">plan</a>. This page chooses what CAPTAiNFiN does when live Jellyfin activity exceeds those effective limits: Observe, Warn or Enforce. <a href="/admin/activity/inactivity-policy">Free-user inactivity rules are configured separately.</a>','');
+    if(banner)banner.insertAdjacentElement('afterend',info);else insertAfterHeader(info);
+  }
+  if(path.startsWith('/admin/activity/inactivity-policy')){
+    insertAfterHeader(tabs([['Live playback','/admin/activity'],['Inactivity rules','/admin/activity/inactivity-policy']],path));
+  }
+
   // Compact the operator workflow on Needs Attention even when individual
   // finding renderers evolve independently.
   if(path==='/admin/attention'){
@@ -79,6 +102,12 @@
       if(selects.length>=1 && (form.textContent||'').toLowerCase().includes('note'))form.classList.add('attentionActionGrid');
     });
   }
+
+  document.addEventListener('click',event=>{
+    const button=event.target.closest('[data-copy-value]');if(!button)return;
+    const value=button.getAttribute('data-copy-value')||'';
+    navigator.clipboard?.writeText(value).then(()=>{const old=button.textContent;button.textContent='Copied';setTimeout(()=>button.textContent=old,1200);}).catch(()=>{});
+  });
 
   // The unread endpoint is deliberately optional. Older deployments and pages
   // continue to work if it is unavailable during a rolling update.
