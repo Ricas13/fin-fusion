@@ -1,26 +1,18 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><%= server ? 'Manage server' : 'Add server' %> · <%= siteName %></title>
-  <link rel="stylesheet" href="/css/platform-shell.css">
+  <%- include('_head') %>
 </head>
 <body>
 <div class="appShell">
-  <aside class="sideNav">
-    <div class="brand"><%= siteName %></div>
-    <div class="navSection">Server</div>
-    <a class="navItem" href="/admin">Dashboard</a><a class="navItem" href="/admin/activity">Activity</a><a class="navItem" href="/admin/users">Users</a><a class="navItem active" href="/admin/servers">Servers</a><a class="navItem" href="/admin/libraries">Libraries</a>
-    <div class="navSection">Business</div><a class="navItem" href="/admin/plans">Plans</a><a class="navItem" href="/admin/payments">Payments</a><a class="navItem" href="/admin/reseller-management">Resellers</a><a class="navItem" href="/admin/request-users">Requests</a>
-    <div class="navSection">System</div><a class="navItem" href="/admin/automation">Automation</a><a class="navItem" href="/admin/security">Security</a><a class="navItem" href="/admin/settings">Settings</a>
-  </aside>
+  <%- include('_nav',{siteName,activeNav:'servers'}) %>
   <main class="mainPane">
-    <header class="topBar"><div>Administration</div><a class="muted" href="/admin/servers">← Back to Servers</a></header>
+    <header class="topBar"><div>Administration</div><div class="buttonRow"><a class="button secondary" href="/admin/servers">← Back to Servers</a><a class="button secondary" href="/logout">Sign out</a></div></header>
     <div class="content">
       <div class="pageHeader"><h1><%= server ? 'Manage '+server.name : 'Add Jellyfin server' %></h1><div class="muted">API credentials are write-only and connectivity changes are validated before storage.</div></div>
       <% if (error) { %><div class="notice error"><%= error %></div><% } %>
-      <div class="statusBanner"><strong>Server trust model:</strong> authenticated administrators may register explicit HTTP/HTTPS Jellyfin endpoints. Credentials and URL fragments are rejected, and changed connectivity is tested before commit.</div>
+      <div class="statusBanner"><strong>Server trust model:</strong> destinations are checked by the same DNS/IP outbound policy used by runtime Jellyfin traffic, then the validated address is pinned for the credential probe. Private endpoints must be explicitly trusted in Operations settings.</div>
 
       <% if (server && impact) { %>
       <div class="statusBanner <%= Number(impact.assigned_accounts)>0 || Number(impact.explicit_plan_rules)>0 ? 'warn' : '' %>">
@@ -59,7 +51,7 @@
             <% if (server) { %><div class="formGroup"><label for="confirmation">Impact confirmation</label><input class="input" id="confirmation" name="confirmation" autocomplete="off" placeholder="Type CHANGE only for a risky edit"><div class="subText">Required only when changing server class/base URL or removing paid/trial placement while this server has assigned accounts or explicit plan rules.</div></div><% } %>
           </div>
 
-          <div class="securityNote standalone"><strong>Authentication:</strong> your already-authenticated admin session authorises this write. 2FA, when enabled or required, is enforced at sign-in rather than by repeatedly asking for disposable codes on routine forms.</div>
+          <div class="securityNote standalone"><strong>High-impact confirmation:</strong> when administrator 2FA is enrolled, server mutations use the global step-up guard. The confirmation remains fresh for the configured step-up window rather than prompting on every field edit.</div>
           <div class="buttonRow"><button class="button" type="submit"><%= server ? 'Save server' : 'Add server' %></button><a class="button secondary" href="/admin/servers">Cancel</a></div>
         </form>
       </section>
