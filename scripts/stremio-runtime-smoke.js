@@ -55,10 +55,12 @@ assert(entitlement.includes('effective_customer_entitlements'),'addon bearer loo
 assert(entitlement.includes('/Sessions/Logout'),'rotation/revocation must invalidate restricted Jellyfin sessions');
 assert(!/SELECT[^;]+api_key_encrypted[^;]+stremio_entitlements/is.test(entitlement),'addon entitlement lookup must not expose administrator Jellyfin keys');
 
+const application=read('src/application.js');
 const platformRouter=read('src/platform/router.js');
 const runtimeSource=read('src/stremio/runtime.js');
-assert(platformRouter.includes('createStremioRuntimeRouter'),'platform router must own the Stremio protocol surface');
-assert(platformRouter.indexOf('router.use(createStremioRuntimeRouter())')<platformRouter.indexOf('router.use(publicAbuseProtection.middleware)'),'Stremio bearer routes must be mounted ahead of portal-specific middleware');
+assert(application.includes('createStremioRuntimeRouter'),'application must own the Stremio protocol surface');
+assert(application.indexOf('app.use(createStremioRuntimeRouter())')<application.indexOf('app.use(sessionMiddleware())'),'Stremio bearer routes must be mounted before staff/customer sessions');
+assert(!platformRouter.includes('createStremioRuntimeRouter'),'platform router must not duplicate the top-level Stremio protocol owner');
 assert(runtimeSource.includes("Access-Control-Allow-Origin','*'"),'Stremio protocol endpoints need CORS');
 assert(runtimeSource.includes("Cross-Origin-Resource-Policy','cross-origin'"),'global same-origin CORP must be relaxed only on the addon surface');
 assert(runtimeSource.includes("scope:'stremio-stream'"),'stream endpoint must be protected by the shared persistent rate limiter');
