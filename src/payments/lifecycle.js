@@ -124,6 +124,7 @@ async function enforceTrialEligibility(customerId, plan) {
 async function startFreeTrial(customerId, planCode) {
     await commerce.assertOpen();
     const plan = await assertDirectPlan(planCode, { trial: true });
+    if(plan.is_addon)throw new Error('Trial access must use a primary plan, not an add-on.');
     await enforceTrialEligibility(customerId, plan);
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
@@ -144,6 +145,7 @@ async function startFreeTrial(customerId, planCode) {
 async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
     if(!automatic)await commerce.assertOpen();
     const plan = await assertDirectPlan(planCode, { free: true });
+    if(plan.is_addon)throw new Error('Free primary access cannot be claimed from an add-on product.');
     const policy = await trialPolicy();
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
@@ -189,7 +191,7 @@ async function activatePurchase(input) {
     const same = input.providerSubscriptionId ? await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider,input.providerSubscriptionId]) : {rowCount:0};
     if(!same.rowCount)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
     if (state.recurringProvider({ source: input.provider, provider_subscription_id: input.providerSubscriptionId })) {
-        if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId);
+        if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
     return core.activatePurchase(input);
 }
