@@ -132,14 +132,14 @@ async function safeMutationAudit(page){
   const emailForm=page.locator('form[action="/admin/profile/email"]');
   assert.equal(await emailForm.count(),1,'My Profile email form is missing');
   await emailForm.locator('input[name="email"]').fill(email);
-  await Promise.all([page.waitForURL(/\/admin\/profile/),emailForm.getByRole('button',{name:'Save email'}).click()]);
+  await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),emailForm.getByRole('button',{name:'Save email'}).click()]);
   assert(!((await page.locator('body').innerText()).includes('Not found')),'Saving My Profile email routed to Not found');
   assert((await page.locator('input[name="email"]').inputValue())===email,'Saved administrator email did not round-trip');
 
   const currencyForm=page.locator('form[action="/admin/profile/currency"]');
   assert.equal(await currencyForm.count(),1,'My Profile reporting currency form is missing');
   await currencyForm.locator('select[name="currency"]').selectOption('EUR');
-  await Promise.all([page.waitForURL(/\/admin\/profile/),currencyForm.getByRole('button',{name:'Save currency'}).click()]);
+  await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),currencyForm.getByRole('button',{name:'Save currency'}).click()]);
   assert.equal(await page.locator('form[action="/admin/profile/currency"] select[name="currency"]').inputValue(),'EUR','Saved reporting currency did not round-trip');
 }
 
