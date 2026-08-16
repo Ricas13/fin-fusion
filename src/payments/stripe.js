@@ -106,15 +106,15 @@ async function incidentContextForCharge(stripe,charge) {
     if(identity.scope==='unresolved'&&providerSubscriptionId)identity=await incidents.identityFromProviderSubscription('stripe',providerSubscriptionId);
     return{identity,providerSubscriptionId,metadata,paymentIntentId,invoiceId};
 }
-async function reverseReferralForDirectIdentity(identity,incidentResult,reason){if(identity?.scope!=='direct'||!identity.customerId)return null;return referrals.revisitRewardAfterAdversePayment({referredCustomerId:identity.customerId,incidentId:incidentResult?.incident?.id||null,reason});}
+async function reverseReferralForDirectIdentity(identity,incidentResult,reason,options={}){if(identity?.scope!=='direct'||!identity.customerId)return null;return referrals.revisitRewardAfterAdversePayment({referredCustomerId:identity.customerId,incidentId:incidentResult?.incident?.id||null,reason,...options});}
 async function recordStripeRefund(event,stripe,charge) {
-    const ctx=await incidentContextForCharge(stripe,charge),amount=Number(charge?.amount||0),refunded=Number(charge?.amount_refunded||0),recorded=await incidents.record({provider:'stripe',eventId:event.id,caseId:charge?.id||ctx.paymentIntentId,kind:'refund',status:'recorded',identity:ctx.identity,providerSubscriptionId:ctx.providerSubscriptionId,amountMinor:refunded,currency:charge?.currency,metadata:{...ctx.metadata,chargeId:charge?.id||null,fullRefund:amount>0&&refunded>=amount,originalAmountMinor:amount}});
-    await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:refund:${event.id}`);return recorded;
+    const ctx=await incidentContextForCharge(stripe,charge),amount=Number(charge?.amount||0),refunded=Number(charge?.amount_refunded||0),fullRefund=amount>0&&refunded>=amount,recorded=await incidents.record({provider:'stripe',eventId:event.id,caseId:charge?.id||ctx.paymentIntentId,kind:'refund',status:'recorded',identity:ctx.identity,providerSubscriptionId:ctx.providerSubscriptionId,amountMinor:refunded,currency:charge?.currency,metadata:{...ctx.metadata,chargeId:charge?.id||null,fullRefund,originalAmountMinor:amount}});
+    await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:refund:${event.id}`,{amountMinor:refunded,fullLoss:fullRefund});return recorded;
 }
 async function recordStripeDispute(event,stripe,dispute) {
     let charge=null;try{charge=typeof dispute?.charge==='string'?await stripe.charges.retrieve(dispute.charge):dispute?.charge||null;}catch(_){}
     const ctx=await incidentContextForCharge(stripe,charge||{}),won=String(dispute?.status||'').toLowerCase()==='won',lost=String(dispute?.status||'').toLowerCase()==='lost',recorded=await incidents.record({provider:'stripe',eventId:event.id,caseId:dispute?.id||charge?.id,kind:lost?'chargeback':'dispute',status:won?'won':lost?'lost':'open',identity:ctx.identity,providerSubscriptionId:ctx.providerSubscriptionId,amountMinor:dispute?.amount,currency:dispute?.currency,metadata:{...ctx.metadata,disputeId:dispute?.id||null,reason:dispute?.reason||null,stripeStatus:dispute?.status||null}});
-    if(lost)await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:chargeback:${event.id}`);return recorded;
+    if(lost)await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:chargeback:${event.id}`,{amountMinor:dispute?.amount,fullLoss:true});return recorded;
 }
 
 async function processWebhook(rawBody,signature) {
