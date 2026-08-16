@@ -4,6 +4,8 @@ const fs=require('fs');
 const path=require('path');
 
 function files(dir){return fs.existsSync(dir)?fs.readdirSync(dir,{withFileTypes:true}).flatMap(entry=>{const full=path.join(dir,entry.name);return entry.isDirectory()?files(full):[full];}):[];}
+function lineAt(text,index){let line=1;for(let i=0;i<index;i++)if(text.charCodeAt(i)===10)line++;return line;}
+function matches(text,re){const out=[];re.lastIndex=0;let match;while((match=re.exec(text))){out.push({index:match.index,value:match[0]});if(match[0].length===0)re.lastIndex++;}return out;}
 
 const root=path.join(__dirname,'..');
 const adminHtmlPath=path.join(root,'src','platform','admin-html.js');
@@ -27,25 +29,23 @@ const findings=[];
 if(!sanitizerPresent)findings.push('src/platform/admin-html.js: admin layout no longer proves deterministic inline-script stripping before render');
 
 for(const file of targets){
-    const text=fs.readFileSync(file,'utf8'),lines=text.split(/\r?\n/);
+    const text=fs.readFileSync(file,'utf8');
     const isSanitizerFile=path.resolve(file)===path.resolve(adminHtmlPath);
     const usesSanitizedAdminLayout=sanitizerPresent
         && /require\(['"]\.\/admin-html['"]\)/.test(text)
         && /\blayout\s*\(/.test(text);
-    lines.forEach((line,index)=>{
-        // Legacy admin fragments are safe only because admin-html strips inline
-        // script blocks before they reach the response. Public/custom shells do
-        // not receive that exception and must use external scripts directly.
-        // The sanitizer source itself contains the literal "<script" as scanner
-        // input and is therefore excluded from rendered-source findings.
-        if(!isSanitizerFile&&/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i.test(line)&&!usesSanitizedAdminLayout)findings.push(`${path.relative(root,file)}:${index+1}: inline <script>`);
-        if(/\son[a-z]+\s*=\s*["']/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: inline event handler`);
-        if(/javascript\s*:/i.test(line))findings.push(`${path.relative(root,file)}:${index+1}: javascript: URL`);
-    });
+    // Scan the complete source, not individual lines. HTML attributes and
+    // <script> tags can legally span line breaks; a line-oriented regex left a
+    // blind spot in the CI gate even though the runtime CSP itself was sound.
+    if(!isSanitizerFile&&!usesSanitizedAdminLayout){
+        for(const hit of matches(text,/<script\b(?![^>]*\bsrc\s*=)[^>]*>/gi))findings.push(`${path.relative(root,file)}:${lineAt(text,hit.index)}: inline <script>`);
+    }
+    for(const hit of matches(text,/\son[a-z]+\s*=\s*["']/gi))findings.push(`${path.relative(root,file)}:${lineAt(text,hit.index)}: inline event handler`);
+    for(const hit of matches(text,/javascript\s*:/gi))findings.push(`${path.relative(root,file)}:${lineAt(text,hit.index)}: javascript: URL`);
 }
 if(findings.length){
     console.error('Inline JavaScript prevents removing CSP script-src unsafe-inline:');
     for(const finding of findings)console.error(` - ${finding}`);
     process.exit(1);
 }
-console.log(`CSP inline-JavaScript audit passed across ${targets.length} rendered-source files.`);
+console.log(`CSP inline-JavaScript audit passed across ${targets.length} rendered-source files (multiline-aware).`);
