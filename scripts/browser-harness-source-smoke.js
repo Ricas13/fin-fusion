@@ -1,0 +1,15 @@
+'use strict';
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const test=fs.readFileSync(path.join(__dirname,'..','tests','admin-browser-regression.js'),'utf8');
+const workflow=fs.readFileSync(path.join(__dirname,'..','.github','workflows','admin-browser-regression.yml'),'utf8');
+assert(test.includes("const {chromium}=require('playwright')"),'Browser audit must use a real Chromium engine');
+assert(test.includes('safeMutationAudit'),'Browser audit must exercise safe authenticated POST forms');
+assert(test.includes('horizontalOverflow'),'Browser audit must detect document-level layout overflow');
+assert(test.includes('gridCoverage'),'Browser audit must detect incomplete dashboard card rows');
+assert(test.includes("'/admin/notifications/preferences','/admin/notifications/email','/admin/notifications'"),'Browser audit must verify the complete global notification workflow');
+assert(test.includes("'/admin/provisioning',['Provisioning','Policy drift']"),'Browser audit must verify the provisioning workflow tabs');
+assert(workflow.includes('npx playwright install --with-deps chromium'),'CI must install the real Chromium runtime');
+assert(workflow.includes('Upload browser audit'),'CI must preserve screenshots/inventory for review');
+console.log('browser harness source smoke: ok');
