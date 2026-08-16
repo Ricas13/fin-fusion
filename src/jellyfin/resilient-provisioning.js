@@ -30,9 +30,15 @@ async function disableNormalAccounts(customerId){
     for(const account of rows.rows)await base.disableJellyfinAccount(account);
 }
 
-async function ensureNormalAccount(customerId,entitlement){
-    const existing=await query(`SELECT id FROM jellyfin_accounts WHERE customer_id=$1 AND account_purpose='jellyfin' AND server_id IN (SELECT id FROM jellyfin_servers WHERE enabled=TRUE AND server_class=$2) LIMIT 1`,[customerId,entitlement.server_class]);
-    if(existing.rowCount)return;
+async function ensureNormalAccountIfHiddenWouldWin(customerId,entitlement){
+    // A fresh Jellyfin/bundle customer has no accounts at all; let the canonical
+    // provisioning-core path create the account so provisioning_runs, retries
+    // and failure classification remain exactly as before. This guard is only
+    // needed for the recovery edge where a hidden Stremio identity survived
+    // but the customer-facing Jellyfin identity was removed externally.
+    const accounts=await query(`SELECT id,account_purpose,server_id FROM jellyfin_accounts WHERE customer_id=$1`,[customerId]);
+    if(!accounts.rows.some(row=>row.account_purpose==='stremio_internal'))return;
+    if(accounts.rows.some(row=>row.account_purpose==='jellyfin'))return;
     const effective=await base.effectivePolicyForCustomer(customerId,entitlement),server=await base.selectServerForPlan(entitlement);
     if(!server)throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.contract_plan_code||entitlement.code}`);
     await base.createJellyfinAccount(customerId,server,effective,{makePrimary:true});
@@ -49,10 +55,7 @@ async function reconcileCustomer(customerId) {
             const s=await stremio.reconcileForCustomer(customerId,entitlement);
             outcome={active:s.status==='active',account:null,stremio:s};
         }else{
-            // provisioning-core predates account_purpose. Ensure it always has
-            // a canonical customer Jellyfin account to select before it sees a
-            // hidden Stremio identity on the same server class.
-            if(entitlement&&['jellyfin','bundle'].includes(type))await ensureNormalAccount(customerId,entitlement);
+            if(entitlement&&['jellyfin','bundle'].includes(type))await ensureNormalAccountIfHiddenWouldWin(customerId,entitlement);
             outcome=await base.reconcileCustomer(customerId);
             if(entitlement&&type==='bundle')outcome.stremio=await stremio.reconcileForCustomer(customerId,entitlement);
             else await stremio.suspend(customerId,'Current subscription does not include Stremio.');
