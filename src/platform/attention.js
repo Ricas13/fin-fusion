@@ -1,5 +1,5 @@
 'use strict';
-const {query}=require('../db');
+const {query,transaction}=require('../db');
 const workerHealth=require('../automation/worker-health');
 function key(prefix,id){return `${prefix}:${id}`}
 function item({key,title,area,severity='warning',detail='',href='',createdAt=null,sourceStatus='open'}){return{key,title,area,severity,detail,href,createdAt,sourceStatus}}
@@ -22,6 +22,34 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  for(const r of backups.rows)out.push(item({key:key('backup',r.id),title:r.status==='failed'?'Backup failed':'Backup has not been restore-verified',area:'Backups',severity:r.status==='failed'?'critical':'warning',detail:r.error||'Restore verification missing',href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
  for(const r of protectedActivations.rows)out.push(item({key:key('activation',r.customer_id),title:`Paid/provisioned account still not activated: ${r.customer_name}`,area:'Customers',severity:'warning',detail:`Activation pending ${r.age_days} day(s) · ${r.has_subscription?'subscription ':''}${r.has_jellyfin?'Jellyfin ':''}${r.has_reseller_sale?'reseller service':''}`.trim(),href:`/admin/users/${r.customer_id}?tab=access#activation`,createdAt:r.created_at}));
  return out}
-async function list({includeResolved=false}={}){const sources=await sourceItems(),keys=sources.map(i=>i.key),states=keys.length?(await query(`SELECT * FROM attention_state WHERE item_key=ANY($1::text[])`,[keys])).rows:[],by=new Map(states.map(s=>[s.item_key,s]));return sources.map(source=>{const stored=by.get(source.key)||{status:'open',assigned_to:null,note:null};const recurred=['resolved','ignored'].includes(stored.status);return{...source,state:recurred?{...stored,status:'open',recurred:true}:stored}}).filter(row=>includeResolved||row.state.status!=='resolved').sort((a,b)=>{const rank={critical:0,warning:1,info:2};return(rank[a.severity]??9)-(rank[b.severity]??9)||new Date(b.createdAt||0)-new Date(a.createdAt||0)})}
-async function setState(itemKey,{status='acknowledged',assignedTo=null,note=null},actorUserId=null){if(!['open','acknowledged','resolved','ignored'].includes(status))throw new Error('Invalid attention status.');const current=(await sourceItems()).some(entry=>entry.key===String(itemKey));if(current&&['resolved','ignored'].includes(status))status='acknowledged';await query(`INSERT INTO attention_state(item_key,status,assigned_to,note,acknowledged_at,acknowledged_by,resolved_at,resolved_by,updated_at) VALUES($1,$2,$3,$4,CASE WHEN $2 IN('acknowledged','resolved') THEN NOW() ELSE NULL END,CASE WHEN $2 IN('acknowledged','resolved') THEN $5 ELSE NULL END,CASE WHEN $2='resolved' THEN NOW() ELSE NULL END,CASE WHEN $2='resolved' THEN $5 ELSE NULL END,NOW()) ON CONFLICT(item_key) DO UPDATE SET status=EXCLUDED.status,assigned_to=EXCLUDED.assigned_to,note=COALESCE(EXCLUDED.note,attention_state.note),acknowledged_at=CASE WHEN EXCLUDED.status IN('acknowledged','resolved') THEN COALESCE(attention_state.acknowledged_at,NOW()) ELSE attention_state.acknowledged_at END,acknowledged_by=CASE WHEN EXCLUDED.status IN('acknowledged','resolved') THEN COALESCE(attention_state.acknowledged_by,$5) ELSE attention_state.acknowledged_by END,resolved_at=CASE WHEN EXCLUDED.status='resolved' THEN NOW() WHEN EXCLUDED.status='open' THEN NULL ELSE attention_state.resolved_at END,resolved_by=CASE WHEN EXCLUDED.status='resolved' THEN $5 WHEN EXCLUDED.status='open' THEN NULL ELSE attention_state.resolved_by END,updated_at=NOW()`,[String(itemKey).slice(0,300),status,assignedTo||null,note==null?null:String(note).trim().slice(0,2000),actorUserId]);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.attention.update','attention_item',$2,$3::jsonb)`,[actorUserId,String(itemKey).slice(0,300),JSON.stringify({status,assignedTo:assignedTo||null,note:Boolean(note),sourceStillOpen:current})])}
-module.exports={list,setState,sourceItems};
+
+async function list(){
+ const sources=await sourceItems(),keys=sources.map(i=>i.key);
+ const states=keys.length?(await query(`SELECT fingerprint,acknowledged_at,assigned_to,note,updated_at FROM attention_workflow WHERE fingerprint=ANY($1::text[])`,[keys])).rows:[];
+ const by=new Map(states.map(s=>[s.fingerprint,s]));
+ return sources.map(source=>{
+   const stored=by.get(source.key)||{};
+   return{...source,state:{status:stored.acknowledged_at!=null?'acknowledged':'open',assigned_to:stored.assigned_to||null,note:stored.note||null,updated_at:stored.updated_at||null}};
+ }).sort((a,b)=>{const rank={critical:0,warning:1,info:2};return(rank[a.severity]??9)-(rank[b.severity]??9)||new Date(b.createdAt||0)-new Date(a.createdAt||0)});
+}
+
+async function openSummary(){
+ const sources=await sourceItems();
+ let updatedAt=null,latest=0;
+ for(const source of sources){const ms=source.createdAt?new Date(source.createdAt).getTime():0;if(Number.isFinite(ms)&&ms>latest){latest=ms;updatedAt=source.createdAt}}
+ return{count:sources.length,updatedAt};
+}
+
+async function setState(itemKey,{status='acknowledged',assignedTo=null,note=null},actorUserId=null){
+ if(!['open','acknowledged'].includes(status))throw new Error('Attention items can only be open or acknowledged while the source issue remains active.');
+ const source=(await sourceItems()).find(entry=>entry.key===String(itemKey));
+ if(!source)throw new Error('This issue has already cleared from its source. Refresh Needs Attention.');
+ const cleanNote=note==null?null:String(note).trim().slice(0,2000);
+ const metadata=JSON.stringify({detail:source.detail||'',sourceStatus:source.sourceStatus||'open',sourceCreatedAt:source.createdAt||null});
+ await transaction(async client=>{
+   await client.query(`INSERT INTO attention_workflow(fingerprint,category,severity,title,href,first_seen_at,last_seen_at,cleared_at,metadata,updated_at) VALUES($1,$2,$3,$4,$5,COALESCE($6::timestamptz,NOW()),NOW(),NULL,$7::jsonb,NOW()) ON CONFLICT(fingerprint) DO UPDATE SET category=EXCLUDED.category,severity=EXCLUDED.severity,title=EXCLUDED.title,href=EXCLUDED.href,last_seen_at=NOW(),cleared_at=NULL,metadata=EXCLUDED.metadata,updated_at=NOW()`,[source.key,source.area,source.severity,source.title,source.href||null,source.createdAt||null,metadata]);
+   await client.query(`UPDATE attention_workflow SET acknowledged_at=CASE WHEN $2='acknowledged' THEN COALESCE(acknowledged_at,NOW()) ELSE NULL END,acknowledged_by=CASE WHEN $2='acknowledged' THEN COALESCE(acknowledged_by,$3::uuid) ELSE NULL END,assigned_to=$4::uuid,note=$5,updated_at=NOW() WHERE fingerprint=$1`,[source.key,status,actorUserId||null,assignedTo||null,cleanNote]);
+   await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.attention.update','attention_item',$2,$3::jsonb)`,[actorUserId,source.key,JSON.stringify({status,assignedTo:assignedTo||null,note:Boolean(cleanNote),sourceStillOpen:true})]);
+ });
+}
+module.exports={list,setState,sourceItems,openSummary};

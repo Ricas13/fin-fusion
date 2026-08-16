@@ -5,6 +5,7 @@ const {rateLimit,ipKeyGenerator}=require('express-rate-limit');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const reporting=require('./reporting-currency');
+const attention=require('./attention');
 const routeRateLimit=require('../security/route-rate-limit');
 
 function gate(req,res,next){
@@ -26,14 +27,14 @@ const unreadPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-unr
 const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
 async function snapshot(){
-  const [customers,resellers,attention,servers,payments]=await Promise.all([
+  const [customers,resellers,attentionSummary,servers,payments]=await Promise.all([
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM customers WHERE created_at>NOW()-INTERVAL '7 days'`),
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM resellers WHERE created_at>NOW()-INTERVAL '7 days'`),
-    query(`SELECT COUNT(*)::int n,MAX(updated_at) updated FROM attention_state WHERE status IN ('open','acknowledged')`),
+    attention.openSummary(),
     query(`SELECT COUNT(*)::int n,MAX(last_health_check) updated FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN ('degraded','offline')`),
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`)
   ]);
-  const rows={customers:customers.rows[0],resellers:resellers.rows[0],attention:attention.rows[0],servers:servers.rows[0],payments:payments.rows[0]};
+  const rows={customers:customers.rows[0],resellers:resellers.rows[0],attention:{n:attentionSummary.count,updated:attentionSummary.updatedAt},servers:servers.rows[0],payments:payments.rows[0]};
   return {
     counts:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,Number(v?.n||0)])),
     updatedAt:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,epoch(v?.updated)]))
