@@ -16,6 +16,13 @@ const syntax = spawnSync('bash', ['-n', path.join(root, 'scripts', 'deploy-produ
 assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must pass bash -n');
 
 for (const token of [
+  'CAPTAINFIN_DEPLOY_DETACHED',
+  'nohup env',
+  'logs/deploy-',
+  'tail --pid=',
+  '.deploy-production.lock',
+  "trap '' HUP",
+  'COMPOSE_PARALLEL_LIMIT',
   'prepare-production-env.js --write',
   '--user "$(id -u):$(id -g)"',
   'docker compose config',
@@ -30,6 +37,8 @@ for (const token of [
 }
 assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety copies must be ignored by git');
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
+assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
+assert(/another CAPTaINFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
