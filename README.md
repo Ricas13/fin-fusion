@@ -1,6 +1,6 @@
-# CAPTaINFiN / Steam Fusion
+# CAPTAiNFiN / Steam Fusion
 
-CAPTaINFiN is a self-hosted Jellyfin customer, reseller, subscription, billing and fleet-management platform. This fork has moved well beyond the original JSON-file Steam Fusion application: PostgreSQL is the system of record, Jellyfin servers are managed as a fleet, customer and reseller commerce are separate, background automation runs in dedicated workers, and the public storefront/admin/customer/reseller experiences are all database-backed.
+CAPTAiNFiN is a self-hosted Jellyfin customer, reseller, subscription, billing and fleet-management platform. This fork has moved well beyond the original JSON-file Steam Fusion application: PostgreSQL is the system of record, Jellyfin servers are managed as a fleet, customer and reseller commerce are separate, background automation runs in dedicated workers, and the public storefront/admin/customer/reseller experiences are all database-backed.
 
 ## What it manages
 
