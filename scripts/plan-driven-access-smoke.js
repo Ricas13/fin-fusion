@@ -59,11 +59,15 @@ assert(storefront.includes('0 spots available · Sold out')&&storefront.includes
 // Reseller storefront inventory is not the same thing as downstream seat_limit.
 assert(migration.includes('ADD COLUMN IF NOT EXISTS capacity_limit INTEGER'),'Reseller tiers need separate storefront capacity');
 assert(plansList.includes('Storefront inventory')&&plansList.includes('Customer seats / reseller'),'Unified Plans must distinguish reseller inventory from downstream seats');
-for(const route of ["'/reseller/billing/stripe'","'/reseller/billing/paypal'","'/reseller/billing/tier'"])assert(resellerGate.includes(route),`Reseller capacity gate missing ${route}`);
+assert(resellerGate.includes("req.method!=='POST'")&&resellerGate.includes('CHECKED_PATHS.has(req.path)'),'Reseller capacity must be a pre-route middleware, not a duplicate billing route owner');
+for(const route of ['/reseller/billing/stripe','/reseller/billing/paypal','/reseller/billing/tier'])assert(resellerGate.includes(route),`Reseller capacity gate missing ${route}`);
 
-// New route modules must actually be mounted before their legacy owners.
-assert(application.indexOf('createAdminPlanCreateV2Router()')<application.indexOf('createAdminCatalogShellRouter()'),'Full-policy plan creation must run before the legacy catalog create route');
-assert(application.indexOf('createResellerCapacityGateRouter()')<application.indexOf('createResellerMonthlyPortalRouter()'),'Reseller inventory gate must run before billing routes');
+// New workflow routes must be the only formal owners of the replaced actions.
+assert(application.includes('createAdminPlanCreateV2Router()'),'Full-policy plan creation must be mounted');
+assert(!application.includes('createAdminCatalogShellRouter'),'Legacy catalogue create routes must not be mounted alongside the V2 plan-create owner');
+assert(application.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
+assert(application.indexOf('createResellerCapacityGateRouter()')<application.indexOf('createResellerMonthlyPortalRouter()'),'Reseller inventory middleware must run before billing routes');
+assert(application.includes('createLegacyJellyfinImportRedirectRouter()')&&!application.includes('createAdminJellyfinImportRouter'),'Only the server-guidance redirect may own the legacy Jellyfin Import URL');
 assert(application.includes('createAdminServerUsersRouter()')&&application.includes('createAdminPlanLifecycleRouter()')&&application.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle/inventory and server import routes must be mounted');
 
 console.log('plan-driven access lifecycle smoke: ok');
