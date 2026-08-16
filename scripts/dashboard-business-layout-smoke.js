@@ -6,18 +6,21 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
 const dashboard=read('src/platform/admin-dashboard.js');
-const view=read('src/platform/admin-dashboard-view.js');
-const forecast=read('src/platform/admin-revenue-forecast.js');
-const css=read('public/css/admin-dashboard-forecast-compact.css');
+const view=read('src/platform/admin-dashboard-view-v2.js');
+const money=read('src/platform/admin-dashboard-money.js');
+const reporting=read('src/platform/reporting-currency.js');
 
-assert(dashboard.includes('forecast.renderCompact(prospect,csrf.token(req))'),'Dashboard must render the compact prospective-income card');
-assert(!dashboard.includes('${forecast.render(prospect,csrf.token(req))}'),'Dashboard must not render the old full-width forecast ahead of the analytics view');
-assert(view.includes("function renderDashboard(s,{prospectiveIncome=''}={})"),'Dashboard view must accept the prospective-income card as composed content');
-assert(view.includes("className: 'third', stat: { value: money(s.revenue.totalMinor, currency)"),'Revenue history must occupy one third of the primary business row');
-assert(view.includes("'Customer base over time', 'Cumulative CAPTaINFiN customer accounts', areaChart(s.customerGrowth, 'total'), { className: 'third'"),'Customer growth must occupy one third of the primary business row');
-assert(view.includes('${prospectiveIncome}'),'Prospective income must be inserted into the Business performance grid');
-assert(forecast.includes('analyticsCard third forecastCard forecastCompact'),'Compact prospective income must use the same one-third analytics card contract');
-assert(css.includes('.forecastCompact .forecastChart svg'),'Compact forecast CSS must remove the old wide-chart constraint');
-assert(css.includes('min-width:0!important'),'Compact forecast chart must be allowed to shrink inside a three-column grid');
+assert(dashboard.includes("require('./admin-dashboard-view-v2')"),'Dashboard must use the cleaned business-performance renderer');
+assert(!dashboard.includes('weeks:12'),'Dashboard must not hard-code the old 12-week prospective-income forecast');
+assert(!dashboard.includes('admin-revenue-forecast'),'Dashboard must not depend on the prospective-income forecast path');
+assert(view.includes("<h2>Business performance</h2>"),'Dashboard must keep the Business performance section');
+assert(view.includes('${revenueHistory(s)}${customerGrowth(s)}'),'Business performance must contain only revenue history and customer growth');
+assert(!view.includes('prospectiveIncome'),'Prospective income must be removed from the active dashboard renderer');
+assert(view.includes("card('Revenue future'"),'Revenue Future must remain in Commerce');
+assert(view.includes('s.forecastDays'),'Revenue Future must describe the selected range-derived forecast horizon');
+assert(money.includes('Date.now()+range.days*86400000'),'Revenue Future data must use the dashboard range rather than a fixed 12-week horizon');
+assert(money.includes('reportingCurrency.convertMinor'),'Dashboard money must be normalized for presentation');
+assert(reporting.includes('getForUser(userId)'),'Reporting currency must support a signed-in user preference');
+assert(reporting.includes("preferred_currency"),'Per-user reporting currency must be persisted separately from raw transaction currency');
 
 console.log('dashboard business layout smoke: ok');
