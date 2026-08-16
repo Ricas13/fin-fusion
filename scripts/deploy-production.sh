@@ -7,15 +7,43 @@ cd "$ROOT"
 log() { printf '\n==> %s\n' "$*"; }
 fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
+# Start the real deployment as a nohup child. The interactive wrapper only
+# follows its log, so an SSH/session disconnect cannot terminate the deployment.
+if [[ "${CAPTAINFIN_DEPLOY_DETACHED:-0}" != "1" ]]; then
+  mkdir -p logs
+  deploy_log="${CAPTAINFIN_DEPLOY_LOG:-$ROOT/logs/deploy-$(date -u +%Y%m%dT%H%M%SZ).log}"
+  printf 'Starting SSH-safe CAPTaINFiN deployment.\n'
+  printf 'Persistent log: %s\n' "$deploy_log"
+  nohup env CAPTAINFIN_DEPLOY_DETACHED=1 CAPTAINFIN_DEPLOY_LOG="$deploy_log" \
+    bash "$0" "$@" >"$deploy_log" 2>&1 < /dev/null &
+  deploy_pid=$!
+  printf 'Deployment PID: %s\n' "$deploy_pid"
+  printf 'If SSH disconnects, reconnect and run: tail -n 200 -f %q\n\n' "$deploy_log"
+  if command -v tail >/dev/null 2>&1; then
+    tail --pid="$deploy_pid" -n +1 -f "$deploy_log" || true
+  fi
+  wait "$deploy_pid"
+  exit $?
+fi
+
+# Keep only one production deployment active at a time. This is particularly
+# important after reconnecting to a host where a detached deployment may still run.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$ROOT/.deploy-production.lock"
+  flock -n 9 || fail 'another CAPTaINFiN production deployment is already running'
+fi
+
 on_error() {
   local rc=$?
   printf '\nDeployment failed (exit %s). Current service state:\n' "$rc" >&2
   docker compose ps 2>/dev/null || true
   printf '\nRecent service logs:\n' >&2
   docker compose logs --tail=120 app automation-worker activity-worker backup-worker migrate 2>/dev/null || true
+  printf '\nPersistent deployment log: %s\n' "${CAPTAINFIN_DEPLOY_LOG:-unknown}" >&2
   exit "$rc"
 }
 trap on_error ERR
+trap '' HUP
 
 command -v docker >/dev/null 2>&1 || fail 'docker is required'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required'
@@ -58,7 +86,10 @@ for _ in $(seq 1 60); do
 done
 [[ "$(docker inspect -f '{{.State.Health.Status}}' steam-fusion-postgres 2>/dev/null || true)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
 
-log 'Building the release images while the current portal remains online'
+# Compose/BuildKit may otherwise build identical service images concurrently.
+# Serialising those builds substantially lowers peak RAM/CPU on small VPS hosts.
+export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
+log "Building the release images conservatively (COMPOSE_PARALLEL_LIMIT=$COMPOSE_PARALLEL_LIMIT)"
 docker compose --profile recovery build app automation-worker activity-worker backup-worker migrate recovery-tools
 
 if [[ "$existing_database" == 1 ]]; then
@@ -96,3 +127,4 @@ docker compose exec -T app npm run verify:deployment
 log 'Deployment complete'
 docker compose ps
 printf '\nCAPTaINFiN is running from commit %s.\n' "$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+printf 'Deployment log: %s\n' "${CAPTAINFIN_DEPLOY_LOG:-unknown}"

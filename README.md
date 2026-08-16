@@ -62,6 +62,14 @@ The `migrate` service applies schema migrations and bootstraps an unattended adm
 
 The app listens on `127.0.0.1:3030` by default. Put your HTTPS reverse proxy in front of it rather than exposing the container directly to the internet.
 
+For upgrades of an existing production installation, use the supported SSH-resilient deployment command instead of a direct Compose rebuild:
+
+```bash
+bash scripts/deploy-production.sh
+```
+
+That command prepares runtime DB identities, persists the host backup UID/GID, serialises image builds to reduce peak resource usage, makes an encrypted pre-deploy backup, migrates first, recreates runtime services only after migration success, and verifies the live deployment. See `docs/PRODUCTION_DEPLOYMENT.md`.
+
 ## First-run setup
 
 A genuinely blank database starts safely with customer-facing features off. The setup flow creates the first native administrator and permanently locks the installer afterwards.
@@ -88,6 +96,7 @@ The normal stack contains:
 - `steam-fusion` — web/admin/customer/reseller application.
 - `steam-fusion-automation` — scheduled singleton jobs using PostgreSQL advisory locks.
 - `steam-fusion-activity` — Jellyfin activity/fleet metrics worker with a restricted DB role.
+- `steam-fusion-backup` — encrypted database backup/verification worker using the host backup-directory UID/GID.
 - `steam-fusion-postgres` — PostgreSQL.
 - `migrate` — one-shot schema migration/bootstrap service.
 
@@ -174,7 +183,7 @@ Use the encrypted PostgreSQL backup tooling rather than copying application stat
 npm run db:backup
 ```
 
-Restore tooling is available through the `recovery-tools` Compose profile. Test restores before relying on a backup strategy.
+Restore tooling is available through the `recovery-tools` Compose profile. Test restores before relying on a backup strategy. Production deployment verification treats an enabled backup loop with a current failure as unhealthy rather than accepting heartbeat-only liveness.
 
 ## Production checks
 

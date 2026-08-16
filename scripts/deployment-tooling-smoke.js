@@ -9,6 +9,9 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const deployScript = fs.readFileSync(path.join(root, 'scripts', 'deploy-production.sh'), 'utf8');
 const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
+const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+const verifyDeployment = fs.readFileSync(path.join(root, 'scripts', 'verify-deployment.js'), 'utf8');
+const backupWorker = fs.readFileSync(path.join(root, 'scripts', 'backup-worker.js'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -16,6 +19,13 @@ const syntax = spawnSync('bash', ['-n', path.join(root, 'scripts', 'deploy-produ
 assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must pass bash -n');
 
 for (const token of [
+  'CAPTAINFIN_DEPLOY_DETACHED',
+  'nohup env',
+  'logs/deploy-',
+  'tail --pid=',
+  '.deploy-production.lock',
+  "trap '' HUP",
+  'COMPOSE_PARALLEL_LIMIT',
   'prepare-production-env.js --write',
   '--user "$(id -u):$(id -g)"',
   'docker compose config',
@@ -29,7 +39,19 @@ for (const token of [
   assert(deployScript.includes(token), `deployment script must contain ${token}`);
 }
 assert(gitignore.includes('.env.pre-runtime-roles-*.bak'), 'generated env safety copies must be ignored by git');
+assert(gitignore.includes('.env.before-*'), 'older env safety copies must be ignored by git');
+assert(gitignore.includes('.deploy-production.lock'), 'deployment lock state must be ignored by git');
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
+assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
+assert(/another CAPTaINFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
+assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'backup and recovery containers must support the host backup owner identity');
+assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
+assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');
+assert(compose.includes('test: ["CMD", "node", "scripts/backup-healthcheck.js"]'), 'Docker backup health must include operation failure state, not heartbeat only');
+assert(verifyDeployment.includes("add('backup worker', backupHealthy"), 'deployment verification must include the backup worker');
+assert(verifyDeployment.includes('backupWorker.last_error'), 'deployment verification must fail on an active backup error');
+assert(backupWorker.includes('SELECT last_success_at,next_run_at,last_error FROM backup_worker_state'), 'backup due logic must inspect persisted failure state');
+assert(backupWorker.includes('if(row.last_error)return true;'), 'a worker restart must immediately retry a previously failed backup');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
@@ -74,6 +96,13 @@ try {
     assert.notStrictEqual(password, 'owner-secret', `${key} must not reuse the owner password`);
     assert(!passwords.has(password), `${key} must have a unique password`);
     passwords.add(password);
+  }
+
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const gid = typeof process.getgid === 'function' ? process.getgid() : null;
+  if (Number.isInteger(uid) && uid > 0 && Number.isInteger(gid) && gid >= 0) {
+    assert(content.includes(`BACKUP_PUID=${uid}`), 'environment preparation must persist the deployment user UID for backup bind mounts');
+    assert(content.includes(`BACKUP_PGID=${gid}`), 'environment preparation must persist the deployment user GID for backup bind mounts');
   }
 
   const before = fs.readFileSync(envFile, 'utf8');
