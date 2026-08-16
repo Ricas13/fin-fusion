@@ -38,17 +38,13 @@ fi
 log 'Validating Compose configuration'
 docker compose config >/dev/null
 
-mkdir -p backups/predeploy
+existing_database=0
 if docker inspect steam-fusion-postgres >/dev/null 2>&1; then
+  existing_database=1
   if [[ "$(docker inspect -f '{{.State.Running}}' steam-fusion-postgres)" != 'true' ]]; then
     log 'Starting existing PostgreSQL container'
     docker start steam-fusion-postgres >/dev/null
   fi
-
-  backup="backups/predeploy/steamfusion-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  log "Creating pre-deploy PostgreSQL backup: $backup"
-  docker exec steam-fusion-postgres sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$backup"
-  [[ -s "$backup" ]] || fail 'pre-deploy database backup is empty'
 else
   log 'No existing PostgreSQL container found; treating this as a fresh installation'
   docker compose up -d postgres
@@ -63,7 +59,12 @@ done
 [[ "$(docker inspect -f '{{.State.Health.Status}}' steam-fusion-postgres 2>/dev/null || true)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
 
 log 'Building the release images while the current portal remains online'
-docker compose build app automation-worker activity-worker backup-worker migrate
+docker compose --profile recovery build app automation-worker activity-worker backup-worker migrate recovery-tools
+
+if [[ "$existing_database" == 1 ]]; then
+  log 'Creating encrypted pre-deploy PostgreSQL backup'
+  docker compose --profile recovery run --rm --no-deps -e BACKUP_DIR=/backups/predeploy recovery-tools npm run db:backup
+fi
 
 log 'Applying migrations, runtime DB roles and administrator bootstrap'
 docker compose run --rm --no-deps migrate
