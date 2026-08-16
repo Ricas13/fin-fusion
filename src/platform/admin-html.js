@@ -1,6 +1,7 @@
 'use strict';
 
 const core=require('./admin-html-core');
+const notificationWorkflow=require('./notification-workflow-tabs');
 
 function scriptBoundary(ch){return ch===undefined||/[\s/>]/.test(ch);}
 function externalScriptTag(openTag){return /\bsrc\s*=/i.test(openTag);}
@@ -113,9 +114,19 @@ function decorateSettingHelp(body){
     return html;
 }
 
+function notificationTabsFor(options={}){
+    const active=String(options.active||'');
+    if(!['notifications','notification-settings','my-notifications','my-profile'].includes(active))return'';
+    const title=String(options.title||'');
+    const subtitle=String(options.subtitle||'');
+    const selected=active==='my-profile'?'profile':title==='My notification preferences'?'personal':/transactional email gateway/i.test(subtitle)?'email':'global';
+    return notificationWorkflow.tabs(selected);
+}
+
 function layout(options={}){
+    options={...options,body:notificationTabsFor(options)+String(options.body||'')};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,SETTING_HELP};

@@ -19,6 +19,10 @@ const commerce=read('src/platform/admin-plan-payment-options.js');
 const storefront=read('src/platform/storefront.js');
 const communications=read('src/platform/customer-communications.js');
 const nav=read('src/platform/admin-nav.js');
+const adminHtml=read('src/platform/admin-html.js');
+const notificationTabs=read('src/platform/notification-workflow-tabs.js');
+const adminProfile=read('src/platform/admin-profile-account.js');
+const platformRouter=read('src/platform/router.js');
 
 assert(migration.includes('CREATE TABLE IF NOT EXISTS plan_prices'),'Migration must create per-currency logical-plan prices');
 assert(migration.includes('UNIQUE(plan_id,currency)'),'A logical plan may have at most one price per currency');
@@ -46,5 +50,17 @@ assert(storefront.includes('planPricing.decoratePlans(logicalPlans,currency)'),'
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
 assert(nav.includes("['notification-settings','Notifications','/admin/notifications/preferences']"),'Global Notifications must remain under Settings');
 assert(nav.includes("['my-notifications','My Notifications','/admin/profile/notifications']"),'Per-admin notification preferences must be discoverable separately');
+
+assert(nav.includes("['my-profile','My Profile','/admin/profile']"),'Administrators need a discoverable personal profile page');
+assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Notification workflow must link back to global settings');
+assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Notification workflow must expose the canonical email infrastructure route');
+assert(notificationTabs.includes("['personal','My notifications','/admin/profile/notifications']"),'Notification workflow must link to personal event routing');
+assert(adminHtml.includes('notificationTabsFor(options={})')&&adminHtml.includes('notificationWorkflow.tabs(selected)'),'All notification layouts must keep workflow tabs visible');
+assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
+assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must resolve to the canonical email infrastructure page');
+assert(adminProfile.includes("UPDATE app_users SET email=$2")&&adminProfile.includes("UPDATE customers SET email=$2"),'Changing administrator email must also keep an attached personal customer profile in sync');
+assert(adminProfile.includes("INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note)"),'Personal media access must attach a customer record to the existing administrator user');
+assert(adminProfile.includes("'admin_grant'")&&adminProfile.includes('provisioning.reconcileCustomer(created.customerId)'),'Personal media access must use an explicit admin grant and the normal Jellyfin reconciliation path');
+assert(!adminProfile.includes("UPDATE app_users SET role='customer'"),'Creating personal media access must never demote the administrator account');
 
 console.log('notification + multi-currency smoke: ok');
