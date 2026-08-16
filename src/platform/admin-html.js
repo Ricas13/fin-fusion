@@ -2,6 +2,7 @@
 
 const core=require('./admin-html-core');
 const notificationWorkflow=require('./notification-workflow-tabs');
+const provisioningWorkflow=require('./provisioning-workflow-tabs');
 
 function scriptBoundary(ch){return ch===undefined||/[\s/>]/.test(ch);}
 function externalScriptTag(openTag){return /\bsrc\s*=/i.test(openTag);}
@@ -120,8 +121,19 @@ function notificationTabsFor(options={}){
     const subtitle=String(options.subtitle||'');
     if(active==='my-profile')return notificationWorkflow.profileTabs('profile');
     if(active==='my-notifications'||title==='My notification preferences')return notificationWorkflow.profileTabs('personal');
+    if(active==='notification-gateway')return notificationWorkflow.globalTabs('health');
     if(!['notifications','notification-settings'].includes(active))return'';
-    return notificationWorkflow.globalTabs(/transactional email gateway/i.test(subtitle)?'email':'global');
+    const context=`${title} ${subtitle}`;
+    if(/transactional email gateway/i.test(context))return notificationWorkflow.globalTabs('email');
+    if(/delivery health|notification gateway|delivery queue|outbox health/i.test(context))return notificationWorkflow.globalTabs('health');
+    return notificationWorkflow.globalTabs('global');
+}
+
+function provisioningTabsFor(options={}){
+    const active=String(options.active||'');
+    if(active==='provisioning')return provisioningWorkflow.tabs('provisioning');
+    if(active==='policy-drift')return provisioningWorkflow.tabs('drift');
+    return'';
 }
 
 function notificationTestScriptFor(options={}){
@@ -129,9 +141,10 @@ function notificationTestScriptFor(options={}){
 }
 
 function layout(options={}){
-    options={...options,body:notificationTabsFor(options)+String(options.body||'')+notificationTestScriptFor(options)};
+    const workflow=notificationTabsFor(options)+provisioningTabsFor(options);
+    options={...options,body:workflow+String(options.body||'')+notificationTestScriptFor(options)};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,notificationTestScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,notificationTestScriptFor,SETTING_HELP};
