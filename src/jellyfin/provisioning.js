@@ -14,12 +14,16 @@ async function notifyNewJellyfinAccess(customerId,account){
     const notifications=require('../integrations/notification-dispatch');
     const runtimeSettings=require('../platform/runtime-settings');
     await runtimeSettings.ensureLoaded().catch(()=>{});
-    const found=await query(`SELECT COALESCE(c.email,u.email) email,COALESCE(c.display_name,u.username,'Customer') customer_name,cp.phone_e164,cp.whatsapp_opt_in FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id WHERE c.id=$1`,[customerId]);
+    const found=await query(`SELECT COALESCE(c.email,u.email) email,COALESCE(c.display_name,u.username,'Customer') customer_name,u.role user_role,c.registration_source,cp.phone_e164,cp.whatsapp_opt_in FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id WHERE c.id=$1`,[customerId]);
     if(!found.rowCount)return;
-    const row=found.rows[0],site=runtimeSettings.siteName(),serverUrl=String(account.public_url||'').trim(),username=account.jellyfin_username||'your Jellyfin username';
+    const row=found.rows[0],site=runtimeSettings.siteName(),serverUrl=String(account.public_url||'').trim(),username=account.jellyfin_username||'your Jellyfin username',personalAdmin=row.user_role==='admin'&&row.registration_source==='admin_personal';
     const steps=account.password_setup_required
-      ? `Your Jellyfin access has been created. Sign in to your ${site} portal first, open Jellyfin access and choose your Jellyfin password. Then open the server${serverUrl?` at ${serverUrl}`:''} and sign in as ${username}. Start any title to confirm playback.`
-      : `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. The same instructions are shown in your ${site} portal.`;
+      ? personalAdmin
+        ? `Your Jellyfin access has been created. Open ${site} administration, go to Settings > My Profile, and set your Jellyfin password under Personal media profile. Then open the server${serverUrl?` at ${serverUrl}`:''} and sign in as ${username}. Start any title to confirm playback.`
+        : `Your Jellyfin access has been created. Sign in to your ${site} portal first, open Jellyfin access and choose your Jellyfin password. Then open the server${serverUrl?` at ${serverUrl}`:''} and sign in as ${username}. Start any title to confirm playback.`
+      : personalAdmin
+        ? `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. You can manage your Jellyfin password under Settings > My Profile in ${site} administration.`
+        : `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. The same instructions are shown in your ${site} portal.`;
     await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,subject:`Your ${site} Jellyfin access is ready`,text:steps,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
     const admin=String(process.env.ADMIN_NOTIFICATION_EMAIL||'').trim();
     if(admin)await notifications.dispatch({eventType:'customer.service.provisioned',to:admin,subject:`${site}: Jellyfin access provisioned`,text:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,dedupeKey:`admin-jellyfin-provisioned:${account.id}`,forceEmail:true});
@@ -35,7 +39,8 @@ async function reconcileCustomer(customerId){
   // Detect only accounts created by this reconciliation. Existing/imported
   // Jellyfin users keep their current credential state, while a newly-created
   // account whose bootstrap password is random is immediately flagged for the
-  // customer to choose a real password in the portal.
+  // customer to choose a real password in the portal or, for a personal admin
+  // media profile, from the administrator's own My Profile page.
   const before=await query(`SELECT id FROM jellyfin_accounts WHERE customer_id=$1`,[customerId]);
   const existing=new Set(before.rows.map(r=>String(r.id)));
   const outcome=await core.reconcileCustomer(customerId);
