@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const { setupReadiness } = require('./setup-readiness');
 const { analyticsData, dashboardRange } = require('./admin-dashboard-analytics');
+const { normalizedDashboardMoney } = require('./admin-dashboard-money');
 
 function boundedInt(value, min, max, fallback) {
     const n = parseInt(value, 10);
@@ -28,7 +29,7 @@ async function legacyPolicyMetrics() {
     return result.rows[0] || {};
 }
 
-async function dashboardData(range = null) {
+async function dashboardData(range = null, reporting = null) {
     const selectedRange = range || dashboardRange({ range: '30d' });
     const [analytics, setup, options, policy] = await Promise.all([
         analyticsData(selectedRange),
@@ -36,6 +37,18 @@ async function dashboardData(range = null) {
         dashboardOptions(),
         legacyPolicyMetrics()
     ]);
+    if (reporting) {
+        const normalized = await normalizedDashboardMoney(selectedRange, analytics.revenue?.series || [], reporting);
+        analytics.revenue = normalized.revenue;
+        analytics.renewals = normalized.renewals;
+        analytics.renewalCount = normalized.renewalCount;
+        analytics.renewalTotals = normalized.renewalTotals;
+        analytics.forecastDays = normalized.forecastDays;
+        analytics.reportingCurrency = normalized.reportingCurrency;
+        analytics.period.revenueMinor = normalized.revenue.totalMinor;
+        analytics.period.revenueCurrency = normalized.reportingCurrency;
+        analytics.period.delta.revenue = normalized.revenueDelta;
+    }
     const transcodes = analytics.serverLoad.reduce((sum, row) => sum + Number(row.transcode_streams || 0), 0);
     const offlineServers = Number(analytics.operational?.offline_servers || 0);
 
