@@ -5,7 +5,7 @@ const customers=require('../customers');
 const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
 const provisioning=require('../jellyfin/resilient-provisioning');
-const customerInactivity=require('../automation/customer-inactivity');
+const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const requestUserSync=require('../integrations/request-user-sync');
 const runtimeSettings=require('./runtime-settings');
 const productReadiness=require('./product-readiness');
@@ -40,8 +40,9 @@ function createCustomerDashboardRouter(){
       await runtimeSettings.ensureLoaded();
       // A global dormant-user cleanup never removes the CAPTaINFiN customer.
       // Returning to the portal is an explicit signal that an entitled customer
-      // wants service again, so release only the cleanup hold and reprovision.
-      const restored=await customerInactivity.restoreReturningCustomer(req.session.customerId).catch(error=>({restored:false,error:error.message}));
+      // wants service again. The helper intentionally looks through the cleanup
+      // hold, releases only that hold type and then provisions fresh Jellyfin access.
+      const restored=await cleanupReturn.restoreReturningCustomer(req.session.customerId,{reconcile:provisioning.reconcileCustomer}).catch(error=>({restored:false,error:error.message}));
       const [portalRaw,plans,currentPlan,requestAccess,requestConfig]=await Promise.all([
         customers.getCustomerPortal(req.session.customerId),sellablePlans(),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration()
       ]);
