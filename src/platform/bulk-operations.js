@@ -15,6 +15,7 @@ const lifecycle = require('../payments/lifecycle');
 const planChange = require('../payments/customer-plan-change');
 const subscriptionState = require('../entitlements/subscription-state');
 const monthly = require('../resellers/monthly');
+const capacityLock = require('../resellers/capacity-lock');
 
 function registerHandler(jobType, fn) { bulkWorker.registerHandler(jobType, fn); }
 async function currentSubscription(customerId) {
@@ -78,9 +79,11 @@ registerHandler('revoke_sessions',async item=>{const sessions=await query(`SELEC
 
 registerHandler('reseller_assign',async item=>{
     const resellerId=String(item.params?.resellerId||'');
-    const assignment=await transaction(async client=>{
-        // Lock the reseller row so this capacity decision serializes with normal
-        // reseller customer creation/resume, which uses the same row lock.
+    const assignment=await capacityLock.withCapacityLock(resellerId,()=>transaction(async client=>{
+        // Every capacity-changing workflow for a reseller takes the same
+        // database-global advisory lock. The row locks below still protect the
+        // concrete ownership rows inside this transaction, while the advisory
+        // lock serializes us with reseller tier changes and normal seat flows.
         const reseller=await client.query('SELECT id FROM resellers WHERE id=$1 FOR UPDATE',[resellerId]);if(!reseller.rowCount)throw new Error('Target reseller not found');
         const customer=await client.query('SELECT reseller_id FROM customers WHERE id=$1 FOR UPDATE',[item.customer_id]);if(!customer.rowCount)throw new Error('Customer not found');if(String(customer.rows[0].reseller_id||'')===resellerId)return{resellerId,unchanged:true};
         const live=await client.query(`SELECT EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW() AND ((s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW()) OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND s.current_period_end+(s.service_extension_days||' days')::interval>NOW()))) AS active`,[item.customer_id]);
@@ -90,7 +93,7 @@ registerHandler('reseller_assign',async item=>{
             if(used>=limit)throw new Error(`Target reseller has no free seats (${used}/${limit}).`);
         }
         await client.query('UPDATE customers SET reseller_id=$2 WHERE id=$1',[item.customer_id,resellerId]);return{resellerId};
-    });
+    }));
     await auditItem('admin.bulk.reseller_assign',item.customer_id,assignment);return assignment;
 });
 registerHandler('reseller_detach',async item=>{const entitlement=await subscriptionState.effectiveSubscription(item.customer_id,{includeBlocked:true});if(entitlement?.source==='reseller_sale')throw new Error('End the reseller-provided customer service before detaching the reseller; detaching alone would orphan a commercial entitlement.');await query('UPDATE customers SET reseller_id=NULL WHERE id=$1',[item.customer_id]);await auditItem('admin.bulk.reseller_detach',item.customer_id,{});return{}});
