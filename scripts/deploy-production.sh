@@ -62,6 +62,8 @@ log 'Building the release images while the current portal remains online'
 docker compose --profile recovery build app automation-worker activity-worker backup-worker migrate recovery-tools
 
 if [[ "$existing_database" == 1 ]]; then
+  mkdir -p backups/predeploy
+  [[ -w backups/predeploy ]] || fail 'backups/predeploy is not writable by the deployment user'
   log 'Creating encrypted pre-deploy PostgreSQL backup'
   docker compose --profile recovery run --rm --no-deps -e BACKUP_DIR=/backups/predeploy recovery-tools npm run db:backup
 fi
