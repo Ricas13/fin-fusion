@@ -14,9 +14,15 @@ for(const route of [
     '/admin/users/11111111-1111-1111-1111-111111111111/profile',
     '/admin/provisioning/migrations/11111111-1111-1111-1111-111111111111/apply',
     '/admin/provisioning/migrations/11111111-1111-1111-1111-111111111111/rollback',
-    '/admin/servers/11111111-1111-1111-1111-111111111111'
+    '/admin/servers/11111111-1111-1111-1111-111111111111',
+    '/admin/settings/registration',
+    '/admin/settings/abuse-protection',
+    '/admin/settings/stremio/servers/11111111-1111-1111-1111-111111111111',
+    '/admin/operations',
+    '/admin/security/2fa-policy'
 ])assert(post(route),`High-impact admin route is missing step-up coverage: ${route}`);
 assert(!post('/admin/server-migrations/legacy/apply'),'Stale server-migrations URL unexpectedly remains security-significant.');
+assert(!post('/admin/security/step-up'),'Step-up verification must not recursively require step-up.');
 
 const paypal=text('src/payments/paypal.js');
 assert(/immutableSubscriptionContract/.test(paypal),'PayPal activation must resolve an immutable subscription contract.');
@@ -59,6 +65,8 @@ assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verificatio
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;
 assert(stremio.assertAcquirable({service_type:'jellyfin'}).service_type==='jellyfin','Jellyfin acquisition must remain available while Stremio runtime is disabled.');
 let blocked=false;try{stremio.assertAcquirable({service_type:'stremio'});}catch(error){blocked=/not available/.test(error.message);}assert(blocked,'Stremio acquisition must fail closed before the runtime is enabled.');
+process.env.STREMIO_RUNTIME_ENABLED='true';
+assert(stremio.runtimeReady()===false,'The enable flag alone must not make Stremio sellable before a real runtime module is present.');
 if(oldRuntime===undefined)delete process.env.STREMIO_RUNTIME_ENABLED;else process.env.STREMIO_RUNTIME_ENABLED=oldRuntime;
 const lifecycle=text('src/payments/lifecycle.js');
 assert(/stremio\.assertAcquirable/.test(lifecycle),'Canonical paid/free/trial lifecycle must enforce the Stremio runtime gate.');
