@@ -20,7 +20,7 @@ function jsFiles(dir){
 }
 
 function canonicalSegments(value){
-  const clean=String(value||'').split('?')[0].replace(/\$\{[^}]+\}/g,':dynamic');
+  const clean=String(value||'').split('?')[0];
   return clean.split('/').filter(Boolean).map(segment=>segment.startsWith(':')?':':segment);
 }
 
@@ -28,6 +28,11 @@ function sameShape(a,b){
   const x=canonicalSegments(a),y=canonicalSegments(b);
   if(x.length!==y.length)return false;
   return x.every((segment,index)=>segment===':'||y[index]===':'||segment===y[index]);
+}
+
+function attr(tag,name){
+  const match=tag.match(new RegExp(`${name}=\\\\?['\"]([^'\"\\\\]+)\\\\?['\"]`,'i'));
+  return match?match[1]:'';
 }
 
 const files=jsFiles(platformDir);
@@ -41,24 +46,28 @@ for(const {file,source} of sources){
 
 const actions=[];
 for(const {file,source} of sources){
-  const actionRe=/(?:action|formaction)=\\?['"](\/admin\/[^'"\\]+)\\?['"]/g;
+  const formRe=/<form\b[^>]*>/gi;
   let match;
-  while((match=actionRe.exec(source))){
-    const action=match[1];
-    if(action.includes('${'))continue; // handled separately below with template-aware regex
-    actions.push({path:action,file});
+  while((match=formRe.exec(source))){
+    const tag=match[0],method=attr(tag,'method').toLowerCase();
+    if(method!=='post')continue;
+    const action=attr(tag,'action');
+    if(action.startsWith('/admin/')&&!action.includes('${'))actions.push({path:action,file,kind:'form'});
   }
-  const templateActionRe=/(?:action|formaction)=\\?['"](\/admin\/[^'"\\]*\$\{[^\n]+?)\\?['"]/g;
-  while((match=templateActionRe.exec(source)))actions.push({path:match[1],file});
+  const submitterRe=/<(?:button|input)\b[^>]*formaction=\\?['"]([^'"\\]+)\\?['"][^>]*>/gi;
+  while((match=submitterRe.exec(source))){
+    const action=match[1];
+    if(action.startsWith('/admin/')&&!action.includes('${'))actions.push({path:action,file,kind:'formaction'});
+  }
 }
 
-const uniqueActions=[...new Map(actions.map(item=>[`${item.file}:${item.path}`,item])).values()];
+const uniqueActions=[...new Map(actions.map(item=>[`${item.file}:${item.kind}:${item.path}`,item])).values()];
 const missing=uniqueActions.filter(action=>!routes.some(route=>sameShape(action.path,route.path)));
 if(missing.length){
   console.error('Visible admin POST/formaction targets without a matching route shape:');
   for(const item of missing)console.error(` - ${path.relative(root,item.file)} -> ${item.path}`);
 }
-assert.equal(missing.length,0,'Every visible admin POST/formaction must resolve to a server route');
+assert.equal(missing.length,0,'Every visible static admin POST/formaction must resolve to a server route');
 
 assert(publicFeedback.includes("hasAttribute?.(name)"),'Enhanced forms must distinguish explicit submitter override attributes from reflected DOM defaults');
 assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formaction')"),'Enhanced forms must only honor explicit formaction overrides');
@@ -79,4 +88,4 @@ assert(html.includes("notificationWorkflow.profileTabs('profile')"),'My Profile 
 assert(html.includes("notificationWorkflow.profileTabs('personal')"),'My Notifications must render the same personal workflow tabs');
 assert(html.includes("notificationWorkflow.globalTabs"),'Global notification pages must use a separate stable tab set');
 
-console.log(`admin visible action integrity: ok (${uniqueActions.length} POST/formaction targets checked)`);
+console.log(`admin visible action integrity: ok (${uniqueActions.length} static POST/formaction targets checked)`);
