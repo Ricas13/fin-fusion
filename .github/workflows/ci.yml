@@ -27,6 +27,11 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      APP_DATABASE_URL: postgres://steamfusion_app:ci-app-password-2026-very-long-value@127.0.0.1:5432/steamfusion
+      AUTOMATION_DATABASE_URL: postgres://steamfusion_automation:ci-automation-password-2026-very-long-value@127.0.0.1:5432/steamfusion
+      ACTIVITY_DATABASE_URL: postgres://steamfusion_activity:activity-ci-password-very-long-2026@127.0.0.1:5432/steamfusion
+      BACKUP_DATABASE_URL: postgres://steamfusion_backup:ci-backup-password-2026-very-long-value@127.0.0.1:5432/steamfusion
+      BACKUP_VERIFY_DATABASE_URL: postgres://steamfusion_backup_verify:ci-backup-verify-password-2026-very-long@127.0.0.1:5432/steamfusion
       DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -170,29 +175,73 @@ jobs:
           })().finally(() => getPool().end());
           NODE
 
-      - name: Configure least-privilege activity role
-        run: npm run db:activity-role
+      - name: Configure isolated runtime database roles
+        run: npm run db:runtime-roles
 
-      - name: Verify activity database isolation
+      - name: Verify runtime database isolation
         run: |
           node - <<'NODE'
           const { Client } = require('pg');
-          const password = encodeURIComponent(process.env.ACTIVITY_DB_PASSWORD);
-          const client = new Client({ connectionString: `postgres://steamfusion_activity:${password}@127.0.0.1:5432/steamfusion` });
-          (async () => {
+          const urls = {
+            app: process.env.APP_DATABASE_URL,
+            automation: process.env.AUTOMATION_DATABASE_URL,
+            activity: process.env.ACTIVITY_DATABASE_URL,
+            backup: process.env.BACKUP_DATABASE_URL,
+            verify: process.env.BACKUP_VERIFY_DATABASE_URL
+          };
+          async function denied(client, sql, label) {
+            let ok = false;
+            try { await client.query(sql); }
+            catch (error) { if (error.code === '42501') ok = true; else throw error; }
+            if (!ok) throw new Error(`${label} unexpectedly succeeded`);
+          }
+          async function use(url, fn) {
+            const client = new Client({ connectionString: url });
             await client.connect();
-            await client.query('SELECT id,streams FROM plans LIMIT 1');
-            const write = await client.query("INSERT INTO stream_policy_events(mode,decision,reason) VALUES('observe','observed','ci') RETURNING id");
-            if (!write.rowCount) throw new Error('Activity role could not write policy event');
-            let paymentDenied = false;
-            try { await client.query('SELECT id FROM payment_events LIMIT 1'); }
-            catch (error) { if (error.code === '42501') paymentDenied = true; else throw error; }
-            if (!paymentDenied) throw new Error('Activity role unexpectedly has payment table access');
-            let authDenied = false;
-            try { await client.query('SELECT id FROM auth_events LIMIT 1'); }
-            catch (error) { if (error.code === '42501') authDenied = true; else throw error; }
-            if (!authDenied) throw new Error('Activity role unexpectedly has authentication table access');
-          })().finally(() => client.end());
+            try { await fn(client); } finally { await client.end(); }
+          }
+          (async () => {
+            await use(urls.app, async client => {
+              await client.query('SELECT id,code FROM plans LIMIT 1');
+              await client.query('BEGIN');
+              await client.query("INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('ci.runtime.app','ci','app','{}'::jsonb)");
+              await client.query('ROLLBACK');
+              await denied(client, 'CREATE TABLE ci_app_forbidden(id int)', 'app DDL');
+            });
+
+            await use(urls.automation, async client => {
+              await client.query('SELECT id,status FROM subscriptions LIMIT 1');
+              await client.query('BEGIN');
+              await client.query("INSERT INTO automation_job_state(job_key,enabled,interval_seconds) VALUES('ci_role_test',FALSE,300) ON CONFLICT(job_key) DO NOTHING");
+              await client.query('ROLLBACK');
+              await denied(client, 'SELECT * FROM auth_recovery_codes LIMIT 1', 'automation auth secret read');
+              await denied(client, 'UPDATE app_users SET username=username', 'automation identity mutation');
+            });
+
+            await use(urls.activity, async client => {
+              await client.query('SELECT id,streams FROM plans LIMIT 1');
+              const write = await client.query("INSERT INTO stream_policy_events(mode,decision,reason) VALUES('observe','observed','ci') RETURNING id");
+              if (!write.rowCount) throw new Error('Activity role could not write policy event');
+              await denied(client, 'SELECT id FROM payment_events LIMIT 1', 'activity payment read');
+              await denied(client, 'SELECT id FROM auth_events LIMIT 1', 'activity auth read');
+            });
+
+            await use(urls.backup, async client => {
+              await client.query('SELECT id FROM auth_events LIMIT 1');
+              await client.query('BEGIN');
+              await client.query("INSERT INTO backup_runs(status,backup_type) VALUES('running','database')");
+              await client.query('ROLLBACK');
+              await denied(client, 'UPDATE customers SET display_name=display_name', 'backup production mutation');
+              await denied(client, 'CREATE TABLE ci_backup_forbidden(id int)', 'backup DDL');
+            });
+
+            await use(urls.verify, async client => {
+              await denied(client, 'SELECT id FROM plans LIMIT 1', 'backup verifier production read');
+              const db = `ci_runtime_verify_${Date.now()}`;
+              await client.query(`CREATE DATABASE ${db}`);
+              await client.query(`DROP DATABASE ${db} WITH (FORCE)`);
+            });
+          })();
           NODE
 
       - name: Admin activity dashboard smoke test
