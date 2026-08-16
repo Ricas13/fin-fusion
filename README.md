@@ -96,6 +96,7 @@ The normal stack contains:
 - `steam-fusion` — web/admin/customer/reseller application.
 - `steam-fusion-automation` — scheduled singleton jobs using PostgreSQL advisory locks.
 - `steam-fusion-activity` — Jellyfin activity/fleet metrics worker with a restricted DB role.
+- `steam-fusion-backup` — encrypted database backup/verification worker using the host backup-directory UID/GID.
 - `steam-fusion-postgres` — PostgreSQL.
 - `migrate` — one-shot schema migration/bootstrap service.
 
@@ -182,7 +183,7 @@ Use the encrypted PostgreSQL backup tooling rather than copying application stat
 npm run db:backup
 ```
 
-Restore tooling is available through the `recovery-tools` Compose profile. Test restores before relying on a backup strategy.
+Restore tooling is available through the `recovery-tools` Compose profile. Test restores before relying on a backup strategy. Production deployment verification treats an enabled backup loop with a current failure as unhealthy rather than accepting heartbeat-only liveness.
 
 ## Production checks
 
