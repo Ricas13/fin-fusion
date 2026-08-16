@@ -29,7 +29,7 @@ async function list(){
  const by=new Map(states.map(s=>[s.fingerprint,s]));
  return sources.map(source=>{
    const stored=by.get(source.key)||{};
-   return{...source,state:{status:stored.acknowledged_at IS NOT NULL?'acknowledged':'open',assigned_to:stored.assigned_to||null,note:stored.note||null,updated_at:stored.updated_at||null}};
+   return{...source,state:{status:stored.acknowledged_at!=null?'acknowledged':'open',assigned_to:stored.assigned_to||null,note:stored.note||null,updated_at:stored.updated_at||null}};
  }).sort((a,b)=>{const rank={critical:0,warning:1,info:2};return(rank[a.severity]??9)-(rank[b.severity]??9)||new Date(b.createdAt||0)-new Date(a.createdAt||0)});
 }
 
