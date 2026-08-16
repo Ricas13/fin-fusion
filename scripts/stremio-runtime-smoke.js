@@ -55,16 +55,19 @@ assert(entitlement.includes('effective_customer_entitlements'),'addon bearer loo
 assert(entitlement.includes('/Sessions/Logout'),'rotation/revocation must invalidate restricted Jellyfin sessions');
 assert(!/SELECT[^;]+api_key_encrypted[^;]+stremio_entitlements/is.test(entitlement),'addon entitlement lookup must not expose administrator Jellyfin keys');
 
-const application=read('src/application.js');
+const platformRouter=read('src/platform/router.js');
 const runtimeSource=read('src/stremio/runtime.js');
-assert(application.includes('createStremioRuntimeRouter'),'application must mount the Stremio protocol router');
-assert(application.indexOf('app.use(createStremioRuntimeRouter())')<application.indexOf('app.use(sessionMiddleware())'),'Stremio bearer routes must be mounted before customer/staff sessions');
+assert(platformRouter.includes('createStremioRuntimeRouter'),'platform router must own the Stremio protocol surface');
+assert(platformRouter.indexOf('router.use(createStremioRuntimeRouter())')<platformRouter.indexOf('router.use(publicAbuseProtection.middleware)'),'Stremio bearer routes must be mounted ahead of portal-specific middleware');
 assert(runtimeSource.includes("Access-Control-Allow-Origin','*'"),'Stremio protocol endpoints need CORS');
 assert(runtimeSource.includes("Cross-Origin-Resource-Policy','cross-origin'"),'global same-origin CORP must be relaxed only on the addon surface');
 assert(runtimeSource.includes("scope:'stremio-stream'"),'stream endpoint must be protected by the shared persistent rate limiter');
 const streamSource=read('src/stremio/jellyfin-runtime.js');
-for(const fragment of ['proxyHeaders','notWebReady','stremio_media_index','active_playback_sessions'])assert(streamSource.includes(fragment),`stream runtime missing ${fragment}`);
+for(const fragment of ['proxyHeaders','notWebReady','active_playback_sessions'])assert(streamSource.includes(fragment),`stream runtime missing ${fragment}`);
+assert(streamSource.includes('mediaIndex.lookup'),'stream runtime must resolve titles through the local media-index boundary');
 assert(streamSource.includes('SupportsDirectPlay'),'runtime must prefer direct-play sources rather than becoming a video proxy');
+const indexSource=read('src/stremio/media-index.js');
+assert(indexSource.includes('stremio_media_index'),'media-index module must own the local IMDb/Jellyfin index table');
 
 const reconciliation=read('src/jellyfin/resilient-provisioning.js');
 assert(reconciliation.includes("type==='stremio'")&&reconciliation.includes("type==='bundle'"),'entitlement reconciliation must distinguish delivery types');
