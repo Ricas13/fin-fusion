@@ -13,6 +13,7 @@ const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminPaymentReconciliationRouter } = require('./admin-payment-reconciliation');
 const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAdminStremioRouter } = require('./admin-stremio');
+const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
@@ -39,8 +40,6 @@ function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
     router.use(publicAbuseProtection.middleware);
-    // Bot updates do not trust a typed handle: Telegram links one-time customer
-    // tokens to the chat identity supplied by Telegram itself.
     router.use(createMessagingBotWebhookRouter());
     router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
@@ -63,6 +62,7 @@ function createRouter(){
     router.use(createAdminPaymentReconciliationRouter());
     router.use(createAdminCommerceRouter());
     router.use(createAdminResellerSettingsRouter());
+    router.use(createAdminStremioSourcesRouter());
     router.use(createAdminStremioRouter());
     router.use(createAdminPlanDeliveryRouter());
     router.use(createAdminResellerDunningRouter());
