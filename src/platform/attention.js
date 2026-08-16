@@ -23,9 +23,20 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  for(const r of protectedActivations.rows)out.push(item({key:key('activation',r.customer_id),title:`Paid/provisioned account still not activated: ${r.customer_name}`,area:'Customers',severity:'warning',detail:`Activation pending ${r.age_days} day(s) · ${r.has_subscription?'subscription ':''}${r.has_jellyfin?'Jellyfin ':''}${r.has_reseller_sale?'reseller service':''}`.trim(),href:`/admin/users/${r.customer_id}?tab=access#activation`,createdAt:r.created_at}));
  return out}
 
+async function workflowStates(keys){
+ if(!keys.length)return[];
+ try{return(await query(`SELECT fingerprint,acknowledged_at,assigned_to,note,updated_at FROM attention_workflow WHERE fingerprint=ANY($1::text[])`,[keys])).rows;}
+ catch(error){
+   // Acknowledgement/assignment state must never take the operational inbox down.
+   // Migration 073 repairs legacy/partial schemas; this fallback keeps a rolling
+   // deployment readable until that migration is applied.
+   console.error('Attention workflow state unavailable:',error.message);
+   return[];
+ }
+}
+
 async function list(){
- const sources=await sourceItems(),keys=sources.map(i=>i.key);
- const states=keys.length?(await query(`SELECT fingerprint,acknowledged_at,assigned_to,note,updated_at FROM attention_workflow WHERE fingerprint=ANY($1::text[])`,[keys])).rows:[];
+ const sources=await sourceItems(),keys=sources.map(i=>i.key),states=await workflowStates(keys);
  const by=new Map(states.map(s=>[s.fingerprint,s]));
  return sources.map(source=>{
    const stored=by.get(source.key)||{};
@@ -52,4 +63,4 @@ async function setState(itemKey,{status='acknowledged',assignedTo=null,note=null
    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.attention.update','attention_item',$2,$3::jsonb)`,[actorUserId,source.key,JSON.stringify({status,assignedTo:assignedTo||null,note:Boolean(cleanNote),sourceStillOpen:true})]);
  });
 }
-module.exports={list,setState,sourceItems,openSummary};
+module.exports={list,setState,sourceItems,openSummary,workflowStates};
