@@ -1,8 +1,8 @@
 BEGIN;
 
 -- A customer may have one primary access contract plus independently billed
--- add-ons. Add-ons must never win the "current entitlement" ranking used by
--- Jellyfin provisioning, reseller capacity, or the main customer dashboard.
+-- add-ons. Preserve the canonical checkout-snapshot semantics introduced by
+-- migration 061; the only primary-view change here is excluding add-on plans.
 CREATE OR REPLACE VIEW effective_customer_entitlements AS
 SELECT DISTINCT ON (s.customer_id)
     s.customer_id,
@@ -17,31 +17,31 @@ SELECT DISTINCT ON (s.customer_id)
     s.cancel_at_period_end,
     s.provider_customer_id,
     s.provider_subscription_id,
-    s.plan_name_snapshot,
-    s.plan_code_snapshot,
-    s.price_minor_snapshot,
-    s.currency_snapshot,
-    s.billing_interval_snapshot,
-    s.duration_days_snapshot,
-    s.provider_price_id_snapshot,
-    p.code,
-    p.name,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planName',''),s.plan_name_snapshot,p.name) AS plan_name_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planCode',''),s.plan_code_snapshot,p.code) AS plan_code_snapshot,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'priceMinor') ~ '^-?[0-9]+$' THEN (s.commercial_snapshot->>'priceMinor')::int END,s.price_minor_snapshot,p.price_minor) AS price_minor_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'currency',''),s.currency_snapshot::text,p.currency::text)::CHAR(3) AS currency_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'billingInterval',''),s.billing_interval_snapshot,p.billing_interval) AS billing_interval_snapshot,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'durationDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'durationDays')::int END,s.duration_days_snapshot,p.duration_days) AS duration_days_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'providerMappingId',''),s.provider_price_id_snapshot) AS provider_price_id_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planCode',''),s.plan_code_snapshot,p.code) AS code,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planName',''),s.plan_name_snapshot,p.name) AS name,
     p.audience,
-    p.billing_interval,
-    p.duration_days,
-    p.price_minor,
-    p.currency,
-    p.streams,
-    p.allow_downloads,
-    p.allow_video_transcoding,
-    p.allow_audio_transcoding,
-    p.allow_live_tv,
-    p.allow_live_tv_management,
-    p.server_class,
-    p.request_movie_quota_limit,
-    p.request_movie_quota_days,
-    p.request_tv_quota_limit,
-    p.request_tv_quota_days,
+    COALESCE(NULLIF(s.commercial_snapshot->>'billingInterval',''),s.billing_interval_snapshot,p.billing_interval) AS billing_interval,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'durationDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'durationDays')::int END,s.duration_days_snapshot,p.duration_days) AS duration_days,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'priceMinor') ~ '^-?[0-9]+$' THEN (s.commercial_snapshot->>'priceMinor')::int END,s.price_minor_snapshot,p.price_minor) AS price_minor,
+    COALESCE(NULLIF(s.commercial_snapshot->>'currency',''),s.currency_snapshot::text,p.currency::text)::CHAR(3) AS currency,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'streams') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'streams')::int END,p.streams) AS streams,
+    CASE WHEN s.commercial_snapshot ? 'allowDownloads' THEN (s.commercial_snapshot->>'allowDownloads')::boolean ELSE p.allow_downloads END AS allow_downloads,
+    CASE WHEN s.commercial_snapshot ? 'allowVideoTranscoding' THEN (s.commercial_snapshot->>'allowVideoTranscoding')::boolean ELSE p.allow_video_transcoding END AS allow_video_transcoding,
+    CASE WHEN s.commercial_snapshot ? 'allowAudioTranscoding' THEN (s.commercial_snapshot->>'allowAudioTranscoding')::boolean ELSE p.allow_audio_transcoding END AS allow_audio_transcoding,
+    CASE WHEN s.commercial_snapshot ? 'allowLiveTv' THEN (s.commercial_snapshot->>'allowLiveTv')::boolean ELSE p.allow_live_tv END AS allow_live_tv,
+    CASE WHEN s.commercial_snapshot ? 'allowLiveTvManagement' THEN (s.commercial_snapshot->>'allowLiveTvManagement')::boolean ELSE p.allow_live_tv_management END AS allow_live_tv_management,
+    COALESCE(NULLIF(s.commercial_snapshot->>'serverClass',''),p.server_class) AS server_class,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestMovieQuotaLimit') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestMovieQuotaLimit')::int END,p.request_movie_quota_limit) AS request_movie_quota_limit,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestMovieQuotaDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestMovieQuotaDays')::int END,p.request_movie_quota_days) AS request_movie_quota_days,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestTvQuotaLimit') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestTvQuotaLimit')::int END,p.request_tv_quota_limit) AS request_tv_quota_limit,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestTvQuotaDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestTvQuotaDays')::int END,p.request_tv_quota_days) AS request_tv_quota_days,
     EXISTS (
         SELECT 1 FROM customer_access_holds h
         WHERE h.customer_id=s.customer_id AND h.released_at IS NULL
@@ -64,8 +64,8 @@ ORDER BY s.customer_id,
          s.created_at DESC;
 
 -- Unlike the primary view, every live add-on remains independently visible.
--- Consumers decide which service type they need; this is intentionally not
--- DISTINCT ON(customer_id).
+-- Use the same sold-contract policy projection as the primary entitlement so a
+-- later catalogue edit cannot rewrite an already-purchased add-on either.
 CREATE OR REPLACE VIEW effective_customer_addons AS
 SELECT
     s.customer_id,
@@ -80,33 +80,33 @@ SELECT
     s.cancel_at_period_end,
     s.provider_customer_id,
     s.provider_subscription_id,
-    s.plan_name_snapshot,
-    s.plan_code_snapshot,
-    s.price_minor_snapshot,
-    s.currency_snapshot,
-    s.billing_interval_snapshot,
-    s.duration_days_snapshot,
-    s.provider_price_id_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planName',''),s.plan_name_snapshot,p.name) AS plan_name_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planCode',''),s.plan_code_snapshot,p.code) AS plan_code_snapshot,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'priceMinor') ~ '^-?[0-9]+$' THEN (s.commercial_snapshot->>'priceMinor')::int END,s.price_minor_snapshot,p.price_minor) AS price_minor_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'currency',''),s.currency_snapshot::text,p.currency::text)::CHAR(3) AS currency_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'billingInterval',''),s.billing_interval_snapshot,p.billing_interval) AS billing_interval_snapshot,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'durationDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'durationDays')::int END,s.duration_days_snapshot,p.duration_days) AS duration_days_snapshot,
+    COALESCE(NULLIF(s.commercial_snapshot->>'providerMappingId',''),s.provider_price_id_snapshot) AS provider_price_id_snapshot,
     s.service_type_snapshot,
-    p.code,
-    p.name,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planCode',''),s.plan_code_snapshot,p.code) AS code,
+    COALESCE(NULLIF(s.commercial_snapshot->>'planName',''),s.plan_name_snapshot,p.name) AS name,
     p.audience,
-    p.billing_interval,
-    p.duration_days,
-    p.price_minor,
-    p.currency,
-    p.streams,
+    COALESCE(NULLIF(s.commercial_snapshot->>'billingInterval',''),s.billing_interval_snapshot,p.billing_interval) AS billing_interval,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'durationDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'durationDays')::int END,s.duration_days_snapshot,p.duration_days) AS duration_days,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'priceMinor') ~ '^-?[0-9]+$' THEN (s.commercial_snapshot->>'priceMinor')::int END,s.price_minor_snapshot,p.price_minor) AS price_minor,
+    COALESCE(NULLIF(s.commercial_snapshot->>'currency',''),s.currency_snapshot::text,p.currency::text)::CHAR(3) AS currency,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'streams') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'streams')::int END,p.streams) AS streams,
     p.service_type,
-    p.allow_downloads,
-    p.allow_video_transcoding,
-    p.allow_audio_transcoding,
-    p.allow_live_tv,
-    p.allow_live_tv_management,
-    p.server_class,
-    p.request_movie_quota_limit,
-    p.request_movie_quota_days,
-    p.request_tv_quota_limit,
-    p.request_tv_quota_days,
+    CASE WHEN s.commercial_snapshot ? 'allowDownloads' THEN (s.commercial_snapshot->>'allowDownloads')::boolean ELSE p.allow_downloads END AS allow_downloads,
+    CASE WHEN s.commercial_snapshot ? 'allowVideoTranscoding' THEN (s.commercial_snapshot->>'allowVideoTranscoding')::boolean ELSE p.allow_video_transcoding END AS allow_video_transcoding,
+    CASE WHEN s.commercial_snapshot ? 'allowAudioTranscoding' THEN (s.commercial_snapshot->>'allowAudioTranscoding')::boolean ELSE p.allow_audio_transcoding END AS allow_audio_transcoding,
+    CASE WHEN s.commercial_snapshot ? 'allowLiveTv' THEN (s.commercial_snapshot->>'allowLiveTv')::boolean ELSE p.allow_live_tv END AS allow_live_tv,
+    CASE WHEN s.commercial_snapshot ? 'allowLiveTvManagement' THEN (s.commercial_snapshot->>'allowLiveTvManagement')::boolean ELSE p.allow_live_tv_management END AS allow_live_tv_management,
+    COALESCE(NULLIF(s.commercial_snapshot->>'serverClass',''),p.server_class) AS server_class,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestMovieQuotaLimit') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestMovieQuotaLimit')::int END,p.request_movie_quota_limit) AS request_movie_quota_limit,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestMovieQuotaDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestMovieQuotaDays')::int END,p.request_movie_quota_days) AS request_movie_quota_days,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestTvQuotaLimit') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestTvQuotaLimit')::int END,p.request_tv_quota_limit) AS request_tv_quota_limit,
+    COALESCE(CASE WHEN (s.commercial_snapshot->>'requestTvQuotaDays') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'requestTvQuotaDays')::int END,p.request_tv_quota_days) AS request_tv_quota_days,
     EXISTS (
         SELECT 1 FROM customer_access_holds h
         WHERE h.customer_id=s.customer_id AND h.released_at IS NULL
