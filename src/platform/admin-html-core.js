@@ -2,6 +2,7 @@
 
 const branding=require('./branding');
 const nav=require('./admin-nav');
+const paymentWorkflow=require('./payment-workflow-tabs');
 
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 
@@ -30,13 +31,16 @@ function header(active,site){
   const sections=nav.groups.map(group=>{
     const activeGroup=group.key===current.group.key;
     const pages=group.pages.map(([key,label,url])=>`<a class="adminTab ${current.key===key?'active':''}" href="${esc(url)}" title="Open ${esc(label)}">${esc(label)}</a>`).join('');
-    // The section label is a real link to the group's landing page. The page
-    // reached by that click renders the active group open, so one click both
-    // navigates and reveals the group's children. The chevron still permits
-    // temporary expand/collapse without navigation.
     return `<details class="navSection ${activeGroup?'active':''}" data-nav-section="${esc(group.key)}" ${activeGroup?'open':''}><summary class="navSectionLabel"><a class="navSectionHome" href="${esc(nav.landingFor(group))}">${icon(group.key)}<span>${esc(group.label)}</span></a><span class="navChevron" aria-hidden="true">⌄</span></summary><div class="navSectionPages">${pages}</div></details>`;
   }).join('');
   return `<header class="adminHeader"><div class="headerMain"><a class="brandBlock" href="/admin"><img class="brandLogo" src="${esc(branding.assetUrl('logo'))}" alt=""><div><div class="brandText">${esc(site)}</div><div class="brandSub">Control centre</div></div></a></div><div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration">${sections}</nav></div><div class="headerActions"><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a><a class="headerButton" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a><a class="headerButton" href="/admin/security">Security</a><a class="headerButton danger" href="/logout">Sign out</a></div></header>`;
+}
+
+function paymentTabsFor(options){
+  const title=String(options.title||'');
+  if(!['Payments','Provider mappings','Billing'].includes(title))return'';
+  const active=title==='Billing'?'billing':title==='Provider mappings'?'mappings':'setup';
+  return paymentWorkflow.tabs(active);
 }
 
 function layout(options={}){
@@ -45,7 +49,8 @@ function layout(options={}){
   const docsAction='<a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a>';
   const topActions=`<div class="topBarActions">${docsAction}${options.action||''}</div>`;
   const favicon=`${branding.assetUrl('favicon')}?v=${Date.now()}`;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(options.title)} · ${esc(site)}</title><link rel="icon" href="${esc(favicon)}"><style>${critical}</style><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"><link rel="stylesheet" href="/css/admin-server-library-dashboard.css"><link rel="stylesheet" href="/css/admin-form-feedback.css"><link rel="stylesheet" href="/css/admin-visual-refinement.css"><link rel="stylesheet" href="/css/operator-experience.css"></head><body><div class="appShell">${header(options.active,site)}<main class="mainPane"><header class="topBar"><div class="topBreadcrumb"><span>${esc(current.group.label)}</span><strong>${esc(current.page[1])}</strong></div>${topActions}</header><div class="content"><div class="pageHeader"><div><h1>${esc(options.title)}</h1><div class="pageSubtitle">${esc(options.subtitle||'')}</div></div></div>${options.body||''}</div></main></div><script src="/js/admin-form-feedback.js" defer></script><script src="/js/operator-experience.js" defer></script></body></html>`;
+  const workflowTabs=paymentTabsFor(options);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(options.title)} · ${esc(site)}</title><link rel="icon" href="${esc(favicon)}"><style>${critical}</style><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"><link rel="stylesheet" href="/css/admin-server-library-dashboard.css"><link rel="stylesheet" href="/css/admin-form-feedback.css"><link rel="stylesheet" href="/css/admin-visual-refinement.css"><link rel="stylesheet" href="/css/operator-experience.css"></head><body><div class="appShell">${header(options.active,site)}<main class="mainPane"><header class="topBar"><div class="topBreadcrumb"><span>${esc(current.group.label)}</span><strong>${esc(current.page[1])}</strong></div>${topActions}</header><div class="content"><div class="pageHeader"><div><h1>${esc(options.title)}</h1><div class="pageSubtitle">${esc(options.subtitle||'')}</div></div></div>${workflowTabs}${options.body||''}</div></main></div><script src="/js/admin-form-feedback.js" defer></script><script src="/js/operator-experience.js" defer></script></body></html>`;
 }
 
-module.exports={esc,layout,header};
+module.exports={esc,layout,header,paymentTabsFor};
