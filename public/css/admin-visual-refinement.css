@@ -1,0 +1,65 @@
+/* Visual refinement layer: keep the admin scannable before adding more features. */
+
+/* Sidebar accordion ------------------------------------------------------- */
+.adminTabs{gap:8px}
+.navSection{display:block}
+.navSection>summary{list-style:none}
+.navSection>summary::-webkit-details-marker{display:none}
+.navSectionLabel{min-height:38px;padding:8px;border-radius:8px;cursor:pointer;user-select:none;transition:background .14s ease,color .14s ease}
+.navSectionLabel:hover{background:rgba(255,255,255,.035);color:#aeb9c6}
+.navSection.active .navSectionLabel{color:#9aa9ba}
+.navChevron{margin-left:auto;color:#526173;font-size:13px;line-height:1;transform:rotate(-90deg);transition:transform .14s ease,color .14s ease}
+.navSection[open] .navChevron{transform:rotate(0);color:#7d8d9f}
+.navSectionPages{display:none;gap:2px;padding:3px 0 4px}
+.navSection[open] .navSectionPages{display:grid}
+.navSection:not([open]){border-bottom:1px solid rgba(255,255,255,.015)}
+
+/* Settings are easier to scan as broad cards than four narrow columns. */
+.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.settings-card{min-width:0}
+.settings-card .card-body{min-width:0}
+
+/* Avoid six-field horizontal walls on wide screens. */
+.formGrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+
+/* Plans: filter like a toolbar, not a second page. */
+.planListToolbar{display:grid;grid-template-columns:minmax(260px,2fr) repeat(4,minmax(130px,1fr)) auto;gap:10px;align-items:end;padding:14px 16px;border-bottom:1px solid var(--border-soft);background:#0f151c}
+.planListToolbar label{display:grid;gap:5px;min-width:0;color:#8996a6;font-size:11px;font-weight:650}
+.planListToolbar .input{min-width:0}
+.planListToolbar .button{align-self:end;white-space:nowrap}
+.planListFilteredEmpty{display:none;padding:26px 18px;text-align:center;color:var(--muted);font-size:12px}
+.planListFilteredEmpty.visible{display:block}
+.planListSummary{padding:9px 14px;border-top:1px solid var(--border-soft);color:var(--muted2);font-size:11px;text-align:right}
+
+/* Empty analytics should not dominate the dashboard. Real charts keep their height. */
+.analyticsDashboard{gap:12px}
+.analyticsGrid{gap:10px}
+.chartEmpty{height:108px}
+.analyticsEmpty{padding:18px 12px}
+.analyticsCard:has(.chartEmpty) .analyticsCardBody{padding-top:10px;padding-bottom:10px}
+
+/* Dense status pages should communicate hierarchy before prose. */
+.statusBanner strong{color:var(--text-strong)}
+.quick-action strong{display:flex;align-items:center;gap:6px}
+
+@media(max-width:1250px){
+  .settings-grid{grid-template-columns:1fr}
+  .formGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .planListToolbar{grid-template-columns:minmax(240px,2fr) repeat(2,minmax(150px,1fr));align-items:end}
+  .planListToolbar .button{justify-self:start}
+}
+
+@media(max-width:860px){
+  /* Mobile keeps the existing horizontal navigation instead of hiding closed groups. */
+  .adminTabs{gap:12px}
+  .navSection{display:flex;align-items:center;border:0}
+  .navSectionLabel{display:none!important}
+  .navSectionPages,.navSection[open] .navSectionPages{display:flex!important;gap:4px;padding:0}
+  .planListToolbar{grid-template-columns:1fr 1fr}
+}
+
+@media(max-width:760px){
+  .formGrid{grid-template-columns:1fr}
+  .planListToolbar{grid-template-columns:1fr}
+  .planListToolbar .button{width:100%}
+}
