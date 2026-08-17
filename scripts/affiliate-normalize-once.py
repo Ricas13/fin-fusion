@@ -3,8 +3,7 @@ import re
 
 def change(path, transform):
     p=Path(path); old=p.read_text(); new=transform(old)
-    if new==old: raise SystemExit(f'no change in {path}')
-    p.write_text(new)
+    if new!=old:p.write_text(new)
 
 change('src/platform/admin-plan-create-v2.js',lambda s:s.replace('The setup follows the same product → commercial terms → playback → policy → libraries flow used by Reseller Plans.','The setup follows one consistent product → commercial terms → playback → policy → libraries flow.').replace('Reseller products are configured separately under Reseller Plans and no longer consume retail-plan credits.','Plans created here are sold directly by CAPTAiNFiN to customer accounts.'))
 def dashboard(s):
