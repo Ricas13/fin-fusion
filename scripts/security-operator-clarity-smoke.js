@@ -30,13 +30,12 @@ assert(/activation was refused without an immutable local contract/.test(paypal)
 assert(/reverseReferralForDirectIdentity/.test(paypal),'PayPal reversals must revisit already-rewarded referrals.');
 const stripe=text('src/payments/stripe.js');
 assert(/reverseReferralForDirectIdentity/.test(stripe),'Stripe reversals must revisit already-rewarded referrals.');
-const referrals=text('src/referrals.js');
-assert(/revisitRewardAfterAdversePayment/.test(referrals)&&/referral_reward_reversals/.test(referrals),'Referral rewards must support idempotent unused-day reversal.');
+const referrals=text('src/referrals.js'),affiliateCredits=text('src/affiliate-credits.js');
+assert(/revisitRewardAfterAdversePayment/.test(referrals)&&/affiliateCredits\.reverseReward/.test(referrals),'Adverse payments must revisit already-earned affiliate service credit.');
+assert(/entry_type='reversed'/.test(affiliateCredits)&&/already-delivered service was preserved|already-delivered service/i.test(referrals),'Affiliate reward reversal must remove unspent credit without clawing back delivered service.');
 
 const bulk=text('src/platform/bulk-operations.js');
-assert(/capacityLock\.withCapacityLock\(resellerId/.test(bulk),'Bulk reseller assignment must share the reseller capacity advisory lock.');
-const capacity=text('src/resellers/capacity-lock.js');
-assert(/new Pool\(/.test(capacity)&&/connectionTimeoutMillis/.test(capacity),'Reseller capacity locks must use a bounded dedicated connection pool.');
+assert(!/reseller_assign|reseller_detach/.test(bulk),'Retired reseller customer-assignment operations must not return to bulk administration.');
 const maintenance=text('src/security/maintenance-lock.js');
 assert(/connectionTimeoutMillis/.test(maintenance),'Maintenance lock pool must have a connection acquisition timeout.');
 
