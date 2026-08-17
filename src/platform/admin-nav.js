@@ -9,6 +9,7 @@ const groups=Object.freeze([
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups & Transfer','/admin/backups']]}
 ]);
 const hiddenPages=Object.freeze({
+  search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   'my-notifications':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
   'my-security':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-security','My Security','/admin/security'])}),
