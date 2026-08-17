@@ -1,25 +1,47 @@
 # Reseller Guide
 
-## Reseller tiers and seats
+## What a reseller subscription provides
 
-A reseller tier defines the commercial capacity available to the reseller. A seat is consumed by a live customer entitlement according to CAPTAiNFiN's reseller policy.
+A CAPTAiNFiN reseller plan is a monthly **managed Jellyfin user allowance**. The plan defines how many Jellyfin users the reseller may manage and the Jellyfin policy those users inherit.
 
-## Customers
+Typical plan policy includes:
 
-Resellers can create and manage customer service within the limits of their active reseller entitlement and the plans made available by the administrator.
+- managed-user limit
+- concurrent streams per managed user
+- downloads
+- video/audio transcoding and remux permissions
+- remote access and Live TV policy
+- 4K policy
+- server placement/class
+- included or excluded Jellyfin libraries
 
-## Sales ledger
+The reseller's own customer billing, pricing, invoicing and CRM activity happen outside CAPTAiNFiN.
 
-Recorded downstream sales are operational records for the reseller estate. Payment method labels and ledger currency are configured by the administrator and may be customised for an individual reseller where supported.
+## Managed Jellyfin users
 
-## Reseller-owned account
+The reseller portal is for Jellyfin access management only. A reseller can:
 
-Administrators can allow or prevent a reseller from having a reseller-owned Jellyfin account. When enabled and used, that owner account consumes one active entitlement from the reseller's available capacity, just like another live downstream service.
+- add a Jellyfin user while a seat is available
+- reset that user's Jellyfin password
+- suspend or resume access
+- delete the Jellyfin user
 
-## Billing and dunning
+One managed Jellyfin user consumes one reseller seat. Suspending a user keeps the seat occupied. Deleting the managed Jellyfin user releases the seat.
 
-The portal shows subscription state, paid-through dates and applicable billing grace. A scheduled cancellation should not remove access that has already been paid for before the end of that service period.
+Managed users inherit the reseller plan's Jellyfin policy automatically; the reseller does not choose or sell a separate CAPTAiNFiN customer plan for each user.
+
+## Monthly plans and billing
+
+Reseller plans are monthly-only and may expose more than one supported currency/price when configured by the administrator. Stripe and PayPal self-service checkout are available only where the administrator has configured and verified the corresponding provider mapping for that exact price.
+
+The portal shows the active reseller plan, paid-through date, seat usage and billing state. Cancelling renewal does not remove already-paid access before the paid-through date.
+
+Plan changes remain subject to seat-capacity and provider rules. A move to a lower allowance cannot take effect while managed-user usage exceeds the target plan limit.
 
 ## Security
 
-Resellers can use two-factor authentication when enabled by platform policy. Administrators may optionally require it for all reseller sign-ins.
+Resellers can use two-factor authentication when enabled by platform policy. Administrators may optionally require it for reseller sign-ins.
+
+## What is intentionally not in the reseller portal
+
+CAPTAiNFiN does not provide a reseller credit wallet, downstream sales ledger, per-customer resale pricing, customer invoices or reseller CRM. Historical database records from older versions may remain for migration/audit compatibility, but they are not part of the live reseller workflow.
