@@ -6,15 +6,12 @@
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention'],['search','Search','/admin/search']]},
   {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['resellers','Resellers','/admin/reseller-management'],['activity','Playback & Activity','/admin/activity']]},
-  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
+  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['stremio-sources','Stremio Sources','/admin/servers/stremio'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit & events','/admin/events']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups & Transfer','/admin/backups']]}
 ]);
 
-// Workflow pages can stay grouped/breadcrumbed without consuming sidebar space.
-// parentKey keeps the owning sidebar destination highlighted while the breadcrumb
-// and top workflow tabs describe the more specific page.
 const hiddenPages=Object.freeze({
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   'my-notifications':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
@@ -28,33 +25,10 @@ const hiddenPages=Object.freeze({
 });
 
 const aliases=Object.freeze({
-  'customer-claims':'users',
-  'reseller-tiers':'plans',
-  'provider-mappings':'payments',
-  'notifications':'notification-settings',
-  'notification-events':'notification-settings',
-  'payment-reconciliation':'commerce-overview',
-  'configuration-health':'settings-general',
-  'setup':'settings-general',
-  'settings':'settings-general',
-  'support-policy':'settings-general',
-  'reseller-settings':'settings-general',
-  'stremio-settings':'settings-integrations',
-  'abuse-protection':'settings-security',
-  'security':'my-security',
-  'jellyfin-import':'servers',
-  'invitations':'plans',
-  'operations':'fleet-operations'
+  'customer-claims':'users','reseller-tiers':'plans','provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'commerce-overview','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','support-policy':'settings-general','reseller-settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','abuse-protection':'settings-security','security':'my-security','jellyfin-import':'servers','invitations':'plans','operations':'fleet-operations'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
-function groupFor(active){
-  const key=activeKey(active),hidden=hiddenPages[key];
-  if(hidden){
-    const base=groups.find(group=>group.key===hidden.groupKey)||groups[0];
-    return {...base,pages:[hidden.page,...base.pages]};
-  }
-  return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];
-}
+function groupFor(active){const key=activeKey(active),hidden=hiddenPages[key];if(hidden){const base=groups.find(group=>group.key===hidden.groupKey)||groups[0];return {...base,pages:[hidden.page,...base.pages]};}return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];}
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
 module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,landingFor};
