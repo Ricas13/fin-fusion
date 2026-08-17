@@ -23,14 +23,14 @@ function activePage(active){
   const key=nav.activeKey(active);
   const group=nav.groupFor(key);
   const page=group.pages.find(item=>item[0]===key)||group.pages[0];
-  return {key,group,page};
+  return {key,sidebarKey:nav.sidebarKey(key),group,page};
 }
 
 function header(active,site){
   const current=activePage(active);
   const sections=nav.groups.map(group=>{
     const activeGroup=group.key===current.group.key;
-    const pages=group.pages.map(([key,label,url])=>`<a class="adminTab ${current.key===key?'active':''}" href="${esc(url)}" title="Open ${esc(label)}">${esc(label)}</a>`).join('');
+    const pages=group.pages.map(([key,label,url])=>`<a class="adminTab ${current.sidebarKey===key?'active':''}" href="${esc(url)}" title="Open ${esc(label)}">${esc(label)}</a>`).join('');
     return `<details class="navSection ${activeGroup?'active':''}" data-nav-section="${esc(group.key)}" ${activeGroup?'open':''}><summary class="navSectionLabel"><a class="navSectionHome" href="${esc(nav.landingFor(group))}">${icon(group.key)}<span>${esc(group.label)}</span></a><span class="navChevron" aria-hidden="true">⌄</span></summary><div class="navSectionPages">${pages}</div></details>`;
   }).join('');
   return `<header class="adminHeader"><div class="headerMain"><a class="brandBlock" href="/admin"><img class="brandLogo" src="${esc(branding.assetUrl('logo'))}" alt=""><div><div class="brandText">${esc(site)}</div><div class="brandSub">Control centre</div></div></a></div><div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration">${sections}</nav></div><div class="headerActions"><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a><a class="headerButton" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a><a class="headerButton" href="/admin/security">Security</a><a class="headerButton danger" href="/logout">Sign out</a></div></header>`;
@@ -44,7 +44,7 @@ function paymentTabsFor(options){
 }
 
 function layout(options={}){
-  const site=options.siteName||'CAPTAiNFiN';
+  const site=options.siteName||'CAPTaINFiN';
   const current=activePage(options.active);
   const docsAction='<a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a>';
   const topActions=`<div class="topBarActions">${docsAction}${options.action||''}</div>`;
