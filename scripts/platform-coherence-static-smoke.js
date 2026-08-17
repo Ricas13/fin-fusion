@@ -17,9 +17,9 @@ assert.strictEqual(packageJson.scripts.syntax,'node scripts/check-js-syntax.js')
 for(const removed of ['import_users.js','check-expired.js','src/platform/reseller-portal.js','src/platform/reseller-storefront.js'])assert(!exists(removed),`${removed} must remain removed from the supported tree`);
 for(const migration of ['016_reserved_legacy_gap.sql','036_platform_coherence.sql','046_restore_invitation_subscription_source.sql','085_canonical_free_tier.sql','088_affiliate_service_credits.sql','089_affiliate_credit_checkout_reservations.sql','090_preserve_subscription_sources_with_service_credit.sql','091_retire_reseller_automation_jobs.sql'])assert(exists(`db/migrations/${migration}`),`missing coherence migration ${migration}`);
 
-const application=read('src/application.js');
+const application=read('src/application.js'),platformRouter=read('src/platform/router.js');
 assert(application.includes("require('./platform/admin-drift')"),'Policy Drift must be mounted by the canonical application');
-assert(application.includes('createCustomerAffiliateRouter'),'customer affiliate runtime must be mounted');
+assert(platformRouter.includes('createCustomerAffiliateRouter')&&platformRouter.includes('router.use(createCustomerAffiliateRouter())'),'customer affiliate runtime must be mounted by the platform router');
 assert(application.includes('createAdminReferralsRouter'),'affiliate administration must be mounted');
 for(const retired of ['reseller-tier-changes','reseller-business','reseller-monthly-portal','reseller-portal','reseller-storefront'])assert(!application.includes(retired),`canonical application still loads retired reseller runtime: ${retired}`);
 
@@ -37,6 +37,8 @@ const plansList=read('src/platform/admin-plans-list.js');
 assert(!plansList.includes('/admin/reseller-tiers'),'Unified Plans must not link to retired reseller plan management');
 assert(!/Reseller plan availability|Create reseller plan|Manage reseller plans/.test(plansList),'Unified Plans still renders retired reseller inventory');
 assert(!plansList.includes('resellerInventorySection'),'Retired reseller inventory mutation surface remains in Plans');
+const operatorExperience=read('public/js/operator-experience.js');
+assert(!operatorExperience.includes('/admin/reseller-tiers'),'Operator experience must not inject retired reseller catalogue navigation');
 
 const compose=read('docker-compose.yml');
 assert(/automation-worker:[\s\S]*scripts\/automation-worker\.js/.test(compose),'Compose must run the dedicated automation worker');
