@@ -19,6 +19,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add db/migrations/092_admin_customer_protection_and_plan_marketing.sql src/platform/storefront.js src/platform/admin-plans.js src/platform/admin-plans-list.js src/platform/admin-plan-order.js src/platform/customer-360.js src/platform/admin-customer-360.js src/platform/customer-360-view-v2.js src/automation/customer-inactivity.js src/platform/admin-attention.js src/platform/admin-original-settings.js public/css/admin-visual-refinement.css scripts/admin-coherence-user-overrides-smoke.js package.json
+          git add src/platform/storefront.js src/platform/admin-plans.js src/platform/admin-plans-list.js src/platform/admin-plan-order.js src/platform/customer-360.js src/platform/admin-customer-360.js src/platform/customer-360-view-v2.js src/automation/customer-inactivity.js src/platform/admin-attention.js src/platform/admin-original-settings.js public/css/admin-visual-refinement.css scripts/admin-coherence-user-overrides-smoke.js package.json
+          git add -f db/migrations/092_admin_customer_protection_and_plan_marketing.sql
           git commit -m "Unify admin controls and add customer overrides"
           git push origin HEAD:fix/admin-coherence-user-overrides-plan-ux
