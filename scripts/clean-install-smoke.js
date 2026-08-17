@@ -5,8 +5,8 @@ const { query, getPool } = require('../src/db');
 const { setupReadiness } = require('../src/platform/setup-readiness');
 
 (async () => {
-    const expectedAdmins = Number.parseInt(process.env.CLEAN_INSTALL_EXPECT_ADMINS || '1', 10);
     const cleanExpected = String(process.env.CLEAN_INSTALL_EXPECTED || '').toLowerCase() === 'true';
+    const expectedAdmins = Number.parseInt(process.env.CLEAN_INSTALL_EXPECT_ADMINS || (cleanExpected ? '1' : '0'), 10);
     const settings = await query(`SELECT setting_key, setting_value FROM platform_settings`);
     const map = Object.fromEntries(settings.rows.map(row => [row.setting_key, row.setting_value]));
     const admins = await query(`SELECT COUNT(*)::int AS count FROM app_users WHERE role='admin'`);
