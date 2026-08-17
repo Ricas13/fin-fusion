@@ -53,7 +53,7 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 
 // Storefront is plan-first and keeps sold-out products visible rather than hiding them.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
-assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Reseller plans.'),'Storefront must have explicit Stremio and reseller product sections');
+assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Managed Jellyfin user plans.'),'Storefront must have explicit Stremio and reseller product sections');
 assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
 
 // Reseller storefront inventory is not the same thing as downstream seat_limit.
