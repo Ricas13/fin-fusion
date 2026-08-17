@@ -156,8 +156,8 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   await form.locator('input[name="code"]').fill(code);
   await form.locator('input[name="name"]').fill(name);
   await form.locator('textarea[name="description"]').fill('Access to a stremio addon');
-  // Customer plans are direct-customer products; the retired reseller audience is intentionally absent.
-  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose the retired reseller audience selector');
+  // Direct customer plans and monthly reseller plans are configured separately.
+  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose reseller audience routing');
   await form.locator('input[name="price"]').fill('6');
   await form.locator('select[name="currency"]').selectOption('USD');
   await form.locator('input[name="capacityLimit"]').fill('20');
@@ -238,14 +238,18 @@ async function main(){
     for(const url of ['/admin/notifications/preferences','/admin/notifications/email','/admin/notifications']){
       await assertWorkflow(page,url,['Global notifications','Email infrastructure','Delivery health']);
     }
-    const provisioningTabs=['Provisioning','Request service','Plan limits','Server migrations','Policy drift'];
+    const provisioningTabs=['Provisioning','Server migrations','Policy drift'];
     for(const [url,active] of [
       ['/admin/provisioning','Provisioning'],
-      ['/admin/request-users','Request service'],
-      ['/admin/request-plan-policy','Plan limits'],
       ['/admin/provisioning/migrations','Server migrations'],
       ['/admin/provisioning/drift','Policy drift']
     ]) await assertWorkflow(page,url,provisioningTabs,active);
+    const integrationTabs=['Integrations','Request service','Plan limits'];
+    for(const [url,active] of [
+      ['/admin/settings?section=integrations','Integrations'],
+      ['/admin/request-users','Request service'],
+      ['/admin/request-plan-policy','Plan limits']
+    ]) await assertWorkflow(page,url,integrationTabs,active);
     await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
