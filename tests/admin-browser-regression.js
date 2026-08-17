@@ -156,7 +156,9 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   await form.locator('input[name="code"]').fill(code);
   await form.locator('input[name="name"]').fill(name);
   await form.locator('textarea[name="description"]').fill('Access to a stremio addon');
-  await form.locator('select[name="audience"]').selectOption('direct');
+  // Customer plans are customer-only. Reseller products are configured separately,
+  // so the old audience selector is intentionally absent from this shared workflow.
+  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose the retired reseller audience selector');
   await form.locator('input[name="price"]').fill('6');
   await form.locator('select[name="currency"]').selectOption('USD');
   await form.locator('input[name="capacityLimit"]').fill('20');
