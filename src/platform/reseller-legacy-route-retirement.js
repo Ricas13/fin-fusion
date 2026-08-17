@@ -7,13 +7,12 @@ function message(res,text='/reseller'){return res.redirect(`${text}?message=${en
 function createResellerLegacyRouteRetirementRouter(){
   const r=express.Router();
   r.use('/reseller',gate);
+  // The active managed-user portal owns the common historical entry points
+  // (sales, ledger, credit history, customer create/renew) so it can give the
+  // most contextual redirect. This router owns only the remaining retired
+  // customer-operation URLs; each route therefore has one assembled owner.
   const retired=[
-    '/reseller/sales',
-    '/reseller/credit-history',
-    '/reseller/ledger',
     '/reseller/owner/create',
-    '/reseller/customer/create',
-    '/reseller/customer/:id/renew',
     '/reseller/customer/:id/toggle',
     '/reseller/customer/:id/end-service',
     '/reseller/customer/:id/credentials',
