@@ -18,6 +18,7 @@ const groups=Object.freeze([
 const hiddenPages=Object.freeze({
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   'my-notifications':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
+  'my-security':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-security','My Security','/admin/security'])}),
   'request-service':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
   'request-plan-limits':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['request-plan-limits','Plan limits','/admin/request-plan-policy'])}),
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
@@ -40,7 +41,7 @@ const aliases=Object.freeze({
   'reseller-settings':'settings-general',
   'stremio-settings':'settings-integrations',
   'abuse-protection':'settings-security',
-  'security':'settings-security',
+  'security':'my-security',
   'jellyfin-import':'servers',
   'invitations':'plans',
   'operations':'fleet-operations'
