@@ -3,9 +3,9 @@
 const bcrypt = require('bcryptjs');
 const { query, transaction, getPool } = require('../src/db');
 const monthly = require('../src/resellers/monthly');
+const managedUsers = require('../src/resellers/managed-users');
 const resellerJobs = require('../src/resellers/jobs');
 const accessHolds = require('../src/entitlements/access-holds');
-const portal = require('../src/platform/reseller-monthly-portal');
 const storefront = require('../src/platform/storefront');
 
 function assert(condition, message) {
@@ -13,18 +13,15 @@ function assert(condition, message) {
 }
 
 const USERNAMES = ['smoke-reseller-monthly', 'smoke-reseller-legacy'];
-const PLAN_CODE = 'smoke-reseller-child-plan';
 const TIER_CODE = 'smoke-monthly-tier';
 
 async function cleanup() {
-    await query("DELETE FROM reseller_sales WHERE reseller_id IN (SELECT r.id FROM resellers r JOIN app_users u ON u.id=r.user_id WHERE u.username=ANY($1::text[]))", [USERNAMES]);
     await query("DELETE FROM reseller_subscriptions WHERE reseller_id IN (SELECT r.id FROM resellers r JOIN app_users u ON u.id=r.user_id WHERE u.username=ANY($1::text[]))", [USERNAMES]);
     await query("DELETE FROM customers WHERE reseller_id IN (SELECT r.id FROM resellers r JOIN app_users u ON u.id=r.user_id WHERE u.username=ANY($1::text[]))", [USERNAMES]);
     await query("DELETE FROM reseller_tier_provider_prices WHERE tier_id IN (SELECT id FROM reseller_tiers WHERE code=$1)", [TIER_CODE]);
     await query("DELETE FROM reseller_tiers WHERE code=$1", [TIER_CODE]);
     await query("DELETE FROM resellers WHERE user_id IN (SELECT id FROM app_users WHERE username=ANY($1::text[]))", [USERNAMES]);
     await query("DELETE FROM app_users WHERE username=ANY($1::text[])", [USERNAMES]);
-    await query('DELETE FROM plans WHERE code=$1', [PLAN_CODE]);
 }
 
 async function createReseller(username) {
@@ -36,27 +33,25 @@ async function createReseller(username) {
     });
 }
 
-async function createActiveCustomer(resellerId, planId, name, owner = false) {
-    return transaction(async client => {
-        const customer = await client.query(`INSERT INTO customers(reseller_id,display_name,is_reseller_owner) VALUES($1,$2,$3) RETURNING *`, [resellerId, name, owner]);
-        if (owner) await client.query('UPDATE resellers SET own_customer_id=$2 WHERE id=$1', [resellerId, customer.rows[0].id]);
-        await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days')`, [customer.rows[0].id, planId]);
-        return customer.rows[0];
-    });
+async function createManagedCustomer(resellerId, name) {
+    return (await query(`
+        INSERT INTO customers(reseller_id,display_name,reseller_managed,note)
+        VALUES($1,$2,TRUE,'Managed reseller smoke user')
+        RETURNING *
+    `, [resellerId, name])).rows[0];
 }
 
 async function main() {
     await cleanup();
     try {
-        const plan = (await query(`
-            INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,allow_remuxing,allow_remote_access)
-            VALUES($1,'Smoke reseller customer plan','reseller','month',30,600,'GBP',3,'premium',TRUE,TRUE,FALSE,TRUE)
-            RETURNING *
-        `, [PLAN_CODE])).rows[0];
-
         const tier = (await query(`
-            INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,active,visible,sort_order)
-            VALUES($1,'Smoke Business','Monthly recurring reseller tier',6000,'GBP',2,TRUE,TRUE,10)
+            INSERT INTO reseller_tiers(
+                code,name,description,monthly_price_minor,currency,seat_limit,
+                capacity_limit,streams,allow_video_transcoding,library_access_mode,
+                active,visible,sort_order
+            )
+            VALUES($1,'Smoke Business','Monthly managed Jellyfin seats',6000,'GBP',2,
+                   10,3,FALSE,'include',TRUE,TRUE,10)
             RETURNING *
         `, [TIER_CODE])).rows[0];
         await query(`INSERT INTO reseller_tier_provider_prices(tier_id,provider,external_id) VALUES($1,'stripe','price_smoke_monthly')`, [tier.id]);
@@ -69,26 +64,33 @@ async function main() {
         const entitlement = await monthly.resellerEntitlement(reseller.id);
         assert(entitlement.active && Number(entitlement.row.seat_limit) === 2, 'Active reseller tier/seat allowance not resolved');
 
-        const owner = await createActiveCustomer(reseller.id, plan.id, 'Smoke owner', true);
-        const child = await createActiveCustomer(reseller.id, plan.id, 'Smoke child');
-        assert(await monthly.seatUsage(reseller.id) === 2, 'Owner + child did not consume two active reseller seats');
+        const first = await createManagedCustomer(reseller.id, 'Smoke managed one');
+        const second = await createManagedCustomer(reseller.id, 'Smoke managed two');
+        assert(await managedUsers.seatUsage(reseller.id) === 2, 'Two managed Jellyfin users did not consume two seats');
 
-        const third = (await query(`INSERT INTO customers(reseller_id,display_name) VALUES($1,'Smoke third') RETURNING id`, [reseller.id])).rows[0];
         let full = false;
         try {
-            await transaction(client => monthly.assertSeatAvailable(client, reseller.id, third.id));
+            await transaction(client => managedUsers.assertSeatAvailable(client, reseller.id));
         } catch (error) {
-            full = /tier is full/i.test(error.message);
+            full = /plan is full/i.test(error.message);
         }
-        assert(full, 'Seat-cap enforcement allowed a third active account into a two-seat tier');
-        await query('DELETE FROM customers WHERE id=$1', [third.id]);
+        assert(full, 'Managed-seat enforcement allowed a third user into a two-seat reseller plan');
 
-        await query(`INSERT INTO reseller_sales(reseller_id,customer_id,plan_id,amount_minor,currency,payment_method,service_ends_at) VALUES($1,$2,$3,650,'GBP','Bank transfer',NOW()+INTERVAL '30 days')`, [reseller.id, child.id, plan.id]);
-        const stats = await portal.analytics(reseller.id, { start: new Date(Date.now() - 86400000), end: new Date(Date.now() + 1000), days: 1 });
-        assert(Number(stats.primary.amount_minor) === 650 && Number(stats.primary.sales) === 1, 'Reseller downstream revenue analytics are incorrect');
+        await accessHolds.addHold({
+            customerId: second.id,
+            type: 'reseller_manual',
+            sourceKey: reseller.id,
+            reason: 'Smoke reseller suspension',
+            metadata: { resellerId: reseller.id }
+        });
+        assert(await managedUsers.seatUsage(reseller.id) === 2, 'Suspending a managed user incorrectly released its reseller seat');
 
-        const section = storefront.resellerSection([{ ...tier, provider_prices: [{ provider: 'stripe', active: true }] }], 'support@example.com');
-        assert(section.includes('Smoke Business') && section.includes('2 active customer entitlements') && section.includes('/ month'), 'Public reseller tier card did not render dynamically through the canonical storefront');
+        const section = storefront.resellerSection([{ ...tier, inventory: { used: 1, limit: 10, remaining: 9, soldOut: false } }], 'support@example.com');
+        assert(section.includes('Smoke Business'), 'Public reseller plan card did not render');
+        assert(section.includes('2 managed Jellyfin users'), 'Reseller storefront did not describe the managed-user allowance');
+        assert(section.includes('3 concurrent streams per managed user'), 'Reseller storefront did not expose the per-user stream limit');
+        assert(section.includes('Video transcoding disabled'), 'Reseller storefront did not expose the plan transcoding policy');
+        assert(section.includes('/ month'), 'Reseller storefront did not show monthly billing');
 
         const mapping = await monthly.providerMapping(tier.id, 'stripe');
         assert(mapping?.external_id === 'price_smoke_monthly', 'Recurring Stripe tier mapping did not resolve');
@@ -96,54 +98,35 @@ async function main() {
         let archiveBlocked = false;
         try { await query('UPDATE reseller_tiers SET active=FALSE WHERE id=$1', [tier.id]); }
         catch (error) { archiveBlocked = /active subscriptions/i.test(error.message); }
-        assert(archiveBlocked, 'A tier with a live paid reseller subscription could be archived');
+        assert(archiveBlocked, 'A reseller plan with a live paid subscription could be archived');
 
         await query(`UPDATE reseller_subscriptions SET status='cancelled',cancel_at_period_end=TRUE WHERE id=$1`, [manual.id]);
         const paidThrough = (await query('SELECT status,cancel_at_period_end FROM reseller_subscriptions WHERE id=$1', [manual.id])).rows[0];
         assert(paidThrough.status === 'active' && paidThrough.cancel_at_period_end === true, 'Paid-through cancellation revoked reseller entitlement early');
 
-        await accessHolds.addHold({
-            customerId: child.id,
-            type: 'reseller_manual',
-            sourceKey: reseller.id,
-            reason: 'Smoke manual reseller suspension',
-            metadata: { resellerId: reseller.id }
-        });
-        assert(await monthly.seatUsage(reseller.id) === 2, 'Suspending customer access incorrectly freed a commercially occupied reseller seat');
-        const heldThird = (await query(`INSERT INTO customers(reseller_id,display_name) VALUES($1,'Smoke held third') RETURNING id`, [reseller.id])).rows[0];
-        let heldSeatFreed = false;
-        try {
-            await transaction(client => monthly.assertSeatAvailable(client, reseller.id, heldThird.id));
-            heldSeatFreed = true;
-        } catch (error) {
-            if (!/tier is full/i.test(error.message)) throw error;
-        }
-        assert(!heldSeatFreed, 'A temporary access hold allowed the reseller to recycle a still-entitled seat');
-        await query('DELETE FROM customers WHERE id=$1', [heldThird.id]);
-
         await query(`UPDATE reseller_subscriptions SET status='expired',cancel_at_period_end=FALSE,current_period_end=NOW()-INTERVAL '1 minute' WHERE id=$1`, [manual.id]);
         await monthly.reconcileEstate(reseller.id);
 
-        const ownerHolds = await accessHolds.activeHolds(owner.id);
-        const childHolds = await accessHolds.activeHolds(child.id);
-        assert(ownerHolds.some(h => h.hold_type === 'reseller_subscription' && String(h.source_key) === String(reseller.id)), 'Expired reseller subscription did not add the estate hold to owner access');
-        assert(childHolds.some(h => h.hold_type === 'reseller_manual' && String(h.source_key) === String(reseller.id)), 'Estate suspension overwrote the independent manual customer hold');
-        assert(childHolds.some(h => h.hold_type === 'reseller_subscription' && String(h.source_key) === String(reseller.id)), 'Estate suspension did not coexist with the manual customer hold');
+        const firstHolds = await accessHolds.activeHolds(first.id);
+        const secondHolds = await accessHolds.activeHolds(second.id);
+        assert(firstHolds.some(h => h.hold_type === 'reseller_subscription' && String(h.source_key) === String(reseller.id)), 'Expired reseller subscription did not suspend a managed user');
+        assert(secondHolds.some(h => h.hold_type === 'reseller_manual' && String(h.source_key) === String(reseller.id)), 'Estate suspension overwrote the independent manual managed-user hold');
+        assert(secondHolds.some(h => h.hold_type === 'reseller_subscription' && String(h.source_key) === String(reseller.id)), 'Estate suspension did not coexist with the manual managed-user hold');
 
         await query(`UPDATE reseller_subscriptions SET status='active',current_period_end=NOW()+INTERVAL '30 days' WHERE id=$1`, [manual.id]);
         await monthly.reconcileEstate(reseller.id);
-        const ownerRestored = await accessHolds.activeHolds(owner.id);
-        const childStillHeld = await accessHolds.activeHolds(child.id);
-        assert(!ownerRestored.some(h => h.hold_type === 'reseller_subscription'), 'Restored reseller payment did not release the estate-created hold');
-        assert(childStillHeld.length === 1 && childStillHeld[0].hold_type === 'reseller_manual', 'Payment restoration incorrectly cleared or duplicated an independent manual hold');
+        const firstRestored = await accessHolds.activeHolds(first.id);
+        const secondStillHeld = await accessHolds.activeHolds(second.id);
+        assert(!firstRestored.some(h => h.hold_type === 'reseller_subscription'), 'Restored reseller payment did not release the estate-created hold');
+        assert(secondStillHeld.length === 1 && secondStillHeld[0].hold_type === 'reseller_manual', 'Payment restoration incorrectly cleared or duplicated an independent managed-user hold');
 
-        // Deployment safety: a legacy reseller that has never entered the monthly
-        // subscription model must not be touched by the recurring monthly job.
-        const legacyCustomer = (await query(`INSERT INTO customers(reseller_id,display_name) VALUES($1,'Legacy child') RETURNING *`, [legacy.reseller.id])).rows[0];
-        await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days')`, [legacyCustomer.id, plan.id]);
+        const legacyUser = await createManagedCustomer(legacy.reseller.id, 'Legacy managed user');
         await resellerJobs.reconcileSubscribedEstates();
-        const legacyHolds = await accessHolds.activeHolds(legacyCustomer.id);
+        const legacyHolds = await accessHolds.activeHolds(legacyUser.id);
         assert(legacyHolds.length === 0, 'Monthly reseller deployment suspended a legacy reseller with no monthly subscription record');
+
+        const legacySales = await query(`SELECT COUNT(*)::int n FROM reseller_sales WHERE reseller_id=$1`, [reseller.id]);
+        assert(Number(legacySales.rows[0].n) === 0, 'Managed-seat workflow unexpectedly wrote a downstream reseller sale');
 
         console.log('monthly reseller tiers smoke: ok');
     } finally {
