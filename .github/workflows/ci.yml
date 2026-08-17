@@ -88,10 +88,6 @@ jobs:
             if (Number(free.price_minor) !== 0) throw new Error('Permanent free tier must remain zero-priced');
             if (Number(free.capacity_limit) !== 0) throw new Error('Fresh permanent free tier must start with zero configured spots');
             if (free.billing_interval === 'trial') throw new Error('Permanent free tier must not be a trial plan');
-            const freePrices = await query(`
-              SELECT currency,price_minor,active FROM plan_prices
-              WHERE plan_id=$1 ORDER BY currency
-            `, [free.id].filter(Boolean));
             const clean = await query("SELECT setting_value FROM platform_settings WHERE setting_key='installation'");
             if (clean.rows[0]?.setting_value?.cleanInstall !== true) throw new Error('Clean-install marker missing');
             const platform = await query("SELECT setting_value FROM platform_settings WHERE setting_key='platform'");
@@ -150,7 +146,7 @@ jobs:
           for (const file of [
             'views/auth/staff-login.ejs','views/auth/2fa-challenge.ejs','views/auth/2fa-setup.ejs',
             'views/auth/recovery-codes.ejs','views/auth/message.ejs','views/admin/security.ejs',
-            'views/admin/security-password.ejs','views/admin/security-recovery.ejs'
+            'views/auth/security-password.ejs','views/auth/security-recovery.ejs'
           ]) ejs.compile(fs.readFileSync(file,'utf8'));
           NODE
 
