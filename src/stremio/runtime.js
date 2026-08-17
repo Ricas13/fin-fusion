@@ -7,6 +7,7 @@ const operations=require('../platform/operations-settings');
 const entitlements=require('./entitlements');
 const jellyfin=require('./jellyfin-runtime');
 const sourcePool=require('./source-pool');
+const sourcePlayback=require('./source-playback');
 const runtimeSettings=require('./runtime-settings');
 
 const manifestLimit=routeRateLimit.middleware({scope:'stremio-manifest',max:60,windowSeconds:60});
@@ -42,7 +43,7 @@ function createStremioRuntimeRouter(){
     try{
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).end();
       const source=await sourcePool.authorizedSourceForEntitlement(e,req.params.sourceId);if(!source)return res.status(404).end();
-      opened=await sourcePool.openPlayback(source,req.params.itemId,req.params.mediaSourceId,req.get('range')||'');
+      opened=await sourcePlayback.open(source,req.params.itemId,req.params.mediaSourceId,req.get('range')||'');
       const upstream=opened.response,status=Number(upstream.statusCode||502);
       if(status===401||status===403){await query(`UPDATE stremio_sources SET auth_state='reconnect_required',last_error='Jellyfin authentication expired. Reconnect this Stremio source.',updated_at=NOW() WHERE id=$1`,[source.id]).catch(()=>{});upstream.destroy();return res.status(502).end();}
       if(status<200||status>=400){upstream.destroy();return res.status(502).end();}
