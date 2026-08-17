@@ -58,9 +58,10 @@ mustNotContain('src/platform/bulk-operations.js',/reseller_assign|reseller_detac
 // Existing subscription acquisition paths must survive service-credit extension.
 for(const source of ['manual','reseller_credit','stripe','paypal','migration','free_claim','reseller_sale','admin_grant','invitation','service_credit'])mustContain('db/migrations/090_preserve_subscription_sources_with_service_credit.sql',`'${source}'`);
 
-// Permanent free tier and explicit storefront ordering remain product invariants.
+// Free Access is permanent as a product rule, but customer-facing copy stays simple.
 mustContain('src/platform/storefront.js','freeTierPanel');
-mustContain('src/platform/storefront.js','Permanent free tier');
+mustContain('src/platform/storefront.js','Free access');
+mustNotContain('src/platform/storefront.js','Permanent free tier');
 mustContain('src/platform/admin-plan-order.js','data-order-list');
 mustContain('public/js/admin-plan-order.js','dragstart');
 mustContain('db/migrations/085_canonical_free_tier.sql','plans_single_free_tier_idx');
