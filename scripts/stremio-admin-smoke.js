@@ -3,47 +3,43 @@
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
-
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
-const application=read('src/application.js');
+
 const router=read('src/platform/router.js');
 const nav=read('src/platform/admin-nav.js');
 const settings=read('src/platform/admin-original-settings.js');
-const page=read('src/platform/admin-stremio.js');
+const legacy=read('src/platform/admin-stremio.js');
+const sources=read('src/platform/admin-stremio-sources.js');
+const delivery=read('src/platform/admin-plan-delivery.js');
+const sourcePool=read('src/stremio/source-pool.js');
+const sourceClient=read('src/stremio/source-client.js');
+const sourceIndex=read('src/stremio/source-index.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
-const migration=read('db/migrations/066_stremio_service_foundation.sql');
-const runtimeMigration=read('db/migrations/069_stremio_runtime.sql');
-const runtime=read('src/stremio/runtime.js');
-const foundation=read('src/stremio/foundation.js');
+const migration=read('db/migrations/082_stremio_source_catalog.sql');
 
-assert(router.includes("createAdminStremioRouter"),'Stremio admin router must be mounted');
-assert(application.includes('createStremioRuntimeRouter')&&application.includes('app.use(createStremioRuntimeRouter())'),'Stremio protocol runtime must have one canonical top-level owner');
-assert(!router.includes('createStremioRuntimeRouter'),'Platform router must not duplicate the top-level Stremio protocol owner');
-assert(nav.includes("'stremio-settings':'settings-integrations'"),'Stremio settings must map into the canonical Integrations settings group');
-assert(settings.includes('href="/admin/settings/stremio"')&&settings.includes('<strong>Stremio</strong>'),'Stremio must be discoverable from Settings → Integrations');
-assert(page.includes('Runtime disabled.')&&page.includes('Runtime ready.')&&page.includes('fail-closed'),'Admin page must surface explicit fail-closed/runtime-ready states');
-assert(page.includes("action=\"/admin/settings/stremio/runtime\"")&&page.includes('Enable runtime')&&page.includes('Disable runtime'),'Runtime enablement must be managed from the Stremio admin page');
-assert(page.includes('Configure the encryption key')&&page.includes('The encryption key itself never appears in the browser.'),'Setup guide must distinguish the secret key from the browser-managed runtime switch');
-assert(!page.includes('name="STREMIO_JELLYFIN_TOKEN_KEY"'),'Dedicated token encryption key must never become a browser-editable form field');
-assert(runtimeSettings.includes("KEY='stremio_runtime_v1'")&&runtimeSettings.includes('platform_settings')&&runtimeSettings.includes('setEnabled'),'Runtime state must persist in platform settings');
-assert(runtimeSettings.includes('eligibleServers<1')&&runtimeSettings.includes('readyIndexes<1'),'Runtime enablement must fail closed until delivery and index prerequisites are ready');
-assert(runtimeSettings.includes("'admin.stremio.runtime.update'"),'Runtime changes must be audited');
-assert(foundation.includes('STREMIO_JELLYFIN_TOKEN_KEY')&&foundation.includes('runtimeSettings.enabled()')&&foundation.includes('runtimeReady'),'Runtime readiness must require both the browser-managed switch and dedicated restricted-token key');
-assert(runtime.includes('runtimeSettings.ensureLoaded()')&&runtime.includes("if(!enabled())"),'Protocol surface must load browser-managed runtime state and fail closed while disabled');
-assert(page.includes("status IN ('pending','active','suspended')"),'Server eligibility removal must protect all assigned non-revoked Stremio entitlements');
-assert(page.includes("'admin.stremio.server_eligibility'"),'Server eligibility changes must be audited');
-assert(page.includes("routeRateLimit.middleware({scope:'admin-stremio-settings'"),'Stremio admin mutations must use the shared persistent rate limiter');
-assert(/router\.post\('\/admin\/settings\/stremio\/servers\/:id',stremioMutationLimit,/.test(page),'Server eligibility mutation must apply the Stremio rate limiter');
-assert(/router\.post\('\/admin\/settings\/stremio\/runtime',stremioMutationLimit,/.test(page),'Runtime mutation must apply the Stremio rate limiter');
-assert(migration.includes("service_type IN ('jellyfin','stremio','bundle')"),'Plan service type constraint is missing');
-assert(migration.includes('token_hash TEXT'),'Stremio entitlements must store a token hash field');
-assert(!migration.includes('token_plaintext'),'Stremio schema must not introduce plaintext token storage');
-assert(migration.includes('service_type_snapshot'),'Subscription service type must be snapshotted');
-assert(migration.includes('enforce_stremio_entitlement_integrity'),'Database must enforce Stremio cross-record integrity');
-assert(migration.includes('Stremio entitlement customer does not own subscription'),'Subscription/customer ownership mismatch must be rejected');
-assert(migration.includes('Stremio Jellyfin account belongs to another customer'),'Jellyfin account/customer ownership mismatch must be rejected');
-assert(migration.includes('Stremio Jellyfin account does not belong to assigned server'),'Jellyfin account/server mismatch must be rejected');
-assert(runtimeMigration.includes('Active Stremio entitlement is incomplete'),'Runtime migration must require a complete active entitlement including restricted Jellyfin access');
-assert(runtimeMigration.includes("'stremio_internal'")&&runtimeMigration.includes('Stremio entitlement requires a dedicated internal Jellyfin account'),'Runtime migration must require and explicitly reject non-internal Jellyfin identities');
+assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Servers-owned Stremio Sources router must be mounted');
+assert(nav.includes("['stremio-sources','Stremio Sources','/admin/servers/stremio']"),'Stremio Sources must be a Servers navigation destination');
+assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'"),'Legacy Stremio navigation must resolve to Servers → Stremio Sources');
+assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio Sources workflow');
+assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'Legacy Stremio settings URL must redirect to Stremio Sources');
 
-console.log('stremio admin runtime smoke: ok');
+for(const phrase of ['Add Jellyfin source','Connect & discover libraries','Libraries to index','Sync now','Incremental every 6 hours','full reconciliation','Password is not stored'])assert(sources.includes(phrase),`Stremio Sources UI missing: ${phrase}`);
+assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&sources.includes('name="password"'),'External source form must use Jellyfin URL + ordinary user credentials');
+assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfinUserId"'),'Operators must not manually paste Jellyfin access tokens/user IDs');
+assert(sources.includes('name="libraryId"'),'Source detail must expose explicit library selection');
+assert(sources.includes("routeRateLimit.middleware({scope:'admin-stremio-sources'"),'Source mutations must use the persistent admin rate limiter');
+assert(sourceClient.includes('/Users/AuthenticateByName')&&sourceClient.includes('/Views?IncludeExternalContent=false'),'Source client must use normal Jellyfin user authentication and discover visible libraries');
+assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'")&&sourceClient.includes("LEGACY_TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY'"),'External tokens must use the normal Jellyfin encryption key while retaining legacy decrypt compatibility');
+assert(!sourceClient.includes('encryptWithEnv(password')&&!sourcePool.includes('password_encrypted'),'Jellyfin source passwords must never be persisted');
+
+assert(sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'Index policy must be six-hour incremental plus seven-day full reconciliation');
+assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'Indexing must be incremental and low-footprint');
+assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(explicit)return mapped.rows'),'Explicit plan mappings must be strict source allow-lists');
+assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own source selection');
+assert(delivery.includes('Lower priority numbers are tried first'),'Plan UI must explain source ordering');
+
+for(const table of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources'])assert(migration.includes(`CREATE TABLE IF NOT EXISTS ${table}`),`Migration missing ${table}`);
+assert(migration.includes('either selected shared sources or a managed Jellyfin delivery identity'),'Entitlement integrity must support source-only and legacy managed delivery');
+assert(runtimeSettings.includes('externalSources')&&runtimeSettings.includes('externalReadyIndexes')&&runtimeSettings.includes('eligibleSources'),'Runtime readiness must be based on usable Stremio sources');
+
+console.log('stremio admin sources smoke: ok');

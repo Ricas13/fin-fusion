@@ -1,4 +1,4 @@
-# CAPTaINFiN Admin UX, Documentation & Stremio Foundation
+# CAPTAiNFiN Admin UX, Documentation & Stremio Foundation
 
 This document tracks the implementation scope for draft PR #70.
 

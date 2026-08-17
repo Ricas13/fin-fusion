@@ -2,7 +2,7 @@
 
 ## Start here
 
-* [CAPTaINFiN Guide](README.md)
+* [CAPTAiNFiN Guide](README.md)
 * [Getting started](getting-started.md)
 * [Subscriptions and plans](subscriptions-and-plans.md)
 

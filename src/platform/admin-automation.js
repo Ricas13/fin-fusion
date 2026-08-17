@@ -10,11 +10,11 @@ const runtimeSettings = require('./runtime-settings');
 const LABELS = {
     health: ['Jellyfin health', 'Checks configured servers and updates health status.'],
     entitlements: ['Entitlements', 'Expires due subscriptions and reconciles active customer access.'],
-    policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTaINFiN policy with live managed Jellyfin users.'],
+    policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTAiNFiN policy with live managed Jellyfin users.'],
     bulk_jobs: ['Bulk operations', 'Processes queued bulk customer actions.'],
     stale_reclaim: ['Stale job reclaim', 'Recovers abandoned running bulk items safely.'],
     email_outbox: ['Transactional email', 'Delivers due messages from the encrypted outbox.'],
-    request_users: ['Request users', 'Synchronises CAPTaINFiN customer access to Seerr/Overseerr.'],
+    request_users: ['Request users', 'Synchronises CAPTAiNFiN customer access to Seerr/Overseerr.'],
     billing: ['Customer billing', 'Re-verifies recurring direct-customer provider subscriptions.'],
     plan_changes: ['Customer plan changes', 'Applies any provider-confirmed or due direct-customer plan transitions.'],
     reseller_billing: ['Reseller billing', 'Re-verifies Stripe/PayPal reseller subscriptions and applies due tier changes.'],

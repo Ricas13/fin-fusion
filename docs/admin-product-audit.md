@@ -1,4 +1,4 @@
-# CAPTaINFiN admin product audit
+# CAPTAiNFiN admin product audit
 
 This audit treats the administrator UI as a product, not just a set of routes.
 
@@ -20,6 +20,6 @@ Every visible administrator destination is reviewed against three questions:
 
 ## Browser coverage
 
-The `Admin Browser Regression` workflow boots a clean PostgreSQL database, creates a real administrator account, starts CAPTaINFiN, signs in with Chromium, crawls the admin surface, captures page screenshots/inventory, tests desktop/mobile overflow, checks dashboard grid row coverage, verifies workflow-tab stability, and performs safe My Profile email/reporting-currency form submissions.
+The `Admin Browser Regression` workflow boots a clean PostgreSQL database, creates a real administrator account, starts CAPTAiNFiN, signs in with Chromium, crawls the admin surface, captures page screenshots/inventory, tests desktop/mobile overflow, checks dashboard grid row coverage, verifies workflow-tab stability, and performs safe My Profile email/reporting-currency form submissions.
 
 External integrations and destructive/operational actions are intentionally not blindly executed by the crawler. Their route wiring remains covered by the static visible-action sweep and their behavior by dedicated integration/safety suites.

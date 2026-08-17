@@ -73,7 +73,7 @@ jobs:
           npm run auth:bootstrap
       - name: Audit mounted admin route ownership
         run: node scripts/admin-route-ownership-audit.js
-      - name: Start CAPTaINFiN
+      - name: Start CAPTAiNFiN
         run: |
           node src/application.js > /tmp/captainfin-browser.log 2>&1 &
           echo $! > /tmp/captainfin-browser.pid
@@ -86,7 +86,17 @@ jobs:
       - name: Crawl authenticated admin UI in Chromium
         run: node tests/admin-browser-regression.js
       - name: Verify admin information architecture in Chromium
-        run: node tests/admin-information-architecture-regression.js
+        shell: bash
+        run: |
+          set +e
+          OUTPUT="$(node tests/admin-information-architecture-regression.js 2>&1)"
+          STATUS=$?
+          printf '%s\n' "$OUTPUT"
+          if [ "$STATUS" -ne 0 ]; then
+            DETAIL="$(printf '%s' "$OUTPUT" | tail -c 2500 | tr '\n' ' ')"
+            echo "::error title=Admin IA regression::$DETAIL"
+            exit "$STATUS"
+          fi
       - name: Simulate admin to customer activation and sign-in
         run: node tests/admin-customer-activation-journey.js
       - name: Simulate deferred Jellyfin provisioning after activation

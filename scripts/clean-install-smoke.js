@@ -25,7 +25,23 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
     const map = Object.fromEntries(settings.rows.map(item => [item.setting_key, item.setting_value]));
 
     if (expectClean) {
-        assert.strictEqual(Number(row.plans), 0, 'fresh install must not seed commercial/trial plans');
+        assert.strictEqual(Number(row.plans), 1, 'fresh install must contain exactly the permanent Free Access plan');
+        const free = await query(`
+            SELECT id,code,billing_interval,price_minor,active,visible,capacity_limit,is_free_tier
+            FROM plans
+        `);
+        assert.strictEqual(free.rowCount, 1, 'fresh install must contain exactly one plan');
+        const freePlan = free.rows[0];
+        assert.strictEqual(freePlan.is_free_tier, true, 'fresh install plan must be the canonical free tier');
+        assert.strictEqual(Number(freePlan.price_minor), 0, 'canonical free tier must be zero-priced');
+        assert.strictEqual(freePlan.active, true, 'canonical free tier must remain active');
+        assert.strictEqual(freePlan.visible, true, 'canonical free tier must remain visible');
+        assert.strictEqual(Number(freePlan.capacity_limit), 0, 'canonical free tier must start closed until the operator opens capacity');
+        assert.notStrictEqual(freePlan.billing_interval, 'trial', 'canonical free tier must not be a trial');
+        const freePrices = await query(`SELECT currency,price_minor,active FROM plan_prices WHERE plan_id=$1 ORDER BY currency`, [freePlan.id]);
+        assert.deepStrictEqual(freePrices.rows.map(item => String(item.currency).trim()), ['EUR','GBP','USD'], 'canonical free tier must expose GBP/USD/EUR price variants');
+        assert(freePrices.rows.every(item => Number(item.price_minor) === 0 && item.active === true), 'all canonical free-tier currency variants must remain active and zero-priced');
+
         assert.strictEqual(Number(row.servers), 0, 'fresh install must not seed Jellyfin servers');
         assert.strictEqual(Number(row.customers), 0, 'fresh install must not seed customers');
         assert.strictEqual(Number(row.resellers), 0, 'fresh install must not seed resellers');
@@ -48,11 +64,13 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
 
         const readiness = await setupReadiness();
         assert.strictEqual(readiness.cleanInstall, true);
-        assert.strictEqual(readiness.counts.plans, 0);
+        assert.strictEqual(readiness.counts.plans, 1, 'setup readiness must count the permanent free tier');
+        assert.strictEqual(readiness.counts.freeTiers, 1, 'setup readiness must recognise exactly one permanent free tier');
+        assert.strictEqual(readiness.counts.configuredCustomerPlans, 0, 'system-created Free Access must not make the customer catalogue look configured');
         assert.strictEqual(readiness.counts.servers, 0);
         assert.strictEqual(readiness.totalCount, 9, 'setup readiness checklist contract changed; update clean-install expectations intentionally');
         assert(readiness.checklist.find(item => item.key === 'jellyfin' && !item.configured));
-        assert(readiness.checklist.find(item => item.key === 'plans' && !item.configured));
+        assert(readiness.checklist.find(item => item.key === 'plans' && !item.configured && /Free Access/.test(item.detail)));
         assert(readiness.checklist.find(item => item.key === 'direct-payments' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'reseller-payments' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'requests' && !item.configured));

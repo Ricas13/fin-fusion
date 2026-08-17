@@ -140,7 +140,7 @@ async function main() {
         const migrations = await verify.query(`SELECT to_regclass('public.schema_migrations') present`);
         await verify.end();
         if (Number(schema.rows[0]?.n || 0) < 5 || !migrations.rows[0]?.present) {
-            throw new Error('Restored database did not contain the expected CAPTaINFiN schema.');
+            throw new Error('Restored database did not contain the expected CAPTAiNFiN schema.');
         }
         const note = `Full temporary restore succeeded into ${databaseName}; ${schema.rows[0].n} public tables detected.`;
         await mark(runId, true, note);

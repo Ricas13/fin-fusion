@@ -42,7 +42,21 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Syntax and lifecycle boundaries
-        run: npm run check:fast
+        id: fastcheck
+        shell: bash
+        run: |
+          set +e
+          npm run check:fast 2>&1 | tee /tmp/check-fast.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+      - name: Upload fast-check failure output
+        if: failure() && steps.fastcheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-fast-failure
+          path: /tmp/check-fast.log
+          if-no-files-found: error
+          retention-days: 7
       - name: Apply migrations
         run: npm run db:migrate
       - name: Race transaction invariants

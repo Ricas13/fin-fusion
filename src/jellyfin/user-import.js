@@ -159,7 +159,7 @@ async function assertRemoteUnmanaged(client, serverId, user) {
     `, [serverId, user.jellyfin_user_id, user.jellyfin_username]);
     if (!existing.rowCount) return;
     const row = existing.rows[0];
-    if (row.jellyfin_user_id === user.jellyfin_user_id) throw new Error(`${user.jellyfin_username} is already managed by CAPTaINFiN.`);
+    if (row.jellyfin_user_id === user.jellyfin_user_id) throw new Error(`${user.jellyfin_username} is already managed by CAPTAiNFiN.`);
     throw new Error(`${user.jellyfin_username} matches a managed account whose Jellyfin ID changed. Use Rebind ID instead of importing a duplicate.`);
 }
 

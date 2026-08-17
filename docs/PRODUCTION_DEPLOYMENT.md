@@ -4,7 +4,7 @@ This is the supported deployment/upgrade path for the Docker Compose installatio
 
 The important safety rule is: **do not recreate the long-running containers until migrations and runtime database-role bootstrap have completed successfully.** Since the runtime-role isolation work, the application, automation, activity and backup processes use separate PostgreSQL identities rather than the database owner login.
 
-## Normal CAPTaINFiN production update
+## Normal CAPTAiNFiN production update
 
 On the production host:
 
@@ -46,7 +46,7 @@ If a deployment step fails, the detached process exits non-zero and the persiste
 
 ## First deployment after runtime-role isolation
 
-Older CAPTaINFiN `.env` files may have only the owner `DATABASE_URL` and `ACTIVITY_DATABASE_URL`. The deployment helper fills the five current runtime URLs when they are missing:
+Older CAPTAiNFiN `.env` files may have only the owner `DATABASE_URL` and `ACTIVITY_DATABASE_URL`. The deployment helper fills the five current runtime URLs when they are missing:
 
 ```text
 APP_DATABASE_URL
@@ -78,11 +78,22 @@ If Node is not installed on the host, the full production deployment script auto
 
 ## Stremio rollout
 
-A normal deployment should configure the dedicated `STREMIO_JELLYFIN_TOKEN_KEY` as a 32-byte deployment secret, but **runtime enable/disable is managed in the browser** from **Settings → Integrations → Stremio**.
+Normal external Stremio delivery is configured in the browser from **Servers → Stremio Sources**. No Stremio-specific environment key is required for an external-source-only plan: source Jellyfin session tokens use the existing `JELLYFIN_ENCRYPTION_KEY`, which is already a required production secret.
 
-After deployment, keep the browser runtime switch disabled while preparing Stremio. Configure an eligible delivery server and build a ready media index, then use **Enable runtime** on the Stremio settings page. The server refuses that enable action unless the secret key, at least one healthy eligible delivery server and at least one ready non-empty media index are all present.
+After deployment:
 
-`STREMIO_RUNTIME_ENABLED` remains only as an upgrade-compatibility fallback for older installations. If an existing deployment inherited `true`, the Stremio page offers **Manage runtime here**; saving there moves runtime ownership into CAPTaINFiN platform settings. New deployments should not use the environment flag as their normal runtime control.
+1. Add a dedicated normal-user Jellyfin account under **Servers → Stremio Sources**.
+2. Select the Movie/TV libraries CAPTAiNFiN is allowed to index.
+3. Wait for the initial source index to show **Ready**.
+4. Enable the Stremio runtime from the same page.
+5. Open the Stremio/bundle plan under **Commerce → Plans → Delivery** and explicitly select the allowed source(s).
+6. Test with a controlled customer before publishing the product.
+
+External source passwords are never stored. They are used only to obtain a Jellyfin user session, whose token is encrypted with `JELLYFIN_ENCRYPTION_KEY`. Incremental indexing runs every six hours, with a full reconciliation at least every seven days.
+
+External-source playback is proxied through CAPTAiNFiN so the upstream Jellyfin user token is never sent to a subscriber's Stremio client. Plan host bandwidth accordingly.
+
+`STREMIO_JELLYFIN_TOKEN_KEY` is retained for the legacy CAPTAiNFiN-managed Jellyfin delivery path that creates hidden restricted Jellyfin users. External-source-only plans do not require it. `STREMIO_RUNTIME_ENABLED` remains only as an upgrade-compatibility fallback for installations that have not yet saved the browser-managed runtime setting.
 
 Deploying the code does not by itself make Stremio products sale-ready.
 

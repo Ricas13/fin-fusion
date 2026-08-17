@@ -90,7 +90,7 @@ async function loop() {
     await heartbeat();
     heartbeatTimer = setInterval(() => heartbeat({ draining: stopping }).catch(error => console.error('Automation heartbeat failed:', error.message)), HEARTBEAT_MS);
     heartbeatTimer.unref?.();
-    console.log(`CAPTaINFiN automation worker ready; poll=${POLL_MS}ms concurrency=${MAX_CONCURRENCY}`);
+    console.log(`CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms concurrency=${MAX_CONCURRENCY}`);
     while (!stopping) {
         try {
             await heartbeat();

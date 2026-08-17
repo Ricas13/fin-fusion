@@ -1,6 +1,6 @@
 BEGIN;
 
--- Explicitly track the account CAPTaINFiN should consider the customer's
+-- Explicitly track the account CAPTAiNFiN should consider the customer's
 -- current Jellyfin home. Historical installs may have multiple disabled
 -- accounts from plan/server changes; choose the newest enabled/non-disabled
 -- account as the initial primary without deleting anything.

@@ -10,6 +10,10 @@ async function main(){
  try{
   await client.query('BEGIN');
   const suffix=crypto.randomBytes(5).toString('hex');
+  const canonicalFree=await client.query(`SELECT id,active,visible,price_minor,capacity_limit FROM plans WHERE is_free_tier=TRUE`);
+  assert(canonicalFree.rowCount===1,'platform must have exactly one canonical free tier');
+  assert(canonicalFree.rows[0].active&&canonicalFree.rows[0].visible&&Number(canonicalFree.rows[0].price_minor)===0,'canonical free tier must stay active, visible and zero-priced');
+
   const user=(await client.query(`INSERT INTO app_users(username,email,password_hash,role,active,email_verified_at) VALUES($1,$2,'not-a-real-login-hash','customer',TRUE,NOW()) RETURNING id`,[`coherence-${suffix}`,`coherence-${suffix}@example.invalid`])).rows[0];
   const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING id`,[user.id,`Coherence ${suffix}`,`coherence-${suffix}@example.invalid`])).rows[0];
   const plan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible) VALUES($1,'Coherence Direct','direct','month',30,0,'GBP',1,'custom',TRUE,TRUE) RETURNING id`,[`coherence-direct-${suffix}`])).rows[0];
@@ -33,8 +37,8 @@ async function main(){
   assert(remaining.rowCount===1&&remaining.rows[0].hold_type==='reseller_manual','releasing one hold must preserve other hold types');
 
   const resellerUser=(await client.query(`INSERT INTO app_users(username,email,password_hash,role,active,email_verified_at) VALUES($1,$2,'not-a-real-login-hash','reseller',TRUE,NOW()) RETURNING id`,[`coherence-reseller-${suffix}`,`reseller-${suffix}@example.invalid`])).rows[0];
-  const reseller=(await client.query(`INSERT INTO resellers(user_id,credits,trial_credits) VALUES($1,0,0) RETURNING id`,[resellerUser.id])).rows[0];
-  const tier=(await client.query(`INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active) VALUES($1,'Coherence Tier','test',1234,'GBP',7,3,100,TRUE,TRUE) RETURNING id`,[`coherence-tier-${suffix}`])).rows[0];
+  const reseller=(await client.query(`INSERT INTO resellers(user_id) VALUES($1) RETURNING id`,[resellerUser.id])).rows[0];
+  const tier=(await client.query(`INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active,streams,allow_video_transcoding,library_access_mode) VALUES($1,'Coherence Tier','test',1234,'GBP',7,3,100,TRUE,TRUE,5,FALSE,'include') RETURNING id`,[`coherence-tier-${suffix}`])).rows[0];
   const resellerSub=(await client.query(`INSERT INTO reseller_subscriptions(reseller_id,tier_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3) RETURNING *`,[reseller.id,tier.id,`sub_reseller_${suffix}`])).rows[0];
   assert(Number(resellerSub.monthly_price_minor_snapshot)===1234,'reseller subscription must snapshot tier price');
   assert(Number(resellerSub.seat_limit_snapshot)===7,'reseller subscription must snapshot seat limit');
@@ -44,6 +48,11 @@ async function main(){
   const snapshot=await client.query(`SELECT monthly_price_minor_snapshot,seat_limit_snapshot,grace_days_snapshot FROM reseller_subscriptions WHERE id=$1`,[resellerSub.id]);
   assert(Number(snapshot.rows[0].monthly_price_minor_snapshot)===1234&&Number(snapshot.rows[0].seat_limit_snapshot)===7&&Number(snapshot.rows[0].grace_days_snapshot)===3,'editing tier terms must not rewrite existing snapshots');
   await expectConstraint(client,`INSERT INTO reseller_subscriptions(reseller_id,tier_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[reseller.id,tier.id,`I-RESELLER-${suffix}`],'overlapping recurring reseller subscription');
+
+  const managed=(await client.query(`INSERT INTO customers(reseller_id,display_name,reseller_managed) VALUES($1,$2,TRUE) RETURNING id`,[reseller.id,`Managed ${suffix}`])).rows[0];
+  assert(managed.id,'reseller managed-user identity must be supported without a downstream sale or customer plan');
+  const saleCount=await client.query(`SELECT COUNT(*)::int n FROM reseller_sales WHERE reseller_id=$1`,[reseller.id]);
+  assert(Number(saleCount.rows[0].n)===0,'managed reseller seat setup must not create downstream sales');
 
   const expectedJobs=['health','entitlements','policy_drift','bulk_jobs','stale_reclaim','email_outbox','request_users','billing','plan_changes','reseller_billing','reseller_estates','reseller_notifications'];
   const jobs=await client.query(`SELECT job_key FROM automation_job_state WHERE job_key=ANY($1::text[])`,[expectedJobs]);

@@ -2,7 +2,7 @@
 
 ## Reseller tiers and seats
 
-A reseller tier defines the commercial capacity available to the reseller. A seat is consumed by a live customer entitlement according to CAPTaINFiN's reseller policy.
+A reseller tier defines the commercial capacity available to the reseller. A seat is consumed by a live customer entitlement according to CAPTAiNFiN's reseller policy.
 
 ## Customers
 

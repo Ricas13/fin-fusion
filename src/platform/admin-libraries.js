@@ -38,7 +38,7 @@ function createAdminLibrariesRouter(){
       return res.redirect('/admin/libraries?message='+encodeURIComponent('Library scan requested successfully.'));
     }catch(error){console.error('Library refresh failed:',error.message);return res.redirect('/admin/libraries?error='+encodeURIComponent('The library scan could not be started safely.'))}
   });
-  router.use('/admin/libraries',(error,_req,res,_next)=>{console.error('Libraries route error:',error.message);return res.status(500).render('auth/message',{siteName:process.env.SITE_NAME||'CAPTaINFiN',title:'Libraries unavailable',message:'Library information could not be loaded safely.',link:'/admin',linkText:'Return to Administration'});});
+  router.use('/admin/libraries',(error,_req,res,_next)=>{console.error('Libraries route error:',error.message);return res.status(500).render('auth/message',{siteName:process.env.SITE_NAME||'CAPTAiNFiN',title:'Libraries unavailable',message:'Library information could not be loaded safely.',link:'/admin',linkText:'Return to Administration'});});
   return router;
 }
 

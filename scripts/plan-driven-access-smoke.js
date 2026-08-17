@@ -38,7 +38,7 @@ assert(planPolicy.includes("billing_interval||'')==='trial'"),'Plan usage disabl
 assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
 assert(inactivity.includes('/Users/${encodeURIComponent(row.jellyfin_user_id)}')&&inactivity.includes("method:'DELETE'"),'Dormant cleanup must delete the Jellyfin user remotely');
 assert(inactivity.includes('DELETE FROM jellyfin_accounts WHERE id=$1'),'Dormant cleanup must remove only the local Jellyfin account mapping');
-assert(!/DELETE\s+FROM\s+customers/i.test(inactivity),'Inactivity automation must never delete CAPTaINFiN customers');
+assert(!/DELETE\s+FROM\s+customers/i.test(inactivity),'Inactivity automation must never delete CAPTAiNFiN customers');
 assert(!/UPDATE\s+app_users\s+SET\s+active\s*=\s*FALSE/i.test(inactivity),'Inactivity automation must never deactivate portal logins');
 assert(cleanupReturn.includes('includeBlocked:true'),'Portal return must be able to see through the cleanup hold');
 assert(cleanupReturn.includes('hold_type=$2')&&cleanupReturn.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Portal return must release only cleanup holds');
@@ -53,12 +53,12 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 
 // Storefront is plan-first and keeps sold-out products visible rather than hiding them.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
-assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Reseller plans.'),'Storefront must have explicit Stremio and reseller product sections');
+assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Managed Jellyfin user plans.'),'Storefront must have explicit Stremio and reseller product sections');
 assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
 
 // Reseller storefront inventory is not the same thing as downstream seat_limit.
 assert(migration.includes('ADD COLUMN IF NOT EXISTS capacity_limit INTEGER'),'Reseller tiers need separate storefront capacity');
-assert(plansList.includes('Storefront inventory')&&plansList.includes('Customer seats / reseller'),'Unified Plans must distinguish reseller inventory from downstream seats');
+assert(plansList.includes('Storefront availability')&&plansList.includes('Managed users / reseller'),'Unified Plans must distinguish reseller storefront inventory from each reseller plan\'s managed-user allowance');
 assert(resellerGate.includes("req.method!=='POST'")&&resellerGate.includes('CHECKED_PATHS.has(req.path)'),'Reseller capacity must be a pre-route middleware, not a duplicate billing route owner');
 for(const route of ['/reseller/billing/stripe','/reseller/billing/paypal','/reseller/billing/tier'])assert(resellerGate.includes(route),`Reseller capacity gate missing ${route}`);
 

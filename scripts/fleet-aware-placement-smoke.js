@@ -65,7 +65,7 @@ const adminPlacement = require('../src/platform/admin-plan-placement-fleet');
     assert.strictEqual(
         placement.selectServer(candidates, 'lowest_customers').id,
         quiet.id,
-        'lowest-users strategy must use actual Jellyfin users, not only CAPTaINFiN-managed customers'
+        'lowest-users strategy must use actual Jellyfin users, not only CAPTAiNFiN-managed customers'
     );
     assert.strictEqual(
         placement.selectServer(candidates, 'lowest_streams').id,

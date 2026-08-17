@@ -169,13 +169,13 @@ function revenueCard(s) {
 }
 
 function customerGrowthCard(s) {
-    return analyticsCard('Customer base over time', 'Cumulative CAPTaINFiN customer accounts', areaChart(s.customerGrowth, 'total'), { className: 'third', stat: { value: number(s.current.customers), label: 'customers now' } });
+    return analyticsCard('Customer base over time', 'Cumulative CAPTAiNFiN customer accounts', areaChart(s.customerGrowth, 'total'), { className: 'third', stat: { value: number(s.current.customers), label: 'customers now' } });
 }
 
 function playbackCard(s) {
     const transcodeRate = s.period.playbackSessions ? (s.period.transcodeSessions / s.period.playbackSessions * 100) : 0;
     const body = `<div class="miniStats"><div class="miniStat"><strong>${hours(s.period.playbackSeconds)}</strong><span>watch time</span></div><div class="miniStat"><strong>${number(s.period.uniqueViewers)}</strong><span>unique viewers</span></div><div class="miniStat"><strong>${number(transcodeRate, 1)}%</strong><span>transcoded sessions</span></div></div>${barChart(s.playbackSeries, 'sessions')}`;
-    return analyticsCard('Managed streaming volume', 'Playback history for customers managed by CAPTaINFiN', body, { className: 'wide', stat: { value: number(s.period.playbackSessions), label: 'sessions' } });
+    return analyticsCard('Managed streaming volume', 'Playback history for customers managed by CAPTAiNFiN', body, { className: 'wide', stat: { value: number(s.period.playbackSessions), label: 'sessions' } });
 }
 
 function planMixCard(s) {
@@ -188,7 +188,7 @@ function serverLoadCard(s) {
     const body = `<div class="serverLoadGrid">${s.serverLoad.map(row => {
         const streams = Number(row.active_streams || 0), managed = Number(row.managed_streams || 0), users = Number(row.total_users || 0);
         return `<div class="serverLoadItem"><div class="serverLoadName"><strong>${esc(row.name)}</strong><span>${esc(row.server_class)} · ${esc(row.health_status || 'unknown')}</span></div><div class="barTrack"><div class="barFill" style="width:${Math.max(streams ? 3 : 0, streams / maxStreams * 100).toFixed(1)}%"></div></div><div class="serverLoadStats"><strong>${number(streams)} streams</strong>${number(managed)} managed · ${number(users)} users</div></div>`;
-    }).join('')}</div><div class="analyticsFootnote">Live fleet stream/user figures include unmanaged legacy Jellyfin users. CAPTaINFiN enforcement still applies only to managed customers.</div>`;
+    }).join('')}</div><div class="analyticsFootnote">Live fleet stream/user figures include unmanaged legacy Jellyfin users. CAPTAiNFiN enforcement still applies only to managed customers.</div>`;
     return analyticsCard('Server load', 'Live Jellyfin fleet snapshot', body, { className: 'wide', stat: { value: number(s.current.fleetStreams), label: `${number(s.current.managedStreams)} managed live` } });
 }
 
@@ -273,7 +273,7 @@ function renderDashboard(s,{prospectiveIncome=''}={}) {
             ${recentPaymentsCard(s)}
             ${referrersCard(s)}
         </div>
-        <div class="analyticsFootnote">Historical streaming charts are intentionally limited to CAPTaINFiN-managed users because legacy Jellyfin playback is not retained in playback history. Live fleet stream/user totals include all Jellyfin users. Download and geographic analytics are not shown because CAPTaINFiN does not currently collect trustworthy history for those metrics.</div>
+        <div class="analyticsFootnote">Historical streaming charts are intentionally limited to CAPTAiNFiN-managed users because legacy Jellyfin playback is not retained in playback history. Live fleet stream/user totals include all Jellyfin users. Download and geographic analytics are not shown because CAPTAiNFiN does not currently collect trustworthy history for those metrics.</div>
     </div>`;
 }
 

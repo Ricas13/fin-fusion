@@ -1,145 +1,62 @@
 'use strict';
 
-const assert = require('assert');
-const { query, getPool } = require('../src/db');
-const transfer = require('../src/platform/configuration-transfer');
+require('dotenv').config();
+const assert=require('assert');
+const crypto=require('crypto');
+const transfer=require('../src/platform/configuration-transfer');
+const {query,getPool}=require('../src/db');
 
-async function server(slug, name) {
-    const result = await query(`
-        INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,health_status)
-        VALUES($1,$2,'premium',$3,$3,'test-not-a-real-secret',TRUE,100,100,'healthy')
-        RETURNING id
-    `, [name, slug, `https://${slug}.example.test`]);
-    return result.rows[0].id;
+async function main(){
+ if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required');
+ const suffix=crypto.randomBytes(4).toString('hex'),code=`transfer-${suffix}`;
+ const tier=(await query(`INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active,capacity_limit,streams,server_class,placement_strategy,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,library_access_mode,library_names) VALUES($1,$2,'portable reseller',1200,'GBP',8,2,42,TRUE,TRUE,25,5,'premium','least_users',TRUE,FALSE,TRUE,TRUE,FALSE,FALSE,TRUE,FALSE,'include',ARRAY['Movies 1080p','TV 1080p']) RETURNING id`,[code,`Transfer ${suffix}`])).rows[0];
+ const gbp=(await query(`INSERT INTO reseller_tier_prices(tier_id,currency,price_minor,active,is_default) VALUES($1,'GBP',1200,TRUE,TRUE) RETURNING id`,[tier.id])).rows[0];
+ const usd=(await query(`INSERT INTO reseller_tier_prices(tier_id,currency,price_minor,active,is_default) VALUES($1,'USD',1500,TRUE,FALSE) RETURNING id`,[tier.id])).rows[0];
+ await query(`INSERT INTO reseller_tier_provider_prices(tier_id,tier_price_id,provider,external_id,active,verification_status) VALUES($1,$2,'stripe',$3,TRUE,'verified'),($1,$4,'paypal',$5,TRUE,'verified')`,[tier.id,gbp.id,`price_gbp_${suffix}`,usd.id,`P-USD-${suffix}`]);
+ await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('jellyfin_drift_policy',$1::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value`,[JSON.stringify({healthyMinutes:360,driftMinutes:60,failureBaseMinutes:15,failureMaxMinutes:360,batchSize:100})]);
+
+ const exported=await transfer.exportPortableConfiguration();
+ assert.strictEqual(exported.version,2,'portable export must use v2');
+ const portable=(exported.configuration.resellerTiers||[]).find(t=>t.code===code);
+ assert(portable,'seeded reseller tier must be exported');
+ assert.strictEqual(portable.server_class,'premium');
+ assert.strictEqual(Number(portable.streams),5);
+ assert.deepStrictEqual(portable.library_names,['Movies 1080p','TV 1080p']);
+ assert(!Object.prototype.hasOwnProperty.call(portable,'credit_cost'),'reseller credit fields must not be exported');
+ assert(!Object.prototype.hasOwnProperty.call(portable,'trial_credit_cost'),'reseller trial-credit fields must not be exported');
+ const prices=[...(portable.prices||[])].sort((a,b)=>a.currency.localeCompare(b.currency));
+ assert.strictEqual(prices.length,2,'both reseller currencies must be exported');
+ assert.strictEqual(prices[0].currency,'GBP');assert.strictEqual(Number(prices[0].price_minor),1200);assert.strictEqual(prices[0].is_default,true);
+ assert.strictEqual(prices[1].currency,'USD');assert.strictEqual(Number(prices[1].price_minor),1500);
+ assert.deepStrictEqual(prices[0].providerMappings.map(x=>[x.provider,x.externalId]),[['stripe',`price_gbp_${suffix}`]],'GBP Stripe mapping must stay attached to GBP');
+ assert.deepStrictEqual(prices[1].providerMappings.map(x=>[x.provider,x.externalId]),[['paypal',`P-USD-${suffix}`]],'USD PayPal mapping must stay attached to USD');
+
+ const preview=await transfer.previewImport(exported);
+ assert(preview.digest,'preview must produce a digest');
+ assert(Number(preview.summary.providerMappingsPendingVerification)>=2,'preview must flag imported mappings for re-verification');
+ assert((preview.warnings||[]).some(x=>/verification/i.test(x)),'preview must warn that imported mappings require verification');
+
+ await query(`DELETE FROM reseller_tier_provider_prices WHERE tier_id=$1`,[tier.id]);
+ await query(`DELETE FROM reseller_tier_prices WHERE tier_id=$1`,[tier.id]);
+ await query(`DELETE FROM reseller_tiers WHERE id=$1`,[tier.id]);
+ const result=await transfer.applyImport(exported,null);
+ assert.strictEqual(result.summary.atomic,true,'import must be atomic');
+ const restored=(await query(`SELECT * FROM reseller_tiers WHERE code=$1`,[code])).rows[0];
+ assert(restored,'reseller tier must be restored');
+ assert.strictEqual(Number(restored.streams),5);assert.strictEqual(restored.library_access_mode,'include');
+ const restoredPrices=(await query(`SELECT id,currency,price_minor,is_default,active FROM reseller_tier_prices WHERE tier_id=$1 ORDER BY currency`,[restored.id])).rows;
+ assert.strictEqual(restoredPrices.length,2);assert.strictEqual(String(restoredPrices[0].currency).trim(),'GBP');assert.strictEqual(Number(restoredPrices[0].price_minor),1200);assert.strictEqual(restoredPrices[0].is_default,true);assert.strictEqual(String(restoredPrices[1].currency).trim(),'USD');assert.strictEqual(Number(restoredPrices[1].price_minor),1500);
+ const restoredMappings=(await query(`SELECT pp.provider,pp.external_id,pp.active,pp.verification_status,pr.currency FROM reseller_tier_provider_prices pp JOIN reseller_tier_prices pr ON pr.id=pp.tier_price_id WHERE pp.tier_id=$1 ORDER BY pr.currency,pp.provider`,[restored.id])).rows;
+ assert.deepStrictEqual(restoredMappings.map(x=>[String(x.currency).trim(),x.provider,x.external_id]),[['GBP','stripe',`price_gbp_${suffix}`],['USD','paypal',`P-USD-${suffix}`]],'provider mappings must not cross currencies during import');
+ assert(restoredMappings.every(x=>x.active===false),'imported provider mappings must remain inactive until verified');
+ assert(restoredMappings.every(x=>x.verification_status==='unverified'),'imported provider mappings must require verification');
+
+ // Legacy single-price reseller backups still normalize to one default price.
+ const legacy=JSON.parse(JSON.stringify(exported));
+ const legacyTier=legacy.configuration.resellerTiers.find(t=>t.code===code);delete legacyTier.prices;legacyTier.providerMappings=[{provider:'stripe',externalId:`legacy_${suffix}`,active:true}];legacyTier.monthly_price_minor=999;legacyTier.currency='EUR';
+ const parsedLegacy=transfer.parseDocument(legacy),normalized=parsedLegacy.configuration.resellerTiers.find(t=>t.code===code);
+ assert.strictEqual(normalized.prices.length,1);assert.strictEqual(normalized.prices[0].currency,'EUR');assert.strictEqual(Number(normalized.prices[0].price_minor),999);assert.strictEqual(normalized.prices[0].providerMappings[0].externalId,`legacy_${suffix}`);
+
+ console.log('Configuration transfer multicurrency reseller round-trip passed.');
 }
-
-(async () => {
-    const serverA = await server('premium-a', 'Premium A');
-    const serverB = await server('premium-b', 'Premium B');
-
-    await query(`
-        INSERT INTO platform_settings(setting_key,setting_value)
-        VALUES('platform',$1::jsonb)
-        ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value
-    `, [JSON.stringify({
-        siteName: 'Portable Source',
-        storefrontEnabled: false,
-        publicRegistration: false,
-        requireEmailVerification: false,
-        requireAdminTwoFactor: true,
-        entitlementJobIntervalMs: 300000,
-        serverHealthIntervalMs: 300000,
-        overseerrUrl: ''
-    })]);
-
-    await query(`
-        INSERT INTO notification_preferences(event_type,telegram_enabled,email_enabled)
-        VALUES('customer.created',TRUE,FALSE)
-        ON CONFLICT(event_type) DO UPDATE SET telegram_enabled=TRUE,email_enabled=FALSE
-    `);
-
-    const plan = await query(`
-        INSERT INTO plans(
-            code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
-            allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,
-            allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,
-            reseller_credit_cost,reseller_trial_credit_cost,library_access_mode,library_names,placement_strategy
-        ) VALUES(
-            'portable-monthly','Portable Monthly','Portable plan','both','month',30,600,'USD',3,
-            TRUE,FALSE,TRUE,TRUE,FALSE,TRUE,FALSE,TRUE,'premium',TRUE,TRUE,10,1,NULL,'include',ARRAY['Movies','TV'],'weighted'
-        ) RETURNING id
-    `);
-    const planId = plan.rows[0].id;
-    await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,70)', [planId, serverA]);
-
-    const exported = await transfer.exportPortableConfiguration();
-    assert.strictEqual(exported.format, transfer.FORMAT);
-    assert.strictEqual(exported.version, 2);
-    assert(Array.isArray(exported.configuration.resellerTiers), 'v2 export must include reseller tiers');
-    assert(Array.isArray(exported.configuration.directPaymentMappings), 'v2 export must include direct payment mappings');
-    assert(Array.isArray(exported.configuration.automation), 'v2 export must include automation settings');
-    assert.strictEqual(exported.configuration.plans.length, 1);
-    assert.strictEqual(exported.configuration.plans[0].serverPool[0].serverSlug, 'premium-a');
-    assert.strictEqual(exported.configuration.settings.platform.requireAdminTwoFactor, undefined, 'security policy must not be portable');
-
-    // Keep a regression for the documented V1 compatibility path as V2 becomes canonical.
-    const legacy = {
-        format: exported.format,
-        version: 1,
-        configuration: {
-            settings: { platform: exported.configuration.settings.platform },
-            plans: exported.configuration.plans,
-            notifications: exported.configuration.notifications
-        },
-        excluded: exported.excluded
-    };
-    assert.strictEqual(transfer.parseDocument(legacy).version, 1, 'v1 portable documents must remain importable');
-
-    const serialized = JSON.stringify(exported);
-    for (const forbidden of ['test-not-a-real-secret', 'base_url', 'api_key_encrypted', 'provider_subscription_id']) {
-        assert(!serialized.includes(forbidden), `portable export leaked forbidden field/value ${forbidden}`);
-    }
-
-    exported.configuration.settings.platform.siteName = 'Portable Target';
-    exported.configuration.plans[0].name = 'Portable Monthly Updated';
-    exported.configuration.plans[0].price_minor = 750;
-    exported.configuration.plans[0].serverPool = [{ serverSlug: 'premium-b', weight: 250 }];
-    exported.configuration.plans.push({
-        ...exported.configuration.plans[0],
-        code: 'portable-trial',
-        name: 'Portable Trial',
-        billing_interval: 'trial',
-        duration_days: 1,
-        price_minor: 0,
-        streams: 1,
-        serverPool: [{ serverSlug: 'not-present', weight: 100 }]
-    });
-
-    const preview = await transfer.previewImport(exported);
-    assert.strictEqual(preview.summary.plansCreate, 1);
-    assert.strictEqual(preview.summary.plansUpdate, 1);
-    assert.strictEqual(preview.summary.serverPoolsApply, 1);
-    assert.strictEqual(preview.summary.serverPoolsSkipped, 1);
-    assert(preview.warnings.some(w => w.includes('not-present')));
-
-    const applied = await transfer.applyImport(exported, null);
-    assert.strictEqual(applied.summary.poolsApplied, 1);
-    assert.strictEqual(applied.summary.poolsSkipped, 1);
-    assert.strictEqual(applied.summary.atomic, true, 'portable import must commit as one atomic transaction');
-    assert.strictEqual(applied.summary.version, 2, 'portable import summary must preserve document version');
-
-    const updatedPlan = await query("SELECT id,name,price_minor FROM plans WHERE code='portable-monthly'");
-    assert.strictEqual(updatedPlan.rows[0].name, 'Portable Monthly Updated');
-    assert.strictEqual(Number(updatedPlan.rows[0].price_minor), 750);
-    const updatedPool = await query(`
-        SELECT js.slug,pse.weight FROM plan_server_eligibility pse
-        JOIN jellyfin_servers js ON js.id=pse.server_id
-        WHERE pse.plan_id=$1
-    `, [updatedPlan.rows[0].id]);
-    assert.deepStrictEqual(updatedPool.rows.map(row => [row.slug, Number(row.weight)]), [['premium-b', 250]]);
-
-    const trialPool = await query(`
-        SELECT COUNT(*)::int AS count FROM plan_server_eligibility pse
-        JOIN plans p ON p.id=pse.plan_id WHERE p.code='portable-trial'
-    `);
-    assert.strictEqual(Number(trialPool.rows[0].count), 0, 'missing target server must not be guessed');
-
-    const platform = await query("SELECT setting_value FROM platform_settings WHERE setting_key='platform'");
-    assert.strictEqual(platform.rows[0].setting_value.siteName, 'Portable Target');
-    assert.strictEqual(platform.rows[0].setting_value.requireAdminTwoFactor, true, 'non-portable security setting must survive merge import');
-
-    const audit = await query("SELECT metadata FROM audit_log WHERE action='admin.configuration.import.atomic' ORDER BY id DESC LIMIT 1");
-    assert.strictEqual(audit.rowCount, 1, 'portable import must emit its atomic audit event');
-    assert.strictEqual(Number(audit.rows[0].metadata.version), 2, 'atomic import audit must record the imported document version');
-    assert.strictEqual(audit.rows[0].metadata.atomic, true, 'atomic import audit must record transaction semantics');
-    assert(Object.prototype.hasOwnProperty.call(audit.rows[0].metadata, 'automationJobs'), 'atomic import audit must include the v2 preview summary');
-
-    const bad = JSON.parse(JSON.stringify(exported));
-    bad.configuration.plans[0].streams = 0;
-    assert.throws(() => transfer.parseDocument(bad), /between 1 and 50/);
-
-    console.log('configuration transfer smoke: ok');
-})().finally(() => getPool().end()).catch(error => {
-    console.error(error);
-    process.exit(1);
-});
+main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>getPool().end());

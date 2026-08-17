@@ -70,7 +70,7 @@ function page(req, { rawDocument = '', preview = null, error = null, message = n
             </div>
         </section>
         <section class="card" style="margin-top:16px">
-            <div class="card-header"><div><h2 class="card-title">Import configuration</h2><div class="muted">Paste an exported JSON document. CAPTaINFiN validates and previews it before any write occurs.</div></div></div>
+            <div class="card-header"><div><h2 class="card-title">Import configuration</h2><div class="muted">Paste an exported JSON document. CAPTAiNFiN validates and previews it before any write occurs.</div></div></div>
             <div class="card-body">
                 <form method="post" action="/admin/configuration/preview">
                     ${csrfInput(req)}

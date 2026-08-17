@@ -15,6 +15,7 @@ const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings
 const { createAdminStremioRouter } = require('./admin-stremio');
 const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
+const { createAdminPlanOrderRouter } = require('./admin-plan-order');
 const { createAdminFleetOperationsRouter } = require('./admin-fleet-operations');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
@@ -26,7 +27,6 @@ const { createAdminOperatorStateRouter } = require('./admin-operator-state');
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createResellerSecurityRouter } = require('./reseller-security');
-const { createResellerLedgerRouter } = require('./reseller-ledger');
 const { createResellerExportRouter } = require('./reseller-export');
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
@@ -54,8 +54,6 @@ function createRouter(){
     router.use(createCustomerStremioRouter());
     router.use(createCustomerDashboardRouter());
     router.use(createResellerSecurityRouter());
-    router.get('/reseller/sales',(req,res)=>res.redirect(302,'/reseller/ledger'));
-    router.use(createResellerLedgerRouter());
     router.use(createResellerExportRouter());
     router.use(createAdminOperatorStateRouter());
     router.use(createAdminJellyfinLifecycleRouter());
@@ -69,6 +67,7 @@ function createRouter(){
     router.use(createAdminStremioSourcesRouter());
     router.use(createAdminStremioRouter());
     router.use(createAdminPlanDeliveryRouter());
+    router.use(createAdminPlanOrderRouter());
     router.use(createAdminFleetOperationsRouter());
     router.use(createAdminResellerDunningRouter());
     router.use(createAdminProfileAccountRouter());

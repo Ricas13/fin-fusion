@@ -65,8 +65,8 @@ function previewCard(req, preview) {
             <div class="compact-item"><div><div class="compact-title">${esc(c.entitlement.name || c.entitlement.code)}</div><div class="compact-meta">${esc(c.entitlement.code)} · ${esc(c.entitlement.server_class)} · ${esc(c.effective.technical.streams)} stream(s)</div></div><span class="pill good">Plan eligible</span></div>
             <div class="compact-item"><div><div class="compact-title">Target capacity</div><div class="compact-meta">${esc(cap)}</div></div><span class="pill good">Available</span></div>
             <div class="compact-item"><div><div class="compact-title">Libraries</div><div class="compact-meta">${esc(c.effective.visibleNames.length)} effective libraries checked against target</div></div><span class="pill good">Matched</span></div>
-            <div class="notice warn" style="margin-top:14px"><strong>Password reset required:</strong> Jellyfin passwords cannot be read back from the source server. The target account receives a random bootstrap password, so the customer must set a new Jellyfin password from their CAPTaINFiN account after the move.</div>
-            <div class="notice" style="margin-top:10px"><strong>Not transferred:</strong> Jellyfin-native watch history, playlists, favourites and other server-local user metadata are not copied by this migration. CAPTaINFiN access policy, username and library entitlement are transferred.</div>
+            <div class="notice warn" style="margin-top:14px"><strong>Password reset required:</strong> Jellyfin passwords cannot be read back from the source server. The target account receives a random bootstrap password, so the customer must set a new Jellyfin password from their CAPTAiNFiN account after the move.</div>
+            <div class="notice" style="margin-top:10px"><strong>Not transferred:</strong> Jellyfin-native watch history, playlists, favourites and other server-local user metadata are not copied by this migration. CAPTAiNFiN access policy, username and library entitlement are transferred.</div>
             <form method="post" action="/admin/provisioning/migrations/apply" style="margin-top:14px">
                 ${csrfInput(req)}
                 <input type="hidden" name="previewKey" value="${esc(preview.key)}">
@@ -100,7 +100,7 @@ function page(req, d, preview = null, error = null) {
         <section class="card">
             <div class="card-header"><div><h2 class="card-title">Move a customer</h2><div class="muted">Controlled account cutover with preflight, failure cleanup and rollback.</div></div></div>
             <div class="card-body">
-                <div class="notice">The source account is never deleted. CAPTaINFiN creates and validates the target first, disables the source only at cutover, then switches the primary account. A cutover failure attempts to restore the source and disable the target.</div>
+                <div class="notice">The source account is never deleted. CAPTAiNFiN creates and validates the target first, disables the source only at cutover, then switches the primary account. A cutover failure attempts to restore the source and disable the target.</div>
                 <div style="margin-top:14px">${form(req, d)}</div>
             </div>
         </section>

@@ -7,27 +7,23 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const monthly=read('src/resellers/monthly.js');
-const ux=read('src/platform/reseller-service-aware-portal.js');
+const ux=read('src/platform/reseller-service-aware-portal-v2.js');
 const business=read('src/platform/reseller-business.js');
-const client=read('public/js/reseller-service-aware.js');
+const retirement=read('src/platform/reseller-legacy-route-retirement.js');
 
-assert(/productReadiness=require\('\.\.\/platform\/product-readiness'\)/.test(monthly),'reseller domain must import canonical product readiness');
-assert(/productReadiness\.evaluate\(plan,readinessCtx\)/.test(monthly),'reseller domain must evaluate delivery readiness before sale');
-assert(/owner&&delivery!==['"]jellyfin['"]/.test(monthly),'reseller owner delivery must remain Jellyfin-only');
-assert(/portalReady=false/.test(monthly)&&/require a CAPTaINFiN portal activation/.test(monthly),'new Stremio reseller customers must require portal readiness in the domain');
-assert(/!customer\.user_id/.test(monthly)&&/portal identity before switching/.test(monthly),'existing Stremio reseller customers must own a portal identity');
-assert(/service_type_snapshot/.test(monthly)&&/account_purpose<>'stremio_internal'/.test(monthly),'reseller customer list must be service-aware and hide internal playback identities');
-assert(/portalReady:portalIntent\.wantsPortal/.test(ux),'service-aware create path must explicitly carry portal readiness into the domain');
-assert(/data-reseller-plan/.test(ux)&&/data-service-type/.test(ux),'reseller plan options must expose delivery metadata to the browser');
-assert(/Create customer & deliver access/.test(ux),'generic reseller create action must not claim Jellyfin-only provisioning');
-assert(/Stremio · portal managed/.test(ux),'Stremio-only customers must not be presented with normal Jellyfin credentials');
-assert(/service==='stremio'/.test(ux)&&/private installation/.test(ux),'Stremio create success must explain portal-managed installation rather than Jellyfin provisioning');
-assert(/reseller-service-aware\.js/.test(ux),'reseller pages must load the external CSP-safe service-aware helper');
-assert(/needsPortal/.test(client)&&/checkbox\.checked=true/.test(client)&&/email\.required/.test(client),'browser helper must force portal activation fields for Stremio/bundle choices');
-assert(/createResellerServiceAwarePortalRouter/.test(business),'service-aware reseller middleware must be mounted before legacy reseller routes');
-assert(!/r\.get\('\/reseller/.test(ux)&&!/r\.post\('\/reseller/.test(ux),'compatibility layer must not create duplicate Express route owners');
-assert(/reseller-service-sale/.test(ux),'service-aware reseller mutations must have persistent route rate limiting');
-assert(/stremioCredentialGuard/.test(business)&&/there is no reseller-visible Jellyfin password/.test(business),'Stremio-only customers must block legacy Jellyfin credential/reset access at the backend boundary');
-assert(/reseller-business-settings/.test(business)&&/r\.post\('\/reseller\/settings',settingsMutationLimit/.test(business),'reseller business settings changes must use the persistent route limiter');
+// Reseller runtime is intentionally Jellyfin managed-seat licensing. Stremio
+// remains a customer-plan capability, not a downstream reseller-sale option.
+assert(/reseller_managed=TRUE/.test(monthly),'reseller seat usage must count only managed Jellyfin users');
+assert(/assertSeatAvailable/.test(monthly)&&/seat_limit/.test(monthly),'reseller domain must enforce the monthly managed-user allowance');
+assert(/reconcileEstate/.test(monthly)&&/reseller_subscription/.test(monthly),'reseller subscription state must control the managed Jellyfin estate');
+assert(!/createOrRenewCustomer/.test(monthly)&&!/salesAnalytics/.test(monthly)&&!/endCustomerService/.test(monthly),'active reseller domain must not export downstream customer sales operations');
+assert(/createResellerServiceAwarePortalRouter/.test(business)&&/createResellerLegacyRouteRetirementRouter/.test(business),'managed-user portal and legacy retirement router must be mounted together');
+assert(/Managed Jellyfin users/.test(ux)&&/\/reseller\/user\/create/.test(ux),'reseller UX must be centred on managed Jellyfin users');
+assert(/managedUsers\.createManagedUser/.test(ux)&&/managedUsers\.deleteManagedUser/.test(ux),'reseller mutations must go through the managed-user domain');
+assert(/tierPriceId/.test(ux)&&/\/reseller\/billing\/stripe/.test(ux)&&/\/reseller\/billing\/paypal/.test(ux),'reseller plan purchase UX must carry the selected multi-currency tier price');
+assert(/How you charge or manage those people commercially stays outside CAPTAiNFiN/.test(ux),'reseller UX must keep downstream commercial management outside CAPTAiNFiN');
+assert(/\/reseller\/sales/.test(ux)&&/\/reseller\/customer\/create/.test(ux),'common downstream reseller routes must remain explicitly retired by the managed-user portal');
+assert(/\/reseller\/customer\/:id\/end-service/.test(retirement)&&/\/reseller\/customer\/:id\/credentials\/reset/.test(retirement),'remaining downstream reseller operations must remain explicitly retired by the compatibility router');
+assert(!/reseller-service-aware\.js/.test(ux),'retired downstream-sale browser helper must not be loaded by the managed-seat portal');
 
-console.log('reseller Stremio UX smoke: ok');
+console.log('reseller managed-seat UX smoke: ok');

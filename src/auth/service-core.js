@@ -177,7 +177,7 @@ async function beginTotpEnrollment(userId) {
         uri: totp.otpauthUri({
             secret,
             accountName: user.email || user.username,
-            issuer: process.env.SITE_NAME || 'CAPTaINFiN'
+            issuer: process.env.SITE_NAME || 'CAPTAiNFiN'
         })
     };
 }

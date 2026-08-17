@@ -21,7 +21,7 @@ This manifest is the acceptance contract for the single platform-coherence PR re
 - [x] 17. Reseller estate reconciliation mutates/audits only on state transitions — `src/resellers/monthly.js`.
 - [x] 18. Reseller analytics uses timestamp-derived playback duration and the stale duration-column implementation is gone — `src/resellers/monthly.js`.
 - [x] 19. Reseller MRR/ARR never adds unlike currencies together — `src/platform/admin-reseller-tiers.js`, `src/platform/admin-commerce.js`.
-- [x] 20. Reseller downstream revenue is constrained to the reseller ledger currency and reported separately from CAPTaINFiN revenue — reseller settings/ledger/analytics.
+- [x] 20. Reseller downstream revenue is constrained to the reseller ledger currency and reported separately from CAPTAiNFiN revenue — reseller settings/ledger/analytics.
 - [x] 21. Reseller-owned Jellyfin access is classified as `owner_access`, not a £0 customer sale — `src/resellers/monthly.js`.
 - [x] 22. Reseller sales corrections are append-only refunds/voids/adjustments — migration 041, `src/resellers/ledger.js`, `src/platform/reseller-ledger.js`.
 - [x] 23. Reseller ledger currency is browser-configurable globally and per reseller — reseller settings and reseller 360 controls.
@@ -62,7 +62,7 @@ This manifest is the acceptance contract for the single platform-coherence PR re
 - [x] 58. Reseller lifecycle notifications cover activation/cancellation, payment failure, grace, scheduled suspension, estate suspend/restore, tier changes, capacity and 7/3/1-day child expiry — migration 039, notification observer.
 - [x] 59. Notification-channel UX is consistent with implemented providers: Email and Telegram are exposed; unsupported WhatsApp controls/config claims are removed — Settings/env/docs regression guard.
 - [x] 60. Resellers receive 80/90/100% capacity warnings and see capacity visually on their dashboard — notification observer + reseller portal.
-- [x] 61. Reseller dashboard reports downstream revenue and estimated gross margin separately from CAPTaINFiN revenue — reseller analytics portal.
+- [x] 61. Reseller dashboard reports downstream revenue and estimated gross margin separately from CAPTAiNFiN revenue — reseller analytics portal.
 - [x] 62. Admin Commerce reports direct/reseller MRR, ARR, activation/churn and lifecycle/payment incident state — `src/platform/admin-commerce.js`.
 - [x] 63. Admin Events provides one searchable timeline for audit, security, payments/incidents, provisioning and email — `src/platform/admin-events.js`.
 - [x] 64. Admin global search resolves customers, resellers, Jellyfin identities, servers and provider references to management pages — `src/platform/admin-search.js`.

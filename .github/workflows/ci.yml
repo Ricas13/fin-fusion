@@ -70,14 +70,24 @@ jobs:
           (async () => {
             const businessCounts = await query(`
               SELECT
-                (SELECT COUNT(*)::int FROM plans) AS plans,
                 (SELECT COUNT(*)::int FROM jellyfin_servers) AS servers,
                 (SELECT COUNT(*)::int FROM customers) AS customers,
-                (SELECT COUNT(*)::int FROM resellers) AS resellers
+                (SELECT COUNT(*)::int FROM resellers) AS resellers,
+                (SELECT COUNT(*)::int FROM subscriptions) AS subscriptions
             `);
             for (const [name, value] of Object.entries(businessCounts.rows[0])) {
               if (Number(value) !== 0) throw new Error(`Fresh CI database unexpectedly seeded ${name}: ${value}`);
             }
+            const plans = await query(`
+              SELECT code,is_free_tier,active,visible,price_minor,capacity_limit,billing_interval
+              FROM plans ORDER BY code
+            `);
+            if (plans.rowCount !== 1) throw new Error(`Fresh CI database must contain only the permanent free tier; found ${plans.rowCount} plans`);
+            const free = plans.rows[0];
+            if (!free.is_free_tier || !free.active || !free.visible) throw new Error('Permanent free tier must be marked, active and visible');
+            if (Number(free.price_minor) !== 0) throw new Error('Permanent free tier must remain zero-priced');
+            if (Number(free.capacity_limit) !== 0) throw new Error('Fresh permanent free tier must start with zero configured spots');
+            if (free.billing_interval === 'trial') throw new Error('Permanent free tier must not be a trial plan');
             const clean = await query("SELECT setting_value FROM platform_settings WHERE setting_key='installation'");
             if (clean.rows[0]?.setting_value?.cleanInstall !== true) throw new Error('Clean-install marker missing');
             const platform = await query("SELECT setting_value FROM platform_settings WHERE setting_key='platform'");
