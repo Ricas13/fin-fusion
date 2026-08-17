@@ -7,6 +7,9 @@
   const header=document.querySelector('.pageHeader');
   if(!header)return;
 
+  if(!document.querySelector('link[data-plan-workflow-style]')){
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/css/admin-plan-workflow.css';link.dataset.planWorkflowStyle='true';document.head.appendChild(link);
+  }
   document.querySelectorAll('.planSubnav').forEach(node=>node.remove());
 
   const topItems=[
