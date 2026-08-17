@@ -14,6 +14,12 @@
 .navSection[open] .navSectionPages{display:grid}
 .navSection:not([open]){border-bottom:1px solid rgba(255,255,255,.015)}
 
+/* Cross-cutting search belongs in the shell, not as a sidebar destination. */
+.adminQuickFind{flex:1 1 320px;max-width:430px;margin:0 18px}
+.adminQuickFindInput{width:100%;height:34px;padding:0 12px;border:1px solid var(--border-soft,var(--border));border-radius:8px;background:var(--panel);color:var(--text);font:inherit;outline:none}
+.adminQuickFindInput::placeholder{color:var(--muted)}
+.adminQuickFindInput:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(32,169,214,.12)}
+
 /* Settings are easier to scan as broad cards than four narrow columns. */
 .settings-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
 .settings-card{min-width:0}
@@ -63,6 +69,7 @@
      desktop fixed height here caused Help/action buttons to overlap vertically. */
   .topBar{height:auto;min-height:50px;padding-top:8px;padding-bottom:8px;flex-wrap:wrap;row-gap:8px}
   .topBreadcrumb{flex:1 1 auto}
+  .adminQuickFind{order:3;flex:1 1 100%;max-width:none;margin:0}
   .topBarActions{margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
 }
 
