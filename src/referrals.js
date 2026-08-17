@@ -28,7 +28,7 @@ async function sameIdentity(referrerId,referredId,client=null){
 }
 async function attributeReferral(referredCustomerId,rawCode){
   const code=String(rawCode||'').trim().toUpperCase();if(!code)return null;
-  const referral=await query(`SELECT rc.id,rc.customer_id FROM referral_codes rc JOIN affiliate_profiles ap ON ap.customer_id=rc.customer_id AND ap.active=TRUE WHERE rc.code=$1`,[code]);
+  const referral=await query(`SELECT rc.id,rc.customer_id FROM referral_codes rc WHERE rc.code=$1`,[code]);
   if(!referral.rowCount||String(referral.rows[0].customer_id)===String(referredCustomerId))return null;
   if(await sameIdentity(referral.rows[0].customer_id,referredCustomerId))return null;
   await query(`INSERT INTO referral_redemptions(referral_code_id,referred_customer_id,status) VALUES($1,$2,'pending') ON CONFLICT(referred_customer_id) DO NOTHING`,[referral.rows[0].id,referredCustomerId]);
@@ -64,7 +64,6 @@ async function rewardIfQualifying(referredCustomerId){
     if(unresolved){await client.query(`UPDATE referral_redemptions SET reward_note='Affiliate credit waiting: qualifying payment has an unresolved dispute.' WHERE id=$1`,[redemption.id]);return{rewarded:false,pending:true,reason:'payment_dispute'};}
     const risk=await client.query(`SELECT 1 FROM customer_access_holds WHERE customer_id=$1 AND hold_type='payment_risk' AND released_at IS NULL LIMIT 1`,[referredCustomerId]);
     if(risk.rowCount){await client.query(`UPDATE referral_redemptions SET reward_note='Affiliate credit waiting: referred account has an unresolved payment-risk hold.' WHERE id=$1`,[redemption.id]);return{rewarded:false,pending:true,reason:'payment_risk'};}
-    // Insert directly using the transaction so referral state and reward ledger cannot diverge.
     const reward=Math.max(1,Math.floor(Number(qualifying.paid_minor)*settings.rewardPercent/100));
     await client.query(`INSERT INTO affiliate_profiles(customer_id,active) VALUES($1,TRUE) ON CONFLICT(customer_id) DO UPDATE SET active=TRUE,disabled_at=NULL,updated_at=NOW()`,[redemption.referrer_customer_id]);
     const ledger=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,referred_customer_id,qualifying_subscription_id,available_at,reference_id,note,metadata)
