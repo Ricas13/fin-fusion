@@ -1,196 +1,29 @@
 'use strict';
 
-const express = require('express');
-const { query } = require('../db');
-const csrf = require('../auth/csrf');
-const referrals = require('../referrals');
-const runtimeSettings = require('./runtime-settings');
-const { esc, layout } = require('./admin-html');
-const { sendCsv } = require('./export');
-
-function gate(req, res, next) {
-    if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
-    return res.redirect('/login?session=expired');
-}
-
-function noStore(_req, res, next) {
-    res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    next();
-}
-
-function csrfInput(req) {
-    return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
-}
-
-function notice(req) {
-    return `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`;
-}
-
-function pill(text, kind = '') {
-    return `<span class="pill ${kind}">${esc(text)}</span>`;
-}
-
-function date(v) {
-    return v ? new Date(v).toLocaleString() : 'never';
-}
-
-async function listRedemptions() {
-    const result = await query(`
-        SELECT rr.id,rr.status,rr.reward_note,rr.rewarded_at,rr.created_at,rc.code AS referral_code,
-               referrer.display_name AS referrer_name,referrer.email AS referrer_email,
-               referred.display_name AS referred_name,referred.email AS referred_email
-        FROM referral_redemptions rr
-        JOIN referral_codes rc ON rc.id=rr.referral_code_id
-        JOIN customers referrer ON referrer.id=rc.customer_id
-        JOIN customers referred ON referred.id=rr.referred_customer_id
-        ORDER BY rr.created_at DESC
-        LIMIT 500
-    `);
-    return result.rows;
-}
-
-function statusPill(status) {
-    if (status === 'rewarded') return pill('Rewarded', 'good');
-    if (status === 'unfulfilled') return pill('Unfulfilled', 'warn');
-    return pill('Pending', 'accent');
-}
-
-function redemptionCard(req, row) {
-    return `<div class="serverCard">
-        <div class="serverTop">
-            <div><strong>${esc(row.referrer_name || row.referrer_email || 'Referrer')}</strong><div class="subText">referred ${esc(row.referred_name || row.referred_email || 'a customer')}</div></div>
-            ${statusPill(row.status)}
-        </div>
-        <div class="subText">Code ${esc(row.referral_code)} · ${esc(date(row.created_at))}</div>
-        ${row.reward_note ? `<div class="subText">${esc(row.reward_note)}</div>` : ''}
-        ${row.status === 'unfulfilled' ? `<div class="formPanel">
-            <form method="post" action="/admin/referrals/${esc(row.id)}/resolve">
-                ${csrfInput(req)}
-                <div class="formGroup"><label>Resolution note</label><input class="input" name="note" maxlength="200" placeholder="e.g. reviewed and resolved manually"></div>
-                <button class="button secondary">Mark resolved</button>
-            </form>
-        </div>` : ''}
-    </div>`;
-}
-
-async function page(req) {
-    await runtimeSettings.ensureLoaded();
-    const [rows, settings] = await Promise.all([listRedemptions(), referrals.loadSettings()]);
-    const rewarded = rows.filter(r => r.status === 'rewarded').length;
-    const unfulfilled = rows.filter(r => r.status === 'unfulfilled').length;
-
-    const body = `${notice(req)}
-        <div class="metrics">
-            <div class="metric"><div class="metricLabel">Referrals</div><div class="metricValue">${rows.length}</div></div>
-            <div class="metric"><div class="metricLabel">Rewarded</div><div class="metricValue">${rewarded}</div></div>
-            <div class="metric"><div class="metricLabel">Needs attention</div><div class="metricValue">${unfulfilled}</div></div>
-        </div>
-        <section class="section">
-            <div class="sectionHead"><h2>Reward settings</h2><span class="muted">Only a genuine positive-value Stripe/PayPal activation qualifies; same email/payment identities are rejected.</span></div>
-            <form class="formPanel" method="post" action="/admin/referrals/settings">
-                ${csrfInput(req)}
-                <div class="formGrid">
-                    <div class="formGroup"><label>Reward days <span class="muted">(added to referrer's active subscription)</span></label><input class="input" type="number" min="1" max="365" name="rewardDays" value="${esc(settings.rewardDays)}"></div>
-                    <div class="formGroup"><label>Qualification delay (days)</label><input class="input" type="number" min="0" max="90" name="qualificationDelayDays" value="${esc(settings.qualificationDelayDays)}"><div class="inlineHelp">Minimum age of the referred paid subscription before the reward can be granted.</div></div>
-                    <div class="formGroup"><label>Refund/dispute window (days)</label><input class="input" type="number" min="0" max="90" name="refundWindowDays" value="${esc(settings.refundWindowDays)}"><div class="inlineHelp">Reward waits at least this long and remains pending while a payment-risk hold is open.</div></div>
-                    <div class="formGroup"><label class="toggleRow"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''}><span>Referral program enabled</span></label></div>
-                </div>
-                <button class="button">Save settings</button>
-            </form>
-        </section>
-        <section class="section">
-            <div class="sectionHead"><h2>Referral activity</h2><span class="muted">${rows.length} shown, newest first</span></div>
-            ${rows.length ? `<div class="serverGrid">${rows.map(row => redemptionCard(req, row)).join('')}</div>` : '<div class="empty">No referrals yet.</div>'}
-        </section>`;
-
-    return layout({
-        siteName: runtimeSettings.siteName(),
-        active: 'referrals',
-        title: 'Referrals',
-        subtitle: 'Referral codes, attribution and delayed paid-event rewards',
-        body,
-        action: '<a class="button secondary" href="/admin/referrals/export">Export CSV</a>'
-    });
-}
-
-function createAdminReferralsRouter() {
-    const router = express.Router();
-    router.use('/admin/referrals', gate, noStore);
-
-    router.get('/admin/referrals', async (req, res, next) => {
-        try {
-            return res.send(await page(req));
-        } catch (error) {
-            return next(error);
-        }
-    });
-
-    router.get('/admin/referrals/export', async (req, res, next) => {
-        try {
-            const rows = await listRedemptions();
-            return sendCsv(res, 'referrals.csv', [
-                { key: 'referral_code', label: 'Referral code' },
-                { key: 'referrer_name', label: 'Referrer' },
-                { key: 'referrer_email', label: 'Referrer email' },
-                { key: 'referred_name', label: 'Referred customer' },
-                { key: 'referred_email', label: 'Referred email' },
-                { key: 'status', label: 'Status' },
-                { key: 'reward_note', label: 'Note' },
-                { key: 'rewarded_at', label: 'Rewarded at' },
-                { key: 'created_at', label: 'Created at' }
-            ], rows);
-        } catch (error) {
-            return next(error);
-        }
-    });
-
-    router.post('/admin/referrals/settings', async (req, res) => {
-        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
-        try {
-            const rewardDays = Number.parseInt(req.body.rewardDays, 10);
-            const qualificationDelayDays = Number.parseInt(req.body.qualificationDelayDays, 10);
-            const refundWindowDays = Number.parseInt(req.body.refundWindowDays, 10);
-            if (!Number.isFinite(rewardDays) || rewardDays < 1 || rewardDays > 365) throw new Error('Enter a reward of 1-365 days.');
-            if (!Number.isFinite(qualificationDelayDays) || qualificationDelayDays < 0 || qualificationDelayDays > 90) throw new Error('Enter a qualification delay of 0-90 days.');
-            if (!Number.isFinite(refundWindowDays) || refundWindowDays < 0 || refundWindowDays > 90) throw new Error('Enter a refund/dispute window of 0-90 days.');
-            const enabled = req.body.enabled === 'on';
-            const value = { rewardDays, qualificationDelayDays, refundWindowDays, enabled };
-            await query(`
-                INSERT INTO platform_settings(setting_key,setting_value,updated_by)
-                VALUES('referral_program',$1::jsonb,$2)
-                ON CONFLICT(setting_key) DO UPDATE SET setting_value=$1::jsonb,updated_by=$2,updated_at=NOW()
-            `, [JSON.stringify(value), req.session.authUserId]);
-            await query(`
-                INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-                VALUES($1,'admin.referrals.settings',NULL,NULL,$2::jsonb)
-            `, [req.session.authUserId, JSON.stringify(value)]);
-            return res.redirect('/admin/referrals?message=' + encodeURIComponent('Referral settings saved.'));
-        } catch (error) {
-            return res.redirect('/admin/referrals?error=' + encodeURIComponent(error.message));
-        }
-    });
-
-    router.post('/admin/referrals/:id/resolve', async (req, res) => {
-        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
-        try {
-            const note = String(req.body.note || '').trim().slice(0, 200) || 'Resolved manually by admin';
-            const updated = await query(`
-                UPDATE referral_redemptions SET status='rewarded',rewarded_at=NOW(),reward_note=$2
-                WHERE id=$1 AND status='unfulfilled' RETURNING id
-            `, [req.params.id, note]);
-            if (!updated.rowCount) throw new Error('missing');
-            await query(`
-                INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-                VALUES($1,'admin.referrals.resolve','referral_redemption',$2,$3::jsonb)
-            `, [req.session.authUserId, req.params.id, JSON.stringify({ note })]);
-            return res.redirect('/admin/referrals?message=' + encodeURIComponent('Referral marked resolved.'));
-        } catch (error) {
-            return res.redirect('/admin/referrals?error=' + encodeURIComponent('Could not resolve referral.'));
-        }
-    });
-
-    return router;
-}
-
-module.exports = { createAdminReferralsRouter };
+const express=require('express');
+const {query}=require('../db');
+const csrf=require('../auth/csrf');
+const affiliateCredits=require('../affiliate-credits');
+const runtimeSettings=require('./runtime-settings');
+const {esc,layout}=require('./admin-html');
+const {sendCsv}=require('./export');
+function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
+function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
+function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
+function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`;}
+function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`;}}
+function balanceText(row){const balances=Array.isArray(row.balances)?row.balances:[];if(!balances.length)return'No credit yet';return balances.map(b=>`${b.currency}: ${money(b.available_minor,b.currency)} available · ${money(b.pending_minor,b.currency)} pending · ${money(b.lifetime_earned_minor,b.currency)} lifetime earned`).join(' | ');}
+async function affiliateRows(){const r=await query(`SELECT c.id,c.display_name,c.email,rc.code,ap.active,ap.enrolled_at,COALESCE(bal.balances,'[]'::jsonb) balances
+ FROM affiliate_profiles ap JOIN customers c ON c.id=ap.customer_id LEFT JOIN referral_codes rc ON rc.customer_id=c.id
+ LEFT JOIN LATERAL (
+   SELECT jsonb_agg(jsonb_build_object('currency',x.currency,'available_minor',x.available_minor,'pending_minor',x.pending_minor,'lifetime_earned_minor',x.lifetime_earned_minor) ORDER BY x.currency) balances
+   FROM (SELECT currency,COALESCE(SUM(amount_minor) FILTER(WHERE state='available'),0)::int available_minor,COALESCE(SUM(amount_minor) FILTER(WHERE state='pending'),0)::int pending_minor,COALESCE(SUM(amount_minor) FILTER(WHERE entry_type='earned' AND state<>'void'),0)::int lifetime_earned_minor FROM affiliate_credit_ledger WHERE customer_id=c.id GROUP BY currency) x
+ ) bal ON TRUE ORDER BY ap.enrolled_at DESC LIMIT 500`);return r.rows.map(row=>({...row,balance_summary:balanceText(row)}));}
+async function redemptionRows(){const r=await query(`SELECT rr.id,rr.status,rr.reward_note,rr.rewarded_at,rr.created_at,rc.code referral_code,referrer.display_name referrer_name,referred.display_name referred_name,l.amount_minor,l.currency,l.state credit_state,l.available_at
+ FROM referral_redemptions rr JOIN referral_codes rc ON rc.id=rr.referral_code_id JOIN customers referrer ON referrer.id=rc.customer_id JOIN customers referred ON referred.id=rr.referred_customer_id LEFT JOIN affiliate_credit_ledger l ON l.referral_redemption_id=rr.id AND l.entry_type='earned' ORDER BY rr.created_at DESC LIMIT 500`);return r.rows;}
+async function page(req){await runtimeSettings.ensureLoaded();await affiliateCredits.matureDueCredits();const[settings,affiliates,redemptions]=await Promise.all([affiliateCredits.loadSettings(),affiliateRows(),redemptionRows()]);const balances=affiliates.flatMap(a=>Array.isArray(a.balances)?a.balances:[]),available=balances.reduce((s,r)=>s+Number(r.available_minor||0),0),pending=balances.reduce((s,r)=>s+Number(r.pending_minor||0),0);const body=`${notice(req)}<div class="metrics"><div class="metric"><div class="metricLabel">Affiliates</div><div class="metricValue">${affiliates.length}</div></div><div class="metric"><div class="metricLabel">Referrals</div><div class="metricValue">${redemptions.length}</div></div><div class="metric"><div class="metricLabel">Ledger</div><div class="metricValue">${available+pending}</div><div class="metricSub">minor units across isolated currency balances</div></div></div>
+<section class="section"><div class="sectionHead"><h2>Affiliate programme</h2><span class="muted">Affiliates can earn service credit without holding a subscription.</span></div><form class="formPanel" method="post" action="/admin/referrals/settings">${csrfInput(req)}<div class="formGrid"><div class="formGroup"><label>Reward percentage</label><input class="input" type="number" min="1" max="100" name="rewardPercent" value="${esc(settings.rewardPercent)}"><div class="inlineHelp">Percentage of the qualifying referred payment converted into same-currency CAPTAiNFiN service credit.</div></div><div class="formGroup"><label>Qualification delay (days)</label><input class="input" type="number" min="0" max="90" name="qualificationDelayDays" value="${esc(settings.qualificationDelayDays)}"></div><div class="formGroup"><label>Refund/dispute window (days)</label><input class="input" type="number" min="0" max="90" name="refundWindowDays" value="${esc(settings.refundWindowDays)}"></div><div class="formGroup"><label class="toggleRow"><input type="checkbox" name="enabled" ${settings.enabled?'checked':''}><span>Affiliate programme enabled</span></label></div></div><button class="button">Save affiliate settings</button></form></section>
+<section class="section"><div class="sectionHead"><h2>Affiliate accounts</h2><span class="muted">${affiliates.length} enrolled</span></div>${affiliates.length?`<div class="serverGrid">${affiliates.map(a=>`<div class="serverCard"><div class="serverTop"><div><strong>${esc(a.display_name||a.email||'Affiliate')}</strong><div class="subText">${esc(a.email||'')} · code ${esc(a.code||'pending')}</div></div><span class="pill ${a.active?'good':'warn'}">${a.active?'Active':'Disabled'}</span></div><div class="subText">${esc(a.balance_summary)}</div></div>`).join('')}</div>`:'<div class="empty">No affiliate accounts yet. A customer becomes an affiliate when they open the affiliate programme or earn their first reward.</div>'}</section>
+<section class="section"><div class="sectionHead"><h2>Referral activity</h2><span class="muted">Newest first</span></div>${redemptions.length?`<div class="serverGrid">${redemptions.map(r=>`<div class="serverCard"><div class="serverTop"><div><strong>${esc(r.referrer_name||'Affiliate')}</strong><div class="subText">referred ${esc(r.referred_name||'customer')} · ${esc(r.referral_code)}</div></div><span class="pill ${r.status==='rewarded'?'good':r.status==='unfulfilled'||r.status==='reversed'?'warn':'accent'}">${esc(r.status)}</span></div>${r.amount_minor?`<div class="subText">Credit ${esc(money(r.amount_minor,r.currency))} · ${esc(r.credit_state||'')}</div>`:''}${r.reward_note?`<div class="subText">${esc(r.reward_note)}</div>`:''}</div>`).join('')}</div>`:'<div class="empty">No referrals yet.</div>'}</section>`;return layout({siteName:runtimeSettings.siteName(),active:'referrals',title:'Affiliates',subtitle:'Referral attribution, service-credit balances and reward qualification',body,action:'<a class="button secondary" href="/admin/referrals/export">Export CSV</a>'});}
+function createAdminReferralsRouter(){const router=express.Router();router.use('/admin/referrals',gate,noStore);router.get('/admin/referrals',async(req,res,next)=>{try{return res.send(await page(req));}catch(e){next(e);}});router.get('/admin/referrals/export',async(_req,res,next)=>{try{return sendCsv(res,'affiliates.csv',[{key:'display_name',label:'Affiliate'},{key:'email',label:'Email'},{key:'code',label:'Referral code'},{key:'active',label:'Active'},{key:'balance_summary',label:'Currency balances'}],await affiliateRows());}catch(e){next(e);}});router.post('/admin/referrals/settings',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const rewardPercent=Number.parseInt(req.body.rewardPercent,10),qualificationDelayDays=Number.parseInt(req.body.qualificationDelayDays,10),refundWindowDays=Number.parseInt(req.body.refundWindowDays,10);if(!Number.isFinite(rewardPercent)||rewardPercent<1||rewardPercent>100)throw new Error('Enter a reward percentage from 1 to 100.');if(!Number.isFinite(qualificationDelayDays)||qualificationDelayDays<0||qualificationDelayDays>90)throw new Error('Enter a qualification delay of 0-90 days.');if(!Number.isFinite(refundWindowDays)||refundWindowDays<0||refundWindowDays>90)throw new Error('Enter a refund/dispute window of 0-90 days.');const value={enabled:req.body.enabled==='on',rewardPercent,qualificationDelayDays,refundWindowDays};await query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by) VALUES('affiliate_program',$1::jsonb,$2) ON CONFLICT(setting_key) DO UPDATE SET setting_value=$1::jsonb,updated_by=$2,updated_at=NOW()`,[JSON.stringify(value),req.session.authUserId]);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.affiliates.settings',NULL,NULL,$2::jsonb)`,[req.session.authUserId,JSON.stringify(value)]);return res.redirect('/admin/referrals?message='+encodeURIComponent('Affiliate settings saved.'));}catch(e){return res.redirect('/admin/referrals?error='+encodeURIComponent(e.message));}});return router;}
+module.exports={createAdminReferralsRouter};

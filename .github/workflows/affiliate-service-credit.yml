@@ -1,13 +1,10 @@
-name: Bulk Reseller Capacity
-
+name: Affiliate Service Credit
 on:
-  push:
-    branches: [main, 'agent/**']
   pull_request:
-
+  push:
+    branches: [main]
 permissions:
   contents: read
-
 jobs:
   smoke:
     runs-on: ubuntu-latest
@@ -17,32 +14,31 @@ jobs:
         env:
           POSTGRES_USER: steamfusion
           POSTGRES_PASSWORD: steamfusion
-          POSTGRES_DB: steamfusion
+          POSTGRES_DB: steamfusion_affiliate
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-cmd "pg_isready -U steamfusion -d steamfusion_affiliate"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion_affiliate
+      NODE_ENV: test
       DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      NODE_ENV: test
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
       - name: Apply migrations
         run: npm run db:migrate
-      - name: Verify bulk reseller capacity
-        run: node scripts/bulk-reseller-capacity-smoke.js
+      - name: Verify no-subscription affiliate earn and credit activation
+        run: node scripts/affiliate-service-credit-smoke.js
+      - name: Verify mixed service-credit provider checkout accounting
+        run: node scripts/affiliate-mixed-payment-smoke.js

@@ -11,13 +11,11 @@ const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
 const { createAdminCommerceRouter } = require('./admin-commerce');
 const { createAdminPaymentReconciliationRouter } = require('./admin-payment-reconciliation');
-const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings');
 const { createAdminStremioRouter } = require('./admin-stremio');
 const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
 const { createAdminPlanOrderRouter } = require('./admin-plan-order');
 const { createAdminFleetOperationsRouter } = require('./admin-fleet-operations');
-const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPersonalNotificationPreferencesRouter } = require('./admin-personal-notification-preferences-v2');
 const { createAdminPersonalNotificationTestsRouter } = require('./admin-personal-notification-tests');
@@ -26,14 +24,13 @@ const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection')
 const { createAdminOperatorStateRouter } = require('./admin-operator-state');
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAccountActivationRouter } = require('./account-activation-router');
-const { createResellerSecurityRouter } = require('./reseller-security');
-const { createResellerExportRouter } = require('./reseller-export');
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
+const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerCommunicationsRouter,createMessagingBotWebhookRouter } = require('./customer-communications');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
@@ -52,9 +49,8 @@ function createRouter(){
     router.use(createCustomerSecurityRouter());
     router.use(createCustomerCommunicationsRouter());
     router.use(createCustomerStremioRouter());
+    router.use(createCustomerAffiliateRouter());
     router.use(createCustomerDashboardRouter());
-    router.use(createResellerSecurityRouter());
-    router.use(createResellerExportRouter());
     router.use(createAdminOperatorStateRouter());
     router.use(createAdminJellyfinLifecycleRouter());
     router.use(createAdminAutomationRouter());
@@ -63,26 +59,17 @@ function createRouter(){
     router.get('/admin/configuration-health',(req,res)=>res.redirect(302,'/admin/setup'));
     router.use(createAdminPaymentReconciliationRouter());
     router.use(createAdminCommerceRouter());
-    router.use(createAdminResellerSettingsRouter());
     router.use(createAdminStremioSourcesRouter());
     router.use(createAdminStremioRouter());
     router.use(createAdminPlanDeliveryRouter());
     router.use(createAdminPlanOrderRouter());
     router.use(createAdminFleetOperationsRouter());
-    router.use(createAdminResellerDunningRouter());
     router.use(createAdminProfileAccountRouter());
     router.use(createAdminPersonalNotificationTestsRouter());
     router.use(createAdminPersonalNotificationPreferencesRouter());
     const globalNotificationRouter=createAdminNotificationPreferencesRouter();
     pruneRoutes(globalNotificationRouter,new Set([
-        '/admin/profile/notifications',
-        '/admin/profile/notifications/currency',
-        '/admin/profile/notifications/telegram/start',
-        '/admin/profile/notifications/telegram/unlink',
-        '/admin/profile/notifications/discord/start',
-        '/admin/profile/notifications/discord/callback',
-        '/admin/profile/notifications/discord/unlink',
-        '/admin/profile/notifications/whatsapp'
+        '/admin/profile/notifications','/admin/profile/notifications/currency','/admin/profile/notifications/telegram/start','/admin/profile/notifications/telegram/unlink','/admin/profile/notifications/discord/start','/admin/profile/notifications/discord/callback','/admin/profile/notifications/discord/unlink','/admin/profile/notifications/whatsapp'
     ]));
     router.use(globalNotificationRouter);
     router.use(createAdminAbuseProtectionRouter());

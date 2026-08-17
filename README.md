@@ -1,6 +1,6 @@
 # CAPTAiNFiN / Steam Fusion
 
-CAPTAiNFiN is a self-hosted platform for managing Jellyfin customers, reseller access, subscriptions, billing, storefronts and a multi-server Jellyfin fleet. PostgreSQL is the system of record, scheduled mutation work runs in dedicated workers, and the public/admin/customer/reseller experiences are database-backed.
+CAPTAiNFiN is a self-hosted platform for managing Jellyfin customers, subscriptions, billing, affiliates, storefronts and a multi-server Jellyfin fleet. PostgreSQL is the system of record, scheduled mutation work runs in dedicated workers, and the public/admin/customer experiences are database-backed.
 
 ## What it manages
 
@@ -8,26 +8,33 @@ CAPTAiNFiN is a self-hosted platform for managing Jellyfin customers, reseller a
 - Direct customers, invitations, imported Jellyfin users, claims and one-time activation links.
 - Customer plans with stream, download, transcoding, library and request policies.
 - Stripe and PayPal one-time or recurring customer checkout.
-- Monthly reseller plans that grant a configurable number of managed Jellyfin users.
-- Plan-owned Jellyfin policy for reseller-managed users, including streams, transcoding, libraries and placement.
-- Multi-currency customer and reseller pricing with price-scoped provider mappings.
+- Affiliate referral attribution with currency-specific CAPTAiNFiN service credit.
+- Affiliate accounts that can earn credit without holding an active subscription.
+- Full-credit plan activation plus mixed service-credit + Stripe checkout and mixed service-credit + one-time PayPal checkout.
+- Multi-currency customer pricing with price-scoped provider mappings.
 - A permanent Free Access tier that remains visible even when no free places are available.
-- Configurable storefront ordering for customer, Stremio/add-on and reseller plans.
+- Configurable storefront ordering for customer and Stremio/add-on plans.
 - Central Seerr/Overseerr account synchronisation and per-plan request quotas.
 - Transactional email and configured notification channels.
-- Provisioning/reconciliation, billing verification, entitlement expiry and reseller-estate enforcement.
+- Provisioning/reconciliation, billing verification and entitlement expiry.
 - Playback/activity metrics, live fleet streams and recurring-commerce reporting.
 - Portable non-secret configuration export/import for clean installs and migrations.
 
-## Reseller model
+## Affiliate and service-credit model
 
-A reseller pays CAPTAiNFiN a monthly fee for a managed-user allowance. One reseller-managed Jellyfin user consumes one seat.
+An affiliate is a normal CAPTAiNFiN customer account. The account does **not** need an active subscription to participate or accumulate service credit.
 
-The reseller portal can add, suspend/resume, reset credentials for and delete managed Jellyfin users. Suspending a user keeps the seat occupied; deleting the managed user releases it. Managed users inherit the Jellyfin policy configured on the reseller plan.
+A qualifying referred payment awards a configurable percentage of the paid amount as service credit in the same currency. Credit has a qualification/refund window and remains separated by currency; CAPTAiNFiN does not silently perform FX conversion.
 
-The reseller's own commercial relationship with those users is deliberately outside CAPTAiNFiN. The live product does **not** provide a reseller credit wallet, downstream sales ledger, per-customer resale pricing or reseller CRM. Historical database structures may remain where required for safe upgrades/audit compatibility, but they are not active product behavior.
+Available credit can be used in three ways:
 
-Reseller plans are monthly-only and may expose multiple configured prices/currencies. Stripe/PayPal mappings are scoped to the exact reseller price so identifiers cannot be reused across currencies accidentally.
+- If the balance covers an eligible plan, the plan is activated directly with subscription source `service_credit`; Stripe/PayPal are not involved.
+- If the balance is smaller than the plan price, it can be reserved against a Stripe checkout and only the remaining amount is charged by Stripe. For recurring Stripe checkout, the credit adjustment applies to the first checkout while later renewal pricing remains the configured plan price.
+- The same partial-credit model is supported for one-time PayPal Orders. Recurring PayPal Billing Plans are intentionally excluded from mixed credit because altering their plan amount would change recurring billing semantics; customers can instead use Stripe, a one-time PayPal option, or enough credit to activate directly.
+
+Credit reservations are checkout-scoped so the same balance cannot be spent twice while a provider checkout is in progress. Verified completion converts the reservation into a redeemed ledger entry; cancellation/failure releases it. Refund and chargeback handling reverses only credit that is still economically recoverable and does not claw back service already delivered.
+
+The former reseller product is retired from active routes, navigation and current portable configuration. Historical reseller tables/source structures may remain where required for safe migrations and audit compatibility, but they are not active product behavior.
 
 ## Architecture
 
@@ -53,7 +60,7 @@ PostgreSQL is authoritative. The original JSON database and single-server script
 - Docker Engine + Docker Compose is the recommended deployment path.
 - PostgreSQL 17 is included in the Compose stack.
 - A reverse proxy terminating HTTPS is recommended for public deployments.
-- At least one Jellyfin server is required before accounts can be provisioned, but a clean installation can start with zero servers, customers, resellers or payment providers.
+- At least one Jellyfin server is required before accounts can be provisioned, but a clean installation can start with zero servers, customers or payment providers.
 
 ## Quick start
 
@@ -83,14 +90,15 @@ See `docs/PRODUCTION_DEPLOYMENT.md` for the production deployment/rollback model
 A blank database starts safely with customer-facing features off. A sensible administration order is:
 
 1. **Setup / Configuration Health** — resolve readiness/dependency warnings.
-2. **Branding / General / Reseller Settings** — set installation identity and global behavior.
+2. **Branding / General** — set installation identity and global behavior.
 3. **Servers / Libraries** — add Jellyfin servers, test them and synchronise libraries.
-4. **Plans / Reseller Plans** — configure customer, Stremio/add-on and reseller products.
+4. **Plans** — configure customer and Stremio/add-on products.
 5. **Storefront order** — arrange public plan ordering; Free Access stays featured separately.
 6. **Payments** — configure provider credentials and price-specific mappings.
-7. **Notifications** — configure available delivery channels and event policy.
-8. **Automation** — confirm dedicated workers are healthy.
-9. **Storefront / Registration** — enable public-facing acquisition when ready.
+7. **Affiliates** — enable the programme and configure reward/qualification settings when wanted.
+8. **Notifications** — configure available delivery channels and event policy.
+9. **Automation** — confirm dedicated workers are healthy.
+10. **Storefront / Registration** — enable public-facing acquisition when ready.
 
 ## Services
 
@@ -100,7 +108,7 @@ docker compose ps
 
 The normal stack contains:
 
-- `steam-fusion` — web/admin/customer/reseller application.
+- `steam-fusion` — web/admin/customer application.
 - `steam-fusion-automation` — scheduled singleton jobs using PostgreSQL advisory locks.
 - `steam-fusion-activity` — Jellyfin activity/fleet worker with a restricted DB role.
 - `steam-fusion-backup` — encrypted database backup/verification worker.
@@ -123,12 +131,13 @@ Migrations are checksum-tracked. **Do not edit an already-applied migration.** A
 
 - PostgreSQL-backed staff/customer identities with bcrypt password hashes.
 - PostgreSQL-backed sessions and persistent login throttling.
-- Optional administrator/reseller TOTP with recovery codes; enforcement is configurable.
+- Optional administrator/customer TOTP with recovery codes where configured.
 - One-time activation, invitation, claim, verification and reset links store hashes rather than plaintext tokens.
 - Jellyfin/payment/request/email credentials are encrypted at rest using purpose-specific keys.
 - CSRF/origin protection covers authenticated state-changing routes.
 - Provider webhooks require signature verification and idempotent processing.
 - CAPTAiNFiN access holds compose independently so one subsystem cannot accidentally clear another restriction.
+- Service-credit checkout reservations prevent concurrent/double spending while provider checkout is unresolved.
 
 Never reuse `DATA_ENCRYPTION_KEY`, `JELLYFIN_ENCRYPTION_KEY`, `AUTH_ENCRYPTION_KEY`, `ACTIVITY_ENCRYPTION_KEY` or `BACKUP_ENCRYPTION_KEY`.
 
@@ -142,11 +151,13 @@ Direct plans may be free, trial, one-time or recurring. Existing recurring custo
 
 The canonical Free Access tier is permanent in the catalogue. Setting its available capacity to zero closes new claims without hiding or deleting the tier.
 
+Affiliate service credit is an account balance, not cash and not a payment-provider balance. It remains in the currency in which it was earned and can be applied only to matching-currency plan pricing.
+
 ## Configuration export/import
 
-Administration can export a versioned portable configuration containing non-secret business configuration such as plans, pricing, reseller plans, policy, provider mapping references, storefront settings and automation schedules.
+Administration can export a versioned portable configuration containing non-secret business configuration such as plans, pricing, policy, affiliate settings, provider mapping references, storefront settings and automation schedules.
 
-Exports exclude secrets, customer/reseller identities, provider customer/subscription identities, sessions, audit/auth history and branding binary assets. Imported provider mappings remain verification-safe rather than being blindly trusted.
+Exports exclude secrets, customer/affiliate identities and balances, historical reseller configuration, provider customer/subscription identities, sessions, audit/auth history and branding binary assets. Imported provider mappings remain verification-safe rather than being blindly trusted.
 
 ## Backups
 
@@ -179,7 +190,7 @@ Production-readiness audit:
 node scripts/production-readiness.js
 ```
 
-GitHub Actions additionally exercise clean install/upgrade paths, route ownership, lifecycle/concurrency invariants, browser regressions, checkout contracts and CodeQL.
+GitHub Actions additionally exercise clean install/upgrade paths, route ownership, lifecycle/concurrency invariants, browser regressions, checkout contracts, affiliate service-credit accounting and CodeQL.
 
 ## Start commands
 
@@ -204,11 +215,11 @@ src/application.js            explicit Express composition
 src/auth/                     authentication, sessions, 2FA, activation/setup
 src/entitlements/             effective access + composable holds
 src/jellyfin/                 registry, placement, provisioning, reconciliation
-src/payments/                 Stripe/PayPal, lifecycle, checkout intents, billing
-src/resellers/                monthly reseller entitlement and managed-seat policy
+src/payments/                 Stripe/PayPal, lifecycle, checkout intents, billing, service-credit reservations
+src/stremio/                  Stremio sources/runtime/delivery
 src/integrations/             request service, email/outbox and integrations
 src/automation/               singleton job registry/health
-src/platform/                 admin/customer/reseller/storefront routes and UI
+src/platform/                 admin/customer/storefront routes and UI
 db/migrations/                immutable PostgreSQL migrations
 scripts/                      operations, workers and regression checks
 ```

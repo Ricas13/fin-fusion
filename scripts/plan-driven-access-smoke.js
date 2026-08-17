@@ -18,14 +18,15 @@ const storefront=read('src/platform/storefront.js');
 const serverUsers=read('src/platform/admin-server-users.js');
 const serverForm=read('views/admin/server-form.ejs');
 const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
-const resellerGate=read('src/platform/reseller-capacity-gate.js');
 const plansList=read('src/platform/admin-plans-list.js');
-const migration=read('db/migrations/074_plan_driven_access_lifecycle.sql');
 
-// Invitations and global Jellyfin import are no longer primary operator navigation.
+// People now contains customer identity and playback only. Affiliate operations
+// belong to Commerce; the retired reseller product must not return to navigation.
 assert(!nav.includes("['jellyfin-import','Jellyfin Import'"),'Jellyfin Import must not return to the People sidebar');
 assert(!nav.includes("['invitations','Invitations'"),'Invitations must not return to the People sidebar');
-assert(nav.includes("['users','Customers'")&&nav.includes("['resellers','Resellers'")&&nav.includes("['activity','Playback & Activity'"),'People must stay customer/reseller/activity focused');
+assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback & Activity'"),'People must stay customer/activity focused');
+assert(!nav.includes("['resellers','Resellers'"),'Retired reseller navigation must not return');
+assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate administration must live in Commerce');
 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.
 for(const token of ['capacityLimit','streams','allowDownloads','allowVideoTranscoding','allowAudioTranscoding','allowRemuxing','allowLiveTv','allowLiveTvManagement','allowRemoteAccess','libraryAccessMode','libraryNames'])assert(createPlan.includes(token),`New plan is missing ${token}`);
@@ -51,22 +52,19 @@ assert(serverUsers.includes("'/admin/servers/:serverId/users'")&&serverUsers.inc
 assert(serverUsers.includes("'/admin/jellyfin-import'")&&serverUsers.includes("res.redirect(302,'/admin/servers"),'Legacy global import GET must guide the operator to a server');
 assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libraries reached from a server must retain server tab context');
 
-// Storefront is plan-first and keeps sold-out products visible rather than hiding them.
+// Storefront remains plan-first and sold-out products stay visible.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
-assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Managed Jellyfin user plans.'),'Storefront must have explicit Stremio and reseller product sections');
+assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Managed Jellyfin user plans.'),'Storefront must retain explicit service sections');
 assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
+assert(plansList.includes('capacityMeter')&&plansList.includes('Manage inventory'),'Unified Plans must expose customer inventory state and its management entry point');
 
-// Reseller storefront inventory is not the same thing as downstream seat_limit.
-assert(migration.includes('ADD COLUMN IF NOT EXISTS capacity_limit INTEGER'),'Reseller tiers need separate storefront capacity');
-assert(plansList.includes('Storefront availability')&&plansList.includes('Managed users / reseller'),'Unified Plans must distinguish reseller storefront inventory from each reseller plan\'s managed-user allowance');
-assert(resellerGate.includes("req.method!=='POST'")&&resellerGate.includes('CHECKED_PATHS.has(req.path)'),'Reseller capacity must be a pre-route middleware, not a duplicate billing route owner');
-for(const route of ['/reseller/billing/stripe','/reseller/billing/paypal','/reseller/billing/tier'])assert(resellerGate.includes(route),`Reseller capacity gate missing ${route}`);
-
-// New workflow routes must be the only formal owners of the replaced actions.
+// Current workflow routes own customer-plan and server actions; reseller billing
+// middleware/portal routes are intentionally absent from the assembled app.
 assert(application.includes('createAdminPlanCreateV2Router()'),'Full-policy plan creation must be mounted');
 assert(!application.includes('createAdminCatalogShellRouter'),'Legacy catalogue create routes must not be mounted alongside the V2 plan-create owner');
 assert(application.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
-assert(application.indexOf('createResellerCapacityGateRouter()')<application.indexOf('createResellerMonthlyPortalRouter()'),'Reseller inventory middleware must run before billing routes');
+assert(!application.includes('createResellerCapacityGateRouter()'),'Retired reseller capacity middleware must not be mounted');
+assert(!application.includes('createResellerMonthlyPortalRouter()'),'Retired reseller billing portal must not be mounted');
 assert(application.includes('createLegacyJellyfinImportRedirectRouter()')&&!application.includes('createAdminJellyfinImportRouter'),'Only the server-guidance redirect may own the legacy Jellyfin Import URL');
 assert(application.includes('createAdminServerUsersRouter()')&&application.includes('createAdminPlanLifecycleRouter()')&&application.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle/inventory and server import routes must be mounted');
 

@@ -3,7 +3,7 @@
 const { transaction } = require('../db');
 
 const V1_SETTINGS = new Set(['platform','storefront','storefront_features','admin_defaults','referral_program']);
-const V2_SETTINGS = new Set(['reseller_defaults_v2','trial_free_policy','commerce_policy','jellyfin_drift_policy','payment_risk_policy']);
+const V2_SETTINGS = new Set(['reseller_defaults_v2','trial_free_policy','commerce_policy','jellyfin_drift_policy','payment_risk_policy','affiliate_program']);
 function lower(value) { return String(value || '').toLowerCase(); }
 
 async function applySettings(client, settings, actorUserId) {

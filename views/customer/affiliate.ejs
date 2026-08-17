@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Affiliate · <%= siteName %></title>
+  <link rel="icon" href="/branding/favicon">
+  <link rel="stylesheet" href="/css/customer-portal.css">
+</head>
+<%
+function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)}`}}
+const balances=new Map((state.balances||[]).map(x=>[x.currency,x]));
+const selected=balances.get(currency)||{available_minor:0,pending_minor:0};
+const available=Number(selected.available_minor||0);
+%>
+<body>
+<div class="portalShell">
+<header class="portalTopbar"><div class="brandLockup"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Affiliate programme</div></div></div><div class="portalActions"><a class="button secondary small" href="/account">My account</a></div></header>
+<main class="portalMain">
+<% if(message){ %><div class="notice success"><%= message %></div><% } %>
+<% if(error){ %><div class="notice error"><%= error %></div><% } %>
+<section class="accountHero"><div><div class="eyebrow">Affiliate programme</div><h1>Refer people. Build service credit.</h1><p>You do not need an active subscription to participate. Qualifying referrals add service credit to this account. Use it for a complete plan or put the balance towards a new paid checkout.</p></div></section>
+<section class="overviewGrid">
+<article class="metricCard"><div class="metricLabel">Available <%= currency %> credit</div><div class="metricValue"><%= money(available,currency) %></div><div class="metricSub">Ready to spend</div></article>
+<article class="metricCard"><div class="metricLabel">Pending <%= currency %> credit</div><div class="metricValue"><%= money(selected.pending_minor,currency) %></div><div class="metricSub">Waiting for qualification</div></article>
+<article class="metricCard"><div class="metricLabel">Reward rate</div><div class="metricValue"><%= settings.rewardPercent %>%</div><div class="metricSub">Of qualifying referred spend</div></article>
+</section>
+<section class="sectionBlock"><div class="sectionHead"><div><h2>Your affiliate code</h2><p>Share this code or append it to a registration link as <code>?ref=<%= code %></code>.</p></div></div><div class="panel referralPanel"><div><div class="accessTitle">Referral code</div><div class="referralCode"><%= code %></div></div><div class="accessMeta">Credits become available after at least <%= Math.max(settings.qualificationDelayDays,settings.refundWindowDays) %> day(s). Refunds and chargebacks can reverse unspent credit.</div></div></section>
+<section class="sectionBlock"><div class="sectionHead"><div><h2>Credit balances</h2><p>Balances stay in their original currency; CAPTAiNFiN does not perform automatic FX conversion.</p></div></div><div class="plansGrid"><% ['GBP','USD','EUR'].forEach(function(c){const b=balances.get(c)||{available_minor:0,pending_minor:0}; %><article class="planCard"><div class="planName"><%= c %></div><div class="planPrice"><%= money(b.available_minor,c) %></div><div class="planDescription"><%= money(b.pending_minor,c) %> pending</div><a class="button secondary full" href="/account/affiliate?currency=<%= c %>">Use <%= c %> balance</a></article><% }) %></div></section>
+<section class="sectionBlock"><div class="sectionHead"><div><h2>Use <%= currency %> service credit</h2><p>If the balance covers the plan, activate directly. If it does not, CAPTAiNFiN reserves the available credit and sends only the remainder to the payment provider.</p></div></div><div class="plansGrid">
+<% plans.filter(p=>Number(p.price_minor)>0).forEach(function(p){const cost=Number(p.price_minor||0),canFull=available>=cost,remainder=Math.max(0,cost-available),opts=Array.isArray(p.payment_options)?p.payment_options:[],stripeOpts=opts.filter(o=>o.provider==='stripe'),paypalPayment=opts.find(o=>o.provider==='paypal'&&o.checkoutMode==='payment'); %>
+<article class="planCard"><div class="planName"><%= p.name %></div><div class="planPrice"><%= money(cost,p.currency) %></div><div class="planDescription"><%= p.description||'CAPTAiNFiN service plan' %></div>
+<% if(canFull){ %>
+<form class="plainForm" method="post" action="/account/affiliate/redeem"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="currency" value="<%= currency %>"><button class="button primary full" type="submit">Activate with <%= money(cost,currency) %> service credit</button></form>
+<% } else if(available>0){ %>
+<div class="accessMeta">Apply <strong><%= money(available,currency) %></strong> credit · pay about <strong><%= money(remainder,currency) %></strong> with a provider.</div>
+<% stripeOpts.forEach(function(opt){ %><form class="plainForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="currency" value="<%= currency %>"><input type="hidden" name="checkoutMode" value="<%= opt.checkoutMode %>"><input type="hidden" name="applyServiceCredit" value="on"><button class="button stripe full" type="submit">Use credit + Stripe <%= opt.checkoutMode==='subscription'?'subscription':'payment' %></button></form><% }) %>
+<% if(paypalPayment){ %><form class="plainForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="currency" value="<%= currency %>"><input type="hidden" name="checkoutMode" value="payment"><input type="hidden" name="applyServiceCredit" value="on"><button class="button paypal full" type="submit">Use credit + PayPal</button></form><% } %>
+<% if(!stripeOpts.length&&!paypalPayment){ %><div class="paymentNote">No mixed-payment provider is configured for this plan in <%= currency %>.</div><% } %>
+<% } else { %><div class="paymentNote">Earn service credit first, or buy this plan from your account page.</div><% } %>
+</article><% }) %>
+</div><div class="notice">Recurring PayPal billing plans are intentionally excluded from mixed credit because changing their plan price would affect recurring billing. Stripe supports a one-time checkout adjustment while preserving later renewal pricing; one-time PayPal Orders support the reduced remainder safely.</div></section>
+</main></div></body></html>
