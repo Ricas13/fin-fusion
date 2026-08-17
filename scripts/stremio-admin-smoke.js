@@ -23,7 +23,7 @@ assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stre
 assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio Sources workflow');
 assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'Legacy Stremio settings URL must redirect to Stremio Sources');
 
-for(const phrase of ['Add Jellyfin source','Connect & discover libraries','Libraries to index','Sync now','Incremental every 6 hours','full reconciliation','Password is not stored'])assert(sources.includes(phrase),`Stremio Sources UI missing: ${phrase}`);
+for(const phrase of ['Add Jellyfin source','Connect Jellyfin source','Libraries to index','Sync now','Incremental every 6 hours','full reconciliation','Password is not stored'])assert(sources.includes(phrase),`Stremio Sources UI missing: ${phrase}`);
 assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&sources.includes('name="password"'),'External source form must use Jellyfin URL + ordinary user credentials');
 assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfinUserId"'),'Operators must not manually paste Jellyfin access tokens/user IDs');
 assert(sources.includes('name="libraryId"'),'Source detail must expose explicit library selection');
@@ -33,6 +33,8 @@ assert(!sources.includes('Use for Stremio'),'Normal Jellyfin server administrati
 assert(!sources.includes('managedServers()'),'Stremio Sources must not query the normal Jellyfin server fleet for candidates');
 assert(sources.includes('independent from Servers → Servers'),'UI must explain that Stremio upstreams are configured independently');
 assert(sources.includes("console.error('[stremio-source] manual connection failed:'"),'Manual connection failures must be logged with their real server-side cause');
+assert(sourcePool.includes('discoveryWarning')&&sourcePool.includes('sourcePersisted:true'),'Library discovery failure must preserve an authenticated source for diagnosis/retry');
+assert(sources.includes('source was saved')&&sources.includes('library discovery needs attention'),'Admin UI must explain partial source admission without pretending discovery succeeded');
 
 assert(sourceClient.includes('/Users/AuthenticateByName')&&sourceClient.includes('/Views?IncludeExternalContent=false'),'Source client must use normal Jellyfin user authentication and discover visible libraries');
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'")&&sourceClient.includes("LEGACY_TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY'"),'External tokens must use the normal Jellyfin encryption key while retaining legacy decrypt compatibility');
