@@ -98,10 +98,11 @@ async function main(){
     await page.goto(`${BASE}/admin/settings/stremio`,{waitUntil:'networkidle'});
     assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Servers → Stremio Sources');
     let stremioText=await page.locator('body').innerText();
-    assert(/External Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText),'Stremio Sources page is missing the external-source workflow');
+    assert(/Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText)&&/independent from Servers → Servers/.test(stremioText),'Stremio Sources page is missing the manual-source workflow');
+    assert(!/Managed Jellyfin sources/.test(stremioText)&&!/Use for Stremio/.test(stremioText),'Stremio Sources must not expose the normal managed Jellyfin fleet');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio Sources'],'Servers sidebar does not own the Stremio workflow');
     const addSource=page.locator('form[action="/admin/servers/stremio"]');
-    assert.equal(await addSource.count(),1,'External Jellyfin source form is missing');
+    assert.equal(await addSource.count(),1,'Manual Jellyfin source form is missing');
     for(const field of ['name','baseUrl','username','password'])assert.equal(await addSource.locator(`[name="${field}"]`).count(),1,`Source form is missing ${field}`);
     assert.equal(await addSource.locator('[name="accessToken"]').count(),0,'Source form exposes raw access-token entry');
     let runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
