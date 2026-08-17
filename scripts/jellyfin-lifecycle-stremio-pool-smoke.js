@@ -24,7 +24,7 @@ assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPT
 assert(runtime.indexOf('sourcePool.streamsFor')<runtime.indexOf('jellyfin.streamsFor'),'external Stremio Sources must be attempted before legacy managed fallback');
 assert(runtime.includes('!explicit')&&pool.includes('if(explicit)return mapped.rows'),'explicit plan source mappings must not fail open to unrelated sources or managed delivery');
 assert(admin.includes('The upstream Jellyfin owner can still see activity'),'operator UI must be transparent about upstream activity visibility');
-assert(admin.includes('Password is not stored')&&admin.includes('choose the libraries'),'operator UI must explain credential and indexing boundaries');
+assert(admin.includes('Password is not stored')&&admin.includes('choose its libraries'),'operator UI must explain credential and indexing boundaries');
 assert(sourceMigration.includes('source-only')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support source-only entitlements without weakening legacy managed integrity');
 assert(migration.includes('portal customer'),'migration must document portal identity invariant');
 console.log('Jellyfin lifecycle + Stremio Sources smoke: OK');
