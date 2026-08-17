@@ -40,6 +40,7 @@ const aliases=Object.freeze({
   'reseller-settings':'settings-general',
   'stremio-settings':'settings-integrations',
   'abuse-protection':'settings-security',
+  'security':'settings-security',
   'jellyfin-import':'servers',
   'invitations':'plans',
   'operations':'fleet-operations'
