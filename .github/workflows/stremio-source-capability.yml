@@ -1,0 +1,24 @@
+name: Stremio Source Capability
+
+on:
+  pull_request:
+    paths:
+      - 'src/stremio/source-capability.js'
+      - 'src/stremio/runtime.js'
+      - 'scripts/stremio-source-capability-smoke.js'
+      - '.github/workflows/stremio-source-capability.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  capability-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/stremio-source-capability-smoke.js
+      - run: node --check src/stremio/source-capability.js
+      - run: node --check src/stremio/runtime.js
