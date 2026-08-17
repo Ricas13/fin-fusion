@@ -7,6 +7,7 @@ on:
       - 'views/**'
       - 'public/**'
       - 'tests/admin-browser-regression.js'
+      - 'tests/admin-information-architecture-regression.js'
       - '.github/workflows/admin-browser-regression.yml'
       - 'db/migrations/**'
   workflow_dispatch:
@@ -78,6 +79,8 @@ jobs:
           exit 1
       - name: Crawl authenticated admin UI in Chromium
         run: node tests/admin-browser-regression.js
+      - name: Verify admin information architecture in Chromium
+        run: node tests/admin-information-architecture-regression.js
       - name: Print app log on failure
         if: failure()
         run: cat /tmp/captainfin-browser.log || true
