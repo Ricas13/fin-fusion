@@ -76,7 +76,7 @@ async function page(req) {
 
     const body = `${notice(req)}
       <section class="card">
-        <div class="card-header"><div><h2 class="card-title">How plan quotas work</h2><div class="muted">Limits are pushed to the central Overseerr/Seerr account whenever request users synchronize.</div></div><a class="button secondary" href="/admin/request-users">Request users</a></div>
+        <div class="card-header"><div><h2 class="card-title">How plan quotas work</h2><div class="muted">Limits are pushed to the central Overseerr/Seerr account whenever request users synchronize.</div></div></div>
         <div class="card-body">
           <div class="compact-item"><div><div class="compact-title">Per-plan policy</div><div class="compact-meta">Movie and TV limits are configured independently. A blank limit means unlimited for that media type.</div></div><span class="pill good">Plan controlled</span></div>
           <div class="compact-item"><div><div class="compact-title">Rolling quota window</div><div class="compact-meta">Overseerr/Seerr applies quotas over the configured number of days. For example: 2 movies every 30 days.</div></div><span class="pill">Native quota</span></div>
@@ -92,10 +92,9 @@ async function page(req) {
 
     return layout({
         siteName: runtimeSettings.siteName(),
-        active: 'provisioning',
+        active: 'request-plan-limits',
         title: 'Plan Request Limits',
         subtitle: 'Movie and TV request quotas for the central Overseerr/Seerr service',
-        action: '<a class="button secondary" href="/admin/request-users">Back to request users</a>',
         body
     });
 }
