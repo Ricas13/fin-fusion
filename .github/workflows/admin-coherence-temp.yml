@@ -13,13 +13,12 @@ jobs:
         with:
           ref: fix/admin-coherence-user-overrides-plan-ux
           fetch-depth: 0
-      - name: Apply coherence pass
-        run: python3 scripts/apply-admin-coherence-pass.py
-      - name: Commit coherence pass
+      - name: Apply coherence follow-up
+        run: python3 scripts/apply-admin-coherence-followup.py
+      - name: Commit coherence follow-up
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/platform/storefront.js src/platform/admin-plans.js src/platform/admin-plans-list.js src/platform/admin-plan-order.js src/platform/customer-360.js src/platform/admin-customer-360.js src/platform/customer-360-view-v2.js src/automation/customer-inactivity.js src/platform/admin-attention.js src/platform/admin-original-settings.js public/css/admin-visual-refinement.css scripts/admin-coherence-user-overrides-smoke.js package.json
-          git add -f db/migrations/092_admin_customer_protection_and_plan_marketing.sql
-          git commit -m "Unify admin controls and add customer overrides"
+          git add src/platform/admin-original-settings.js src/platform/admin-plan-order.js src/platform/admin-customer-360.js src/platform/customer-360-view-v2.js src/stremio/source-pool.js src/platform/admin-stremio-sources.js scripts/admin-coherence-user-overrides-smoke.js
+          git commit -m "Finish admin coherence and Stremio source flow"
           git push origin HEAD:fix/admin-coherence-user-overrides-plan-ux
