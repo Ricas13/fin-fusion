@@ -31,6 +31,6 @@ CREATE INDEX IF NOT EXISTS affiliate_credit_ledger_referral_idx ON affiliate_cre
 ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_source_check;
 ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_source_check CHECK (source IN ('manual','reseller_credit','stripe','paypal','migration','admin_grant','service_credit'));
 INSERT INTO platform_settings(setting_key,setting_value)
-VALUES ('affiliate_program','{"enabled":false,"rewardPercent":15,"qualificationDelayDays":14,"refundWindowDays":14,"recurringMonths":12}'::jsonb)
+VALUES ('affiliate_program','{"enabled":false,"rewardPercent":15,"qualificationDelayDays":14,"refundWindowDays":14}'::jsonb)
 ON CONFLICT (setting_key) DO NOTHING;
 COMMIT;
