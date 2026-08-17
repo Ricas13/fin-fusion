@@ -15,12 +15,13 @@ function globalTabs(active='global'){
 function profileTabs(active='profile'){
   return render([
     ['profile','Profile','/admin/profile'],
-    ['personal','Notifications','/admin/profile/notifications']
+    ['personal','Notifications','/admin/profile/notifications'],
+    ['security','Security','/admin/security']
   ],active,'My profile workflow');
 }
 
 function tabs(active='global'){
-  return ['profile','personal'].includes(active)?profileTabs(active):globalTabs(active);
+  return ['profile','personal','security'].includes(active)?profileTabs(active):globalTabs(active);
 }
 
 module.exports={tabs,globalTabs,profileTabs};
