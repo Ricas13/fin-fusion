@@ -23,7 +23,7 @@ const plans = [
     {
         id: 'monthly', code: 'monthly', name: 'Monthly', description: 'Monthly access.',
         service_type:'jellyfin',billing_interval: 'month', duration_days: 30, price_minor: 600, currency: 'USD', streams: 3,
-        allow_downloads: true, allow_video_transcoding: false,capacity:{limit:40,used:12,remaining:28,soldOut:false}
+        allow_downloads: true, allow_video_transcoding: false,marketing_features:['Three streams','Downloads included'],capacity:{limit:40,used:12,remaining:28,soldOut:false}
     },
     {
         id: 'six', code: 'six-month', name: '6 Months', description: 'Six months access.',
@@ -54,6 +54,11 @@ assert.match(closedCard, /Sign in to choose/);
 assert.match(closedCard, /\/account\/login\?next=%2Faccount%23plans/);
 assert.doesNotMatch(closedCard, /Best value|Save \$/);
 
+const customMarketingCard = planCard(plans[2], { logged:false,registrationOpen:true });
+assert.match(customMarketingCard, /Three streams/);
+assert.match(customMarketingCard, /Downloads included/);
+assert.doesNotMatch(customMarketingCard, /Direct-play focused/);
+
 const soldTrial = planCard(plans[1], { logged:false,registrationOpen:true });
 assert.match(soldTrial, /0 spots available · Sold out/);
 assert.match(soldTrial, /aria-disabled="true">Sold out/);
@@ -72,12 +77,12 @@ const resellerTiers=[{id:'r1',code:'reseller',name:'Reseller 50',description:'Ma
 const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,resellerTiers,support:{supportEmail:'support@example.test'} });
 for (const expected of [
     'heroSection','freeTierPanel','pricingGrid','finalCta','Your entertainment. One simple subscription.',
-    'Permanent free tier','Still here — currently full.','Choose the access that fits you.','Stremio add-ons &amp; plans.',
+    'Free access','Still here — currently full.','Choose the access that fits you.','Stremio add-ons &amp; plans.',
     'Managed Jellyfin user plans.','50 managed Jellyfin users','5 concurrent streams per managed user',
     '0 spots available · Sold out','support@example.test'
 ]) assert.ok(page.includes(expected), `rendered storefront should include ${expected}`);
-assert.ok(page.indexOf('heroSection') < page.indexOf('id="free-access"'), 'hero should appear before permanent free access');
-assert.ok(page.indexOf('id="free-access"') < page.indexOf('id="plans"'), 'permanent free access should appear above paid/trial plan cards');
+assert.ok(page.indexOf('heroSection') < page.indexOf('id="free-access"'), 'hero should appear before free access');
+assert.ok(page.indexOf('id="free-access"') < page.indexOf('id="plans"'), 'free access should appear above paid/trial plan cards');
 assert.ok(page.indexOf('id="plans"') < page.indexOf('id="stremio"'), 'main plans should appear before Stremio');
 assert.ok(page.indexOf('id="stremio"') < page.indexOf('id="resellers"'), 'Stremio should appear before reseller plans');
 for(const removed of ['featureGrid','experienceSection','stepsGrid','Everything you need to watch your way','From account to watching in minutes'])assert.ok(!page.includes(removed),`old marketing section should be gone: ${removed}`);
