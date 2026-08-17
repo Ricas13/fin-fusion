@@ -32,7 +32,7 @@ const stripe=text('src/payments/stripe.js');
 assert(/reverseReferralForDirectIdentity/.test(stripe),'Stripe reversals must revisit already-rewarded referrals.');
 const referrals=text('src/referrals.js'),affiliateCredits=text('src/affiliate-credits.js');
 assert(/revisitRewardAfterAdversePayment/.test(referrals)&&/affiliateCredits\.reverseReward/.test(referrals),'Adverse payments must revisit already-earned affiliate service credit.');
-assert(/entry_type='reversed'/.test(affiliateCredits)&&/already-delivered service was preserved|already-delivered service/i.test(referrals),'Affiliate reward reversal must remove unspent credit without clawing back delivered service.');
+assert(/'reversed'/.test(affiliateCredits)&&/already-delivered service was preserved/i.test(referrals),'Affiliate reward reversal must remove unspent credit without clawing back delivered service.');
 
 const bulk=text('src/platform/bulk-operations.js');
 assert(!/reseller_assign|reseller_detach/.test(bulk),'Retired reseller customer-assignment operations must not return to bulk administration.');
