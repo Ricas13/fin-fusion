@@ -13,7 +13,7 @@ fs.mkdirSync(OUT,{recursive:true});
 
 const forced=[
   '/admin','/admin/attention','/admin/search','/admin/events',
-  '/admin/users','/admin/reseller-management','/admin/activity',
+  '/admin/users','/admin/activity',
   '/admin/servers','/admin/libraries','/admin/servers/operations',
   '/admin/commerce','/admin/plans','/admin/plans/new?type=stremio','/admin/payments','/admin/discounts','/admin/referrals',
   '/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/provisioning/migrations','/admin/provisioning/drift','/admin/automation',
@@ -156,8 +156,7 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   await form.locator('input[name="code"]').fill(code);
   await form.locator('input[name="name"]').fill(name);
   await form.locator('textarea[name="description"]').fill('Access to a stremio addon');
-  // Customer plans are customer-only. Reseller products are configured separately,
-  // so the old audience selector is intentionally absent from this shared workflow.
+  // Customer plans are direct-customer products; the retired reseller audience is intentionally absent.
   assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose the retired reseller audience selector');
   await form.locator('input[name="price"]').fill('6');
   await form.locator('select[name="currency"]').selectOption('USD');
