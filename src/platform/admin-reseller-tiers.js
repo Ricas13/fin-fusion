@@ -5,6 +5,7 @@
 //
 // Shared setup vocabulary intentionally mirrors customer/Stremio plans:
 // Product -> Pricing -> Capacity -> Jellyfin access policy -> Jellyfin libraries -> Storefront.
-// The form includes "Concurrent streams per managed user" and a "Jellyfin user policy"
-// section while pricing is multicurrency and monthly-only by reseller contract.
+// The form includes "Concurrent streams per managed user", a "Jellyfin user policy"
+// section, and an "Impact preview" for existing reseller subscriptions while pricing
+// is multicurrency and monthly-only by reseller contract.
 module.exports=require('./admin-reseller-tiers-v2');
