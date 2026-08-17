@@ -56,7 +56,7 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
 assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Managed Jellyfin user plans.'),'Storefront must retain explicit service sections');
 assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
-assert(plansList.includes('Storefront availability'),'Unified Plans must expose storefront inventory state');
+assert(plansList.includes('capacityMeter')&&plansList.includes('Manage inventory'),'Unified Plans must expose customer inventory state and its management entry point');
 
 // Current workflow routes own customer-plan and server actions; reseller billing
 // middleware/portal routes are intentionally absent from the assembled app.
