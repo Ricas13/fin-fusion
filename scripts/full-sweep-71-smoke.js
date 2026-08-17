@@ -36,7 +36,8 @@ mustNotContain('src/application.js',"require('./platform/reseller-portal')");
 mustContain('src/application.js','The reseller programme has been retired');
 
 // Affiliate/service-credit product invariants.
-mustContain('src/referrals.js','affiliateCredits.awardReferral');
+mustContain('src/referrals.js','rewardIfQualifying');
+mustContain('src/referrals.js',"entry_type,state,referral_redemption_id");
 mustContain('src/referrals.js','affiliateCredits.reverseReward');
 mustContain('src/affiliate-credits.js',"source,'service_credit'");
 mustContain('src/affiliate-credits.js','activatePlanWithCredit');
