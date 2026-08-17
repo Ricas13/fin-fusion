@@ -12,7 +12,7 @@
     return;
   }
 
-  const match=location.pathname.match(/^\/admin\/plans\/([^/]+)\/(edit|delivery|inventory|commerce|jellyfin|libraries|placement|lifecycle|payment-options)$/);
+  const match=location.pathname.match(/^\/admin\/plans\/([^/]+)\/(edit|delivery|inventory|commerce|jellyfin|libraries|placement|lifecycle|payment-options|archive-confirm)$/);
   if(!match)return;
   const id=match[1],page=match[2];
   const header=document.querySelector('.pageHeader');
@@ -30,7 +30,7 @@
     ['Commerce',`/admin/plans/${id}/commerce`,'commerce']
   ];
   const deliveryPages=['delivery','jellyfin','libraries','placement','lifecycle'];
-  const active=page==='edit'?'overview':deliveryPages.includes(page)?'delivery':page==='inventory'?'availability':'commerce';
+  const active=(page==='edit'||page==='archive-confirm')?'overview':deliveryPages.includes(page)?'delivery':page==='inventory'?'availability':'commerce';
   const top=document.createElement('nav');top.className='operatorTabs planWorkflowTabs';top.setAttribute('aria-label','Plan management');
   topItems.forEach(([label,href,key])=>{const a=document.createElement('a');a.className=`operatorTab ${key===active?'active':''}`;a.href=href;a.textContent=label;top.appendChild(a);});
   header.insertAdjacentElement('afterend',top);
