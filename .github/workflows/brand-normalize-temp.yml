@@ -1,0 +1,35 @@
+name: Temporary CAPTAiNFiN Brand Normalizer
+
+on:
+  push:
+    branches:
+      - feat/reseller-seat-licensing
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/reseller-seat-licensing
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Normalize tracked brand casing
+        run: node scripts/captainfin-brand-audit.js --write
+      - name: Commit normalization when needed
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No brand normalization needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Normalize CAPTAiNFiN branding"
+          git push origin HEAD:feat/reseller-seat-licensing
