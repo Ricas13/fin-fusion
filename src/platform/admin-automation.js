@@ -11,15 +11,18 @@ const LABELS = {
     health: ['Jellyfin health', 'Checks configured servers and updates health status.'],
     entitlements: ['Entitlements', 'Expires due subscriptions and reconciles active customer access.'],
     policy_drift: ['Jellyfin policy drift', 'Read-only comparison of CAPTAiNFiN policy with live managed Jellyfin users.'],
+    customer_inactivity: ['Customer inactivity', 'Applies configured Jellyfin inactivity and cleanup rules.'],
     bulk_jobs: ['Bulk operations', 'Processes queued bulk customer actions.'],
     stale_reclaim: ['Stale job reclaim', 'Recovers abandoned running bulk items safely.'],
     email_outbox: ['Transactional email', 'Delivers due messages from the encrypted outbox.'],
+    notification_outbox: ['Notification delivery', 'Delivers due customer and administrator notifications.'],
     request_users: ['Request users', 'Synchronises CAPTAiNFiN customer access to Seerr/Overseerr.'],
     billing: ['Customer billing', 'Re-verifies recurring direct-customer provider subscriptions.'],
     plan_changes: ['Customer plan changes', 'Applies any provider-confirmed or due direct-customer plan transitions.'],
-    reseller_billing: ['Reseller billing', 'Re-verifies Stripe/PayPal reseller subscriptions and applies due tier changes.'],
-    reseller_estates: ['Reseller estates', 'Applies parent reseller entitlement changes to child customers.'],
-    reseller_notifications: ['Reseller lifecycle notifications', 'Emits billing, grace, estate and seat-utilisation transition notifications without blocking billing.']
+    referral_rewards: ['Affiliate rewards', 'Qualifies pending referrals and matures eligible service credit.'],
+    activation_cleanup: ['Activation cleanup', 'Cleans abandoned customer activation state.'],
+    pending_registration_cleanup: ['Registration cleanup', 'Removes expired staged public registrations.'],
+    stremio_media_index: ['Stremio media index', 'Refreshes managed and external Stremio catalogue indexes.']
 };
 
 function gate(req,res,next){ return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
