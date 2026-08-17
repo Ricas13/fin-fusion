@@ -1,94 +1,25 @@
 'use strict';
 
 const express=require('express');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
-const runtimeSettings=require('./runtime-settings');
-const foundation=require('../stremio/foundation');
-const stremioRuntimeSettings=require('../stremio/runtime-settings');
-const mediaIndex=require('../stremio/media-index');
-const {layout,esc}=require('./admin-html');
+const stremioRuntime=require('../stremio/runtime-settings');
 
-const stremioMutationLimit=routeRateLimit.middleware({scope:'admin-stremio-settings',max:20,windowSeconds:300});
+const mutationLimit=routeRateLimit.middleware({scope:'admin-stremio-settings',max:20,windowSeconds:300});
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
-function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
-function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`;}
-function money(minor,currency='USD'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'USD')}).format(Number(minor||0)/100);}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`;}}
-async function runtimeStatus(){await stremioRuntimeSettings.ensureLoaded();const checks=await stremioRuntimeSettings.prerequisites(),state=stremioRuntimeSettings.snapshot();return{...state,...checks,ready:foundation.runtimeReady()};}
-
-async function data(){
-    const [plans,servers,entitlements,indexStates,runtime]=await Promise.all([
-        query(`SELECT id,code,name,service_type,streams,active,visible,price_minor,currency,archived_at FROM plans ORDER BY archived_at IS NOT NULL,active DESC,sort_order,price_minor,name`),
-        query(`SELECT id,name,server_class,public_url,enabled,health_status,stremio_enabled FROM jellyfin_servers ORDER BY enabled DESC,priority,name`),
-        query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status='active')::int active,COUNT(*) FILTER(WHERE status='pending')::int pending,COUNT(*) FILTER(WHERE status='suspended')::int suspended,COUNT(*) FILTER(WHERE status='revoked')::int revoked FROM stremio_entitlements`),
-        mediaIndex.states(),
-        runtimeStatus()
-    ]);
-    return {plans:plans.rows,servers:servers.rows,entitlements:entitlements.rows[0]||{total:0,active:0,pending:0,suspended:0,revoked:0},indexStates,runtime};
-}
-function guideStep(number,title,ready,detail,action=''){return `<div class="readinessStep ${ready?'ready':'pending'}"><div class="readinessNumber">${ready?'✓':esc(number)}</div><div class="readinessBody"><strong>${esc(title)}</strong><span>${detail}</span>${action?`<div class="readinessAction">${action}</div>`:''}</div></div>`;}
-function runtimeAction(req,d){
-    if(d.runtime.source==='legacy_env'&&d.runtime.enabled)return `<form method="post" action="/admin/settings/stremio/runtime" class="inlineForm">${csrfInput(req)}<input type="hidden" name="enabled" value="1"><button class="button btn-sm">Manage runtime here</button></form>`;
-    if(d.runtime.enabled)return `<form method="post" action="/admin/settings/stremio/runtime" class="inlineForm">${csrfInput(req)}<input type="hidden" name="enabled" value="0"><button class="button secondary btn-sm">Disable runtime</button></form>`;
-    const canEnable=d.runtime.keyConfigured&&d.runtime.eligibleServers>0&&d.runtime.readyIndexes>0;
-    return `<form method="post" action="/admin/settings/stremio/runtime" class="inlineForm">${csrfInput(req)}<input type="hidden" name="enabled" value="1"><button class="button btn-sm" ${canEnable?'':'disabled title="Complete steps 1–3 first"'}>Enable runtime</button></form>`;
-}
-function operatorGuide(req,d){
-    const stremioPlans=d.plans.filter(plan=>['stremio','bundle'].includes(plan.service_type)&&plan.active&&!plan.archived_at),hasPlan=stremioPlans.length>0;
-    const allReady=d.runtime.ready&&d.runtime.eligibleServers>0&&d.runtime.readyIndexes>0&&hasPlan;
-    const runtimeDetail=d.runtime.ready?'Runtime is enabled here and the dedicated token-encryption key is valid.':d.runtime.enabled?'The runtime switch is enabled, but a security prerequisite is no longer healthy. Stremio remains fail-closed until it is fixed.':'Once steps 1–3 are green, enable the runtime here. The encryption key itself never appears in the browser.';
-    return `<section class="section stremioGuide"><div class="sectionHead"><div><h2>What do I need to do?</h2><div class="muted">Complete these in order. CAPTaINFiN deliberately refuses to sell new Stremio access until secure delivery is ready.</div></div><span class="statusPill ${allReady?'statusGood':'statusWarn'}">${allReady?'Ready to test/sell':'Setup incomplete'}</span></div><div class="readinessSteps">
-    ${guideStep(1,'Configure the encryption key',d.runtime.keyConfigured,d.runtime.keyConfigured?'The dedicated Stremio Jellyfin token-encryption key is configured.':'Configure STREMIO_JELLYFIN_TOKEN_KEY once as a deployment secret. CAPTaINFiN only shows whether it is valid; the key is never exposed in the admin UI.','<a class="button secondary btn-sm" href="/admin/setup">Configuration health</a>')}
-    ${guideStep(2,'Choose a Jellyfin delivery server',d.runtime.eligibleServers>0,d.runtime.eligibleServers>0?`${d.runtime.eligibleServers} healthy server(s) are enabled for Stremio with a public playback URL.`:'Enable Stremio on at least one healthy Jellyfin server that has a public playback URL.','<a class="button secondary btn-sm" href="#stremio-servers">Server eligibility</a>')}
-    ${guideStep(3,'Build the IMDb media index',d.runtime.readyIndexes>0,d.runtime.readyIndexes>0?`${d.runtime.readyIndexes} eligible server index(es) are ready.`:'Queue the media index after enabling the server. Do not sell access until at least one index is ready.','<a class="button secondary btn-sm" href="#stremio-servers">Index status</a>')}
-    ${guideStep(4,'Enable the secure runtime',d.runtime.ready,runtimeDetail,runtimeAction(req,d))}
-    ${guideStep(5,'Create a Stremio or bundle plan',hasPlan,hasPlan?`${stremioPlans.length} active Stremio/bundle plan(s) exist.`:'Create either a Stremio-only plan or a Jellyfin + Stremio bundle in the unified Plans workflow.','<a class="button secondary btn-sm" href="/admin/plans/new?type=stremio">Create Stremio plan</a> <a class="button secondary btn-sm" href="/admin/plans/new?type=bundle">Create bundle</a>')}
-    ${guideStep(6,'Test as a customer',Number(d.entitlements.total||0)>0,Number(d.entitlements.total||0)>0?`${Number(d.entitlements.active||0)} active install(s), ${Number(d.entitlements.pending||0)} pending.`:'After steps 1–5 are green, use a test customer and acquire the plan. The customer Account → Stremio page will issue/rotate the installation URL; verify manifest and playback before advertising the product.','<a class="button secondary btn-sm" href="/admin/users">Choose test customer</a>')}
-    </div></section>`;
-}
-
-async function page(req){
-    await runtimeSettings.ensureLoaded();
-    const d=await data(),e=d.entitlements,stremioPlans=d.plans.filter(plan=>['stremio','bundle'].includes(plan.service_type)),eligibleServers=d.servers.filter(server=>server.stremio_enabled);
-    let status;
-    if(d.runtime.ready)status='<div class="statusBanner good"><strong>Runtime ready.</strong> Stremio acquisition, installation and stream endpoints are enabled. Keep at least one eligible server indexed before selling access.</div>';
-    else if(d.runtime.enabled)status='<div class="statusBanner warn"><strong>Runtime safety check failed.</strong> The browser switch is enabled, but the dedicated encryption key is missing or invalid. Stremio remains fail-closed.</div>';
-    else status='<div class="statusBanner warn"><strong>Runtime disabled.</strong> Complete the encryption-key, server and media-index steps below, then enable Stremio directly from this page. Stremio/bundle acquisition remains fail-closed until then.</div>';
-    const legacy=d.runtime.source==='legacy_env'?'<div class="notice warn"><strong>Legacy deployment flag detected.</strong> Runtime state is currently inherited from STREMIO_RUNTIME_ENABLED. Use “Manage runtime here” below once to move control into CAPTaINFiN; after that the browser setting is authoritative.</div>':'';
-    const body=`${notice(req)}${status}${legacy}${operatorGuide(req,d)}
-    <div class="metrics"><div class="metric"><div class="metricLabel">Runtime</div><div class="metricValue ${d.runtime.ready?'statusGood':'statusWarn'}" style="font-size:20px">${d.runtime.ready?'Ready':d.runtime.enabled?'Blocked':'Disabled'}</div></div><div class="metric"><div class="metricLabel">Stremio/bundle plans</div><div class="metricValue">${stremioPlans.length}</div></div><div class="metric"><div class="metricLabel">Eligible servers</div><div class="metricValue">${d.runtime.eligibleServers}</div></div><div class="metric"><div class="metricLabel">Active installs</div><div class="metricValue">${Number(e.active||0)}</div></div></div>
-    <section class="section"><div class="sectionHead"><div><h2>Plan delivery</h2><div class="settings-hint">This is a compact operational view. Create/edit customer and reseller products in <a href="/admin/plans">Plans</a>.</div></div></div><div class="tableWrap"><table class="dataTable"><thead><tr><th>Plan</th><th>Delivery</th><th>Streams</th><th>Price</th><th>Sale state</th><th></th></tr></thead><tbody>${d.plans.map(plan=>`<tr><td><strong>${esc(plan.name)}</strong><div class="subText">${esc(plan.code)}</div></td><td><form method="post" action="/admin/settings/stremio/plans/${esc(plan.id)}" class="inlineForm">${csrfInput(req)}<select class="input" name="serviceType"><option value="jellyfin" ${plan.service_type==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${plan.service_type==='stremio'?'selected':''}>Stremio</option><option value="bundle" ${plan.service_type==='bundle'?'selected':''}>Bundle</option></select><button class="button secondary btn-sm">Save</button></form></td><td>${esc(plan.streams)}</td><td>${esc(money(plan.price_minor,plan.currency))}</td><td>${plan.archived_at?'<span class="pill">Archived</span>':plan.active&&plan.visible?'<span class="pill good">Visible</span>':'<span class="pill warn">Not selling</span>'}</td><td><a class="button secondary btn-sm" href="/admin/plans/${esc(plan.id)}/delivery">Delivery</a></td></tr>`).join('')}</tbody></table></div></section>
-    <section class="section" id="stremio-servers"><div class="sectionHead"><div><h2>Jellyfin delivery servers</h2><div class="settings-hint">A Stremio server needs a public playback URL, healthy placement status and an up-to-date IMDb index.</div></div><form method="post" action="/admin/settings/stremio/index">${csrfInput(req)}<button class="button secondary">Queue full media-index refresh</button></form></div>${d.indexStates.length?`<div class="tableWrap"><table class="dataTable"><thead><tr><th>Server</th><th>Health</th><th>Stremio</th><th>IMDb index</th><th>Last complete</th><th></th></tr></thead><tbody>${d.indexStates.map(server=>`<tr><td><strong>${esc(server.name)}</strong></td><td><span class="pill ${server.health_status==='healthy'?'good':server.health_status==='offline'?'bad':'warn'}">${esc(server.health_status||'unknown')}</span></td><td><span class="pill ${server.stremio_enabled?'good':'warn'}">${server.stremio_enabled?'Eligible':'Off'}</span></td><td><span class="pill ${server.index_status==='ready'?'good':server.index_status==='failed'?'bad':'warn'}">${esc(server.index_status)}</span><div class="subText">${Number(server.item_count||0).toLocaleString('en-GB')} IMDb titles${server.last_error?` · ${esc(server.last_error)}`:''}</div></td><td>${server.last_completed_at?esc(new Date(server.last_completed_at).toLocaleString('en-GB')):'Never'}</td><td><form method="post" action="/admin/settings/stremio/servers/${esc(server.id)}">${csrfInput(req)}<input type="hidden" name="enabled" value="${server.stremio_enabled?'0':'1'}"><button class="button secondary btn-sm">${server.stremio_enabled?'Disable':'Enable'}</button></form></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No Jellyfin servers configured.</div>'}</section>
-    <section class="section"><div class="sectionHead"><div><h2>Installation security</h2><div class="settings-hint">Every customer gets an opaque addon URL and a dedicated hidden Jellyfin identity.</div></div></div><div class="card-body"><div class="compact-item"><div><div class="compact-title">Install credential</div><div class="compact-meta">Raw value appears only when issued or rotated.</div></div><span class="pill good">Hash only at rest</span></div><div class="compact-item"><div><div class="compact-title">Playback identity</div><div class="compact-meta">Restricted Jellyfin token is encrypted with its own purpose key. The secret itself is never browser-editable.</div></div><span class="pill ${d.runtime.keyConfigured?'good':'warn'}">${d.runtime.keyConfigured?'Key configured':'Key missing'}</span></div><div class="compact-item"><div><div class="compact-title">Concurrent streams</div><div class="compact-meta">Dedicated Jellyfin MaxActiveSessions plus CAPTaINFiN active-playback admission check.</div></div><span class="pill good">Defense in depth</span></div><div class="compact-item"><div><div class="compact-title">Entitlements</div><div class="compact-meta">${Number(e.active||0)} active · ${Number(e.pending||0)} pending · ${Number(e.suspended||0)} suspended · ${Number(e.revoked||0)} revoked</div></div><span class="pill accent">${Number(e.total||0)}</span></div></div></section>`;
-    return layout({siteName:runtimeSettings.siteName(),active:'stremio-settings',title:'Stremio',subtitle:'Guided setup, delivery readiness, test flow and installation security',body});
-}
+function target(message='',error=''){const q=new URLSearchParams();if(message)q.set('message',message);if(error)q.set('error',error);return `/admin/servers/stremio${q.toString()?`?${q}`:''}`;}
+function queueIndex(){return query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested) VALUES('stremio_media_index',TRUE,21600,NOW(),TRUE) ON CONFLICT(job_key) DO UPDATE SET enabled=TRUE,next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()`);}
 
 function createAdminStremioRouter(){
-    const router=express.Router();
-    router.use('/admin/settings/stremio',gate,noStore);
-    router.get('/admin/settings/stremio',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){return next(error);}});
-    router.post('/admin/settings/stremio/runtime',stremioMutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled)==='1';await stremioRuntimeSettings.setEnabled(enabled,req.session.authUserId);return res.redirect('/admin/settings/stremio?message='+encodeURIComponent(enabled?'Stremio runtime enabled. New Stremio acquisition and addon requests can now proceed while readiness remains healthy.':'Stremio runtime disabled. New acquisition and addon requests are now fail-closed.'));}catch(error){return res.redirect('/admin/settings/stremio?error='+encodeURIComponent(error.message));}});
-    router.post('/admin/settings/stremio/index',stremioMutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested) VALUES('stremio_media_index',TRUE,21600,NOW(),TRUE) ON CONFLICT(job_key) DO UPDATE SET enabled=TRUE,next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()`);return res.redirect('/admin/settings/stremio?message='+encodeURIComponent('Stremio media-index refresh queued.'));}catch(error){return res.redirect('/admin/settings/stremio?error='+encodeURIComponent(error.message));}});
-    router.post('/admin/settings/stremio/plans/:id',stremioMutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await stremioRuntimeSettings.ensureLoaded();const serviceType=foundation.normalizeServiceType(req.body.serviceType);await transaction(async client=>{const plan=await client.query(`SELECT * FROM plans WHERE id=$1 FOR UPDATE`,[req.params.id]);if(!plan.rowCount)throw new Error('Plan not found.');if(['stremio','bundle'].includes(serviceType)&&plan.rows[0].active&&plan.rows[0].visible&&!foundation.runtimeReady())throw new Error('Disable/hide this plan or finish Stremio runtime configuration before making it a live Stremio product.');await client.query(`UPDATE plans SET service_type=$2,updated_at=NOW() WHERE id=$1`,[req.params.id,serviceType]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.stremio.plan_delivery','plan',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({from:plan.rows[0].service_type,to:serviceType})]);});return res.redirect('/admin/settings/stremio?message='+encodeURIComponent('Plan delivery type updated. Existing subscription snapshots were left unchanged.'));}catch(error){return res.redirect('/admin/settings/stremio?error='+encodeURIComponent(error.message));}});
-    router.post('/admin/settings/stremio/servers/:id',stremioMutationLimit,async(req,res)=>{
-        if(!csrf.verify(req))return res.status(403).send('Invalid security token');
-        try{
-            const enabled=String(req.body.enabled)==='1';
-            await transaction(async client=>{
-                const server=await client.query('SELECT id,name,public_url,stremio_enabled FROM jellyfin_servers WHERE id=$1 FOR UPDATE',[req.params.id]);
-                if(!server.rowCount)throw new Error('Jellyfin server not found.');
-                if(enabled&&!server.rows[0].public_url)throw new Error('Configure a public Jellyfin playback URL before enabling Stremio on this server.');
-                if(!enabled){const assigned=await client.query(`SELECT COUNT(*)::int n FROM stremio_entitlements WHERE server_id=$1 AND status IN ('pending','active','suspended')`,[req.params.id]);if(Number(assigned.rows[0]?.n||0)>0)throw new Error('Move or revoke assigned Stremio entitlements before removing this server from Stremio eligibility.');}
-                await client.query('UPDATE jellyfin_servers SET stremio_enabled=$2,updated_at=NOW() WHERE id=$1',[req.params.id,enabled]);
-                await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.stremio.server_eligibility','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({enabled})]);
-            });
-            if(enabled)await query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested) VALUES('stremio_media_index',TRUE,21600,NOW(),TRUE) ON CONFLICT(job_key) DO UPDATE SET next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()`);
-            return res.redirect('/admin/settings/stremio?message='+encodeURIComponent(enabled?'Server enabled for Stremio and media indexing queued.':'Server removed from Stremio delivery.'));
-        }catch(error){return res.redirect('/admin/settings/stremio?error='+encodeURIComponent(error.message));}
-    });
-    return router;
+  const router=express.Router();router.use('/admin/settings/stremio',gate,noStore);
+  router.get('/admin/settings/stremio',(_req,res)=>res.redirect(302,'/admin/servers/stremio'));
+  router.post('/admin/settings/stremio/runtime',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled)==='1';await stremioRuntime.setEnabled(enabled,req.session.authUserId);return res.redirect(target(enabled?'Stremio runtime enabled.':'Stremio runtime disabled.'));}catch(error){return res.redirect(target('',error.message));}});
+  router.post('/admin/settings/stremio/index',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await queueIndex();return res.redirect(target('Stremio indexing queued.'));}catch(error){return res.redirect(target('',error.message));}});
+  router.post('/admin/settings/stremio/plans/:id',mutationLimit,(req,res)=>res.redirect(303,`/admin/plans/${encodeURIComponent(req.params.id)}/delivery?error=${encodeURIComponent('Stremio plan delivery is now managed from the plan Delivery page.')}`));
+  router.post('/admin/settings/stremio/servers/:id',mutationLimit,(req,res)=>res.redirect(303,target('Managed Jellyfin Stremio eligibility is now controlled from Stremio Sources.')));
+  return router;
 }
 
-module.exports={createAdminStremioRouter,page,data,runtimeStatus,operatorGuide};
+module.exports={createAdminStremioRouter};
