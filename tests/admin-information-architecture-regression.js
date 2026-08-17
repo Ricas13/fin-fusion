@@ -20,6 +20,7 @@ async function signIn(page){
 async function labels(locator){return (await locator.allTextContents()).map(x=>x.trim()).filter(Boolean);}
 async function screenshot(page,name){await page.screenshot({path:path.join(OUT,`ia-${name}.png`),fullPage:true});}
 async function submit(form,button){await Promise.all([form.page().waitForNavigation({waitUntil:'networkidle',timeout:15000}),form.getByRole('button',{name:button}).click()]);}
+async function submitAction(page,form,button,pathname){const response=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===pathname,{timeout:15000});await form.getByRole('button',{name:button}).click();await response;await page.waitForLoadState('networkidle');}
 async function operationsValue(pool){return (await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='operations_v1'`)).rows[0]?.setting_value||{};}
 
 async function main(){
@@ -95,6 +96,35 @@ async function main(){
     assert.equal(afterSecurity.locale,beforeSecurity.locale,'Saving Security reset General locale');
     assert.equal(afterSecurity.placementHealthMode,beforeSecurity.placementHealthMode,'Saving Security reset Fleet placement policy');
     await screenshot(page,'settings-security');
+
+    await pool.query(`DELETE FROM platform_settings WHERE setting_key='stremio_runtime_v1'`);
+    await page.goto(`${BASE}/admin/settings/stremio`,{waitUntil:'networkidle'});
+    let stremioText=await page.locator('body').innerText();
+    assert(/Configure the encryption key/.test(stremioText)&&/Enable the secure runtime/.test(stremioText),'Stremio setup guide is missing the separated key/runtime steps');
+    assert.equal(await page.locator('input[name="STREMIO_JELLYFIN_TOKEN_KEY"]').count(),0,'Stremio encryption key became browser editable');
+    let runtimeForm=page.locator('form[action="/admin/settings/stremio/runtime"]');
+    assert.equal(await runtimeForm.count(),1,'Stremio runtime browser form is missing');
+    assert(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled(),'Runtime enablement must remain disabled before server/index prerequisites are ready');
+
+    const seeded=(await pool.query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,health_status,stremio_enabled,placement_mode)
+      VALUES('Browser Stremio Delivery','browser-stremio-delivery','premium','http://127.0.0.1:65530','https://media.example.invalid','test-only-encrypted-value',TRUE,999,'healthy',TRUE,'active') RETURNING id`)).rows[0];
+    await pool.query(`INSERT INTO stremio_media_index_state(server_id,status,last_completed_at,item_count,updated_at) VALUES($1,'ready',NOW(),42,NOW())`,[seeded.id]);
+    await page.reload({waitUntil:'networkidle'});
+    runtimeForm=page.locator('form[action="/admin/settings/stremio/runtime"]');
+    assert(!(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled()),'Runtime enablement did not unlock after secure prerequisites became ready');
+    await submitAction(page,runtimeForm,'Enable runtime','/admin/settings/stremio/runtime');
+    await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime enabled.'),null,{timeout:15000});
+    stremioText=await page.locator('body').innerText();
+    assert(/Runtime ready/.test(stremioText),'Stremio runtime did not become ready after browser enablement');
+    let stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
+    assert.equal(stored?.enabled,true,'Browser enablement was not persisted to platform settings');
+    runtimeForm=page.locator('form[action="/admin/settings/stremio/runtime"]');
+    await submitAction(page,runtimeForm,'Disable runtime','/admin/settings/stremio/runtime');
+    await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime disabled.'),null,{timeout:15000});
+    stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
+    assert.equal(stored?.enabled,false,'Browser disablement was not persisted to platform settings');
+    await screenshot(page,'settings-stremio-runtime-toggle');
+    await pool.query('DELETE FROM jellyfin_servers WHERE id=$1',[seeded.id]);
 
     console.log('admin information architecture regression: ok');
   }finally{await browser.close();await pool.end();}
