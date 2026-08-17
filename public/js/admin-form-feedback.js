@@ -111,10 +111,26 @@
         URL.revokeObjectURL(url);
     }
 
+    function compactMessage(value, max = 600) {
+        const text = String(value || '').replace(/\s+/g, ' ').trim();
+        if (!text) return '';
+        return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
+    }
+
     async function responseMessage(response) {
         try {
-            const text = (await response.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            if (text && text.length < 300) return text;
+            const text = await response.text();
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.includes('text/html') || /^\s*<!doctype|^\s*<html/i.test(text)) {
+                const doc = new DOMParser().parseFromString(text, 'text/html');
+                const errorNode = doc.querySelector('.notice.error,[data-form-error],.formSubmitError,.fieldErrorMessage,[role="alert"].error');
+                const specific = compactMessage(errorNode?.textContent);
+                if (specific) return specific;
+                const title = compactMessage(doc.querySelector('h1')?.textContent, 180);
+                if (title && /not found|forbidden|invalid|error|failed/i.test(title)) return title;
+            }
+            const plain = compactMessage(text.replace(/<[^>]+>/g, ' '));
+            if (plain && plain.length < 600) return plain;
         } catch (_) {}
         return `Request failed (${response.status}).`;
     }
