@@ -22,7 +22,8 @@ assert(/Managed Jellyfin users/.test(ux)&&/\/reseller\/user\/create/.test(ux),'r
 assert(/managedUsers\.createManagedUser/.test(ux)&&/managedUsers\.deleteManagedUser/.test(ux),'reseller mutations must go through the managed-user domain');
 assert(/tierPriceId/.test(ux)&&/\/reseller\/billing\/stripe/.test(ux)&&/\/reseller\/billing\/paypal/.test(ux),'reseller plan purchase UX must carry the selected multi-currency tier price');
 assert(/How you charge or manage those people commercially stays outside CAPTAiNFiN/.test(ux),'reseller UX must keep downstream commercial management outside CAPTAiNFiN');
-assert(/\/reseller\/sales/.test(retirement)&&/\/reseller\/customer\/create/.test(retirement),'legacy downstream reseller routes must remain explicitly retired');
+assert(/\/reseller\/sales/.test(ux)&&/\/reseller\/customer\/create/.test(ux),'common downstream reseller routes must remain explicitly retired by the managed-user portal');
+assert(/\/reseller\/customer\/:id\/end-service/.test(retirement)&&/\/reseller\/customer\/:id\/credentials\/reset/.test(retirement),'remaining downstream reseller operations must remain explicitly retired by the compatibility router');
 assert(!/reseller-service-aware\.js/.test(ux),'retired downstream-sale browser helper must not be loaded by the managed-seat portal');
 
 console.log('reseller managed-seat UX smoke: ok');
