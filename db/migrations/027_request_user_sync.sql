@@ -1,7 +1,7 @@
 BEGIN;
 
 -- Tracks the one central request-system identity associated with each managed
--- CAPTAiNFiN customer. This is intentionally customer-scoped rather than
+-- CAPTaINFiN customer. This is intentionally customer-scoped rather than
 -- Jellyfin-account-scoped: one customer may move between or exist on many
 -- Jellyfin servers, but should have only one Overseerr/Seerr identity.
 CREATE TABLE IF NOT EXISTS request_user_sync (

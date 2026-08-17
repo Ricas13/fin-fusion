@@ -73,10 +73,10 @@ CREATE INDEX IF NOT EXISTS stremio_stream_attribution_customer_idx ON stremio_st
 CREATE INDEX IF NOT EXISTS stremio_stream_attribution_source_idx ON stremio_stream_attribution(source_id,requested_at DESC);
 
 COMMENT ON TABLE jellyfin_account_lifecycle IS
-'Jellyfin-only lifecycle state. Automated lifecycle must never disable/delete the CAPTAiNFiN portal customer.';
+'Jellyfin-only lifecycle state. Automated lifecycle must never disable/delete the CAPTaINFiN portal customer.';
 COMMENT ON TABLE stremio_sources IS
 'Authorized Jellyfin bridge/service accounts used by the Stremio source pool. External sources require explicit authorization confirmation.';
 COMMENT ON TABLE stremio_stream_attribution IS
-'CAPTAiNFiN-side attribution of Stremio stream requests to the real portal customer while upstream Jellyfin sees the configured bridge account.';
+'CAPTaINFiN-side attribution of Stremio stream requests to the real portal customer while upstream Jellyfin sees the configured bridge account.';
 
 COMMIT;
