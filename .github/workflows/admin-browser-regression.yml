@@ -73,7 +73,7 @@ jobs:
           npm run auth:bootstrap
       - name: Audit mounted admin route ownership
         run: node scripts/admin-route-ownership-audit.js
-      - name: Start CAPTaINFiN
+      - name: Start CAPTAiNFiN
         run: |
           node src/application.js > /tmp/captainfin-browser.log 2>&1 &
           echo $! > /tmp/captainfin-browser.pid
