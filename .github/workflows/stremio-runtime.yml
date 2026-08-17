@@ -20,6 +20,7 @@ on:
       - 'scripts/stremio-runtime-smoke.js'
       - 'scripts/stremio-admin-smoke.js'
       - 'scripts/stremio-source-client-smoke.js'
+      - 'scripts/stremio-source-admission-smoke.js'
       - 'scripts/jellyfin-lifecycle-stremio-pool-smoke.js'
       - 'scripts/runtime-db-isolation-smoke.js'
       - 'tests/admin-information-architecture-regression.js'
@@ -42,6 +43,7 @@ jobs:
       - name: Stremio runtime contract
         run: |
           node scripts/stremio-source-client-smoke.js
+          node scripts/stremio-source-admission-smoke.js
           node scripts/stremio-admin-smoke.js
           node scripts/stremio-runtime-smoke.js
       - name: Syntax check runtime modules
