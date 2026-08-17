@@ -44,7 +44,7 @@ async function candidates(){
              COUNT(*) FILTER(WHERE disabled=FALSE AND account_purpose='primary')::int active_accounts
       FROM jellyfin_accounts GROUP BY customer_id
     )
-    SELECT ca.*,COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,
+    SELECT ca.*,COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,c.automation_protected,
       us.last_playback_at,COALESCE(us.playback_seconds,0)::bigint playback_seconds,
       a.first_account_at,a.active_accounts,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=ca.customer_id) currently_playing,
@@ -68,9 +68,9 @@ async function candidates(){
     const referenceAt=reference?new Date(reference):null,firstAt=new Date(row.first_account_at||row.starts_at||0),ageHours=(now-firstAt.getTime())/3600000,seconds=Number(row.playback_seconds||0);
     const noPlaybackEligible=policy.noPlaybackDays!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.noPlaybackDays*24)&&referenceAt&&referenceAt.getTime()<=now-policy.noPlaybackDays*86400000;
     const usageEligible=policy.minimumPlaybackMinutes!=null&&ageHours>=Math.max(policy.minimumObservationHours,policy.playbackWindowDays*24)&&seconds<policy.minimumPlaybackMinutes*60;
-    const eligible=!row.currently_playing&&!row.already_held&&(noPlaybackEligible||usageEligible);
+    const eligible=!row.automation_protected&&!row.currently_playing&&!row.already_held&&(noPlaybackEligible||usageEligible);
     const triggers=[];if(noPlaybackEligible)triggers.push(`no playback for ${policy.noPlaybackDays} day(s)`);if(usageEligible)triggers.push(`${Math.round(seconds/60)} min played in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`);
-    return{...row,policy,playback_seconds:seconds,inactive_reference_at:referenceAt,eligible,triggers,reasons:eligible?triggers:[row.currently_playing?'currently playing':null,row.already_held?'already held':null,!noPlaybackEligible&&!usageEligible?'usage requirements currently satisfied':null].filter(Boolean)};
+    return{...row,policy,playback_seconds:seconds,inactive_reference_at:referenceAt,eligible,triggers,reasons:eligible?triggers:[row.automation_protected?'admin protected':null,row.currently_playing?'currently playing':null,row.already_held?'already held':null,!noPlaybackEligible&&!usageEligible?'usage requirements currently satisfied':null].filter(Boolean)};
   });
 }
 
@@ -107,7 +107,7 @@ async function cleanupCandidates(cfg=null){
   cfg=cfg||await getCleanup();const cutoff=new Date(Date.now()-cfg.deleteAfterDays*86400000),minimumCreated=new Date(Date.now()-cfg.minimumObservationHours*3600000);
   const r=await query(`
     SELECT ja.id account_id,ja.customer_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,ja.created_at,ja.last_activity_at,
-      js.name server_name,COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,
+      js.name server_name,COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.automation_protected,
       ph.last_playback_at,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=ja.customer_id AND aps.server_id=ja.server_id) currently_playing,
       EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=ja.customer_id AND h.hold_type=$3 AND h.source_key=('server:'||ja.server_id::text) AND h.released_at IS NULL) already_held
@@ -117,7 +117,7 @@ async function cleanupCandidates(cfg=null){
       AND GREATEST(COALESCE(ph.last_playback_at,'epoch'::timestamptz),COALESCE(ja.last_activity_at,'epoch'::timestamptz),ja.created_at)<=$1
     ORDER BY GREATEST(COALESCE(ph.last_playback_at,'epoch'::timestamptz),COALESCE(ja.last_activity_at,'epoch'::timestamptz),ja.created_at)
   `,[cutoff,minimumCreated,CLEANUP_HOLD_TYPE]);
-  return r.rows.map(row=>({...row,activity_reference_at:[row.last_playback_at,row.last_activity_at,row.created_at].filter(Boolean).map(v=>new Date(v)).sort((a,b)=>b-a)[0]||null,eligible:!row.currently_playing&&!row.already_held,reasons:[row.currently_playing?'currently playing':null,row.already_held?'cleanup already recorded':null].filter(Boolean)}));
+  return r.rows.map(row=>({...row,activity_reference_at:[row.last_playback_at,row.last_activity_at,row.created_at].filter(Boolean).map(v=>new Date(v)).sort((a,b)=>b-a)[0]||null,eligible:!row.automation_protected&&!row.currently_playing&&!row.already_held,reasons:[row.automation_protected?'admin protected':null,row.currently_playing?'currently playing':null,row.already_held?'cleanup already recorded':null].filter(Boolean)}));
 }
 
 async function deleteDormantAccount(row,{actorUserId=null,dryRun=true,deleteAfterDays=30}={}){
