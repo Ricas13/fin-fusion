@@ -13,12 +13,17 @@ const groups=Object.freeze([
 ]);
 
 // Workflow pages can stay grouped/breadcrumbed without consuming sidebar space.
+// parentKey keeps the owning sidebar destination highlighted while the breadcrumb
+// and top workflow tabs describe the more specific page.
 const hiddenPages=Object.freeze({
-  billing:Object.freeze({groupKey:'commerce',page:Object.freeze(['billing','Billing','/admin/billing'])}),
-  'my-notifications':Object.freeze({groupKey:'settings',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
-  'policy-drift':Object.freeze({groupKey:'automation',page:Object.freeze(['policy-drift','Policy Drift','/admin/provisioning/drift'])}),
-  'notification-gateway':Object.freeze({groupKey:'settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
-  'configuration-transfer':Object.freeze({groupKey:'settings',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
+  billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
+  'my-notifications':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
+  'request-service':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
+  'request-plan-limits':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['request-plan-limits','Plan limits','/admin/request-plan-policy'])}),
+  'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
+  'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Policy drift','/admin/provisioning/drift'])}),
+  'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'notification-settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
+  'configuration-transfer':Object.freeze({groupKey:'settings',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 
 const aliases=Object.freeze({
@@ -39,6 +44,7 @@ const aliases=Object.freeze({
   'invitations':'plans'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
+function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
 function groupFor(active){
   const key=activeKey(active),hidden=hiddenPages[key];
   if(hidden){
@@ -48,4 +54,4 @@ function groupFor(active){
   return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];
 }
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
-module.exports={groups,hiddenPages,aliases,activeKey,groupFor,landingFor};
+module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,landingFor};

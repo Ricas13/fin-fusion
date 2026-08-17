@@ -130,9 +130,14 @@ function notificationTabsFor(options={}){
 
 function provisioningTabsFor(options={}){
     const active=String(options.active||'');
-    if(active==='provisioning')return provisioningWorkflow.tabs('provisioning');
-    if(active==='policy-drift')return provisioningWorkflow.tabs('drift');
-    return'';
+    const tab={
+        provisioning:'provisioning',
+        'request-service':'requests',
+        'request-plan-limits':'limits',
+        'server-migrations':'migrations',
+        'policy-drift':'drift'
+    }[active];
+    return tab?provisioningWorkflow.tabs(tab):'';
 }
 function backupTabsFor(options={}){
     const active=String(options.active||'');

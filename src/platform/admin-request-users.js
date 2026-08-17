@@ -71,7 +71,7 @@ async function page(req) {
     const passwordsNeeded = candidates.filter(row => row.password_reset_required && !row.access_suspended).length;
 
     const lifecycleCard = `<section class="card">
-        <div class="card-header"><div><h2 class="card-title">Request access lifecycle</h2><div class="muted">CAPTaINFiN owns request identity, plan quotas and subscription-based access; the request service remains the content-request frontend.</div></div><a class="button secondary" href="/admin/request-plan-policy">Plan limits</a></div>
+        <div class="card-header"><div><h2 class="card-title">Request access lifecycle</h2><div class="muted">CAPTaINFiN owns request identity, plan quotas and subscription-based access; the request service remains the content-request frontend.</div></div></div>
         <div class="card-body">
             <div class="compact-item"><div><div class="compact-title">One request identity per customer</div><div class="compact-meta">A customer can move between Jellyfin servers without creating another request account.</div></div><span class="pill good">Centralised</span></div>
             <div class="compact-item"><div><div class="compact-title">Plan quota</div><div class="compact-meta">Movie and TV-season quotas are applied from the customer's current CAPTaINFiN plan.</div></div><span class="pill good">Plan controlled</span></div>
@@ -118,11 +118,11 @@ async function page(req) {
 
     const table = `<section class="section"><div class="sectionHead"><div><h2>Managed request users</h2><div class="muted">One row per CAPTaINFiN customer. TV quota uses the request service's native season-based counting.</div></div><span class="muted">${candidates.length} managed</span></div>${candidates.length ? `<div class="tableWrap"><table class="dataTable requestUserTable"><thead><tr><th>Customer / login</th><th>Access</th><th>Movies</th><th>TV</th><th>Jellyfin servers</th><th>Sync</th><th>Request user</th><th>Login</th><th>Last sync</th><th>Problem</th><th class="right">Action</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No managed request users yet.</div>'}</section>`;
 
-    const action = `<div class="buttonRow"><a class="button secondary" href="/admin/request-plan-policy">Plan limits</a><form method="post" action="/admin/request-users/sync-all">${csrfInput(req)}<button class="button" type="submit" ${configured ? '' : 'disabled'}>Sync all users</button></form></div>`;
+    const action = `<form method="post" action="/admin/request-users/sync-all">${csrfInput(req)}<button class="button" type="submit" ${configured ? '' : 'disabled'}>Sync all users</button></form>`;
     const styles = '<style>.requestUserTable{min-width:1500px}.problemCell{max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metricValue.smallish{font-size:22px}.inlineForm{display:inline;margin:0}</style>';
     return layout({
         siteName: runtimeSettings.siteName(),
-        active: 'provisioning',
+        active: 'request-service',
         title: 'Request Service',
         subtitle: 'Central Overseerr / Jellyseerr / Seerr integration for every managed Jellyfin server',
         action,

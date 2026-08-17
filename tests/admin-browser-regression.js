@@ -16,7 +16,7 @@ const forced=[
   '/admin/users','/admin/reseller-management','/admin/activity',
   '/admin/servers','/admin/libraries',
   '/admin/commerce','/admin/plans','/admin/payments','/admin/discounts','/admin/referrals',
-  '/admin/provisioning','/admin/provisioning/drift','/admin/automation',
+  '/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/provisioning/migrations','/admin/provisioning/drift','/admin/automation',
   '/admin/settings?section=general','/admin/profile','/admin/profile/notifications',
   '/admin/notifications/preferences','/admin/notifications/email','/admin/notifications',
   '/admin/settings/branding','/admin/settings?section=integrations','/admin/settings?section=security',
@@ -119,11 +119,19 @@ async function auditPage(page,url,{mobile=false}={}){
   }
 }
 
-async function assertWorkflow(page,url,expected){
+async function assertWorkflow(page,url,expected,activeExpected=null){
   await page.goto(`${BASE}${url}`,{waitUntil:'networkidle'});
   const tabs=await page.locator('.operatorTabs a').allTextContents();
   const clean=tabs.map(x=>x.trim()).filter(Boolean);
   assert.deepStrictEqual(clean,expected,`${url} workflow tabs changed: ${JSON.stringify(clean)}`);
+  if(activeExpected){
+    const active=(await page.locator('.operatorTabs a.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
+    assert.deepStrictEqual(active,[activeExpected],`${url} active workflow tab changed: ${JSON.stringify(active)}`);
+    const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
+    assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not match its workflow page`);
+    const siblingLinks=(await page.locator('.topBarActions a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
+    assert.deepStrictEqual(siblingLinks,[],`${url} mixes sibling-page navigation into the top-right action area: ${JSON.stringify(siblingLinks)}`);
+  }
 }
 
 async function safeMutationAudit(page){
@@ -174,13 +182,19 @@ async function main(){
     for(const url of ['/admin/notifications/preferences','/admin/notifications/email','/admin/notifications']){
       await assertWorkflow(page,url,['Global notifications','Email infrastructure','Delivery health']);
     }
-    await assertWorkflow(page,'/admin/provisioning',['Provisioning','Policy drift']);
-    await assertWorkflow(page,'/admin/provisioning/drift',['Provisioning','Policy drift']);
+    const provisioningTabs=['Provisioning','Request service','Plan limits','Server migrations','Policy drift'];
+    for(const [url,active] of [
+      ['/admin/provisioning','Provisioning'],
+      ['/admin/request-users','Request service'],
+      ['/admin/request-plan-policy','Plan limits'],
+      ['/admin/provisioning/migrations','Server migrations'],
+      ['/admin/provisioning/drift','Policy drift']
+    ]) await assertWorkflow(page,url,provisioningTabs,active);
     await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/provisioning','/admin/notifications/preferences','/admin/profile','/admin/operations','/admin/backups']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/notifications/preferences','/admin/profile','/admin/operations','/admin/backups']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
