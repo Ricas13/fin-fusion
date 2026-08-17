@@ -1,7 +1,7 @@
 'use strict';
 
 const express=require('express');
-const {query}=require('../db');
+const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const {customer360,customerAccessDetail}=require('./customer-360');
 const view=require('./customer-360-view');
