@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const stremioFoundation = require('../stremio/foundation');
+const stremioRuntimeSettings = require('../stremio/runtime-settings');
 
 function serviceType(plan) {
   const value = String(plan?.service_type || plan?.service_type_snapshot || 'jellyfin').toLowerCase();
@@ -18,22 +19,12 @@ function catalogueState(plan, now = Date.now()) {
 }
 
 async function stremioContext() {
-  const [servers, indexes] = await Promise.all([
-    query(`SELECT COUNT(*)::int n
-           FROM jellyfin_servers
-           WHERE enabled=TRUE AND stremio_enabled=TRUE AND public_url IS NOT NULL
-             AND COALESCE(placement_mode,'active')='active'
-             AND health_status IN ('healthy','degraded')`),
-    query(`SELECT COUNT(*)::int n
-           FROM stremio_media_index_state s
-           JOIN jellyfin_servers j ON j.id=s.server_id
-           WHERE j.enabled=TRUE AND j.stremio_enabled=TRUE AND j.public_url IS NOT NULL
-             AND s.status='ready' AND s.item_count>0`)
-  ]);
+  await stremioRuntimeSettings.ensureLoaded();
+  const checks = await stremioRuntimeSettings.prerequisites();
   return {
     runtimeReady: stremioFoundation.runtimeReady(),
-    eligibleServers: Number(servers.rows[0]?.n || 0),
-    readyIndexes: Number(indexes.rows[0]?.n || 0)
+    eligibleServers: checks.eligibleServers,
+    readyIndexes: checks.readyIndexes
   };
 }
 
