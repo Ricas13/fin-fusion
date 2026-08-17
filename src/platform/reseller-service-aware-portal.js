@@ -6,114 +6,55 @@ const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const monthly=require('../resellers/monthly');
-const resellerSettings=require('../resellers/settings');
+const managedUsers=require('../resellers/managed-users');
 const provisioning=require('../jellyfin/provisioning');
-const productReadiness=require('./product-readiness');
 const runtimeSettings=require('./runtime-settings');
-const core=require('./reseller-monthly-portal-core');
-const legacy=require('./reseller-monthly-portal');
 const branding=require('./branding');
 const {esc}=require('./admin-html');
 
-const saleLimit=routeRateLimit.middleware({scope:'reseller-service-sale',max:30,windowSeconds:300});
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='reseller'?next():res.redirect('/login?session=expired');}
-function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
-function re(value){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
-function delivery(plan){return productReadiness.serviceType(plan);}
-function deliveryLabel(plan){return productReadiness.deliveryLabel(plan);}
-function optionText(plan){return `${plan.name} · ${deliveryLabel(plan)} · ${Number(plan.duration_days||30)} days`;}
-function injectScript(html){return String(html).includes('/js/reseller-service-aware.js')?html:String(html).replace('</body>','<script src="/js/reseller-service-aware.js" defer></script></body>');}
-function decorateOptions(html,plans,{allowStremio=true}={}){
-  let out=String(html);
-  for(const plan of plans||[]){
-    const type=delivery(plan),pattern=new RegExp(`<option value="${re(esc(plan.code))}"([^>]*)>[^<]*<\\/option>`,'g');
-    if(!allowStremio&&type!=='jellyfin'){out=out.replace(pattern,'');continue;}
-    out=out.replace(pattern,(_whole,attrs)=>`<option value="${esc(plan.code)}" data-service-type="${esc(type)}"${attrs}>${esc(optionText(plan))}</option>`);
-  }
-  return out;
-}
-function decorateCreateForm(html,d){
-  let out=String(html),match=out.match(/<form class="formPanel" method="post" action="\/reseller\/customer\/create">[\s\S]*?<\/form>/);
-  if(!match)return out;
-  let form=decorateOptions(match[0],d.plans,{allowStremio:d.cfg.customerPortalPolicy!=='jellyfin_only'});
-  form=form.replace('<label>Jellyfin username</label>','<label>Customer username</label>')
-    .replace('name="planCode"','name="planCode" data-reseller-plan')
-    .replace('name="createPortal" value="1"','name="createPortal" value="1" data-reseller-create-portal')
-    .replace('name="email" maxlength="254"','name="email" maxlength="254" data-reseller-portal-email data-portal-required="'+(d.cfg.customerPortalPolicy==='portal_required'?'1':'0')+'"')
-    .replace('Create customer & provision Jellyfin','Create customer & deliver access');
-  if(d.cfg.customerPortalPolicy!=='jellyfin_only')form=form.replace('<button class="button">Create customer & deliver access</button>','<div class="notice warn" data-reseller-portal-note hidden><strong>Stremio delivery needs a portal account.</strong> The customer uses that portal to create, rotate or revoke their private Stremio installation.</div><button class="button">Create customer & deliver access</button>');
-  return out.replace(match[0],form);
-}
-function decorateOwnerForm(html,plans){
-  const match=String(html).match(/<form class="formPanel" method="post" action="\/reseller\/owner\/create">[\s\S]*?<\/form>/);if(!match)return html;
-  const form=decorateOptions(match[0],plans,{allowStremio:false});return String(html).replace(match[0],form);
-}
-function decorateCustomerActions(html,customers){
-  let out=String(html);
-  for(const customer of customers||[]){
-    if(delivery(customer)!=='stremio')continue;
-    const href=`/reseller/customer/${customer.id}/credentials`,pattern=new RegExp(`<a class="button secondary btn-sm" href="${re(href)}">Credentials<\\/a>`,'g');
-    out=out.replace(pattern,customer.user_id?'<span class="pill good">Stremio · portal managed</span>':'<span class="pill warn">Portal activation needed</span>');
-  }
-  return out;
-}
+const mutationLimit=routeRateLimit.middleware({scope:'reseller-managed-users',max:30,windowSeconds:300});
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='reseller'?next():res.redirect('/login?session=expired')}
+function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
+function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
+function money(minor,currency='GBP'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`}}
+function date(value){return value?new Date(value).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'—'}
+function pill(label,kind=''){return `<span class="pill ${kind}">${esc(label)}</span>`}
+function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
+function redirect(res,key,message,path='/reseller'){return res.redirect(`${path}?${key}=${encodeURIComponent(message)}`)}
+function password(){return `${crypto.randomBytes(18).toString('base64url')}A1!`}
+async function resellerForUser(userId){const result=await query(`SELECT r.id,r.user_id,u.username,u.email,u.active FROM resellers r JOIN app_users u ON u.id=r.user_id WHERE r.user_id=$1`,[userId]);if(!result.rowCount)throw new Error('This account is not linked to a reseller.');return result.rows[0]}
+
+function shell(site,title,body){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · ${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"><style>body{background:#0c1117}.wrap{max-width:1450px;margin:auto;padding:0 22px 50px}.top{min-height:62px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #222933;margin-bottom:22px}.brand{display:flex;gap:10px;align-items:center;font-weight:800;text-decoration:none}.brand img{width:30px;height:30px;border-radius:7px}.nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.nav a{color:#9da9b8;text-decoration:none;padding:7px 9px;border-radius:7px}.tierGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:12px}.tierCard{border:1px solid #28313c;border-radius:12px;padding:16px;background:#111820}.tierPrice{font-size:25px;font-weight:800}.capacity{height:8px;background:#222a34;border-radius:20px;overflow:hidden;margin-top:8px}.capacity span{display:block;height:100%;background:#20a9d6}.userActions,.buttonRow{display:flex;gap:7px;flex-wrap:wrap}.userActions form,.buttonRow form{margin:0}.dangerPanel{border-color:#6e3036;background:#211316}.codeValue{font-family:ui-monospace,monospace;font-size:17px;padding:13px;border:1px solid #29323d;border-radius:8px;background:#0d141c;word-break:break-all}@media(max-width:800px){.wrap{padding:0 12px 35px}.top{align-items:flex-start;flex-direction:column;padding:12px 0}}</style></head><body><div class="wrap"><header class="top"><a class="brand" href="/reseller"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)} · Reseller</span></a><nav class="nav"><a href="/reseller">Managed users</a><a href="/reseller/security">Security</a><a href="/logout">Sign out</a></nav></header>${body}</div></body></html>`}
+
+function tierCards(req,tiers,subscription,active){if(!tiers.length)return'<div class="empty">No reseller plans are currently available.</div>';return `<div class="tierGrid">${tiers.map(tier=>{const current=String(subscription?.tier_id||'')===String(tier.id),providers=Array.isArray(tier.provider_prices)?tier.provider_prices.filter(p=>p.active):[],closed=Number(tier.capacity_limit??0)<=0&&!current;let action='';if(!active&&!closed){action=`<div class="buttonRow">${providers.some(p=>p.provider==='stripe')?`<form method="post" action="/reseller/billing/stripe">${token(req)}<input type="hidden" name="tierId" value="${esc(tier.id)}"><button class="button">Subscribe with Stripe</button></form>`:''}${providers.some(p=>p.provider==='paypal')?`<form method="post" action="/reseller/billing/paypal">${token(req)}<input type="hidden" name="tierId" value="${esc(tier.id)}"><button class="button secondary">Subscribe with PayPal</button></form>`:''}</div>`}else if(active&&!current&&!closed){action=`<form method="post" action="/reseller/billing/tier">${token(req)}<input type="hidden" name="tierId" value="${esc(tier.id)}"><button class="button secondary">Change to ${esc(tier.name)}</button></form>`}return `<article class="tierCard"><div class="serverTop"><strong>${esc(tier.name)}</strong>${current?pill('Current','good'):closed?pill('Closed','warn'):''}</div><div class="tierPrice">${esc(money(tier.monthly_price_minor,tier.currency))}<span class="muted" style="font-size:12px"> / month</span></div><p class="muted">${esc(tier.description||'Monthly Jellyfin reseller access')}</p><p><strong>${esc(tier.seat_limit)}</strong> managed Jellyfin user${Number(tier.seat_limit)===1?'':'s'}</p><p class="subText">${esc(tier.streams||1)} concurrent stream${Number(tier.streams||1)===1?'':'s'} per user · ${tier.allow_video_transcoding?'video transcode allowed':'no video transcode'}</p>${action}</article>`}).join('')}</div>`}
+
+function credentialsPage(site,username,plain,message){return shell(site,'Jellyfin credentials',`<section class="section"><div class="sectionHead"><div><h2>Jellyfin credentials ready</h2><div class="muted">${esc(message)}</div></div></div><div class="formPanel"><p><strong>Username</strong></p><div class="codeValue">${esc(username)}</div><p><strong>Password</strong></p><div class="codeValue">${esc(plain)}</div><p class="muted">The password is shown once. Share it securely with the person using this Jellyfin account.</p><a class="button" href="/reseller">Back to managed users</a></div></section>`)}
+
 async function dashboard(req){
-  const [html,d]=await Promise.all([legacy.dashboard(req),core.dashboardData(req)]);
-  let out=decorateCreateForm(html,d);out=decorateOwnerForm(out,d.plans);out=decorateCustomerActions(out,d.customers);return injectScript(out);
+ await runtimeSettings.ensureLoaded();const reseller=await resellerForUser(req.session.authUserId),subscription=await monthly.currentSubscription(reseller.id),state=await monthly.resellerEntitlement(reseller.id),users=await managedUsers.listManagedUsers(reseller.id),tiers=await monthly.listTiers({visibleOnly:true,activeOnly:true}),used=users.length,limit=state.active?Number(subscription?.seat_limit||0):Number(subscription?.seat_limit||0),pct=limit?Math.min(100,Math.round(used/limit*100)):0,streams=users.reduce((sum,row)=>sum+Number(row.active_streams||0),0),canAdd=state.active&&used<limit;
+ const rows=users.map(user=>`<tr><td><strong>${esc(user.jellyfin_username||user.display_name||'Provisioning pending')}</strong><div class="subText">Created ${esc(date(user.created_at))}</div></td><td>${esc(user.server_name||'Provisioning pending')}</td><td>${esc(user.active_streams||0)}</td><td>${user.manually_suspended?pill('Suspended','warn'):user.jellyfin_account_id?pill('Active','good'):pill('Provisioning','warn')}</td><td><div class="userActions">${user.jellyfin_account_id?`<a class="button secondary btn-sm" href="/reseller/user/${esc(user.id)}/credentials">Reset password</a>`:''}<form method="post" action="/reseller/user/${esc(user.id)}/toggle">${token(req)}<input type="hidden" name="suspended" value="${user.manually_suspended?'false':'true'}"><button class="button secondary btn-sm">${user.manually_suspended?'Resume':'Suspend'}</button></form><a class="button btn-danger btn-sm" href="/reseller/user/${esc(user.id)}/delete">Delete</a></div></td></tr>`).join('');
+ const add=canAdd?`<form class="formPanel" method="post" action="/reseller/user/create">${token(req)}<div class="formGroup narrow"><label>Jellyfin username</label><input class="input" name="username" required pattern="[A-Za-z0-9._-]{3,40}" maxlength="40" autocomplete="off"><div class="inlineHelp">This creates one Jellyfin user using the streams, transcoding and library rules configured on your reseller plan.</div></div><button class="button">Create Jellyfin user</button></form>`:!state.active?'<div class="notice error"><strong>Reseller subscription inactive.</strong> Managed Jellyfin access is disabled until the monthly subscription is restored.</div>':`<div class="notice warn"><strong>All ${esc(limit)} managed-user seats are in use.</strong> Delete an unused Jellyfin user or change to a reseller plan with more users.</div>`;
+ const billing=state.active?`<div class="buttonRow">${subscription?.cancel_at_period_end?(subscription.source==='stripe'?`<form method="post" action="/reseller/billing/resume">${token(req)}<button class="button">Resume renewal</button></form>`:'<span class="muted">Renewal is stopped. A new PayPal authorization may be required to restart it.</span>'):`<form method="post" action="/reseller/billing/cancel">${token(req)}<button class="button secondary">Stop renewal</button></form>`}</div>`:'';
+ const body=`${notice(req)}${state.inGrace?`<div class="notice warn"><strong>Billing grace period.</strong> Restore the reseller subscription before ${esc(date(subscription?.grace_until||subscription?.manual_grace_until))} to keep the managed users enabled.</div>`:''}<div class="metrics"><div class="metric"><div class="metricLabel">Managed Jellyfin users</div><div class="metricValue">${esc(used)}${limit?` / ${esc(limit)}`:''}</div><div class="capacity"><span style="width:${pct}%"></span></div></div><div class="metric"><div class="metricLabel">Streams now</div><div class="metricValue">${esc(streams)}</div></div><div class="metric"><div class="metricLabel">Reseller plan</div><div class="metricValue" style="font-size:20px">${esc(subscription?.tier_name||'None')}</div><div class="subText">${subscription?`${esc(money(subscription.monthly_price_minor,subscription.currency))}/mo · paid to ${esc(date(subscription.current_period_end))}`:'No monthly subscription'}</div></div><div class="metric"><div class="metricLabel">Policy</div><div class="metricValue" style="font-size:18px">${esc(subscription?.streams||tiers.find(t=>String(t.id)===String(subscription?.tier_id))?.streams||'—')} streams / user</div><div class="subText">Jellyfin rules are controlled by your reseller plan</div></div></div><section class="section"><div class="sectionHead"><div><h2>Your monthly reseller plan</h2><div class="muted">The monthly fee grants a managed-user allowance. How you charge or manage those people commercially is entirely up to you and is not recorded here.</div></div></div>${tierCards(req,tiers,subscription,state.active)}${billing}</section><section class="section"><div class="sectionHead"><div><h2>Add managed Jellyfin user</h2><div class="muted">One user = one reseller seat until the user is deleted.</div></div></div>${add}</section><section class="section"><div class="sectionHead"><div><h2>Managed Jellyfin users</h2><div class="muted">Suspend temporarily disables access but keeps the seat occupied. Delete removes the Jellyfin user and releases the seat.</div></div></div>${rows?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>User</th><th>Server</th><th>Streams</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">No managed Jellyfin users yet.</div>'}</section>`;
+ return shell(runtimeSettings.siteName(),'Managed Jellyfin users',body);
 }
-async function manage(req){
-  const reseller=await core.resolveReseller(req.session.authUserId),customer=await monthly.getResellerCustomer(reseller.id,req.params.id);if(!customer)return null;
-  const subscription=await monthly.currentSubscription(reseller.id);const plans=subscription?await resellerSettings.eligiblePlans(subscription.tier_id):[];
-  const allowed=customer.user_id?plans:plans.filter(plan=>delivery(plan)==='jellyfin');let html=await legacy.managePage(req);if(!html)return null;
-  html=decorateOptions(html,plans,{allowStremio:Boolean(customer.user_id)}).replace('name="planCode"','name="planCode" data-reseller-plan');
-  if(!customer.user_id&&plans.some(plan=>delivery(plan)!=='jellyfin'))html=html.replace('<section class="section"><div class="sectionHead"><h2>Renew or change plan</h2>','<div class="notice warn"><strong>Stremio plans are hidden for this customer.</strong> A CAPTAiNFiN portal identity is required before switching them to Stremio or a bundle.</div><section class="section"><div class="sectionHead"><h2>Renew or change plan</h2>');
-  if(!allowed.length)html=html.replace('<button class="button">Record sale & apply lifecycle</button>','<button class="button" disabled>No deliverable plans available</button>');
-  return injectScript(html);
-}
-async function prevalidatePortal(req,cfg){
-  const wantsPortal=cfg.customerPortalPolicy==='portal_required'||(cfg.customerPortalPolicy==='optional'&&req.body.createPortal==='1');
-  if(!wantsPortal)return{wantsPortal:false};
-  const email=String(req.body.email||'').trim().toLowerCase(),username=String(req.body.username||'').trim();
-  if(!email||!email.includes('@'))throw new Error('Customer email is required for a portal activation.');
-  const duplicate=await query(`SELECT 1 FROM app_users WHERE lower(username)=lower($1) OR lower(COALESCE(email,''))=lower($2) LIMIT 1`,[username,email]);
-  if(duplicate.rowCount)throw new Error('That portal username or email is already in use.');
-  return{wantsPortal:true,email};
-}
-function credentialsPage(site,username,password,message,portal,serviceType){
-  const stremio=serviceType==='bundle'?'<div class="notice success"><strong>Stremio is included too.</strong> The customer manages their private Stremio installation from their CAPTAiNFiN portal after activation.</div>':'';
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Access ready · ${esc(site)}</title><link rel="icon" href="${esc(branding.assetUrl('favicon'))}"><link rel="stylesheet" href="/css/admin-original-base.css"><link rel="stylesheet" href="/css/admin-original-components.css"><link rel="stylesheet" href="/css/customer-360.css"></head><body><main style="max-width:760px;margin:40px auto;padding:20px"><section class="section"><div class="formPanel"><h1>Customer access ready</h1><p>${esc(message)}</p>${stremio}<p><strong>Jellyfin username</strong></p><div class="codeBox">${esc(username)}</div><p><strong>Jellyfin password</strong></p><div class="codeBox">${esc(password)}</div><p class="muted">Shown once. Share it securely and ask the customer to change it.</p>${portal?`<hr><p><strong>CAPTAiNFiN portal activation</strong></p><p>${portal.queued?`Activation email queued to ${esc(portal.email)}.`:`Email could not be queued; share the one-time link below.`}</p><div class="codeBox">${esc(portal.activationLink)}</div>`:''}<p><a class="button" href="/reseller">Back to dashboard</a></p></div></section></main></body></html>`;
-}
-async function createCustomer(req,res){
-  try{
-    const reseller=await core.resolveReseller(req.session.authUserId),cfg=await resellerSettings.forReseller(reseller.id),portalIntent=await prevalidatePortal(req,cfg);
-    const result=await monthly.createOrRenewCustomer({resellerId:reseller.id,username:req.body.username,planCode:req.body.planCode,amount:req.body.amount,currency:req.body.currency,paymentMethod:req.body.paymentMethod,note:req.body.note,actorUserId:req.session.authUserId,portalReady:portalIntent.wantsPortal});
-    const portal=await legacy.attachPortalAccount(req,reseller,result,cfg),service=delivery(result.plan);
-    if(service==='stremio')return res.redirect('/reseller?message='+encodeURIComponent(portal?.queued?'Customer created. Portal activation was emailed; the customer can create their Stremio installation after activation.':'Customer created with Stremio delivery. Share the portal activation link so they can manage their private installation.'));
-    if(!result.reconcile?.account?.id)return res.redirect('/reseller?message='+encodeURIComponent(service==='bundle'?'Customer and portal created; Jellyfin provisioning is queued and Stremio will be available from their portal.':'Customer and sale recorded; Jellyfin provisioning is queued.'));
-    const password=`${crypto.randomBytes(18).toString('base64url')}A1!`;await provisioning.setJellyfinPassword(result.customer.id,result.reconcile.account.id,password);await runtimeSettings.ensureLoaded();
-    return res.send(credentialsPage(runtimeSettings.siteName(),result.reconcile.account.jellyfin_username||req.body.username,password,service==='bundle'?'Customer created with Jellyfin + Stremio delivery.':'Customer created and Jellyfin provisioned.',portal,service));
-  }catch(error){return res.redirect('/reseller?error='+encodeURIComponent(error.message));}
-}
-async function renewCustomer(req,res){
-  try{
-    const reseller=await core.resolveReseller(req.session.authUserId),result=await monthly.createOrRenewCustomer({resellerId:reseller.id,customerId:req.params.id,planCode:req.body.planCode,amount:req.body.amount,currency:req.body.currency,paymentMethod:req.body.paymentMethod,note:req.body.note,changeMode:req.body.changeMode,actorUserId:req.session.authUserId}),label=deliveryLabel(result.plan),messages={renewal:`${label} sale recorded and existing access extended.`,scheduled_plan_change:`Sale recorded; ${label} delivery is scheduled for the current access-expiry date.`,immediate_plan_change:`Sale recorded; delivery changed immediately to ${label}.`,new:`${label} entitlement created.`};
-    return res.redirect('/reseller?message='+encodeURIComponent(messages[result.operation]||'Customer lifecycle updated.'));
-  }catch(error){return res.redirect(`/reseller/customer/${encodeURIComponent(req.params.id)}/renew?error=${encodeURIComponent(error.message)}`);}
-}
-function runLimited(middleware,req,res,handler){return middleware(req,res,error=>error?handler(error):handler());}
+
+async function deletePage(req){await runtimeSettings.ensureLoaded();const reseller=await resellerForUser(req.session.authUserId),user=await managedUsers.getManagedUser(reseller.id,req.params.id);if(!user)return null;return shell(runtimeSettings.siteName(),'Delete Jellyfin user',`${notice(req)}<section class="section dangerPanel"><div class="sectionHead"><div><h2>Delete ${esc(user.display_name||'managed user')}?</h2><div class="muted">This permanently removes the Jellyfin user and releases one managed-user seat.</div></div></div><form class="formPanel" method="post" action="/reseller/user/${esc(user.id)}/delete">${token(req)}<label class="checkRow"><input type="checkbox" name="confirm" value="1" required> I understand this deletes the Jellyfin account and releases the seat.</label><div class="buttonRow"><button class="button btn-danger">Delete Jellyfin user</button><a class="button secondary" href="/reseller">Cancel</a></div></form></section>`)}
+async function resetPage(req){await runtimeSettings.ensureLoaded();const reseller=await resellerForUser(req.session.authUserId),user=await managedUsers.getManagedUser(reseller.id,req.params.id);if(!user)return null;return shell(runtimeSettings.siteName(),'Reset Jellyfin password',`${notice(req)}<section class="section"><div class="sectionHead"><div><h2>Reset ${esc(user.display_name||'managed user')} password</h2><div class="muted">A new random Jellyfin password will be shown once.</div></div></div><form method="post" action="/reseller/user/${esc(user.id)}/credentials">${token(req)}<button class="button">Generate new password</button> <a class="button secondary" href="/reseller">Cancel</a></form></section>`)}
+
 function createResellerServiceAwarePortalRouter(){
-  const r=express.Router();
-  r.use('/reseller',gate,noStore,async(req,res,next)=>{
-    const path=String(req.path||'/'),method=String(req.method||'GET').toUpperCase();
-    try{
-      if(method==='GET'&&path==='/')return res.send(await dashboard(req));
-      const renew=path.match(/^\/customer\/([^/]+)\/renew$/);
-      if(method==='GET'&&renew){req.params.id=renew[1];const html=await manage(req);return html?res.send(html):res.status(404).send('Customer not found');}
-      if(method==='POST'&&path==='/customer/create')return runLimited(saleLimit,req,res,error=>{if(error)return next(error);if(!csrf.verify(req))return res.status(403).send('Invalid security token');return createCustomer(req,res);});
-      if(method==='POST'&&renew){req.params.id=renew[1];return runLimited(saleLimit,req,res,error=>{if(error)return next(error);if(!csrf.verify(req))return res.status(403).send('Invalid security token');return renewCustomer(req,res);});}
-      return next();
-    }catch(error){return next(error);}
-  });
-  return r;
+ const r=express.Router();r.use('/reseller',gate,noStore);
+ r.get('/reseller',async(req,res,next)=>{try{return res.send(await dashboard(req))}catch(error){next(error)}});
+ for(const path of ['/reseller/ledger','/reseller/sales','/reseller/credit-history','/reseller/settings'])r.all(path,(req,res)=>redirect(res,'message','This reseller workspace only manages the monthly subscription and Jellyfin users. Downstream billing and customer administration stay outside CAPTaINFiN.'));
+ r.all('/reseller/customer/:id/renew',(req,res)=>redirect(res,'message','Per-customer reseller plans and renewals were retired. Managed users inherit the policy from the reseller plan.'));
+ r.all('/reseller/customer/create',(req,res)=>redirect(res,'message','Use Add managed Jellyfin user instead.'));
+ r.get('/reseller/user/:id/delete',async(req,res,next)=>{try{const html=await deletePage(req);return html?res.send(html):res.status(404).send('Managed Jellyfin user not found')}catch(error){next(error)}});
+ r.get('/reseller/user/:id/credentials',async(req,res,next)=>{try{const html=await resetPage(req);return html?res.send(html):res.status(404).send('Managed Jellyfin user not found')}catch(error){next(error)}});
+ r.post('/reseller/user/create',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const reseller=await resellerForUser(req.session.authUserId),result=await managedUsers.createManagedUser({resellerId:reseller.id,username:req.body.username,actorUserId:req.session.authUserId});if(!result.reconcile?.account?.id)return redirect(res,'message','Managed Jellyfin user created. Provisioning is queued.');const plain=password();await provisioning.setJellyfinPassword(result.customer.id,result.reconcile.account.id,plain);await runtimeSettings.ensureLoaded();return res.send(credentialsPage(runtimeSettings.siteName(),result.reconcile.account.jellyfin_username||req.body.username,plain,'The user inherited your reseller plan’s Jellyfin policy.'))}catch(error){return redirect(res,'error',error.message)}});
+ r.post('/reseller/user/:id/toggle',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const reseller=await resellerForUser(req.session.authUserId),suspended=req.body.suspended==='true';await managedUsers.setSuspended({resellerId:reseller.id,customerId:req.params.id,suspended,actorUserId:req.session.authUserId});return redirect(res,'message',suspended?'Managed user suspended. The seat remains occupied.':'Managed user resumed.')}catch(error){return redirect(res,'error',error.message)}});
+ r.post('/reseller/user/:id/credentials',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const reseller=await resellerForUser(req.session.authUserId),user=await managedUsers.getManagedUser(reseller.id,req.params.id);if(!user)throw new Error('Managed Jellyfin user not found.');const account=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND account_purpose<>'stremio_internal' ORDER BY is_primary DESC,created_at LIMIT 1`,[user.id]);if(!account.rowCount)throw new Error('Jellyfin provisioning has not completed yet.');const plain=password();await provisioning.setJellyfinPassword(user.id,account.rows[0].id,plain);await runtimeSettings.ensureLoaded();return res.send(credentialsPage(runtimeSettings.siteName(),account.rows[0].jellyfin_username||user.display_name,plain,'The previous Jellyfin password no longer works.'))}catch(error){return redirect(res,'error',error.message)}});
+ r.post('/reseller/user/:id/delete',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{if(req.body.confirm!=='1')throw new Error('Confirm the deletion first.');const reseller=await resellerForUser(req.session.authUserId),result=await managedUsers.deleteManagedUser({resellerId:reseller.id,customerId:req.params.id,actorUserId:req.session.authUserId});return redirect(res,'message',`Managed Jellyfin user deleted. ${result.seatUsage} seat${result.seatUsage===1?' is':'s are'} now in use.`)}catch(error){return redirect(res,'error',error.message,`/reseller/user/${encodeURIComponent(req.params.id)}/delete`)}});
+ return r;
 }
-module.exports={createResellerServiceAwarePortalRouter,dashboard,manage,decorateOptions,decorateCreateForm,decorateOwnerForm,decorateCustomerActions,createCustomer,renewCustomer};
+
+module.exports={createResellerServiceAwarePortalRouter,dashboard,deletePage,resetPage,tierCards,credentialsPage,resellerForUser};
