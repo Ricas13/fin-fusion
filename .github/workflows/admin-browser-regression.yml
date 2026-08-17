@@ -10,6 +10,7 @@ on:
       - 'tests/admin-browser-regression.js'
       - 'tests/admin-information-architecture-regression.js'
       - 'tests/admin-customer-activation-journey.js'
+      - 'tests/admin-deferred-provisioning-journey.js'
       - '.github/workflows/admin-browser-regression.yml'
       - 'db/migrations/**'
   workflow_dispatch:
@@ -87,6 +88,8 @@ jobs:
         run: node tests/admin-information-architecture-regression.js
       - name: Simulate admin to customer activation and sign-in
         run: node tests/admin-customer-activation-journey.js
+      - name: Simulate deferred Jellyfin provisioning after activation
+        run: node tests/admin-deferred-provisioning-journey.js
       - name: Print app log on failure
         if: failure()
         run: cat /tmp/captainfin-browser.log || true
