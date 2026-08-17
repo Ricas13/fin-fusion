@@ -1,81 +1,60 @@
 <!doctype html>
-<html>
-<head>
-  <title>Security · <%= siteName %></title>
-  <%- include('_head') %>
-</head>
+<html lang="en">
+<head><%- include('_head',{title:'My security',siteName}) %></head>
 <body>
 <div class="appShell">
   <%- include('_nav',{siteName,activeNav:'security'}) %>
   <main class="mainPane">
-    <header class="topBar"><div>Administration</div><a class="button secondary" href="/logout">Sign out</a></header>
+    <header class="topBar"><div class="topBreadcrumb"><span>Settings</span><strong>My Security</strong></div><div class="topBarActions"><a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a></div></header>
     <div class="content">
-      <div class="pageHeader"><h1>Security</h1><div class="muted">Administrator authentication and session controls</div></div>
-      <% if(message){ %><div class="notice success"><%= message %></div><% } %>
-      <% if(error){ %><div class="notice error"><%= error %></div><% } %>
+      <div class="pageHeader"><div><h1>My security</h1><div class="pageSubtitle">Your administrator password, two-factor authentication, recovery and signed-in sessions</div></div></div>
+      <nav class="operatorTabs" aria-label="My profile workflow"><a class="operatorTab" href="/admin/profile">Profile</a><a class="operatorTab" href="/admin/profile/notifications">Notifications</a><a class="operatorTab active" href="/admin/security">Security</a></nav>
+
+      <% if (message) { %><div class="notice success"><%= message %></div><% } %>
+      <% if (error) { %><div class="notice error"><%= error %></div><% } %>
 
       <div class="metrics">
-        <div class="metric"><div class="metricLabel">My 2FA</div><div class="metricValue small"><%= user.totp_enabled?'Enabled':'Off' %></div></div>
-        <div class="metric"><div class="metricLabel">Recovery codes</div><div class="metricValue"><%= recoveryCodesRemaining %></div></div>
-        <div class="metric"><div class="metricLabel">Active sessions</div><div class="metricValue"><%= sessions.filter(s=>!s.revokedAt).length %></div></div>
-        <div class="metric"><div class="metricLabel">Failed attempts</div><div class="metricValue"><%= user.failed_login_count||0 %></div></div>
+        <div class="metric"><div class="metricLabel">My 2FA</div><div class="metricValue small"><%= user.totp_enabled ? 'On' : 'Off' %></div></div>
+        <div class="metric"><div class="metricLabel">Recovery codes</div><div class="metricValue small"><%= recoveryCodesRemaining %></div></div>
+        <div class="metric"><div class="metricLabel">Active sessions</div><div class="metricValue small"><%= sessions.filter(s=>!s.revokedAt).length %></div></div>
+        <div class="metric"><div class="metricLabel">Failed attempts</div><div class="metricValue small"><%= user.failed_login_count || 0 %></div></div>
       </div>
 
-      <div class="statusBanner <%= admin2faRequired?'':'warn' %>">
-        <strong>Administrator 2FA policy:</strong> <%= admin2faRequired?'required at sign-in':'optional' %>.
-        Your account: <%= user.totp_enabled?'enrolled':'not enrolled' %>.
-      </div>
+      <div class="statusBanner"><strong>Platform administrator 2FA policy:</strong> <%= admin2faRequired ? 'required' : 'optional' %>. Your account is <%= user.totp_enabled ? 'enrolled' : 'not enrolled' %>.</div>
 
       <section class="section">
-        <div class="sectionHead"><h2>Two-factor authentication policy</h2><span class="pill <%= admin2faRequired?'good':'warn' %>"><%= admin2faRequired?'Required':'Optional' %></span></div>
-        <form class="formPanel" method="post" action="/admin/security/2fa-policy">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <label class="toggleRow">
-            <input type="checkbox" name="requireAdminTwoFactor" <%= admin2faRequired?'checked':'' %>>
-            <span><strong>Require 2FA for administrator sign-in</strong><span class="subText">Off by default. When off, each administrator can choose whether to use 2FA on their own account.</span></span>
-          </label>
-          <div class="buttonRow"><button class="button" type="submit">Save 2FA policy</button></div>
-        </form>
-      </section>
-
-      <section class="section">
-        <div class="sectionHead"><h2>My two-factor authentication</h2><span class="pill <%= user.totp_enabled?'good':'warn' %>"><%= user.totp_enabled?'Enabled':'Off' %></span></div>
+        <div class="sectionHead"><div><h2>My two-factor authentication</h2><div class="muted">Authenticator-based protection for this administrator account.</div></div><span class="pill <%= user.totp_enabled ? 'good' : 'warn' %>"><%= user.totp_enabled ? 'On' : 'Off' %></span></div>
         <div class="formPanel">
-          <% if(!user.totp_enabled){ %>
-            <p class="muted">2FA is optional for your account. Enable it here if you want an authenticator code at sign-in.</p>
-            <form method="post" action="/admin/security/2fa/enable">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="button" type="submit">Enable 2FA for my account</button>
-            </form>
+          <% if (!user.totp_enabled) { %>
+            <p class="muted"><%= admin2faRequired ? 'The platform requires 2FA. Enrol this account before the next sign-in.' : '2FA is optional for your account. Enable it if you want an authenticator code at sign-in.' %></p>
+            <form method="post" action="/admin/security/2fa/enable"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button" type="submit">Enable 2FA for my account</button></form>
           <% } else { %>
             <div class="buttonRow"><a class="button secondary" href="/admin/security/recovery">Recovery codes</a></div>
-            <% if(admin2faRequired){ %>
-              <p class="subText">Your 2FA cannot be disabled while the global administrator requirement is on.</p>
-            <% } else { %>
-              <form method="post" action="/admin/security/2fa/disable" style="margin-top:14px">
+            <% if (!admin2faRequired) { %>
+              <form method="post" action="/admin/security/2fa/disable" class="stack" style="margin-top:14px">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <div class="formGroup"><label for="currentPassword2fa">Current password</label><input class="input" id="currentPassword2fa" name="currentPassword" type="password" autocomplete="current-password" required></div>
-                <button class="button secondary" type="submit">Disable 2FA for my account</button>
+                <div class="formGroup"><label>Current password</label><input class="input" type="password" name="currentPassword" autocomplete="current-password" required></div>
+                <button class="button secondary" type="submit">Disable my 2FA</button>
               </form>
-            <% } %>
+            <% } else { %><div class="inlineHelp">The platform-wide administrator policy currently prevents disabling 2FA on this account.</div><% } %>
           <% } %>
         </div>
       </section>
 
       <section class="section">
-        <div class="sectionHead"><h2>Sessions</h2><form method="post" action="/admin/security/sessions/revoke-others"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary">Sign out other sessions</button></form></div>
-        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Session</th><th>Last seen</th><th>Expires</th><th>Status</th></tr></thead><tbody><% sessions.forEach(function(s){ %><tr><td><%= s.isCurrent?'Current session':'Browser '+s.fingerprint %></td><td><%= new Date(s.lastSeenAt).toLocaleString() %></td><td><%= new Date(s.expiresAt).toLocaleString() %></td><td><span class="pill <%= s.revokedAt?'bad':s.isCurrent?'accent':'good' %>"><%= s.revokedAt?'Revoked':s.isCurrent?'Current':'Active' %></span></td></tr><% }) %></tbody></table></div>
+        <div class="sectionHead"><div><h2>Sessions</h2><div class="muted">Signed-in administrator sessions for this account.</div></div><form method="post" action="/admin/security/sessions/revoke-others"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary" type="submit">Sign out other sessions</button></form></div>
+        <div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Session</th><th>Last seen</th><th>Expires</th><th>Status</th></tr></thead><tbody>
+          <% sessions.forEach(function(s){ %><tr><td><%= s.isCurrent ? 'Current session' : 'Browser '+s.fingerprint %></td><td><%= s.lastSeenAt ? new Date(s.lastSeenAt).toLocaleString('en-GB') : '—' %></td><td><%= s.expiresAt ? new Date(s.expiresAt).toLocaleString('en-GB') : '—' %></td><td><span class="pill <%= s.revokedAt ? 'bad' : (s.isCurrent ? 'accent' : 'good') %>"><%= s.revokedAt ? 'Revoked' : (s.isCurrent ? 'Current' : 'Active') %></span></td></tr><% }); %>
+        </tbody></table></div>
       </section>
 
-      <section class="section">
-        <div class="sectionHead"><h2>Account controls</h2></div>
-        <div class="formPanel buttonRow"><a class="button" href="/admin/security/password">Change password</a></div>
-      </section>
+      <section class="section"><div class="sectionHead"><div><h2>Account controls</h2><div class="muted">Changing your password revokes other staff sessions.</div></div></div><div class="formPanel"><a class="button secondary" href="/admin/security/password">Change password</a></div></section>
 
-      <section class="section">
-        <div class="sectionHead"><h2>Recent authentication events</h2></div>
-        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Event</th><th>Result</th></tr></thead><tbody><% events.forEach(function(e){ %><tr><td><%= new Date(e.created_at).toLocaleString() %></td><td><%= e.event_type %></td><td><span class="pill <%= e.success?'good':'bad' %>"><%= e.success?'Success':'Denied' %></span></td></tr><% }) %></tbody></table></div>
-      </section>
+      <section class="section"><div class="sectionHead"><div><h2>Recent authentication events</h2><div class="muted">Recent security events for this administrator account.</div></div></div><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Time</th><th>Event</th><th>Result</th></tr></thead><tbody>
+        <% events.forEach(function(event){ const eventType=String(event.event_type||'Security event').replace(/^admin[._]/,'').replace(/[._]+/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}); %><tr><td><%= new Date(event.created_at).toLocaleString('en-GB') %></td><td><%= eventType %></td><td><span class="pill <%= event.success ? 'good' : 'bad' %>"><%= event.success ? 'Success' : 'Failed' %></span></td></tr><% }); %>
+      </tbody></table></div></section>
+
+      <section class="section"><div class="sectionHead"><div><h2>Platform administrator 2FA policy</h2><div class="muted">Global sign-in requirement for every administrator. This is platform policy, not a personal preference.</div></div><span class="pill <%= admin2faRequired ? 'good' : 'warn' %>"><%= admin2faRequired ? 'Required' : 'Optional' %></span></div><form class="formPanel" method="post" action="/admin/security/2fa-policy"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="toggleRow"><input type="checkbox" name="requireAdminTwoFactor" <%= admin2faRequired ? 'checked' : '' %>><span><strong>Require 2FA for administrator sign-in</strong><small class="muted">When off, each administrator may choose whether to enrol their own account.</small></span></label><button class="button secondary" type="submit">Save platform 2FA policy</button></form></section>
     </div>
   </main>
 </div>
