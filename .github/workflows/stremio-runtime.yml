@@ -7,15 +7,22 @@ on:
       - 'src/application.js'
       - 'src/jellyfin/resilient-provisioning.js'
       - 'src/platform/admin-stremio.js'
+      - 'src/platform/admin-stremio-sources.js'
+      - 'src/platform/admin-plan-delivery.js'
+      - 'src/platform/admin-nav.js'
       - 'src/platform/product-readiness.js'
       - 'src/platform/customer-stremio.js'
       - 'src/platform/customer-dashboard.js'
       - 'src/platform/router.js'
       - 'views/customer/stremio.ejs'
       - 'db/migrations/069_stremio_runtime.sql'
+      - 'db/migrations/082_stremio_source_catalog.sql'
       - 'scripts/stremio-runtime-smoke.js'
       - 'scripts/stremio-admin-smoke.js'
+      - 'scripts/stremio-source-client-smoke.js'
+      - 'scripts/jellyfin-lifecycle-stremio-pool-smoke.js'
       - 'scripts/runtime-db-isolation-smoke.js'
+      - 'tests/admin-information-architecture-regression.js'
       - 'package.json'
       - 'docker-compose.yml'
       - '.env.example'
@@ -33,13 +40,19 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Stremio runtime contract
-        run: node scripts/stremio-runtime-smoke.js
+        run: |
+          node scripts/stremio-source-client-smoke.js
+          node scripts/stremio-admin-smoke.js
+          node scripts/stremio-runtime-smoke.js
       - name: Syntax check runtime modules
         run: |
           node --check src/application.js
           node --check src/stremio/foundation.js
           node --check src/stremio/entitlements.js
           node --check src/stremio/media-index.js
+          node --check src/stremio/source-client.js
+          node --check src/stremio/source-index.js
+          node --check src/stremio/source-pool.js
           node --check src/stremio/jellyfin-runtime.js
           node --check src/stremio/runtime-settings.js
           node --check src/stremio/runtime.js
@@ -47,4 +60,6 @@ jobs:
           node --check src/platform/customer-stremio.js
           node --check src/platform/customer-dashboard.js
           node --check src/platform/admin-stremio.js
+          node --check src/platform/admin-stremio-sources.js
+          node --check src/platform/admin-plan-delivery.js
           node --check src/platform/router.js
