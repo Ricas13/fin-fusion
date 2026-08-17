@@ -8,7 +8,7 @@ let cache=null;
 
 function legacyEnabled(){return String(process.env.STREMIO_RUNTIME_ENABLED||'').toLowerCase()==='true';}
 function keyConfigured(){try{keyFromEnv('STREMIO_JELLYFIN_TOKEN_KEY');return true;}catch(_){return false;}}
-function snapshot(){return cache?{...cache}:{enabled:false,source:'unloaded'};}
+function snapshot(){if(cache)return{...cache};const inherited=legacyEnabled();return{enabled:inherited,source:inherited?'legacy_env':'unloaded'};}
 
 async function reload(){
   const result=await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1 LIMIT 1',[KEY]);
@@ -22,8 +22,8 @@ async function reload(){
   return snapshot();
 }
 async function ensureLoaded(){return cache?snapshot():reload();}
-function enabled(){return cache?.enabled===true;}
-function source(){return cache?.source||'unloaded';}
+function enabled(){return cache?cache.enabled===true:legacyEnabled();}
+function source(){return snapshot().source;}
 
 async function prerequisites(){
   const [servers,indexes]=await Promise.all([
