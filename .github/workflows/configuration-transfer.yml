@@ -47,6 +47,20 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/config_transfer
         run: npm run db:migrate
       - name: Portable configuration round-trip
+        id: roundtrip
+        shell: bash
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/config_transfer
-        run: node scripts/configuration-transfer-smoke.js
+        run: |
+          set +e
+          node scripts/configuration-transfer-smoke.js 2>&1 | tee /tmp/configuration-transfer-smoke.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+      - name: Upload configuration transfer failure output
+        if: failure() && steps.roundtrip.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: configuration-transfer-failure
+          path: /tmp/configuration-transfer-smoke.log
+          if-no-files-found: error
+          retention-days: 7
