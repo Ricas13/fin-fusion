@@ -15,6 +15,14 @@ function cleanUrl(value){
   url.search='';url.hash='';url.pathname=url.pathname.replace(/\/+$/,'');
   return url.toString().replace(/\/$/,'');
 }
+function sourceUrl(baseUrl,endpoint){
+  if(typeof endpoint!=='string'||!endpoint.startsWith('/')||endpoint.startsWith('//'))throw new Error('Invalid Jellyfin source endpoint.');
+  const base=cleanUrl(baseUrl),root=new URL(`${base}/`),url=new URL(endpoint.slice(1),root);
+  if(url.origin!==root.origin)throw new Error('Jellyfin source endpoint escaped the configured server origin.');
+  const prefix=root.pathname.endsWith('/')?root.pathname:root.pathname+'/';
+  if(prefix!=='/'&&!url.pathname.startsWith(prefix))throw new Error('Jellyfin source endpoint escaped the configured server base path.');
+  return url;
+}
 function cleanUsername(value){const username=String(value||'').trim();if(!username||username.length>120)throw new Error('Enter the Jellyfin username.');return username;}
 function clientAuthorization(){return 'MediaBrowser Client="CAPTAiNFiN Stremio Source", Device="CAPTAiNFiN", DeviceId="captainfin-stremio-source", Version="1.0"';}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin access token.');return `MediaBrowser Token="${token}"`;}
@@ -28,7 +36,7 @@ async function parseJson(response){const text=await response.text();if(!text)ret
 async function authenticate(baseUrl,username,password){
   const base=cleanUrl(baseUrl),user=cleanUsername(username),secret=String(password||'');
   if(!secret)throw new Error('Enter the Jellyfin password.');
-  const url=new URL('/Users/AuthenticateByName',`${base}/`);
+  const url=sourceUrl(base,'/Users/AuthenticateByName');
   const response=await outbound.safeFetch(url,{purpose:'Stremio external Jellyfin sign-in',method:'POST',timeoutMs:12000,maxBytes:1024*1024,headers:{Authorization:clientAuthorization(),Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({Username:user,Pw:secret})});
   if(response.status===401||response.status===403)throw new Error('Jellyfin rejected the username or password.');
   if(!response.ok)throw new Error(`Jellyfin sign-in failed with HTTP ${response.status}.`);
@@ -38,10 +46,7 @@ async function authenticate(baseUrl,username,password){
 }
 function sourceToken(source){return decryptToken(source.access_token_encrypted);}
 async function request(source,endpoint,{method='GET',body=null,timeoutMs=15000,maxBytes=8*1024*1024}={}){
-  if(typeof endpoint!=='string'||!endpoint.startsWith('/')||endpoint.startsWith('//'))throw new Error('Invalid Jellyfin source endpoint.');
-  const base=new URL(cleanUrl(source.base_url)),url=new URL(endpoint,`${base.toString().replace(/\/$/,'')}/`);
-  if(url.origin!==base.origin)throw new Error('Jellyfin source endpoint escaped the configured server origin.');
-  const headers={Authorization:jellyfinAuthHeader(sourceToken(source)),Accept:'application/json'};
+  const url=sourceUrl(source.base_url,endpoint),headers={Authorization:jellyfinAuthHeader(sourceToken(source)),Accept:'application/json'};
   if(body!=null)headers['Content-Type']='application/json';
   const response=await outbound.safeFetch(url,{purpose:`Stremio source request on ${source.name||'Jellyfin'}`,method,timeoutMs,maxBytes,headers,body:body==null?undefined:JSON.stringify(body)});
   if(response.status===401||response.status===403){const error=new Error('Jellyfin authentication expired. Reconnect this Stremio source.');error.code='STREMIO_SOURCE_AUTH';throw error;}
@@ -54,4 +59,4 @@ async function discoverLibraries(source){
   return (Array.isArray(payload.Items)?payload.Items:[]).map(item=>({libraryId:String(item.Id||''),name:String(item.Name||'Library'),collectionType:String(item.CollectionType||'').toLowerCase()})).filter(item=>item.libraryId&&supported.has(item.collectionType));
 }
 
-module.exports={TOKEN_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,cleanUrl,cleanUsername,clientAuthorization,jellyfinAuthHeader,encryptToken,decryptToken,authenticate,sourceToken,request,discoverLibraries};
+module.exports={TOKEN_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,jellyfinAuthHeader,encryptToken,decryptToken,authenticate,sourceToken,request,discoverLibraries};
