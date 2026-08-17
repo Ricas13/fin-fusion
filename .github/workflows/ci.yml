@@ -146,7 +146,7 @@ jobs:
           for (const file of [
             'views/auth/staff-login.ejs','views/auth/2fa-challenge.ejs','views/auth/2fa-setup.ejs',
             'views/auth/recovery-codes.ejs','views/auth/message.ejs','views/admin/security.ejs',
-            'views/auth/security-password.ejs','views/auth/security-recovery.ejs'
+            'views/admin/security-password.ejs','views/admin/security-recovery.ejs'
           ]) ejs.compile(fs.readFileSync(file,'utf8'));
           NODE
 
