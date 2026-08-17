@@ -59,7 +59,7 @@ function normalizeRiskPolicy(value) {
 }
 function hydrateLegacyPlanFields(input) {
     const parsed=sourceDocument(input);
-    if(parsed?.version!==2||!object(parsed.configuration))return input;
+    if(![1,2].includes(Number(parsed?.version))||!object(parsed.configuration))return input;
     const clone=JSON.parse(JSON.stringify(parsed));
     clone.configuration.plans=(Array.isArray(clone.configuration.plans)?clone.configuration.plans:[]).map(plan=>({
         ...plan,
