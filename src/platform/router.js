@@ -15,6 +15,7 @@ const { createAdminResellerSettingsRouter } = require('./admin-reseller-settings
 const { createAdminStremioRouter } = require('./admin-stremio');
 const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
+const { createAdminFleetOperationsRouter } = require('./admin-fleet-operations');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPersonalNotificationPreferencesRouter } = require('./admin-personal-notification-preferences-v2');
@@ -68,6 +69,7 @@ function createRouter(){
     router.use(createAdminStremioSourcesRouter());
     router.use(createAdminStremioRouter());
     router.use(createAdminPlanDeliveryRouter());
+    router.use(createAdminFleetOperationsRouter());
     router.use(createAdminResellerDunningRouter());
     router.use(createAdminProfileAccountRouter());
     router.use(createAdminPersonalNotificationTestsRouter());
