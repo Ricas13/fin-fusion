@@ -6,10 +6,10 @@
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention'],['search','Search','/admin/search']]},
   {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['resellers','Resellers','/admin/reseller-management'],['activity','Playback & Activity','/admin/activity']]},
-  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries']]},
+  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Referrals','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit & events','/admin/events']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['operations','Operations','/admin/operations'],['backups','Backups & Transfer','/admin/backups']]}
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups & Transfer','/admin/backups']]}
 ]);
 
 // Workflow pages can stay grouped/breadcrumbed without consuming sidebar space.
@@ -41,7 +41,8 @@ const aliases=Object.freeze({
   'stremio-settings':'settings-integrations',
   'abuse-protection':'settings-security',
   'jellyfin-import':'servers',
-  'invitations':'plans'
+  'invitations':'plans',
+  'operations':'fleet-operations'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
