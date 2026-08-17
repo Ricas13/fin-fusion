@@ -14,13 +14,13 @@ fs.mkdirSync(OUT,{recursive:true});
 const forced=[
   '/admin','/admin/attention','/admin/search','/admin/events',
   '/admin/users','/admin/reseller-management','/admin/activity',
-  '/admin/servers','/admin/libraries',
+  '/admin/servers','/admin/libraries','/admin/servers/operations',
   '/admin/commerce','/admin/plans','/admin/plans/new?type=stremio','/admin/payments','/admin/discounts','/admin/referrals',
   '/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/provisioning/migrations','/admin/provisioning/drift','/admin/automation',
-  '/admin/settings?section=general','/admin/profile','/admin/profile/notifications',
+  '/admin/settings?section=general','/admin/profile','/admin/profile/notifications','/admin/security',
   '/admin/notifications/preferences','/admin/notifications/email','/admin/notifications',
   '/admin/settings/branding','/admin/settings?section=integrations','/admin/settings?section=security',
-  '/admin/operations','/admin/backups','/admin/configuration'
+  '/admin/backups','/admin/configuration'
 ];
 
 function slug(value){return String(value).replace(/^https?:\/\/[^/]+/,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,110)||'admin';}
@@ -177,8 +177,6 @@ async function planCreationAudit(page){
   assert(/\/admin\/plans\/[^/]+\/delivery$/.test(createdUrl.pathname),'Valid Stremio creation did not continue to Delivery');
   assert(!/Request failed/i.test(await page.locator('body').innerText()),'Valid Stremio creation surfaced a generic request failure');
 
-  // Backend-only duplicate validation returns a 400 HTML form. The enhanced
-  // form layer must extract the actionable error rather than mask it as 400.
   await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
   form=page.locator('form[data-plan-create-v2]');
   await fillStremioPlan(form,{name:'Duplicate Stremio Addon'});
@@ -232,8 +230,10 @@ async function main(){
       }
     }
 
-    await assertWorkflow(page,'/admin/profile',['Profile','Notifications']);
-    await assertWorkflow(page,'/admin/profile/notifications',['Profile','Notifications']);
+    const profileTabs=['Profile','Notifications','Security'];
+    await assertWorkflow(page,'/admin/profile',profileTabs);
+    await assertWorkflow(page,'/admin/profile/notifications',profileTabs);
+    await assertWorkflow(page,'/admin/security',profileTabs);
     for(const url of ['/admin/notifications/preferences','/admin/notifications/email','/admin/notifications']){
       await assertWorkflow(page,url,['Global notifications','Email infrastructure','Delivery health']);
     }
@@ -249,7 +249,7 @@ async function main(){
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/operations','/admin/backups']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
