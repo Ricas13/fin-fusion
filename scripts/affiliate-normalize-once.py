@@ -13,3 +13,8 @@ def dashboard(s):
     if '/account/affiliate' not in s:s=s.replace('<a class="button secondary" href="/account/security">Account security</a>','<a class="button secondary" href="/account/security">Account security</a><a class="button secondary" href="/account/affiliate">Affiliate programme</a>')
     return s
 change('views/customer/dashboard.ejs',dashboard)
+def app_routes(s):
+    old="app.get('/reseller*',(_req,res)=>res.redirect(302,'/account?error='+encodeURIComponent('The reseller programme has been retired. Use the affiliate programme instead.')));\n app.get('/admin/reseller*',(_req,res)=>res.redirect(302,'/admin/referrals?message='+encodeURIComponent('The reseller programme has been retired and replaced by Affiliates.')));"
+    new="app.use(/^\\/reseller(?:\\/|$)/,(_req,res)=>res.redirect(302,'/account?error='+encodeURIComponent('The reseller programme has been retired. Use the affiliate programme instead.')));\n app.use(/^\\/admin\\/reseller(?:\\/|$)/,(_req,res)=>res.redirect(302,'/admin/referrals?message='+encodeURIComponent('The reseller programme has been retired and replaced by Affiliates.')));"
+    return s.replace(old,new)
+change('src/application.js',app_routes)
