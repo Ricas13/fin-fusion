@@ -7,7 +7,7 @@ BEGIN;
 DO $$
 BEGIN
     IF current_setting('steamfusion.fresh_install', true) = 'on' THEN
-        -- Historical migrations seeded four CAPTAiNFiN example/commercial plans.
+        -- Historical migrations seeded four CAPTaINFiN example/commercial plans.
         -- A distributable installation must start with zero business objects.
         DELETE FROM plans
         WHERE code IN ('trial-24h','monthly','six-month','yearly');
