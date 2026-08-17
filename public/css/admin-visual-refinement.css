@@ -58,6 +58,12 @@
   .navSectionLabel{display:none!important}
   .navSectionPages,.navSection[open] .navSectionPages{display:flex!important;gap:4px;padding:0}
   .planListToolbar{grid-template-columns:1fr 1fr}
+
+  /* The top bar must grow when a page has multiple real actions. Keeping the
+     desktop fixed height here caused Help/action buttons to overlap vertically. */
+  .topBar{height:auto;min-height:50px;padding-top:8px;padding-bottom:8px;flex-wrap:wrap;row-gap:8px}
+  .topBreadcrumb{flex:1 1 auto}
+  .topBarActions{margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
 }
 
 @media(max-width:760px){
