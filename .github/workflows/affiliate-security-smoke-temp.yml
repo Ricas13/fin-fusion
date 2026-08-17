@@ -1,0 +1,21 @@
+name: Affiliate security smoke update
+on:
+  push:
+    branches: [feat/affiliate-service-credits]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Update security smoke for affiliate model'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/affiliate-service-credits
+      - run: python3 scripts/affiliate-security-smoke-update.py
+      - run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add scripts/security-operator-clarity-smoke.js
+          git commit -m 'Update security smoke for affiliate model'
+          git push origin HEAD:feat/affiliate-service-credits
