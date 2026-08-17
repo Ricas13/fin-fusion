@@ -2,6 +2,7 @@
 
 const {query,transaction}=require('./db');
 const planPricing=require('./payments/plan-pricing');
+const serviceCreditReservations=require('./payments/service-credit-reservations');
 const provisioning=require('./jellyfin/resilient-provisioning');
 
 function cleanCurrency(value){return planPricing.cleanCurrency(value,'GBP');}
@@ -35,12 +36,14 @@ async function profile(customerId){
 }
 
 async function balances(customerId){
-  const r=await query(`SELECT currency,
-    COALESCE(SUM(amount_minor) FILTER(WHERE state='available'),0)::int AS available_minor,
-    COALESCE(SUM(amount_minor) FILTER(WHERE state='pending'),0)::int AS pending_minor,
-    COALESCE(SUM(amount_minor) FILTER(WHERE state IN('available','pending')),0)::int AS total_minor
-    FROM affiliate_credit_ledger WHERE customer_id=$1 GROUP BY currency ORDER BY currency`,[customerId]);
-  return r.rows.map(row=>({...row,available_minor:Number(row.available_minor||0),pending_minor:Number(row.pending_minor||0),total_minor:Number(row.total_minor||0)}));
+  const r=await query(`WITH currencies AS (
+      SELECT currency FROM affiliate_credit_ledger WHERE customer_id=$1
+      UNION SELECT currency FROM affiliate_credit_checkout_reservations WHERE customer_id=$1
+    ) SELECT c.currency,
+      GREATEST(0,COALESCE((SELECT SUM(l.amount_minor) FROM affiliate_credit_ledger l WHERE l.customer_id=$1 AND l.currency=c.currency AND l.state='available'),0)-COALESCE((SELECT SUM(r.amount_minor) FROM affiliate_credit_checkout_reservations r WHERE r.customer_id=$1 AND r.currency=c.currency AND r.state='reserved' AND r.expires_at>NOW()),0))::int AS available_minor,
+      COALESCE((SELECT SUM(l.amount_minor) FROM affiliate_credit_ledger l WHERE l.customer_id=$1 AND l.currency=c.currency AND l.state='pending'),0)::int AS pending_minor
+    FROM currencies c ORDER BY c.currency`,[customerId]);
+  return r.rows.map(row=>({...row,available_minor:Number(row.available_minor||0),pending_minor:Number(row.pending_minor||0),total_minor:Number(row.available_minor||0)+Number(row.pending_minor||0)}));
 }
 
 async function matureDueCredits(customerId=null){
@@ -75,8 +78,8 @@ async function reverseReward({redemptionId,paymentIncidentId=null,reason='paymen
     const used=await client.query(`SELECT COALESCE(SUM(-amount_minor),0)::int used FROM affiliate_credit_ledger WHERE customer_id=$1 AND currency=$2 AND entry_type='redeemed' AND metadata->>'sourceRewardId'=$3`,[row.customer_id,row.currency,String(row.id)]);
     // A reversal never creates a negative spendable balance. If credit has already
     // been consumed, preserve delivered service and record only the unspent part.
-    const current=await client.query(`SELECT COALESCE(SUM(amount_minor),0)::int balance FROM affiliate_credit_ledger WHERE customer_id=$1 AND currency=$2 AND state='available'`,[row.customer_id,row.currency]);
-    const reversible=Math.min(Number(row.amount_minor),Math.max(0,Number(current.rows[0]?.balance||0)));
+    const current=await serviceCreditReservations.availableMinorForClient(client,row.customer_id,row.currency);
+    const reversible=Math.min(Number(row.amount_minor),Math.max(0,Number(current||0)));
     await client.query(`UPDATE affiliate_credit_ledger SET state='void',note=note||' · reversed: '||$2 WHERE id=$1`,[row.id,String(reason).slice(0,180)]);
     if(reversible>0)await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,payment_incident_id,reference_id,note,metadata)
       VALUES($1,$2,$3,'reversed','available',$4,$5,$6,$7,$8::jsonb) ON CONFLICT(entry_type,reference_id) DO NOTHING`,[
@@ -100,8 +103,7 @@ async function redeemPlan({customerId,planCode,currency}){
     if(!price)throw new Error(`That plan is not available in ${wanted}.`);
     const cost=Number(price.price_minor||0);
     if(cost<=0)throw new Error('Free plans do not use affiliate credit.');
-    const bal=(await client.query(`SELECT COALESCE(SUM(amount_minor),0)::int amount FROM affiliate_credit_ledger WHERE customer_id=$1 AND currency=$2 AND state='available'`,[customerId,wanted])).rows[0];
-    const available=Number(bal?.amount||0);
+    const available=await serviceCreditReservations.availableMinorForClient(client,customerId,wanted);
     if(available<cost)throw new Error(`You need ${cost-available} more ${wanted} minor units of service credit for this plan.`);
     const live=await client.query(`SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);
     if(live.rowCount)throw new Error('You already have active service. Use your existing subscription controls before activating another plan.');
