@@ -51,30 +51,18 @@
     }
   }
 
-  // Catalogue filters belong only to catalogue browsing / new-product selection.
-  // Individual plan settings render their own service-aware management workflow
-  // server-side, so adding this row there created competing navigation systems.
-  const planCataloguePage=path==='/admin/plans' || path==='/admin/plans/new' || path.startsWith('/admin/reseller-tiers');
+  // Catalogue filters belong only to direct customer plan browsing / creation.
+  // The retired reseller product must never be reintroduced by client-side tabs.
+  const planCataloguePage=path==='/admin/plans' || path==='/admin/plans/new';
   if(planCataloguePage){
     const type=new URLSearchParams(location.search).get('type')||'';
-    const active=path.startsWith('/admin/reseller-tiers')?'/admin/reseller-tiers':type?`/admin/plans?type=${encodeURIComponent(type)}`:'/admin/plans';
+    const active=type?`/admin/plans?type=${encodeURIComponent(type)}`:'/admin/plans';
     insertAfterHeader(tabs([
       ['All plans','/admin/plans'],
       ['Jellyfin','/admin/plans?type=jellyfin'],
       ['Stremio','/admin/plans?type=stremio'],
-      ['Bundles','/admin/plans?type=bundle'],
-      ['Reseller','/admin/reseller-tiers']
+      ['Bundles','/admin/plans?type=bundle']
     ],active));
-    // Old reseller-tier forms accepted an arbitrary three-letter code. Keep the
-    // backend compatibility but constrain the operator UI to the three supported
-    // commercial currencies.
-    if(path.startsWith('/admin/reseller-tiers')){
-      document.querySelectorAll('input[name="currency"]').forEach(input=>{
-        const select=document.createElement('select');select.className=input.className||'input';select.name='currency';
-        ['GBP','USD','EUR'].forEach(code=>{const option=document.createElement('option');option.value=code;option.textContent=code;if(String(input.value||'GBP').toUpperCase()===code)option.selected=true;select.appendChild(option);});
-        input.replaceWith(select);
-      });
-    }
   }
 
   // Payments, Notifications, Provisioning and Backups/Transfer now render their
@@ -129,7 +117,7 @@
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (!data || !data.counts) return;
-      const hrefByKey = {customers:'/admin/users',resellers:'/admin/reseller-management',attention:'/admin/attention',servers:'/admin/servers',payments:'/admin/payments'};
+      const hrefByKey = {customers:'/admin/users',attention:'/admin/attention',servers:'/admin/servers',payments:'/admin/payments'};
       for (const [key,countValue] of Object.entries(data.counts)) {
         const count = Number(countValue || 0); if (count <= 0) continue;
         const href = hrefByKey[key]; if (!href) continue;
