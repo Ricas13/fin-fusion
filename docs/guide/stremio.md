@@ -77,7 +77,7 @@ Once a plan explicitly selects external Stremio Sources, CAPTAiNFiN does not cre
 
 The runtime switch lives on **Servers → Stremio Sources**.
 
-CAPTaINFiN refuses to enable customer Stremio delivery until at least one usable source has a selected library and a ready, non-empty index. Runtime changes are stored in platform settings and audit logged.
+CAPTAiNFiN refuses to enable customer Stremio delivery until at least one usable source has a selected library and a ready, non-empty index. Runtime changes are stored in platform settings and audit logged.
 
 `STREMIO_RUNTIME_ENABLED` exists only as an upgrade-compatibility fallback for older installations that have not yet saved the browser-managed runtime state.
 
@@ -85,21 +85,21 @@ CAPTaINFiN refuses to enable customer Stremio delivery until at least one usable
 
 If the customer's effective plan includes Stremio:
 
-1. Sign in to the CAPTaINFiN customer portal.
+1. Sign in to the CAPTAiNFiN customer portal.
 2. Open **Stremio**.
 3. Choose **Create installation**.
 4. Use **Install in Stremio**, or copy the manifest URL into Stremio manually.
-5. Open a movie or episode in Stremio. CAPTaINFiN stream choices appear alongside the customer's other addons.
+5. Open a movie or episode in Stremio. CAPTAiNFiN stream choices appear alongside the customer's other addons.
 
-The raw addon credential is shown only when created or rotated. CAPTaINFiN stores a one-way hash rather than the raw installation credential. Rotating an installation invalidates the previous addon URL. Revoking the installation invalidates the addon credential immediately.
+The raw addon credential is shown only when created or rotated. CAPTAiNFiN stores a one-way hash rather than the raw installation credential. Rotating an installation invalidates the previous addon URL. Revoking the installation invalidates the addon credential immediately.
 
 ## Stream limits
 
-CAPTaINFiN applies the plan's concurrent-stream policy before serving addon access and retains normal playback/activity enforcement. On managed Jellyfin delivery the hidden Jellyfin identity can also receive a matching Jellyfin-side session limit. An external Jellyfin source remains subject to whatever limits the upstream operator configured for the dedicated source account.
+CAPTAiNFiN applies the plan's concurrent-stream policy before serving addon access and retains normal playback/activity enforcement. On managed Jellyfin delivery the hidden Jellyfin identity can also receive a matching Jellyfin-side session limit. An external Jellyfin source remains subject to whatever limits the upstream operator configured for the dedicated source account.
 
 ## Stream names
 
-CAPTaINFiN enriches stream choices with source/quality information where Jellyfin exposes it. The addon remains stream-only; it does not replace Stremio's catalogue.
+CAPTAiNFiN enriches stream choices with source/quality information where Jellyfin exposes it. The addon remains stream-only; it does not replace Stremio's catalogue.
 
 ## Launch checklist
 
