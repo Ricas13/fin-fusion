@@ -16,7 +16,10 @@ const groups=Object.freeze([
 const hiddenPages=Object.freeze({
   billing:Object.freeze({groupKey:'commerce',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   'my-notifications':Object.freeze({groupKey:'settings',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
-  'policy-drift':Object.freeze({groupKey:'automation',page:Object.freeze(['policy-drift','Policy Drift','/admin/provisioning/drift'])}),
+  'request-service':Object.freeze({groupKey:'automation',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
+  'request-plan-limits':Object.freeze({groupKey:'automation',page:Object.freeze(['request-plan-limits','Plan limits','/admin/request-plan-policy'])}),
+  'server-migrations':Object.freeze({groupKey:'automation',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
+  'policy-drift':Object.freeze({groupKey:'automation',page:Object.freeze(['policy-drift','Policy drift','/admin/provisioning/drift'])}),
   'notification-gateway':Object.freeze({groupKey:'settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
   'configuration-transfer':Object.freeze({groupKey:'settings',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
