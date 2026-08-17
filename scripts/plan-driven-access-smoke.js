@@ -58,7 +58,7 @@ assert(storefront.includes('0 spots available · Sold out')&&storefront.includes
 
 // Reseller storefront inventory is not the same thing as downstream seat_limit.
 assert(migration.includes('ADD COLUMN IF NOT EXISTS capacity_limit INTEGER'),'Reseller tiers need separate storefront capacity');
-assert(plansList.includes('Storefront inventory')&&plansList.includes('Customer seats / reseller'),'Unified Plans must distinguish reseller inventory from downstream seats');
+assert(plansList.includes('Storefront availability')&&plansList.includes('Managed users / reseller'),'Unified Plans must distinguish reseller storefront inventory from each reseller plan\'s managed-user allowance');
 assert(resellerGate.includes("req.method!=='POST'")&&resellerGate.includes('CHECKED_PATHS.has(req.path)'),'Reseller capacity must be a pre-route middleware, not a duplicate billing route owner');
 for(const route of ['/reseller/billing/stripe','/reseller/billing/paypal','/reseller/billing/tier'])assert(resellerGate.includes(route),`Reseller capacity gate missing ${route}`);
 
