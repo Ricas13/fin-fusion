@@ -111,10 +111,9 @@ function page(req, d, preview = null, error = null) {
         </section>`;
     return layout({
         siteName: runtimeSettings.siteName(),
-        active: 'provisioning',
+        active: 'server-migrations',
         title: 'Server Migrations',
         subtitle: 'Controlled Jellyfin customer moves between eligible servers',
-        action: '<a class="button secondary" href="/admin/provisioning">Back to Provisioning</a>',
         body
     });
 }
