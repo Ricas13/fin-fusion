@@ -27,13 +27,30 @@ const hiddenPages=Object.freeze({
 });
 
 const aliases=Object.freeze({
-  'customer-claims':'users','reseller-tiers':'plans','provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'commerce-overview','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','support-policy':'settings-general','reseller-settings':'settings-general','stremio-settings':'settings-integrations','abuse-protection':'settings-security','jellyfin-import':'servers','invitations':'plans'
+  'customer-claims':'users',
+  'reseller-tiers':'plans',
+  'provider-mappings':'payments',
+  'notifications':'notification-settings',
+  'notification-events':'notification-settings',
+  'payment-reconciliation':'commerce-overview',
+  'configuration-health':'settings-general',
+  'setup':'settings-general',
+  'settings':'settings-general',
+  'support-policy':'settings-general',
+  'reseller-settings':'settings-general',
+  'stremio-settings':'settings-integrations',
+  'abuse-protection':'settings-security',
+  'jellyfin-import':'servers',
+  'invitations':'plans'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
 function groupFor(active){
   const key=activeKey(active),hidden=hiddenPages[key];
-  if(hidden){const base=groups.find(group=>group.key===hidden.groupKey)||groups[0];return {...base,pages:[hidden.page,...base.pages]};}
+  if(hidden){
+    const base=groups.find(group=>group.key===hidden.groupKey)||groups[0];
+    return {...base,pages:[hidden.page,...base.pages]};
+  }
   return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];
 }
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
