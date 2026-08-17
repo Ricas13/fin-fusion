@@ -37,7 +37,7 @@ function createAdminCustomer360Router(){
             const activeTab=TABS.has(String(req.query.tab||''))?String(req.query.tab):'overview';
             const id=encodeURIComponent(req.params.customerId);
             const [accessDetail,incidentRows]=await Promise.all([activeTab==='access'?customerAccessDetail(req.params.customerId):null,activeTab==='billing'?query(`SELECT id,provider,incident_type,incident_status,created_at,resolved_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[req.params.customerId]):Promise.resolve({rows:[]})]);
-            const resellerLink=detail.customer.reseller_id?`<a class="button secondary" href="/admin/reseller-management/${encodeURIComponent(detail.customer.reseller_id)}">Reseller 360 · ${esc(detail.customer.reseller_username||'owner')}</a>`:'';
+            const resellerLink='';
             const extras=activeTab==='billing'?incidentPanel(incidentRows.rows):'';
             return res.send(layout({siteName:runtimeSettings.siteName(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req),accessDetail)}${extras}`,action:`<div class="buttonRow">${resellerLink}<a class="button secondary" href="${path(req.params.customerId,'activity')}">Activity</a><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
         }catch(error){return next(error)}
