@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/css/customer-portal.css">
 </head>
 <%
-function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)`}}
+function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)}`}}
 const balances=new Map((state.balances||[]).map(x=>[x.currency,x]));
 const selected=balances.get(currency)||{available_minor:0,pending_minor:0};
 const available=Number(selected.available_minor||0);
