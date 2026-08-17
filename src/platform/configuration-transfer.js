@@ -27,8 +27,29 @@ function normalizeRiskPolicy(value) {
         failedRenewalAction: 'provider_state'
     };
 }
+function hydrateLegacyPlanFields(input) {
+    const parsed=sourceDocument(input);
+    if(parsed?.version!==2||!object(parsed.configuration))return input;
+    const clone=JSON.parse(JSON.stringify(parsed));
+    clone.configuration.plans=(Array.isArray(clone.configuration.plans)?clone.configuration.plans:[]).map(plan=>({
+        ...plan,
+        reseller_credit_cost: Object.prototype.hasOwnProperty.call(plan||{},'reseller_credit_cost') ? plan.reseller_credit_cost : null,
+        reseller_trial_credit_cost: Object.prototype.hasOwnProperty.call(plan||{},'reseller_trial_credit_cost') ? plan.reseller_trial_credit_cost : null
+    }));
+    return clone;
+}
+function removeRetiredCreditConfiguration(document) {
+    if(document?.version!==2||!object(document.configuration))return document;
+    for(const plan of document.configuration.plans||[]){
+        delete plan.reseller_credit_cost;
+        delete plan.reseller_trial_credit_cost;
+    }
+    // This setting only represented the retired reseller credit wallet model.
+    if(object(document.configuration.settings)) delete document.configuration.settings.reseller_defaults;
+    return document;
+}
 function parseDocument(input) {
-    const parsed=core.parseDocument(input);if(parsed.version!==2)return parsed;
+    const parsed=core.parseDocument(hydrateLegacyPlanFields(input));if(parsed.version!==2)return parsed;
     const settings=sourceDocument(input)?.configuration?.settings||{};
     if(settings[DRIFT_KEY]&&typeof settings[DRIFT_KEY]==='object'&&!Array.isArray(settings[DRIFT_KEY]))parsed.configuration.settings[DRIFT_KEY]=normalizeDriftPolicy(settings[DRIFT_KEY]);
     if(settings[RISK_KEY]&&typeof settings[RISK_KEY]==='object'&&!Array.isArray(settings[RISK_KEY]))parsed.configuration.settings[RISK_KEY]=normalizeRiskPolicy(settings[RISK_KEY]);
@@ -41,7 +62,7 @@ async function exportPortableConfiguration() {
         if(row.setting_key===DRIFT_KEY)document.configuration.settings[DRIFT_KEY]=normalizeDriftPolicy(row.setting_value);
         if(row.setting_key===RISK_KEY)document.configuration.settings[RISK_KEY]=normalizeRiskPolicy(row.setting_value);
     }
-    return document;
+    return removeRetiredCreditConfiguration(document);
 }
 async function previewImport(input) {
     const document=parseDocument(input);const result=await core.previewImport(document),settings=document.configuration.settings;
