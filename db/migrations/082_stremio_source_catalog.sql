@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS plan_stremio_sources (
 );
 CREATE INDEX IF NOT EXISTS plan_stremio_sources_source_idx ON plan_stremio_sources(source_id,plan_id) WHERE enabled=TRUE;
 
+CREATE TABLE IF NOT EXISTS stremio_source_playback_leases (
+  lease_hash TEXT PRIMARY KEY,
+  entitlement_id UUID NOT NULL REFERENCES stremio_entitlements(id) ON DELETE CASCADE,
+  customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  source_id UUID NOT NULL REFERENCES stremio_sources(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stremio_source_playback_leases_entitlement_idx ON stremio_source_playback_leases(entitlement_id,expires_at);
+CREATE INDEX IF NOT EXISTS stremio_source_playback_leases_expiry_idx ON stremio_source_playback_leases(expires_at);
+
 -- Source-only plans no longer need a CAPTAiNFiN-managed Jellyfin identity. The
 -- install credential remains customer/subscription bound; either an explicit
 -- shared source mapping OR the legacy managed-server identity makes an active
@@ -119,5 +132,6 @@ COMMENT ON TABLE stremio_source_libraries IS 'Libraries visible to the dedicated
 COMMENT ON TABLE stremio_source_media_index IS 'Local IMDb lookup index for selected libraries on external/shared Jellyfin Stremio sources.';
 COMMENT ON TABLE stremio_source_index_state IS 'Per-source lightweight sync state: six-hour incremental indexing with periodic full reconciliation.';
 COMMENT ON TABLE plan_stremio_sources IS 'Per-plan Stremio source allow-list and priority. Empty mapping preserves compatibility with the managed-server delivery path.';
+COMMENT ON TABLE stremio_source_playback_leases IS 'Short-lived CAPTAiNFiN admission leases enforcing per-entitlement external Stremio stream concurrency.';
 
 COMMIT;
