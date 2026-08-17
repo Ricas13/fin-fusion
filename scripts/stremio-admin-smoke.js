@@ -28,6 +28,12 @@ assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&
 assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfinUserId"'),'Operators must not manually paste Jellyfin access tokens/user IDs');
 assert(sources.includes('name="libraryId"'),'Source detail must expose explicit library selection');
 assert(sources.includes("routeRateLimit.middleware({scope:'admin-stremio-sources'"),'Source mutations must use the persistent admin rate limiter');
+assert(!sources.includes('Managed Jellyfin sources'),'Managed Jellyfin servers must not be offered as Stremio sources');
+assert(!sources.includes('Use for Stremio'),'Normal Jellyfin server administration must not leak into the manual Stremio source workflow');
+assert(!sources.includes('managedServers()'),'Stremio Sources must not query the normal Jellyfin server fleet for candidates');
+assert(sources.includes('independent from Servers → Servers'),'UI must explain that Stremio upstreams are configured independently');
+assert(sources.includes("console.error('[stremio-source] manual connection failed:'"),'Manual connection failures must be logged with their real server-side cause');
+
 assert(sourceClient.includes('/Users/AuthenticateByName')&&sourceClient.includes('/Views?IncludeExternalContent=false'),'Source client must use normal Jellyfin user authentication and discover visible libraries');
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'")&&sourceClient.includes("LEGACY_TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY'"),'External tokens must use the normal Jellyfin encryption key while retaining legacy decrypt compatibility');
 assert(!sourceClient.includes('encryptWithEnv(password')&&!sourcePool.includes('password_encrypted'),'Jellyfin source passwords must never be persisted');
