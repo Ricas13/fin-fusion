@@ -60,10 +60,13 @@ WHERE pp.plan_id=p.id AND p.is_free_tier=TRUE;
 CREATE OR REPLACE FUNCTION protect_canonical_free_tier()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF TG_OP='DELETE' AND OLD.is_free_tier=TRUE THEN
-        RAISE EXCEPTION 'The canonical free plan cannot be deleted';
+    IF TG_OP='DELETE' THEN
+        IF OLD.is_free_tier=TRUE THEN
+            RAISE EXCEPTION 'The canonical free plan cannot be deleted';
+        END IF;
+        RETURN OLD;
     END IF;
-    IF TG_OP='UPDATE' AND OLD.is_free_tier=TRUE THEN
+    IF OLD.is_free_tier=TRUE THEN
         IF NEW.is_free_tier<>TRUE
            OR NEW.active<>TRUE
            OR NEW.visible<>TRUE
@@ -73,7 +76,7 @@ BEGIN
             RAISE EXCEPTION 'The canonical free plan must remain active, visible, non-trial and free';
         END IF;
     END IF;
-    RETURN COALESCE(NEW,OLD);
+    RETURN NEW;
 END;
 $$;
 DROP TRIGGER IF EXISTS protect_canonical_free_tier_trigger ON plans;
@@ -85,13 +88,17 @@ CREATE OR REPLACE FUNCTION protect_canonical_free_tier_price()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE free_plan BOOLEAN;
 BEGIN
-    SELECT is_free_tier INTO free_plan FROM plans WHERE id=COALESCE(NEW.plan_id,OLD.plan_id);
+    SELECT is_free_tier INTO free_plan FROM plans WHERE id=CASE WHEN TG_OP='DELETE' THEN OLD.plan_id ELSE NEW.plan_id END;
     IF free_plan=TRUE THEN
-        IF TG_OP='DELETE' OR NEW.price_minor<>0 OR NEW.active<>TRUE THEN
+        IF TG_OP='DELETE' THEN
+            RAISE EXCEPTION 'Free-tier storefront prices cannot be deleted';
+        END IF;
+        IF NEW.price_minor<>0 OR NEW.active<>TRUE THEN
             RAISE EXCEPTION 'Free-tier storefront prices must remain active and zero';
         END IF;
     END IF;
-    RETURN COALESCE(NEW,OLD);
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
 END;
 $$;
 DROP TRIGGER IF EXISTS protect_canonical_free_tier_price_trigger ON plan_prices;
