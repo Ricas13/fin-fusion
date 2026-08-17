@@ -5,6 +5,7 @@ const {query}=require('../db');
 const providerSettings=require('./provider-settings');
 const intents=require('./checkout-intents');
 const tierPricing=require('./reseller-tier-pricing');
+const monthly=require('../resellers/monthly');
 
 let stripeClient=null,stripeKey=null,paypalToken=null,paypalTokenUntil=0,paypalCredentialKey=null;
 function withState(url,intent){const target=new URL(url);target.searchParams.set('checkout_intent',intent.id);target.searchParams.set('checkout_state',intent.nonce);return target.toString()}
@@ -33,10 +34,6 @@ async function createPayPalCheckout({resellerId,tierId,tierPriceId,returnUrl,can
   try{const payload=await paypalApi('/v1/billing/subscriptions',{method:'POST',requestId:intent.id,body:{plan_id:mapping.external_id,custom_id:`reseller:${resellerId}:${tierId}`,application_context:{brand_name:process.env.SITE_NAME||'CAPTAiNFiN',shipping_preference:'NO_SHIPPING',user_action:'SUBSCRIBE_NOW',return_url:withState(returnUrl,intent),cancel_url:cancelUrl}}}),url=(payload.links||[]).find(x=>['approve','payer-action'].includes(x.rel))?.href;if(!url)throw new Error('PayPal did not return an approval URL.');await intents.attachProviderCheckout(intent.id,payload.id);return{id:payload.id,url,intentId:intent.id,state:intent.nonce}}
   catch(error){await intents.consume({intentId:intent.id,nonce:intent.nonce,state:'failed'}).catch(()=>{});throw error}
 }
-async function applyIntentSnapshot(intent,{providerSubscriptionId=null}={}){
-  if(!intent||intent.scope!=='reseller')return null;const snap=intent.commercial_snapshot||{};if(snap.kind!=='reseller_tier'||!snap.tierPriceId)return null;
-  const params=[intent.reseller_id,intent.tier_id,intent.provider,snap.tierPriceId,snap.tierName||null,Number(snap.priceMinor),String(snap.currency||'').trim(),Number(snap.seatLimit),providerSubscriptionId||null];
-  const r=await query(`UPDATE reseller_subscriptions SET tier_price_id_snapshot=$4,tier_name_snapshot=COALESCE($5,tier_name_snapshot),monthly_price_minor_snapshot=$6,currency_snapshot=$7,seat_limit_snapshot=$8,updated_at=NOW() WHERE id=(SELECT id FROM reseller_subscriptions WHERE reseller_id=$1 AND tier_id=$2 AND source=$3 AND ($9::text IS NULL OR provider_subscription_id=$9) ORDER BY created_at DESC LIMIT 1) RETURNING *`,params);return r.rows[0]||null;
-}
+async function applyIntentSnapshot(intent,options={}){return monthly.applyCheckoutPriceSnapshot(intent,options)}
 async function applyIntentSnapshotById(intentId,options={}){const r=await query(`SELECT * FROM billing_checkout_intents WHERE id=$1`,[intentId]);return applyIntentSnapshot(r.rows[0]||null,options)}
 module.exports={selectedPrice,contract,createStripeCheckout,createPayPalCheckout,applyIntentSnapshot,applyIntentSnapshotById};
