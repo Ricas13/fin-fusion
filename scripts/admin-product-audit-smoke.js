@@ -9,7 +9,8 @@ const backupTabs=fs.readFileSync(path.join(__dirname,'..','src','platform','back
 const settings=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-original-settings.js'),'utf8');
 
 const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.map(page=>page[0])]));
-assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention','search'],'Dashboard should contain current-state/action destinations only');
+assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard should contain current-state/action destinations only');
+assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a sidebar destination');
 assert.deepStrictEqual(pageKeys.automation,['provisioning','automation-jobs','events'],'Automation should expose the operational workflow, jobs, and audit history without implementation-detail duplicates');
 assert(!pageKeys.settings.includes('settings-commerce'),'Commerce must not be duplicated under Settings');
 assert(!pageKeys.settings.includes('settings-advanced'),'A vague Advanced link hub must not consume a Settings sidebar slot');
