@@ -29,7 +29,8 @@
     ['Availability',`/admin/plans/${id}/inventory`,'availability'],
     ['Commerce',`/admin/plans/${id}/commerce`,'commerce']
   ];
-  const active=page==='edit'?'overview':(['jellyfin','libraries','placement','lifecycle'].includes(page)?'delivery':page==='inventory'?'availability':'commerce');
+  const deliveryPages=['delivery','jellyfin','libraries','placement','lifecycle'];
+  const active=page==='edit'?'overview':deliveryPages.includes(page)?'delivery':page==='inventory'?'availability':'commerce';
   const top=document.createElement('nav');top.className='operatorTabs planWorkflowTabs';top.setAttribute('aria-label','Plan management');
   topItems.forEach(([label,href,key])=>{const a=document.createElement('a');a.className=`operatorTab ${key===active?'active':''}`;a.href=href;a.textContent=label;top.appendChild(a);});
   header.insertAdjacentElement('afterend',top);
