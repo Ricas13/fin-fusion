@@ -9,7 +9,8 @@ async function main(){
  await query(`INSERT INTO affiliate_profiles(customer_id,active) VALUES($1,TRUE)`,[customer.id]);
  await query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id,note) VALUES($1,'GBP',400,'adjustment','available',$2,'mixed smoke')`,[customer.id,`mixed-seed-${suffix}`]);
  const plan=(await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class) VALUES($1,'Mixed plan','jellyfin','direct','month',30,600,'GBP',100,TRUE,TRUE,1,'premium') RETURNING id`,[`mixed-plan-${suffix}`])).rows[0];
- const price=(await query(`INSERT INTO plan_prices(plan_id,currency,price_minor,active,is_default) VALUES($1,'GBP',600,TRUE,TRUE) RETURNING id`,[plan.id])).rows[0];
+ const price=(await query(`SELECT id FROM plan_prices WHERE plan_id=$1 AND currency='GBP' LIMIT 1`,[plan.id])).rows[0];
+ assert(price&&price.id,'plan-price compatibility trigger must create the default GBP price');
  const intent=(await query(`INSERT INTO billing_checkout_intents(scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,nonce_hash,expires_at,commercial_snapshot) VALUES('customer',$1,$2,$3,'stripe','payment',$4,NOW()+INTERVAL '60 minutes',$5::jsonb) RETURNING id`,[customer.id,plan.id,price.id,'smoke-nonce',JSON.stringify({kind:'direct_plan',planId:plan.id,planPriceId:price.id,provider:'stripe',checkoutMode:'payment',priceMinor:600,discountedMinor:200,currency:'GBP'})])).rows[0];
  const reserved=await reservations.reserveForIntent({customerId:customer.id,checkoutIntentId:intent.id,currency:'GBP',maxAmountMinor:550,expiresAt:new Date(Date.now()+70*60*1000)});
  assert.equal(reserved.amountMinor,400,'mixed checkout should reserve available credit');
