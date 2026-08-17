@@ -3,7 +3,13 @@
 const { query, getPool } = require('../src/db');
 const { planCreateInput, createPlanRecord } = require('../src/platform/admin-catalog-shell');
 
-const CODES = ['smoke-reseller-monthly', 'smoke-custom-both', 'smoke-direct'];
+const CODES = [
+    'smoke-reseller-monthly',
+    'smoke-custom-both',
+    'smoke-direct',
+    'smoke-stremio-addon',
+    'smoke-bundle'
+];
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -77,6 +83,49 @@ async function main() {
         assert(direct.duration === 365, 'Yearly frequency did not normalize to 365 days');
         assert(direct.resellerCreditCost === null && direct.resellerTrialCreditCost === null, 'Direct plan retained reseller credit costs');
         await createPlanRecord(direct, null);
+
+        // Regression for the actual Stremio-only plan workflow used by operators.
+        const stremio = planCreateInput({
+            code: 'smoke-stremio-addon',
+            name: 'Stremio Addon',
+            description: 'Access to a stremio addon',
+            serviceType: 'stremio',
+            audience: 'direct',
+            billingInterval: 'month',
+            durationDays: '30',
+            price: '6',
+            currency: 'USD',
+            capacityLimit: '20',
+            streams: '1',
+            sortOrder: '100',
+            visible: 'on',
+            active: 'on'
+        });
+        assert(stremio.serviceType === 'stremio' && stremio.isAddon === false, 'Stremio product classification changed unexpectedly');
+        const createdStremio = await createPlanRecord(stremio, null);
+        const storedStremio = (await query('SELECT * FROM plans WHERE id=$1', [createdStremio.id])).rows[0];
+        assert(storedStremio.service_type === 'stremio', 'Stremio plan did not persist its delivery type');
+        assert(Number(storedStremio.capacity_limit) === 20 && Number(storedStremio.streams) === 1, 'Stremio plan inventory/playback contract was not stored');
+
+        const bundle = planCreateInput({
+            code: 'smoke-bundle',
+            name: 'Smoke Bundle',
+            description: 'Jellyfin and Stremio bundle',
+            serviceType: 'bundle',
+            audience: 'direct',
+            billingInterval: 'month',
+            durationDays: '30',
+            price: '9',
+            currency: 'GBP',
+            capacityLimit: '12',
+            streams: '3',
+            serverClass: 'premium',
+            visible: 'on',
+            active: 'on'
+        });
+        const createdBundle = await createPlanRecord(bundle, null);
+        const storedBundle = (await query('SELECT * FROM plans WHERE id=$1', [createdBundle.id])).rows[0];
+        assert(storedBundle.service_type === 'bundle', 'Bundle plan did not persist its delivery type');
 
         const audit = await query("SELECT COUNT(*)::int count FROM audit_log WHERE action='admin.plan.create' AND entity_id=$1", [created.id]);
         assert(Number(audit.rows[0].count) === 1, 'Plan creation audit event missing');
