@@ -1,0 +1,47 @@
+name: Stremio Source Branch Normalization
+
+on:
+  push:
+    branches: [feat/stremio-sources]
+    paths:
+      - '.github/workflows/stremio-source-normalize-branch.yml'
+      - 'scripts/captainfin-brand-audit.js'
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stremio-sources
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Normalize CAPTAiNFiN display branding
+        run: node scripts/captainfin-brand-audit.js --write
+      - name: Remove legacy Stremio shortcut from Settings Integrations
+        run: |
+          node <<'NODE'
+          const fs=require('fs');
+          const file='src/platform/admin-original-settings.js';
+          let text=fs.readFileSync(file,'utf8');
+          const legacy='<a class="quick-action" href="/admin/settings/stremio"><strong>Stremio</strong><span>Service foundation, addon credentials and runtime readiness</span></a>';
+          if(!text.includes(legacy)) throw new Error('Legacy Stremio integration shortcut not found');
+          text=text.replace(legacy,'');
+          fs.writeFileSync(file,text);
+          NODE
+      - name: Commit normalization
+        run: |
+          if git diff --quiet; then
+            echo 'Nothing to normalize'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Normalize CAPTAiNFiN branding and Stremio navigation'
+          git push origin HEAD:feat/stremio-sources
