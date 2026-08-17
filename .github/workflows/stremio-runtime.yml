@@ -54,6 +54,7 @@ jobs:
           node --check src/stremio/source-index.js
           node --check src/stremio/source-pool.js
           node --check src/stremio/source-playback.js
+          node --check src/stremio/source-admission.js
           node --check src/stremio/jellyfin-runtime.js
           node --check src/stremio/runtime-settings.js
           node --check src/stremio/runtime.js
