@@ -15,7 +15,7 @@ async function server(slug, name) {
 
 (async () => {
     const serverA = await server('premium-a', 'Premium A');
-    const serverB = await server('premium-b', 'Premium B');
+    await server('premium-b', 'Premium B');
 
     await query(`
         INSERT INTO platform_settings(setting_key,setting_value)
@@ -58,8 +58,12 @@ async function server(slug, name) {
     assert(Array.isArray(exported.configuration.resellerTiers), 'v2 export must include reseller tiers');
     assert(Array.isArray(exported.configuration.directPaymentMappings), 'v2 export must include direct payment mappings');
     assert(Array.isArray(exported.configuration.automation), 'v2 export must include automation settings');
-    assert.strictEqual(exported.configuration.plans.length, 1);
-    assert.strictEqual(exported.configuration.plans[0].serverPool[0].serverSlug, 'premium-a');
+    assert.strictEqual(exported.configuration.plans.length, 2, 'portable export must include the canonical Free Access plan plus configured plans');
+    const freePlan = exported.configuration.plans.find(item => item.code === 'free-access');
+    const portablePlan = exported.configuration.plans.find(item => item.code === 'portable-monthly');
+    assert(freePlan, 'canonical Free Access plan must remain portable');
+    assert(portablePlan, 'configured plan must remain portable');
+    assert.strictEqual(portablePlan.serverPool[0].serverSlug, 'premium-a');
     assert.strictEqual(exported.configuration.settings.platform.requireAdminTwoFactor, undefined, 'security policy must not be portable');
 
     // Keep a regression for the documented V1 compatibility path as V2 becomes canonical.
@@ -81,11 +85,11 @@ async function server(slug, name) {
     }
 
     exported.configuration.settings.platform.siteName = 'Portable Target';
-    exported.configuration.plans[0].name = 'Portable Monthly Updated';
-    exported.configuration.plans[0].price_minor = 750;
-    exported.configuration.plans[0].serverPool = [{ serverSlug: 'premium-b', weight: 250 }];
+    portablePlan.name = 'Portable Monthly Updated';
+    portablePlan.price_minor = 750;
+    portablePlan.serverPool = [{ serverSlug: 'premium-b', weight: 250 }];
     exported.configuration.plans.push({
-        ...exported.configuration.plans[0],
+        ...portablePlan,
         code: 'portable-trial',
         name: 'Portable Trial',
         billing_interval: 'trial',
@@ -97,7 +101,7 @@ async function server(slug, name) {
 
     const preview = await transfer.previewImport(exported);
     assert.strictEqual(preview.summary.plansCreate, 1);
-    assert.strictEqual(preview.summary.plansUpdate, 1);
+    assert.strictEqual(preview.summary.plansUpdate, 2, 'Free Access and the configured plan should both round-trip as updates');
     assert.strictEqual(preview.summary.serverPoolsApply, 1);
     assert.strictEqual(preview.summary.serverPoolsSkipped, 1);
     assert(preview.warnings.some(w => w.includes('not-present')));
@@ -107,6 +111,13 @@ async function server(slug, name) {
     assert.strictEqual(applied.summary.poolsSkipped, 1);
     assert.strictEqual(applied.summary.atomic, true, 'portable import must commit as one atomic transaction');
     assert.strictEqual(applied.summary.version, 2, 'portable import summary must preserve document version');
+
+    const canonicalFree = await query("SELECT active,visible,price_minor,is_free_tier FROM plans WHERE code='free-access'");
+    assert.strictEqual(canonicalFree.rowCount, 1, 'portable round-trip must preserve exactly one canonical free tier');
+    assert.strictEqual(canonicalFree.rows[0].active, true);
+    assert.strictEqual(canonicalFree.rows[0].visible, true);
+    assert.strictEqual(Number(canonicalFree.rows[0].price_minor), 0);
+    assert.strictEqual(canonicalFree.rows[0].is_free_tier, true);
 
     const updatedPlan = await query("SELECT id,name,price_minor FROM plans WHERE code='portable-monthly'");
     assert.strictEqual(updatedPlan.rows[0].name, 'Portable Monthly Updated');
@@ -135,7 +146,8 @@ async function server(slug, name) {
     assert(Object.prototype.hasOwnProperty.call(audit.rows[0].metadata, 'automationJobs'), 'atomic import audit must include the v2 preview summary');
 
     const bad = JSON.parse(JSON.stringify(exported));
-    bad.configuration.plans[0].streams = 0;
+    const badPortable = bad.configuration.plans.find(item => item.code === 'portable-monthly');
+    badPortable.streams = 0;
     assert.throws(() => transfer.parseDocument(bad), /between 1 and 50/);
 
     console.log('configuration transfer smoke: ok');
