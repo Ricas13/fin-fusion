@@ -34,6 +34,14 @@ function onboardingMessage(portal,currentPlan,delivery){
   if(account.password_setup_required)return `Your Jellyfin access is ready. 1) Open “Jellyfin access” below and set your Jellyfin password. 2) Use the Open Jellyfin button. 3) Sign in as ${username}. 4) Start any title to confirm the setup. These instructions stay here until your first playback is detected.`;
   return `Your Jellyfin access is ready. 1) Use the Open Jellyfin button below. 2) Sign in as ${username} with the Jellyfin password you set. 3) Start any title to confirm the setup. These instructions stay here until your first playback is detected.`;
 }
+function customerProvisioningMessage(state){
+  const message=String(state?.last_error||'');
+  if(/no eligible jellyfin server|no jellyfin server|no suitable server/i.test(message))return 'No suitable Jellyfin server is available for this plan right now. We will retry automatically, or you can retry now.';
+  if(/username .* already exists|target_username_exists/i.test(message))return 'That Jellyfin username is already in use on the target server. Please retry; if it continues, contact support.';
+  if(/capacity|max_users|sold out/i.test(message))return 'The eligible Jellyfin server is currently at capacity. We will retry automatically when space is available.';
+  if(state&&['blocked','failed','pending','running'].includes(String(state.status||'')))return 'Your plan is active, but Jellyfin setup has not completed yet. We will keep retrying automatically.';
+  return null;
+}
 function createCustomerDashboardRouter(){
   const r=express.Router();
   r.get('/account',requireCustomer,async(req,res,next)=>{
@@ -41,9 +49,10 @@ function createCustomerDashboardRouter(){
       await runtimeSettings.ensureLoaded();
       const restored=await cleanupReturn.restoreReturningCustomer(req.session.customerId,{reconcile:provisioning.reconcileCustomer}).catch(error=>({restored:false,error:error.message}));
       const sessionCurrency=String(req.session.storefrontCurrency||'').toUpperCase(),currency=planPricing.CURRENCIES.includes(sessionCurrency)?sessionCurrency:await planPricing.userPreferredCurrency(req.session.customerUserId);
-      const [portalRaw,plans,currentPlan,requestAccess,requestConfig,currencies,provisioningState]=await Promise.all([
+      const [portalRaw,plans,currentPlan,requestAccess,requestConfig,currencies,rawProvisioningState]=await Promise.all([
         customers.getCustomerPortal(req.session.customerId),sellablePlans(currency),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration(),planPricing.enabledCurrencies(),provisioning.control.getCustomerState(req.session.customerId).catch(()=>null)
       ]);
+      const provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null;
       const portal=await hideInternalAccounts(req.session.customerId,portalRaw),delivery=deliveryType(currentPlan),hasJellyfin=['jellyfin','bundle'].includes(delivery),hasStremio=['stremio','bundle'].includes(delivery);
       const restoreMessage=restored.restored?'Your inactive Jellyfin user was cleaned up previously. A fresh Jellyfin account has now been provisioned because you returned to your CAPTAiNFiN account.':null;
       if(delivery==='stremio'){
@@ -58,8 +67,8 @@ function createCustomerDashboardRouter(){
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
     if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));
     try{await provisioning.reconcileCustomer(req.session.customerId);return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access is ready.'));}
-    catch(error){return res.redirect('/account?welcome=1&error='+encodeURIComponent(`Your plan is active, but Jellyfin setup is still pending: ${String(error?.message||error).slice(0,300)}`));}
+    catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your plan is active, but Jellyfin setup is still pending.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}
   });
   return r;
 }
-module.exports={createCustomerDashboardRouter,hideInternalAccounts,deliveryType,sellablePlans,onboardingMessage};
+module.exports={createCustomerDashboardRouter,hideInternalAccounts,deliveryType,sellablePlans,onboardingMessage,customerProvisioningMessage};
