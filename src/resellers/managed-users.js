@@ -13,6 +13,11 @@ function cleanUsername(value){
   if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3–40 characters using letters, numbers, dot, underscore or dash.');
   return username;
 }
+function cleanPassword(value){
+  const password=String(value||'');
+  if(password.length<8||password.length>128)throw new Error('Password must be between 8 and 128 characters.');
+  return password;
+}
 
 async function seatUsage(resellerId,client=null){
   const db=client||{query};
@@ -62,7 +67,7 @@ async function createManagedUser({resellerId,username,actorUserId=null}){
 async function listManagedUsers(resellerId){
   const result=await query(`
     SELECT c.id,c.display_name,c.created_at,c.access_paused_at,
-           ja.id jellyfin_account_id,ja.jellyfin_username,ja.disabled,ja.last_policy_sync,
+           ja.id jellyfin_account_id,ja.jellyfin_username,ja.disabled,ja.last_policy_sync,ja.password_setup_required,ja.password_reset_required,
            js.id server_id,js.name server_name,js.public_url,
            COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams,
            EXISTS(
@@ -87,6 +92,17 @@ async function listManagedUsers(resellerId){
 async function getManagedUser(resellerId,customerId){
   const result=await query(`SELECT * FROM customers WHERE id=$1 AND reseller_id=$2 AND reseller_managed=TRUE`,[customerId,resellerId]);
   return result.rows[0]||null;
+}
+
+async function setPassword({resellerId,customerId,newPassword,actorUserId=null}){
+  cleanPassword(newPassword);
+  const customer=await getManagedUser(resellerId,customerId);
+  if(!customer)throw new Error('Managed Jellyfin user not found.');
+  const account=(await query(`SELECT id FROM jellyfin_accounts WHERE customer_id=$1 AND account_purpose<>'stremio_internal' ORDER BY is_primary DESC,created_at ASC LIMIT 1`,[customerId])).rows[0];
+  if(!account)throw new Error('This managed user does not have a Jellyfin account yet.');
+  await provisioning.setJellyfinPassword(customerId,account.id,newPassword);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'reseller.managed_user.password_set','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({resellerId})]);
+  return{updated:true};
 }
 
 async function setSuspended({resellerId,customerId,suspended,actorUserId=null}){
@@ -117,4 +133,4 @@ async function deleteManagedUser({resellerId,customerId,actorUserId=null}){
   return{deleted:true,seatUsage:await seatUsage(resellerId)};
 }
 
-module.exports={MANUAL_HOLD,cleanUsername,seatUsage,entitlement,assertSeatAvailable,createManagedUser,listManagedUsers,getManagedUser,setSuspended,deleteManagedUser};
+module.exports={MANUAL_HOLD,cleanUsername,cleanPassword,seatUsage,entitlement,assertSeatAvailable,createManagedUser,listManagedUsers,getManagedUser,setPassword,setSuspended,deleteManagedUser};
