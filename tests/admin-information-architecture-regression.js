@@ -106,7 +106,7 @@ async function main(){
     for(const field of ['name','baseUrl','username','password'])assert.equal(await addSource.locator(`[name="${field}"]`).count(),1,`Source form is missing ${field}`);
     assert.equal(await addSource.locator('[name="accessToken"]').count(),0,'Source form exposes raw access-token entry');
     let runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
-    assert(await runtimeForm.getByRole('button',{name:'Enable Stremio runtime'}).isDisabled(),'Runtime must remain disabled before a selected indexed source exists');
+    assert(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled(),'Runtime must remain disabled before a selected indexed source exists');
     await screenshot(page,'stremio-sources-empty');
 
     const seeded=(await pool.query(`INSERT INTO stremio_sources(name,enabled,source_kind,base_url,public_url,jellyfin_user_id,jellyfin_username,access_token_encrypted,weight,priority,authorization_confirmed,auth_state,last_connected_at,last_auth_check_at)
@@ -139,13 +139,13 @@ async function main(){
 
     await page.goto(`${BASE}/admin/servers/stremio`,{waitUntil:'networkidle'});
     runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
-    assert(!(await runtimeForm.getByRole('button',{name:'Enable Stremio runtime'}).isDisabled()),'Ready external source did not unlock runtime enablement');
-    await submitAction(page,runtimeForm,'Enable Stremio runtime','/admin/servers/stremio/runtime');
+    assert(!(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled()),'Ready external source did not unlock runtime enablement');
+    await submitAction(page,runtimeForm,'Enable runtime','/admin/servers/stremio/runtime');
     await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime enabled.'),null,{timeout:15000});
     let stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
     assert.equal(stored?.enabled,true,'Stremio Sources runtime enablement was not persisted');
     runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
-    await submitAction(page,runtimeForm,'Disable Stremio runtime','/admin/servers/stremio/runtime');
+    await submitAction(page,runtimeForm,'Disable runtime','/admin/servers/stremio/runtime');
     await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime disabled.'),null,{timeout:15000});
     stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
     assert.equal(stored?.enabled,false,'Stremio Sources runtime disablement was not persisted');
