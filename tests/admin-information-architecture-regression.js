@@ -12,16 +12,12 @@ const PASSWORD=process.env.BROWSER_ADMIN_PASSWORD||'BrowserAuditPass!2026';
 const OUT=path.join(process.cwd(),'test-results','admin-browser');
 fs.mkdirSync(OUT,{recursive:true});
 
-async function signIn(page){
-  await page.goto(`${BASE}/login`,{waitUntil:'domcontentloaded'});
-  await page.locator('#username').fill(USER);await page.locator('#password').fill(PASSWORD);
-  await Promise.all([page.waitForURL(url=>url.pathname.startsWith('/admin'),{timeout:15000}),page.getByRole('button',{name:'Sign in'}).click()]);
-}
-async function labels(locator){return (await locator.allTextContents()).map(x=>x.trim()).filter(Boolean);}
+async function signIn(page){await page.goto(`${BASE}/login`,{waitUntil:'domcontentloaded'});await page.locator('#username').fill(USER);await page.locator('#password').fill(PASSWORD);await Promise.all([page.waitForURL(url=>url.pathname.startsWith('/admin'),{timeout:15000}),page.getByRole('button',{name:'Sign in'}).click()]);}
+async function labels(locator){return(await locator.allTextContents()).map(x=>x.trim()).filter(Boolean);}
 async function screenshot(page,name){await page.screenshot({path:path.join(OUT,`ia-${name}.png`),fullPage:true});}
 async function submit(form,button){await Promise.all([form.page().waitForNavigation({waitUntil:'networkidle',timeout:15000}),form.getByRole('button',{name:button}).click()]);}
 async function submitAction(page,form,button,pathname){const response=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===pathname,{timeout:15000});await form.getByRole('button',{name:button}).click();await response;await page.waitForLoadState('networkidle');}
-async function operationsValue(pool){return (await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='operations_v1'`)).rows[0]?.setting_value||{};}
+async function operationsValue(pool){return(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='operations_v1'`)).rows[0]?.setting_value||{};}
 
 async function main(){
   const pool=new Pool({connectionString:process.env.DATABASE_URL});
@@ -69,7 +65,7 @@ async function main(){
     assert(/Public URL & regional format/.test(general)&&/Public base URL/.test(general)&&/Timezone/.test(general),'General does not own public URL/locale/timezone');
     assert(!/Default customer plan/.test(general)&&!/Default server priority/.test(general),'Dead workflow defaults returned to General');
     const settingsLinks=await labels(page.locator('[data-nav-section="settings"] .adminTab'));
-    assert(!settingsLinks.includes('Operations'),'Retired Operations remains visible under Settings');
+    assert(!settingsLinks.includes('Operations')&&!settingsLinks.includes('Stremio'),'Settings still exposes an Operations/Stremio implementation destination');
     const generalForm=page.locator('form[action="/admin/settings/runtime-general"]');
     assert.equal(await generalForm.count(),1,'General runtime form is missing');
     await submit(generalForm,'Save URL & regional settings');
@@ -97,34 +93,64 @@ async function main(){
     assert.equal(afterSecurity.placementHealthMode,beforeSecurity.placementHealthMode,'Saving Security reset Fleet placement policy');
     await screenshot(page,'settings-security');
 
+    // Stremio is a Servers/Delivery workflow, not a Settings workflow.
     await pool.query(`DELETE FROM platform_settings WHERE setting_key='stremio_runtime_v1'`);
     await page.goto(`${BASE}/admin/settings/stremio`,{waitUntil:'networkidle'});
+    assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Servers → Stremio Sources');
     let stremioText=await page.locator('body').innerText();
-    assert(/Configure the encryption key/.test(stremioText)&&/Enable the secure runtime/.test(stremioText),'Stremio setup guide is missing the separated key/runtime steps');
-    assert.equal(await page.locator('input[name="STREMIO_JELLYFIN_TOKEN_KEY"]').count(),0,'Stremio encryption key became browser editable');
-    let runtimeForm=page.locator('form[action="/admin/settings/stremio/runtime"]');
-    assert.equal(await runtimeForm.count(),1,'Stremio runtime browser form is missing');
-    assert(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled(),'Runtime enablement must remain disabled before server/index prerequisites are ready');
+    assert(/External Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText),'Stremio Sources page is missing the external-source workflow');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio Sources'],'Servers sidebar does not own the Stremio workflow');
+    const addSource=page.locator('form[action="/admin/servers/stremio"]');
+    assert.equal(await addSource.count(),1,'External Jellyfin source form is missing');
+    for(const field of ['name','baseUrl','username','password'])assert.equal(await addSource.locator(`[name="${field}"]`).count(),1,`Source form is missing ${field}`);
+    assert.equal(await addSource.locator('[name="accessToken"]').count(),0,'Source form exposes raw access-token entry');
+    let runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
+    assert(await runtimeForm.getByRole('button',{name:'Enable Stremio runtime'}).isDisabled(),'Runtime must remain disabled before a selected indexed source exists');
+    await screenshot(page,'stremio-sources-empty');
 
-    const seeded=(await pool.query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,health_status,stremio_enabled,placement_mode)
-      VALUES('Browser Stremio Delivery','browser-stremio-delivery','premium','http://127.0.0.1:65530','https://media.example.invalid','test-only-encrypted-value',TRUE,999,'healthy',TRUE,'active') RETURNING id`)).rows[0];
-    await pool.query(`INSERT INTO stremio_media_index_state(server_id,status,last_completed_at,item_count,updated_at) VALUES($1,'ready',NOW(),42,NOW())`,[seeded.id]);
-    await page.reload({waitUntil:'networkidle'});
-    runtimeForm=page.locator('form[action="/admin/settings/stremio/runtime"]');
-    assert(!(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled()),'Runtime enablement did not unlock after secure prerequisites became ready');
-    await submitAction(page,runtimeForm,'Enable runtime','/admin/settings/stremio/runtime');
-    await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime enabled.'),null,{timeout:15000});
+    const seeded=(await pool.query(`INSERT INTO stremio_sources(name,enabled,source_kind,base_url,public_url,jellyfin_user_id,jellyfin_username,access_token_encrypted,weight,priority,authorization_confirmed,auth_state,last_connected_at,last_auth_check_at)
+      VALUES('Browser External Jellyfin',TRUE,'external','https://jellyfin.example.invalid','https://jellyfin.example.invalid','browser-user-id','browser-source-user','encrypted-test-token',100,50,TRUE,'connected',NOW(),NOW()) RETURNING id`)).rows[0];
+    await pool.query(`INSERT INTO stremio_source_libraries(source_id,library_id,name,collection_type,selected,available) VALUES($1,'movies-lib','Movies','movies',TRUE,TRUE),($1,'tv-lib','TV Shows','tvshows',FALSE,TRUE)`,[seeded.id]);
+    await pool.query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_completed_at,last_full_completed_at,next_incremental_at,force_full,item_count) VALUES($1,'ready','full',NOW(),NOW(),NOW(),NOW()+INTERVAL '6 hours',FALSE,42)`,[seeded.id]);
+
+    await page.goto(`${BASE}/admin/servers/stremio/${encodeURIComponent(seeded.id)}`,{waitUntil:'networkidle'});
     stremioText=await page.locator('body').innerText();
-    assert(/Runtime ready/.test(stremioText),'Stremio runtime did not become ready after browser enablement');
+    assert(/Libraries to index/.test(stremioText)&&/Movies/.test(stremioText)&&/TV Shows/.test(stremioText),'Source detail does not show discovered libraries');
+    assert(await page.locator('input[name="libraryId"][value="movies-lib"]').isChecked(),'Selected library state did not round-trip');
+    assert(!(await page.locator('input[name="libraryId"][value="tv-lib"]').isChecked()),'Unselected library was incorrectly enabled');
+    assert(/every 6 hours/i.test(stremioText)&&/every 7 days/i.test(stremioText),'Source detail does not explain automatic index cadence');
+    await screenshot(page,'stremio-source-libraries');
+
+    await page.goto(`${BASE}/admin/plans/${id}/delivery`,{waitUntil:'networkidle'});
+    let deliveryText=await page.locator('body').innerText();
+    assert(/Stremio sources/.test(deliveryText)&&/Browser External Jellyfin/.test(deliveryText),'Plan Delivery does not expose Stremio source selection');
+    const sourceForm=page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"]`);
+    await sourceForm.locator(`input[name="sourceId"][value="${seeded.id}"]`).check();
+    await sourceForm.locator(`input[name="priority_${seeded.id}"]`).fill('10');
+    await submitAction(page,sourceForm,'Save Stremio sources',`/admin/plans/${plan.id}/stremio-sources`);
+    const mapping=(await pool.query('SELECT enabled,priority FROM plan_stremio_sources WHERE plan_id=$1 AND source_id=$2',[plan.id,seeded.id])).rows[0];
+    assert.equal(mapping?.enabled,true,'Plan source mapping was not persisted');
+    assert.equal(Number(mapping?.priority),10,'Plan source priority was not persisted');
+    deliveryText=await page.locator('body').innerText();
+    assert(/1\/1 selected source ready/.test(deliveryText),'Plan Delivery does not surface mapped-source readiness');
+    await screenshot(page,'plan-delivery-stremio-source');
+
+    await page.goto(`${BASE}/admin/servers/stremio`,{waitUntil:'networkidle'});
+    runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
+    assert(!(await runtimeForm.getByRole('button',{name:'Enable Stremio runtime'}).isDisabled()),'Ready external source did not unlock runtime enablement');
+    await submitAction(page,runtimeForm,'Enable Stremio runtime','/admin/servers/stremio/runtime');
+    await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime enabled.'),null,{timeout:15000});
     let stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
-    assert.equal(stored?.enabled,true,'Browser enablement was not persisted to platform settings');
-    runtimeForm=page.locator('form[action="/admin/settings/stremio/runtime"]');
-    await submitAction(page,runtimeForm,'Disable runtime','/admin/settings/stremio/runtime');
+    assert.equal(stored?.enabled,true,'Stremio Sources runtime enablement was not persisted');
+    runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
+    await submitAction(page,runtimeForm,'Disable Stremio runtime','/admin/servers/stremio/runtime');
     await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime disabled.'),null,{timeout:15000});
     stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
-    assert.equal(stored?.enabled,false,'Browser disablement was not persisted to platform settings');
-    await screenshot(page,'settings-stremio-runtime-toggle');
-    await pool.query('DELETE FROM jellyfin_servers WHERE id=$1',[seeded.id]);
+    assert.equal(stored?.enabled,false,'Stremio Sources runtime disablement was not persisted');
+    await screenshot(page,'stremio-sources-runtime');
+
+    await pool.query('DELETE FROM plan_stremio_sources WHERE source_id=$1',[seeded.id]);
+    await pool.query('DELETE FROM stremio_sources WHERE id=$1',[seeded.id]);
 
     console.log('admin information architecture regression: ok');
   }finally{await browser.close();await pool.end();}
