@@ -6,7 +6,7 @@ const csrf = require('../auth/csrf');
 const branding = require('./branding');
 const { esc } = require('./admin-html');
 
-function site() { return process.env.SITE_NAME || 'CAPTaINFiN'; }
+function site() { return process.env.SITE_NAME || 'CAPTAiNFiN'; }
 function noStore(_req, res, next) {
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
     res.setHeader('Pragma', 'no-cache');
@@ -53,7 +53,7 @@ function formPage(req, invitation, values = {}, error = null) {
             <input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
             ${emailField}
             <div class="field"><label>Username</label><input class="input" name="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" autocomplete="username" required value="${esc(values.username || '')}"><div class="help">3–40 characters. Letters, numbers, dot, underscore and dash.</div></div>
-            <div class="field"><label>Portal password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required><div class="help">At least 12 characters. This is only your CAPTaINFiN portal password. Jellyfin uses a separate password that you choose after provisioning.</div></div>
+            <div class="field"><label>Portal password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required><div class="help">At least 12 characters. This is only your CAPTAiNFiN portal password. Jellyfin uses a separate password that you choose after provisioning.</div></div>
             <div class="field"><label>Confirm portal password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div>
             <button class="button" type="submit">Create account</button>
         </form>

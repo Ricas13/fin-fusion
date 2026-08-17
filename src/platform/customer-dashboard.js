@@ -45,7 +45,7 @@ function createCustomerDashboardRouter(){
         customers.getCustomerPortal(req.session.customerId),sellablePlans(currency),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration(),planPricing.enabledCurrencies()
       ]);
       const portal=await hideInternalAccounts(req.session.customerId,portalRaw),delivery=deliveryType(currentPlan),hasJellyfin=['jellyfin','bundle'].includes(delivery),hasStremio=['stremio','bundle'].includes(delivery);
-      const restoreMessage=restored.restored?'Your inactive Jellyfin user was cleaned up previously. A fresh Jellyfin account has now been provisioned because you returned to your CAPTaINFiN account.':null;
+      const restoreMessage=restored.restored?'Your inactive Jellyfin user was cleaned up previously. A fresh Jellyfin account has now been provisioned because you returned to your CAPTAiNFiN account.':null;
       if(delivery==='stremio'){
         return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
       }

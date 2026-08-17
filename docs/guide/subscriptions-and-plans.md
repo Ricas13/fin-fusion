@@ -1,6 +1,6 @@
 # Subscriptions and plans
 
-CAPTaINFiN separates the **commercial plan** a customer buys from the **Jellyfin account** that delivers service.
+CAPTAiNFiN separates the **commercial plan** a customer buys from the **Jellyfin account** that delivers service.
 
 ## What a plan controls
 
@@ -19,7 +19,7 @@ Depending on the plan configuration, a plan can define:
 
 ## Existing subscriptions and plan edits
 
-Changing a catalogue plan is intended to affect **future acquisition and renewal decisions**. CAPTaINFiN keeps commercial snapshots on subscriptions and checkout contracts so an existing paid-through service period is not silently rewritten when an administrator edits the catalogue later.
+Changing a catalogue plan is intended to affect **future acquisition and renewal decisions**. CAPTAiNFiN keeps commercial snapshots on subscriptions and checkout contracts so an existing paid-through service period is not silently rewritten when an administrator edits the catalogue later.
 
 Archiving a plan removes it from new catalogue acquisition without deleting historical subscription records.
 
@@ -29,11 +29,11 @@ The stream limit is the number of simultaneous playback sessions allowed by the 
 
 ## Direct customers and reseller customers
 
-Direct customers acquire plans from CAPTaINFiN itself. Reseller customers receive eligible plans through a reseller estate. Reseller tiers separately control how many active downstream customer entitlements a reseller may operate.
+Direct customers acquire plans from CAPTAiNFiN itself. Reseller customers receive eligible plans through a reseller estate. Reseller tiers separately control how many active downstream customer entitlements a reseller may operate.
 
 ## Future delivery types
 
-CAPTaINFiN is being prepared to support multiple delivery types:
+CAPTAiNFiN is being prepared to support multiple delivery types:
 
 - **Jellyfin** — normal Jellyfin portal/account access
 - **Stremio** — stream-only access delivered through a user-specific Stremio addon credential

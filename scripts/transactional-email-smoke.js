@@ -88,7 +88,7 @@ function startFakeSmtp() {
             secureMode: 'plain',
             username: 'smtp-user',
             password: 'smtp-password',
-            fromName: 'CAPTaINFiN Test',
+            fromName: 'CAPTAiNFiN Test',
             fromEmail: 'noreply@example.test',
             replyTo: 'support@example.test'
         });

@@ -7,7 +7,7 @@ const placement = require('../jellyfin/placement');
 const { esc, layout } = require('./admin-html');
 const { planSubnav } = require('./admin-plans');
 
-function site() { return process.env.SITE_NAME || 'CAPTaINFiN'; }
+function site() { return process.env.SITE_NAME || 'CAPTAiNFiN'; }
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
     return res.redirect('/login?session=expired');
@@ -96,7 +96,7 @@ function serverRows(data) {
             <td><input type="checkbox" name="serverIds" value="${esc(server.id)}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}></td>
             <td><strong>${esc(server.name)}</strong><div class="muted">${esc(server.slug)}${server.location ? ` · ${esc(server.location)}` : ''}</div></td>
             <td><span class="pill ${healthClass(server.health_status)}">${esc(healthLabel(server.health_status))}</span><div class="subText">${capacity}</div></td>
-            <td><strong>${load.users.toLocaleString('en-GB')}</strong> / ${esc(max)}<div class="subText">${load.managedUsers.toLocaleString('en-GB')} CAPTaINFiN managed</div></td>
+            <td><strong>${load.users.toLocaleString('en-GB')}</strong> / ${esc(max)}<div class="subText">${load.managedUsers.toLocaleString('en-GB')} CAPTAiNFiN managed</div></td>
             <td><strong>${load.streams.toLocaleString('en-GB')}</strong><div class="subText">${load.managedStreams.toLocaleString('en-GB')} managed</div></td>
             <td>${source}</td>
             <td><input class="input" style="max-width:7rem" type="number" min="1" max="10000" name="weight_${esc(server.id)}" value="${esc(existingWeight)}" ${disabled ? 'disabled' : ''}></td>
@@ -111,7 +111,7 @@ function page(req, plan, data) {
     const body = `${notice(req.query.message)}${notice(req.query.error, 'error')}${planSubnav(plan.id, 'placement')}
         <section class="section">
             <div class="sectionHead"><div><h2>Fleet-aware server placement</h2><div class="settings-hint">New accounts are placed using the real Jellyfin user and playback load when a fresh fleet sample is available.</div></div></div>
-            <div class="notice">Existing customers are never moved automatically. If fleet metrics become stale or unavailable, placement safely falls back to CAPTaINFiN-managed counts rather than blocking provisioning.</div>
+            <div class="notice">Existing customers are never moved automatically. If fleet metrics become stale or unavailable, placement safely falls back to CAPTAiNFiN-managed counts rather than blocking provisioning.</div>
             <form class="formPanel" method="post" action="/admin/plans/${esc(plan.id)}/placement">
                 ${csrfInput(req)}
                 <div class="formGroup"><label>Placement strategy</label><select class="input" name="placementStrategy">${strategyOptions(strategy)}</select></div>

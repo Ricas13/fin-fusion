@@ -300,7 +300,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
 async function storefrontPage(req, res) {
     try {
         await runtimeSettings.ensureLoaded();
-        const site = runtimeSettings.siteName ? runtimeSettings.siteName() : (process.env.SITE_NAME || 'CAPTaINFiN');
+        const site = runtimeSettings.siteName ? runtimeSettings.siteName() : (process.env.SITE_NAME || 'CAPTAiNFiN');
         if (!runtimeSettings.storefrontEnabled()) {
             res.setHeader('Cache-Control', 'no-store, private, max-age=0');
             return res.status(404).send(disabledPage(site));

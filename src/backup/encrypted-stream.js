@@ -39,13 +39,13 @@ function parseHeaderFromFd(fd) {
   const bytes = fs.readSync(fd, maxHeader, 0, maxHeader.length, 0);
   const data = maxHeader.subarray(0, bytes);
   if (!data.subarray(0, MAGIC.length).equals(MAGIC)) {
-    throw new Error('Invalid CAPTaINFiN backup header');
+    throw new Error('Invalid CAPTAiNFiN backup header');
   }
   const newline = data.indexOf(0x0a, MAGIC.length);
-  if (newline === -1) throw new Error('Incomplete CAPTaINFiN backup header');
+  if (newline === -1) throw new Error('Incomplete CAPTAiNFiN backup header');
   const metadata = JSON.parse(data.subarray(MAGIC.length, newline).toString('utf8'));
   if (metadata.version !== 1 || metadata.cipher !== 'aes-256-gcm' || metadata.kdf !== 'scrypt') {
-    throw new Error('Unsupported CAPTaINFiN backup format');
+    throw new Error('Unsupported CAPTAiNFiN backup format');
   }
   return {
     metadata,

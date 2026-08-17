@@ -19,7 +19,7 @@ assert(jobs.includes('async customer_inactivity(){return jellyfinLifecycle.run()
 assert(policy.includes("portalAccountPreserved:true"), 'policy audit must record portal preservation');
 assert(migration.includes("source_kind='owned' OR authorization_confirmed=TRUE"), 'external Stremio sources must require authorization');
 assert(pool.includes("Confirm that you are authorized"), 'external source creation must enforce authorization');
-assert(pool.includes('stremio_stream_attribution'), 'source pool must retain CAPTaINFiN attribution');
+assert(pool.includes('stremio_stream_attribution'), 'source pool must retain CAPTAiNFiN attribution');
 assert(runtime.indexOf('sourcePool.streamsFor')<runtime.indexOf('jellyfin.streamsFor'), 'source pool must be attempted before entitlement fallback');
 assert(admin.includes('does not hide, forge or suppress upstream Jellyfin activity'), 'admin UI must state upstream activity is not concealed');
 assert(migration.includes('portal customer'), 'migration must document portal identity invariant');

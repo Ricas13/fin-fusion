@@ -1,4 +1,4 @@
-# CAPTaINFiN admin deep audit — August 2026
+# CAPTAiNFiN admin deep audit — August 2026
 
 This is the working inventory for the full operator-product audit. Every visible control must have a clear owner, discoverable location, successful happy path, actionable failure path and browser-level regression coverage.
 

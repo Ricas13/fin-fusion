@@ -75,7 +75,7 @@ async function requestMaintenanceGuard(req, res, next) {
         handle = await acquireSharedMaintenanceLock({ tryOnly: true });
         if (!handle) {
             res.setHeader('Retry-After', '30');
-            return res.status(503).send('CAPTaINFiN is temporarily unavailable for database maintenance.');
+            return res.status(503).send('CAPTAiNFiN is temporarily unavailable for database maintenance.');
         }
 
         let released = false;

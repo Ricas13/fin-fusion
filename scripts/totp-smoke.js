@@ -30,12 +30,12 @@ assert.strictEqual(totp.verifyTotp(generated, code, { time: now, window: 0 }), t
 assert.strictEqual(totp.verifyTotp(generated, code, { time: now + 30_000, window: 1 }), true, 'Normal authenticator clock-skew window failed');
 assert.strictEqual(totp.verifyTotp(generated, '000000', { time: now, window: 0 }), code === '000000');
 
-const uri = totp.otpauthUri({ secret: generated, accountName: 'admin@example.test', issuer: 'CAPTaINFiN' });
+const uri = totp.otpauthUri({ secret: generated, accountName: 'admin@example.test', issuer: 'CAPTAiNFiN' });
 const parsed = new URL(uri);
 assert.strictEqual(parsed.protocol, 'otpauth:');
 assert.strictEqual(parsed.hostname, 'totp');
 assert.strictEqual(parsed.searchParams.get('secret'), generated);
-assert.strictEqual(parsed.searchParams.get('issuer'), 'CAPTaINFiN');
+assert.strictEqual(parsed.searchParams.get('issuer'), 'CAPTAiNFiN');
 assert.strictEqual(parsed.searchParams.get('algorithm'), 'SHA1');
 assert.strictEqual(parsed.searchParams.get('digits'), '6');
 assert.strictEqual(parsed.searchParams.get('period'), '30');

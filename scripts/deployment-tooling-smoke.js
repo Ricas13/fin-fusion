@@ -43,7 +43,7 @@ assert(gitignore.includes('.env.before-*'), 'older env safety copies must be ign
 assert(gitignore.includes('.deploy-production.lock'), 'deployment lock state must be ignored by git');
 assert(dockerignore.includes('.env.*'), 'all derivative .env secret files must stay out of Docker build context');
 assert(/COMPOSE_PARALLEL_LIMIT:-1/.test(deployScript), 'production builds must default to one concurrent Compose operation');
-assert(/another CAPTaINFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
+assert(/another CAPTAiNFiN production deployment is already running/.test(deployScript), 'deployment must refuse overlapping production runs');
 assert(compose.includes('user: "${BACKUP_PUID:-1000}:${BACKUP_PGID:-1000}"'), 'backup and recovery containers must support the host backup owner identity');
 assert((compose.match(/user: "\$\{BACKUP_PUID:-1000\}:\$\{BACKUP_PGID:-1000\}"/g) || []).length === 2, 'both backup-worker and recovery-tools must use the configured backup identity');
 assert((compose.match(/\/tmp:size=2g,mode=1777/g) || []).length === 2, 'backup and recovery temporary mounts must remain writable by a non-image UID');

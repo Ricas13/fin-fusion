@@ -46,7 +46,7 @@ function configPanel(req, status) {
             ${csrfInput(req)}
             <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable central request integration</strong><small class="muted">When disabled, automatic user sync and request lifecycle changes stop. Saved credentials are retained.</small></span></label>
             <div class="formGrid" style="margin-top:14px">
-                <div class="formGroup"><label>Request service URL</label><input class="input" type="url" name="baseUrl" maxlength="500" placeholder="https://requests.example.com" value="${esc(status.baseUrl || '')}"><div class="inlineHelp">Public or internal URL CAPTaINFiN can reach.</div></div>
+                <div class="formGroup"><label>Request service URL</label><input class="input" type="url" name="baseUrl" maxlength="500" placeholder="https://requests.example.com" value="${esc(status.baseUrl || '')}"><div class="inlineHelp">Public or internal URL CAPTAiNFiN can reach.</div></div>
                 <div class="formGroup"><label>API key</label><input class="input" type="password" name="apiKey" autocomplete="new-password" placeholder="${status.apiKeyConfigured ? 'Configured — leave blank to keep current key' : 'Enter API key'}"><div class="inlineHelp">Stored encrypted. It is never rendered back to the browser.</div><label class="toggleRow compact"><input type="checkbox" name="clearApiKey"><span>Clear saved API key</span></label></div>
                 <div class="formGroup"><label>User sync interval · minutes</label><input class="input" type="number" min="5" max="1440" name="syncIntervalMinutes" value="${esc(status.syncIntervalMinutes || 15)}"><div class="inlineHelp">Applies without a container restart.</div></div>
             </div>
@@ -71,10 +71,10 @@ async function page(req) {
     const passwordsNeeded = candidates.filter(row => row.password_reset_required && !row.access_suspended).length;
 
     const lifecycleCard = `<section class="card">
-        <div class="card-header"><div><h2 class="card-title">Request access lifecycle</h2><div class="muted">CAPTaINFiN owns request identity, plan quotas and subscription-based access; the request service remains the content-request frontend.</div></div></div>
+        <div class="card-header"><div><h2 class="card-title">Request access lifecycle</h2><div class="muted">CAPTAiNFiN owns request identity, plan quotas and subscription-based access; the request service remains the content-request frontend.</div></div></div>
         <div class="card-body">
             <div class="compact-item"><div><div class="compact-title">One request identity per customer</div><div class="compact-meta">A customer can move between Jellyfin servers without creating another request account.</div></div><span class="pill good">Centralised</span></div>
-            <div class="compact-item"><div><div class="compact-title">Plan quota</div><div class="compact-meta">Movie and TV-season quotas are applied from the customer's current CAPTaINFiN plan.</div></div><span class="pill good">Plan controlled</span></div>
+            <div class="compact-item"><div><div class="compact-title">Plan quota</div><div class="compact-meta">Movie and TV-season quotas are applied from the customer's current CAPTAiNFiN plan.</div></div><span class="pill good">Plan controlled</span></div>
             <div class="compact-item"><div><div class="compact-title">Subscription lifecycle</div><div class="compact-meta">Expired access sets request permissions to zero without deleting the user or their request history. Renewal restores access.</div></div><span class="pill good">Automatic</span></div>
         </div>
     </section>`;
@@ -116,7 +116,7 @@ async function page(req) {
         </tr>`;
     }).join('');
 
-    const table = `<section class="section"><div class="sectionHead"><div><h2>Managed request users</h2><div class="muted">One row per CAPTaINFiN customer. TV quota uses the request service's native season-based counting.</div></div><span class="muted">${candidates.length} managed</span></div>${candidates.length ? `<div class="tableWrap"><table class="dataTable requestUserTable"><thead><tr><th>Customer / login</th><th>Access</th><th>Movies</th><th>TV</th><th>Jellyfin servers</th><th>Sync</th><th>Request user</th><th>Login</th><th>Last sync</th><th>Problem</th><th class="right">Action</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No managed request users yet.</div>'}</section>`;
+    const table = `<section class="section"><div class="sectionHead"><div><h2>Managed request users</h2><div class="muted">One row per CAPTAiNFiN customer. TV quota uses the request service's native season-based counting.</div></div><span class="muted">${candidates.length} managed</span></div>${candidates.length ? `<div class="tableWrap"><table class="dataTable requestUserTable"><thead><tr><th>Customer / login</th><th>Access</th><th>Movies</th><th>TV</th><th>Jellyfin servers</th><th>Sync</th><th>Request user</th><th>Login</th><th>Last sync</th><th>Problem</th><th class="right">Action</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No managed request users yet.</div>'}</section>`;
 
     const action = `<form method="post" action="/admin/request-users/sync-all">${csrfInput(req)}<button class="button" type="submit" ${configured ? '' : 'disabled'}>Sync all users</button></form>`;
     const styles = '<style>.requestUserTable{min-width:1500px}.problemCell{max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metricValue.smallish{font-size:22px}.inlineForm{display:inline;margin:0}</style>';

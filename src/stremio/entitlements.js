@@ -17,7 +17,7 @@ function streamLimit(row){return Math.max(1,Math.min(50,Number(row?.streams||1))
 function internalUsername(customerId){return `cf_stremio_${String(customerId).replace(/-/g,'').slice(0,12)}`;}
 function randomPassword(){return crypto.randomBytes(32).toString('base64url');}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin user token');return `MediaBrowser Token="${token}"`;}
-function clientAuthorization(){return 'MediaBrowser Client="CAPTaINFiN Stremio", Device="CAPTaINFiN", DeviceId="captainfin-stremio", Version="1.0"';}
+function clientAuthorization(){return 'MediaBrowser Client="CAPTAiNFiN Stremio", Device="CAPTAiNFiN", DeviceId="captainfin-stremio", Version="1.0"';}
 
 async function entitledSubscription(customerId){
   const addons=await subscriptionState.effectiveAddons(customerId);

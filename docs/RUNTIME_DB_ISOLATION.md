@@ -1,6 +1,6 @@
 # Runtime database and secret isolation
 
-CAPTaINFiN uses one PostgreSQL owner only for schema migration, role maintenance and explicit recovery operations. Long-running containers use separate login roles and receive only the secrets required for their job.
+CAPTAiNFiN uses one PostgreSQL owner only for schema migration, role maintenance and explicit recovery operations. Long-running containers use separate login roles and receive only the secrets required for their job.
 
 ## Runtime identities
 

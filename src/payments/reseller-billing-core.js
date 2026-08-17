@@ -22,7 +22,7 @@ async function stripe() {
     const key = stripeApiKey(config);
     if (!key) throw new Error('Stripe is not configured.');
     if (!stripeClient || stripeKey !== key) {
-        stripeClient = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTaINFiN Reseller Billing', version: '1.0.0' } });
+        stripeClient = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTAiNFiN Reseller Billing', version: '1.0.0' } });
         stripeKey = key;
     }
     return stripeClient;
@@ -155,7 +155,7 @@ async function createPayPalCheckout({ resellerId, tierId, returnUrl, cancelUrl, 
             plan_id: mapping.external_id,
             custom_id: paypalCustomId(resellerId, tierId),
             application_context: {
-                brand_name: process.env.SITE_NAME || 'CAPTaINFiN',
+                brand_name: process.env.SITE_NAME || 'CAPTAiNFiN',
                 shipping_preference: 'NO_SHIPPING',
                 user_action: 'SUBSCRIBE_NOW',
                 return_url: returnUrl,

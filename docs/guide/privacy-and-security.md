@@ -1,14 +1,14 @@
 # Account, passwords and security
 
-This page explains the credentials a customer may encounter in CAPTaINFiN.
+This page explains the credentials a customer may encounter in CAPTAiNFiN.
 
 ## Portal password
 
-Your CAPTaINFiN portal password is used to sign in to the customer account area. It is not automatically reused as your Jellyfin password.
+Your CAPTAiNFiN portal password is used to sign in to the customer account area. It is not automatically reused as your Jellyfin password.
 
 ## Jellyfin password
 
-If your subscription includes normal Jellyfin access, you may be asked to set a separate Jellyfin password. Changing the Jellyfin password does not change the CAPTaINFiN portal password.
+If your subscription includes normal Jellyfin access, you may be asked to set a separate Jellyfin password. Changing the Jellyfin password does not change the CAPTAiNFiN portal password.
 
 ## Password reset
 

@@ -47,7 +47,7 @@ function environmentConfig() {
             secureMode: mode,
             username: decodeURIComponent(url.username || ''),
             password: decodeURIComponent(url.password || ''),
-            fromName: String(process.env.EMAIL_FROM_NAME || process.env.SITE_NAME || 'CAPTaINFiN').trim(),
+            fromName: String(process.env.EMAIL_FROM_NAME || process.env.SITE_NAME || 'CAPTAiNFiN').trim(),
             fromEmail,
             replyTo: email(process.env.EMAIL_REPLY_TO || '', false)
         };
@@ -127,7 +127,7 @@ async function save(input, actorUserId = null) {
     if (username && !passwordPresent) throw new Error('SMTP password is required when a username is configured.');
     const fromEmail = email(input.fromEmail, true);
     const replyTo = email(input.replyTo, false) || null;
-    const fromName = String(input.fromName || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 120) || 'CAPTaINFiN';
+    const fromName = String(input.fromName || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 120) || 'CAPTAiNFiN';
 
     await query(`
         INSERT INTO email_gateway_settings(id,enabled,host,port,secure_mode,username,password_encrypted,from_name,from_email,reply_to,updated_by,updated_at)

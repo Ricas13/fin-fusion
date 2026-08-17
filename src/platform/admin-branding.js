@@ -36,7 +36,7 @@ async function page(req) {
         uploadBlock(req,'favicon','Favicon','PNG or ICO','image/png,image/x-icon,image/vnd.microsoft.icon,.ico')
     ]);
     const body = `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}<div class="statusBanner"><strong>Shared branding storage:</strong> custom logo and favicon data is stored in PostgreSQL so every application replica serves the same assets. Existing legacy files are imported automatically on first use.</div><div class="settings-grid">${blocks.join('')}</div>`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'branding', title: 'Branding', subtitle: 'Shared logo and browser icon used across CAPTaINFiN', body });
+    return layout({ siteName: runtimeSettings.siteName(), active: 'branding', title: 'Branding', subtitle: 'Shared logo and browser icon used across CAPTAiNFiN', body });
 }
 
 function createAdminBrandingRouter() {

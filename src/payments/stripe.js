@@ -19,7 +19,7 @@ async function getStripe() {
     if (!key) throw new Error('Stripe is not configured');
     if (!stripeClient || stripeClientKey !== key) {
         const Stripe = require('stripe');
-        stripeClient = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTaINFiN', version: '1.0.0' } });
+        stripeClient = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' } });
         stripeClientKey = key;
     }
     return stripeClient;

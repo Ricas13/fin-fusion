@@ -1,6 +1,6 @@
-# CAPTaINFiN Guide
+# CAPTAiNFiN Guide
 
-Welcome to the CAPTaINFiN user guide. This documentation is written for customers, resellers and administrators using the platform day to day.
+Welcome to the CAPTAiNFiN user guide. This documentation is written for customers, resellers and administrators using the platform day to day.
 
 Use the navigation to find the guide for your role:
 

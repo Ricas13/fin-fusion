@@ -1,6 +1,6 @@
 # Security and access
 
-CAPTaINFiN separates portal identity, Jellyfin credentials and infrastructure secrets.
+CAPTAiNFiN separates portal identity, Jellyfin credentials and infrastructure secrets.
 
 ## Administrator and reseller sign-in
 
@@ -18,11 +18,11 @@ Treat recovery codes like passwords. Store them somewhere secure and do not past
 
 ## API keys and provider credentials
 
-Jellyfin API keys, payment-provider secrets, request-service API keys and SMTP passwords are infrastructure credentials. CAPTaINFiN stores supported browser-managed secrets encrypted at rest and does not intentionally display decrypted secrets back to administrators after storage.
+Jellyfin API keys, payment-provider secrets, request-service API keys and SMTP passwords are infrastructure credentials. CAPTAiNFiN stores supported browser-managed secrets encrypted at rest and does not intentionally display decrypted secrets back to administrators after storage.
 
 ## Invite and claim links
 
-Invitation and customer-claim links use bearer tokens. Anyone holding a valid unused link may be able to redeem it, so share it only with the intended person. CAPTaINFiN stores supported claim/invitation tokens as hashes rather than retaining the raw bearer value for later display.
+Invitation and customer-claim links use bearer tokens. Anyone holding a valid unused link may be able to redeem it, so share it only with the intended person. CAPTAiNFiN stores supported claim/invitation tokens as hashes rather than retaining the raw bearer value for later display.
 
 ## Canonical public URL
 
