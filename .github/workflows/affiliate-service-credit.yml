@@ -40,3 +40,5 @@ jobs:
         run: npm run db:migrate
       - name: Verify no-subscription affiliate earn and credit activation
         run: node scripts/affiliate-service-credit-smoke.js
+      - name: Verify mixed service-credit provider checkout accounting
+        run: node scripts/affiliate-mixed-payment-smoke.js
