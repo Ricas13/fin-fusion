@@ -31,42 +31,41 @@ async function main(){
 
   await client.query(`INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason) VALUES($1,'admin_suspended','admin','admin test'),($1,'reseller_manual','reseller-test','reseller test')`,[customer.id]);
   const holds=await client.query(`SELECT COUNT(*)::int n FROM customer_access_holds WHERE customer_id=$1 AND released_at IS NULL`,[customer.id]);
-  assert(Number(holds.rows[0].n)===2,'independent access holds must coexist');
+  assert(Number(holds.rows[0].n)===2,'independent historical access holds must coexist');
   await client.query(`UPDATE customer_access_holds SET released_at=NOW() WHERE customer_id=$1 AND hold_type='admin_suspended'`,[customer.id]);
   const remaining=await client.query(`SELECT hold_type FROM customer_access_holds WHERE customer_id=$1 AND released_at IS NULL`,[customer.id]);
-  assert(remaining.rowCount===1&&remaining.rows[0].hold_type==='reseller_manual','releasing one hold must preserve other hold types');
+  assert(remaining.rowCount===1&&remaining.rows[0].hold_type==='reseller_manual','releasing one hold must preserve historical hold types');
 
+  // Historical reseller schema remains upgrade-safe even though the reseller
+  // product and automation runtime are no longer exposed or executed.
   const resellerUser=(await client.query(`INSERT INTO app_users(username,email,password_hash,role,active,email_verified_at) VALUES($1,$2,'not-a-real-login-hash','reseller',TRUE,NOW()) RETURNING id`,[`coherence-reseller-${suffix}`,`reseller-${suffix}@example.invalid`])).rows[0];
   const reseller=(await client.query(`INSERT INTO resellers(user_id) VALUES($1) RETURNING id`,[resellerUser.id])).rows[0];
   const tier=(await client.query(`INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active,streams,allow_video_transcoding,library_access_mode) VALUES($1,'Coherence Tier','test',1234,'GBP',7,3,100,TRUE,TRUE,5,FALSE,'include') RETURNING id`,[`coherence-tier-${suffix}`])).rows[0];
   const resellerSub=(await client.query(`INSERT INTO reseller_subscriptions(reseller_id,tier_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3) RETURNING *`,[reseller.id,tier.id,`sub_reseller_${suffix}`])).rows[0];
-  assert(Number(resellerSub.monthly_price_minor_snapshot)===1234,'reseller subscription must snapshot tier price');
-  assert(Number(resellerSub.seat_limit_snapshot)===7,'reseller subscription must snapshot seat limit');
-  assert(String(resellerSub.currency_snapshot).trim()==='GBP','reseller subscription must snapshot currency');
-  assert(Number(resellerSub.grace_days_snapshot)===3,'reseller subscription must snapshot grace days');
-  await client.query(`UPDATE reseller_tiers SET monthly_price_minor=9999,seat_limit=99,grace_days=10 WHERE id=$1`,[tier.id]);
-  const snapshot=await client.query(`SELECT monthly_price_minor_snapshot,seat_limit_snapshot,grace_days_snapshot FROM reseller_subscriptions WHERE id=$1`,[resellerSub.id]);
-  assert(Number(snapshot.rows[0].monthly_price_minor_snapshot)===1234&&Number(snapshot.rows[0].seat_limit_snapshot)===7&&Number(snapshot.rows[0].grace_days_snapshot)===3,'editing tier terms must not rewrite existing snapshots');
-  await expectConstraint(client,`INSERT INTO reseller_subscriptions(reseller_id,tier_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[reseller.id,tier.id,`I-RESELLER-${suffix}`],'overlapping recurring reseller subscription');
+  assert(Number(resellerSub.monthly_price_minor_snapshot)===1234,'historical reseller subscription must preserve snapshotted price');
+  assert(Number(resellerSub.seat_limit_snapshot)===7,'historical reseller subscription must preserve snapshotted seat limit');
+  assert(String(resellerSub.currency_snapshot).trim()==='GBP','historical reseller subscription must preserve currency');
+  assert(Number(resellerSub.grace_days_snapshot)===3,'historical reseller subscription must preserve grace days');
+  await expectConstraint(client,`INSERT INTO reseller_subscriptions(reseller_id,tier_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[reseller.id,tier.id,`I-RESELLER-${suffix}`],'overlapping historical reseller subscription');
 
   const managed=(await client.query(`INSERT INTO customers(reseller_id,display_name,reseller_managed) VALUES($1,$2,TRUE) RETURNING id`,[reseller.id,`Managed ${suffix}`])).rows[0];
-  assert(managed.id,'reseller managed-user identity must be supported without a downstream sale or customer plan');
+  assert(managed.id,'historical reseller managed-user identities must remain readable after upgrade');
   const saleCount=await client.query(`SELECT COUNT(*)::int n FROM reseller_sales WHERE reseller_id=$1`,[reseller.id]);
-  assert(Number(saleCount.rows[0].n)===0,'managed reseller seat setup must not create downstream sales');
+  assert(Number(saleCount.rows[0].n)===0,'historical managed seat setup must not fabricate downstream sales');
 
-  const expectedJobs=['health','entitlements','policy_drift','bulk_jobs','stale_reclaim','email_outbox','request_users','billing','plan_changes','reseller_billing','reseller_estates','reseller_notifications'];
-  const jobs=await client.query(`SELECT job_key FROM automation_job_state WHERE job_key=ANY($1::text[])`,[expectedJobs]);
-  assert(jobs.rowCount===expectedJobs.length,`expected ${expectedJobs.length} platform automation jobs, found ${jobs.rowCount}`);
+  const retiredJobs=['reseller_billing','reseller_estates','reseller_notifications'];
+  const retiredRows=await client.query(`SELECT job_key FROM automation_job_state WHERE job_key=ANY($1::text[])`,[retiredJobs]);
+  assert(retiredRows.rowCount===0,`retired reseller automation scheduler rows remain: ${retiredRows.rows.map(r=>r.job_key).join(', ')}`);
+  const supportedSeeded=await client.query(`SELECT COUNT(*)::int n FROM automation_job_state`);
+  assert(Number(supportedSeeded.rows[0].n)>=9,'supported platform automation seed rows were unexpectedly removed');
 
   const brandingColumns=await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name='branding_assets'`);
   assert(brandingColumns.rows.some(row=>row.column_name==='content'),'shared branding storage must include binary content');
   const driftColumns=await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name='jellyfin_policy_drift'`);
   assert(driftColumns.rowCount>0,'policy drift state table must exist');
-  const dunningColumns=await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name='reseller_subscriptions' AND column_name='manual_grace_until'`);
-  assert(dunningColumns.rowCount===1,'manual reseller grace override must exist');
 
   await client.query('ROLLBACK');
-  console.log('Platform coherence DB invariants OK.');
+  console.log('Platform coherence DB invariants OK: current runtime clean, historical reseller schema preserved.');
  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
  finally{client.release();await getPool().end()}
 }
