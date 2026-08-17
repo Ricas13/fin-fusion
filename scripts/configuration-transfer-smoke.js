@@ -53,6 +53,19 @@ async function server(slug, name) {
     const planId = plan.rows[0].id;
     await query('INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,70)', [planId, serverA]);
 
+    await query(`
+        INSERT INTO reseller_tiers(
+            code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active,
+            server_class,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,
+            allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,
+            library_access_mode,library_names,placement_strategy,capacity_limit
+        ) VALUES(
+            'portable-reseller','Portable Reseller','Portable managed-user plan',5000,'GBP',20,3,15,TRUE,TRUE,
+            'premium',5,TRUE,FALSE,TRUE,TRUE,FALSE,FALSE,TRUE,FALSE,
+            'include',ARRAY['Movies 1080p','TV 1080p'],'least_users',25
+        )
+    `);
+
     const exported = await transfer.exportPortableConfiguration();
     assert.strictEqual(exported.format, transfer.FORMAT);
     assert.strictEqual(exported.version, 2);
@@ -61,9 +74,15 @@ async function server(slug, name) {
     assert(Array.isArray(exported.configuration.automation), 'v2 export must include automation settings');
     const freePlan = exported.configuration.plans.find(item => item.is_free_tier === true || item.code === 'free-access');
     const portablePlan = exported.configuration.plans.find(item => item.code === 'portable-monthly');
+    const portableTier = exported.configuration.resellerTiers.find(item => item.code === 'portable-reseller');
     assert(freePlan, 'portable configuration must include the permanent free tier');
     assert(portablePlan, 'portable configuration must include the configured customer plan');
+    assert(portableTier, 'portable configuration must include the reseller plan');
     assert.strictEqual(portablePlan.serverPool[0].serverSlug, 'premium-a');
+    assert.strictEqual(Number(portableTier.seat_limit), 20);
+    assert.strictEqual(Number(portableTier.streams), 5, 'reseller concurrent-stream policy must export');
+    assert.strictEqual(portableTier.allow_video_transcoding, false, 'reseller transcode policy must export');
+    assert.deepStrictEqual(portableTier.library_names, ['Movies 1080p','TV 1080p'], 'reseller library policy must export');
     assert.strictEqual(exported.configuration.settings.platform.requireAdminTwoFactor, undefined, 'security policy must not be portable');
 
     // Keep a regression for the documented V1 compatibility path as V2 becomes canonical.
@@ -88,6 +107,11 @@ async function server(slug, name) {
     portablePlan.name = 'Portable Monthly Updated';
     portablePlan.price_minor = 750;
     portablePlan.serverPool = [{ serverSlug: 'premium-b', weight: 250 }];
+    portableTier.streams = 4;
+    portableTier.allow_downloads = false;
+    portableTier.library_access_mode = 'include';
+    portableTier.library_names = ['Movies 1080p'];
+    portableTier.capacity_limit = 30;
     exported.configuration.plans.push({
         ...portablePlan,
         code: 'portable-trial',
@@ -122,6 +146,17 @@ async function server(slug, name) {
         WHERE pse.plan_id=$1
     `, [updatedPlan.rows[0].id]);
     assert.deepStrictEqual(updatedPool.rows.map(row => [row.slug, Number(row.weight)]), [['premium-b', 250]]);
+
+    const updatedTier = await query(`
+        SELECT streams,allow_downloads,allow_video_transcoding,library_access_mode,library_names,capacity_limit
+        FROM reseller_tiers WHERE code='portable-reseller'
+    `);
+    assert.strictEqual(Number(updatedTier.rows[0].streams), 4, 'reseller stream policy must round-trip');
+    assert.strictEqual(updatedTier.rows[0].allow_downloads, false, 'reseller download policy must round-trip');
+    assert.strictEqual(updatedTier.rows[0].allow_video_transcoding, false, 'reseller transcode policy must round-trip');
+    assert.strictEqual(updatedTier.rows[0].library_access_mode, 'include');
+    assert.deepStrictEqual(updatedTier.rows[0].library_names, ['Movies 1080p'], 'reseller library policy must round-trip');
+    assert.strictEqual(Number(updatedTier.rows[0].capacity_limit), 30, 'reseller storefront capacity must round-trip');
 
     const trialPool = await query(`
         SELECT COUNT(*)::int AS count FROM plan_server_eligibility pse
