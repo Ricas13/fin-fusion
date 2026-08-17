@@ -17,6 +17,7 @@ const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
 const { createAdminResellerDunningRouter } = require('./admin-reseller-dunning');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
+const { createAdminPersonalNotificationPreferencesRouter } = require('./admin-personal-notification-preferences-v2');
 const { createAdminPersonalNotificationTestsRouter } = require('./admin-personal-notification-tests');
 const { createAdminProfileAccountRouter } = require('./admin-profile-account');
 const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection');
@@ -70,7 +71,19 @@ function createRouter(){
     router.use(createAdminResellerDunningRouter());
     router.use(createAdminProfileAccountRouter());
     router.use(createAdminPersonalNotificationTestsRouter());
-    router.use(createAdminNotificationPreferencesRouter());
+    router.use(createAdminPersonalNotificationPreferencesRouter());
+    const globalNotificationRouter=createAdminNotificationPreferencesRouter();
+    pruneRoutes(globalNotificationRouter,new Set([
+        '/admin/profile/notifications',
+        '/admin/profile/notifications/currency',
+        '/admin/profile/notifications/telegram/start',
+        '/admin/profile/notifications/telegram/unlink',
+        '/admin/profile/notifications/discord/start',
+        '/admin/profile/notifications/discord/callback',
+        '/admin/profile/notifications/discord/unlink',
+        '/admin/profile/notifications/whatsapp'
+    ]));
+    router.use(globalNotificationRouter);
     router.use(createAdminAbuseProtectionRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
