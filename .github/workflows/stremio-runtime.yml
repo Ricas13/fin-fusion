@@ -7,12 +7,14 @@ on:
       - 'src/application.js'
       - 'src/jellyfin/resilient-provisioning.js'
       - 'src/platform/admin-stremio.js'
+      - 'src/platform/product-readiness.js'
       - 'src/platform/customer-stremio.js'
       - 'src/platform/customer-dashboard.js'
       - 'src/platform/router.js'
       - 'views/customer/stremio.ejs'
       - 'db/migrations/069_stremio_runtime.sql'
       - 'scripts/stremio-runtime-smoke.js'
+      - 'scripts/stremio-admin-smoke.js'
       - 'scripts/runtime-db-isolation-smoke.js'
       - 'package.json'
       - 'docker-compose.yml'
@@ -39,7 +41,9 @@ jobs:
           node --check src/stremio/entitlements.js
           node --check src/stremio/media-index.js
           node --check src/stremio/jellyfin-runtime.js
+          node --check src/stremio/runtime-settings.js
           node --check src/stremio/runtime.js
+          node --check src/platform/product-readiness.js
           node --check src/platform/customer-stremio.js
           node --check src/platform/customer-dashboard.js
           node --check src/platform/admin-stremio.js
