@@ -7,7 +7,57 @@ const RESELLER_AUDIENCES=new Set(['reseller','both']);
 function recurringProvider(row){const source=String(row?.source||''),id=String(row?.provider_subscription_id||'');return(source==='stripe'&&/^sub_/i.test(id))||(source==='paypal'&&/^I-/i.test(id))}
 function audienceAllows(plan,channel){const audience=String(plan?.audience||'direct');if(channel==='customer')return DIRECT_AUDIENCES.has(audience);if(channel==='reseller')return RESELLER_AUDIENCES.has(audience);return false}
 function assertAudience(plan,channel){if(!audienceAllows(plan,channel))throw new Error(channel==='customer'?'This plan is not available for direct customers.':'This plan is not available through resellers.');return plan}
-async function effectiveSubscription(customerId,{client=null,includeBlocked=false}={}){const db=client||{query};const result=await db.query(`
+
+async function managedResellerEntitlement(customerId,{client=null,includeBlocked=false}={}){
+ const db=client||{query};
+ const owner=await db.query(`SELECT reseller_id,reseller_managed FROM customers WHERE id=$1`,[customerId]);
+ if(!owner.rowCount||!owner.rows[0].reseller_managed||!owner.rows[0].reseller_id)return{managed:false,entitlement:null};
+ const result=await db.query(`
+   SELECT rt.*,
+          NULL::uuid AS subscription_id,
+          rt.id AS plan_id,
+          'reseller_tier'::text AS entitlement_kind,
+          'jellyfin'::text AS service_type,
+          'reseller'::text AS audience,
+          'month'::text AS billing_interval,
+          30::int AS duration_days,
+          COALESCE(rs.monthly_price_minor_snapshot,rt.monthly_price_minor) AS price_minor,
+          COALESCE(rs.currency_snapshot,rt.currency) AS currency,
+          COALESCE(rs.tier_name_snapshot,rt.name) AS contract_plan_name,
+          rt.code AS contract_plan_code,
+          COALESCE(rs.monthly_price_minor_snapshot,rt.monthly_price_minor) AS contract_price_minor,
+          COALESCE(rs.currency_snapshot,rt.currency) AS contract_currency,
+          'month'::text AS contract_billing_interval,
+          30::int AS contract_duration_days,
+          rs.current_period_end AS access_expires_at,
+          EXISTS(
+            SELECT 1 FROM customer_access_holds h
+            WHERE h.customer_id=$1 AND h.released_at IS NULL
+          ) AS blocked
+   FROM reseller_subscriptions rs
+   JOIN reseller_tiers rt ON rt.id=rs.tier_id
+   WHERE rs.reseller_id=$2
+     AND (
+       (rs.status='active' AND rs.current_period_end>NOW())
+       OR (
+         rs.status='past_due'
+         AND GREATEST(COALESCE(rs.grace_until,'epoch'::timestamptz),COALESCE(rs.manual_grace_until,'epoch'::timestamptz))>NOW()
+       )
+     )
+     AND ($3::boolean OR NOT EXISTS(
+       SELECT 1 FROM customer_access_holds h
+       WHERE h.customer_id=$1 AND h.released_at IS NULL
+     ))
+   ORDER BY CASE WHEN rs.status='active' THEN 0 ELSE 1 END,rs.current_period_end DESC,rs.created_at DESC
+   LIMIT 1
+ `,[customerId,owner.rows[0].reseller_id,Boolean(includeBlocked)]);
+ return{managed:true,entitlement:result.rows[0]||null};
+}
+
+async function effectiveSubscription(customerId,{client=null,includeBlocked=false}={}){
+ const managed=await managedResellerEntitlement(customerId,{client,includeBlocked});
+ if(managed.managed)return managed.entitlement;
+ const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
         COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
         COALESCE(s.plan_code_snapshot,p.code) AS contract_plan_code,
@@ -46,4 +96,4 @@ async function assertNoOtherLiveRecurring(client,customerId,excludeId=null,targe
 }
 function assertSafeSourceRewrite(existing,targetSource){if(recurringProvider(existing)&&!['stripe','paypal'].includes(String(targetSource||'')))throw new Error('A provider-managed recurring subscription cannot be converted into a manual or reseller subscription. Cancel/change provider billing through the billing workflow first.')}
 async function markSuperseded(client,{subscriptionId,replacementId,reason='plan_change'}){await client.query(`UPDATE subscriptions SET superseded_by=$2,replaced_at=NOW(),replacement_reason=$3,updated_at=NOW() WHERE id=$1 AND superseded_by IS NULL`,[subscriptionId,replacementId,String(reason||'').slice(0,200)])}
-module.exports={LIVE_STATUSES,recurringProvider,audienceAllows,assertAudience,effectiveSubscription,effectiveAddons,assertNoOtherLiveRecurring,assertSafeSourceRewrite,markSuperseded};
+module.exports={LIVE_STATUSES,recurringProvider,audienceAllows,assertAudience,managedResellerEntitlement,effectiveSubscription,effectiveAddons,assertNoOtherLiveRecurring,assertSafeSourceRewrite,markSuperseded};
