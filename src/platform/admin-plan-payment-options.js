@@ -40,7 +40,7 @@ function modeCard(currency,provider,mode,row,{externalRequired=false,label,help}
   const key=`${currency}_${provider}_${mode}`,enabled=Boolean(row?.active);
   const mappingField=externalRequired
     ? `<div class="formGroup"><label>${provider==='stripe'?'Stripe Price ID':'PayPal Billing Plan ID'}</label><input class="input" name="${key}_external_id" value="${esc(row?.external_id||'')}" placeholder="${provider==='stripe'?'price_...':'P-...'}"><div class="inlineHelp">Verified against the ${currency} amount, recurrence and active state before becoming sellable.</div></div>`
-    : `<div class="securityNote standalone">One-time PayPal orders use the CAPTaINFiN ${currency} amount directly; no Billing Plan ID is needed.</div>`;
+    : `<div class="securityNote standalone">One-time PayPal orders use the CAPTAiNFiN ${currency} amount directly; no Billing Plan ID is needed.</div>`;
   return `<div class="serverCard"><div class="serverTop"><div><strong>${esc(label)}</strong><div class="subText">${esc(help)}</div></div><span class="pill ${enabled?'good':''}">${enabled?'Enabled':'Off'}</span></div><label class="toggleRow"><input type="checkbox" name="${key}_enabled" ${enabled?'checked':''}><span>Offer this ${currency} option</span></label>${mappingField}${verification(row)}</div>`;
 }
 
