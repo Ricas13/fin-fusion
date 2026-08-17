@@ -43,10 +43,11 @@ async function server(slug, name) {
             code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
             allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,
             allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,
-            reseller_credit_cost,reseller_trial_credit_cost,library_access_mode,library_names,placement_strategy
+            library_access_mode,library_names,placement_strategy
         ) VALUES(
-            'portable-monthly','Portable Monthly','Portable plan','both','month',30,600,'USD',3,
-            TRUE,FALSE,TRUE,TRUE,FALSE,TRUE,FALSE,TRUE,'premium',TRUE,TRUE,10,1,NULL,'include',ARRAY['Movies','TV'],'weighted'
+            'portable-monthly','Portable Monthly','Portable plan','direct','month',30,600,'USD',3,
+            TRUE,FALSE,TRUE,TRUE,FALSE,TRUE,FALSE,TRUE,'premium',TRUE,TRUE,10,
+            'include',ARRAY['Movies','TV'],'weighted'
         ) RETURNING id
     `);
     const planId = plan.rows[0].id;
@@ -58,8 +59,11 @@ async function server(slug, name) {
     assert(Array.isArray(exported.configuration.resellerTiers), 'v2 export must include reseller tiers');
     assert(Array.isArray(exported.configuration.directPaymentMappings), 'v2 export must include direct payment mappings');
     assert(Array.isArray(exported.configuration.automation), 'v2 export must include automation settings');
-    assert.strictEqual(exported.configuration.plans.length, 1);
-    assert.strictEqual(exported.configuration.plans[0].serverPool[0].serverSlug, 'premium-a');
+    const freePlan = exported.configuration.plans.find(item => item.is_free_tier === true || item.code === 'free-access');
+    const portablePlan = exported.configuration.plans.find(item => item.code === 'portable-monthly');
+    assert(freePlan, 'portable configuration must include the permanent free tier');
+    assert(portablePlan, 'portable configuration must include the configured customer plan');
+    assert.strictEqual(portablePlan.serverPool[0].serverSlug, 'premium-a');
     assert.strictEqual(exported.configuration.settings.platform.requireAdminTwoFactor, undefined, 'security policy must not be portable');
 
     // Keep a regression for the documented V1 compatibility path as V2 becomes canonical.
@@ -76,28 +80,29 @@ async function server(slug, name) {
     assert.strictEqual(transfer.parseDocument(legacy).version, 1, 'v1 portable documents must remain importable');
 
     const serialized = JSON.stringify(exported);
-    for (const forbidden of ['test-not-a-real-secret', 'base_url', 'api_key_encrypted', 'provider_subscription_id']) {
+    for (const forbidden of ['test-not-a-real-secret', 'base_url', 'api_key_encrypted', 'provider_subscription_id', 'reseller_credit_cost', 'reseller_trial_credit_cost']) {
         assert(!serialized.includes(forbidden), `portable export leaked forbidden field/value ${forbidden}`);
     }
 
     exported.configuration.settings.platform.siteName = 'Portable Target';
-    exported.configuration.plans[0].name = 'Portable Monthly Updated';
-    exported.configuration.plans[0].price_minor = 750;
-    exported.configuration.plans[0].serverPool = [{ serverSlug: 'premium-b', weight: 250 }];
+    portablePlan.name = 'Portable Monthly Updated';
+    portablePlan.price_minor = 750;
+    portablePlan.serverPool = [{ serverSlug: 'premium-b', weight: 250 }];
     exported.configuration.plans.push({
-        ...exported.configuration.plans[0],
+        ...portablePlan,
         code: 'portable-trial',
         name: 'Portable Trial',
         billing_interval: 'trial',
         duration_days: 1,
         price_minor: 0,
         streams: 1,
+        is_free_tier: false,
         serverPool: [{ serverSlug: 'not-present', weight: 100 }]
     });
 
     const preview = await transfer.previewImport(exported);
     assert.strictEqual(preview.summary.plansCreate, 1);
-    assert.strictEqual(preview.summary.plansUpdate, 1);
+    assert(preview.summary.plansUpdate >= 1, 'portable customer plan update must be detected');
     assert.strictEqual(preview.summary.serverPoolsApply, 1);
     assert.strictEqual(preview.summary.serverPoolsSkipped, 1);
     assert(preview.warnings.some(w => w.includes('not-present')));
@@ -124,6 +129,12 @@ async function server(slug, name) {
     `);
     assert.strictEqual(Number(trialPool.rows[0].count), 0, 'missing target server must not be guessed');
 
+    const permanentFree = await query("SELECT is_free_tier,active,visible,price_minor FROM plans WHERE is_free_tier=TRUE");
+    assert.strictEqual(permanentFree.rowCount, 1, 'configuration import must preserve exactly one permanent free tier');
+    assert.strictEqual(permanentFree.rows[0].active, true);
+    assert.strictEqual(permanentFree.rows[0].visible, true);
+    assert.strictEqual(Number(permanentFree.rows[0].price_minor), 0);
+
     const platform = await query("SELECT setting_value FROM platform_settings WHERE setting_key='platform'");
     assert.strictEqual(platform.rows[0].setting_value.siteName, 'Portable Target');
     assert.strictEqual(platform.rows[0].setting_value.requireAdminTwoFactor, true, 'non-portable security setting must survive merge import');
@@ -135,7 +146,8 @@ async function server(slug, name) {
     assert(Object.prototype.hasOwnProperty.call(audit.rows[0].metadata, 'automationJobs'), 'atomic import audit must include the v2 preview summary');
 
     const bad = JSON.parse(JSON.stringify(exported));
-    bad.configuration.plans[0].streams = 0;
+    const badPortable = bad.configuration.plans.find(item => item.code === 'portable-monthly');
+    badPortable.streams = 0;
     assert.throws(() => transfer.parseDocument(bad), /between 1 and 50/);
 
     console.log('configuration transfer smoke: ok');
