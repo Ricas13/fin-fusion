@@ -1,0 +1,24 @@
+name: Free Access Customer Portal Temp
+on:
+  push:
+    branches: [fix/free-access-provisioning-customer-portal]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/free-access-provisioning-customer-portal
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 scripts/apply-free-access-customer-portal-patch.py
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/jellyfin/provisioning-core.js src/platform/customer-dashboard.js src/platform/router-core.js views/customer/dashboard.ejs public/css/customer-portal.css scripts/free-access-customer-portal-smoke.js package.json
+          git commit -m "Fix free access provisioning and redesign customer portal"
+          git push origin HEAD:fix/free-access-provisioning-customer-portal
