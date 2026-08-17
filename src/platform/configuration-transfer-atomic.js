@@ -4,242 +4,82 @@ const { transaction } = require('../db');
 
 const V1_SETTINGS = new Set(['platform','storefront','storefront_features','admin_defaults','referral_program']);
 const V2_SETTINGS = new Set(['reseller_defaults_v2','trial_free_policy','commerce_policy','jellyfin_drift_policy','payment_risk_policy']);
-
 function lower(value) { return String(value || '').toLowerCase(); }
 
 async function applySettings(client, settings, actorUserId) {
     let count = 0;
     for (const [key, value] of Object.entries(settings || {})) {
         if (!V1_SETTINGS.has(key) && !V2_SETTINGS.has(key)) continue;
-        await client.query(`
-            INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at)
-            VALUES($1,$2::jsonb,$3,NOW())
-            ON CONFLICT(setting_key) DO UPDATE SET
-                setting_value=CASE
-                    WHEN $1='storefront_features' THEN EXCLUDED.setting_value
-                    ELSE CASE
-                        WHEN jsonb_typeof(platform_settings.setting_value)='object'
-                         AND jsonb_typeof(EXCLUDED.setting_value)='object'
-                        THEN platform_settings.setting_value||EXCLUDED.setting_value
-                        ELSE EXCLUDED.setting_value
-                    END
-                END,
-                updated_by=EXCLUDED.updated_by,
-                updated_at=NOW()
-        `, [key, JSON.stringify(value), actorUserId || null]);
+        await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,$2::jsonb,$3,NOW()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=CASE WHEN $1='storefront_features' THEN EXCLUDED.setting_value ELSE CASE WHEN jsonb_typeof(platform_settings.setting_value)='object' AND jsonb_typeof(EXCLUDED.setting_value)='object' THEN platform_settings.setting_value||EXCLUDED.setting_value ELSE EXCLUDED.setting_value END END,updated_by=EXCLUDED.updated_by,updated_at=NOW()`, [key, JSON.stringify(value), actorUserId || null]);
         count++;
     }
     return count;
 }
-
 async function applyNotifications(client, items, actorUserId) {
     let count = 0;
     for (const item of items || []) {
-        await client.query(`
-            INSERT INTO notification_preferences(event_type,telegram_enabled,email_enabled,updated_by,updated_at)
-            VALUES($1,$2,$3,$4,NOW())
-            ON CONFLICT(event_type) DO UPDATE SET
-                telegram_enabled=EXCLUDED.telegram_enabled,
-                email_enabled=EXCLUDED.email_enabled,
-                updated_by=EXCLUDED.updated_by,
-                updated_at=NOW()
-        `, [item.event_type, item.telegram_enabled, item.email_enabled, actorUserId || null]);
+        await client.query(`INSERT INTO notification_preferences(event_type,telegram_enabled,email_enabled,updated_by,updated_at) VALUES($1,$2,$3,$4,NOW()) ON CONFLICT(event_type) DO UPDATE SET telegram_enabled=EXCLUDED.telegram_enabled,email_enabled=EXCLUDED.email_enabled,updated_by=EXCLUDED.updated_by,updated_at=NOW()`, [item.event_type, item.telegram_enabled, item.email_enabled, actorUserId || null]);
         count++;
     }
     return count;
 }
-
 async function applyPlans(client, plans) {
     const serverRows = await client.query('SELECT id,slug FROM jellyfin_servers');
     const serverMap = new Map(serverRows.rows.map(row => [lower(row.slug), row]));
-    let poolsApplied = 0;
-    let poolsSkipped = 0;
-
+    let poolsApplied = 0, poolsSkipped = 0;
     for (const plan of plans || []) {
-        const saved = await client.query(`
-            INSERT INTO plans(
-                code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
-                allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,
-                allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,
-                library_access_mode,library_names,placement_strategy,created_at,updated_at
-            ) VALUES(
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::text[],$24,NOW(),NOW()
-            )
-            ON CONFLICT(code) DO UPDATE SET
-                name=EXCLUDED.name,description=EXCLUDED.description,audience=EXCLUDED.audience,
-                billing_interval=EXCLUDED.billing_interval,duration_days=EXCLUDED.duration_days,
-                price_minor=EXCLUDED.price_minor,currency=EXCLUDED.currency,streams=EXCLUDED.streams,
-                allow_downloads=EXCLUDED.allow_downloads,allow_video_transcoding=EXCLUDED.allow_video_transcoding,
-                allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,allow_live_tv=EXCLUDED.allow_live_tv,
-                allow_live_tv_management=EXCLUDED.allow_live_tv_management,allow_4k=EXCLUDED.allow_4k,
-                allow_remuxing=EXCLUDED.allow_remuxing,allow_remote_access=EXCLUDED.allow_remote_access,
-                server_class=EXCLUDED.server_class,active=EXCLUDED.active,visible=EXCLUDED.visible,
-                sort_order=EXCLUDED.sort_order,library_access_mode=EXCLUDED.library_access_mode,
-                library_names=EXCLUDED.library_names,placement_strategy=EXCLUDED.placement_strategy,updated_at=NOW()
-            RETURNING id
-        `, [
-            plan.code,plan.name,plan.description,plan.audience,plan.billing_interval,plan.duration_days,
-            plan.price_minor,plan.currency,plan.streams,plan.allow_downloads,plan.allow_video_transcoding,
-            plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,plan.allow_4k,
-            plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,plan.sort_order,
-            plan.library_access_mode,plan.library_names,plan.placement_strategy
-        ]);
+        const saved = await client.query(`INSERT INTO plans(code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,library_access_mode,library_names,placement_strategy,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::text[],$24,NOW(),NOW()) ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,audience=EXCLUDED.audience,billing_interval=EXCLUDED.billing_interval,duration_days=EXCLUDED.duration_days,price_minor=EXCLUDED.price_minor,currency=EXCLUDED.currency,streams=EXCLUDED.streams,allow_downloads=EXCLUDED.allow_downloads,allow_video_transcoding=EXCLUDED.allow_video_transcoding,allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,allow_live_tv=EXCLUDED.allow_live_tv,allow_live_tv_management=EXCLUDED.allow_live_tv_management,allow_4k=EXCLUDED.allow_4k,allow_remuxing=EXCLUDED.allow_remuxing,allow_remote_access=EXCLUDED.allow_remote_access,server_class=EXCLUDED.server_class,active=EXCLUDED.active,visible=EXCLUDED.visible,sort_order=EXCLUDED.sort_order,library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,placement_strategy=EXCLUDED.placement_strategy,updated_at=NOW() RETURNING id`, [plan.code,plan.name,plan.description,plan.audience,plan.billing_interval,plan.duration_days,plan.price_minor,plan.currency,plan.streams,plan.allow_downloads,plan.allow_video_transcoding,plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,plan.allow_4k,plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,plan.sort_order,plan.library_access_mode,plan.library_names,plan.placement_strategy]);
         const planId = saved.rows[0].id;
-
-        if (Object.prototype.hasOwnProperty.call(plan, 'request_movie_quota_limit')) {
-            await client.query(`
-                UPDATE plans SET
-                    request_movie_quota_limit=$2,request_movie_quota_days=$3,
-                    request_tv_quota_limit=$4,request_tv_quota_days=$5,updated_at=NOW()
-                WHERE id=$1
-            `, [planId,plan.request_movie_quota_limit,plan.request_movie_quota_days,plan.request_tv_quota_limit,plan.request_tv_quota_days]);
-        }
-
-        const pool = Array.isArray(plan.serverPool) ? plan.serverPool : [];
-        const missing = pool.some(entry => !serverMap.has(lower(entry.serverSlug)));
-        if (missing) {
-            poolsSkipped++;
-            continue;
-        }
+        if (Object.prototype.hasOwnProperty.call(plan, 'request_movie_quota_limit')) await client.query(`UPDATE plans SET request_movie_quota_limit=$2,request_movie_quota_days=$3,request_tv_quota_limit=$4,request_tv_quota_days=$5,updated_at=NOW() WHERE id=$1`, [planId,plan.request_movie_quota_limit,plan.request_movie_quota_days,plan.request_tv_quota_limit,plan.request_tv_quota_days]);
+        const pool = Array.isArray(plan.serverPool) ? plan.serverPool : [], missing = pool.some(entry => !serverMap.has(lower(entry.serverSlug)));
+        if (missing) { poolsSkipped++; continue; }
         await client.query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [planId]);
-        for (const entry of pool) {
-            const server = serverMap.get(lower(entry.serverSlug));
-            await client.query(`
-                INSERT INTO plan_server_eligibility(plan_id,server_id,weight,created_at,updated_at)
-                VALUES($1,$2,$3,NOW(),NOW())
-            `, [planId, server.id, entry.weight]);
-        }
+        for (const entry of pool) { const server=serverMap.get(lower(entry.serverSlug)); await client.query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight,created_at,updated_at) VALUES($1,$2,$3,NOW(),NOW())`, [planId, server.id, entry.weight]); }
         poolsApplied++;
     }
     return { poolsApplied, poolsSkipped };
 }
-
-async function applyV2Extras(client, configuration) {
-    let tierMappingsApplied = 0;
-    let tierRulesApplied = 0;
-    let directMappingsApplied = 0;
-    let automationApplied = 0;
-    let skippedReferences = 0;
-    let mappingsPendingVerification = 0;
-
-    for (const tier of configuration.resellerTiers || []) {
-        await client.query(`
-            INSERT INTO reseller_tiers(
-                code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active,
-                server_class,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,
-                allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,
-                library_access_mode,library_names,placement_strategy,capacity_limit
-            ) VALUES(
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::text[],$23,$24
-            )
-            ON CONFLICT(code) DO UPDATE SET
-                name=EXCLUDED.name,description=EXCLUDED.description,monthly_price_minor=EXCLUDED.monthly_price_minor,
-                currency=EXCLUDED.currency,seat_limit=EXCLUDED.seat_limit,grace_days=EXCLUDED.grace_days,
-                sort_order=EXCLUDED.sort_order,visible=EXCLUDED.visible,
-                active=CASE WHEN reseller_tiers.active=FALSE AND EXCLUDED.active=TRUE THEN TRUE ELSE reseller_tiers.active END,
-                server_class=EXCLUDED.server_class,streams=EXCLUDED.streams,
-                allow_downloads=EXCLUDED.allow_downloads,allow_video_transcoding=EXCLUDED.allow_video_transcoding,
-                allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,allow_remuxing=EXCLUDED.allow_remuxing,
-                allow_live_tv=EXCLUDED.allow_live_tv,allow_live_tv_management=EXCLUDED.allow_live_tv_management,
-                allow_remote_access=EXCLUDED.allow_remote_access,allow_4k=EXCLUDED.allow_4k,
-                library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,
-                placement_strategy=EXCLUDED.placement_strategy,capacity_limit=EXCLUDED.capacity_limit,updated_at=NOW()
-        `, [
-            tier.code,tier.name,tier.description,tier.monthly_price_minor,tier.currency,tier.seat_limit,tier.grace_days,
-            tier.sort_order,tier.visible,tier.active,tier.server_class,tier.streams,tier.allow_downloads,
-            tier.allow_video_transcoding,tier.allow_audio_transcoding,tier.allow_remuxing,tier.allow_live_tv,
-            tier.allow_live_tv_management,tier.allow_remote_access,tier.allow_4k,tier.library_access_mode,
-            tier.library_names,tier.placement_strategy,tier.capacity_limit
-        ]);
-    }
-
-    const tierRows = await client.query('SELECT id,code FROM reseller_tiers');
-    const planRows = await client.query('SELECT id,code FROM plans');
-    const tierByCode = new Map(tierRows.rows.map(row => [lower(row.code), row]));
-    const planByCode = new Map(planRows.rows.map(row => [lower(row.code), row]));
-
-    for (const tier of configuration.resellerTiers || []) {
-        const savedTier = tierByCode.get(lower(tier.code));
-        if (!savedTier) continue;
-        for (const mapping of tier.providerMappings || []) {
-            await client.query(`
-                INSERT INTO reseller_tier_provider_prices(tier_id,provider,external_id,active)
-                VALUES($1,$2,$3,FALSE)
-                ON CONFLICT(tier_id,provider) DO UPDATE SET external_id=EXCLUDED.external_id,active=FALSE,updated_at=NOW()
-            `, [savedTier.id,mapping.provider,mapping.externalId]);
-            tierMappingsApplied++;
-            if (mapping.active) mappingsPendingVerification++;
+async function applyTierPrices(client,savedTier,tier){
+    const prices=Array.isArray(tier.prices)&&tier.prices.length?tier.prices:[{currency:tier.currency,price_minor:tier.monthly_price_minor,active:true,is_default:true,providerMappings:tier.providerMappings||[]}];
+    await client.query(`UPDATE reseller_tier_prices SET active=FALSE,is_default=FALSE,updated_at=NOW() WHERE tier_id=$1`,[savedTier.id]);
+    let mappingsApplied=0,pending=0,pricesApplied=0;
+    for(const price of prices){
+        const saved=(await client.query(`INSERT INTO reseller_tier_prices(tier_id,currency,price_minor,active,is_default) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tier_id,currency) DO UPDATE SET price_minor=EXCLUDED.price_minor,active=EXCLUDED.active,is_default=EXCLUDED.is_default,updated_at=NOW() RETURNING id`,[savedTier.id,price.currency,price.price_minor,price.active!==false,price.is_default===true])).rows[0];
+        pricesApplied++;
+        const importedProviders=new Set();
+        for(const mapping of price.providerMappings||[]){
+            importedProviders.add(mapping.provider);
+            await client.query(`INSERT INTO reseller_tier_provider_prices(tier_id,tier_price_id,provider,external_id,active,verification_status,verification_error) VALUES($1,$2,$3,$4,FALSE,'unverified','Imported configuration requires remote verification') ON CONFLICT(tier_price_id,provider) DO UPDATE SET tier_id=EXCLUDED.tier_id,external_id=EXCLUDED.external_id,active=FALSE,verification_status='unverified',verification_error='Imported configuration requires remote verification',verified_at=NULL,updated_at=NOW()`,[savedTier.id,saved.id,mapping.provider,mapping.externalId]);
+            mappingsApplied++; if(mapping.active)pending++;
         }
-        for (const rule of tier.planRules || []) {
-            const savedPlan = planByCode.get(lower(rule.planCode));
-            if (!savedPlan) {
-                skippedReferences++;
-                continue;
-            }
-            await client.query(`
-                INSERT INTO reseller_tier_plan_rules(tier_id,plan_id,active,allow_customer,allow_owner,allow_trial,created_at)
-                VALUES($1,$2,$3,$4,$5,$6,NOW())
-                ON CONFLICT(tier_id,plan_id) DO UPDATE SET
-                    active=EXCLUDED.active,allow_customer=EXCLUDED.allow_customer,
-                    allow_owner=EXCLUDED.allow_owner,allow_trial=EXCLUDED.allow_trial,updated_at=NOW()
-            `, [savedTier.id,savedPlan.id,rule.active,rule.allowCustomer,rule.allowOwner,rule.allowTrial]);
-            tierRulesApplied++;
-        }
+        await client.query(`UPDATE reseller_tier_provider_prices SET active=FALSE WHERE tier_price_id=$1 AND NOT(provider=ANY($2::text[]))`,[saved.id,[...importedProviders]]);
     }
-
-    for (const mapping of configuration.directPaymentMappings || []) {
-        const savedPlan = planByCode.get(lower(mapping.planCode));
-        if (!savedPlan) {
-            skippedReferences++;
-            continue;
-        }
-        const metadata = {
-            ...(mapping.metadata || {}),
-            importedRequestedActive:Boolean(mapping.active),
-            requiresRemoteVerification:true
-        };
-        await client.query(`
-            INSERT INTO plan_provider_prices(plan_id,provider,external_id,checkout_mode,active,metadata)
-            VALUES($1,$2,$3,$4,FALSE,$5::jsonb)
-            ON CONFLICT(plan_id,provider,checkout_mode) DO UPDATE SET
-                external_id=EXCLUDED.external_id,active=FALSE,metadata=EXCLUDED.metadata,updated_at=NOW()
-        `, [savedPlan.id,mapping.provider,mapping.externalId,mapping.checkoutMode,JSON.stringify(metadata)]);
-        directMappingsApplied++;
-        if (mapping.active) mappingsPendingVerification++;
-    }
-
-    for (const job of configuration.automation || []) {
-        const result = await client.query(`
-            UPDATE automation_job_state SET
-                enabled=$2,interval_seconds=$3,
-                next_run_at=CASE WHEN $2 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,
-                force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,
-                updated_at=NOW()
-            WHERE job_key=$1
-        `, [job.jobKey,job.enabled,job.intervalSeconds]);
-        if (result.rowCount) automationApplied++;
-        else skippedReferences++;
-    }
-
-    return {tierMappingsApplied,tierRulesApplied,directMappingsApplied,automationApplied,skippedReferences,mappingsPendingVerification};
+    const defaultPrice=(await client.query(`SELECT currency,price_minor FROM reseller_tier_prices WHERE tier_id=$1 AND is_default=TRUE LIMIT 1`,[savedTier.id])).rows[0];
+    if(defaultPrice)await client.query(`UPDATE reseller_tiers SET currency=$2,monthly_price_minor=$3,updated_at=NOW() WHERE id=$1`,[savedTier.id,defaultPrice.currency,defaultPrice.price_minor]);
+    return{mappingsApplied,pending,pricesApplied};
 }
-
+async function applyV2Extras(client, configuration) {
+    let tierMappingsApplied=0,tierPricesApplied=0,tierRulesApplied=0,directMappingsApplied=0,automationApplied=0,skippedReferences=0,mappingsPendingVerification=0;
+    for (const tier of configuration.resellerTiers || []) {
+        await client.query(`INSERT INTO reseller_tiers(code,name,description,monthly_price_minor,currency,seat_limit,grace_days,sort_order,visible,active,server_class,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_remuxing,allow_live_tv,allow_live_tv_management,allow_remote_access,allow_4k,library_access_mode,library_names,placement_strategy,capacity_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::text[],$23,$24) ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,monthly_price_minor=EXCLUDED.monthly_price_minor,currency=EXCLUDED.currency,seat_limit=EXCLUDED.seat_limit,grace_days=EXCLUDED.grace_days,sort_order=EXCLUDED.sort_order,visible=EXCLUDED.visible,active=CASE WHEN reseller_tiers.active=FALSE AND EXCLUDED.active=TRUE THEN TRUE ELSE reseller_tiers.active END,server_class=EXCLUDED.server_class,streams=EXCLUDED.streams,allow_downloads=EXCLUDED.allow_downloads,allow_video_transcoding=EXCLUDED.allow_video_transcoding,allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,allow_remuxing=EXCLUDED.allow_remuxing,allow_live_tv=EXCLUDED.allow_live_tv,allow_live_tv_management=EXCLUDED.allow_live_tv_management,allow_remote_access=EXCLUDED.allow_remote_access,allow_4k=EXCLUDED.allow_4k,library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,placement_strategy=EXCLUDED.placement_strategy,capacity_limit=EXCLUDED.capacity_limit,updated_at=NOW()`, [tier.code,tier.name,tier.description,tier.monthly_price_minor,tier.currency,tier.seat_limit,tier.grace_days,tier.sort_order,tier.visible,tier.active,tier.server_class,tier.streams,tier.allow_downloads,tier.allow_video_transcoding,tier.allow_audio_transcoding,tier.allow_remuxing,tier.allow_live_tv,tier.allow_live_tv_management,tier.allow_remote_access,tier.allow_4k,tier.library_access_mode,tier.library_names,tier.placement_strategy,tier.capacity_limit]);
+    }
+    const tierRows=await client.query('SELECT id,code FROM reseller_tiers'),planRows=await client.query('SELECT id,code FROM plans'),tierByCode=new Map(tierRows.rows.map(row=>[lower(row.code),row])),planByCode=new Map(planRows.rows.map(row=>[lower(row.code),row]));
+    for (const tier of configuration.resellerTiers || []) {
+        const savedTier=tierByCode.get(lower(tier.code)); if(!savedTier)continue;
+        const priceResult=await applyTierPrices(client,savedTier,tier);tierMappingsApplied+=priceResult.mappingsApplied;tierPricesApplied+=priceResult.pricesApplied;mappingsPendingVerification+=priceResult.pending;
+        for (const rule of tier.planRules || []) { const savedPlan=planByCode.get(lower(rule.planCode)); if(!savedPlan){skippedReferences++;continue;} await client.query(`INSERT INTO reseller_tier_plan_rules(tier_id,plan_id,active,allow_customer,allow_owner,allow_trial,created_at) VALUES($1,$2,$3,$4,$5,$6,NOW()) ON CONFLICT(tier_id,plan_id) DO UPDATE SET active=EXCLUDED.active,allow_customer=EXCLUDED.allow_customer,allow_owner=EXCLUDED.allow_owner,allow_trial=EXCLUDED.allow_trial,updated_at=NOW()`,[savedTier.id,savedPlan.id,rule.active,rule.allowCustomer,rule.allowOwner,rule.allowTrial]);tierRulesApplied++; }
+    }
+    for (const mapping of configuration.directPaymentMappings || []) { const savedPlan=planByCode.get(lower(mapping.planCode));if(!savedPlan){skippedReferences++;continue;}const metadata={...(mapping.metadata||{}),importedRequestedActive:Boolean(mapping.active),requiresRemoteVerification:true};await client.query(`INSERT INTO plan_provider_prices(plan_id,provider,external_id,checkout_mode,active,metadata) VALUES($1,$2,$3,$4,FALSE,$5::jsonb) ON CONFLICT(plan_id,provider,checkout_mode) DO UPDATE SET external_id=EXCLUDED.external_id,active=FALSE,metadata=EXCLUDED.metadata,updated_at=NOW()`,[savedPlan.id,mapping.provider,mapping.externalId,mapping.checkoutMode,JSON.stringify(metadata)]);directMappingsApplied++;if(mapping.active)mappingsPendingVerification++; }
+    for (const job of configuration.automation || []) { const result=await client.query(`UPDATE automation_job_state SET enabled=$2,interval_seconds=$3,next_run_at=CASE WHEN $2 THEN LEAST(COALESCE(next_run_at,NOW()),NOW()) ELSE next_run_at END,force_run_requested=CASE WHEN $2 THEN force_run_requested ELSE FALSE END,updated_at=NOW() WHERE job_key=$1`,[job.jobKey,job.enabled,job.intervalSeconds]);if(result.rowCount)automationApplied++;else skippedReferences++; }
+    return {tierMappingsApplied,tierPricesApplied,tierRulesApplied,directMappingsApplied,automationApplied,skippedReferences,mappingsPendingVerification};
+}
 async function applyImport(document,{actorUserId=null,digest=null,previewSummary={}}={}) {
     if (!document || !document.configuration) throw new Error('Normalized configuration document is required.');
     return transaction(async client => {
-        const settingsApplied = await applySettings(client,document.configuration.settings,actorUserId);
-        const notificationsApplied = await applyNotifications(client,document.configuration.notifications,actorUserId);
-        const plansResult = await applyPlans(client,document.configuration.plans);
-        const extras = document.version===2
-            ? await applyV2Extras(client,document.configuration)
-            : {tierMappingsApplied:0,tierRulesApplied:0,directMappingsApplied:0,automationApplied:0,skippedReferences:0,mappingsPendingVerification:0};
-        const summary = {...previewSummary,settingsApplied,notificationsApplied,...plansResult,...extras,atomic:true,version:document.version};
-        await client.query(`
-            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-            VALUES($1,'admin.configuration.import.atomic','configuration',$2,$3::jsonb)
-        `, [actorUserId||null,digest||'unknown',JSON.stringify(summary)]);
+        const settingsApplied=await applySettings(client,document.configuration.settings,actorUserId),notificationsApplied=await applyNotifications(client,document.configuration.notifications,actorUserId),plansResult=await applyPlans(client,document.configuration.plans),extras=document.version===2?await applyV2Extras(client,document.configuration):{tierMappingsApplied:0,tierPricesApplied:0,tierRulesApplied:0,directMappingsApplied:0,automationApplied:0,skippedReferences:0,mappingsPendingVerification:0};
+        const summary={...previewSummary,settingsApplied,notificationsApplied,...plansResult,...extras,atomic:true,version:document.version};
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.configuration.import.atomic','configuration',$2,$3::jsonb)`,[actorUserId||null,digest||'unknown',JSON.stringify(summary)]);
         return summary;
     });
 }
-
-module.exports={applyImport,applySettings,applyNotifications,applyPlans,applyV2Extras};
+module.exports={applyImport,applySettings,applyNotifications,applyPlans,applyV2Extras,applyTierPrices};
