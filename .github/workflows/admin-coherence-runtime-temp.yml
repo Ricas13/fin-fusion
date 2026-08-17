@@ -1,0 +1,22 @@
+name: Admin Coherence Runtime Temp
+on:
+  push:
+    branches: [fix/admin-coherence-user-overrides-plan-ux]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/admin-coherence-user-overrides-plan-ux
+          fetch-depth: 0
+      - run: python3 scripts/fix-admin-coherence-runtime.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/platform/admin-customer-360.js src/platform/admin-attention.js public/js/admin-attention-bulk.js scripts/admin-coherence-user-overrides-smoke.js
+          git commit -m "Fix admin override runtime and CSP-safe bulk selection"
+          git push origin HEAD:fix/admin-coherence-user-overrides-plan-ux
