@@ -46,11 +46,16 @@ async function applyGrace(saved){if(!saved?.id)return saved;const row=await curr
 async function setProviderSubscription(input){return applyGrace(await core.setProviderSubscription(input))}
 async function updateKnownProviderSubscription(input){return applyGrace(await core.updateKnownProviderSubscription(input))}
 async function createManualTierSubscription(input){const row=await core.createManualTierSubscription(input);await reconcileEstate(input.resellerId);return currentSubscription(input.resellerId)||row}
+async function applyCheckoutPriceSnapshot(intent,{providerSubscriptionId=null}={}){
+  if(!intent||intent.scope!=='reseller')return null;const snap=intent.commercial_snapshot||{};if(snap.kind!=='reseller_tier'||!snap.tierPriceId)return null;
+  const params=[intent.reseller_id,intent.tier_id,intent.provider,snap.tierPriceId,snap.tierName||null,Number(snap.priceMinor),String(snap.currency||'').trim(),Number(snap.seatLimit),providerSubscriptionId||null];
+  const r=await query(`UPDATE reseller_subscriptions SET tier_price_id_snapshot=$4,tier_name_snapshot=COALESCE($5,tier_name_snapshot),monthly_price_minor_snapshot=$6,currency_snapshot=$7,seat_limit_snapshot=$8,updated_at=NOW() WHERE id=(SELECT id FROM reseller_subscriptions WHERE reseller_id=$1 AND tier_id=$2 AND source=$3 AND ($9::text IS NULL OR provider_subscription_id=$9) ORDER BY created_at DESC LIMIT 1) RETURNING *`,params);return r.rows[0]||null;
+}
 async function getResellerCustomer(resellerId,customerId){const r=await query(`SELECT * FROM customers WHERE id=$1 AND reseller_id=$2 AND reseller_managed=TRUE`,[customerId,resellerId]);return r.rows[0]||null}
 
 module.exports={
   cleanText:core.cleanText,moneyMinor:core.moneyMinor,cleanCurrency:core.cleanCurrency,randomCheckoutKey:core.randomCheckoutKey,
   listTiers,tierById,tierByCode,currentSubscription,resellerEntitlement,seatUsage,assertSeatAvailable,
   suspendEstate,restoreEstate,reconcileEstate,reconcileAllEstates,setProviderSubscription,updateKnownProviderSubscription,
-  createManualTierSubscription,providerMapping:tierPricing.providerMapping,getResellerCustomer,statusIsEntitled:entitled
+  createManualTierSubscription,applyCheckoutPriceSnapshot,providerMapping:tierPricing.providerMapping,getResellerCustomer,statusIsEntitled:entitled
 };
