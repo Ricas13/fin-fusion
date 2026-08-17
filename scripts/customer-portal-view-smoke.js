@@ -43,7 +43,9 @@ const ejs = require('ejs');
     assert.match(html, /Current plan/);
     assert.match(html, /Library visibility/);
     assert.match(html, /Plans/);
-    assert.match(html, /Refer a friend/);
+    assert.match(html, /Affiliate programme/);
+    assert.match(html, /\/account\/affiliate/);
+    assert.doesNotMatch(html, /Refer a friend/, 'Legacy referral-days copy must not reappear.');
     assert.match(html, /customer-portal\.css/);
     assert(!html.includes('Invalid Date'), 'Portal must never render Invalid Date');
     assert.match(html, /Open Jellyfin/);
@@ -59,7 +61,7 @@ const ejs = require('ejs');
     });
     assert.match(empty, /do not currently have an active subscription/i);
     assert.match(empty, /No plans are currently available/i);
-    assert.doesNotMatch(empty, /Refer a friend/, 'Disabled referral module must not appear in the portal');
+    assert.doesNotMatch(empty, /Your affiliate code/, 'Disabled affiliate module must not appear in the portal');
 
     console.log('customer portal view smoke: ok');
 })().catch(error => {
