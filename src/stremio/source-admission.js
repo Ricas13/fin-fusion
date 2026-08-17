@@ -28,7 +28,8 @@ async function admit(entitlement,rawLease,sourceId,itemId){
   });
 }
 async function touch(entitlementId,rawLease){let leaseHash;try{leaseHash=hash(rawLease);}catch{return false;}const r=await query(`UPDATE stremio_source_playback_leases SET last_seen_at=NOW(),expires_at=NOW()+($3||' seconds')::interval WHERE lease_hash=$1 AND entitlement_id=$2 AND expires_at>NOW()-INTERVAL '30 seconds'`,[leaseHash,entitlementId,String(LEASE_SECONDS)]);return r.rowCount>0;}
+async function release(entitlementId,rawLease){let leaseHash;try{leaseHash=hash(rawLease);}catch{return false;}const r=await query(`DELETE FROM stremio_source_playback_leases WHERE lease_hash=$1 AND entitlement_id=$2`,[leaseHash,entitlementId]);return r.rowCount>0;}
 async function active(entitlementId){const r=await query(`SELECT COUNT(*)::int n FROM stremio_source_playback_leases WHERE entitlement_id=$1 AND expires_at>NOW()`,[entitlementId]);return Number(r.rows[0]?.n||0);}
 async function cleanup(limit=1000){const r=await query(`DELETE FROM stremio_source_playback_leases WHERE lease_hash IN (SELECT lease_hash FROM stremio_source_playback_leases WHERE expires_at<=NOW() ORDER BY expires_at LIMIT $1)`,[Math.max(1,Math.min(10000,Number(limit)||1000))]);return r.rowCount;}
 
-module.exports={LEASE_SECONDS,issue,hash,admit,touch,active,cleanup};
+module.exports={LEASE_SECONDS,issue,hash,admit,touch,release,active,cleanup};
