@@ -230,6 +230,7 @@ async function resolveLibraryAccessForServer(serverId, unrestricted, visibleName
 
 async function selectServerForPlan(plan) {
     const isTrial = plan.billing_interval === 'trial';
+    const accessKind = isTrial ? 'trial' : (Number(plan.price_minor || 0) === 0 ? 'free' : 'paid');
     const planId = planServers.planId(plan);
     if (!planId) throw new Error('Plan id is required for server placement');
     const healthMode = await planServers.placementHealthMode();
@@ -264,11 +265,11 @@ async function selectServerForPlan(plan) {
               ($4='healthy_or_degraded' AND js.health_status IN ('healthy','degraded')) OR
               ($4='fail_open' AND js.health_status<>'offline')
           )
-          AND CASE WHEN $2::boolean THEN js.trial_enabled ELSE js.paid_enabled END
+          AND CASE WHEN $2::text='trial' THEN js.trial_enabled WHEN $2::text='free' THEN TRUE ELSE js.paid_enabled END
           AND (NOT r.restricted OR pse.server_id IS NOT NULL)
         GROUP BY js.id,pse.weight,r.restricted
         HAVING js.max_users IS NULL OR js.max_users=0 OR COUNT(DISTINCT ja.id) < js.max_users
-    `, [plan.server_class, isTrial, planId, healthMode]);
+    `, [plan.server_class, accessKind, planId, healthMode]);
 
     return placement.selectServer(result.rows, plan.placement_strategy);
 }
