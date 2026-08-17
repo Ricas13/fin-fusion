@@ -13,7 +13,9 @@ function target(message='',error=''){const q=new URLSearchParams();if(message)q.
 function queueIndex(){return query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested) VALUES('stremio_media_index',TRUE,21600,NOW(),TRUE) ON CONFLICT(job_key) DO UPDATE SET enabled=TRUE,next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()`);}
 
 function createAdminStremioRouter(){
-  const router=express.Router();router.use('/admin/settings/stremio',gate,noStore);
+  const router=express.Router();
+  router.get('/admin/stremio-sources',gate,noStore,(_req,res)=>res.redirect(302,'/admin/servers/stremio'));
+  router.use('/admin/settings/stremio',gate,noStore);
   router.get('/admin/settings/stremio',(_req,res)=>res.redirect(302,'/admin/servers/stremio'));
   router.post('/admin/settings/stremio/runtime',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled)==='1';await stremioRuntime.setEnabled(enabled,req.session.authUserId);return res.redirect(target(enabled?'Stremio runtime enabled.':'Stremio runtime disabled.'));}catch(error){return res.redirect(target('',error.message));}});
   router.post('/admin/settings/stremio/index',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await queueIndex();return res.redirect(target('Stremio indexing queued.'));}catch(error){return res.redirect(target('',error.message));}});
