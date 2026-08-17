@@ -49,10 +49,6 @@ const SETTING_HELP=Object.freeze({
     'Support email':'Public contact address customers can use when they need help.',
     'Announcement':'Optional short message displayed prominently on the storefront.',
     'Features · one per line':'Each non-empty line becomes one public feature item.',
-    'Default customer plan':'Preselected plan for manual administrator customer workflows; it does not change existing customers.',
-    'Default server class':'Initial server class used when an administrator creates or configures server placement manually.',
-    'Default server priority':'Lower-priority values are considered after higher-priority placement choices according to the placement policy.',
-    'Default max users · 0 = unlimited':'Convenience capacity default for newly configured servers. Zero means no explicit user-count ceiling.',
     'Site name':'The customer-facing platform name used in page titles, emails and portal branding.',
     'Default monthly tier':'Tier preselected when a new reseller is created. Existing resellers are not changed.',
     'Default ledger currency':'Three-letter currency used for new reseller downstream sales ledgers.',
@@ -149,12 +145,16 @@ function backupTabsFor(options={}){
 function notificationTestScriptFor(options={}){
     return String(options.title||'')==='My notification preferences'?'<script src="/js/admin-personal-notification-tests.js" defer></script>':'';
 }
+function planWorkflowScriptFor(options={}){
+    return String(options.active||'')==='plans'?'<script src="/js/admin-plan-workflow.js" defer></script>':'';
+}
 
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+backupTabsFor(options);
-    options={...options,body:workflow+String(options.body||'')+notificationTestScriptFor(options)};
+    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options);
+    options={...options,body:workflow+String(options.body||'')+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,backupTabsFor,notificationTestScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,SETTING_HELP};

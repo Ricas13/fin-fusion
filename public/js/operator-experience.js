@@ -51,10 +51,11 @@
     }
   }
 
-  // Plans are one commercial catalogue even though reseller tiers retain a
-  // separate persistence model underneath. Service type tabs keep the operator
-  // mental model unified and the create form can progressively expose fields.
-  if(path.startsWith('/admin/plans') || path.startsWith('/admin/reseller-tiers')){
+  // Catalogue filters belong only to catalogue browsing / new-product selection.
+  // Individual plan settings render their own service-aware management workflow
+  // server-side, so adding this row there created competing navigation systems.
+  const planCataloguePage=path==='/admin/plans' || path==='/admin/plans/new' || path.startsWith('/admin/reseller-tiers');
+  if(planCataloguePage){
     const type=new URLSearchParams(location.search).get('type')||'';
     const active=path.startsWith('/admin/reseller-tiers')?'/admin/reseller-tiers':type?`/admin/plans?type=${encodeURIComponent(type)}`:'/admin/plans';
     insertAfterHeader(tabs([

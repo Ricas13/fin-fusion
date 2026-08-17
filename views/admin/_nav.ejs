@@ -1,10 +1,14 @@
 <%
   // Compatibility partial for EJS pages. Navigation data comes from the same
   // src/platform/admin-nav.js registry used by admin-html, exposed through
-  // application locals so the two renderers cannot drift again.
+  // application locals so old EJS screens cannot invent a second hierarchy.
   const navGroups = Array.isArray(adminNavGroups) ? adminNavGroups : [];
-  const currentKey = typeof adminNavActiveKey === 'function' ? adminNavActiveKey(activeNav) : (activeNav || 'dashboard');
-  const currentGroup = navGroups.find(group => group.pages.some(page => page[0] === currentKey)) || navGroups[0];
+  const activeKeyFn = typeof adminNavActiveKey === 'function' ? adminNavActiveKey : value => value || 'dashboard';
+  const groupForFn = typeof adminNavGroupFor === 'function' ? adminNavGroupFor : key => navGroups.find(group => group.pages.some(page => page[0] === key)) || navGroups[0];
+  const sidebarKeyFn = typeof adminNavSidebarKey === 'function' ? adminNavSidebarKey : key => key;
+  const currentKey = activeKeyFn(activeNav);
+  const currentGroup = groupForFn(currentKey);
+  const currentSidebarKey = sidebarKeyFn(currentKey);
   const iconPaths = {
     dashboard:'<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/><path d="M9.5 20v-6h5v6"/>',
     people:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -15,7 +19,14 @@
   };
 %>
 <header class="adminHeader">
-  <div class="headerMain"><a class="brandBlock" href="/admin"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandText"><%= siteName %></div><div class="brandSub">Administration</div></div></a></div>
-  <div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration"><% navGroups.forEach(function(group){ const isActive=currentGroup&&currentGroup.key===group.key; %><div class="navGroup"><a class="adminTab <%= isActive?'active':'' %>" href="<%= group.pages[0][2] %>"><span class="navIcon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><%- iconPaths[group.key]||iconPaths.dashboard %></svg></span><span><%= group.label %></span></a><% if(isActive && group.pages.length>1){ %><div class="adminSubTabs"><% group.pages.forEach(function(child){ %><a class="adminSubTab <%= currentKey===child[0]?'active':'' %>" href="<%= child[2] %>"><%= child[1] %></a><% }); %></div><% } %></div><% }); %></nav></div>
-  <div class="headerActions"><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open Store</a><a class="headerButton" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a><a class="headerButton" href="/admin/security">Security</a><a class="headerButton danger" href="/logout">Sign out</a></div>
+  <div class="headerMain"><a class="brandBlock" href="/admin"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandText"><%= siteName %></div><div class="brandSub">Control centre</div></div></a></div>
+  <div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration">
+    <% navGroups.forEach(function(group){ const isActive=currentGroup&&currentGroup.key===group.key; %>
+      <details class="navSection <%= isActive?'active':'' %>" data-nav-section="<%= group.key %>" <%= isActive?'open':'' %>>
+        <summary class="navSectionLabel"><a class="navSectionHome" href="<%= group.pages[0][2] %>"><span class="navIcon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><%- iconPaths[group.key]||iconPaths.dashboard %></svg></span><span><%= group.label %></span></a><span class="navChevron" aria-hidden="true">⌄</span></summary>
+        <div class="navSectionPages"><% group.pages.forEach(function(child){ %><a class="adminTab <%= currentSidebarKey===child[0]?'active':'' %>" href="<%= child[2] %>" title="Open <%= child[1] %>"><%= child[1] %></a><% }); %></div>
+      </details>
+    <% }); %>
+  </nav></div>
+  <div class="headerActions"><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a><a class="headerButton" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a><a class="headerButton" href="/admin/security">Security</a><a class="headerButton danger" href="/logout">Sign out</a></div>
 </header>
