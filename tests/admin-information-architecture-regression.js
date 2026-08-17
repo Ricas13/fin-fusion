@@ -19,6 +19,8 @@ async function signIn(page){
 }
 async function labels(locator){return (await locator.allTextContents()).map(x=>x.trim()).filter(Boolean);}
 async function screenshot(page,name){await page.screenshot({path:path.join(OUT,`ia-${name}.png`),fullPage:true});}
+async function submit(form,button){await Promise.all([form.page().waitForNavigation({waitUntil:'networkidle',timeout:15000}),form.getByRole('button',{name:button}).click()]);}
+async function operationsValue(pool){return (await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='operations_v1'`)).rows[0]?.setting_value||{};}
 
 async function main(){
   const pool=new Pool({connectionString:process.env.DATABASE_URL});
@@ -54,21 +56,44 @@ async function main(){
     const fleetText=await page.locator('body').innerText();
     assert(/Placement health policy/.test(fleetText)&&/Placement dry run/.test(fleetText),'Fleet operations is missing placement controls');
     assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Fleet operations still contains unrelated platform/security settings');
+    const fleetForm=page.locator('form[action="/admin/servers/operations/placement-policy"]');
+    assert.equal(await fleetForm.count(),1,'Fleet placement policy form is missing');
+    await submit(fleetForm,'Save placement policy');
+    assert(/Placement health policy saved/.test(await page.locator('body').innerText()),'Fleet placement policy did not round-trip');
     await screenshot(page,'fleet-operations');
 
+    const beforeGeneral=await operationsValue(pool);
     await page.goto(`${BASE}/admin/settings?section=general`,{waitUntil:'networkidle'});
-    const general=await page.locator('body').innerText();
+    let general=await page.locator('body').innerText();
     assert(/Public URL & regional format/.test(general)&&/Public base URL/.test(general)&&/Timezone/.test(general),'General does not own public URL/locale/timezone');
     assert(!/Default customer plan/.test(general)&&!/Default server priority/.test(general),'Dead workflow defaults returned to General');
     const settingsLinks=await labels(page.locator('[data-nav-section="settings"] .adminTab'));
     assert(!settingsLinks.includes('Operations'),'Retired Operations remains visible under Settings');
+    const generalForm=page.locator('form[action="/admin/settings/runtime-general"]');
+    assert.equal(await generalForm.count(),1,'General runtime form is missing');
+    await submit(generalForm,'Save URL & regional settings');
+    general=await page.locator('body').innerText();
+    assert(/Public URL and regional settings saved/.test(general),'General runtime settings did not round-trip');
+    const afterGeneral=await operationsValue(pool);
+    assert.equal(afterGeneral.placementHealthMode,beforeGeneral.placementHealthMode,'Saving General reset the fleet placement-health policy');
+    assert.equal(afterGeneral.staffSessionHours,beforeGeneral.staffSessionHours,'Saving General reset a Security setting');
     await screenshot(page,'settings-general');
 
+    const beforeSecurity=await operationsValue(pool);
     await page.goto(`${BASE}/admin/settings?section=security`,{waitUntil:'networkidle'});
-    const security=await page.locator('body').innerText();
+    let security=await page.locator('body').innerText();
     assert(/Session & registration limits/.test(security)&&/Staff\/reseller session lifetime/.test(security),'Security does not own session limits');
     assert(/Trusted outbound hostnames/.test(security)&&/Trusted private CIDRs/.test(security),'Security does not own private integration trust');
     assert(/Abandoned activation cleanup/.test(security),'Security does not own abandoned-registration cleanup');
+    const securityForm=page.locator('form[action="/admin/settings/runtime-security"]');
+    assert.equal(await securityForm.count(),1,'Security runtime form is missing');
+    await submit(securityForm,'Save session & network security');
+    security=await page.locator('body').innerText();
+    assert(/Session and network security settings saved/.test(security),'Security runtime settings did not round-trip');
+    const afterSecurity=await operationsValue(pool);
+    assert.equal(afterSecurity.publicBaseUrl,beforeSecurity.publicBaseUrl,'Saving Security reset General public URL');
+    assert.equal(afterSecurity.locale,beforeSecurity.locale,'Saving Security reset General locale');
+    assert.equal(afterSecurity.placementHealthMode,beforeSecurity.placementHealthMode,'Saving Security reset Fleet placement policy');
     await screenshot(page,'settings-security');
 
     console.log('admin information architecture regression: ok');
