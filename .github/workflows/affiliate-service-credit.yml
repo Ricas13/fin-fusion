@@ -1,0 +1,42 @@
+name: Affiliate Service Credit
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion_affiliate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion_affiliate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion_affiliate
+      NODE_ENV: test
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply migrations
+        run: npm run db:migrate
+      - name: Verify no-subscription affiliate earn and credit activation
+        run: node scripts/affiliate-service-credit-smoke.js
