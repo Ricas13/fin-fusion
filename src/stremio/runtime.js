@@ -8,6 +8,7 @@ const entitlements=require('./entitlements');
 const jellyfin=require('./jellyfin-runtime');
 const sourcePool=require('./source-pool');
 const sourcePlayback=require('./source-playback');
+const sourceAdmission=require('./source-admission');
 const runtimeSettings=require('./runtime-settings');
 
 const manifestLimit=routeRateLimit.middleware({scope:'stremio-manifest',max:60,windowSeconds:60});
@@ -20,6 +21,7 @@ function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.1.0',name:'CAP
 async function publicOrigin(req){try{const cfg=await operations.get();if(cfg.publicBaseUrl)return String(cfg.publicBaseUrl).replace(/\/$/,'');}catch(_error){}const host=req.get('x-forwarded-host')||req.get('host');const proto=req.get('x-forwarded-proto')||req.protocol||'https';return `${proto}://${host}`.replace(/\/$/,'');}
 function copyPlaybackHeaders(upstream,res){for(const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified','cache-control']){const value=upstream.headers?.[name];if(value!=null)res.setHeader(name,value);}}
 async function hasExplicitSources(entitlement){const r=await query(`SELECT EXISTS(SELECT 1 FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE WHERE s.id=$1) yes`,[entitlement.subscription_id]);return r.rows[0]?.yes===true;}
+function attachLease(streams,lease){return streams.map(stream=>{try{const url=new URL(stream.url);if(/\/stremio\/[^/]+\/source\//.test(url.pathname))url.searchParams.set('lease',lease);return{...stream,url:url.toString()};}catch{return stream;}});}
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
@@ -34,26 +36,32 @@ function createStremioRuntimeRouter(){
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const type=String(req.params.type||''),videoId=String(req.params.videoId||''),proxyBase=await publicOrigin(req),explicit=await hasExplicitSources(e);
       let streams=await sourcePool.streamsFor(e,type,videoId,{proxyBase,installToken:req.params.token});
-      if(!streams.length&&!explicit)streams=await jellyfin.streamsFor(e,type,videoId);
+      if(streams.length)streams=attachLease(streams,sourceAdmission.issue());
+      else if(!explicit)streams=await jellyfin.streamsFor(e,type,videoId);
       await entitlements.markUse(e.id,'stream');return res.json({streams});
     }catch(_error){console.error('Stremio stream request failed.');return res.json({streams:[]});}
   });
   router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
-    if(!enabled())return res.status(404).end();let opened;
+    if(!enabled())return res.status(404).end();let opened,heartbeat=null,e=null,lease=String(req.query.lease||'');
     try{
-      const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).end();
+      e=await entitlements.findByInstallToken(req.params.token);if(!e||!lease)return res.status(404).end();
       const source=await sourcePool.authorizedSourceForEntitlement(e,req.params.sourceId);if(!source)return res.status(404).end();
+      const admission=await sourceAdmission.admit(e,lease,source.id,req.params.itemId);
+      if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}
       opened=await sourcePlayback.open(source,req.params.itemId,req.params.mediaSourceId,req.get('range')||'');
       const upstream=opened.response,status=Number(upstream.statusCode||502);
-      if(status===401||status===403){await query(`UPDATE stremio_sources SET auth_state='reconnect_required',last_error='Jellyfin authentication expired. Reconnect this Stremio source.',updated_at=NOW() WHERE id=$1`,[source.id]).catch(()=>{});upstream.destroy();return res.status(502).end();}
-      if(status<200||status>=400){upstream.destroy();return res.status(502).end();}
+      if(status===401||status===403){await sourceAdmission.release(e.id,lease).catch(()=>{});await query(`UPDATE stremio_sources SET auth_state='reconnect_required',last_error='Jellyfin authentication expired. Reconnect this Stremio source.',updated_at=NOW() WHERE id=$1`,[source.id]).catch(()=>{});upstream.destroy();return res.status(502).end();}
+      if(status<200||status>=400){await sourceAdmission.release(e.id,lease).catch(()=>{});upstream.destroy();return res.status(502).end();}
       copyPlaybackHeaders(upstream,res);res.status(status);
-      upstream.on('error',()=>{if(!res.headersSent)res.status(502);res.end();});
-      res.on('close',()=>{if(!res.writableEnded)opened?.request?.destroy();});
+      heartbeat=setInterval(()=>sourceAdmission.touch(e.id,lease).catch(()=>{}),60000);heartbeat.unref?.();
+      const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};
+      upstream.on('error',()=>{stop();if(!res.headersSent)res.status(502);res.end();});
+      upstream.on('end',stop);
+      res.on('close',()=>{stop();if(!res.writableEnded)opened?.request?.destroy();});
       upstream.pipe(res);
-    }catch(_error){opened?.request?.destroy();if(!res.headersSent)return res.status(502).end();return res.end();}
+    }catch(_error){if(heartbeat)clearInterval(heartbeat);opened?.request?.destroy();if(e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});if(!res.headersSent)return res.status(502).end();return res.end();}
   });
   return router;
 }
 
-module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,createStremioRuntimeRouter};
+module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,createStremioRuntimeRouter};
