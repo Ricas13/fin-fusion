@@ -14,7 +14,7 @@ const runtime=require('../src/stremio/runtime');
 const jellyfin=require('../src/stremio/jellyfin-runtime');
 
 assert.strictEqual(runtime.available,true,'runtime must advertise its implementation');
-assert.strictEqual(foundation.runtimeReady(),true,'runtime must require both enablement and a valid dedicated token key');
+assert.strictEqual(foundation.runtimeReady(),true,'legacy runtime enablement must remain compatible until a browser-managed setting is loaded');
 const validKey=process.env.STREMIO_JELLYFIN_TOKEN_KEY;
 process.env.STREMIO_JELLYFIN_TOKEN_KEY='too-short';
 assert.strictEqual(foundation.runtimeReady(),false,'invalid Stremio purpose key must fail closed');
@@ -58,12 +58,17 @@ assert(!/SELECT[^;]+api_key_encrypted[^;]+stremio_entitlements/is.test(entitleme
 const application=read('src/application.js');
 const platformRouter=read('src/platform/router.js');
 const runtimeSource=read('src/stremio/runtime.js');
+const runtimeSettingsSource=read('src/stremio/runtime-settings.js');
 assert(application.includes('createStremioRuntimeRouter'),'application must own the Stremio protocol surface');
 assert(application.indexOf('app.use(createStremioRuntimeRouter())')<application.indexOf('app.use(sessionMiddleware())'),'Stremio bearer routes must be mounted before staff/customer sessions');
 assert(!platformRouter.includes('createStremioRuntimeRouter'),'platform router must not duplicate the top-level Stremio protocol owner');
 assert(runtimeSource.includes("Access-Control-Allow-Origin','*'"),'Stremio protocol endpoints need CORS');
 assert(runtimeSource.includes("Cross-Origin-Resource-Policy','cross-origin'"),'global same-origin CORP must be relaxed only on the addon surface');
 assert(runtimeSource.includes("scope:'stremio-stream'"),'stream endpoint must be protected by the shared persistent rate limiter');
+assert(runtimeSource.includes("require('./runtime-settings')")&&runtimeSource.includes('runtimeSettings.ensureLoaded()'),'protocol must use the persistent runtime setting before serving bearer requests');
+assert(!runtimeSource.includes('process.env.STREMIO_RUNTIME_ENABLED'),'protocol endpoints must not be controlled directly by the deployment flag');
+assert(runtimeSettingsSource.includes("KEY='stremio_runtime_v1'")&&runtimeSettingsSource.includes('legacyEnabled'),'runtime settings must be database-backed while preserving upgrade compatibility');
+assert(runtimeSettingsSource.includes('STREMIO_JELLYFIN_TOKEN_KEY')&&runtimeSettingsSource.includes('readyIndexes<1'),'browser enablement must retain secret-key and media-index safety gates');
 const streamSource=read('src/stremio/jellyfin-runtime.js');
 for(const fragment of ['proxyHeaders','notWebReady','active_playback_sessions'])assert(streamSource.includes(fragment),`stream runtime missing ${fragment}`);
 assert(streamSource.includes('mediaIndex.lookup'),'stream runtime must resolve titles through the local media-index boundary');

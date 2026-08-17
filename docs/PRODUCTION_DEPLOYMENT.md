@@ -78,13 +78,13 @@ If Node is not installed on the host, the full production deployment script auto
 
 ## Stremio rollout
 
-A normal portal deployment should leave:
+A normal deployment should configure the dedicated `STREMIO_JELLYFIN_TOKEN_KEY` as a 32-byte deployment secret, but **runtime enable/disable is managed in the browser** from **Settings → Integrations → Stremio**.
 
-```text
-STREMIO_RUNTIME_ENABLED=false
-```
+After deployment, keep the browser runtime switch disabled while preparing Stremio. Configure an eligible delivery server and build a ready media index, then use **Enable runtime** on the Stremio settings page. The server refuses that enable action unless the secret key, at least one healthy eligible delivery server and at least one ready non-empty media index are all present.
 
-until the Stremio delivery server, media index and dedicated `STREMIO_JELLYFIN_TOKEN_KEY` are verified. Deploying the code does not by itself make Stremio products sale-ready.
+`STREMIO_RUNTIME_ENABLED` remains only as an upgrade-compatibility fallback for older installations. If an existing deployment inherited `true`, the Stremio page offers **Manage runtime here**; saving there moves runtime ownership into CAPTaINFiN platform settings. New deployments should not use the environment flag as their normal runtime control.
+
+Deploying the code does not by itself make Stremio products sale-ready.
 
 ## Verification
 

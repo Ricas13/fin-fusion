@@ -3,6 +3,7 @@
 const crypto=require('crypto');
 const path=require('path');
 const {keyFromEnv}=require('../security/purpose-crypto');
+const runtimeSettings=require('./runtime-settings');
 
 const SERVICE_TYPES=Object.freeze(['jellyfin','stremio','bundle']);
 
@@ -14,7 +15,7 @@ function normalizeServiceType(value){
 function allowsJellyfin(value){const type=normalizeServiceType(value);return type==='jellyfin'||type==='bundle';}
 function allowsStremio(value){const type=normalizeServiceType(value);return type==='stremio'||type==='bundle';}
 function runtimeReady(){
-    if(String(process.env.STREMIO_RUNTIME_ENABLED||'').toLowerCase()!=='true')return false;
+    if(!runtimeSettings.enabled())return false;
     try{
         keyFromEnv('STREMIO_JELLYFIN_TOKEN_KEY');
         const runtime=require('./runtime');

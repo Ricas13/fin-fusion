@@ -2,7 +2,7 @@
 
 CAPTaINFiN can provide a **stream-only Stremio addon** backed by a Jellyfin server. Stremio keeps its normal metadata/catalogue experience; CAPTaINFiN supplies the eligible streams for a movie or episode.
 
-> Before selling Stremio access, an administrator must complete the runtime setup and test the intended Stremio clients. The runtime deliberately stays fail-closed until it is enabled, its dedicated encryption key is configured, an eligible Jellyfin server is available and the media index is ready.
+> Before selling Stremio access, an administrator must complete the runtime setup and test the intended Stremio clients. The runtime deliberately stays fail-closed until it is enabled in the admin UI, its dedicated encryption key is configured, an eligible Jellyfin server is available and the media index is ready.
 
 ## Customer setup
 
@@ -72,16 +72,17 @@ Unavailable information is left out rather than invented.
 
 ## Administrator setup
 
-Open **Settings → Integrations → Stremio**.
+Open **Settings → Integrations → Stremio** and follow the setup guide in order.
 
-1. Configure a unique `STREMIO_JELLYFIN_TOKEN_KEY` and keep `STREMIO_RUNTIME_ENABLED=false` during preparation.
-2. Give each delivery Jellyfin server a public playback URL.
-3. Enable the intended Jellyfin server(s) for Stremio.
-4. Queue the media-index refresh and wait for **Ready** with a sensible IMDb title count.
-5. Enable the Stremio runtime.
-6. Change or create the intended plan delivery type: **Stremio** or **Bundle**.
-7. Use a controlled test customer to create an installation and test movie + episode playback on every client you intend to advertise.
-8. Only then make the Stremio plan publicly visible.
+1. Configure a unique `STREMIO_JELLYFIN_TOKEN_KEY` as a deployment secret. This is the only Stremio runtime secret that remains outside the browser; CAPTaINFiN displays only whether the key is valid and never exposes its value.
+2. Give each delivery Jellyfin server a public playback URL and enable the intended server(s) for Stremio.
+3. Queue the media-index refresh and wait for at least one eligible server index to show **Ready** with a sensible IMDb title count.
+4. Use **Enable runtime** on the Stremio settings page. CAPTaINFiN refuses to enable it until the key, an eligible healthy server and a ready non-empty index are all present.
+5. Create the intended plan delivery type: **Stremio** or **Bundle**.
+6. Use a controlled test customer to create an installation and test movie + episode playback on every client you intend to advertise.
+7. Only then make the Stremio plan publicly visible.
+
+The runtime switch is stored in CAPTaINFiN platform settings and can be disabled immediately from the same page. Runtime changes are audited. `STREMIO_RUNTIME_ENABLED` is retained only as an upgrade compatibility fallback for older deployments that have not yet saved the browser-managed setting.
 
 Existing subscription service snapshots are not silently rewritten when an administrator changes a plan's delivery type.
 
