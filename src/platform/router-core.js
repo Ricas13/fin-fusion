@@ -317,7 +317,7 @@ function createRouter() {
     router.post('/account/claim-free/:planCode', requireCustomer, async (req, res) => {
         try {
             await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
-            return res.redirect('/account?message=' + encodeURIComponent('Free access is active.'));
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. We are preparing your Jellyfin account now.'));
         } catch (error) {
             return res.redirect('/account?error=' + encodeURIComponent(error.message));
         }
