@@ -9,22 +9,16 @@ function requireText(file,needle,message){if(!read(file).includes(needle))throw 
 function forbid(file,pattern,message){if(pattern.test(read(file)))throw new Error(`${message} (${file})`)}
 
 const liveResellerFiles=[
-  'src/platform/admin-reseller-tiers.js',
-  'src/platform/admin-resellers.js',
-  'src/platform/admin-reseller-360.js',
-  'src/platform/admin-reseller-settings.js',
-  'src/platform/reseller-service-aware-portal.js',
-  'src/platform/reseller-business.js',
-  'src/platform/reseller-export.js',
-  'src/platform/admin-commerce.js'
+  'src/platform/admin-reseller-tiers.js','src/platform/admin-reseller-tiers-v2.js','src/platform/admin-resellers.js',
+  'src/platform/admin-reseller-360.js','src/platform/admin-reseller-settings.js','src/platform/reseller-service-aware-portal.js',
+  'src/platform/reseller-business.js','src/platform/reseller-export.js','src/platform/admin-commerce.js','src/resellers/monthly.js'
 ];
-
 for(const file of liveResellerFiles){
-  forbid(file,/Reseller credit cost|resellerCreditCost|reseller_trial_credit_cost|reseller_credit_cost/i,'Live reseller UI must not expose legacy credit pricing');
-  forbid(file,/Credit balance|Trial credits|Legacy credits|Record sale|Revenue MTD|ledger currency|allowed payment methods/i,'Live reseller UI must not expose the retired reseller sales/ledger model');
+  forbid(file,/Reseller credit cost|resellerCreditCost|reseller_trial_credit_cost|reseller_credit_cost/i,'Live reseller UI/runtime must not expose legacy credit pricing');
+  forbid(file,/Credit balance|Trial credits|Legacy credits|Record sale|Revenue MTD|ledger currency|allowed payment methods/i,'Live reseller UI/runtime must not expose the retired reseller sales/ledger model');
   forbid(file,/\breseller_sales\b/i,'Live reseller runtime must not read or write downstream reseller sales');
 }
-
+forbid('src/resellers/monthly.js',/createOrRenewCustomer|salesAnalytics|reseller_sale|amountMinor|paymentMethod/i,'Canonical reseller runtime must expose only monthly seat-licensing operations');
 forbid('src/platform/router.js',/createResellerLedgerRouter|reseller-ledger|\/reseller\/sales[^\n]*\/reseller\/ledger/i,'Shared router must not mount the retired reseller ledger');
 forbid('src/platform/admin-plan-payment-options.js',/resellerCreditCost|resellerTrialCreditCost|reseller_credit_cost|reseller_trial_credit_cost/i,'Customer-plan commerce must not contain reseller credit pricing');
 forbid('src/platform/admin-plans.js',/resellerCreditCost|resellerTrialCreditCost|reseller_credit_cost|reseller_trial_credit_cost|Legacy reseller credits/i,'Customer-plan administration/export must not contain reseller credit pricing');
@@ -41,6 +35,15 @@ requireText('src/payments/reseller-billing.js','managedUsers.seatUsage','Tier do
 requireText('src/platform/admin-reseller-tiers.js','Concurrent streams per managed user','Reseller plan setup must expose per-user stream policy');
 requireText('src/platform/admin-reseller-tiers.js','Jellyfin user policy','Reseller plan setup must use the familiar Jellyfin policy section');
 requireText('src/platform/admin-reseller-tiers.js','Jellyfin libraries','Reseller plan setup must expose library selection');
+
+requireText('db/migrations/086_reseller_multicurrency_prices.sql','CREATE TABLE IF NOT EXISTS reseller_tier_prices','Reseller plans must support several currency prices');
+requireText('db/migrations/086_reseller_multicurrency_prices.sql','tier_price_id','Reseller provider mappings must belong to a concrete currency price');
+requireText('src/payments/reseller-tier-pricing.js','resolvePrice','Reseller checkout needs a currency-aware price resolver');
+requireText('src/platform/admin-reseller-tiers-v2.js','GBP monthly price','Reseller plan setup must expose familiar multicurrency price variants');
+requireText('src/platform/admin-reseller-tiers-v2.js','USD monthly price','Reseller plan setup must expose USD pricing');
+requireText('src/platform/admin-reseller-tiers-v2.js','EUR monthly price','Reseller plan setup must expose EUR pricing');
+requireText('src/platform/admin-reseller-tiers-v2.js','Product','Reseller setup must follow the common product/pricing/policy flow');
+requireText('src/platform/admin-reseller-tiers-v2.js','Storefront','Reseller setup must finish with storefront controls');
 
 requireText('db/migrations/085_canonical_free_tier.sql','is_free_tier BOOLEAN NOT NULL DEFAULT FALSE','A canonical free-tier marker must exist');
 requireText('db/migrations/085_canonical_free_tier.sql','plans_single_free_tier_idx','Exactly one canonical free tier must be enforced');
