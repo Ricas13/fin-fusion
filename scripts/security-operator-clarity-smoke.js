@@ -58,12 +58,18 @@ assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP st
 
 const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
 assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
-const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js');
+const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
-for(const label of ['General','My Profile','Notifications','Branding','Integrations','Security','Operations','Backups & Transfer'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
-for(const obsolete of ['Commerce','Advanced','My Notifications'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
+for(const label of ['General','My Profile','Notifications','Branding','Integrations','Security','Backups & Transfer'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
+for(const obsolete of ['Commerce','Advanced','My Notifications','Operations'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
+const serversGroup=navModel.groups.find(group=>group.key==='servers');
+assert(Boolean(serversGroup),'Servers navigation group must exist.');
+assert(serversGroup.pages.some(page=>page[1]==='Fleet operations'&&page[2]==='/admin/servers/operations'),'Server drain/placement controls must be discoverable as Servers → Fleet operations.');
+assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
+assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');
+assert(/Placement health policy/.test(fleet)&&/Placement dry run/.test(fleet)&&/placement-mode/.test(fleet),'Fleet operations must own placement-health, drain/maintenance and simulation controls.');
 assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verification/.test(settings),'Security settings must expose staged-registration state.');
 
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;
