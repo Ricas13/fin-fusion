@@ -29,7 +29,21 @@ CREATE TABLE IF NOT EXISTS affiliate_credit_ledger (
 CREATE INDEX IF NOT EXISTS affiliate_credit_ledger_customer_currency_idx ON affiliate_credit_ledger(customer_id,currency,state,created_at);
 CREATE INDEX IF NOT EXISTS affiliate_credit_ledger_referral_idx ON affiliate_credit_ledger(referral_redemption_id);
 ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_source_check;
-ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_source_check CHECK (source IN ('manual','reseller_credit','stripe','paypal','migration','admin_grant','service_credit'));
+-- Service credit is additive. Preserve every subscription source supported by
+-- pre-affiliate production releases so upgrades do not fail while rewriting the
+-- CHECK constraint before migration 090 can run.
+ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_source_check CHECK (source IN (
+ 'manual',
+ 'reseller_credit',
+ 'stripe',
+ 'paypal',
+ 'migration',
+ 'free_claim',
+ 'reseller_sale',
+ 'admin_grant',
+ 'invitation',
+ 'service_credit'
+));
 INSERT INTO platform_settings(setting_key,setting_value)
 VALUES ('affiliate_program','{"enabled":false,"rewardPercent":15,"qualificationDelayDays":14,"refundWindowDays":14}'::jsonb)
 ON CONFLICT (setting_key) DO NOTHING;
