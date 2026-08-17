@@ -1,6 +1,6 @@
 BEGIN;
 
--- A Jellyfin account created by CAPTAiNFiN starts with an intentionally
+-- A Jellyfin account created by CAPTaINFiN starts with an intentionally
 -- unexposed random bootstrap password. Mark only those freshly provisioned
 -- identities so the customer must choose their own password before the portal
 -- treats setup as complete. Existing/imported Jellyfin accounts insert with
