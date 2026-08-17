@@ -45,6 +45,13 @@ async function authenticate(baseUrl,username,password){
   return{baseUrl:base,publicUrl:base,jellyfinUserId,jellyfinUsername,accessToken:token};
 }
 function sourceToken(source){return decryptToken(source.access_token_encrypted);}
+async function logout(source){
+  if(!source?.access_token_encrypted)return false;
+  try{
+    const response=await outbound.safeFetch(sourceUrl(source.base_url,'/Sessions/Logout'),{purpose:`Stremio source logout on ${source.name||'Jellyfin'}`,method:'POST',timeoutMs:8000,maxBytes:1024*1024,headers:{Authorization:jellyfinAuthHeader(sourceToken(source)),Accept:'application/json'}});
+    return response.ok;
+  }catch(_error){return false;}
+}
 async function request(source,endpoint,{method='GET',body=null,timeoutMs=15000,maxBytes=8*1024*1024}={}){
   const url=sourceUrl(source.base_url,endpoint),headers={Authorization:jellyfinAuthHeader(sourceToken(source)),Accept:'application/json'};
   if(body!=null)headers['Content-Type']='application/json';
@@ -59,4 +66,4 @@ async function discoverLibraries(source){
   return (Array.isArray(payload.Items)?payload.Items:[]).map(item=>({libraryId:String(item.Id||''),name:String(item.Name||'Library'),collectionType:String(item.CollectionType||'').toLowerCase()})).filter(item=>item.libraryId&&supported.has(item.collectionType));
 }
 
-module.exports={TOKEN_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,jellyfinAuthHeader,encryptToken,decryptToken,authenticate,sourceToken,request,discoverLibraries};
+module.exports={TOKEN_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,jellyfinAuthHeader,encryptToken,decryptToken,authenticate,sourceToken,logout,request,discoverLibraries};
