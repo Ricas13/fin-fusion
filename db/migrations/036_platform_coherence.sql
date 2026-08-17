@@ -158,7 +158,7 @@ ALTER TABLE reseller_sales
     CHECK (sale_type IN ('sale','refund','void','adjustment','complimentary','owner_access'));
 CREATE INDEX IF NOT EXISTS reseller_sales_parent_idx ON reseller_sales(parent_sale_id);
 
--- A local intent exists before leaving CAPTAiNFiN for a hosted checkout.  The
+-- A local intent exists before leaving CAPTaINFiN for a hosted checkout.  The
 -- partial unique indexes make double-clicks/concurrent requests idempotent.
 CREATE TABLE IF NOT EXISTS billing_checkout_intents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
