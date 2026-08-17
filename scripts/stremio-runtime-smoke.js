@@ -46,10 +46,15 @@ const sourcePool=read('src/stremio/source-pool.js');
 const sourceClient=read('src/stremio/source-client.js');
 const sourceIndex=read('src/stremio/source-index.js');
 const sourcePlayback=read('src/stremio/source-playback.js');
+const sourceAdmission=read('src/stremio/source-admission.js');
 assert(runtimeSource.includes('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId'),'external source media must be served through the CAPTAiNFiN proxy boundary');
 assert(runtimeSource.includes('authorizedSourceForEntitlement'),'proxy requests must re-check the plan/customer source allow-list');
 assert(runtimeSource.includes("scope:'stremio-source-playback'"),'external playback proxy must be rate limited');
 assert(runtimeSource.includes("require('./source-playback')")&&runtimeSource.includes('sourcePlayback.open'),'runtime must use the dedicated raw source playback boundary');
+assert(runtimeSource.includes("require('./source-admission')")&&runtimeSource.includes('sourceAdmission.issue()')&&runtimeSource.includes('sourceAdmission.admit'),'external source playback must enforce a CAPTAiNFiN concurrency lease');
+assert(runtimeSource.includes("res.status(429)")&&runtimeSource.includes('sourceAdmission.touch'),'over-limit playback must fail closed and live streams must refresh their leases');
+assert(sourceAdmission.includes('FOR UPDATE')&&sourceAdmission.includes('stream_limit')&&sourceAdmission.includes('active>=limit'),'external concurrency admission must serialize per entitlement and enforce the plan stream limit');
+assert(sourceAdmission.includes('LEASE_SECONDS=150')&&sourceAdmission.includes('lease_scope_mismatch'),'playback leases must be short-lived and bound to their source/item scope');
 assert(sourcePlayback.includes('assertSafeIntegrationUrl')&&sourcePlayback.includes('client.sourceUrl'),'upstream proxy must retain outbound URL/DNS safety and Jellyfin base-path handling');
 assert(!sourcePool.includes('proxyHeaders'),'external Jellyfin user token must not be shipped to Stremio via proxyHeaders');
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'"),'external Jellyfin tokens must use the platform Jellyfin encryption key');
@@ -57,7 +62,7 @@ assert(sourceClient.includes('/Users/AuthenticateByName'),'external sources must
 assert(sourceIndex.includes('MinDateLastSaved')&&sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'source indexing must be incremental with periodic reconciliation');
 
 const migration=read('db/migrations/082_stremio_source_catalog.sql');
-for(const fragment of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources'])assert(migration.includes(fragment),`source catalog migration missing ${fragment}`);
+for(const fragment of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources','stremio_source_playback_leases'])assert(migration.includes(fragment),`source catalog migration missing ${fragment}`);
 assert(migration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must permit source-only entitlements while preserving legacy integrity');
 
 const application=read('src/application.js'),platformRouter=read('src/platform/router.js');
