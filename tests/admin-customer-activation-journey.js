@@ -49,6 +49,22 @@ async function main(){
     assert.equal(Number(dbCustomer.subscriptions),0,'Portal-only customer unexpectedly received a streaming subscription');
     assert.equal(dbCustomer.active,false,'Customer became active before using the activation link');
 
+    // Reproduce the operator action that previously failed: open Customers and
+    // click the newly-created real customer into Customer 360.
+    await admin.goto(`${BASE}/admin/users`,{waitUntil:'networkidle'});
+    const customerLink=admin.locator(`a[href="/admin/users/${dbCustomer.id}"]`).first();
+    assert.equal(await customerLink.count(),1,'Customers list does not link the real customer to Customer 360');
+    const customer360ResponsePromise=admin.waitForResponse(response=>new URL(response.url()).pathname===`/admin/users/${dbCustomer.id}`&&response.request().resourceType()==='document',{timeout:15000});
+    await customerLink.click();
+    const customer360Response=await customer360ResponsePromise;
+    await admin.waitForLoadState('networkidle');
+    assert(customer360Response.status()<400,`Clicking a customer opened Customer 360 with HTTP ${customer360Response.status()}`);
+    assert.equal(new URL(admin.url()).pathname,`/admin/users/${dbCustomer.id}`,'Customer link did not land on the Customer 360 record');
+    const customer360Text=await admin.locator('body').innerText();
+    assert(/Browser Portal Customer/.test(customer360Text),'Customer 360 did not render the selected customer identity');
+    assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
+    await shot(admin,'customer-360');
+
     // Duplicate creation must explain the problem rather than create a second identity.
     await admin.goto(`${BASE}/admin/users/new`,{waitUntil:'networkidle'});
     const duplicate=admin.locator('form[action="/admin/users/new"]');
