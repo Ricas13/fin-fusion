@@ -15,7 +15,7 @@ const forced=[
   '/admin','/admin/attention','/admin/search','/admin/events',
   '/admin/users','/admin/reseller-management','/admin/activity',
   '/admin/servers','/admin/libraries',
-  '/admin/commerce','/admin/plans','/admin/payments','/admin/discounts','/admin/referrals',
+  '/admin/commerce','/admin/plans','/admin/plans/new?type=stremio','/admin/payments','/admin/discounts','/admin/referrals',
   '/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/provisioning/migrations','/admin/provisioning/drift','/admin/automation',
   '/admin/settings?section=general','/admin/profile','/admin/profile/notifications',
   '/admin/notifications/preferences','/admin/notifications/email','/admin/notifications',
@@ -97,7 +97,7 @@ async function auditPage(page,url,{mobile=false}={}){
     if(!type.includes('text/html'))return{url,finalUrl:final.pathname+final.search,status:response.status(),contentType:type,nonHtml:true};
     const bodyText=await page.locator('body').innerText();
     if(/(^|\n)Not found(\n|$)/i.test(bodyText)||bodyText.trim()==='Not found')fail('Visible admin page rendered Not found',url);
-    if(/Request failed\.?$/im.test(bodyText))fail('Visible admin page rendered Request failed',url);
+    if(/Request failed(?:\s*\(\d+\))?\.?$/im.test(bodyText))fail('Visible admin page rendered generic Request failed',url);
     const metrics=await browserMetrics(page);
     if(metrics.h1.length!==1)fail('Admin page must have exactly one visible H1',`${url} has ${metrics.h1.length}`);
     if(metrics.horizontalOverflow>4)fail('Page has document-level horizontal overflow',`${url} overflows by ${metrics.horizontalOverflow}px at ${metrics.viewport.width}px`);
@@ -151,6 +151,59 @@ async function safeMutationAudit(page){
   assert.equal(await page.locator('form[action="/admin/profile/currency"] select[name="currency"]').inputValue(),'EUR','Saved reporting currency did not round-trip');
 }
 
+async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio Addon'}={}){
+  await form.locator('select[name="serviceType"]').selectOption('stremio');
+  await form.locator('input[name="code"]').fill(code);
+  await form.locator('input[name="name"]').fill(name);
+  await form.locator('textarea[name="description"]').fill('Access to a stremio addon');
+  await form.locator('select[name="audience"]').selectOption('direct');
+  await form.locator('input[name="price"]').fill('6');
+  await form.locator('select[name="currency"]').selectOption('USD');
+  await form.locator('input[name="capacityLimit"]').fill('20');
+  await form.locator('select[name="billingInterval"]').selectOption('month');
+  await form.locator('input[name="streams"]').fill('1');
+}
+
+async function planCreationAudit(page){
+  await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
+  let form=page.locator('form[data-plan-create-v2]');
+  assert.equal(await form.count(),1,'Canonical V2 plan creation form is not owning /admin/plans/new');
+  await fillStremioPlan(form);
+  await Promise.all([
+    page.waitForURL(url=>/\/admin\/plans\/[^/]+\/delivery$/.test(url.pathname),{timeout:15000}),
+    form.getByRole('button',{name:'Create plan'}).click()
+  ]);
+  const createdUrl=new URL(page.url());
+  assert(/\/admin\/plans\/[^/]+\/delivery$/.test(createdUrl.pathname),'Valid Stremio creation did not continue to Delivery');
+  assert(!/Request failed/i.test(await page.locator('body').innerText()),'Valid Stremio creation surfaced a generic request failure');
+
+  // Backend-only duplicate validation returns a 400 HTML form. The enhanced
+  // form layer must extract the actionable error rather than mask it as 400.
+  await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
+  form=page.locator('form[data-plan-create-v2]');
+  await fillStremioPlan(form,{name:'Duplicate Stremio Addon'});
+  await form.getByRole('button',{name:'Create plan'}).click();
+  const error=page.locator('.formSubmitError,[data-form-error]').first();
+  await error.waitFor({state:'visible',timeout:10000});
+  const message=(await error.textContent()||'').trim();
+  assert(/already exists/i.test(message),`Duplicate plan did not surface an actionable error: ${message}`);
+  assert(!/Request failed\s*\(400\)/i.test(message),'Duplicate plan error was masked as Request failed (400)');
+}
+
+async function personalNotificationsAudit(page){
+  await page.goto(`${BASE}/admin/profile/notifications`,{waitUntil:'networkidle'});
+  const activeSidebar=(await page.locator('.adminTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
+  assert.deepStrictEqual(activeSidebar,['My Profile'],`Personal notifications should belong to My Profile, got ${JSON.stringify(activeSidebar)}`);
+  const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
+  assert.equal(breadcrumb,'My Notifications','Personal notification breadcrumb has the wrong owner');
+  const body=await page.locator('body').innerText();
+  assert(!/Preferred dashboard\/reporting currency/i.test(body),'Reporting currency is duplicated on the Notifications tab');
+  assert(!/Profile & reporting/i.test(body),'Profile settings are duplicated on the Notifications tab');
+  const groups=await page.locator('details.notificationEventGroup').count();
+  assert(groups>=3,`Personal event routing is not grouped by operator job (${groups} group(s))`);
+  assert.equal(await page.locator('section').filter({hasText:'Your delivery channels'}).count(),1,'Personal delivery readiness is missing');
+}
+
 async function main(){
   const browser=await chromium.launch({headless:true});
   const inventory={generatedAt:new Date().toISOString(),desktop:[],mobile:[],summary:{}};
@@ -159,11 +212,13 @@ async function main(){
     const page=await context.newPage();
     await signIn(page);
     await safeMutationAudit(page);
+    await planCreationAudit(page);
+    await personalNotificationsAudit(page);
 
     const sidebar=await page.locator('.adminTab[href^="/admin"]').evaluateAll(nodes=>nodes.map(a=>a.getAttribute('href')));
     const queue=unique([...forced,...sidebar].map(canonical));
     const visited=new Set();
-    while(queue.length&&visited.size<140){
+    while(queue.length&&visited.size<160){
       const url=queue.shift();
       if(!url||visited.has(url))continue;
       visited.add(url);
@@ -194,7 +249,7 @@ async function main(){
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/notifications/preferences','/admin/profile','/admin/operations','/admin/backups']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/operations','/admin/backups']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
