@@ -39,9 +39,10 @@ requireText('src/platform/admin-reseller-tiers.js','Jellyfin libraries','Reselle
 requireText('db/migrations/086_reseller_multicurrency_prices.sql','CREATE TABLE IF NOT EXISTS reseller_tier_prices','Reseller plans must support several currency prices');
 requireText('db/migrations/086_reseller_multicurrency_prices.sql','tier_price_id','Reseller provider mappings must belong to a concrete currency price');
 requireText('src/payments/reseller-tier-pricing.js','resolvePrice','Reseller checkout needs a currency-aware price resolver');
-requireText('src/platform/admin-reseller-tiers-v2.js','GBP monthly price','Reseller plan setup must expose familiar multicurrency price variants');
-requireText('src/platform/admin-reseller-tiers-v2.js','USD monthly price','Reseller plan setup must expose USD pricing');
-requireText('src/platform/admin-reseller-tiers-v2.js','EUR monthly price','Reseller plan setup must expose EUR pricing');
+requireText('src/platform/admin-reseller-tiers-v2.js','Default currency','Reseller plan setup must expose a default currency selector');
+requireText('src/platform/admin-reseller-tiers-v2.js','tierPricing.CURRENCIES.map(c=>pricingRow','Reseller plan setup must render every supported currency price');
+requireText('src/platform/admin-reseller-tiers-v2.js','Stripe recurring Price ID','Reseller plan setup must expose price-scoped Stripe mappings');
+requireText('src/platform/admin-reseller-tiers-v2.js','PayPal Billing Plan ID','Reseller plan setup must expose price-scoped PayPal mappings');
 requireText('src/platform/admin-reseller-tiers-v2.js','Product','Reseller setup must follow the common product/pricing/policy flow');
 requireText('src/platform/admin-reseller-tiers-v2.js','Storefront','Reseller setup must finish with storefront controls');
 
