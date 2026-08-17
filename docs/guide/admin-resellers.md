@@ -1,38 +1,58 @@
-# Resellers and reseller tiers
+# Resellers and reseller plans
 
-CAPTAiNFiN treats the reseller subscription as the parent commercial entitlement for a reseller estate.
+CAPTAiNFiN treats a reseller subscription as the parent entitlement for a managed Jellyfin estate. A reseller pays a monthly fee for the right to manage up to a configured number of Jellyfin users; the reseller's own commercial relationship with those people stays outside CAPTAiNFiN.
 
-## Reseller tiers
+## Reseller plans
 
-A reseller tier defines the commercial capacity available to the reseller, including its recurring price, currency and seat limit. A **seat** represents a live downstream customer entitlement.
+A reseller plan defines:
 
-Temporary access suspension does not release a commercial seat. Ending the downstream service does.
+- name, description and storefront visibility/order
+- managed Jellyfin users per reseller
+- one or more monthly currency/price variants
+- Stripe/PayPal mapping for each supported price where required
+- grace period and billing lifecycle policy
+- concurrent streams per managed user
+- downloads, transcoding, remux, Live TV, remote-access and 4K policy
+- server class/placement rules
+- included/excluded/all-library access
 
-## Creating a reseller
+Plan setup follows the same broad structure as the customer/Stremio plan editors: identity, pricing, service/capacity, policy/access, placement/libraries and publishing.
 
-When an administrator creates a reseller they can set:
+## Managed-user capacity
 
-- portal username and email
-- initial monthly tier
-- manual entitlement period when applicable
-- ledger currency
-- downstream payment-method labels
-- whether an owner Jellyfin account is allowed
+One managed Jellyfin user consumes one reseller seat. Temporary suspension does **not** release a seat; deleting the managed Jellyfin user does.
 
-The reseller completes its own activation flow. Administrators do not need to know or retain the reseller's password.
+The reseller cannot assign a separate CAPTAiNFiN retail plan to each managed user. Jellyfin policy is inherited from the reseller's active reseller plan.
+
+A downgrade to a smaller managed-user allowance must not take effect while current usage exceeds the target limit.
+
+## Creating and managing a reseller
+
+Administrators manage reseller identity, active monthly plan, billing state and the managed Jellyfin estate. Reseller credentials use the normal activation/security flow; administrators do not need to know or retain the reseller's password.
 
 ## Reseller 360
 
-The reseller management page provides the operational view of the estate: tier, paid-through status, seats in use, customers, active streams, downstream revenue and account/security state.
+The reseller management view should focus on operational information that CAPTAiNFiN actually owns:
 
-## Downstream sales
+- current reseller plan and billing state
+- paid-through/grace state
+- managed users used versus allowed
+- managed Jellyfin accounts and server placement
+- current streams/activity
+- security/account state
 
-Resellers record customer sales in their configured ledger currency. The payment method is a reporting label selected from the methods allowed by the administrator; CAPTAiNFiN does not treat a reseller's manually recorded downstream payment as a Stripe/PayPal transaction unless an actual provider workflow exists for it.
+It should not present downstream reseller revenue, customer resale prices or reseller-credit balances as active product concepts.
 
-## Grace and dunning
+## Billing and currencies
 
-A reseller can enter billing grace depending on the tier/subscription policy. Estate access and commercial status should be managed through the reseller lifecycle controls rather than by manually editing customer subscriptions behind the lifecycle layer.
+Reseller plans are monthly-only but can expose multiple configured currencies/prices. Provider identifiers are price-scoped: a Stripe or PayPal mapping for one currency must never be reused for a different price/currency.
 
-## Owner account
+Commercial terms are snapshotted into the reseller subscription so later plan edits do not silently alter an agreement that has already been purchased.
 
-If enabled, a reseller-owned Jellyfin account consumes one active customer entitlement just like another live downstream account.
+## Historical reseller data
+
+Older installations may still contain reseller sales/credit-ledger tables and records. They are retained only where required for safe migration, audit or compatibility. Do not build new runtime behavior on those historical structures.
+
+## Security
+
+Reseller two-factor authentication is optional unless the administrator enables platform policy requiring it for reseller sign-ins.
