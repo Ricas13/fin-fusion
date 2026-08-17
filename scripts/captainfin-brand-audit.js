@@ -9,7 +9,7 @@ const WORD=/\bcaptainfin\b/gi;
 const WRITE=process.argv.includes('--write');
 const BINARY_EXTENSIONS=new Set(['.png','.jpg','.jpeg','.gif','.webp','.ico','.pdf','.zip','.gz','.tgz','.woff','.woff2','.ttf','.eot','.mp4','.mkv','.sqlite','.db']);
 function trackedFiles(){return cp.execFileSync('git',['ls-files','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);}
-function shouldRead(file){return!file.startsWith('.github/workflows/')&&!BINARY_EXTENSIONS.has(path.extname(file).toLowerCase());}
+function shouldRead(file){return!BINARY_EXTENSIONS.has(path.extname(file).toLowerCase());}
 function replacements(text){let changed=false;const value=text.replace(WORD,match=>{if(match==='captainfin'||match===CANONICAL)return match;changed=true;return CANONICAL;});return{value,changed};}
 const offenders=[];
 for(const file of trackedFiles()){
