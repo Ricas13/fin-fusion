@@ -47,9 +47,6 @@
     }
 
     function actionUrl(form, submitter = null) {
-        // The DOM formAction property can resolve to the current document URL even
-        // when no formaction attribute was authored. Only an explicit attribute
-        // may override the parent form action.
         const override = explicitSubmitterAttribute(submitter, 'formaction');
         return override ? new URL(override, window.location.href).href : (form.action || window.location.href);
     }
@@ -70,10 +67,14 @@
         if (form.target && form.target !== '_self') return false;
         if (String(form.enctype || '').toLowerCase() === 'multipart/form-data') return false;
         if (form.querySelector('input[type="file"]')) return false;
-        // Credential forms intentionally use the browser's native form submission.
-        // This preserves native formaction behaviour for the Validate buttons and
-        // avoids an AJAX layer between the browser session and CSRF verification.
-        if (actionPath(form) === '/admin/notifications/preferences/delivery') return false;
+        const path = actionPath(form);
+        // Credential forms intentionally use native submission so browser
+        // formaction and CSRF behavior stay fully conventional.
+        if (path === '/admin/notifications/preferences/delivery') return false;
+        // Customer creation returns a one-time activation link in the POST HTML
+        // response. Fetching it in the background and reloading the GET form would
+        // discard the only operator-visible copy of that result.
+        if (path === '/admin/users/new') return false;
         return sameOrigin(form.action || window.location.href);
     }
 
@@ -140,14 +141,11 @@
         const form = event.currentTarget;
         if (!shouldEnhance(form)) return;
         if (!form.reportValidity()) return;
-
         event.preventDefault();
         clearFeedback(form);
-
         const submitter = event.submitter || form.querySelector('[type="submit"],button:not([type])');
         const originalDisabled = submitter?.disabled;
         if (submitter) submitter.disabled = true;
-
         try {
             const data = urlencodedBody(form, submitter);
             const target = actionUrl(form, submitter);
@@ -164,30 +162,14 @@
                     'Accept': 'text/html,application/xhtml+xml,application/json'
                 }
             });
-
             const finalUrl = new URL(response.url || target, window.location.href);
             const error = finalUrl.searchParams.get('error');
             const field = finalUrl.searchParams.get('field');
-            if (error) {
-                showFeedback(form, error, field);
-                return;
-            }
-
+            if (error) { showFeedback(form, error, field); return; }
             const disposition = response.headers.get('content-disposition') || '';
-            if (/attachment/i.test(disposition)) {
-                await downloadResponse(response);
-                return;
-            }
-
-            if (!response.ok) {
-                showFeedback(form, await responseMessage(response), null);
-                return;
-            }
-
-            if (response.redirected || finalUrl.href !== window.location.href) {
-                window.location.assign(finalUrl.href);
-                return;
-            }
+            if (/attachment/i.test(disposition)) { await downloadResponse(response); return; }
+            if (!response.ok) { showFeedback(form, await responseMessage(response), null); return; }
+            if (response.redirected || finalUrl.href !== window.location.href) { window.location.assign(finalUrl.href); return; }
             window.location.reload();
         } catch (_) {
             showFeedback(form, 'The request could not be completed. Check your connection and try again.', null);
@@ -211,13 +193,8 @@
             await navigator.clipboard.writeText(value);
             button.textContent = 'Copied';
             button.classList.add('copyDone');
-            window.setTimeout(() => {
-                button.textContent = old;
-                button.classList.remove('copyDone');
-            }, 1400);
-        } catch (_) {
-            window.prompt('Copy link', value);
-        }
+            window.setTimeout(() => { button.textContent = old; button.classList.remove('copyDone'); }, 1400);
+        } catch (_) { window.prompt('Copy link', value); }
     }
 
     async function uploadBrandAsset(button) {
@@ -226,58 +203,33 @@
         const fileInput = document.getElementById(`${kind}File`);
         const status = document.getElementById(`${kind}Status`);
         const file = fileInput?.files?.[0];
-        if (!file) {
-            if (status) status.textContent = 'Choose a file first.';
-            return;
-        }
+        if (!file) { if (status) status.textContent = 'Choose a file first.'; return; }
         const csrfToken = button.dataset.csrfToken || '';
         button.disabled = true;
         if (status) status.textContent = 'Uploading…';
         try {
             const response = await fetch(`/admin/settings/branding/${encodeURIComponent(kind)}`, {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': file.type || 'application/octet-stream',
-                    'X-CSRF-Token': csrfToken
-                },
-                body: file
+                method: 'POST', credentials: 'same-origin',
+                headers: {'Content-Type': file.type || 'application/octet-stream','X-CSRF-Token': csrfToken}, body: file
             });
             const result = await response.json().catch(() => ({ ok: false, error: 'Unexpected server response.' }));
             if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed.');
             window.location.reload();
-        } catch (error) {
-            if (status) status.textContent = error.message || 'Upload failed.';
-        } finally {
-            button.disabled = false;
-        }
+        } catch (error) { if (status) status.textContent = error.message || 'Upload failed.'; }
+        finally { button.disabled = false; }
     }
 
     document.addEventListener('submit', confirmSubmit, true);
-
     document.addEventListener('click', event => {
         const copy = event.target.closest?.('[data-copy-link]');
-        if (copy) {
-            event.preventDefault();
-            copyLink(copy);
-            return;
-        }
+        if (copy) { event.preventDefault(); copyLink(copy); return; }
         const upload = event.target.closest?.('[data-brand-upload]');
-        if (upload) {
-            event.preventDefault();
-            uploadBrandAsset(upload);
-        }
+        if (upload) { event.preventDefault(); uploadBrandAsset(upload); }
     });
-
     document.addEventListener('DOMContentLoaded', () => {
         const all = document.getElementById('checkAllPage');
         const table = document.getElementById('customersTable');
-        if (all && table) {
-            all.addEventListener('change', () => {
-                table.querySelectorAll('.rowCheck').forEach(control => { control.checked = all.checked; });
-            });
-        }
-
+        if (all && table) all.addEventListener('change', () => table.querySelectorAll('.rowCheck').forEach(control => { control.checked = all.checked; }));
         document.querySelectorAll('form').forEach(form => {
             if (shouldEnhance(form)) form.addEventListener('submit', submitEnhanced);
             form.addEventListener('input', event => {
