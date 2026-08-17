@@ -1,6 +1,17 @@
 'use strict';
 
 (() => {
+  if(location.pathname==='/admin/plans'){
+    // The list is an entry point, not a second copy of the plan workflow.
+    // Manage opens the plan; Availability remains linked from the capacity cell.
+    // Delivery/Lifecycle shortcuts created an arbitrary mix of destinations.
+    document.querySelectorAll('.planListRow .buttonRow a[href]').forEach(link=>{
+      const href=link.getAttribute('href')||'';
+      if(/\/delivery$|\/lifecycle$/.test(href))link.remove();
+    });
+    return;
+  }
+
   const match=location.pathname.match(/^\/admin\/plans\/([^/]+)\/(edit|delivery|inventory|commerce|jellyfin|libraries|placement|lifecycle|payment-options)$/);
   if(!match)return;
   const id=match[1],page=match[2];
