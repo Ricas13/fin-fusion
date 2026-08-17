@@ -44,7 +44,7 @@ function paymentTabsFor(options){
 }
 
 function layout(options={}){
-  const site=options.siteName||'CAPTaINFiN';
+  const site=options.siteName||'CAPTAiNFiN';
   const current=activePage(options.active);
   const docsAction='<a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a>';
   const topActions=`<div class="topBarActions">${docsAction}${options.action||''}</div>`;
