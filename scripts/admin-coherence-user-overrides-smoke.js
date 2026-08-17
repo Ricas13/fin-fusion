@@ -1,7 +1,8 @@
 'use strict';
 const assert=require('assert'),fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
-const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),order=read('src/platform/admin-plan-order.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),migration=read('db/migrations/092_admin_customer_protection_and_plan_marketing.sql');
+const nav=require('../src/platform/admin-nav');
+const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),order=read('src/platform/admin-plan-order.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),migration=read('db/migrations/092_admin_customer_protection_and_plan_marketing.sql'),provisioningTabs=read('src/platform/provisioning-workflow-tabs.js'),integrationTabs=read('src/platform/integration-workflow-tabs.js'),adminShell=read('src/platform/admin-html-core.js');
 assert(/Managed Jellyfin user plans/.test(storefront)&&/resellerSection\(/.test(storefront),'monthly reseller storefront plans must remain available');
 assert(/monthly\.listTiers/.test(storefront)&&/resellerInventory/.test(storefront),'storefront must load reseller tiers and live reseller-plan capacity');
 assert(/marketing_features/.test(plans)&&/Homepage features/.test(plans),'plan marketing features missing');
@@ -20,4 +21,17 @@ assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
 assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');
 assert(!/label>Reseller<\/label>/.test(customersList),'legacy reseller ownership filter must not return to the direct-customer list');
+
+const group=key=>nav.groups.find(item=>item.key===key);
+const pageKeys=key=>group(key).pages.map(item=>item[0]);
+assert(!pageKeys('dashboard').includes('search'),'Search must not be a sidebar destination');
+assert(nav.hiddenPages.search?.parentKey==='dashboard','Quick-find results must retain Dashboard ownership');
+for(const key of ['users','invitations','customer-claims','jellyfin-import','activity'])assert(pageKeys('people').includes(key),`People navigation must expose ${key}`);
+assert(group('commerce').pages.some(item=>item[0]==='payments'&&item[1]==='Payment providers'),'Payments sidebar entry must be named Payment providers');
+assert(nav.hiddenPages['request-service']?.groupKey==='settings'&&nav.hiddenPages['request-service']?.parentKey==='settings-integrations','Request service must belong to Settings → Integrations');
+assert(nav.hiddenPages['request-plan-limits']?.groupKey==='settings'&&nav.hiddenPages['request-plan-limits']?.parentKey==='settings-integrations','Plan limits must belong to Settings → Integrations');
+assert(!/Request service|Plan limits/.test(provisioningTabs),'Provisioning tabs must not contain Overseerr configuration');
+assert(/Integrations/.test(integrationTabs)&&/Request service/.test(integrationTabs)&&/Plan limits/.test(integrationTabs),'Integrations workflow must own request-service configuration');
+assert(/class=\"adminQuickFind\"/.test(adminShell)&&/action=\"\/admin\/search\"/.test(adminShell),'Admin shell must provide top-bar quick find');
+assert(!/Help & guides/.test(adminShell),'Admin shell must not duplicate Help & guides in sidebar and top bar');
 console.log('admin coherence user overrides smoke: ok');
