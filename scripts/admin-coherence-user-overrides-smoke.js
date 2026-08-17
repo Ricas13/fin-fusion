@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('assert'),fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
-const storefront=read('src/platform/storefront.js'),order=read('src/platform/admin-plan-order.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),migration=read('db/migrations/092_admin_customer_protection_and_plan_marketing.sql');
+const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),order=read('src/platform/admin-plan-order.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),migration=read('db/migrations/092_admin_customer_protection_and_plan_marketing.sql');
 assert(!/Managed Jellyfin user plans/.test(storefront),'retired reseller storefront copy remains');
 assert(!/resellerSection\(/.test(storefront),'retired reseller storefront section remains active');
 assert(/marketing_features/.test(plans)&&/Homepage features/.test(plans),'plan marketing features missing');
@@ -14,4 +14,6 @@ assert(/attention\/bulk/.test(attention)&&/data-attention-select-all/.test(atten
 assert(/marketing_features/.test(migration)&&/automation_protected/.test(migration),'migration missing coherence columns');
 assert(!/reseller_tiers/.test(order)&&!/Reseller plans/.test(order),'retired reseller ordering remains');assert(/Where settings live/.test(settings)&&/Plans & customer access/.test(settings),'settings directory missing');assert(!/allowPrivateConnected/.test(settings),'settings identifier was corrupted');assert(/discoveryWarning/.test(stremioPool)&&/source was saved/.test(stremioAdmin),'Stremio source resilience missing');assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 override routes must import transaction');
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
+assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');
+assert(!/label>Reseller<\/label>/.test(customersList),'retired reseller filter remains on Customers');
 console.log('admin coherence user overrides smoke: ok');
