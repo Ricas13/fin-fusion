@@ -64,7 +64,7 @@ const store = {
 };
 
 const resellerTiers=[{id:'r1',code:'reseller',name:'Reseller 50',description:'Managed access.',seat_limit:50,monthly_price_minor:1000,currency:'USD',inventory:{limit:5,used:5,remaining:0,soldOut:true}}];
-const page = renderStorefront({ site: 'CAPTaINFiN', plans, store, registrationOpen: false, logged: false,resellerTiers,support:{supportEmail:'support@example.test'} });
+const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,resellerTiers,support:{supportEmail:'support@example.test'} });
 for (const expected of [
     'heroSection','pricingGrid','finalCta','Your entertainment. One simple subscription.',
     'Choose the access that fits you.','Stremio add-ons &amp; plans.','Reseller plans.','0 spots available · Sold out','support@example.test'
@@ -74,7 +74,7 @@ assert.ok(page.indexOf('id="plans"') < page.indexOf('id="stremio"'), 'main plans
 assert.ok(page.indexOf('id="stremio"') < page.indexOf('id="resellers"'), 'Stremio should appear before reseller plans');
 for(const removed of ['featureGrid','experienceSection','stepsGrid','Everything you need to watch your way','From account to watching in minutes'])assert.ok(!page.includes(removed),`old marketing section should be gone: ${removed}`);
 
-const openPage = renderStorefront({ site: 'CAPTaINFiN', plans, store, registrationOpen: true, logged: false,resellerTiers:[] });
+const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: true, logged: false,resellerTiers:[] });
 assert.ok(openPage.includes('Create account'));
 assert.ok(openPage.includes('href="/account/register"'));
 assert.ok(!openPage.includes('New customers can currently join by invitation.'));

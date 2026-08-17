@@ -21,11 +21,11 @@ assert.strictEqual(foundation.runtimeReady(),false,'invalid Stremio purpose key 
 process.env.STREMIO_JELLYFIN_TOKEN_KEY=validKey;
 
 const manifest=runtime.manifest();
-assert.deepStrictEqual(manifest.catalogs,[],'CAPTaINFiN must remain a stream-only addon');
+assert.deepStrictEqual(manifest.catalogs,[],'CAPTAiNFiN must remain a stream-only addon');
 assert(manifest.types.includes('movie')&&manifest.types.includes('series'),'manifest must support movie and series streams');
 assert(manifest.resources.some(r=>r.name==='stream'),'manifest must expose stream resources');
 assert(manifest.resources.find(r=>r.name==='stream').idPrefixes.includes('tt'),'stream IDs must be IMDb-addressable');
-assert.strictEqual(manifest.behaviorHints.p2p,false,'CAPTaINFiN streams must not be advertised as P2P');
+assert.strictEqual(manifest.behaviorHints.p2p,false,'CAPTAiNFiN streams must not be advertised as P2P');
 
 const filename='Movie.2025.2160p.UHD.BluRay.REMUX.HEVC.DV.HDR.TrueHD.Atmos.7.1-FraMeSToR.strm';
 const parsed=foundation.streamDisplayFromFilename(filename);

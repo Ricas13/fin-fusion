@@ -121,7 +121,7 @@ Migrations are checksum-tracked. Do not edit an already-applied migration; add a
 - Jellyfin/payment/request/email credentials are encrypted at rest using purpose-specific installation keys.
 - CSRF/origin protection is applied to authenticated state-changing routes.
 - Provider webhooks require provider signature verification and idempotent processing.
-- CAPTaINFiN-managed access uses independent composable holds so billing/admin/reseller restrictions cannot accidentally clear one another.
+- CAPTAiNFiN-managed access uses independent composable holds so billing/admin/reseller restrictions cannot accidentally clear one another.
 - Provider-managed recurring subscriptions are never silently rewritten into manual/reseller-credit entitlements.
 
 Never reuse `DATA_ENCRYPTION_KEY`, `JELLYFIN_ENCRYPTION_KEY`, `AUTH_ENCRYPTION_KEY`, `ACTIVITY_ENCRYPTION_KEY` or `BACKUP_ENCRYPTION_KEY`.

@@ -20,6 +20,6 @@ assert(settings.includes("requested==='advanced')return res.redirect('/admin/con
 assert(settings.includes("requested==='commerce')return res.redirect('/admin/commerce')"),'Legacy Settings Commerce URLs must resolve to the real Commerce area');
 assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('Expiring-soon window'),'Retired dashboard settings must not remain visible controls');
 assert(dashboard.includes('businessPerformanceGrid')&&dashboard.includes('streamingOperationsGrid')&&dashboard.includes('commerceAnalyticsGrid'),'Dashboard sections must remain explicit for browser layout checks');
-assert(!dashboard.includes("customerGrowth(s){return card('Customer base over time','Cumulative CAPTaINFiN customer accounts',areaChart(s.customerGrowth,'total'),{className:'wide'"),'Business performance must not pair two 8/12 cards and leave empty columns');
+assert(!dashboard.includes("customerGrowth(s){return card('Customer base over time','Cumulative CAPTAiNFiN customer accounts',areaChart(s.customerGrowth,'total'),{className:'wide'"),'Business performance must not pair two 8/12 cards and leave empty columns');
 assert(dashboard.includes("return card('Top referrers'" )&&dashboard.includes("{className:'wide'}"),'Commerce second row needs an 8/12 companion for Product usage');
 console.log('admin product audit smoke: ok');

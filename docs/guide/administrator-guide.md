@@ -1,6 +1,6 @@
 # Administrator Guide
 
-The administrator portal is the control plane for CAPTaINFiN. Settings should be grouped by purpose and each control should explain its effect directly in the interface.
+The administrator portal is the control plane for CAPTAiNFiN. Settings should be grouped by purpose and each control should explain its effect directly in the interface.
 
 ## Dashboard
 

@@ -4,7 +4,7 @@ This is the supported deployment/upgrade path for the Docker Compose installatio
 
 The important safety rule is: **do not recreate the long-running containers until migrations and runtime database-role bootstrap have completed successfully.** Since the runtime-role isolation work, the application, automation, activity and backup processes use separate PostgreSQL identities rather than the database owner login.
 
-## Normal CAPTaINFiN production update
+## Normal CAPTAiNFiN production update
 
 On the production host:
 
@@ -46,7 +46,7 @@ If a deployment step fails, the detached process exits non-zero and the persiste
 
 ## First deployment after runtime-role isolation
 
-Older CAPTaINFiN `.env` files may have only the owner `DATABASE_URL` and `ACTIVITY_DATABASE_URL`. The deployment helper fills the five current runtime URLs when they are missing:
+Older CAPTAiNFiN `.env` files may have only the owner `DATABASE_URL` and `ACTIVITY_DATABASE_URL`. The deployment helper fills the five current runtime URLs when they are missing:
 
 ```text
 APP_DATABASE_URL
@@ -82,7 +82,7 @@ A normal deployment should configure the dedicated `STREMIO_JELLYFIN_TOKEN_KEY` 
 
 After deployment, keep the browser runtime switch disabled while preparing Stremio. Configure an eligible delivery server and build a ready media index, then use **Enable runtime** on the Stremio settings page. The server refuses that enable action unless the secret key, at least one healthy eligible delivery server and at least one ready non-empty media index are all present.
 
-`STREMIO_RUNTIME_ENABLED` remains only as an upgrade-compatibility fallback for older installations. If an existing deployment inherited `true`, the Stremio page offers **Manage runtime here**; saving there moves runtime ownership into CAPTaINFiN platform settings. New deployments should not use the environment flag as their normal runtime control.
+`STREMIO_RUNTIME_ENABLED` remains only as an upgrade-compatibility fallback for older installations. If an existing deployment inherited `true`, the Stremio page offers **Manage runtime here**; saving there moves runtime ownership into CAPTAiNFiN platform settings. New deployments should not use the environment flag as their normal runtime control.
 
 Deploying the code does not by itself make Stremio products sale-ready.
 

@@ -1,14 +1,14 @@
 # Glossary
 
-**CAPTaINFiN entitlement** — The effective service access granted to a customer by an active subscription, trial, free plan or other supported service contract.
+**CAPTAiNFiN entitlement** — The effective service access granted to a customer by an active subscription, trial, free plan or other supported service contract.
 
 **Plan** — A catalogue definition describing commercial and service policy for customer access.
 
 **Provisioning** — Applying an entitlement to the backing service, such as creating or updating a Jellyfin account.
 
-**Jellyfin account** — The media-server account associated with a CAPTaINFiN customer. Its password is separate from the CAPTaINFiN portal password.
+**Jellyfin account** — The media-server account associated with a CAPTAiNFiN customer. Its password is separate from the CAPTAiNFiN portal password.
 
-**Reseller** — A business or operator with an allocated CAPTaINFiN reseller tier who manages downstream customers.
+**Reseller** — A business or operator with an allocated CAPTAiNFiN reseller tier who manages downstream customers.
 
 **Seat** — Commercial reseller capacity consumed by an eligible live customer entitlement according to reseller policy.
 
@@ -20,6 +20,6 @@
 
 **Provisioning pending** — A valid entitlement exists but the backing service change has not yet completed successfully.
 
-**Canonical public URL** — The administrator-configured HTTPS origin CAPTaINFiN uses when generating external links.
+**Canonical public URL** — The administrator-configured HTTPS origin CAPTAiNFiN uses when generating external links.
 
-**Stremio service** — A planned CAPTaINFiN delivery type that will expose subscription-controlled Jellyfin-backed streams to a user-specific Stremio addon installation.
+**Stremio service** — A planned CAPTAiNFiN delivery type that will expose subscription-controlled Jellyfin-backed streams to a user-specific Stremio addon installation.

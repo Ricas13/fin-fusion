@@ -42,7 +42,7 @@ async function stripeAdapter() {
         const Stripe = require('stripe');
         stripeClient = new Stripe(key, {
             apiVersion: '2026-06-24.dahlia',
-            appInfo: { name: 'CAPTaINFiN', version: '1.0.0' }
+            appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' }
         });
         stripeClientKey = key;
     }
@@ -139,7 +139,7 @@ async function paypalAdapter() {
         async stopRenewal(row) {
             await paypalApi(`/v1/billing/subscriptions/${encodeURIComponent(row.provider_subscription_id)}/cancel`, {
                 method: 'POST',
-                body: { reason: 'Renewal disabled by CAPTaINFiN administrator' }
+                body: { reason: 'Renewal disabled by CAPTAiNFiN administrator' }
             });
         },
         async resumeRenewal() {

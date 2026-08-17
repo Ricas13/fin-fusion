@@ -1,6 +1,6 @@
-# CAPTaINFiN / Steam Fusion Roadmap
+# CAPTAiNFiN / Steam Fusion Roadmap
 
-This roadmap describes the current PostgreSQL CAPTaINFiN platform, not the original JSON-file Steam Fusion application.
+This roadmap describes the current PostgreSQL CAPTAiNFiN platform, not the original JSON-file Steam Fusion application.
 
 ## Product principles
 
@@ -126,12 +126,12 @@ This roadmap describes the current PostgreSQL CAPTaINFiN platform, not the origi
 - [ ] Automated upgrade recommendations/notifications based on sustained utilisation.
 - [ ] Provider-native scheduled downgrade where provider APIs make it unambiguous.
 - [ ] Optional reseller-specific branding/white-label portal scope.
-- [ ] Optional reseller tax/VAT invoice metadata if CAPTaINFiN becomes the merchant of record for reseller fees.
+- [ ] Optional reseller tax/VAT invoice metadata if CAPTAiNFiN becomes the merchant of record for reseller fees.
 
 ## Requests — implemented
 
 - [x] Central Seerr/Overseerr browser-managed integration.
-- [x] One request account per CAPTaINFiN customer.
+- [x] One request account per CAPTAiNFiN customer.
 - [x] Existing account link-by-email without password reset.
 - [x] Deterministic placeholder email for genuinely emailless managed users.
 - [x] Per-plan movie/TV rolling quotas.
@@ -143,7 +143,7 @@ This roadmap describes the current PostgreSQL CAPTaINFiN platform, not the origi
 ### Requests follow-up
 
 - [ ] Optional additional request-service adapters only where their identity/quota model can be normalised cleanly.
-- [ ] Customer-facing request activity/history embedded directly in CAPTaINFiN if required.
+- [ ] Customer-facing request activity/history embedded directly in CAPTAiNFiN if required.
 
 ## Notifications — implemented
 
@@ -227,7 +227,7 @@ This roadmap describes the current PostgreSQL CAPTaINFiN platform, not the origi
 
 ## Cutover definition
 
-CAPTaINFiN is ready to replace a third-party manager for a deployment when:
+CAPTAiNFiN is ready to replace a third-party manager for a deployment when:
 
 1. All required Jellyfin servers/libraries/plans are represented and healthy.
 2. Existing users are imported/linked with identities verified.

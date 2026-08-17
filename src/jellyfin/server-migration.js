@@ -90,7 +90,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
 
     const alreadyRecorded = await query('SELECT id FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 LIMIT 1', [customerId, target.id]);
     if (alreadyRecorded.rowCount) {
-        throw new ServerMigrationError('TARGET_ACCOUNT_EXISTS', 'This customer already has a CAPTaINFiN Jellyfin account on the target server.', 'preflight');
+        throw new ServerMigrationError('TARGET_ACCOUNT_EXISTS', 'This customer already has a CAPTAiNFiN Jellyfin account on the target server.', 'preflight');
     }
     if (!(await provisioning.usernameAvailable(target.id, source.jellyfin_username))) {
         throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on the target Jellyfin server.`, 'preflight');
@@ -291,7 +291,7 @@ async function rollbackMigration(migrationId, actorUserId) {
 
     const sourceResult = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.source_account_id, migration.customer_id]);
     const targetResult = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.target_account_id, migration.customer_id]);
-    if (!sourceResult.rowCount || !targetResult.rowCount) throw new ServerMigrationError('ROLLBACK_ACCOUNT_MISSING', 'Source or target Jellyfin account is missing from CAPTaINFiN.');
+    if (!sourceResult.rowCount || !targetResult.rowCount) throw new ServerMigrationError('ROLLBACK_ACCOUNT_MISSING', 'Source or target Jellyfin account is missing from CAPTAiNFiN.');
     const source = sourceResult.rows[0];
     const target = targetResult.rows[0];
     const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);

@@ -1,10 +1,10 @@
 # Customer guide
 
-The customer portal is the place to review your CAPTaINFiN account and the service attached to it.
+The customer portal is the place to review your CAPTAiNFiN account and the service attached to it.
 
 ## Your account
 
-Your portal identity is separate from the Jellyfin account used for media playback. Your CAPTaINFiN portal password is not automatically reused as your Jellyfin password.
+Your portal identity is separate from the Jellyfin account used for media playback. Your CAPTAiNFiN portal password is not automatically reused as your Jellyfin password.
 
 Depending on the configured security options, you may also be able to enable two-factor authentication for the customer portal.
 
@@ -14,7 +14,7 @@ The portal can show the active plan, service period and actions made available b
 
 ## Jellyfin access
 
-If your service includes normal Jellyfin access, CAPTaINFiN provisions or reconciles a Jellyfin account on an eligible server. New accounts may require you to set a separate Jellyfin password before using it.
+If your service includes normal Jellyfin access, CAPTAiNFiN provisions or reconciles a Jellyfin account on an eligible server. New accounts may require you to set a separate Jellyfin password before using it.
 
 ## Library visibility
 
@@ -22,11 +22,11 @@ Your plan controls the libraries you are entitled to use. Where customer library
 
 ## Requests
 
-If a request service is configured, CAPTaINFiN can provide request-service access according to your plan. Request-site credentials may be managed separately from both your portal and Jellyfin credentials.
+If a request service is configured, CAPTAiNFiN can provide request-service access according to your plan. Request-site credentials may be managed separately from both your portal and Jellyfin credentials.
 
 ## Password reset
 
-Email password reset changes the CAPTaINFiN portal password only. Transactional email must be configured for browser password-reset delivery.
+Email password reset changes the CAPTAiNFiN portal password only. Transactional email must be configured for browser password-reset delivery.
 
 ## Stremio
 

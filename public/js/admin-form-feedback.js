@@ -158,7 +158,7 @@
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
                     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
-                    'X-CAPTAINFIN-AJAX-FORM': '1',
+                    'X-CAPTAiNFiN-AJAX-FORM': '1',
                     'Accept': 'text/html,application/xhtml+xml,application/json'
                 }
             });

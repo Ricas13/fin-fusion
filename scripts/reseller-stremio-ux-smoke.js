@@ -14,7 +14,7 @@ const client=read('public/js/reseller-service-aware.js');
 assert(/productReadiness=require\('\.\.\/platform\/product-readiness'\)/.test(monthly),'reseller domain must import canonical product readiness');
 assert(/productReadiness\.evaluate\(plan,readinessCtx\)/.test(monthly),'reseller domain must evaluate delivery readiness before sale');
 assert(/owner&&delivery!==['"]jellyfin['"]/.test(monthly),'reseller owner delivery must remain Jellyfin-only');
-assert(/portalReady=false/.test(monthly)&&/require a CAPTaINFiN portal activation/.test(monthly),'new Stremio reseller customers must require portal readiness in the domain');
+assert(/portalReady=false/.test(monthly)&&/require a CAPTAiNFiN portal activation/.test(monthly),'new Stremio reseller customers must require portal readiness in the domain');
 assert(/!customer\.user_id/.test(monthly)&&/portal identity before switching/.test(monthly),'existing Stremio reseller customers must own a portal identity');
 assert(/service_type_snapshot/.test(monthly)&&/account_purpose<>'stremio_internal'/.test(monthly),'reseller customer list must be service-aware and hide internal playback identities');
 assert(/portalReady:portalIntent\.wantsPortal/.test(ux),'service-aware create path must explicitly carry portal readiness into the domain');

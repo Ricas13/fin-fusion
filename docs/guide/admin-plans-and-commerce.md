@@ -30,7 +30,7 @@ Catalogue pricing stores the plan amount and currency. Existing provider checkou
 
 ## Provider mappings
 
-Stripe and PayPal mappings connect a CAPTaINFiN plan to the corresponding provider-side product, price or billing plan. Mappings should be verified before enabling them for live checkout.
+Stripe and PayPal mappings connect a CAPTAiNFiN plan to the corresponding provider-side product, price or billing plan. Mappings should be verified before enabling them for live checkout.
 
 ## Retiring a plan
 

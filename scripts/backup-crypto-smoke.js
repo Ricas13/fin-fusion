@@ -13,7 +13,7 @@ const {
 
 async function main() {
   const secret = 'test-backup-encryption-key-0123456789abcdef';
-  const payload = Buffer.from('CAPTaINFiN encrypted backup smoke payload\n'.repeat(128), 'utf8');
+  const payload = Buffer.from('CAPTAiNFiN encrypted backup smoke payload\n'.repeat(128), 'utf8');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'captainfin-backup-smoke-'));
   const file = path.join(dir, 'sample.pgdump.enc');
   try {

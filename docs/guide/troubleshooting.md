@@ -8,7 +8,7 @@ Administrators should use the application logs and request ID to locate the unde
 
 ## I cannot sign in
 
-Check that you are using the correct portal for your account type and the correct portal password. Jellyfin credentials are separate and do not necessarily sign you into CAPTaINFiN.
+Check that you are using the correct portal for your account type and the correct portal password. Jellyfin credentials are separate and do not necessarily sign you into CAPTAiNFiN.
 
 If the account uses 2FA, use the current authenticator code or an unused recovery code. Repeated failed attempts may trigger a temporary rate limit.
 
@@ -18,7 +18,7 @@ Browser password reset depends on transactional email being configured. If email
 
 ## Jellyfin password does not match my portal password
 
-This is expected. CAPTaINFiN intentionally separates portal credentials from Jellyfin credentials. Use the Jellyfin password setup/change action provided in your account portal.
+This is expected. CAPTAiNFiN intentionally separates portal credentials from Jellyfin credentials. Use the Jellyfin password setup/change action provided in your account portal.
 
 ## My libraries are missing
 

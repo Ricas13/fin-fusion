@@ -1,6 +1,6 @@
 # Getting started
 
-CAPTaINFiN has separate areas for customers, resellers and administrators. Sign in with the account type you were given and use the navigation for your role.
+CAPTAiNFiN has separate areas for customers, resellers and administrators. Sign in with the account type you were given and use the navigation for your role.
 
 ## Customers
 
@@ -18,7 +18,7 @@ The admin interface groups controls by purpose. Each important setting includes 
 
 ## Passwords
 
-CAPTaINFiN portal passwords and Jellyfin passwords are separate. A portal password reset does not silently change the Jellyfin password.
+CAPTAiNFiN portal passwords and Jellyfin passwords are separate. A portal password reset does not silently change the Jellyfin password.
 
 ## If something fails
 

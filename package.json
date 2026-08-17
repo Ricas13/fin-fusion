@@ -1,7 +1,7 @@
 {
   "name": "steam-fusion",
   "version": "1.4.0",
-  "description": "CAPTaINFiN: Jellyfin customer, reseller, subscription and fleet management platform",
+  "description": "CAPTAiNFiN: Jellyfin customer, reseller, subscription and fleet management platform",
   "main": "src/application.js",
   "scripts": {
     "start": "node src/application.js",

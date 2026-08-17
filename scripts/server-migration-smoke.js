@@ -154,7 +154,7 @@ async function makeCustomer(username, planId, sourceServer, remoteId) {
     assert.strictEqual(afterRollback.rows[0].disabled, false);
     assert(afterRollback.rows.some(row => String(row.server_id) === String(target.id) && row.disabled === true));
 
-    // Exact username preservation is a preflight requirement; CAPTaINFiN will
+    // Exact username preservation is a preflight requirement; CAPTAiNFiN will
     // not silently add a numeric suffix during a controlled move.
     const second = await makeCustomer('taken-name', plan.id, source, 'source-user-2');
     state(target.id).users.set('foreign-taken', { id: 'foreign-taken', name: 'taken-name', disabled: false });

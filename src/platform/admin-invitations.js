@@ -6,7 +6,7 @@ const csrf = require('../auth/csrf');
 const invitations = require('../invitations');
 const { esc, layout } = require('./admin-html');
 
-function site() { return process.env.SITE_NAME || 'CAPTaINFiN'; }
+function site() { return process.env.SITE_NAME || 'CAPTAiNFiN'; }
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
     return res.redirect('/login?session=expired');

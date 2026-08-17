@@ -7,7 +7,7 @@ const serversAdmin = require('./admin-servers');
 const runtimeSettings = require('./runtime-settings');
 const { esc, layout } = require('./admin-html');
 
-function site() { return process.env.SITE_NAME || 'CAPTaINFiN'; }
+function site() { return process.env.SITE_NAME || 'CAPTAiNFiN'; }
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
     return res.redirect('/login?session=expired');
@@ -93,7 +93,7 @@ async function body(req) {
             <div class="sectionHead"><h2>Configured servers</h2><span class="muted">${rows.length} total · health every ${healthMinutes} min · live load sampled by activity worker</span></div>
             ${rows.length ? `<div class="compactServerRows">${rows.map(server => serverRow(req, server)).join('')}</div>` : '<div class="empty">No Jellyfin servers configured.</div>'}
         </section>
-        <div class="notice">Live totals include every Jellyfin user and playback session on each server. “Managed” counts are the subset owned by CAPTaINFiN; stream enforcement only applies to that managed subset.</div>
+        <div class="notice">Live totals include every Jellyfin user and playback session on each server. “Managed” counts are the subset owned by CAPTAiNFiN; stream enforcement only applies to that managed subset.</div>
         <script src="/js/admin-server-library-dashboard.js" defer></script>`;
 }
 
@@ -139,7 +139,7 @@ function createAdminServerFleetDashboardRouter() {
                 siteName: site(),
                 active: 'servers',
                 title: 'Servers',
-                subtitle: 'Jellyfin availability, total load and CAPTaINFiN-managed load',
+                subtitle: 'Jellyfin availability, total load and CAPTAiNFiN-managed load',
                 body: await body(req),
                 action: '<a class="button" href="/admin/servers/new">Add server</a>'
             }));

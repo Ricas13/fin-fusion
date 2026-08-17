@@ -1,6 +1,6 @@
 # Private staging rollout
 
-This project must move through private staging before any public CAPTaINFiN customer traffic is routed to it.
+This project must move through private staging before any public CAPTAiNFiN customer traffic is routed to it.
 
 ## Merge boundary
 
@@ -10,7 +10,7 @@ Before staging, confirm the resulting `main` branch passes the full CI workflow 
 
 ## Staging isolation
 
-The first deployment is administration-only/private. It must not be linked from the public CAPTaINFiN site and must not receive production Stripe or PayPal webhooks.
+The first deployment is administration-only/private. It must not be linked from the public CAPTAiNFiN site and must not receive production Stripe or PayPal webhooks.
 
 Use HTTPS through the normal reverse proxy and restrict access with a private network/VPN, firewall allowlist, or an additional reverse-proxy authentication layer. PostgreSQL must not publish a public port.
 
@@ -101,7 +101,7 @@ A backup that has not been restored successfully is not considered a tested back
 
 ## Public cutover gate
 
-Public CAPTaINFiN traffic may move only after all of these are true:
+Public CAPTAiNFiN traffic may move only after all of these are true:
 
 - the complete merged `main` branch is green;
 - private staging has passed real Jellyfin provisioning and expiry/reactivation tests;

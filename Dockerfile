@@ -14,7 +14,7 @@ COPY . .
 USER node
 EXPOSE 3030
 
-# Do not inherit the node:alpine docker-entrypoint wrapper. CAPTaINFiN's
+# Do not inherit the node:alpine docker-entrypoint wrapper. CAPTAiNFiN's
 # Compose services provide their own explicit commands (app/workers/migrate),
 # and invoking those commands directly avoids the wrapper terminating the
 # long-running worker processes during production startup.

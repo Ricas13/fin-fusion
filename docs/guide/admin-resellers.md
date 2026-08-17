@@ -1,6 +1,6 @@
 # Resellers and reseller tiers
 
-CAPTaINFiN treats the reseller subscription as the parent commercial entitlement for a reseller estate.
+CAPTAiNFiN treats the reseller subscription as the parent commercial entitlement for a reseller estate.
 
 ## Reseller tiers
 
@@ -27,7 +27,7 @@ The reseller management page provides the operational view of the estate: tier, 
 
 ## Downstream sales
 
-Resellers record customer sales in their configured ledger currency. The payment method is a reporting label selected from the methods allowed by the administrator; CAPTaINFiN does not treat a reseller's manually recorded downstream payment as a Stripe/PayPal transaction unless an actual provider workflow exists for it.
+Resellers record customer sales in their configured ledger currency. The payment method is a reporting label selected from the methods allowed by the administrator; CAPTAiNFiN does not treat a reseller's manually recorded downstream payment as a Stripe/PayPal transaction unless an actual provider workflow exists for it.
 
 ## Grace and dunning
 

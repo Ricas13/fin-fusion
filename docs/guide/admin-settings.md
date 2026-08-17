@@ -40,7 +40,7 @@ Reseller defaults apply when a new reseller is created. Existing reseller commer
 
 ## Operations
 
-Operations settings control deployment-wide behavior such as the canonical public URL and runtime safety settings. The public base URL should be the HTTPS address customers actually use to reach CAPTaINFiN.
+Operations settings control deployment-wide behavior such as the canonical public URL and runtime safety settings. The public base URL should be the HTTPS address customers actually use to reach CAPTAiNFiN.
 
 ## Email
 

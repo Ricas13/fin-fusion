@@ -12,7 +12,7 @@ fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 if [[ "${CAPTAINFIN_DEPLOY_DETACHED:-0}" != "1" ]]; then
   mkdir -p logs
   deploy_log="${CAPTAINFIN_DEPLOY_LOG:-$ROOT/logs/deploy-$(date -u +%Y%m%dT%H%M%SZ).log}"
-  printf 'Starting SSH-safe CAPTaINFiN deployment.\n'
+  printf 'Starting SSH-safe CAPTAiNFiN deployment.\n'
   printf 'Persistent log: %s\n' "$deploy_log"
   nohup env CAPTAINFIN_DEPLOY_DETACHED=1 CAPTAINFIN_DEPLOY_LOG="$deploy_log" \
     bash "$0" "$@" >"$deploy_log" 2>&1 < /dev/null &
@@ -30,7 +30,7 @@ fi
 # important after reconnecting to a host where a detached deployment may still run.
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$ROOT/.deploy-production.lock"
-  flock -n 9 || fail 'another CAPTaINFiN production deployment is already running'
+  flock -n 9 || fail 'another CAPTAiNFiN production deployment is already running'
 fi
 
 on_error() {

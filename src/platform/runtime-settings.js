@@ -4,7 +4,7 @@ const { query } = require('../db');
 let cache=null,loadingPromise=null;
 async function reload(){const result=await query("SELECT setting_value FROM platform_settings WHERE setting_key='platform'");cache=result.rows[0]?.setting_value&&typeof result.rows[0].setting_value==='object'?result.rows[0].setting_value:{};return cache}
 async function ensureLoaded(){if(cache)return cache;if(!loadingPromise)loadingPromise=reload().finally(()=>{loadingPromise=null});return loadingPromise}
-function siteName(){const stored=typeof cache?.siteName==='string'?cache.siteName.trim():'';return stored||String(process.env.SITE_NAME||'').trim()||'CAPTaINFiN'}
+function siteName(){const stored=typeof cache?.siteName==='string'?cache.siteName.trim():'';return stored||String(process.env.SITE_NAME||'').trim()||'CAPTAiNFiN'}
 function publicRegistrationOpen(){const stored=cache?.publicRegistration;return typeof stored==='boolean'?stored:process.env.PUBLIC_REGISTRATION!=='false'}
 function storefrontEnabled(){const stored=cache?.storefrontEnabled;if(typeof stored==='boolean')return stored;if(typeof process.env.STOREFRONT_ENABLED==='string')return process.env.STOREFRONT_ENABLED==='true';return true}
 function requireEmailVerification(){const stored=cache?.requireEmailVerification;return typeof stored==='boolean'?stored:process.env.REQUIRE_EMAIL_VERIFICATION==='true'}

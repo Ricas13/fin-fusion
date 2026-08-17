@@ -34,10 +34,10 @@ CREATE INDEX IF NOT EXISTS customer_channel_link_tokens_customer_idx
     ON customer_channel_link_tokens(customer_id,channel,created_at DESC);
 
 COMMENT ON COLUMN customer_communication_preferences.telegram_chat_id IS
-'Verified private Telegram chat id obtained when the customer starts the CAPTaINFiN bot with a one-time link token.';
+'Verified private Telegram chat id obtained when the customer starts the CAPTAiNFiN bot with a one-time link token.';
 COMMENT ON COLUMN customer_communication_preferences.discord_user_id IS
 'Verified immutable Discord user snowflake obtained through Discord OAuth identify.';
 COMMENT ON TABLE customer_channel_link_tokens IS
-'Short-lived one-time tokens used to bind a signed-in CAPTaINFiN customer to Telegram or Discord without trusting typed handles as delivery addresses.';
+'Short-lived one-time tokens used to bind a signed-in CAPTAiNFiN customer to Telegram or Discord without trusting typed handles as delivery addresses.';
 
 COMMIT;

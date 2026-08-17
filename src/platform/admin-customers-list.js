@@ -10,7 +10,7 @@ const {BULK_ACTIONS}=require('./admin-bulk-customers');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
-function site(){return process.env.SITE_NAME||'CAPTaINFiN'}
+function site(){return process.env.SITE_NAME||'CAPTAiNFiN'}
 function t(v,max=200){return String(v||'').trim().slice(0,max)}
 function pill(v,k=''){return `<span class="pill ${k}">${esc(v)}</span>`}
 function date(v){return v?new Date(v).toLocaleDateString():'—'}
