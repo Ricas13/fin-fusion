@@ -27,7 +27,7 @@ const hiddenPages=Object.freeze({
   'configuration-transfer':Object.freeze({groupKey:'settings',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 const aliases=Object.freeze({
-  'resellers':'referrals','reseller-tiers':'plans','provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','support-policy':'settings-general','reseller-settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations'
+  'provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','support-policy':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
