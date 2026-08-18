@@ -1,0 +1,16 @@
+.infoMain{min-height:70vh;padding:76px 0 64px}
+.infoHero{padding:56px 0 30px;animation:storeRise .42s cubic-bezier(.2,.8,.2,1) both}
+.infoHero h1{max-width:860px;margin:12px 0 12px;color:#f7fbff;font-size:clamp(38px,6vw,72px);line-height:.98;letter-spacing:0}
+.infoHero p{max-width:760px;margin:0;color:#a5b3c3;font-size:17px;line-height:1.6}
+.infoGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.infoCard,.faqItem,.contactPanel{border:1px solid rgba(80,104,124,.46);border-radius:12px;background:rgba(11,17,25,.74);box-shadow:0 20px 70px rgba(0,0,0,.22);backdrop-filter:blur(12px)}
+.infoCard{padding:22px;transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s ease,box-shadow .18s ease}
+.infoCard:hover{transform:translateY(-3px);border-color:rgba(64,203,239,.34);box-shadow:0 24px 70px rgba(0,0,0,.28)}
+.infoCard h2,.contactPanel h2{margin:0 0 8px;color:#f2f8fb;font-size:18px}
+.infoCard p,.contactPanel p,.faqItem p{margin:0;color:#99a8b8;line-height:1.55}
+.faqList{display:grid;gap:10px}.faqItem{padding:0;overflow:hidden}.faqItem summary{cursor:pointer;list-style:none;padding:18px 20px;color:#eef7fb;font-weight:850}.faqItem summary::-webkit-details-marker{display:none}.faqItem summary:after{content:"+";float:right;color:#40cbef}.faqItem[open] summary:after{content:"-"}.faqItem p{padding:0 20px 18px}
+.contactPanel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:center;padding:24px}
+.infoActions{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}.infoAction{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 13px;border:1px solid rgba(64,203,239,.28);border-radius:9px;background:rgba(64,203,239,.08);color:#dff8ff;text-decoration:none;font-weight:800;font-size:12px;transition:transform .16s ease,filter .16s ease}.infoAction.primary{background:linear-gradient(135deg,#1fb5df,#35c987);color:#061014}.infoAction:hover{transform:translateY(-1px);filter:brightness(1.07)}
+.infoMuted{color:#93a1b1}.infoFooterLinks{display:flex;gap:12px;flex-wrap:wrap}.infoFooterLinks a{color:#99a9b9;text-decoration:none}
+@media(max-width:840px){.infoGrid,.contactPanel{grid-template-columns:1fr}.infoActions{justify-content:flex-start}.infoMain{padding-top:42px}}
+@media(prefers-reduced-motion:reduce){.infoHero,.infoCard,.infoAction{animation:none!important;transition:none!important}.infoCard:hover,.infoAction:hover{transform:none!important}}

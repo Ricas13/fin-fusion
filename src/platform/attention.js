@@ -4,7 +4,7 @@ const workerHealth=require('../automation/worker-health');
 const jobHealth=require('../automation/job-health');
 function key(prefix,id){return `${prefix}:${id}`}
 function item({key,title,area,severity='warning',detail='',href='',createdAt=null,sourceStatus='open'}){return{key,title,area,severity,detail,href,createdAt,sourceStatus}}
-async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,provisioning,notifications,backups,protectedActivations]=await Promise.all([
+async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,provisioning,notifications,backups,protectedActivations,stremioSources]=await Promise.all([
  query(`SELECT id,incident_type,incident_status,provider,provider_event_id,customer_id,created_at FROM payment_incidents WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  jobHealth.list().then(rows=>({rows})).catch(()=>({rows:[]})),
  query(`SELECT worker_key,last_heartbeat_at FROM operational_worker_state ORDER BY worker_key`).catch(()=>({rows:[]})),
@@ -12,7 +12,8 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  query(`SELECT id,customer_id,action,status,detail,started_at FROM provisioning_runs WHERE status='failed' AND started_at>NOW()-INTERVAL '7 days' ORDER BY started_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`SELECT id,channel,event_type,message_type,status,last_error,created_at FROM notification_outbox WHERE status IN('failed','dead') ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`SELECT id,status,error,started_at FROM backup_runs WHERE status='failed' OR (status='succeeded' AND verified_at IS NULL AND started_at<NOW()-INTERVAL '2 days') ORDER BY started_at DESC LIMIT 50`).catch(()=>({rows:[]})),
- query(`SELECT DISTINCT ON(c.id) c.id customer_id,COALESCE(c.display_name,u.username,u.email,'Customer') customer_name,u.email,t.created_at,EXTRACT(DAY FROM(NOW()-t.created_at))::int age_days,EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id) has_subscription,EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id) has_jellyfin FROM account_activation_tokens t JOIN app_users u ON u.id=t.user_id JOIN customers c ON c.user_id=u.id LEFT JOIN platform_settings ps ON ps.setting_key='activation_cleanup_v1' WHERE t.purpose='customer_activation' AND t.used_at IS NULL AND t.revoked_at IS NULL AND u.role='customer' AND (EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id) OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id)) AND t.created_at<=NOW()-(COALESCE(NULLIF(ps.setting_value->>'retentionDays','')::int,30)||' days')::interval ORDER BY c.id,t.created_at DESC LIMIT 100`).catch(()=>({rows:[]}))
+ query(`SELECT DISTINCT ON(c.id) c.id customer_id,COALESCE(c.display_name,u.username,u.email,'Customer') customer_name,u.email,t.created_at,EXTRACT(DAY FROM(NOW()-t.created_at))::int age_days,EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id) has_subscription,EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id) has_jellyfin FROM account_activation_tokens t JOIN app_users u ON u.id=t.user_id JOIN customers c ON c.user_id=u.id LEFT JOIN platform_settings ps ON ps.setting_key='activation_cleanup_v1' WHERE t.purpose='customer_activation' AND t.used_at IS NULL AND t.revoked_at IS NULL AND u.role='customer' AND (EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id) OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id)) AND t.created_at<=NOW()-(COALESCE(NULLIF(ps.setting_value->>'retentionDays','')::int,30)||' days')::interval ORDER BY c.id,t.created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
+ query(`SELECT s.id,s.name,s.auth_state,s.last_error,s.updated_at,COALESCE(i.status,'never') index_status,i.last_error index_error,i.updated_at index_updated_at FROM stremio_sources s LEFT JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND (s.auth_state IN('reconnect_required','error') OR i.status='failed') ORDER BY GREATEST(COALESCE(s.updated_at,'1970-01-01'::timestamptz),COALESCE(i.updated_at,'1970-01-01'::timestamptz)) DESC LIMIT 100`).catch(()=>({rows:[]}))
  ]);
  for(const r of incidents.rows)out.push(item({key:key('payment',r.id),title:`${r.provider||'Payment'} ${r.incident_type||'incident'}`,area:'Payments',severity:'critical',detail:`${r.incident_status||'open'} · ${r.provider_event_id||r.id}`,href:`/admin/commerce?incident=${encodeURIComponent(r.id)}#incident-${encodeURIComponent(r.id)}`,createdAt:r.created_at}));
  for(const r of jobs.rows){const state=jobHealth.healthState(r);if(!['failed','stale'].includes(state))continue;out.push(item({key:key('job',r.job_key),title:`Automation job: ${r.job_key}`,area:'Automation',severity:state==='failed'?'critical':'warning',detail:r.last_error||`Last success ${r.last_success_at||'never'}`,href:`/admin/automation?job=${encodeURIComponent(r.job_key)}#job-${encodeURIComponent(r.job_key)}`,createdAt:r.last_success_at||r.last_started_at}));}
@@ -22,6 +23,11 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  for(const r of notifications.rows)out.push(item({key:key('notification',r.id),title:`${r.channel} notification ${r.status}`,area:'Notifications',severity:r.status==='dead'?'critical':'warning',detail:r.last_error||r.event_type||r.message_type||'',href:`${r.channel==='email'?'/admin/notifications':'/admin/notifications/preferences'}?outboxId=${encodeURIComponent(r.id)}#outbox-${encodeURIComponent(r.id)}`,createdAt:r.created_at}));
  for(const r of backups.rows)out.push(item({key:key('backup',r.id),title:r.status==='failed'?'Backup failed':'Backup has not been restore-verified',area:'Backups',severity:r.status==='failed'?'critical':'warning',detail:r.error||'Restore verification missing',href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
  for(const r of protectedActivations.rows)out.push(item({key:key('activation',r.customer_id),title:`Paid/provisioned account still not activated: ${r.customer_name}`,area:'Customers',severity:'warning',detail:`Activation pending ${r.age_days} day(s) · ${r.has_subscription?'subscription ':''}${r.has_jellyfin?'Jellyfin':''}`.trim(),href:`/admin/users/${r.customer_id}?tab=access#activation`,createdAt:r.created_at}));
+ for(const r of stremioSources.rows){
+   const authProblem=['reconnect_required','error'].includes(r.auth_state);
+   const detail=authProblem?(r.last_error||'The Stremio Jellyfin source connection needs a reconnect.'):(r.index_error||'The Stremio source index failed.');
+   out.push(item({key:key(authProblem?'stremio-source':'stremio-index',r.id),title:authProblem?`Stremio source needs attention: ${r.name}`:`Stremio index failed: ${r.name}`,area:'Servers',severity:authProblem&&r.auth_state==='reconnect_required'?'critical':'warning',detail,href:`/admin/servers/stremio/${r.id}`,createdAt:r.index_updated_at||r.updated_at}));
+ }
  return out}
 
 async function workflowStates(keys){
@@ -33,17 +39,18 @@ async function workflowStates(keys){
  }
 }
 
-async function list(){
+async function list(options={}){
  const sources=await sourceItems(),keys=sources.map(i=>i.key),states=await workflowStates(keys);
  const by=new Map(states.map(s=>[s.fingerprint,s]));
- return sources.map(source=>{
+ const items=sources.map(source=>{
    const stored=by.get(source.key)||{};
    return{...source,state:{status:stored.acknowledged_at!=null?'acknowledged':'open',assigned_to:stored.assigned_to||null,note:stored.note||null,updated_at:stored.updated_at||null}};
- }).sort((a,b)=>{const rank={critical:0,warning:1,info:2};return(rank[a.severity]??9)-(rank[b.severity]??9)||new Date(b.createdAt||0)-new Date(a.createdAt||0)});
+ });
+ return items.filter(item=>options.includeAcknowledged||item.state.status!=='acknowledged').sort((a,b)=>{const rank={critical:0,warning:1,info:2};return(rank[a.severity]??9)-(rank[b.severity]??9)||new Date(b.createdAt||0)-new Date(a.createdAt||0)});
 }
 
 async function openSummary(){
- const sources=await sourceItems();
+ const sources=await list();
  let updatedAt=null,latest=0;
  for(const source of sources){const ms=source.createdAt?new Date(source.createdAt).getTime():0;if(Number.isFinite(ms)&&ms>latest){latest=ms;updatedAt=source.createdAt}}
  return{count:sources.length,updatedAt};

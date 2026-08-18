@@ -1,0 +1,24 @@
+:root{--motion-fast:120ms;--motion-med:180ms;--motion-slow:340ms;--ease-standard:cubic-bezier(.2,.8,.2,1);--tone-stremio:#9b7cff;--tone-jellyfin:#34c5f4;--tone-reward:#f7b955}
+.portalMain,.customerPortalPage,.securityMain{animation:pageRise var(--motion-slow) var(--ease-standard) both}
+.panel,.planCard,.compactCard,.summaryPanel,.welcomePanel,.accessCard,.metricCard,.libraryChoice,.customerNavLink{transition:transform var(--motion-med) var(--ease-standard),border-color var(--motion-med) var(--ease-standard),box-shadow var(--motion-med) var(--ease-standard),background var(--motion-med) var(--ease-standard)}
+@media(hover:hover){.panel:hover,.planCard:hover,.compactCard:hover,.accessCard:hover,.metricCard:hover{transform:translateY(-2px);border-color:rgba(52,197,244,.28);box-shadow:0 16px 42px rgba(0,0,0,.20)}.libraryChoice:hover,.customerNavLink:hover{transform:translateX(2px)}}
+.button{transition:transform var(--motion-fast) var(--ease-standard),filter var(--motion-fast) var(--ease-standard),box-shadow var(--motion-fast) var(--ease-standard),background var(--motion-fast) var(--ease-standard)}
+.button:hover{filter:brightness(1.08);box-shadow:0 10px 24px rgba(0,0,0,.16)}
+.button:active{transform:translateY(1px);box-shadow:none}
+.planCard{overflow:hidden}
+.planCard:before{content:"";position:absolute;inset:0 auto auto 0;width:100%;height:3px;background:linear-gradient(90deg,var(--tone-jellyfin),var(--good),var(--tone-reward));opacity:.7}
+.planCard.current:before{height:4px;background:linear-gradient(90deg,var(--good),var(--tone-jellyfin))}
+.planCard:after{content:"";position:absolute;inset:-70% auto auto -38%;width:42%;height:240%;pointer-events:none;background:linear-gradient(100deg,transparent,rgba(255,255,255,.045),transparent);transform:rotate(18deg);transition:transform .55s var(--ease-standard)}
+@media(hover:hover){.planCard:hover:after{transform:translateX(340%) rotate(18deg)}}
+.pill.good:before,.pill.warn:before,.pill.accent:before{content:"";width:6px;height:6px;border-radius:999px;background:currentColor;box-shadow:0 0 12px currentColor}
+.accessWelcomeModal{animation:modalPop var(--motion-slow) var(--ease-standard) both}
+.welcomeSuccessIcon{animation:successPulse 1.7s var(--ease-standard) infinite}
+.provisioningPanel{position:relative;overflow:hidden}
+.provisioningPanel:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,var(--warn),var(--danger));animation:progressShimmer 1.8s linear infinite}
+.provisioningPanel:not(.failed):after{background:linear-gradient(90deg,var(--warn),var(--tone-jellyfin),var(--good))}
+.summaryValue,.metric strong,.planPrice{font-variant-numeric:tabular-nums}
+@keyframes pageRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes modalPop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes successPulse{0%,100%{box-shadow:0 0 0 0 rgba(53,201,135,.26)}50%{box-shadow:0 0 0 10px rgba(53,201,135,0)}}
+@keyframes progressShimmer{from{transform:translateX(-30%)}to{transform:translateX(30%)}}
+@media(prefers-reduced-motion:reduce){.portalMain,.customerPortalPage,.securityMain,.accessWelcomeModal,.welcomeSuccessIcon,.provisioningPanel:after{animation:none!important}.panel,.planCard,.compactCard,.summaryPanel,.welcomePanel,.accessCard,.metricCard,.libraryChoice,.customerNavLink,.button{transition:none!important}.panel:hover,.planCard:hover,.compactCard:hover,.accessCard:hover,.metricCard:hover,.libraryChoice:hover,.customerNavLink:hover{transform:none!important}}

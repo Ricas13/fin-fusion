@@ -10,4 +10,18 @@
 @media (hover:hover){.planCard:hover::after,.featureCard:hover::after,.howCard:hover::after{transform:translateX(320%) rotate(18deg)}}
 .storeBtn,.storeNav a{transition:transform .16s ease,filter .16s ease,color .16s ease,text-shadow .16s ease}
 .planBadge,.heroEyebrow,.announcement{backdrop-filter:blur(10px)}
+.heroCopy,.screenMock,.freeTierPanel,.pricingSection,.finalCta{animation:storeRise .42s cubic-bezier(.2,.8,.2,1) both}
+.screenMock{animation-delay:.06s}.freeTierPanel,.pricingSection{animation-delay:.09s}.finalCta{animation-delay:.12s}
+.planCard{--service-a:#40cbef;--service-b:#38d98d}
+.planCard[data-service="stremio"]{--service-a:#a78bfa;--service-b:#40cbef}
+.planCard[data-service="bundle"]{--service-a:#38d98d;--service-b:#a78bfa}
+.planCard:before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--service-a),var(--service-b));opacity:.72}
+.planCard.featured:before{height:4px;opacity:1}
+.planGlow{background:radial-gradient(circle at 50% 0,var(--service-a),transparent 64%)!important;opacity:.12}
+.planAvailability{animation:storePillIn .34s cubic-bezier(.2,.8,.2,1) both}
+.liveDot{animation:storePulse 1.6s cubic-bezier(.2,.8,.2,1) infinite}
+@keyframes storeRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes storeMeter{from{transform:scaleX(0);transform-origin:left}to{transform:scaleX(1);transform-origin:left}}
+@keyframes storePillIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes storePulse{0%,100%{box-shadow:0 0 0 0 rgba(64,203,239,.35)}50%{box-shadow:0 0 0 8px rgba(64,203,239,0)}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}

@@ -6,6 +6,7 @@ const { query } = require('../db');
 const serversAdmin = require('./admin-servers');
 const runtimeSettings = require('./runtime-settings');
 const { esc, layout } = require('./admin-html');
+const graphics=require('./admin-section-graphics');
 
 function site() { return process.env.SITE_NAME || 'CAPTAiNFiN'; }
 function gate(req, res, next) {
@@ -84,11 +85,28 @@ function serverRow(req, server) {
     </div>`;
 }
 
+function metricNumber(server,key,fallback=0){return server.fleet_metrics?.[key]==null?Number(fallback||0):Number(server.fleet_metrics[key]||0)}
+function serverOverview(rows){
+    const total=rows.length,healthy=rows.filter(row=>row.health_status==='healthy').length,offline=rows.filter(row=>row.health_status==='offline').length,degraded=rows.filter(row=>row.health_status==='degraded').length;
+    const managed=rows.reduce((sum,row)=>sum+Number(row.assigned_users||0),0),capacity=rows.reduce((sum,row)=>sum+Number(row.max_users||0),0);
+    const activeStreams=rows.reduce((sum,row)=>sum+metricNumber(row,'active_streams',row.active_streams),0),managedStreams=rows.reduce((sum,row)=>sum+metricNumber(row,'managed_streams',row.active_streams),0),transcodes=rows.reduce((sum,row)=>sum+metricNumber(row,'transcode_streams',0),0);
+    const topLoad=rows.map(row=>({name:row.name,count:metricNumber(row,'active_streams',row.active_streams)})).sort((a,b)=>b.count-a.count).slice(0,6);
+    return `${graphics.hero({title:'Fleet health',subtitle:'Live Jellyfin availability, placement capacity and stream pressure across the CAPTAiNFiN-managed fleet.',tone:offline?'warn':'blue',stats:[
+        graphics.stat({label:'Servers',value:graphics.number(total),meta:`${graphics.number(healthy)} healthy`,tone:offline?'warn':'good'}),
+        graphics.stat({label:'Live streams',value:graphics.number(activeStreams),meta:`${graphics.number(managedStreams)} managed`,tone:'blue',href:'/admin/activity'}),
+        graphics.stat({label:'Transcodes',value:graphics.number(transcodes),meta:'live transcoding load',tone:transcodes?'violet':'good'}),
+        graphics.stat({label:'Offline/degraded',value:graphics.number(offline+degraded),meta:`${graphics.number(offline)} offline`,tone:offline||degraded?'warn':'good',href:'/admin/attention'})
+    ],meters:[graphics.meter({label:'Placement capacity used',value:managed,max:capacity||Math.max(managed,1),tone:capacity&&managed/capacity>.85?'warn':'good',meta:capacity?`${graphics.number(managed)} managed users / ${graphics.number(capacity)} configured capacity`:'No explicit max-user capacity set'})],actions:'<a class="button secondary" href="/admin/servers/new">Add server</a><a class="button secondary" href="/admin/activity">Playback operations</a>'})}${graphics.insightGrid([
+        {title:'Stream load',subtitle:'Current active streams by server',value:graphics.number(activeStreams),body:graphics.bars(topLoad),tone:'blue',href:'/admin/activity',linkLabel:'Open playback'},
+        {title:'Health states',subtitle:'Enabled server status',value:`${graphics.number(healthy)} / ${graphics.number(total)}`,body:graphics.bars([{name:'Healthy',count:healthy},{name:'Degraded',count:degraded},{name:'Offline',count:offline}]),tone:offline?'warn':'good',href:'/admin/attention',linkLabel:'Review issues'},
+        {title:'Customer placement',subtitle:'Managed accounts across servers',value:graphics.number(managed),body:graphics.bars(rows.map(row=>({name:row.name,count:Number(row.assigned_users||0)})).sort((a,b)=>b.count-a.count).slice(0,6)),tone:'violet',href:'/admin/users',linkLabel:'Open customers'}
+    ])}`;
+}
 async function body(req) {
     await runtimeSettings.ensureLoaded();
     const rows = await dashboardRows();
     const healthMinutes = Math.max(1, Math.round(runtimeSettings.serverHealthIntervalMs() / 60000));
-    return `${notice(req.query.message)}${notice(req.query.error, 'error')}
+    return `${notice(req.query.message)}${notice(req.query.error, 'error')}${serverOverview(rows)}
         <section class="section compactServerSection">
             <div class="sectionHead"><h2>Configured servers</h2><span class="muted">${rows.length} total · health every ${healthMinutes} min · live load sampled by activity worker</span></div>
             ${rows.length ? `<div class="compactServerRows">${rows.map(server => serverRow(req, server)).join('')}</div>` : '<div class="empty">No Jellyfin servers configured.</div>'}

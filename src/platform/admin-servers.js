@@ -9,6 +9,7 @@ const outbound = require('../security/outbound-url-policy');
 const { encryptWithEnv } = require('../security/purpose-crypto');
 
 const SERVER_CLASSES = new Set(['premium', 'free', 'custom']);
+const SERVER_ID_PARAM = ':serverId([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})';
 const SAFE_ERROR_PREFIXES = [
     'Slug must be ', 'Enter a valid ', 'Only http and https ', 'URLs may not contain ',
     'URL hostname is required.', 'Internal/base URL is required.', 'Jellyfin API key is required.',
@@ -191,19 +192,19 @@ async function renderLocals(req, server = null, error = null) {
 function createAdminServersRouter() {
     const router = express.Router(); router.use('/admin/servers', requireNativeAdmin, noStore);
     router.get('/admin/servers/new', async (req,res,next) => { try { return res.render('admin/server-form', await renderLocals(req)); } catch(error){next(error);} });
-    router.get('/admin/servers/:serverId/edit', async (req,res,next) => { try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); return res.render('admin/server-form',await renderLocals(req,server)); } catch(error){next(error);} });
+    router.get(`/admin/servers/${SERVER_ID_PARAM}/edit`, async (req,res,next) => { try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); return res.render('admin/server-form',await renderLocals(req,server)); } catch(error){next(error);} });
     router.post('/admin/servers', async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try { const form=parseServerForm(req.body,{apiKeyRequired:true}),id=await createServer(req.session.authUserId,form); try{await registry.healthcheckServer(id);}catch(_){} return res.redirect('/admin/servers?message='+encodeURIComponent('Jellyfin server added and credentials validated.')); }
         catch(error){console.warn('Admin server create rejected:',error.message);return res.redirect(formErrorRedirect('/admin/servers/new',error));}
     });
-    router.post('/admin/servers/:serverId/test', async (req,res) => {
+    router.post(`/admin/servers/${SERVER_ID_PARAM}/test`, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const started=Date.now();
         try { const server=await serverDetail(req.params.serverId),secret=await registry.getServerSecret(req.params.serverId); if(!server||!secret)return res.status(404).send('Server not found'); const info=await probeCredentials(secret.base_url,secret.apiKey),latencyMs=Date.now()-started,serverName=cleanText(info.ServerName,100)||server.name,version=cleanText(info.Version,40),checkedAt=await persistHealthCheck(req.params.serverId,'healthy'); await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.connection_test','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.serverId,JSON.stringify({ok:true,latencyMs,version:version||null,checkedAt})]); return res.redirect('/admin/servers?message='+encodeURIComponent(`Connection successful — ${serverName}${version?` · Jellyfin ${version}`:''} · ${latencyMs} ms.`)); }
         catch(error){await persistHealthCheck(req.params.serverId,'offline').catch(()=>{});console.warn('Admin server connection test failed:',error.message);return res.redirect('/admin/servers?error='+encodeURIComponent(`Connection failed — ${safeAdminError(error)}`));}
     });
-    router.post('/admin/servers/:serverId', async (req,res) => {
+    router.post(`/admin/servers/${SERVER_ID_PARAM}`, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
             const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found');
@@ -213,7 +214,7 @@ function createAdminServersRouter() {
             return res.redirect('/admin/servers?message='+encodeURIComponent('Server configuration updated.'));
         } catch(error){console.warn('Admin server update rejected:',error.message);return res.redirect(formErrorRedirect('/admin/servers/'+encodeURIComponent(req.params.serverId)+'/edit',error));}
     });
-    router.post('/admin/servers/:serverId/health', async (req,res) => {
+    router.post(`/admin/servers/${SERVER_ID_PARAM}/health`, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); const result=await registry.healthcheckServer(req.params.serverId); await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.healthcheck','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.serverId,JSON.stringify({ok:result.ok,latencyMs:result.latencyMs})]); return res.redirect('/admin/servers?'+(result.ok?'message=':'error=')+encodeURIComponent(result.ok?`Server health check passed (${result.latencyMs} ms).`:'Server health check failed.')); }
         catch(error){return res.redirect('/admin/servers?error='+encodeURIComponent('Server health check could not be completed.'));}

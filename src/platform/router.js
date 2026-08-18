@@ -7,6 +7,7 @@ const lifecycle = require('../payments/lifecycle');
 const publicAbuseProtection = require('../security/public-abuse-protection');
 const routeRateLimit = require('../security/route-rate-limit');
 const { createPublicHelpRouter } = require('./public-help');
+const { createPublicPagesRouter } = require('./public-pages');
 const { createAdminAutomationRouter } = require('./admin-automation');
 const { createAdminSearchRouter } = require('./admin-search');
 const { createAdminEventsRouter } = require('./admin-events');
@@ -45,6 +46,7 @@ function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
     router.use(publicAbuseProtection.middleware);
     router.use(createMessagingBotWebhookRouter());
+    router.use(createPublicPagesRouter());
     router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
     router.use(createCustomerPublicAuthRouter());

@@ -7,6 +7,7 @@ const customerFilters=require('./customer-filters');
 const registry=require('../jellyfin/registry');
 const {sendCsv}=require('./export');
 const {BULK_ACTIONS}=require('./admin-bulk-customers');
+const graphics=require('./admin-section-graphics');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
@@ -123,13 +124,47 @@ function bulkBar(req,filters,total){
         </form></section>`;
 }
 
+async function customerOverview(){
+    const [summary,plans]=await Promise.all([
+        query(`SELECT
+            (SELECT COUNT(*)::int FROM customers) total,
+            (SELECT COUNT(*)::int FROM app_users u JOIN customers c ON c.user_id=u.id WHERE u.active=TRUE) portal_enabled,
+            (SELECT COUNT(DISTINCT customer_id)::int FROM subscriptions WHERE superseded_by IS NULL AND status IN('active','trialing') AND current_period_end>NOW()) active_access,
+            (SELECT COUNT(DISTINCT customer_id)::int FROM subscriptions WHERE superseded_by IS NULL AND status='past_due') past_due,
+            (SELECT COUNT(*)::int FROM customers WHERE created_at>=NOW()-INTERVAL '30 days') new_30d,
+            (SELECT COUNT(DISTINCT customer_id)::int FROM playback_history WHERE customer_id IS NOT NULL AND started_at>=NOW()-INTERVAL '30 days') active_30d,
+            (SELECT COUNT(DISTINCT customer_id)::int FROM jellyfin_accounts WHERE disabled=FALSE) jellyfin_ready,
+            (SELECT COUNT(*)::int FROM jellyfin_accounts WHERE disabled=TRUE) disabled_accounts,
+            (SELECT COUNT(*)::int FROM customer_provisioning_state WHERE status IN('blocked','failed')) provisioning_attention,
+            (SELECT COUNT(DISTINCT c.id)::int FROM customers c JOIN app_users u ON u.id=c.user_id WHERE u.email_verified_at IS NULL) unverified`).catch(()=>({rows:[{}]})),
+        query(`SELECT COALESCE(p.name,'No active plan') name,COUNT(DISTINCT c.id)::int count
+            FROM customers c
+            LEFT JOIN subscriptions s ON s.customer_id=c.id AND s.superseded_by IS NULL AND s.status IN('active','trialing') AND s.current_period_end>NOW()
+            LEFT JOIN plans p ON p.id=s.plan_id
+            GROUP BY 1 ORDER BY count DESC,name LIMIT 6`).catch(()=>({rows:[]}))
+    ]);
+    return{summary:summary.rows[0]||{},plans:plans.rows};
+}
+function customerOverviewHtml(data){
+    const s=data.summary,total=Number(s.total||0),ready=Number(s.jellyfin_ready||0),active=Number(s.active_access||0),attention=Number(s.provisioning_attention||0)+Number(s.disabled_accounts||0)+Number(s.past_due||0);
+    return `${graphics.hero({title:'People health',subtitle:'Customer growth, active entitlement, Jellyfin readiness and support pressure in one view.',tone:attention?'warn':'good',stats:[
+        graphics.stat({label:'Customers',value:graphics.number(total),meta:`${graphics.number(s.new_30d)} joined in 30 days`,tone:'blue',href:'/admin/users?sort=recent'}),
+        graphics.stat({label:'Active access',value:graphics.number(active),meta:`${graphics.number(s.portal_enabled)} portal logins enabled`,tone:'good'}),
+        graphics.stat({label:'Recently active',value:graphics.number(s.active_30d),meta:'played in the last 30 days',tone:'violet'}),
+        graphics.stat({label:'Needs attention',value:graphics.number(attention),meta:'past due, disabled or provisioning blocked',tone:attention?'warn':'good',href:'/admin/attention'})
+    ],meters:[graphics.meter({label:'Jellyfin readiness',value:ready,max:Math.max(total,ready),tone:ready>=total?'good':'blue',meta:`${graphics.number(ready)} customer(s) have enabled Jellyfin access`})],actions:'<a class="button secondary" href="/admin/users/new">Add customer</a><a class="button secondary" href="/admin/jellyfin-import">Import Jellyfin users</a>'})}${graphics.insightGrid([
+        {title:'Plan mix',subtitle:'Current active and trialing customers',value:graphics.number(active),body:graphics.bars(data.plans),tone:'blue',href:'/admin/plans',linkLabel:'Open plans'},
+        {title:'Activation',subtitle:'Accounts that still need portal verification',value:graphics.number(s.unverified),body:graphics.meter({label:'Verified or ready',value:Math.max(0,total-Number(s.unverified||0)),max:Math.max(total,1),tone:Number(s.unverified||0)?'warn':'good'}),tone:Number(s.unverified||0)?'warn':'good'},
+        {title:'Support pressure',subtitle:'Operational people items',value:graphics.number(attention),body:graphics.bars([{name:'Past due',count:s.past_due||0},{name:'Disabled Jellyfin',count:s.disabled_accounts||0},{name:'Provisioning blocked',count:s.provisioning_attention||0}]),tone:attention?'warn':'good',href:'/admin/attention',linkLabel:'Review attention'}
+    ])}`;
+}
 async function listPage(req){
     const filters=parseFilters(req.query);
     const page=Math.max(parseInt(req.query.page,10)||1,1);
     const sort=['expiring','name','recent'].includes(req.query.sort)?req.query.sort:'recent';
-    const [options,result]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize:25,sort})]);
+    const [options,result,overview]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize:25,sort}),customerOverview()]);
     const rows=result.rows;
-    const body=`${notice(req)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>Customers</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><thead><tr><th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Server</th><th>Reconciliation</th><th>Override</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customers-bulk.js" defer></script>`;
+    const body=`${notice(req)}${customerOverviewHtml(overview)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>Customers</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><thead><tr><th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Server</th><th>Reconciliation</th><th>Override</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customers-bulk.js" defer></script>`;
     return layout({siteName:site(),active:'users',title:'Customers',subtitle:'Managed customers, subscriptions and Jellyfin access',body,action:'<a class="button" href="/admin/users/new">Add customer</a> <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a> <a class="button secondary" href="/admin/users/export?'+queryStringFor(filters)+'">Export CSV</a>'});
 }
 

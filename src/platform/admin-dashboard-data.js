@@ -4,6 +4,7 @@ const { query } = require('../db');
 const { setupReadiness } = require('./setup-readiness');
 const { analyticsData, dashboardRange } = require('./admin-dashboard-analytics');
 const { normalizedDashboardMoney } = require('./admin-dashboard-money');
+const attention = require('./attention');
 
 function boundedInt(value, min, max, fallback) {
     const n = parseInt(value, 10);
@@ -31,11 +32,12 @@ async function legacyPolicyMetrics() {
 
 async function dashboardData(range = null, reporting = null) {
     const selectedRange = range || dashboardRange({ range: '30d' });
-    const [analytics, setup, options, policy] = await Promise.all([
+    const [analytics, setup, options, policy, attentionSummary] = await Promise.all([
         analyticsData(selectedRange),
         setupReadiness(),
         dashboardOptions(),
-        legacyPolicyMetrics()
+        legacyPolicyMetrics(),
+        attention.openSummary().catch(() => ({ count: 0, updatedAt: null }))
     ]);
     if (reporting) {
         const normalized = await normalizedDashboardMoney(selectedRange, analytics.revenue?.series || [], reporting);
@@ -57,6 +59,7 @@ async function dashboardData(range = null, reporting = null) {
     return {
         ...analytics,
         setup,
+        attention: attentionSummary,
         options,
         customers: Number(analytics.current.customers || 0),
         activeSubscriptions: Number(analytics.current.activeSubscriptions || 0),

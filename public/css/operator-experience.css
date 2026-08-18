@@ -121,5 +121,14 @@
 button,.button,.btn,a.adminTab,a.operatorTab { transition:transform .12s ease,filter .12s ease,background .12s ease,border-color .12s ease; }
 button:hover,.button:hover,.btn:hover { filter:brightness(1.08); }
 button:active,.button:active,.btn:active { transform:translateY(1px); }
+.content>.pageHeader,.content>.notice,.content>.statusBanner,.content>.metrics,.content>.section,.content>.analyticsDashboard,.content>.sectionGraphicHero,.content>.sectionInsightGrid {
+  animation: adminPageRise .30s cubic-bezier(.2,.8,.2,1) both;
+}
+.section,.analyticsCard,.serverCard,.formPanel,.metric,.analyticsKpi,.sectionInsightCard,.dashboardFocusCard {
+  will-change: transform;
+}
+.attentionAcknowledged{opacity:.72}
+.attentionViewTabs .operatorTab{position:relative}
+@keyframes adminPageRise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}

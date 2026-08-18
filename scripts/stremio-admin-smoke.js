@@ -10,6 +10,7 @@ const nav=read('src/platform/admin-nav.js');
 const settings=read('src/platform/admin-original-settings.js');
 const legacy=read('src/platform/admin-stremio.js');
 const sources=read('src/platform/admin-stremio-sources.js');
+const adminServers=read('src/platform/admin-servers.js');
 const delivery=read('src/platform/admin-plan-delivery.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const sourceClient=read('src/stremio/source-client.js');
@@ -18,6 +19,7 @@ const runtimeSettings=read('src/stremio/runtime-settings.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
 assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Servers-owned Stremio Sources router must be mounted');
+assert(adminServers.includes('SERVER_ID_PARAM')&&adminServers.includes('/admin/servers/${SERVER_ID_PARAM}/edit'),'Generic Jellyfin server routes must be UUID-constrained so /admin/servers/stremio is not parsed as a server ID');
 assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio']"),'Stremio must be a Servers navigation destination');
 assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'"),'Legacy Stremio navigation must resolve to Servers → Stremio');
 assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio Sources workflow');
@@ -32,7 +34,7 @@ assert(!sources.includes('Managed Jellyfin sources'),'Managed Jellyfin servers m
 assert(!sources.includes('Use for Stremio'),'Normal Jellyfin server administration must not leak into the manual Stremio source workflow');
 assert(!sources.includes('managedServers()'),'Stremio Sources must not query the normal Jellyfin server fleet for candidates');
 assert(sources.includes('independent from Servers → Servers'),'UI must explain that Stremio upstreams are configured independently');
-assert(sources.includes("console.error('[stremio-source] manual connection failed:'"),'Manual connection failures must be logged with their real server-side cause');
+assert(sources.includes('Attempt log ID')&&sources.includes('[stremio-source-attempt]')&&sources.includes('failureLogPayload'),'Manual connection failures must show an attempt ID and emit structured Docker logs');
 assert(sourcePool.includes('discoveryWarning')&&sourcePool.includes('sourcePersisted:true'),'Library discovery failure must preserve an authenticated source for diagnosis/retry');
 assert(sources.includes('source was saved')&&sources.includes('library discovery needs attention'),'Admin UI must explain partial source admission without pretending discovery succeeded');
 
