@@ -1,5 +1,8 @@
 BEGIN;
 
+ALTER TABLE pending_registrations
+    ADD COLUMN IF NOT EXISTS free_access_requested BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS free_access_registration_reservations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     pending_registration_id UUID NOT NULL UNIQUE REFERENCES pending_registrations(id) ON DELETE CASCADE,
