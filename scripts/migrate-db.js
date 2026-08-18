@@ -18,12 +18,12 @@ function unwrapTransaction(sql) {
 }
 
 async function ensureMigrationLedger(pool) {
-    await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
         filename TEXT PRIMARY KEY,
         checksum TEXT,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
-    await pool.query('ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT');
+    await pool.query('ALTER TABLE public.schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT');
 }
 
 async function detectFreshDatabase(pool) {
@@ -39,7 +39,7 @@ async function detectFreshDatabase(pool) {
 
 async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
     const existing = await pool.query(
-        'SELECT checksum FROM schema_migrations WHERE filename=$1',
+        'SELECT checksum FROM public.schema_migrations WHERE filename=$1',
         [filename]
     );
     if (!existing.rowCount) return false;
@@ -47,7 +47,7 @@ async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
     const recorded = existing.rows[0].checksum;
     if (!recorded) {
         await pool.query(
-            'UPDATE schema_migrations SET checksum=$2 WHERE filename=$1 AND checksum IS NULL',
+            'UPDATE public.schema_migrations SET checksum=$2 WHERE filename=$1 AND checksum IS NULL',
             [filename, checksum]
         );
         console.warn(`baseline checksum ${filename}`);
@@ -66,7 +66,7 @@ async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
 
 async function adoptBaseline(pool, filename, checksum) {
     await pool.query(
-        'INSERT INTO schema_migrations(filename,checksum) VALUES($1,$2)',
+        'INSERT INTO public.schema_migrations(filename,checksum) VALUES($1,$2)',
         [filename, checksum]
     );
     console.log(`adopt ${filename}`);
@@ -76,15 +76,19 @@ async function applyMigration(pool, filename, sql, checksum, freshInstall) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query("SELECT pg_catalog.set_config('search_path','public',false)");
         await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
         await client.query(unwrapTransaction(sql));
-        await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+        // pg_dump baselines intentionally set an empty search_path. Restore the
+        // application schema before updating the migration ledger or continuing.
+        await client.query("SELECT pg_catalog.set_config('search_path','public',false)");
+        await client.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
             filename TEXT PRIMARY KEY,
             checksum TEXT,
             applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
         await client.query(
-            'INSERT INTO schema_migrations(filename,checksum) VALUES($1,$2)',
+            'INSERT INTO public.schema_migrations(filename,checksum) VALUES($1,$2)',
             [filename, checksum]
         );
         await client.query('COMMIT');
