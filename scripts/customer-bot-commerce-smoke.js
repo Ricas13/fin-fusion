@@ -21,7 +21,9 @@ const scopedMigration=read('db/migrations/077_notifications_multicurrency_report
 
 assert(!/FROM reseller_tiers WHERE archived_at IS NULL/.test(plans),'Plans list must not query nonexistent reseller_tiers.archived_at');
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
-assert(!plans.includes('resellerRows')&&!plans.includes('/admin/reseller-tiers'),'Plans must remain independent from the retired reseller catalogue');
+assert(plans.includes("['reseller','Reseller','/admin/reseller-tiers']"),'Unified Plans must expose the live monthly reseller catalogue');
+assert(plans.includes('/admin/plans/resellers')&&plans.includes('Reseller accounts'),'Unified Plans must expose reseller account management separately from customer plans');
+assert(!/reseller credit|credit wallet|buy credits/i.test(plans),'Unified Plans must not revive reseller-credit semantics');
 assert(shell.includes("paymentWorkflow.tabs(active)"),'Shared admin shell must render payment workflow tabs');
 for(const title of ['Payments','Provider mappings','Billing'])assert(shell.includes(`'${title}'`),`Payment workflow must recognise ${title}`);
 
