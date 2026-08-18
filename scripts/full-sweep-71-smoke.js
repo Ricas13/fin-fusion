@@ -67,7 +67,8 @@ mustContain('src/payments/stripe.js',"duration:'once'");
 mustContain('src/payments/paypal.js','Service credit cannot be combined with a recurring PayPal subscription');
 mustContain('views/customer/affiliate.ejs','Use credit + Stripe');
 mustContain('views/customer/affiliate.ejs','Use credit + PayPal');
-mustContain('views/customer/dashboard.ejs','Affiliate programme');
+mustContain('views/customer/dashboard.ejs','Benefits');
+mustContain('views/customer/dashboard.ejs','/account/affiliate');
 mustNotContain('views/customer/dashboard.ejs','Refer a friend');
 mustNotContain('src/platform/bulk-operations.js',/reseller_assign|reseller_detach/);
 
