@@ -3,6 +3,7 @@
 const express = require('express');
 const core = require('./router-core');
 const placement = require('../jellyfin/placement');
+const lifecycle = require('../payments/lifecycle');
 const publicAbuseProtection = require('../security/public-abuse-protection');
 const routeRateLimit = require('../security/route-rate-limit');
 const { createPublicHelpRouter } = require('./public-help');
@@ -40,6 +41,7 @@ const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer
 const trialFreeLimit=routeRateLimit.middleware({scope:'customer-trial-free',max:12,windowSeconds:300});
 let fleetStarted=false;
 function ensureFleetSnapshot(){if(!fleetStarted){fleetStarted=true;placement.startFleetSnapshotRefresh();}}
+function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
 function pruneRoutes(router,paths){if(!router?.stack)return router;router.stack=router.stack.filter(layer=>{if(layer.route&&paths.has(String(layer.route.path)))return false;if(layer.handle?.stack)pruneRoutes(layer.handle,paths);return true;});return router;}
 function createRouter(){
     ensureFleetSnapshot();const router=express.Router();
@@ -81,13 +83,13 @@ function createRouter(){
     router.use(createAdminAbuseProtectionRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
-    router.use('/account/trial/start',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
-    router.use('/account/claim-free/:planCode',trialFreeLimit,(req,res,next)=>req.method==='POST'?mutationGuard(req,res,next):next());
+    router.post('/account/trial/start',trialFreeLimit,requireCustomer,mutationGuard,async(req,res)=>{try{await lifecycle.startFreeTrial(req.session.customerId,req.body.planCode||null);return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your trial is active. Your access details are below.'));}catch(error){return res.redirect('/account?error='+encodeURIComponent(error.message));}});
+    router.post('/account/claim-free/:planCode',trialFreeLimit,requireCustomer,mutationGuard,async(req,res)=>{try{await lifecycle.claimFreePlan(req.session.customerId,req.params.planCode);return res.redirect('/account?welcome=1&message='+encodeURIComponent('Free Access claimed. Your access details are below.'));}catch(error){return res.redirect('/account?error='+encodeURIComponent(error.message));}});
     const legacy=core.createRouter();
     pruneRoutes(legacy,new Set([
         '/account','/account/register','/account/verify-email','/account/forgot-password','/account/reset-password',
         '/account/login','/account/logout','/account/checkout/stripe','/account/checkout/paypal','/account/paypal/return','/account/stripe/portal',
-        '/account/jellyfin/:accountId/password',
+        '/account/jellyfin/:accountId/password','/account/trial/start','/account/claim-free/:planCode',
         '/admin/configuration','/admin/configuration/export','/admin/configuration/preview','/admin/configuration/apply','/admin/notifications/preferences',
         '/admin/plans/:id/commerce','/admin/plans/:id/provider'
     ]));
