@@ -7,7 +7,7 @@ const ejs = require('ejs');
 (async () => {
     const currentPlan = {
         id: 'plan-1', plan_id: 'plan-1', name: 'Monthly', code: 'monthly', status: 'active',
-        source: 'invitation', current_period_end: new Date(Date.now() + 86400000), streams: 3,
+        source: 'manual', current_period_end: new Date(Date.now() + 86400000), streams: 3,
         allow_downloads: true, allow_video_transcoding: false
     };
     const locals = {
@@ -46,12 +46,13 @@ const ejs = require('ejs');
     assert.match(html, /Welcome back, viewer1/);
     assert.match(html, /Your access/);
     assert.match(html, /Current plan/);
-    assert.match(html, /Library visibility/);
-    assert.match(html, /Plans/);
-    assert.match(html, /Affiliate programme/);
+    assert.match(html, /Your libraries/);
+    assert.match(html, /Hide or show libraries already included in your plan/);
+    assert.match(html, /Plans &amp; billing/);
+    assert.match(html, /Benefits/);
     assert.match(html, /\/account\/affiliate/);
     assert.match(html, /customerSidebar/);
-    assert.match(html, /Jellyfin access/);
+    assert.match(html, /Jellyfin/);
     assert.doesNotMatch(html, /Refer a friend/, 'Legacy referral-days copy must not reappear.');
     assert.match(html, /customer-portal\.css/);
     assert(!html.includes('Invalid Date'), 'Portal must never render Invalid Date');
