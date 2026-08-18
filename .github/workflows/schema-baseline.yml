@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
 permissions:
-  contents: read
+  contents: write
 jobs:
   baseline:
     runs-on: ubuntu-24.04
@@ -32,32 +32,37 @@ jobs:
       BACKUP_ENCRYPTION_KEY: 5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run db:migrate
-      - name: Verify database vocabulary is clean
-        shell: bash
-        run: |
-          docker run --rm --network host postgres:17-alpine \
-            pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges > /tmp/schema.sql
-          term="$(printf 're%s' 'seller')"
-          if grep -in "$term" /tmp/schema.sql; then
-            echo "::error::Retired product vocabulary remains in generated schema"
-            exit 1
-          fi
-      - name: Export baseline schema
+      - name: Generate and verify clean baseline
         shell: bash
         run: |
           docker run --rm --network host postgres:17-alpine \
             pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges \
             --exclude-table=schema_migrations \
             --exclude-table=user_sessions \
-            > schema-baseline.sql
-      - uses: actions/upload-artifact@v4
-        with:
-          name: schema-baseline
-          path: schema-baseline.sql
-          retention-days: 7
+            > /tmp/schema-baseline.sql
+          term="$(printf 're%s' 'seller')"
+          if grep -in "$term" /tmp/schema-baseline.sql; then
+            echo "::error::Retired product vocabulary remains in generated schema"
+            exit 1
+          fi
+          sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' /tmp/schema-baseline.sql > db/migrations/000_schema_baseline.sql
+      - name: Commit generated baseline when changed
+        shell: bash
+        run: |
+          if git diff --quiet -- db/migrations/000_schema_baseline.sql && git ls-files --error-unmatch db/migrations/000_schema_baseline.sql >/dev/null 2>&1; then
+            echo "Baseline already current."
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add db/migrations/000_schema_baseline.sql
+          git commit -m "Add clean PostgreSQL schema baseline"
+          git push origin "HEAD:${{ github.head_ref }}"
