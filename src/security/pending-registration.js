@@ -28,7 +28,7 @@ function cleanCommunicationPreferences(value={}){
 }
 async function serialize(client){await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:pending-registration',$1::bigint))`,[LOCK_SEED]);}
 async function canonicalFreePlan(client){
-    const found=await client.query(`SELECT id,code,name,capacity_limit FROM plans WHERE active=TRUE AND visible=TRUE AND is_free_tier=TRUE AND COALESCE(is_addon,FALSE)=FALSE AND audience IN('direct','both') AND price_minor=0 AND billing_interval<>'trial' AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY storefront_order ASC,id ASC LIMIT 1`);
+    const found=await client.query(`SELECT id,code,name,capacity_limit FROM plans WHERE active=TRUE AND visible=TRUE AND is_free_tier=TRUE AND COALESCE(is_addon,FALSE)=FALSE AND audience IN('direct','both') AND price_minor=0 AND billing_interval<>'trial' AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY storefront_order ASC,id ASC LIMIT 1`);
     return found.rows[0]||null;
 }
 
@@ -42,10 +42,8 @@ async function begin({email,username,password,referralCode=null,communicationPre
         if(banned.rowCount)throw new Error('Registration is not available for this email address');
         const exists=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) OR lower(username)=lower($2) LIMIT 1`,[email,username]);
         if(exists.rowCount)throw new Error('An account already exists with that email or username');
-        // Re-submitting the same identity replaces its old pending request. Any
-        // associated free-slot hold is released by ON DELETE CASCADE.
         await client.query(`DELETE FROM pending_registrations WHERE consumed_at IS NULL AND (expires_at<=NOW() OR lower(email)=lower($1) OR lower(username)=lower($2))`,[email,username]);
-        const created=await client.query(`INSERT INTO pending_registrations(email,username,password_hash,referral_code,token_hash,expires_at,communication_preferences) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id,email,username,expires_at,created_at`,[email,username,passwordHash,ref,hash,expiresAt,JSON.stringify(prefs)]);
+        const created=await client.query(`INSERT INTO pending_registrations(email,username,password_hash,referral_code,token_hash,expires_at,communication_preferences,free_access_requested) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) RETURNING id,email,username,expires_at,created_at,free_access_requested`,[email,username,passwordHash,ref,hash,expiresAt,JSON.stringify(prefs),Boolean(freeAccess)]);
         let freeReservation=null;
         if(freeAccess){
             const plan=await canonicalFreePlan(client);
@@ -54,9 +52,7 @@ async function begin({email,username,password,referralCode=null,communicationPre
                 await planCapacity.lockAndAssert(client,plan.id,plan.name||'Free Access');
                 const holdExpiresAt=new Date(Math.min(expiresAt.getTime(),Date.now()+FREE_HOLD_MINUTES*60000));
                 freeReservation=(await client.query(`INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at) VALUES($1,$2,$3,$4) RETURNING id,plan_id,expires_at`,[created.rows[0].id,plan.id,email,holdExpiresAt])).rows[0];
-            }else{
-                freeReservation={id:null,plan_id:plan.id,expires_at:expiresAt,unlimited:true};
-            }
+            }else freeReservation={id:null,plan_id:plan.id,expires_at:expiresAt,unlimited:true};
         }
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.pending','pending_registration',$1,$2::jsonb)`,[created.rows[0].id,JSON.stringify({email,username,expiresAt,referral:Boolean(ref),freeAccess:Boolean(freeAccess),freeHoldExpiresAt:freeReservation?.expires_at||null,optionalChannels:{whatsapp:prefs.whatsapp_opt_in,telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
         return{...created.rows[0],freeReservation};
@@ -79,8 +75,8 @@ async function consume(rawToken){
         const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
         await client.query(`INSERT INTO customer_communication_preferences(customer_id,phone_e164,whatsapp_opt_in,whatsapp_opted_in_at,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,CASE WHEN $3 THEN NOW() ELSE NULL END,$4,$5,$6,$7) ON CONFLICT(customer_id) DO UPDATE SET phone_e164=EXCLUDED.phone_e164,whatsapp_opt_in=EXCLUDED.whatsapp_opt_in,whatsapp_opted_in_at=EXCLUDED.whatsapp_opted_in_at,telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.phone_e164,prefs.whatsapp_opt_in,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
         await client.query(`UPDATE pending_registrations SET consumed_at=NOW(),updated_at=NOW() WHERE id=$1`,[pending.id]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,freeReservationId:reservation?.id||null,optionalChannels:{whatsapp:prefs.whatsapp_opt_in,telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
-        return{user,customer,referralCode:pending.referral_code||null,pendingRegistrationId:pending.id,freeReservation:reservation};
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,optionalChannels:{whatsapp:prefs.whatsapp_opt_in,telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
+        return{user,customer,referralCode:pending.referral_code||null,pendingRegistrationId:pending.id,freeAccessRequested:Boolean(pending.free_access_requested),freeReservation:reservation};
     });
     if(!created)return null;
     if(created.referralCode){try{const settings=await referrals.loadSettings();if(settings.enabled)await referrals.attributeReferral(created.customer.id,created.referralCode);}catch(error){console.error('Verified registration referral attribution failed:',error.message);}}
@@ -88,6 +84,6 @@ async function consume(rawToken){
 }
 
 async function cleanupExpired(limit=500){const max=Math.max(1,Math.min(5000,Number(limit)||500)),result=await query(`WITH doomed AS (SELECT id FROM pending_registrations WHERE consumed_at IS NULL AND expires_at<=NOW() ORDER BY expires_at LIMIT $1) DELETE FROM pending_registrations p USING doomed d WHERE p.id=d.id RETURNING p.id`,[max]);return{processed:result.rowCount,removed:result.rowCount};}
-async function recent(limit=50){const result=await query(`SELECT id,email,username,expires_at,consumed_at,created_at FROM pending_registrations ORDER BY created_at DESC LIMIT $1`,[Math.max(1,Math.min(200,Number(limit)||50))]);return result.rows;}
+async function recent(limit=50){const result=await query(`SELECT id,email,username,expires_at,consumed_at,free_access_requested,created_at FROM pending_registrations ORDER BY created_at DESC LIMIT $1`,[Math.max(1,Math.min(200,Number(limit)||50))]);return result.rows;}
 async function stats(){const result=await query(`SELECT COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at>NOW())::int pending,COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at<=NOW())::int expired FROM pending_registrations`);return result.rows[0]||{pending:0,expired:0};}
 module.exports={FREE_HOLD_MINUTES,begin,consume,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,cleanCommunicationPreferences,canonicalFreePlan};
