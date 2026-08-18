@@ -28,7 +28,7 @@ function cleanCommunicationPreferences(value={}){
 }
 async function serialize(client){await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:pending-registration',$1::bigint))`,[LOCK_SEED]);}
 async function canonicalFreePlan(client){
-    const found=await client.query(`SELECT id,code,name,capacity_limit FROM plans WHERE active=TRUE AND visible=TRUE AND is_free_tier=TRUE AND COALESCE(is_addon,FALSE)=FALSE AND audience IN('direct','both') AND price_minor=0 AND billing_interval<>'trial' AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY storefront_order ASC,id ASC LIMIT 1`);
+    const found=await client.query(`SELECT id,code,name,capacity_limit FROM plans WHERE active=TRUE AND visible=TRUE AND is_free_tier=TRUE AND COALESCE(is_addon,FALSE)=FALSE AND audience IN('direct','both') AND price_minor=0 AND billing_interval<>'trial' AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY sort_order ASC,id ASC LIMIT 1`);
     return found.rows[0]||null;
 }
 
