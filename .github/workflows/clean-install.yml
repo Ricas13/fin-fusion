@@ -163,7 +163,7 @@ jobs:
           grep -q 'Admin Dashboard' /tmp/admin.html
           grep -q 'Browser Test Streams' /tmp/admin.html
           grep -q 'Platform setup' /tmp/admin.html
-          grep -q '0 / 11 configured' /tmp/admin.html
+          grep -q '0 / 9 configured' /tmp/admin.html
 
           curl -fsS -b /tmp/cookies.txt -D /tmp/setup-locked.headers -o /dev/null http://127.0.0.1:3031/setup
           grep -qi '^location: /admin' /tmp/setup-locked.headers
