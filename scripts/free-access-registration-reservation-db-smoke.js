@@ -1,6 +1,7 @@
 'use strict';
 
 const assert=require('assert');
+const crypto=require('crypto');
 const {query}=require('../src/db');
 const pending=require('../src/security/pending-registration');
 const capacity=require('../src/entitlements/plan-capacity');
@@ -10,7 +11,7 @@ async function main(){
   const free=(await query(`SELECT id,code,capacity_limit FROM plans WHERE is_free_tier=TRUE LIMIT 1`)).rows[0];
   assert(free,'canonical Free Access plan is missing');
   const originalLimit=free.capacity_limit;
-  const tag=`hold-${Date.now()}-${Math.random().toString(16).slice(2,8)}`;
+  const tag=`hold-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   let first=null,created=null,subscriptionId=null;
   try{
     const before=await capacity.usage(free.id);
