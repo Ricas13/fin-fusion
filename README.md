@@ -1,35 +1,25 @@
 # CAPTAiNFiN / Steam Fusion
 
-CAPTAiNFiN is a self-hosted platform for managing Jellyfin customers, subscriptions, billing, affiliates, monthly resellers, storefronts and a multi-server Jellyfin fleet. PostgreSQL is the system of record, scheduled mutation work runs in dedicated workers, and the public/admin/customer experiences are database-backed.
+CAPTAiNFiN is a self-hosted platform for managing Jellyfin and Stremio customers, subscriptions, billing, affiliates, storefronts and a multi-server Jellyfin fleet. PostgreSQL is the system of record, scheduled mutation work runs in dedicated workers, and the public, administration and customer experiences are database-backed.
 
 ## What it manages
 
 - Multiple Jellyfin servers, health, libraries, capacity and fleet-aware placement.
 - Direct customers, imported Jellyfin users, portal claims and one-time activation links.
 - Customer plans with stream, download, transcoding, library and request policies.
-- Monthly reseller plans with managed Jellyfin-user allowances and inherited Jellyfin policy.
+- Jellyfin, Stremio and bundle products with consistent plan configuration.
 - Stripe and PayPal one-time or recurring customer checkout.
 - Affiliate referral attribution with currency-specific CAPTAiNFiN service credit.
 - Affiliate accounts that can earn credit without holding an active subscription.
 - Full-credit plan activation plus mixed service-credit + Stripe checkout and mixed service-credit + one-time PayPal checkout.
-- Multi-currency customer and reseller pricing with price-scoped provider mappings.
+- Multi-currency customer pricing with price-scoped provider mappings.
 - A permanent Free Access tier that remains visible even when no free places are available.
-- Configurable storefront ordering for customer, Stremio/add-on and reseller plans.
+- Configurable storefront ordering for customer, Stremio and bundle plans.
 - Central Seerr/Overseerr account synchronisation and per-plan request quotas.
 - Transactional email and configured notification channels.
 - Provisioning/reconciliation, billing verification and entitlement expiry.
 - Playback/activity metrics, live fleet streams and recurring-commerce reporting.
 - Portable non-secret configuration export/import for clean installs and migrations.
-
-## Reseller model
-
-A reseller pays CAPTAiNFiN a monthly fee for a reseller plan. Each plan defines a fixed number of managed Jellyfin-user seats together with the Jellyfin rules those users inherit, including concurrent streams, transcoding permissions, server class and allowed libraries.
-
-CAPTAiNFiN manages the reseller subscription, seat allowance and technical Jellyfin policy. The reseller manages their own downstream commercial relationship, pricing, billing and customer support outside CAPTAiNFiN.
-
-Reseller pricing can be configured independently in GBP, USD and EUR with its own Stripe/PayPal recurring mappings. Existing reseller subscriptions keep their snapshotted commercial price and seat allowance while current Jellyfin policy changes can be reconciled to managed users.
-
-The old reseller wallet/credit model is retired. Historical database structures may remain only where required for safe upgrades and audit compatibility; they are not active product behaviour. Affiliate service credit is a separate customer benefit and is not reseller credit.
 
 ## Affiliate and service-credit model
 
@@ -101,7 +91,7 @@ A blank database starts safely with customer-facing features off. A sensible adm
 1. **Setup readiness** — resolve readiness/dependency warnings.
 2. **General & branding** — set installation identity, public URL and support links.
 3. **Servers / Libraries** — add Jellyfin servers, test them and synchronise libraries.
-4. **Plans** — configure Jellyfin, Stremio/bundle and monthly reseller products.
+4. **Plans** — configure Jellyfin, Stremio and bundle products.
 5. **Storefront order** — arrange public plan ordering; Free Access stays featured separately.
 6. **Payment providers** — configure provider credentials and price-specific mappings.
 7. **Affiliates** — enable the programme and configure reward/qualification settings when wanted.
@@ -146,7 +136,7 @@ Run migrations manually with:
 npm run db:migrate
 ```
 
-Migrations are checksum-tracked. **Do not edit an already-applied migration.** Add a new numbered migration instead.
+Migrations are checksum-tracked. Do not edit an already-applied migration. Add a new migration instead.
 
 ## Security model
 
@@ -180,9 +170,9 @@ Affiliate service credit is an account balance, not cash and not a payment-provi
 
 ## Configuration export/import
 
-Administration can export a versioned portable configuration containing non-secret business configuration such as customer plans, reseller plans, pricing, policy, affiliate settings, provider mapping references, storefront settings and automation schedules.
+Administration can export a versioned portable configuration containing non-secret business configuration such as plans, pricing, delivery policy, affiliate settings, provider mapping references, storefront settings and automation schedules.
 
-Exports exclude secrets, customer/affiliate/reseller identities and balances, provider customer/subscription identities, sessions, audit/auth history and branding binary assets. Imported provider mappings remain verification-safe rather than being blindly trusted.
+Exports exclude secrets, customer/affiliate identities and balances, provider customer/subscription identities, sessions, audit/auth history and branding binary assets. Imported provider mappings remain verification-safe rather than being blindly trusted.
 
 ## Backups
 
@@ -231,7 +221,7 @@ Development:
 npm run dev
 ```
 
-Both execute `src/application.js`, the explicit application-composition root. Older compatibility entrypoints remain thin/no-op wrappers only where required for safe upgrades.
+Both execute `src/application.js`, the explicit application-composition root.
 
 ## Project structure
 
@@ -245,7 +235,7 @@ src/stremio/                  Stremio sources/runtime/delivery
 src/integrations/             request service, email/outbox and integrations
 src/automation/               singleton job registry/health
 src/platform/                 admin/customer/storefront routes and UI
-db/migrations/                immutable PostgreSQL migrations
+db/migrations/                PostgreSQL schema baseline and upgrade migrations
 scripts/                      operations, workers and regression checks
 ```
 
