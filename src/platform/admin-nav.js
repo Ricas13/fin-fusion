@@ -16,6 +16,7 @@ const hiddenPages=Object.freeze({
   'my-profile':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['my-profile','My Profile','/admin/profile'])}),
   'my-notifications':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
   'my-security':Object.freeze({groupKey:'settings',parentKey:'settings-security',page:Object.freeze(['my-security','My Security','/admin/security'])}),
+  'admin-2fa-policy':Object.freeze({groupKey:'settings',parentKey:'settings-security',page:Object.freeze(['admin-2fa-policy','Administrator 2FA','/admin/settings/admin-2fa'])}),
   'request-service':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
   'request-plan-limits':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['request-plan-limits','Request limits','/admin/request-plan-policy'])}),
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
