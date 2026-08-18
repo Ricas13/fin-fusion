@@ -6,7 +6,8 @@ const {
     planCard,
     savingForPlan,
     monthlyEquivalent,
-    bestValueCode
+    bestValueCode,
+    publicResellerTiers
 } = require('../src/platform/storefront');
 
 const plans = [
@@ -41,8 +42,6 @@ const plans = [
     }
 ];
 
-// Commercial math stays available to callers, while the public storefront
-// deliberately avoids the old “Best value / Save” marketing treatment.
 assert.strictEqual(savingForPlan(plans[3], plans), 600, '6-month plan should save $6 versus monthly');
 assert.strictEqual(savingForPlan(plans[4], plans), 2200, 'yearly plan should save $22 versus monthly');
 assert.strictEqual(monthlyEquivalent(plans[3]), 500, '6-month plan should work out to $5/month');
@@ -73,19 +72,31 @@ const store = {
     features: ['Legacy feature data may remain stored but is no longer rendered.']
 };
 
-const resellerTiers=[{id:'r1',code:'reseller',name:'Reseller 50',description:'Managed access.',seat_limit:50,streams:5,allow_video_transcoding:false,library_access_mode:'include',monthly_price_minor:1000,currency:'USD',inventory:{limit:5,used:5,remaining:0,soldOut:true}}];
-const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,resellerTiers,support:{supportEmail:'support@example.test'} });
+const closedReseller={id:'r1',code:'reseller-closed',name:'Reseller Closed',description:'Managed access.',seat_limit:50,streams:5,allow_video_transcoding:false,library_access_mode:'include',monthly_price_minor:1000,currency:'USD',active:true,visible:true,inventory:{limit:5,used:5,remaining:0,soldOut:true}};
+const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,resellerTiers:[closedReseller],support:{supportEmail:'support@example.test'} });
 for (const expected of [
     'heroSection','freeTierPanel','pricingGrid','finalCta','Your entertainment. One simple subscription.',
     'Free access','Still here — currently full.','Choose the access that fits you.','Stremio add-ons &amp; plans.',
-    'Managed Jellyfin user plans.','50 managed Jellyfin users','5 concurrent streams per managed user',
     '0 spots available · Sold out','support@example.test'
 ]) assert.ok(page.includes(expected), `rendered storefront should include ${expected}`);
+assert.ok(!page.includes('id="resellers"'), 'a fully closed reseller catalogue must not render publicly');
+assert.ok(!page.includes('href="#resellers"'), 'a fully closed reseller catalogue must not add a nav link');
+assert.ok(!page.includes('Reseller Closed'), 'closed reseller cards must not leak onto the homepage');
+assert.strictEqual(publicResellerTiers([closedReseller]).length,0,'closed reseller tier must not be public');
 assert.ok(page.indexOf('heroSection') < page.indexOf('id="free-access"'), 'hero should appear before free access');
 assert.ok(page.indexOf('id="free-access"') < page.indexOf('id="plans"'), 'free access should appear above paid/trial plan cards');
 assert.ok(page.indexOf('id="plans"') < page.indexOf('id="stremio"'), 'main plans should appear before Stremio');
-assert.ok(page.indexOf('id="stremio"') < page.indexOf('id="resellers"'), 'Stremio should appear before reseller plans');
 for(const removed of ['featureGrid','experienceSection','stepsGrid','Everything you need to watch your way','From account to watching in minutes'])assert.ok(!page.includes(removed),`old marketing section should be gone: ${removed}`);
+
+const openReseller={...closedReseller,id:'r2',code:'reseller-open',name:'Reseller Open',seat_limit:25,streams:3,inventory:{limit:10,used:4,remaining:6,soldOut:false}};
+const mixedPage=renderStorefront({site:'CAPTAiNFiN',plans,store,registrationOpen:false,logged:false,resellerTiers:[closedReseller,openReseller],support:{supportEmail:'support@example.test'}});
+assert.ok(mixedPage.includes('id="resellers"'),'an open reseller tier should render the reseller section');
+assert.ok(mixedPage.includes('href="#resellers"'),'an open reseller tier should render the reseller nav link');
+assert.ok(mixedPage.includes('Reseller Open'),'open reseller tier should be public');
+assert.ok(mixedPage.includes('25 managed Jellyfin users'),'open reseller policy should render');
+assert.ok(mixedPage.includes('3 concurrent streams per managed user'),'open reseller stream limit should render');
+assert.ok(!mixedPage.includes('Reseller Closed'),'closed reseller tier should stay hidden even beside an open tier');
+assert.strictEqual(publicResellerTiers([closedReseller,openReseller]).length,1,'only open reseller tiers should be public');
 
 const openPlans=plans.map(plan=>plan.is_free_tier?{...plan,capacity:{limit:20,used:3,remaining:17,soldOut:false}}:plan);
 const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans:openPlans, store, registrationOpen: true, logged: false,resellerTiers:[] });
