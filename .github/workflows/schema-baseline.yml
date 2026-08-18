@@ -40,29 +40,30 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:migrate
-      - name: Generate and verify clean baseline
+      - name: Generate and verify complete clean baseline
         shell: bash
         run: |
           docker run --rm --network host postgres:17-alpine \
-            pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges \
+            pg_dump "$DATABASE_URL" --no-owner --no-privileges --inserts \
             --exclude-table=schema_migrations \
             --exclude-table=user_sessions \
-            > /tmp/schema-baseline.sql
+            > /tmp/database-baseline.sql
           term="$(printf 're%s' 'seller')"
-          if grep -in "$term" /tmp/schema-baseline.sql; then
-            echo "::error::Retired product vocabulary remains in generated schema"
+          if grep -in "$term" /tmp/database-baseline.sql; then
+            echo "::error::Retired product vocabulary remains in generated database baseline"
             exit 1
           fi
-          sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' /tmp/schema-baseline.sql > db/migrations/000_schema_baseline.sql
+          sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' /tmp/database-baseline.sql > db/migrations/000_database_baseline.sql
       - name: Commit generated baseline when changed
         shell: bash
         run: |
-          if git diff --quiet -- db/migrations/000_schema_baseline.sql && git ls-files --error-unmatch db/migrations/000_schema_baseline.sql >/dev/null 2>&1; then
+          git rm -f --ignore-unmatch db/migrations/000_schema_baseline.sql
+          git add -f db/migrations/000_database_baseline.sql
+          if git diff --cached --quiet; then
             echo "Baseline already current."
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -f db/migrations/000_schema_baseline.sql
-          git commit -m "Add clean PostgreSQL schema baseline"
+          git commit -m "Add complete clean PostgreSQL baseline"
           git push origin "HEAD:${{ github.head_ref }}"
