@@ -15,6 +15,7 @@ const SAFE_ERROR_PREFIXES = [
     'Jellyfin API key format is invalid.', 'Priority must be between ', 'Maximum users must be between ',
     'Invalid server class.', 'Jellyfin returned HTTP ', 'Jellyfin returned an unexpected response.',
     'Jellyfin validation timed out.', 'Could not validate the Jellyfin server securely.',
+    'Jellyfin destination ', 'Jellyfin hostname ', 'Could not connect to Jellyfin at ',
     'Server name is required.', 'Server not found.'
 ];
 
@@ -95,6 +96,15 @@ function parseServerForm(body, { apiKeyRequired = false } = {}) {
     };
 }
 function headerValue(headers,name){if(!headers)return'';if(typeof headers.get==='function')return headers.get(name)||'';return headers[String(name).toLowerCase()]||headers[name]||'';}
+function connectionPolicyMessage(error,baseUrl){
+    const message=String(error?.message||'');
+    if(/private address that is not explicitly allowed/i.test(message))return 'Jellyfin destination resolves to a private address. Enable private integrations and add this Jellyfin hostname or network CIDR to the trusted outbound destinations in Settings, then retry.';
+    if(/resolved to a blocked/i.test(message))return `Jellyfin destination is blocked by outbound network safety: ${message.replace(/^Jellyfin server validation destination\s*/i,'')}`;
+    if(/hostname did not resolve|ENOTFOUND|EAI_AGAIN/i.test(message))return 'Jellyfin hostname could not be resolved. Check the internal/base URL and DNS from the CAPTAiNFiN host.';
+    if(/ECONNREFUSED/i.test(message))return `Could not connect to Jellyfin at ${baseUrl}. The host resolved, but the connection was refused.`;
+    if(/ETIMEDOUT|timeout/i.test(message))return `Could not connect to Jellyfin at ${baseUrl} before the connection timed out.`;
+    return null;
+}
 async function probeCredentials(baseUrl, apiKey) {
     try {
         const response = await outbound.safeFetch(`${baseUrl}/System/Info`, { purpose: 'Jellyfin server validation', method: 'GET', timeoutMs: 5000, maxBytes: 1024*1024, headers: registry.authHeaders(apiKey) });
@@ -108,8 +118,9 @@ async function probeCredentials(baseUrl, apiKey) {
     } catch (error) {
         if (error instanceof FieldValidationError) throw error;
         if (error.name === 'AbortError') throw invalidField('baseUrl', 'Jellyfin validation timed out.');
-        if (error.message.startsWith('Jellyfin ')) throw error;
-        throw invalidField('baseUrl', 'Could not validate the Jellyfin server securely.');
+        const useful=connectionPolicyMessage(error,baseUrl);if(useful)throw invalidField('baseUrl',useful);
+        if (String(error.message||'').startsWith('Jellyfin ')) throw invalidField('baseUrl',String(error.message));
+        throw invalidField('baseUrl', 'Could not validate the Jellyfin server securely. Check that CAPTAiNFiN can reach the internal/base URL and that the API key is valid.');
     }
 }
 async function serverList() {
@@ -179,8 +190,6 @@ async function renderLocals(req, server = null, error = null) {
 }
 function createAdminServersRouter() {
     const router = express.Router(); router.use('/admin/servers', requireNativeAdmin, noStore);
-    // GET /admin/servers is owned by admin-server-fleet-dashboard.js. This
-    // router owns server creation/edit/test/health mutations and edit forms.
     router.get('/admin/servers/new', async (req,res,next) => { try { return res.render('admin/server-form', await renderLocals(req)); } catch(error){next(error);} });
     router.get('/admin/servers/:serverId/edit', async (req,res,next) => { try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); return res.render('admin/server-form',await renderLocals(req,server)); } catch(error){next(error);} });
     router.post('/admin/servers', async (req,res) => {
@@ -212,4 +221,4 @@ function createAdminServersRouter() {
     router.use('/admin/servers', async (error,_req,res,_next) => { console.error('Admin servers route error:',error.message); await runtimeSettings.ensureLoaded().catch(()=>{}); return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Servers unavailable',message:'Server administration could not be loaded safely.',link:'/admin',linkText:'Return to Administration'}); });
     return router;
 }
-module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError };
+module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage };
