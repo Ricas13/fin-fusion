@@ -4,7 +4,7 @@
 <%
   function validDate(value){if(!value)return null;const d=new Date(value);return Number.isNaN(d.getTime())?null:d;}
   function formatDate(value){const d=validDate(value);return d?d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'Not available';}
-  function price(plan){if(Number(plan&&plan.price_minor||0)===0)return'Free';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'USD'}).format(Number(plan.price_minor||0)/100)}catch(_){return `${plan.currency||'USD'} ${(Number(plan.price_minor||0)/100).toFixed(2)`;}}
+  function price(plan){if(Number(plan&&plan.price_minor||0)===0)return'Free';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'USD'}).format(Number(plan.price_minor||0)/100)}catch(_){return `${plan.currency||'USD'} ${(Number(plan.price_minor||0)/100).toFixed(2)}`;}}
   function delivery(plan){const t=String(plan&&plan.service_type||'stremio');return t==='bundle'?'Jellyfin + Stremio':'Stremio';}
   function monthlyValue(plan){const amount=Number(plan&&((plan.price_minor_snapshot!=null)?plan.price_minor_snapshot:plan.price_minor)||0),interval=String(plan&&((plan.billing_interval_snapshot)||plan.billing_interval)||''),days=Math.max(1,Number(plan&&((plan.duration_days_snapshot!=null)?plan.duration_days_snapshot:plan.duration_days)||30));if(interval==='month')return amount;if(interval==='6_months')return amount/6;if(interval==='year')return amount/12;return amount*30.4375/days;}
   const username=portal.customer.login_username||portal.customer.login_email||portal.customer.display_name||'Customer';
