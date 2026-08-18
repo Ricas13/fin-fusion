@@ -35,6 +35,7 @@ assert(!sources.includes('Use for Stremio'),'Normal Jellyfin server administrati
 assert(!sources.includes('managedServers()'),'Stremio Sources must not query the normal Jellyfin server fleet for candidates');
 assert(sources.includes('independent from Servers → Servers'),'UI must explain that Stremio upstreams are configured independently');
 assert(sources.includes('Attempt log ID')&&sources.includes('[stremio-source-attempt]')&&sources.includes('failureLogPayload'),'Manual connection failures must show an attempt ID and emit structured Docker logs');
+assert(sources.includes('Recent connection attempts')&&sources.includes('recentAttempts')&&sources.includes('audit_log')&&sources.includes('stremio_source_attempt'),'Manual connection attempts must persist to the audit log and render on the Stremio page');
 assert(sourcePool.includes('discoveryWarning')&&sourcePool.includes('sourcePersisted:true'),'Library discovery failure must preserve an authenticated source for diagnosis/retry');
 assert(sources.includes('source was saved')&&sources.includes('library discovery needs attention'),'Admin UI must explain partial source admission without pretending discovery succeeded');
 
