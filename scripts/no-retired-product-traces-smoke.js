@@ -33,9 +33,9 @@ function walk(dir){
 
 walk(root);
 if(hits.length){
-  console.error('Retired product traces remain:');
-  for(const hit of hits.slice(0,500)) console.error(`  ${hit}`);
-  if(hits.length>500) console.error(`  ... ${hits.length-500} more`);
+  const files=[...new Set(hits.map(hit=>hit.replace(/ \(path\)$/,'').replace(/:\d+$/,'')))].sort();
+  console.error(`Retired product traces remain in ${files.length} files (${hits.length} occurrences):`);
+  for(const file of files) console.error(`  ${file}`);
 }
 assert.deepStrictEqual(hits,[],'Retired product must have no source, route, UI, documentation, test, configuration, or migration traces');
 console.log('retired product trace audit: ok');
