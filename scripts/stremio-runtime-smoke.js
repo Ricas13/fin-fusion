@@ -60,7 +60,8 @@ assert(sourceAdmission.includes('LEASE_SECONDS=150')&&sourceAdmission.includes('
 assert(sourcePlayback.includes('assertSafeIntegrationUrl')&&sourcePlayback.includes('client.sourceUrl'),'upstream proxy must retain outbound URL/DNS safety and Jellyfin base-path handling');
 assert(!sourcePool.includes('proxyHeaders'),'external Jellyfin user token must not be shipped to Stremio via proxyHeaders');
 assert(sourcePool.includes('sourceIndex.lookupAll')&&sourcePool.includes('selectionMode:\'all_available_releases\''),'manual Stremio sources must return every indexed release instead of collapsing Movies and Movies-4K to one stream');
-assert(sourcePool.includes('streamDisplayFromFilename')&&sourcePool.includes('📁 ${filename}')&&sourcePool.includes('🗂️ ${libraryName'),'external stream cards must expose filename-derived release details and source library context');
+assert(sourcePool.includes('streamDisplayFromFilename')&&sourcePool.includes('📺 ${video.DisplayTitle}')&&sourcePool.includes('📶 ${(Number(media.Bitrate)/1000000).toFixed(1)} Mbps'),'external stream cards must keep useful filename-derived release details');
+assert(!sourcePool.includes('📁 ${filename}')&&!sourcePool.includes('🗂️ ${libraryName')&&!sourcePool.includes('Jellyfin source`'),'external stream cards must not expose source names, library names, or folder/file names');
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'"),'external Jellyfin tokens must use the platform Jellyfin encryption key');
 assert(sourceClient.includes('/Users/AuthenticateByName'),'external sources must authenticate as normal Jellyfin users');
 assert(sourceIndex.includes('MinDateLastSaved')&&sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'source indexing must be incremental with periodic reconciliation');
