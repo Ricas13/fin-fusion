@@ -252,12 +252,14 @@ async function main(){
       ['/admin/provisioning/migrations','Server migrations'],
       ['/admin/provisioning/drift','Policy drift']
     ]) await assertWorkflow(page,url,provisioningTabs,active);
-    const integrationTabs=['Integrations','Request service','Plan limits'];
+    const integrationTabs=['Integrations','Request service'];
     for(const [url,active] of [
       ['/admin/settings?section=integrations','Integrations'],
-      ['/admin/request-users','Request service'],
-      ['/admin/request-plan-policy','Plan limits']
+      ['/admin/request-users','Request service']
     ]) await assertWorkflow(page,url,integrationTabs,active);
+    await assertWorkflow(page,'/admin/request-plan-policy',[]);
+    assert.equal(String(await page.locator('.topBreadcrumb span').textContent()).trim(),'Commerce','Request limits must be owned by Commerce');
+    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Request limits','Request limits breadcrumb must reflect plan policy ownership');
     await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
