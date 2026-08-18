@@ -30,6 +30,7 @@ const { createAccountActivationRouter } = require('./account-activation-router')
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
+const { createCustomerActivityRouter } = require('./customer-activity');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
@@ -79,6 +80,7 @@ function createRouter(){
     ]));
     router.use(globalNotificationRouter);
     router.use(createAdminAbuseProtectionRouter());
+    router.use(createCustomerActivityRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
     router.post('/account/trial/start',trialFreeLimit,requireCustomer,mutationGuard,async(req,res)=>{try{await lifecycle.startFreeTrial(req.session.customerId,req.body.planCode||null);return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your trial is active. Your access details are below.'));}catch(error){return res.redirect('/account?error='+encodeURIComponent(error.message));}});
