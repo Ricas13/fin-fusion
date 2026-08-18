@@ -20,12 +20,12 @@ const serverForm=read('views/admin/server-form.ejs');
 const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
 const plansList=read('src/platform/admin-plans-list.js');
 
-// People owns customer onboarding/discovery. Jellyfin Import remains a visible
-// entry point but its legacy URL guides the operator into the server-scoped flow.
+// People owns customer records and Jellyfin import/claim discovery. Invitation
+// onboarding is retired; imported-user claims remain a subordinate import flow.
 assert(nav.includes("['jellyfin-import','Jellyfin Import'"),'Jellyfin Import must remain discoverable under People');
-assert(nav.includes("['invitations','Invitations'"),'Invitations must remain discoverable under People');
-assert(nav.includes("['customer-claims','Customer Claims'"),'Customer Claims must remain discoverable under People');
-assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback & Activity'"),'People must retain customers and playback activity');
+assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to People navigation');
+assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
+assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback Operations'"),'Customers must remain in People and playback operations in Servers');
 assert(!nav.includes("['resellers','Resellers'"),'Monthly reseller plans must not recreate the retired standalone reseller-admin sidebar');
 assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate administration must live in Commerce');
 
