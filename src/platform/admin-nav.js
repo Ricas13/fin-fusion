@@ -2,7 +2,7 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['invitations','Invitations','/admin/invitations'],['customer-claims','Customer Claims','/admin/customer-claims'],['jellyfin-import','Jellyfin Import','/admin/jellyfin-import'],['activity','Playback & Activity','/admin/activity']]},
+  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['invitations','Invitations','/admin/invitations'],['customer-claims','Customer Claims','/admin/customer-claims'],['jellyfin-import','Jellyfin Import','/admin/jellyfin-import'],['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password'],['activity','Playback & Activity','/admin/activity']]},
   {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['stremio-sources','Stremio Sources','/admin/servers/stremio'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payment providers','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit & events','/admin/events']]},

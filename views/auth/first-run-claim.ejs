@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>First-run setup · <%= siteName %></title>
   <link rel="stylesheet" href="/css/platform-shell.css">
-  <style>.setupSteps{display:flex;gap:8px;margin:14px 0 22px}.setupStep{font-size:12px;padding:6px 9px;border:1px solid #334155;border-radius:999px;color:#94a3b8}.setupStep.active{color:#fff;border-color:#64748b}.codeHint{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0f172a;border:1px solid #334155;border-radius:10px;padding:12px;margin:14px 0;color:#cbd5e1;line-height:1.55}</style>
+  <style>.setupSteps{display:flex;gap:8px;margin:14px 0 22px}.setupStep{font-size:12px;padding:6px 9px;border:1px solid #334155;border-radius:999px;color:#94a3b8}.setupStep.active{color:#fff;border-color:#64748b}.codeHint{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0f172a;border:1px solid #334155;border-radius:10px;padding:12px;margin:14px 0;color:#cbd5e1;line-height:1.55}.codeHint code{user-select:all;color:#fff}.setupHelp{margin:10px 0 18px;color:#94a3b8;line-height:1.55}</style>
 </head>
 <body>
 <main class="authShell">
@@ -16,7 +16,9 @@
     <div class="setupSteps"><span class="setupStep active">1 · Claim install</span><span class="setupStep">2 · Create admin</span><span class="setupStep">3 · Dashboard</span></div>
     <h1 class="authTitle">Claim this installation</h1>
     <p class="muted">A one-time setup code is required before the first administrator can be created. This prevents an internet visitor from claiming a newly deployed server.</p>
-    <div class="codeHint">Docker: <strong>docker logs steam-fusion | grep FIRST-RUN</strong><br>Lost code: <strong>docker compose run --rm app npm run setup:claim</strong></div>
+    <div class="setupHelp"><strong>You do not need to search application logs.</strong> On the server, from the CAPTAiNFiN compose directory, run the command below. It prints a fresh one-time code and invalidates any older code.</div>
+    <div class="codeHint"><code>docker compose exec app npm run setup:claim</code></div>
+    <p class="setupHelp">If the app container is not running yet, use <code>docker compose run --rm app npm run setup:claim</code> instead. Copy the code it prints into the field below.</p>
     <% if (error) { %><div class="notice error"><%= error %></div><% } %>
     <form method="post" action="/setup/claim" autocomplete="off">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
