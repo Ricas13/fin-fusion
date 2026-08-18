@@ -43,12 +43,17 @@ BEGIN
     END LOOP;
     DROP TABLE IF EXISTS credit_transactions CASCADE;
 
-    -- Remove feature-specific columns that were added to otherwise shared
-    -- customer/content tables.
+    -- Remove feature-specific columns only from surviving base/partition tables.
     FOR rec IN
-        SELECT table_schema, table_name, column_name
-        FROM information_schema.columns
-        WHERE table_schema='public' AND lower(column_name) LIKE '%' || term || '%'
+        SELECT n.nspname AS table_schema,c.relname AS table_name,a.attname AS column_name
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid=a.attrelid
+        JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public'
+          AND c.relkind IN ('r','p')
+          AND a.attnum>0
+          AND NOT a.attisdropped
+          AND lower(a.attname) LIKE '%' || term || '%'
     LOOP
         EXECUTE format('ALTER TABLE %I.%I DROP COLUMN IF EXISTS %I CASCADE',rec.table_schema,rec.table_name,rec.column_name);
     END LOOP;
@@ -71,7 +76,9 @@ BEGIN
         FROM pg_constraint con
         JOIN pg_class c ON c.oid=con.conrelid
         JOIN pg_namespace n ON n.oid=c.relnamespace
-        WHERE n.nspname='public' AND lower(pg_get_constraintdef(con.oid)) LIKE '%' || term || '%'
+        WHERE n.nspname='public'
+          AND c.relkind IN ('r','p')
+          AND lower(pg_get_constraintdef(con.oid)) LIKE '%' || term || '%'
     LOOP
         EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I',rec.schema_name,rec.table_name,rec.conname);
     END LOOP;
@@ -98,10 +105,16 @@ BEGIN
     -- Scrub historical free-text/JSON audit and provider metadata so an upgraded
     -- database does not retain the retired product name in surviving records.
     FOR rec IN
-        SELECT table_schema,table_name,column_name,data_type
-        FROM information_schema.columns
-        WHERE table_schema='public'
-          AND data_type IN ('text','character varying','character','json','jsonb')
+        SELECT n.nspname AS table_schema,c.relname AS table_name,a.attname AS column_name,
+               CASE a.atttypid WHEN 'json'::regtype THEN 'json' WHEN 'jsonb'::regtype THEN 'jsonb' ELSE 'text' END AS data_type
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid=a.attrelid
+        JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public'
+          AND c.relkind IN ('r','p')
+          AND a.attnum>0
+          AND NOT a.attisdropped
+          AND a.atttypid IN ('text'::regtype,'varchar'::regtype,'bpchar'::regtype,'json'::regtype,'jsonb'::regtype)
     LOOP
         BEGIN
             IF rec.data_type IN ('json','jsonb') THEN
@@ -116,7 +129,6 @@ BEGIN
                 );
             END IF;
         EXCEPTION WHEN OTHERS THEN
-            -- Some generated/protected columns are intentionally not writable.
             NULL;
         END;
     END LOOP;
