@@ -8,11 +8,9 @@ const routeRateLimit=require('../security/route-rate-limit');
 const WINDOW_MS=Math.max(2,Math.min(30,Number(process.env.ADMIN_STEP_UP_MINUTES||10)))*60*1000;
 const MUTATION_PATTERNS=[
  /^\/admin\/customers\/bulk\//,
- /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|library-overrides|profile|policy|reseller|sessions)/,
+ /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|library-overrides|profile|policy|sessions)/,
  /^\/admin\/customer(?:s)?\/[^/]+\//,
  /^\/admin\/plans(?:\/|$)/,
- /^\/admin\/reseller-tiers(?:\/|$)/,
- /^\/admin\/reseller-management\/[^/]+\/(?:subscription|tier|dunning|suspend|restore|grace)/,
  /^\/admin\/discounts(?:\/|$)/,
  /^\/admin\/referrals(?:\/|$)/,
  /^\/admin\/configuration\/apply$/,
@@ -30,20 +28,7 @@ const stepUpViewLimit=routeRateLimit.middleware({scope:'admin-step-up-view',max:
 const stepUpVerifyLimit=routeRateLimit.middleware({scope:'admin-step-up-verify',max:8,windowSeconds:600});
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function adminPath(url){return /^\/admin(?:\/|$)/.test(url.pathname);}
-function safeNext(req,value){
- const raw=String(value||'').trim();
- if(!raw||/[\u0000-\u001f\u007f\\]/.test(raw))return'/admin';
- try{
-  const fixedBase=new URL('https://captainfin.invalid');
-  const local=new URL(raw,fixedBase);
-  if(raw.startsWith('/')&&local.origin===fixedBase.origin&&adminPath(local))return`${local.pathname}${local.search}${local.hash}`;
- }catch(_){}
- try{
-  const absolute=new URL(raw),host=String(req?.get?.('host')||'').trim().toLowerCase();
-  if(host&&absolute.host.toLowerCase()===host&&adminPath(absolute))return`${absolute.pathname}${absolute.search}${absolute.hash}`;
- }catch(_){}
- return'/admin';
-}
+function safeNext(req,value){const raw=String(value||'').trim();if(!raw||/[\u0000-\u001f\u007f\\]/.test(raw))return'/admin';try{const fixedBase=new URL('https://captainfin.invalid');const local=new URL(raw,fixedBase);if(raw.startsWith('/')&&local.origin===fixedBase.origin&&adminPath(local))return`${local.pathname}${local.search}${local.hash}`;}catch(_){}try{const absolute=new URL(raw),host=String(req?.get?.('host')||'').trim().toLowerCase();if(host&&absolute.host.toLowerCase()===host&&adminPath(absolute))return`${absolute.pathname}${absolute.search}${absolute.hash}`;}catch(_){}return'/admin';}
 async function required(userId){if(!userId)return false;const r=await query(`SELECT totp_enabled FROM app_users WHERE id=$1 AND role='admin' AND active=TRUE`,[userId]);return Boolean(r.rows[0]?.totp_enabled);}
 function fresh(req){return Number.isFinite(Number(req.session?.adminStepUpAt))&&Date.now()-Number(req.session.adminStepUpAt)<=WINDOW_MS;}
 function sensitive(req){return req.method==='POST'&&MUTATION_PATTERNS.some(re=>re.test(req.path||req.originalUrl||''));}
