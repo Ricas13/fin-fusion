@@ -47,6 +47,7 @@ const sourceClient=read('src/stremio/source-client.js');
 const sourceIndex=read('src/stremio/source-index.js');
 const sourcePlayback=read('src/stremio/source-playback.js');
 const sourceAdmission=read('src/stremio/source-admission.js');
+const matchMigration=read('db/migrations/003_stremio_source_match_fallbacks.sql');
 assert(runtimeSource.includes('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId'),'external source media must be served through the CAPTAiNFiN proxy boundary');
 assert(runtimeSource.includes('authorizedSourceForEntitlement'),'proxy requests must re-check the plan/customer source allow-list');
 assert(runtimeSource.includes("scope:'stremio-source-playback'"),'external playback proxy must be rate limited');
@@ -65,6 +66,9 @@ assert(!sourcePool.includes('📁 ${filename}')&&!sourcePool.includes('🗂️ $
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'"),'external Jellyfin tokens must use the platform Jellyfin encryption key');
 assert(sourceClient.includes('/Users/AuthenticateByName'),'external sources must authenticate as normal Jellyfin users');
 assert(sourceIndex.includes('MinDateLastSaved')&&sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'source indexing must be incremental with periodic reconciliation');
+assert(sourceIndex.includes('tmdb_id')&&sourceIndex.includes('tvdb_id')&&sourceIndex.includes('title_key'),'source index must store alternate metadata IDs and normalized title keys');
+assert(sourcePool.includes('v3-cinemeta.strem.io')&&sourcePool.includes('stremioMeta')&&sourcePool.includes('sourceIndex.lookupAll(source.id,identity,type)'),'manual source resolution must use Stremio metadata for non-IMDb fallback matching');
+assert(matchMigration.includes('ALTER COLUMN imdb_id DROP NOT NULL')&&matchMigration.includes('stremio_source_media_tmdb_idx')&&matchMigration.includes('stremio_source_media_title_idx'),'metadata fallback migration must make IMDb optional and index alternate lookup fields');
 
 const migration=read('db/migrations/000_database_baseline.sql');
 for(const fragment of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources','stremio_source_playback_leases'])assert(migration.includes(fragment),`source catalog migration missing ${fragment}`);
