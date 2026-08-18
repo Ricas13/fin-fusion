@@ -35,11 +35,12 @@ assert(adminAutomation.includes('Affiliate rewards'),'Automation UI must describ
 assert(!/Reseller billing|Reseller estates|Reseller lifecycle notifications/.test(adminAutomation),'Automation UI still exposes retired reseller jobs');
 
 const plansList=read('src/platform/admin-plans-list.js');
-assert(!plansList.includes('/admin/reseller-tiers'),'Unified Plans must not link to retired reseller plan management');
-assert(!/Reseller plan availability|Create reseller plan|Manage reseller plans/.test(plansList),'Unified Plans still renders retired reseller inventory');
-assert(!plansList.includes('resellerInventorySection'),'Retired reseller inventory mutation surface remains in Plans');
+assert(plansList.includes("['reseller','Reseller','/admin/reseller-tiers']"),'Unified Plans must expose the live monthly reseller product family');
+assert(plansList.includes('/admin/plans/resellers')&&plansList.includes('Reseller accounts'),'Unified Plans must expose reseller account/subscription management');
+assert(!plansList.includes('resellerInventorySection'),'Retired reseller-credit inventory mutation surface must not return');
+assert(!/buy reseller credits|reseller credit balance|credit wallet/i.test(plansList),'Unified Plans must not revive reseller-credit semantics');
 const operatorExperience=read('public/js/operator-experience.js');
-assert(!operatorExperience.includes('/admin/reseller-tiers'),'Operator experience must not inject retired reseller catalogue navigation');
+assert(!operatorExperience.includes('/admin/reseller/credits'),'Operator experience must not inject retired reseller-credit navigation');
 
 const compose=read('docker-compose.yml');
 assert(/automation-worker:[\s\S]*scripts\/automation-worker\.js/.test(compose),'Compose must run the dedicated automation worker');
