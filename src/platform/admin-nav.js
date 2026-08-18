@@ -2,26 +2,29 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['invitations','Invitations','/admin/invitations'],['customer-claims','Customer Claims','/admin/customer-claims'],['jellyfin-import','Jellyfin Import','/admin/jellyfin-import'],['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password'],['activity','Playback & Activity','/admin/activity']]},
-  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['stremio-sources','Stremio Sources','/admin/servers/stremio'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
+  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['jellyfin-import','Jellyfin Import','/admin/jellyfin-import']]},
+  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['activity','Playback Operations','/admin/activity'],['stremio-sources','Stremio','/admin/servers/stremio'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payment providers','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit & events','/admin/events']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['my-profile','My Profile','/admin/profile'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups & Transfer','/admin/backups']]}
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups & Transfer','/admin/backups']]}
 ]);
 const hiddenPages=Object.freeze({
   search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
-  'my-notifications':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
-  'my-security':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-security','My Security','/admin/security'])}),
+  'customer-claims':Object.freeze({groupKey:'people',parentKey:'jellyfin-import',page:Object.freeze(['customer-claims','Imported-user claims','/admin/customer-claims'])}),
+  'customer-jellyfin-password':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['customer-jellyfin-password','Jellyfin password support','/admin/customer-jellyfin-password'])}),
+  'my-profile':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['my-profile','My Profile','/admin/profile'])}),
+  'my-notifications':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['my-notifications','My Notifications','/admin/profile/notifications'])}),
+  'my-security':Object.freeze({groupKey:'settings',parentKey:'settings-security',page:Object.freeze(['my-security','My Security','/admin/security'])}),
   'request-service':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
-  'request-plan-limits':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['request-plan-limits','Plan limits','/admin/request-plan-policy'])}),
+  'request-plan-limits':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['request-plan-limits','Request limits','/admin/request-plan-policy'])}),
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
   'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Policy drift','/admin/provisioning/drift'])}),
   'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'notification-settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
   'configuration-transfer':Object.freeze({groupKey:'settings',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 const aliases=Object.freeze({
-  'resellers':'referrals','reseller-tiers':'plans','provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'commerce-overview','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','support-policy':'settings-general','reseller-settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations'
+  'invitations':'users','resellers':'referrals','reseller-tiers':'plans','provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','support-policy':'settings-general','reseller-settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
