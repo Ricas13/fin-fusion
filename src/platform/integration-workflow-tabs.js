@@ -1,6 +1,7 @@
 'use strict';
 
 function tabs(active='integrations'){
+  if(active==='limits')return'';
   const items=[
     ['integrations','Integrations','/admin/settings?section=integrations'],
     ['requests','Request service','/admin/request-users']
