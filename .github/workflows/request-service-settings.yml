@@ -3,7 +3,7 @@ name: Request Service Settings
 on:
   pull_request:
     paths:
-      - 'db/migrations/030_request_service_settings.sql'
+      - 'db/migrations/**'
       - 'src/integrations/request-service-settings.js'
       - 'src/platform/admin-request-users.js'
       - 'src/platform/admin-request-redirect.js'

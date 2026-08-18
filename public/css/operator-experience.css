@@ -69,7 +69,6 @@
 .planTypeTag { display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:7px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;background:rgba(76,201,240,.08);color:#84ddf8; }
 .planTypeTag.stremio { color:#b69cff;background:rgba(182,156,255,.08); }
 .planTypeTag.bundle { color:#54e4a0;background:rgba(84,228,160,.08); }
-.planTypeTag.reseller { color:#f7c56d;background:rgba(247,197,109,.08); }
 
 .emptyAction { display:grid;place-items:center;text-align:center;min-height:130px;padding:20px;border:1px dashed #2c3744;border-radius:10px;color:var(--muted); }
 .emptyAction strong { color:#dfe6ed;margin-bottom:4px; }

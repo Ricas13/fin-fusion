@@ -32,19 +32,11 @@ function sqlStatements(source) {
 }
 
 // Provider billing identities and provider-driven subscription state must remain
-// behind the lifecycle layer. The reseller billing stack is deliberately listed
-// here because it is the provider lifecycle owner for reseller_subscriptions,
-// analogous to payments/lifecycle* for direct-customer subscriptions. Route and
-// UI modules remain outside this list.
+// behind the lifecycle layer. Route and UI modules remain outside this list.
 const PROVIDER_MUTATION_OWNERS = new Set([
     'src/payments/lifecycle-core.js',
     'src/payments/lifecycle.js',
-    'src/payments/customer-plan-change.js',
-    'src/resellers/monthly.js',
-    'src/resellers/monthly-core.js',
-    'src/payments/reseller-billing-core.js',
-    'src/payments/reseller-billing-v2-core.js',
-    'src/payments/reseller-billing.js'
+    'src/payments/customer-plan-change.js'
 ]);
 
 const ENTITLEMENT_CONSUMERS = [
@@ -67,7 +59,7 @@ for (const file of sourceFiles) {
 
     if (!PROVIDER_MUTATION_OWNERS.has(name)) {
         for (const sql of statements) {
-            const mutatesSubscription = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:subscriptions|reseller_subscriptions)\b/i.test(sql);
+            const mutatesSubscription = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(sql);
             const touchesProviderState = /\b(?:provider_subscription_id|provider_customer_id|provider_status|pending_provider_|source\s*=\s*['"](?:stripe|paypal)['"])/i.test(sql);
             if (mutatesSubscription && touchesProviderState) {
                 failures.push(`${name}: provider-backed subscription mutation outside lifecycle owner`);

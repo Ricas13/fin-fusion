@@ -42,7 +42,7 @@ async function main(){
       assert.deepStrictEqual(await labels(workflow),expected,`${suffix} has inconsistent plan workflow navigation`);
       assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),[active],`${suffix} highlights the wrong plan workflow step`);
       const allTabs=await labels(page.locator('.operatorTabs a'));
-      assert(!allTabs.includes('All plans')&&!allTabs.includes('Bundles')&&!allTabs.includes('Reseller'),`${suffix} still mixes catalogue filters into a specific plan`);
+      assert(!allTabs.includes('All plans')&&!allTabs.includes('Bundles'),`${suffix} still mixes catalogue filters into a specific plan`);
       if(suffix==='delivery')assert.equal(await page.locator('.planDeliveryTools').count(),0,'Stremio-only delivery exposed Jellyfin-only tools');
       await screenshot(page,`plan-${suffix}`);
     }

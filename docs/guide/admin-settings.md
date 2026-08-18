@@ -10,7 +10,7 @@ The customer-facing name used in page titles, portal branding and generated comm
 
 ### Publish public storefront
 
-Controls whether the public sales homepage is visible. Turning it off does not disable administrator, customer or reseller portals.
+Controls whether the public sales homepage is visible. Turning it off does not disable administrator or customer portals.
 
 ### Public registration
 
@@ -27,16 +27,6 @@ Storefront settings control public copy such as the hero title, subtitle, featur
 ## Admin defaults
 
 Defaults are convenience values for administrator workflows. They are not a second policy engine and do not override an existing plan or subscription.
-
-## Reseller settings
-
-Reseller defaults apply when a new reseller is created. Existing reseller commercial settings are not silently rewritten.
-
-- **Default monthly tier** — preselected reseller tier.
-- **Ledger currency** — currency used for downstream sales records.
-- **Payment methods** — labels available when a reseller records how a customer paid.
-- **Owner account allowed** — whether a reseller may consume one of its entitlements for its own Jellyfin account.
-- **Require reseller 2FA** — globally requires enrolled or newly enrolling resellers to use two-factor authentication at sign-in.
 
 ## Operations
 

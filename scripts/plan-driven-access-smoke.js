@@ -26,7 +26,6 @@ assert(nav.includes("['jellyfin-import','Jellyfin Import'"),'Jellyfin Import mus
 assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to People navigation');
 assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
 assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback Operations'"),'Customers must remain in People and playback operations in Servers');
-assert(!nav.includes("['resellers','Resellers'"),'Monthly reseller plans must not recreate the retired standalone reseller-admin sidebar');
 assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate administration must live in Commerce');
 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.
@@ -56,16 +55,14 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 
 // Storefront remains plan-first and sold-out products stay visible.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
-assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Managed Jellyfin user plans.'),'Storefront must retain explicit service sections');
+assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Straightforward access'),'Storefront must retain explicit service sections');
 assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
 assert(plansList.includes('capacityMeter')&&plansList.includes('Manage inventory'),'Unified Plans must expose customer inventory state and its management entry point');
 
-// Current workflow routes own customer-plan, monthly-reseller and server actions.
+// Current workflow routes own customer-plan and server actions.
 assert(application.includes('createAdminPlanCreateV2Router()'),'Full-policy plan creation must be mounted');
 assert(!application.includes('createAdminCatalogShellRouter'),'Legacy catalogue create routes must not be mounted alongside the V2 plan-create owner');
 assert(application.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
-assert(!application.includes('createResellerCapacityGateRouter()'),'Retired reseller credit-era capacity middleware must not be mounted');
-assert(application.includes('createResellerMonthlyPortalRouter()'),'Monthly reseller seat-management portal must be mounted');
 assert(application.includes('createLegacyJellyfinImportRedirectRouter()')&&!application.includes('createAdminJellyfinImportRouter'),'Only the server-guidance landing route may own the legacy Jellyfin Import URL');
 assert(application.includes('createAdminServerUsersRouter()')&&application.includes('createAdminPlanLifecycleRouter()')&&application.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle/inventory and server import routes must be mounted');
 

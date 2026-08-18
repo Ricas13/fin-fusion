@@ -14,33 +14,22 @@ assert.strictEqual(packageJson.scripts.start,'node src/application.js','supporte
 assert.strictEqual(packageJson.scripts['automation:worker'],'node scripts/automation-worker.js');
 assert.strictEqual(packageJson.scripts.syntax,'node scripts/check-js-syntax.js');
 
-for(const removed of ['import_users.js','check-expired.js','src/platform/reseller-portal.js','src/platform/reseller-storefront.js'])assert(!exists(removed),`${removed} must remain removed from the supported tree`);
-for(const migration of ['016_reserved_legacy_gap.sql','036_platform_coherence.sql','046_restore_invitation_subscription_source.sql','085_canonical_free_tier.sql','088_affiliate_service_credits.sql','089_affiliate_credit_checkout_reservations.sql','090_preserve_subscription_sources_with_service_credit.sql','091_retire_reseller_automation_jobs.sql'])assert(exists(`db/migrations/${migration}`),`missing coherence migration ${migration}`);
+for(const removed of ['import_users.js','check-expired.js'])assert(!exists(removed),`${removed} must remain removed from the supported tree`);
+for(const migration of ['000_database_baseline.sql','001_remove_retired_product.sql'])assert(exists(`db/migrations/${migration}`),`missing baseline migration ${migration}`);
 
 const application=read('src/application.js'),platformRouter=read('src/platform/router.js');
 assert(application.includes("require('./platform/admin-drift')"),'Policy Drift must be mounted by the canonical application');
 assert(platformRouter.includes('createCustomerAffiliateRouter')&&platformRouter.includes('router.use(createCustomerAffiliateRouter())'),'customer affiliate runtime must be mounted by the platform router');
 assert(application.includes('createAdminReferralsRouter'),'affiliate administration must be mounted');
-assert(application.includes('createResellerMonthlyPortalRouter')&&application.includes('app.use(createResellerMonthlyPortalRouter())'),'monthly reseller seat-management runtime must be mounted');
-for(const retired of ['reseller-tier-changes','reseller-business','reseller-portal','reseller-storefront'])assert(!application.includes(retired),`canonical application still loads retired reseller runtime: ${retired}`);
 
 const automation=read('src/automation/jobs.js');
 for(const key of ['policy_drift','billing','plan_changes','referral_rewards','activation_cleanup','pending_registration_cleanup'])assert(new RegExp(`\\b${key}\\b`).test(automation),`automation worker is missing ${key}`);
-for(const retired of ['reseller_billing','reseller_estates','reseller_notifications'])assert(!new RegExp(`\\b${retired}\\b`).test(automation),`retired reseller automation job is still registered: ${retired}`);
-const retiredAutomationMigration=read('db/migrations/091_retire_reseller_automation_jobs.sql');
-for(const retired of ['reseller_billing','reseller_estates','reseller_notifications'])assert(retiredAutomationMigration.includes(retired),`upgrade migration does not retire ${retired}`);
 
 const adminAutomation=read('src/platform/admin-automation.js');
 assert(adminAutomation.includes('Affiliate rewards'),'Automation UI must describe affiliate reward qualification');
-assert(!/Reseller billing|Reseller estates|Reseller lifecycle notifications/.test(adminAutomation),'Automation UI still exposes retired reseller jobs');
 
 const plansList=read('src/platform/admin-plans-list.js');
-assert(plansList.includes("['reseller','Reseller','/admin/reseller-tiers']"),'Unified Plans must expose the live monthly reseller product family');
-assert(plansList.includes('/admin/plans/resellers')&&plansList.includes('Reseller accounts'),'Unified Plans must expose reseller account/subscription management');
-assert(!plansList.includes('resellerInventorySection'),'Retired reseller-credit inventory mutation surface must not return');
-assert(!/buy reseller credits|reseller credit balance|credit wallet/i.test(plansList),'Unified Plans must not revive reseller-credit semantics');
-const operatorExperience=read('public/js/operator-experience.js');
-assert(!operatorExperience.includes('/admin/reseller/credits'),'Operator experience must not inject retired reseller-credit navigation');
+assert(!/buy .*credits|credit wallet/i.test(plansList),'Unified Plans must not revive retired credit-wallet semantics');
 
 const compose=read('docker-compose.yml');
 assert(/automation-worker:[\s\S]*scripts\/automation-worker\.js/.test(compose),'Compose must run the dedicated automation worker');
@@ -91,4 +80,4 @@ const drift=read('src/jellyfin/drift-control.js');
 assert(drift.includes("method:'GET'")||drift.includes("method: 'GET'"),'drift audit must explicitly use read-only Jellyfin GET');
 assert(exists('scripts/jellyfin-drift-smoke.js'),'current-schema Policy Drift smoke test must exist');
 
-console.log(`platform coherence static contract: ok (${sourceFiles.length} source files inspected; affiliate and monthly reseller runtimes active, reseller credit runtime retired)`);
+console.log(`platform coherence static contract: ok (${sourceFiles.length} source files inspected; affiliate runtime active, retired-product runtime absent)`);

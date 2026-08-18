@@ -41,7 +41,7 @@ async function main(){
     const refundCode=await referrals.ensureReferralCode(refundReferrer.id);
     assert(await referrals.attributeReferral(refundReferred.id,refundCode),'Refund test referral was not attributed');
     const refundedPurchase=await subscription(refundReferred.id,paidPlan.id,{source:'stripe',discountedMinor:500});
-    await incidents.record({provider:'stripe',eventId:`evt_refund_${suffix}`,caseId:`ch_refund_${suffix}`,kind:'refund',status:'recorded',identity:{scope:'direct',customerId:refundReferred.id,resellerId:null},providerSubscriptionId:refundedPurchase.provider_subscription_id,amountMinor:500,currency:'GBP',metadata:{fullRefund:true}});
+    await incidents.record({provider:'stripe',eventId:`evt_refund_${suffix}`,caseId:`ch_refund_${suffix}`,kind:'refund',status:'recorded',identity:{scope:'direct',customerId:refundReferred.id},providerSubscriptionId:refundedPurchase.provider_subscription_id,amountMinor:500,currency:'GBP',metadata:{fullRefund:true}});
     const refundResult=await referrals.rewardIfQualifying(refundReferred.id);
     assert.strictEqual(refundResult?.reason,'payment_reversed','Refunded qualifying payment still earned affiliate credit');
     assert.strictEqual((await query(`SELECT status FROM referral_redemptions WHERE referred_customer_id=$1`,[refundReferred.id])).rows[0]?.status,'unfulfilled','Refunded referral was not disqualified');

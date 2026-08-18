@@ -8,7 +8,6 @@ const discounts = require('../src/payments/discounts');
 const intents = require('../src/payments/checkout-intents');
 const lifecycle = require('../src/payments/lifecycle');
 const providerOps = require('../src/payments/provider-operations');
-const capacityLock = require('../src/resellers/capacity-lock');
 
 const suffix = crypto.randomBytes(6).toString('hex');
 const code = name => `race-${name}-${suffix}`;
@@ -19,9 +18,9 @@ async function plan(name,{price=500,audience='direct',interval='month',streams=2
         VALUES($1,$2,$3,$4,30,$5,'GBP',$6,'premium',TRUE,TRUE) RETURNING *`,
         [code(name),`Race ${name} ${suffix}`,audience,interval,price,streams])).rows[0];
 }
-async function customer(name,resellerId=null) {
-    return (await query(`INSERT INTO customers(reseller_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,
-        [resellerId,`Race ${name} ${suffix}`,email(name)])).rows[0];
+async function customer(name) {
+    return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,
+        [`Race ${name} ${suffix}`,email(name)])).rows[0];
 }
 function snapshot(p,provider='stripe',checkoutMode='payment') {
     return {kind:'direct_plan',planId:p.id,planCode:p.code,planName:p.name,provider,checkoutMode,
@@ -91,41 +90,6 @@ async function duplicateAndOutOfOrderProviderEvents() {
     assert.strictEqual(lateCancel.state,'completed','Late provider cancellation regressed a completed checkout');
 }
 
-async function resellerDowngradeVsSeatActivation() {
-    const p=await plan('reseller-child',{audience:'reseller'});
-    const user=(await query(`INSERT INTO app_users(email,username,password_hash,role,active,email_verified_at) VALUES($1,$2,'race-hash','reseller',TRUE,NOW()) RETURNING id`,[email('reseller'),code('reseller-user')])).rows[0];
-    const reseller=(await query(`INSERT INTO resellers(user_id) VALUES($1) RETURNING *`,[user.id])).rows[0];
-    const high=(await query(`INSERT INTO reseller_tiers(code,name,monthly_price_minor,currency,seat_limit,active,visible) VALUES($1,$2,5000,'GBP',2,TRUE,TRUE) RETURNING *`,[code('tier-high'),`Race high ${suffix}`])).rows[0];
-    const low=(await query(`INSERT INTO reseller_tiers(code,name,monthly_price_minor,currency,seat_limit,active,visible) VALUES($1,$2,3000,'GBP',1,TRUE,TRUE) RETURNING *`,[code('tier-low'),`Race low ${suffix}`])).rows[0];
-    const parent=(await query(`INSERT INTO reseller_subscriptions(reseller_id,tier_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days') RETURNING *`,[reseller.id,high.id])).rows[0];
-    const first=await customer('seat-first',reseller.id),second=await customer('seat-second',reseller.id);
-    await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','reseller_sale',NOW(),NOW()+INTERVAL '30 days')`,[first.id,p.id]);
-
-    let release;
-    const gate=new Promise(resolve=>{release=resolve});
-    let lockedResolve;
-    const locked=new Promise(resolve=>{lockedResolve=resolve});
-    const downgrade=capacityLock.withCapacityLock(reseller.id,async()=>{
-        lockedResolve();
-        await gate;
-        await query(`UPDATE reseller_subscriptions SET pending_tier_id=$2,pending_tier_effective_at=current_period_end,pending_tier_requested_at=NOW() WHERE id=$1`,[parent.id,low.id]);
-        await new Promise(resolve=>setTimeout(resolve,100));
-    });
-    await locked;
-    const activation=transaction(async client=>client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','reseller_sale',NOW(),NOW()+INTERVAL '30 days')`,[second.id,p.id]));
-    await new Promise(resolve=>setTimeout(resolve,100));
-    let activationSettled=false;activation.finally(()=>{activationSettled=true;}).catch(()=>{});
-    await new Promise(resolve=>setTimeout(resolve,50));
-    assert.strictEqual(activationSettled,false,'Seat activation did not block behind reseller capacity lock');
-    release();
-    await downgrade;
-    const result=await Promise.allSettled([activation]);
-    assert.strictEqual(result[0].status,'rejected','Seat activation slipped through a committed lower-tier ceiling');
-    assert(/pending reseller tier change limits/i.test(String(result[0].reason?.message||result[0].reason)),'Seat race failed for an unexpected reason');
-    const live=await query(`SELECT COUNT(*)::int n FROM customers c JOIN subscriptions s ON s.customer_id=c.id WHERE c.reseller_id=$1 AND s.superseded_by IS NULL AND s.starts_at<=NOW() AND s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW()`,[reseller.id]);
-    assert.strictEqual(Number(live.rows[0].n),1,'Reseller downgrade race persisted an over-capacity live entitlement');
-}
-
 async function workerCrashRecovery() {
     const owner=(await customer('provider-op')).id,key=`op-race-${suffix}`;
     const first=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:owner,operationType:'cancel_subscription',localReference:`sub_local_${suffix}`,idempotencyKey:key,request:{reason:'race smoke'}});
@@ -150,7 +114,6 @@ async function main(){
         await freeClaimRace();
         await checkoutSurvivesCatalogueRetirement();
         await duplicateAndOutOfOrderProviderEvents();
-        await resellerDowngradeVsSeatActivation();
         await workerCrashRecovery();
         console.log('Adversarial concurrency smoke test passed.');
     } finally {

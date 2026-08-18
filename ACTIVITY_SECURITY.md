@@ -43,7 +43,7 @@ Run `npm run db:activity-role` after migrations to configure the `steamfusion_ac
 
 - column-level read access to only the Jellyfin server/account and subscription/plan fields needed for policy evaluation
 - read/write access to activity, playback-history and policy-event tables
-- no access to payment events, web sessions, reseller credits, content requests or authentication tables
+- no access to payment events, web sessions, content requests or authentication tables
 - connection and query time limits to reduce resource-abuse blast radius
 
 CI verifies that the worker role can perform its required activity write while a payment-table read is denied.

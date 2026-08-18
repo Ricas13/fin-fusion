@@ -3,7 +3,7 @@ name: Customer Claim
 on:
   pull_request:
     paths:
-      - 'db/migrations/032_customer_account_claims.sql'
+      - 'db/migrations/**'
       - 'src/customer-claims.js'
       - 'src/platform/customer-claim.js'
       - 'src/platform/admin-html.js'

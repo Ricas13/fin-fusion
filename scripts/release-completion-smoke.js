@@ -8,22 +8,6 @@ function read(file){return fs.readFileSync(path.join(__dirname,'..',file),'utf8'
 function has(source,fragment,message){assert(source.includes(fragment),message||`Expected ${fragment}`);}
 function lacks(source,fragment,message){assert(!source.includes(fragment),message||`Did not expect ${fragment}`);}
 
-const storefront=read('src/platform/storefront.js');
-has(storefront,'function publicResellerTiers','storefront must explicitly filter reseller tiers for public sale');
-has(storefront,'!tier.inventory.soldOut','closed reseller tiers must be excluded from the public catalogue');
-has(storefront,'Number(tier.inventory.remaining||0)>0','reseller tier must have capacity before it is advertised');
-has(storefront,"openResellerTiers.length?'<a href=\"#resellers\">Resellers</a>':''",'Resellers navigation must disappear when no tier is open');
-has(storefront,'resellerSection(openResellerTiers,supportEmail)','only open reseller tiers may reach the public section');
-
-const transfer=read('src/platform/configuration-transfer.js');
-lacks(transfer,'document.configuration.resellerTiers=[]','configuration transfer must not discard live reseller tiers');
-lacks(transfer,'resellerTiersCreate:0','configuration preview must report real reseller tier creates');
-lacks(transfer,'resellerTiersUpdate:0','configuration preview must report real reseller tier updates');
-has(transfer,'document.configuration.resellerTiers=await liveResellerCatalogue()','export must include the live monthly reseller catalogue');
-has(transfer,'delete plan.reseller_credit_cost','retired reseller credit fields must still be stripped');
-has(transfer,'delete plan.reseller_trial_credit_cost','retired reseller trial-credit fields must still be stripped');
-lacks(transfer,'delete document.configuration.settings.reseller_defaults_v2','live monthly reseller defaults must remain portable');
-
 const customerDashboard=read('views/customer/dashboard.ejs');
 const customerNav=read('views/customer/_nav.ejs');
 has(customerNav,'href="/help">Help &amp; support</a>','customer portal must expose Help & support');

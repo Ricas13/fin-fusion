@@ -16,7 +16,7 @@ function gate(req,res,next){return req.session?.authUserId&&req.session?.authRol
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
 function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
 function label(eventType){return String(eventType||'').split('.').map(part=>part.replace(/_/g,' ')).map(part=>part.charAt(0).toUpperCase()+part.slice(1)).join(' · ')}
-function group(eventType){const first=String(eventType||'').split('.')[0];return({reseller:'Reseller',customer:'Customer',subscription:'Subscription',payment:'Payments',server:'Servers',request:'Requests',automation:'Automation',security:'Security',account:'Account'})[first]||'Platform'}
+function group(eventType){const first=String(eventType||'').split('.')[0];return({customer:'Customer',subscription:'Subscription',payment:'Payments',server:'Servers',request:'Requests',automation:'Automation',security:'Security',account:'Account'})[first]||'Platform'}
 function dt(v){return v?new Date(v).toLocaleString('en-GB'):'—'}
 async function rows(){const result=await query(`SELECT event_type,event_scope,customer_opt_in_allowed,COALESCE(display_name,event_type) display_name,COALESCE(description,'') description,telegram_enabled,email_enabled,discord_enabled,whatsapp_enabled,updated_at FROM notification_preferences ORDER BY event_type`);return result.rows}
 function ready(labelValue,ok){return `<span class="statusPill ${ok?'statusGood':'statusWarn'}">${esc(labelValue)} ${ok?'ready':'not configured'}</span>`}

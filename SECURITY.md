@@ -1,6 +1,6 @@
 # Security
 
-Steam Fusion manages reseller accounts and Jellyfin user access. Treat the application, its database, session secret and Jellyfin API key as privileged infrastructure.
+Steam Fusion manages customer accounts and Jellyfin user access. Treat the application, its database, session secret and Jellyfin API key as privileged infrastructure.
 
 ## Production baseline
 

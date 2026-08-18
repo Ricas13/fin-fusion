@@ -12,12 +12,12 @@ const adminLinks=require('../integrations/admin-channel-links');
 const {layout,esc}=require('./admin-html');
 
 const CHANNELS=['email','telegram','discord','whatsapp'];
-const GROUP_ORDER=['Platform','Security','Automation','Servers','Customer','Subscription','Payments','Requests','Reseller','Account'];
+const GROUP_ORDER=['Platform','Security','Automation','Servers','Customer','Subscription','Payments','Requests','Account'];
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`;}
-function group(eventType){const first=String(eventType||'').split('.')[0];return({reseller:'Reseller',customer:'Customer',subscription:'Subscription',payment:'Payments',server:'Servers',request:'Requests',automation:'Automation',security:'Security',account:'Account'})[first]||'Platform';}
+function group(eventType){const first=String(eventType||'').split('.')[0];return({customer:'Customer',subscription:'Subscription',payment:'Payments',server:'Servers',request:'Requests',automation:'Automation',security:'Security',account:'Account'})[first]||'Platform';}
 function e164(value){const phone=String(value||'').replace(/[\s()-]/g,'');if(!/^\+[1-9]\d{7,14}$/.test(phone))throw new Error('Enter an international WhatsApp number, for example +447700900123.');return phone;}
 function statusPill(label,kind){return `<span class="pill ${kind||''}">${esc(label)}</span>`;}
 

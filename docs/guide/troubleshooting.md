@@ -26,10 +26,6 @@ Library visibility is constrained by the active plan and by the customer's allow
 
 Administrators should also confirm that the assigned Jellyfin server exposes the expected library and that provisioning reconciliation is healthy.
 
-## A reseller cannot add another customer
-
-Check the reseller subscription state and seat usage. A temporary suspension/hold does not release the commercial seat; end an unused downstream service or move the reseller to a tier with more capacity.
-
 ## A server is unavailable for placement
 
 Check that it is enabled, healthy, in the correct server class, below configured capacity, and eligible for the selected plan. Also verify its internal base URL and API credentials.

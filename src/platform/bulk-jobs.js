@@ -12,7 +12,7 @@ const { query, transaction } = require('../db');
 
 const MAX_ITEMS_PER_JOB = 5000;
 
-async function createJob(jobType, params, { createdBy = null, resellerScope = null, idempotencyKey = null } = {}) {
+async function createJob(jobType, params, { createdBy = null, idempotencyKey = null } = {}) {
     if (idempotencyKey) {
         // INSERT-first (not SELECT-then-INSERT): the uniqueness check and the
         // insert must be one atomic operation, or two concurrent requests with
@@ -20,11 +20,11 @@ async function createJob(jobType, params, { createdBy = null, resellerScope = nu
         // targets the NULLS NOT DISTINCT partial unique index from migration
         // 018, so this is race-safe even when created_by is NULL (system jobs).
         const inserted = await query(`
-            INSERT INTO background_jobs(job_type,created_by,reseller_scope,idempotency_key,params,status)
-            VALUES($1,$2,$3,$4,$5::jsonb,'pending')
+            INSERT INTO background_jobs(job_type,created_by,idempotency_key,params,status)
+            VALUES($1,$2,$3,$4::jsonb,'pending')
             ON CONFLICT (created_by,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
             RETURNING *
-        `, [jobType, createdBy, resellerScope, idempotencyKey, JSON.stringify(params || {})]);
+        `, [jobType, createdBy, idempotencyKey, JSON.stringify(params || {})]);
         if (inserted.rowCount) return { job: inserted.rows[0], reused: false };
         // Lost the race (or this is a genuine resubmission) -- fetch the
         // winner. IS NOT DISTINCT FROM (not =) so this still matches when
@@ -37,10 +37,10 @@ async function createJob(jobType, params, { createdBy = null, resellerScope = nu
         throw new Error('Job creation conflicted but the existing job could not be found');
     }
     const result = await query(`
-        INSERT INTO background_jobs(job_type,created_by,reseller_scope,params,status)
-        VALUES($1,$2,$3,$4::jsonb,'pending')
+        INSERT INTO background_jobs(job_type,created_by,params,status)
+        VALUES($1,$2,$3::jsonb,'pending')
         RETURNING *
-    `, [jobType, createdBy, resellerScope, JSON.stringify(params || {})]);
+    `, [jobType, createdBy, JSON.stringify(params || {})]);
     return { job: result.rows[0], reused: false };
 }
 
@@ -70,16 +70,8 @@ async function getJob(jobId) {
     return result.rows[0] || null;
 }
 
-// actorScope: { isReseller, resellerId } -- when the caller is a reseller,
-// only jobs they themselves created/own may be viewed or retried. Admins
-// (actorScope=null) may view/retry any job. This is re-checked here, not
-// left to the route layer, so every caller of this module gets the same
-// guarantee regardless of how it's invoked.
-async function getJobForActor(jobId, actorScope) {
-    const job = await getJob(jobId);
-    if (!job) return null;
-    if (actorScope?.isReseller && job.reseller_scope !== actorScope.resellerId) return null;
-    return job;
+async function getJobForActor(jobId, _actorScope) {
+    return getJob(jobId);
 }
 
 async function listJobItems(jobId, { status = null, limit = 500 } = {}) {

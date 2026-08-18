@@ -6,7 +6,7 @@
 
 - Portable platform/storefront settings (site identity, storefront/public-registration switches, reconcile intervals and request-site URL)
 - Storefront copy/features
-- Admin/reseller defaults
+- Admin defaults
 - Referral-program settings
 - Notification preferences
 - Plan commercial/Jellyfin policy fields
@@ -15,7 +15,7 @@
 
 ## Always excluded
 
-- Administrator, reseller and customer identities/passwords
+- Administrator and customer identities/passwords
 - Jellyfin server URLs and API keys
 - Payment credentials, payment customer IDs and provider price mappings
 - Subscriptions, payment events, discount/referral redemption history

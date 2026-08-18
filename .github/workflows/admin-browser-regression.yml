@@ -50,7 +50,6 @@ jobs:
       ADMIN_PASSWORD: BrowserAuditPass!2026
       ADMIN_EMAIL: browseradmin@example.invalid
       REQUIRE_ADMIN_2FA: 'false'
-      REQUIRE_RESELLER_2FA: 'false'
       BROWSER_ADMIN_USERNAME: browseradmin
       BROWSER_ADMIN_PASSWORD: BrowserAuditPass!2026
       BROWSER_BASE_URL: http://127.0.0.1:3030

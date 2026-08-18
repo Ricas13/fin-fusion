@@ -1,7 +1,6 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcryptjs');
 const { getPool } = require('../src/db');
 const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
@@ -36,37 +35,6 @@ async function main() {
             adminMap.set(admin.id, result.rows[0].id);
         }
 
-        const resellerMap = new Map();
-        for (const reseller of data.resellers || []) {
-            const user = await client.query(`
-                INSERT INTO app_users(
-                    username,password_hash,role,active,legacy_numeric_id,password_changed_at,created_at
-                ) VALUES($1,$2,'reseller',$3,$4,COALESCE($5::timestamptz,NOW()),COALESCE($6::timestamptz,NOW()))
-                ON CONFLICT(username) DO UPDATE SET
-                    legacy_numeric_id=EXCLUDED.legacy_numeric_id,
-                    active=EXCLUDED.active,
-                    updated_at=NOW()
-                WHERE app_users.role='reseller'
-                RETURNING id
-            `, [
-                reseller.username,
-                reseller.password || bcrypt.hashSync(cryptoSafeFallback(), 12),
-                reseller.active !== false,
-                Number(reseller.id),
-                reseller.passwordChangedAt || null,
-                reseller.createdAt || null
-            ]);
-            if (!user.rowCount) throw new Error(`Role mismatch for existing reseller ${reseller.username}`);
-
-            const rr = await client.query(`
-                INSERT INTO resellers(user_id,credits,trial_credits,note,created_at)
-                VALUES($1,$2,$3,$4,COALESCE($5::timestamptz,NOW()))
-                ON CONFLICT(user_id) DO UPDATE SET credits=EXCLUDED.credits,trial_credits=EXCLUDED.trial_credits,note=EXCLUDED.note
-                RETURNING id
-            `, [user.rows[0].id, Math.max(0, reseller.credits || 0), Math.max(0, Math.min(20, reseller.trialCredits || 0)), reseller.note || '', reseller.createdAt || null]);
-            resellerMap.set(reseller.id, rr.rows[0].id);
-        }
-
         let defaultServerId = null;
         if (process.env.JELLYFIN_URL && process.env.JELLYFIN_API_KEY && process.env.JELLYFIN_ENCRYPTION_KEY) {
             const server = await client.query(`
@@ -86,12 +54,11 @@ async function main() {
         }
 
         for (const c of data.clients || []) {
-            const resellerId = resellerMap.get(c.resellerId) || null;
             const customer = await client.query(`
-                INSERT INTO customers(reseller_id,display_name,note,created_at)
-                VALUES($1,$2,$3,COALESCE($4::timestamptz,NOW()))
+                INSERT INTO customers(display_name,note,created_at)
+                VALUES($1,$2,COALESCE($3::timestamptz,NOW()))
                 RETURNING id
-            `, [resellerId, c.username, c.note || '', c.createdAt || null]);
+            `, [c.username, c.note || '', c.createdAt || null]);
             const customerId = customer.rows[0].id;
 
             if (defaultServerId && c.jellyfinId) {
@@ -116,7 +83,7 @@ async function main() {
         }
 
         await client.query('COMMIT');
-        console.log(`Imported ${(data.admins || []).length} admins, ${(data.resellers || []).length} resellers and ${(data.clients || []).length} clients.`);
+        console.log(`Imported ${(data.admins || []).length} admins and ${(data.clients || []).length} clients.`);
         console.log('Legacy client passwords are intentionally not imported. Reset them if they must be re-shared.');
         console.log('Existing PostgreSQL staff passwords are preserved when usernames already exist.');
     } catch (err) {
@@ -126,10 +93,6 @@ async function main() {
         client.release();
         await pool.end();
     }
-}
-
-function cryptoSafeFallback() {
-    return require('crypto').randomBytes(32).toString('base64url');
 }
 
 main().catch(err => {

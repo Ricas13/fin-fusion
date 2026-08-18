@@ -1,0 +1,53 @@
+name: Schema Baseline
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion_baseline
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion_baseline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://steamfusion:steamfusion@127.0.0.1:5432/steamfusion_baseline
+      NODE_ENV: test
+      SESSION_SECRET: baseline-session-secret-0123456789abcdef0123456789abcdef
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      BACKUP_ENCRYPTION_KEY: 5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - name: Verify complete database vocabulary is clean
+        shell: bash
+        run: |
+          docker run --rm --network host postgres:17-alpine \
+            pg_dump "$DATABASE_URL" --no-owner --no-privileges --inserts \
+            --exclude-table=schema_migrations \
+            --exclude-table=user_sessions \
+            > /tmp/database.sql
+          term="$(printf 're%s' 'seller')"
+          if grep -in "$term" /tmp/database.sql; then
+            echo "::error::Retired product vocabulary remains in generated database"
+            exit 1
+          fi

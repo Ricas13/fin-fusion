@@ -12,17 +12,12 @@
 * [Account, passwords and security](privacy-and-security.md)
 * [Stremio service](stremio.md)
 
-## Resellers
-
-* [Reseller guide](reseller-guide.md)
-
 ## Administrators
 
 * [Administrator guide](administrator-guide.md)
 * [Settings explained](admin-settings.md)
 * [Plans and commerce](admin-plans-and-commerce.md)
 * [Servers and libraries](admin-servers-and-libraries.md)
-* [Resellers and reseller tiers](admin-resellers.md)
 * [Security and access](admin-security.md)
 * [Stremio service](stremio.md)
 

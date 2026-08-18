@@ -37,7 +37,7 @@ Do not enable live Stripe/PayPal credentials for the first staging boot.
 1. Start PostgreSQL only and verify its persistent volume and backup destination.
 2. Run all database migrations.
 3. Import legacy JSON data into PostgreSQL using a backup copy of the source data.
-4. Run the staff-auth migration so legacy admin/reseller numeric IDs are mapped to PostgreSQL identities.
+4. Run the staff-auth migration so legacy admin numeric IDs are mapped to PostgreSQL identities.
 5. Start the web application privately.
 6. Complete administrator TOTP enrollment using the independent enrollment approval value.
 7. Save the one-time recovery codes outside the server.

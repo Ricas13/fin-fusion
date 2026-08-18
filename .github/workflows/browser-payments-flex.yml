@@ -3,7 +3,7 @@ name: Browser Payments & Flexible Checkout
 on:
   pull_request:
     paths:
-      - 'db/migrations/029_browser_payments_and_flexible_checkout.sql'
+      - 'db/migrations/**'
       - 'src/payments/provider-settings.js'
       - 'src/payments/stripe.js'
       - 'src/payments/paypal.js'

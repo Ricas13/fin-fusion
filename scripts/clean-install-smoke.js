@@ -7,6 +7,27 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
 (async () => {
     const cleanExpected = String(process.env.CLEAN_INSTALL_EXPECTED || '').toLowerCase() === 'true';
     const expectedAdmins = Number.parseInt(process.env.CLEAN_INSTALL_EXPECT_ADMINS || (cleanExpected ? '1' : '0'), 10);
+    const schema = await query(`
+        SELECT
+            to_regclass('public.app_users') AS app_users,
+            to_regclass('public.platform_settings') AS platform_settings,
+            to_regclass('public.plans') AS plans,
+            to_regclass('public.legacy_marker') AS legacy_marker
+    `);
+    const hasAppSchema = Boolean(schema.rows[0].app_users && schema.rows[0].platform_settings && schema.rows[0].plans);
+
+    if (!hasAppSchema) {
+        assert.strictEqual(cleanExpected, false, 'fresh install migration did not create application tables');
+        assert(schema.rows[0].legacy_marker, 'skeletal upgrade simulation must retain its legacy marker table');
+        const ledger = await query(`SELECT filename FROM public.schema_migrations ORDER BY filename`);
+        const applied = new Set(ledger.rows.map(row => row.filename));
+        for (const filename of ['000_database_baseline.sql', '001_remove_retired_product.sql', '002_add_runtime_session_store.sql']) {
+            assert(applied.has(filename), `skeletal upgrade simulation must record ${filename}`);
+        }
+        console.log('skeletal upgrade adoption smoke: ok');
+        return;
+    }
+
     const settings = await query(`SELECT setting_key, setting_value FROM platform_settings`);
     const map = Object.fromEntries(settings.rows.map(row => [row.setting_key, row.setting_value]));
     const admins = await query(`SELECT COUNT(*)::int AS count FROM app_users WHERE role='admin'`);
@@ -42,16 +63,12 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
         assert.strictEqual(readiness.counts.plans, 1, 'setup readiness must count the permanent free tier');
         assert.strictEqual(readiness.counts.freeTiers, 1, 'setup readiness must recognise exactly one permanent free tier');
         assert.strictEqual(readiness.counts.configuredCustomerPlans, 0, 'system-created Free Access must not make the customer catalogue look configured');
-        assert.strictEqual(readiness.counts.resellerPlans, 0, 'fresh install must not seed reseller plans');
-        assert.strictEqual(readiness.counts.resellers, 0, 'fresh install must not seed reseller accounts');
         assert.strictEqual(readiness.counts.servers, 0);
         assert.strictEqual(readiness.counts.affiliates, 0, 'fresh install must have no affiliate accounts');
-        assert.strictEqual(readiness.totalCount, 11, 'setup readiness checklist contract changed; update clean-install expectations intentionally');
+        assert.strictEqual(readiness.totalCount, 9, 'setup readiness checklist contract changed; update clean-install expectations intentionally');
         assert(readiness.checklist.find(item => item.key === 'jellyfin' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'plans' && !item.configured && /Free Access/.test(item.detail)));
         assert(readiness.checklist.find(item => item.key === 'direct-payments' && !item.configured));
-        assert(readiness.checklist.find(item => item.key === 'reseller-plans' && !item.configured), 'fresh install must expose optional monthly reseller plan setup');
-        assert(readiness.checklist.find(item => item.key === 'reseller-payments' && !item.configured), 'fresh install must expose optional reseller commerce setup');
         assert(readiness.checklist.find(item => item.key === 'affiliates' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'requests' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'email' && !item.configured));

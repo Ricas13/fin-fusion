@@ -2,9 +2,7 @@
 const assert=require('assert'),fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
 const nav=require('../src/platform/admin-nav');
-const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),order=read('src/platform/admin-plan-order.js'),plansList=read('src/platform/admin-plans-list.js'),resellerAccounts=read('src/platform/admin-reseller-accounts.js'),resellerPortal=read('src/platform/reseller-monthly-portal.js'),managedUsers=read('src/resellers/managed-users.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),attentionSource=read('src/platform/attention.js'),operatorState=read('src/platform/admin-operator-state.js'),operatorExperience=read('public/js/operator-experience.js'),migration=read('db/migrations/092_admin_customer_protection_and_plan_marketing.sql'),provisioningTabs=read('src/platform/provisioning-workflow-tabs.js'),integrationTabs=read('src/platform/integration-workflow-tabs.js'),adminShell=read('src/platform/admin-html-core.js');
-assert(/Managed Jellyfin user plans/.test(storefront)&&/resellerSection\(/.test(storefront),'monthly reseller storefront plans must remain available');
-assert(/monthly\.listTiers/.test(storefront)&&/resellerInventory/.test(storefront),'storefront must load reseller tiers and live reseller-plan capacity');
+const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),attentionSource=read('src/platform/attention.js'),operatorState=read('src/platform/admin-operator-state.js'),operatorExperience=read('public/js/operator-experience.js'),migration=read('db/migrations/000_database_baseline.sql'),provisioningTabs=read('src/platform/provisioning-workflow-tabs.js'),integrationTabs=read('src/platform/integration-workflow-tabs.js'),adminShell=read('src/platform/admin-html-core.js');
 assert(/marketing_features/.test(plans)&&/Homepage features/.test(plans),'plan marketing features missing');
 assert(/Free access/.test(storefront)&&!/Permanent free tier/.test(storefront),'free tier customer copy must be simple');
 assert(/email\/verify/.test(customer),'manual email verification override missing');
@@ -16,20 +14,12 @@ assert(/async function openSummary\(\)/.test(attentionSource)&&/count:sources\.l
 assert(/attention\.openSummary\(\)/.test(operatorState)&&/attention:\{n:attentionSummary\.count,updated:attentionSummary\.updatedAt\}/.test(operatorState),'Operator unread snapshot must include Needs Attention');
 assert(/\/admin\/api\/operator-state\/unread/.test(operatorExperience)&&/attention:'\/admin\/attention'/.test(operatorExperience),'Admin shell must fetch the unread snapshot and badge Needs Attention globally');
 assert(/marketing_features/.test(migration)&&/automation_protected/.test(migration),'migration missing coherence columns');
-assert(/reseller_tiers/.test(order)&&/Reseller plans/.test(order),'reseller storefront ordering must remain available');
-assert(/\/admin\/plans\/resellers/.test(plansList)&&/Reseller accounts/.test(plansList),'Plans must expose reseller account management');
-assert(/role,'reseller'|role,active,password_changed_at/.test(resellerAccounts)&&/createManualTierSubscription/.test(resellerAccounts),'Admin must create a normal reseller login with a monthly tier entitlement');
-assert(/credits,trial_credits,note\) VALUES\(\$1,0,0/.test(resellerAccounts),'New reseller accounts must explicitly start with zero legacy credits');
-assert(/managedUsers\.createManagedUser/.test(resellerPortal)&&/managedUsers\.setPassword/.test(resellerPortal),'Reseller portal must support managed Jellyfin user creation and usable passwords');
-assert(!/\/reseller\/(credits|wallet)/i.test(resellerPortal),'Reseller credit-wallet routes must stay retired');
-assert(/assertSeatAvailable/.test(managedUsers)&&/setPassword/.test(managedUsers),'Managed reseller users must be seat-limited and password-manageable');
 assert(/Where settings live/.test(settings)&&/Plans & customer access/.test(settings),'settings directory missing');
 assert(!/allowPrivateConnected/.test(settings),'settings identifier was corrupted');
 assert(/discoveryWarning/.test(stremioPool)&&/source was saved/.test(stremioAdmin),'Stremio source resilience missing');
 assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 override routes must import transaction');
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
 assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');
-assert(!/label>Reseller<\/label>/.test(customersList),'legacy reseller ownership filter must not return to the direct-customer list');
 
 const group=key=>nav.groups.find(item=>item.key===key);
 const pageKeys=key=>group(key).pages.map(item=>item[0]);
