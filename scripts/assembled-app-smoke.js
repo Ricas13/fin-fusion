@@ -13,20 +13,20 @@ for(const[method,path]of[
  ['GET','/'],['GET','/account/affiliate'],['POST','/account/affiliate/redeem'],
  ['POST','/account/checkout/stripe'],['POST','/account/checkout/paypal'],['GET','/account/paypal/return'],['POST','/account/stripe/portal'],['POST','/account/subscription/renewal'],['POST','/account/plan-change/cancel'],
  ['GET','/admin/referrals'],['POST','/admin/referrals/settings'],['GET','/admin/automation'],['GET','/admin/search'],['GET','/admin/events'],['GET','/admin/commerce'],['GET','/admin/notifications/preferences'],['POST','/admin/notifications/preferences'],
- ['GET','/admin/provisioning/drift'],['GET','/admin/configuration-health'],['GET','/admin/configuration'],['GET','/admin/configuration/export'],['POST','/admin/configuration/preview'],['POST','/admin/configuration/apply'],['GET','/account/history'],
+ ['GET','/admin/provisioning/drift'],['GET','/admin/configuration-health'],['GET','/admin/configuration'],['GET','/admin/configuration/export'],['POST','/admin/configuration/preview'],['POST','/admin/configuration/apply'],['GET','/admin/reseller-tiers'],['GET','/account/history'],
  ['GET','/reseller'],['POST','/reseller/users'],['POST','/reseller/users/:customerId/password'],['POST','/reseller/users/:customerId/suspend'],['POST','/reseller/users/:customerId/resume'],['POST','/reseller/users/:customerId/delete'],
  ['POST','/reseller/billing/stripe'],['POST','/reseller/billing/paypal'],['GET','/reseller/billing/paypal/return'],['POST','/reseller/billing/checkout/cancel'],['POST','/reseller/billing/cancel'],['POST','/reseller/billing/resume'],['POST','/reseller/billing/tier']
 ])requireExactly(entries,method,path);
 
-// Monthly reseller seat management and subscription billing are live. The
-// former credit/ledger/business portal and legacy reseller-admin surfaces stay absent.
-for(const path of ['/reseller/security','/reseller/tier-change','/reseller/export','/reseller/ledger','/reseller/sales','/admin/reseller-management','/admin/reseller-tiers']){
+// Monthly reseller tiers, seat management and subscription billing are live.
+// The former credit/ledger/business portal and retired reseller-management shell stay absent.
+for(const path of ['/reseller/security','/reseller/tier-change','/reseller/export','/reseller/ledger','/reseller/sales','/admin/reseller-management']){
  requireExactly(entries,'GET',path,0);
 }
 for(const path of ['/reseller/credits','/reseller/wallet','/reseller/ledger'])requireExactly(entries,'POST',path,0);
 
 for(const[method,path]of[['POST','/webhooks/stripe'],['POST','/webhooks/paypal'],['GET','/activate/:token'],['POST','/activate/:token'],['GET','/account'],['POST','/account/logout']])requireAtLeast(entries,method,path);
-const duplicateCritical=[],criticalPrefixes=['/account/affiliate','/account/checkout','/account/paypal/return','/account/subscription','/account/plan-change','/admin/referrals','/admin/configuration','/admin/provisioning/drift','/admin/notifications/preferences','/reseller'],grouped=new Map();
+const duplicateCritical=[],criticalPrefixes=['/account/affiliate','/account/checkout','/account/paypal/return','/account/subscription','/account/plan-change','/admin/referrals','/admin/configuration','/admin/provisioning/drift','/admin/notifications/preferences','/admin/reseller-tiers','/reseller'],grouped=new Map();
 for(const entry of entries){const key=`${entry.method} ${entry.path}`;grouped.set(key,(grouped.get(key)||0)+1)}
 for(const[key,n]of grouped)if(n>1&&criticalPrefixes.some(prefix=>key.includes(` ${prefix}`)))duplicateCritical.push(`${key} x${n}`);
 if(duplicateCritical.length)throw new Error(`Critical duplicate routes detected: ${duplicateCritical.join(', ')}`);
