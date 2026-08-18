@@ -39,7 +39,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run db:migrate
+      - name: Build canonical database from historical chain
+        shell: bash
+        run: |
+          rm -f db/migrations/000_schema_baseline.sql db/migrations/000_database_baseline.sql
+          npm run db:migrate
       - name: Generate and verify complete clean baseline
         shell: bash
         run: |
