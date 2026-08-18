@@ -18,6 +18,7 @@ const checkout=read('src/platform/flexible-checkout.js');
 const stremio=read('views/customer/stremio-dashboard.ejs');
 const history=read('src/platform/customer-history.js');
 const activity=read('src/platform/customer-activity.js');
+const customerPortalCss=read('public/css/customer-portal.css');
 
 for(const label of ['Overview','Streaming','Plans &amp; billing','Activity','Notifications','Security','Benefits','Help &amp; support'])assert(nav.includes(label),`customer navigation missing ${label}`);
 assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must use shared customer navigation');
@@ -26,6 +27,8 @@ assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('s
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
 assert(!/provisioning source|server placement|reconciliation/i.test(dashboard),'dashboard exposes operator-only jargon');
 assert(stremio.includes("include('_nav',{active:'overview'})"),'Stremio-only dashboard must use shared navigation');
+assert(customerPortalCss.includes('.accountHero')&&customerPortalCss.includes('.overviewGrid')&&customerPortalCss.includes('.metricCard')&&customerPortalCss.includes('.notice.error'),'customer dashboard hero, metrics and warning surfaces must be styled');
+assert(!stremio.includes('style="font-size:20px"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
 assert(history.includes("customerNav.nav('plans')"),'billing history must use shared navigation');
 assert(router.includes('createCustomerActivityRouter')&&activity.includes("r.get('/account/activity'"),'customer Activity navigation must have a mounted /account/activity route');
 assert(activity.includes('WHERE ph.customer_id=$1')&&activity.includes('WHERE customer_id=$1'),'customer Activity page must only query the signed-in customer');
