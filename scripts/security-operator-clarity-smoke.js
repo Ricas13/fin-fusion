@@ -57,16 +57,20 @@ assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP st
 
 const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
 assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
-const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js');
+const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),adminShell=text('src/platform/admin-html-core.js');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
-for(const label of ['General','My Profile','Notifications','Branding','Integrations','Security','Backups & Transfer'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
-for(const obsolete of ['Commerce','Advanced','My Notifications','Operations','Stremio'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
+for(const label of ['General','Notifications','Branding','Integrations','Security','Backups & Transfer'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
+for(const personal of ['My Profile','My Notifications','My Security'])assert(!labels.includes(personal),`Personal ${personal} must live under My account rather than global Settings navigation.`);
+for(const obsolete of ['Commerce','Advanced','Operations','Stremio'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
+assert(/headerActionLabel\">My account/.test(adminShell),'Admin shell must expose a dedicated My account area.');
+assert(/href=\"\/admin\/profile\">Profile/.test(adminShell)&&/href=\"\/admin\/profile\/notifications\">Notifications/.test(adminShell)&&/href=\"\/admin\/security\">Security/.test(adminShell),'My account area must expose personal Profile, Notifications and Security.');
+assert(navModel.hiddenPages['admin-2fa-policy']?.page?.[2]==='/admin/settings/admin-2fa','Platform-wide administrator 2FA policy must remain owned by Settings → Security.');
 const serversGroup=navModel.groups.find(group=>group.key==='servers');
 assert(Boolean(serversGroup),'Servers navigation group must exist.');
 assert(serversGroup.pages.some(page=>page[1]==='Fleet operations'&&page[2]==='/admin/servers/operations'),'Server drain/placement controls must be discoverable as Servers → Fleet operations.');
-assert(serversGroup.pages.some(page=>page[1]==='Stremio Sources'&&page[2]==='/admin/servers/stremio'),'External Jellyfin sources must be discoverable as Servers → Stremio Sources.');
+assert(serversGroup.pages.some(page=>page[1]==='Stremio'&&page[2]==='/admin/servers/stremio'),'External Jellyfin sources must be discoverable as Servers → Stremio.');
 assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
 assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');
 assert(/Placement health policy/.test(fleet)&&/Placement dry run/.test(fleet)&&/placement-mode/.test(fleet),'Fleet operations must own placement-health, drain/maintenance and simulation controls.');
@@ -85,14 +89,9 @@ if(oldRuntime===undefined)delete process.env.STREMIO_RUNTIME_ENABLED;else proces
 const lifecycle=text('src/payments/lifecycle.js');
 assert(/stremio\.assertAcquirable/.test(lifecycle),'Canonical paid/free/trial lifecycle must enforce the Stremio runtime gate.');
 
-// Policy Drift remains load-bearing but its former tuning form is deliberately
-// gone from the operator page; cadence values are now informational defaults.
 const driftAdmin=text('src/platform/admin-drift.js');
 assert(/Audit cadence/.test(driftAdmin)&&!/drift\/settings/.test(driftAdmin),'Policy Drift low-level tuning must stay out of the normal operator form.');
 
-// Historical migrations intentionally include duplicate numeric prefixes and
-// are keyed by complete filename. Freeze that history, but reject any new
-// duplicate numeric prefix from 067 onward.
 const migrations=fs.readdirSync(path.join(root,'db','migrations')).filter(name=>/^\d{3}.*\.sql$/.test(name));
 const groups=new Map();
 for(const name of migrations){const prefix=Number(name.slice(0,3));if(prefix<67)continue;const list=groups.get(prefix)||[];list.push(name);groups.set(prefix,list);}
