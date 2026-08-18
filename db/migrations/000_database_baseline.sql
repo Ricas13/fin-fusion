@@ -3017,6 +3017,704 @@ ALTER TABLE ONLY public.stremio_stream_attribution ALTER COLUMN id SET DEFAULT n
 
 
 --
+-- Data for Name: account_activation_tokens; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: account_tokens; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: active_playback_sessions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: admin_channel_link_tokens; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: admin_communication_preferences; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: admin_nav_read_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: admin_notification_preferences; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: affiliate_credit_checkout_reservations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: affiliate_credit_ledger; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: affiliate_profiles; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: app_users; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: arr_instances; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: attention_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: attention_workflow; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: audit_log; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: auth_events; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: auth_recovery_codes; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: auth_sessions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: auth_totp_enrollments; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: automation_job_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.automation_job_state VALUES ('health', true, 300, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('entitlements', true, 300, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('bulk_jobs', true, 30, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('stale_reclaim', true, 60, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('email_outbox', true, 60, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('request_users', true, 900, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('billing', true, 900, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.762601+00', false);
+INSERT INTO public.automation_job_state VALUES ('plan_changes', true, 300, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.838801+00', false);
+INSERT INTO public.automation_job_state VALUES ('policy_drift', true, 900, NULL, NULL, NULL, NULL, NULL, 0, NULL, '2026-08-18 13:47:28.86789+00', false);
+
+
+--
+-- Data for Name: background_job_items; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: background_jobs; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: backup_runs; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: backup_verification_requests; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: backup_worker_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: billing_checkout_intents; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: branding_assets; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: content_requests; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_access_holds; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_account_claims; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_bans; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_channel_link_tokens; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_communication_preferences; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_download_events; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_invitations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_library_overrides; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_library_selection; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_notification_preferences; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_plan_changes; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_policy_overrides; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_provisioning_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customer_server_migrations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: customers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: discount_checkout_reservations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: discount_codes; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: discount_redemptions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: email_gateway_settings; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: free_access_registration_reservations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: invitation_redemptions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: jellyfin_account_lifecycle; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: jellyfin_accounts; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: jellyfin_policy_drift; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: jellyfin_policy_reconciliation; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: jellyfin_server_metrics; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: jellyfin_servers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: login_rate_limits; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: notification_outbox; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: notification_preferences; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.notification_preferences VALUES ('customer.created', false, false, NULL, '2026-08-18 13:47:28.409991+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('request.created', false, false, NULL, '2026-08-18 13:47:28.409991+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.plan_change.scheduled', false, false, NULL, '2026-08-18 13:47:28.838801+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.plan_change.applied', false, false, NULL, '2026-08-18 13:47:28.838801+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.plan_change.failed', false, false, NULL, '2026-08-18 13:47:28.838801+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.subscription.cancelled', false, false, NULL, '2026-08-18 13:47:28.838801+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('payment.refunded', false, false, NULL, '2026-08-18 13:47:28.838801+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('payment.disputed', false, false, NULL, '2026-08-18 13:47:28.838801+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('payment.chargeback', false, false, NULL, '2026-08-18 13:47:28.887096+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('payment.renewal_failed', false, false, NULL, '2026-08-18 13:47:28.887096+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.service.expired', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.service.inactive', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('attention.created', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'admin', false, NULL, NULL);
+INSERT INTO public.notification_preferences VALUES ('customer.registered', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'admin', false, 'New customer registration', 'A new customer account was created.');
+INSERT INTO public.notification_preferences VALUES ('payment.received', false, false, NULL, '2026-08-18 13:47:29.239548+00', false, false, 'both', true, 'Payment received', 'A customer payment was confirmed by the provider.');
+INSERT INTO public.notification_preferences VALUES ('payment.failed', false, false, NULL, '2026-08-18 13:47:28.409991+00', false, false, 'both', true, 'Payment failed', 'A customer payment or renewal failed.');
+INSERT INTO public.notification_preferences VALUES ('subscription.activated', false, false, NULL, '2026-08-18 13:47:28.409991+00', false, false, 'both', true, 'Subscription activated', 'A customer subscription became active.');
+INSERT INTO public.notification_preferences VALUES ('subscription.cancelled', false, false, NULL, '2026-08-18 13:47:29.239548+00', false, false, 'both', true, 'Subscription cancelled', 'A customer subscription was cancelled.');
+INSERT INTO public.notification_preferences VALUES ('subscription.expiring', false, false, NULL, '2026-08-18 13:47:28.409991+00', false, false, 'both', true, 'Subscription expiring', 'A customer subscription is approaching expiry or renewal.');
+INSERT INTO public.notification_preferences VALUES ('customer.service.provisioned', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'both', true, 'Service provisioned', 'Customer service provisioning completed.');
+INSERT INTO public.notification_preferences VALUES ('account.announcement', false, false, NULL, '2026-08-18 13:47:29.239548+00', false, false, 'customer', true, 'Important account/service announcements', 'Important account or service information.');
+INSERT INTO public.notification_preferences VALUES ('provisioning.failed', false, false, NULL, '2026-08-18 13:47:29.239548+00', false, false, 'admin', false, 'Provisioning failure', 'Customer service provisioning failed.');
+INSERT INTO public.notification_preferences VALUES ('server.offline', false, false, NULL, '2026-08-18 13:47:28.409991+00', false, false, 'admin', false, 'Jellyfin server offline', 'A managed Jellyfin server is offline.');
+INSERT INTO public.notification_preferences VALUES ('automation.error', false, false, NULL, '2026-08-18 13:47:29.239548+00', false, false, 'admin', false, 'Automation/service error', 'A background automation or service failed.');
+INSERT INTO public.notification_preferences VALUES ('security.alert', false, false, NULL, '2026-08-18 13:47:29.239548+00', false, false, 'admin', false, 'Security event', 'An operational security event needs attention.');
+INSERT INTO public.notification_preferences VALUES ('customer.subscription.requested', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'both', false, 'Subscription request received', 'A customer submitted a subscription request.');
+INSERT INTO public.notification_preferences VALUES ('customer.trial.requested', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'both', false, 'Trial request received', 'A customer submitted a trial request.');
+INSERT INTO public.notification_preferences VALUES ('customer.stremio.requested', false, false, NULL, '2026-08-18 13:47:29.151756+00', false, false, 'both', false, 'Stremio request received', 'A customer submitted a Stremio access request.');
+
+
+--
+-- Data for Name: operational_worker_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: payment_customers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: payment_events; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: payment_incident_notes; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: payment_incidents; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: payment_provider_credentials; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: pending_registrations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: plan_prices; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.plan_prices VALUES ('a7c0b28f-4406-42a7-a5c2-a3cbaa021128', 'cf9e6385-eb06-4733-8b04-fa38b7ecaf71', 'GBP', 0, true, true, '2026-08-18 13:47:29.348558+00', '2026-08-18 13:47:29.348558+00');
+INSERT INTO public.plan_prices VALUES ('61fd71e2-8bf3-4cf1-bf93-ac4f7465b2fb', 'cf9e6385-eb06-4733-8b04-fa38b7ecaf71', 'USD', 0, true, false, '2026-08-18 13:47:29.348558+00', '2026-08-18 13:47:29.348558+00');
+INSERT INTO public.plan_prices VALUES ('b072e971-0599-4117-9f9d-c73a4aafb0be', 'cf9e6385-eb06-4733-8b04-fa38b7ecaf71', 'EUR', 0, true, false, '2026-08-18 13:47:29.348558+00', '2026-08-18 13:47:29.348558+00');
+
+
+--
+-- Data for Name: plan_provider_prices; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: plan_server_eligibility; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: plan_stremio_sources; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: plans; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.plans VALUES ('cf9e6385-eb06-4733-8b04-fa38b7ecaf71', 'free-access', 'Free Access', 'direct', 'month', 30, 0, 'GBP', 1, false, false, true, true, false, 'free', true, '2026-08-18 13:47:29.348558+00', '2026-08-18 13:47:29.348558+00', 'Permanent free-access tier. Availability may be closed while the plan remains visible.', true, 0, true, 'all', '{}', false, true, 'balanced', NULL, 30, NULL, 30, NULL, NULL, NULL, 1, NULL, NULL, 'jellyfin', 0, false, '{}', true, '{}');
+
+
+--
+-- Data for Name: platform_settings; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.platform_settings VALUES ('account_policy', '{"publicRegistration": false, "allowSelfServiceTrial": true, "requireEmailVerification": false}', NULL, '2026-08-18 13:47:28.420494+00');
+INSERT INTO public.platform_settings VALUES ('platform', '{"overseerrUrl": "", "storefrontEnabled": false, "publicRegistration": false, "serverHealthIntervalMs": 300000, "entitlementJobIntervalMs": 300000, "requireEmailVerification": false}', NULL, '2026-08-18 13:47:28.623939+00');
+INSERT INTO public.platform_settings VALUES ('referral_program', '{"enabled": false, "rewardDays": 7}', NULL, '2026-08-18 13:47:28.623939+00');
+INSERT INTO public.platform_settings VALUES ('installation', '{"createdAt": "2026-08-18T13:47:28.623939+00:00", "cleanInstall": true, "setupVersion": 1}', NULL, '2026-08-18 13:47:28.623939+00');
+INSERT INTO public.platform_settings VALUES ('trial_free_policy', '{"freeMode": "once_per_plan", "trialMode": "once_ever", "downgradeToFree": false, "paidCanClaimFree": false}', NULL, '2026-08-18 13:47:28.818654+00');
+INSERT INTO public.platform_settings VALUES ('commerce_policy', '{"paypalPlanChanges": "new_authorization_at_period_end", "stripeUpgradeTiming": "immediate", "stripeDowngradeTiming": "period_end"}', NULL, '2026-08-18 13:47:28.838801+00');
+INSERT INTO public.platform_settings VALUES ('jellyfin_drift_policy', '{"batchSize": 100, "driftMinutes": 60, "healthyMinutes": 360, "failureMaxMinutes": 360, "failureBaseMinutes": 15}', NULL, '2026-08-18 13:47:28.86789+00');
+INSERT INTO public.platform_settings VALUES ('payment_risk_policy', '{"refundAction": "preserve", "disputeAction": "suspend", "chargebackAction": "suspend", "failedRenewalAction": "provider_state"}', NULL, '2026-08-18 13:47:28.887096+00');
+INSERT INTO public.platform_settings VALUES ('backup_policy_v1', '{"enabled": true, "intervalHours": 24, "minimumCopies": 7, "retentionDays": 30}', NULL, '2026-08-18 13:47:28.933833+00');
+INSERT INTO public.platform_settings VALUES ('support_links_v1', '{"termsUrl": "", "refundUrl": "", "statusUrl": "", "privacyUrl": "", "supportUrl": "", "supportEmail": ""}', NULL, '2026-08-18 13:47:28.933833+00');
+INSERT INTO public.platform_settings VALUES ('support_policy_v1', '{"termsUrl": "", "statusUrl": "", "privacyUrl": "", "supportUrl": "", "companyName": "", "companyTaxId": "", "supportEmail": "", "companyAddress": "", "refundPolicyUrl": ""}', NULL, '2026-08-18 13:47:28.993035+00');
+INSERT INTO public.platform_settings VALUES ('activation_cleanup_v1', '{"enabled": false, "warningDays": 7, "retentionDays": 30}', NULL, '2026-08-18 13:47:28.993035+00');
+INSERT INTO public.platform_settings VALUES ('public_abuse_protection_v1', '{"turnstileEnabled": false, "turnstileSiteKey": "", "protectRegistration": true, "protectPasswordReset": true, "turnstileSecretEncrypted": null}', NULL, '2026-08-18 13:47:29.019577+00');
+INSERT INTO public.platform_settings VALUES ('commerce_control_v1', '{"paused": false, "reason": "", "pausedAt": null, "pausedBy": null}', NULL, '2026-08-18 13:47:29.021639+00');
+INSERT INTO public.platform_settings VALUES ('operations_v1', '{"locale": "en-GB", "timezone": "Europe/London", "publicBaseUrl": "", "staffSessionHours": 12, "placementHealthMode": "healthy_or_degraded", "customerSessionHours": 168, "outboundTrustedHosts": [], "allowPrivateIntegrations": false, "notificationCooldownMinutes": 30, "registrationRateLimitPerHour": 20}', NULL, '2026-08-18 13:47:29.063835+00');
+INSERT INTO public.platform_settings VALUES ('reporting_currency_v1', '{"rates": {"EUR": 1.17, "GBP": 1.0, "USD": 1.27}, "currency": "GBP", "updatedAt": "2026-08-18T13:47:29.151756+00:00"}', NULL, '2026-08-18 13:47:29.151756+00');
+INSERT INTO public.platform_settings VALUES ('customer_inactivity_policy_v1', '{"action": "disable_jellyfin", "dryRun": true, "enabled": false, "planCodes": ["trial-24h"], "inactiveDays": 7, "minimumPlaybackMinutes": 0, "minimumObservationHours": 24}', NULL, '2026-08-18 13:47:29.151756+00');
+INSERT INTO public.platform_settings VALUES ('notification_channels_v1', '{"discord": {"enabled": false, "webhookUrl": ""}, "whatsapp": {"enabled": false, "phoneNumberId": "", "graphApiVersion": "v23.0"}, "adminEmail": ""}', NULL, '2026-08-18 13:47:29.151756+00');
+INSERT INTO public.platform_settings VALUES ('jellyfin_user_cleanup_v1', '{"dryRun": true, "enabled": false, "deleteAfterDays": 30, "minimumObservationHours": 24}', NULL, '2026-08-18 13:47:29.199456+00');
+INSERT INTO public.platform_settings VALUES ('stremio_source_pool_v1', '{"enabled": false, "selectionMode": "weighted_random"}', NULL, '2026-08-18 13:47:29.215087+00');
+INSERT INTO public.platform_settings VALUES ('affiliate_program', '{"enabled": false, "rewardPercent": 15, "refundWindowDays": 14, "qualificationDelayDays": 14}', NULL, '2026-08-18 13:47:29.377553+00');
+
+
+--
+-- Data for Name: playback_history; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: provider_operations; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: provisioning_runs; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: referral_codes; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: referral_redemptions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: referral_reward_reversals; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: referral_service_credits; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: request_quality_tiers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.request_quality_tiers VALUES ('0b779da6-017b-45a7-8181-0a6af8095c12', '1080p', '1080p', 'Standard Full HD request', true, 10, '2026-08-18 13:47:28.446076+00', '2026-08-18 13:47:28.446076+00');
+INSERT INTO public.request_quality_tiers VALUES ('3b75cbf6-e378-42c1-8846-379a04bacc76', '4k', '4K', 'Ultra HD / 4K request', true, 20, '2026-08-18 13:47:28.446076+00', '2026-08-18 13:47:28.446076+00');
+
+
+--
+-- Data for Name: request_routes; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: request_service_settings; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+INSERT INTO public.request_service_settings VALUES (1, false, NULL, NULL, 15, NULL, '2026-08-18 13:47:28.676614+00', '2026-08-18 13:47:28.676614+00');
+
+
+--
+-- Data for Name: request_user_sync; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stream_policy_events; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_entitlements; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_media_index; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_media_index_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_source_index_state; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_source_libraries; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_source_media_index; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_source_playback_leases; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_sources; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: stremio_stream_attribution; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: subscription_provider_sync; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: subscription_service_extension_events; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Data for Name: subscriptions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+
+
+--
+-- Name: audit_log_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.audit_log_id_seq', 1, false);
+
+
+--
+-- Name: auth_events_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.auth_events_id_seq', 1, false);
+
+
+--
+-- Name: background_job_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.background_job_items_id_seq', 1, false);
+
+
+--
+-- Name: customer_download_events_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.customer_download_events_id_seq', 1, false);
+
+
+--
+-- Name: jellyfin_account_lifecycle_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.jellyfin_account_lifecycle_id_seq', 1, false);
+
+
+--
+-- Name: native_staff_legacy_compat_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.native_staff_legacy_compat_seq', 1, false);
+
+
+--
+-- Name: playback_history_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.playback_history_id_seq', 1, false);
+
+
+--
+-- Name: stream_policy_events_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.stream_policy_events_id_seq', 1, false);
+
+
+--
+-- Name: stremio_stream_attribution_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.stremio_stream_attribution_id_seq', 1, false);
+
+
+--
 -- Name: account_activation_tokens account_activation_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
