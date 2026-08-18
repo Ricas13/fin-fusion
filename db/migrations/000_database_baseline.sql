@@ -9,7 +9,6 @@
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
-SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -1565,7 +1564,7 @@ CREATE TABLE public.subscriptions (
     provider_mapping_external_id_snapshot text,
     CONSTRAINT subscriptions_service_extension_days_check CHECK (((service_extension_days >= 0) AND (service_extension_days <= 3650))),
     CONSTRAINT subscriptions_service_type_snapshot_check CHECK ((service_type_snapshot = ANY (ARRAY['jellyfin'::text, 'stremio'::text, 'bundle'::text]))),
-    CONSTRAINT subscriptions_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'stripe'::text, 'paypal'::text, 'migration'::text, 'service_credit'::text]))),
+    CONSTRAINT subscriptions_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'stripe'::text, 'paypal'::text, 'migration'::text, 'free_claim'::text, 'admin_grant'::text, 'invitation'::text, 'service_credit'::text]))),
     CONSTRAINT subscriptions_status_check CHECK ((status = ANY (ARRAY['trialing'::text, 'active'::text, 'past_due'::text, 'paused'::text, 'cancelled'::text, 'expired'::text])))
 );
 

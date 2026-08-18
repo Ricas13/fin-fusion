@@ -118,29 +118,40 @@ BEGIN
     END LOOP;
 END $$;
 
-ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
-ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK (role IN ('admin','customer'));
-
-DROP INDEX IF EXISTS app_users_role_legacy_id_unique;
-CREATE UNIQUE INDEX app_users_role_legacy_id_unique
-    ON app_users(role,legacy_numeric_id)
-    WHERE legacy_numeric_id IS NOT NULL AND role='admin';
-
-CREATE OR REPLACE FUNCTION assign_native_staff_compatibility_id()
-RETURNS trigger LANGUAGE plpgsql AS $$
+DO $$
 BEGIN
-    IF NEW.role='admin' AND NEW.legacy_numeric_id IS NULL THEN
-        NEW.legacy_numeric_id := -nextval('native_staff_legacy_compat_seq');
+    IF to_regclass('public.app_users') IS NOT NULL THEN
+        ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
+        ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK (role IN ('admin','customer'));
+
+        DROP INDEX IF EXISTS app_users_role_legacy_id_unique;
+        CREATE UNIQUE INDEX app_users_role_legacy_id_unique
+            ON app_users(role,legacy_numeric_id)
+            WHERE legacy_numeric_id IS NOT NULL AND role='admin';
     END IF;
-    RETURN NEW;
-END;
-$$;
 
-ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_audience_check;
-ALTER TABLE plans ADD CONSTRAINT plans_audience_check CHECK (audience IN ('direct'));
+    IF to_regclass('public.native_staff_legacy_compat_seq') IS NOT NULL THEN
+        CREATE OR REPLACE FUNCTION assign_native_staff_compatibility_id()
+        RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+            IF NEW.role='admin' AND NEW.legacy_numeric_id IS NULL THEN
+                NEW.legacy_numeric_id := -nextval('native_staff_legacy_compat_seq');
+            END IF;
+            RETURN NEW;
+        END;
+        $fn$;
+    END IF;
 
-ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_source_check;
-ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_source_check CHECK (source IN ('manual','stripe','paypal','migration','service_credit'));
+    IF to_regclass('public.plans') IS NOT NULL THEN
+        ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_audience_check;
+        ALTER TABLE plans ADD CONSTRAINT plans_audience_check CHECK (audience IN ('direct'));
+    END IF;
+
+    IF to_regclass('public.subscriptions') IS NOT NULL THEN
+        ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_source_check;
+        ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_source_check CHECK (source IN ('manual','stripe','paypal','migration','free_claim','admin_grant','invitation','service_credit'));
+    END IF;
+END $$;
 
 DELETE FROM schema_migrations WHERE filename <> '000_database_baseline.sql';
 

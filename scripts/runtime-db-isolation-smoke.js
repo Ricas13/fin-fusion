@@ -12,12 +12,12 @@ const verifyBackup = read('scripts/verify-backup.js');
 const sessionMigration = read('db/migrations/002_add_runtime_session_store.sql');
 
 function service(name) {
-    const marker = `  ${name}:\n`;
-    const start = compose.indexOf(marker);
-    assert(start >= 0, `missing compose service ${name}`);
-    const rest = compose.slice(start + marker.length);
-    const next = rest.search(/^  [a-zA-Z0-9][a-zA-Z0-9_-]*:\n/m);
-    return next < 0 ? compose.slice(start) : compose.slice(start, start + marker.length + next);
+    const match = new RegExp(`(^|\\r?\\n)  ${name}:\\r?\\n`).exec(compose);
+    assert(match, `missing compose service ${name}`);
+    const start = match.index + match[1].length;
+    const rest = compose.slice(start + match[0].length - match[1].length);
+    const next = rest.search(/\r?\n  [a-zA-Z0-9][a-zA-Z0-9_-]*:\r?\n/);
+    return next < 0 ? compose.slice(start) : compose.slice(start, start + match[0].length - match[1].length + next);
 }
 
 const migrate = service('migrate');

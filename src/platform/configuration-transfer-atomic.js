@@ -55,4 +55,4 @@ async function applyImport(document,{actorUserId=null,digest=null,previewSummary
         return summary;
     });
 }
-module.exports={applyImport,applySettings,applyNotifications,applyPlans,applyV2Extras,applyTierPrices};
+module.exports={applyImport,applySettings,applyNotifications,applyPlans,applyV2Extras};

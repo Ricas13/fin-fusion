@@ -5,9 +5,9 @@ const fs=require('fs');
 const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
-const migration=read('db/migrations/077_notifications_multicurrency_reporting.sql');
-const integrity=read('db/migrations/078_multicurrency_contract_integrity.sql');
-const transactional=read('db/migrations/079_notification_transactional_scopes.sql');
+const migration=read('db/migrations/000_database_baseline.sql');
+const integrity=migration;
+const transactional=migration;
 const pricing=read('src/payments/plan-pricing.js');
 const providerPricing=read('src/payments/provider-plan-pricing.js');
 const checkout=read('src/platform/flexible-checkout.js');
@@ -29,14 +29,14 @@ const platformRouter=read('src/platform/router.js');
 const personalTests=read('src/platform/admin-personal-notification-tests.js');
 const personalTestUi=read('public/js/admin-personal-notification-tests.js');
 
-assert(migration.includes('CREATE TABLE IF NOT EXISTS plan_prices'),'Migration must create per-currency logical-plan prices');
-assert(migration.includes('UNIQUE(plan_id,currency)'),'A logical plan may have at most one price per currency');
-assert(migration.includes('ADD COLUMN IF NOT EXISTS plan_price_id UUID REFERENCES plan_prices'),'Provider mappings must belong to a price variant');
-assert(migration.includes('preferred_currency CHAR(3)'),'Users must have an independent reporting/display currency preference');
-assert(migration.includes("preferred_currency IN ('GBP','USD','EUR')"),'Only GBP/USD/EUR are supported');
-assert(integrity.includes('FOREIGN KEY(plan_price_id,plan_id) REFERENCES plan_prices(id,plan_id)'),'Provider mapping must not point at another logical plan price');
+assert(/CREATE TABLE (?:IF NOT EXISTS )?(?:public\.)?plan_prices/.test(migration),'Migration must create per-currency logical-plan prices');
+assert(/UNIQUE\s*\(\s*plan_id,\s*currency\s*\)/.test(migration),'A logical plan may have at most one price per currency');
+assert(/plan_price_id uuid/i.test(migration)&&/REFERENCES public\.plan_prices|REFERENCES plan_prices/i.test(migration),'Provider mappings must belong to a price variant');
+assert(/preferred_currency (?:CHAR|character)\(3\)/i.test(migration),'Users must have an independent reporting/display currency preference');
+assert(/preferred_currency[\s\S]+GBP[\s\S]+USD[\s\S]+EUR/.test(migration),'Only GBP/USD/EUR are supported');
+assert(/FOREIGN KEY\s*\(\s*plan_price_id,\s*plan_id\s*\) REFERENCES (?:public\.)?plan_prices\s*\(\s*id,\s*plan_id\s*\)/.test(integrity),'Provider mapping must not point at another logical plan price');
 assert(integrity.includes('snapshot_subscription_multicurrency_contract'),'Subscription rows must persist selected price/provider mapping audit identifiers');
-assert(transactional.includes("customer.subscription.requested','both',FALSE"),'Mandatory customer acknowledgement events must stay customer-addressable without becoming optional customer toggles');
+assert(/customer\.subscription\.requested[\s\S]+both[\s\S]+false/i.test(transactional),'Mandatory customer acknowledgement events must stay customer-addressable without becoming optional customer toggles');
 
 assert(pricing.includes("const CURRENCIES=Object.freeze(['GBP','USD','EUR'])"),'Pricing service must explicitly support GBP/USD/EUR');
 assert(providerPricing.includes('JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE'),'Checkout provider resolution must join an active currency price');

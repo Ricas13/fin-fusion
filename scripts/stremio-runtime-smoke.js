@@ -61,7 +61,7 @@ assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'"),'external Je
 assert(sourceClient.includes('/Users/AuthenticateByName'),'external sources must authenticate as normal Jellyfin users');
 assert(sourceIndex.includes('MinDateLastSaved')&&sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'source indexing must be incremental with periodic reconciliation');
 
-const migration=read('db/migrations/082_stremio_source_catalog.sql');
+const migration=read('db/migrations/000_database_baseline.sql');
 for(const fragment of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources','stremio_source_playback_leases'])assert(migration.includes(fragment),`source catalog migration missing ${fragment}`);
 assert(migration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must permit source-only entitlements while preserving legacy integrity');
 

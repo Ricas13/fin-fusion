@@ -19,7 +19,7 @@ async function subscription({ customerId, planId, source, providerId, status = '
 (async () => {
     const plan = (await query(`
         INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
-        VALUES('billing-control-test','Billing Control Test','both','month',30,600,'USD',3,'premium',TRUE,TRUE)
+        VALUES('billing-control-test','Billing Control Test','direct','month',30,600,'USD',3,'premium',TRUE,TRUE)
         RETURNING id
     `)).rows[0];
     const stripeCustomer = await customer('Stripe Alice', 'stripe@example.test');
