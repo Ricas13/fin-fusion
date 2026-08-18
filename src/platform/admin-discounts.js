@@ -40,10 +40,18 @@ function integer(value, min, max, fallback = null) {
     return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
+function selectedValues(value){
+    const values=Array.isArray(value)?value:[value];
+    return [...new Set(values.map(item=>String(item||'').trim().toLowerCase()).filter(Boolean))].slice(0,200);
+}
+
 async function listCodes() {
-    const result = await query(`
-        SELECT * FROM discount_codes ORDER BY active DESC, created_at DESC
-    `);
+    const result = await query(`SELECT * FROM discount_codes ORDER BY active DESC, created_at DESC`);
+    return result.rows;
+}
+
+async function selectablePlans(){
+    const result=await query(`SELECT code,name,service_type,billing_interval,currency,price_minor FROM plans WHERE active=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY sort_order,name`);
     return result.rows;
 }
 
@@ -79,7 +87,7 @@ function codeCard(req, row) {
 
 async function page(req) {
     await runtimeSettings.ensureLoaded();
-    const rows = await listCodes();
+    const [rows,plans]=await Promise.all([listCodes(),selectablePlans()]);
     const active = rows.filter(r => r.active).length;
     const totalRedemptions = rows.reduce((sum, r) => sum + Number(r.redemption_count || 0), 0);
 
@@ -98,8 +106,8 @@ async function page(req) {
                     <div class="formGroup"><label>Type</label><select class="input" name="discountType"><option value="percent">Percent off</option><option value="fixed">Fixed amount off</option></select></div>
                     <div class="formGroup"><label>Percent off (1-100)</label><input class="input" type="number" name="percentOff" min="1" max="100"></div>
                     <div class="formGroup"><label>Fixed amount off</label><input class="input" type="number" step="0.01" min="0.01" name="fixedOff"></div>
-                    <div class="formGroup"><label>Currency (for fixed)</label><input class="input" name="currency" maxlength="3" value="USD"></div>
-                    <div class="formGroup"><label>Plan codes <span class="muted">(comma separated, blank = any)</span></label><input class="input" name="planCodes" placeholder="monthly,yearly"></div>
+                    <div class="formGroup"><label>Currency (for fixed)</label><select class="input" name="currency"><option value="GBP">GBP</option><option value="USD">USD</option><option value="EUR">EUR</option></select><div class="inlineHelp">Percentage discounts work naturally across currencies. Fixed discounts apply only in the selected currency.</div></div>
+                    <div class="formGroup"><label>Eligible plans</label><select class="input" name="planCodes" multiple size="6">${plans.map(plan=>`<option value="${esc(plan.code)}">${esc(plan.name)} · ${esc(plan.currency)} ${(Number(plan.price_minor||0)/100).toFixed(2)} · ${esc(plan.billing_interval)}</option>`).join('')}</select><div class="inlineHelp">Leave all plans unselected to allow the code on any plan. Use Ctrl/Cmd-click to choose several.</div></div>
                     <div class="formGroup"><label>Max redemptions <span class="muted">(blank = unlimited)</span></label><input class="input" type="number" min="1" name="maxRedemptions"></div>
                     <div class="formGroup"><label>Per-customer limit</label><input class="input" type="number" min="1" max="1000" name="perCustomerLimit" value="1"></div>
                     <div class="formGroup"><label>Expires</label><input class="input" type="date" name="expiresAt"></div>
@@ -128,11 +136,7 @@ function createAdminDiscountsRouter() {
     router.use('/admin/discounts', gate, noStore);
 
     router.get('/admin/discounts', async (req, res, next) => {
-        try {
-            return res.send(await page(req));
-        } catch (error) {
-            return next(error);
-        }
+        try { return res.send(await page(req)); } catch (error) { return next(error); }
     });
 
     router.get('/admin/discounts/export', async (req, res, next) => {
@@ -151,9 +155,7 @@ function createAdminDiscountsRouter() {
                 { key: 'expires_at', label: 'Expires at' },
                 { key: 'created_at', label: 'Created at' }
             ], rows);
-        } catch (error) {
-            return next(error);
-        }
+        } catch (error) { return next(error); }
     });
 
     router.post('/admin/discounts', async (req, res) => {
@@ -163,7 +165,14 @@ function createAdminDiscountsRouter() {
             if (!/^[A-Z0-9-]{3,40}$/.test(code)) throw new Error('Enter a valid code (letters, numbers, dashes).');
             const discountType = req.body.discountType === 'fixed' ? 'fixed' : 'percent';
             const description = text(req.body.description, 200);
-            const planCodes = text(req.body.planCodes, 500).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+            const requestedPlans=selectedValues(req.body.planCodes);
+            let planCodes=[];
+            if(requestedPlans.length){
+                const valid=await query(`SELECT code FROM plans WHERE code=ANY($1::text[])`,[requestedPlans]);
+                const allowed=new Set(valid.rows.map(row=>String(row.code).toLowerCase()));
+                planCodes=requestedPlans.filter(code=>allowed.has(code));
+                if(planCodes.length!==requestedPlans.length)throw new Error('One or more selected plans no longer exist. Refresh and try again.');
+            }
             const maxRedemptions = integer(req.body.maxRedemptions, 1, 1000000, null);
             const perCustomerLimit = integer(req.body.perCustomerLimit, 1, 1000, 1);
             const expiresAt = req.body.expiresAt ? new Date(`${req.body.expiresAt}T23:59:59Z`) : null;
@@ -173,11 +182,11 @@ function createAdminDiscountsRouter() {
                 percentOff = integer(req.body.percentOff, 1, 100, null);
                 if (!percentOff) throw new Error('Enter a percent off between 1 and 100.');
             } else {
-                const dollars = Number(req.body.fixedOff);
-                if (!Number.isFinite(dollars) || dollars <= 0 || dollars > 100000) throw new Error('Enter a valid fixed amount.');
-                fixedOffMinor = Math.round(dollars * 100);
-                currency = text(req.body.currency, 3).toUpperCase() || 'USD';
-                if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Enter a valid 3-letter currency code.');
+                const value = Number(req.body.fixedOff);
+                if (!Number.isFinite(value) || value <= 0 || value > 100000) throw new Error('Enter a valid fixed amount.');
+                fixedOffMinor = Math.round(value * 100);
+                currency = text(req.body.currency, 3).toUpperCase() || 'GBP';
+                if (!['GBP','USD','EUR'].includes(currency)) throw new Error('Choose GBP, USD or EUR for a fixed discount.');
             }
 
             await transaction(async client => {
@@ -192,7 +201,7 @@ function createAdminDiscountsRouter() {
                 await client.query(`
                     INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                     VALUES($1,'admin.discount.create','discount_code',$2,$3::jsonb)
-                `, [req.session.authUserId, created.rows[0].id, JSON.stringify({ code, discountType })]);
+                `, [req.session.authUserId, created.rows[0].id, JSON.stringify({ code, discountType, planCodes })]);
             });
             return res.redirect('/admin/discounts?message=' + encodeURIComponent('Discount code created.'));
         } catch (error) {
@@ -208,10 +217,7 @@ function createAdminDiscountsRouter() {
             const active = String(req.body.active) === 'true';
             const updated = await query('UPDATE discount_codes SET active=$2,updated_at=NOW() WHERE id=$1 RETURNING code', [req.params.id, active]);
             if (!updated.rowCount) throw new Error('missing');
-            await query(`
-                INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-                VALUES($1,'admin.discount.toggle','discount_code',$2,$3::jsonb)
-            `, [req.session.authUserId, req.params.id, JSON.stringify({ active })]);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.discount.toggle','discount_code',$2,$3::jsonb)`, [req.session.authUserId, req.params.id, JSON.stringify({ active })]);
             return res.redirect('/admin/discounts?message=' + encodeURIComponent(active ? 'Code enabled.' : 'Code disabled.'));
         } catch (error) {
             return res.redirect('/admin/discounts?error=' + encodeURIComponent('Discount code could not be updated.'));
@@ -221,4 +227,4 @@ function createAdminDiscountsRouter() {
     return router;
 }
 
-module.exports = { createAdminDiscountsRouter };
+module.exports = { createAdminDiscountsRouter, selectablePlans };
