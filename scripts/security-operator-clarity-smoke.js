@@ -34,8 +34,6 @@ const referrals=text('src/referrals.js'),affiliateCredits=text('src/affiliate-cr
 assert(/revisitRewardAfterAdversePayment/.test(referrals)&&/affiliateCredits\.reverseReward/.test(referrals),'Adverse payments must revisit already-earned affiliate service credit.');
 assert(/'reversed'/.test(affiliateCredits)&&/already-delivered service was preserved/i.test(referrals),'Affiliate reward reversal must remove unspent credit without clawing back delivered service.');
 
-const bulk=text('src/platform/bulk-operations.js');
-assert(!/reseller_assign|reseller_detach/.test(bulk),'Retired reseller customer-assignment operations must not return to bulk administration.');
 const maintenance=text('src/security/maintenance-lock.js');
 assert(/connectionTimeoutMillis/.test(maintenance),'Maintenance lock pool must have a connection acquisition timeout.');
 

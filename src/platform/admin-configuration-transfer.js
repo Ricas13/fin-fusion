@@ -30,8 +30,6 @@ function previewMarkup(req, preview) {
     const update = summaryValue(s, 'plansUpdate');
     const settings = summaryValue(s, 'settingsChange', 'extendedSettings');
     const notifications = summaryValue(s, 'notificationsChange');
-    const tierCreate = summaryValue(s, 'resellerTiersCreate');
-    const tierUpdate = summaryValue(s, 'resellerTiersUpdate');
     const mappings = summaryValue(s, 'directPaymentMappings');
     const jobs = summaryValue(s, 'automationJobs');
     return `<section class="card" style="margin-top:16px">
@@ -40,15 +38,13 @@ function previewMarkup(req, preview) {
             <div class="statsGrid">
                 ${summaryCard('Plans to create', create)}
                 ${summaryCard('Plans to update', update)}
-                ${summaryCard('Reseller tiers to create', tierCreate)}
-                ${summaryCard('Reseller tiers to update', tierUpdate)}
                 ${summaryCard('Settings / policy groups', settings)}
                 ${summaryCard('Notification changes', notifications)}
                 ${summaryCard('Payment mappings', mappings)}
                 ${summaryCard('Automation schedules', jobs)}
             </div>
             ${preview.warnings?.length ? `<div class="notice warn" style="margin-top:14px"><strong>Warnings</strong><ul>${preview.warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul></div>` : ''}
-            <div class="notice" style="margin-top:14px">Import is merge-only. It never deletes customers, resellers, subscriptions, payment transactions, users or secrets. References that cannot be resolved safely are skipped and reported.</div>
+            <div class="notice" style="margin-top:14px">Import is merge-only. It never deletes customers, subscriptions, payment transactions, users or secrets. References that cannot be resolved safely are skipped and reported.</div>
             <form method="post" action="/admin/configuration/apply" style="margin-top:14px">
                 ${csrfInput(req)}
                 <input type="hidden" name="digest" value="${esc(preview.digest)}">
@@ -64,8 +60,8 @@ function page(req, { rawDocument = '', preview = null, error = null, message = n
         <section class="card">
             <div class="card-header"><div><h2 class="card-title">Portable configuration V2</h2><div class="muted">Move business configuration between installations without exporting identities, credentials or transactional data.</div></div><a class="button" href="/admin/configuration/export">Export JSON</a></div>
             <div class="card-body">
-                <div class="compact-item"><div><div class="compact-title">Included</div><div class="compact-meta">Plans and request quotas, reseller tiers and tier catalogue rules, storefront/settings, non-secret payment mapping references, notification preferences, automation schedules and Jellyfin drift-audit policy.</div></div><span class="pill good">Portable</span></div>
-                <div class="compact-item"><div><div class="compact-title">Always excluded</div><div class="compact-meta">Passwords, API keys, provider/email/request credentials, server secrets/URLs, customers, resellers, subscriptions, transactions, sessions, audit/auth history and branding binary assets.</div></div><span class="pill">No secrets</span></div>
+                <div class="compact-item"><div><div class="compact-title">Included</div><div class="compact-meta">Plans and request quotas, storefront/settings, non-secret payment mapping references, notification preferences, automation schedules and Jellyfin drift-audit policy.</div></div><span class="pill good">Portable</span></div>
+                <div class="compact-item"><div><div class="compact-title">Always excluded</div><div class="compact-meta">Passwords, API keys, provider/email/request credentials, server secrets/URLs, customers, subscriptions, transactions, sessions, audit/auth history and branding binary assets.</div></div><span class="pill">No secrets</span></div>
                 <div class="compact-item"><div><div class="compact-title">Import behaviour</div><div class="compact-meta">Preview first, merge second. Existing business records not present in the import are left untouched. V1 files remain accepted.</div></div><span class="pill good">Non-destructive</span></div>
             </div>
         </section>
@@ -136,7 +132,7 @@ function createAdminConfigurationTransferRouter() {
             delete req.session.configurationImportPreview;
             await runtimeSettings.reload();
             const s = applied.summary || {};
-            const message = `Configuration imported: ${summaryValue(s,'plansCreate')} plan(s) created, ${summaryValue(s,'plansUpdate')} updated, ${summaryValue(s,'resellerTiersCreate')} reseller tier(s) created, ${summaryValue(s,'resellerTiersUpdate')} updated, ${summaryValue(s,'skippedReferences')} unresolved reference(s) skipped.`;
+            const message = `Configuration imported: ${summaryValue(s,'plansCreate')} plan(s) created, ${summaryValue(s,'plansUpdate')} updated, ${summaryValue(s,'skippedReferences')} unresolved reference(s) skipped.`;
             return res.redirect('/admin/configuration?message=' + encodeURIComponent(message));
         } catch (error) {
             const prefix = error.path ? `${error.path}: ` : '';

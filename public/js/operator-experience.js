@@ -67,7 +67,6 @@
   }
 
   // Catalogue filters belong only to direct customer plan browsing / creation.
-  // Reseller plans have their own monthly-seat product editor.
   const planCataloguePage=path==='/admin/plans' || path==='/admin/plans/new';
   if(planCataloguePage){
     const type=new URLSearchParams(location.search).get('type')||'';

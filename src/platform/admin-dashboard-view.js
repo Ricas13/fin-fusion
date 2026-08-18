@@ -164,7 +164,7 @@ function operationalAlerts(s) {
 
 function revenueCard(s) {
     const currency = s.revenue.primaryCurrency;
-    const body = `${barChart(s.revenue.series, 'revenue_minor', value => money(value, currency))}${s.revenue.currencies.length > 1 ? `<div class="currencyBreakdown">${s.revenue.currencies.map(row => `<span class="currencyPill">${esc(row.currency)} ${esc(money(row.minor, row.currency))}</span>`).join('')}</div>` : ''}<div class="analyticsFootnote">Webhook-confirmed gross Stripe/PayPal payments only. Manual subscriptions, reseller credits and provider fees are not counted as revenue.</div>`;
+    const body = `${barChart(s.revenue.series, 'revenue_minor', value => money(value, currency))}${s.revenue.currencies.length > 1 ? `<div class="currencyBreakdown">${s.revenue.currencies.map(row => `<span class="currencyPill">${esc(row.currency)} ${esc(money(row.minor, row.currency))}</span>`).join('')}</div>` : ''}<div class="analyticsFootnote">Webhook-confirmed gross Stripe/PayPal payments only. Manual subscriptions and provider fees are not counted as revenue.</div>`;
     return analyticsCard('Revenue history', `Successful provider payments · ${s.range.label}`, body, { className: 'third', stat: { value: money(s.revenue.totalMinor, currency), label: 'gross revenue' } });
 }
 

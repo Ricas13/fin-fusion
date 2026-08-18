@@ -4,15 +4,11 @@ The administrator portal is the control plane for CAPTAiNFiN. Settings should be
 
 ## Dashboard
 
-Use the dashboard for service health, customer and reseller activity, commercial state and items requiring attention.
+Use the dashboard for service health, customer activity, commercial state and items requiring attention.
 
 ## Customers and users
 
 Manage customer records, portal users, account state, provisioning and service access. Portal passwords and Jellyfin passwords are separate credentials.
-
-## Resellers
-
-Configure reseller defaults, tiers, seat capacity, billing state, downstream policy and reseller security. Defaults apply to newly-created resellers unless an individual override exists.
 
 ## Jellyfin servers
 

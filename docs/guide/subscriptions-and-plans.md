@@ -15,7 +15,6 @@ Depending on the plan configuration, a plan can define:
 - 4K access
 - eligible Jellyfin server class and placement rules
 - libraries the customer can access
-- whether the plan is sold directly, through resellers, or both
 
 ## Existing subscriptions and plan edits
 
@@ -26,10 +25,6 @@ Archiving a plan removes it from new catalogue acquisition without deleting hist
 ## Concurrent streams
 
 The stream limit is the number of simultaneous playback sessions allowed by the plan policy. A temporary account hold does not create an extra commercial entitlement.
-
-## Direct customers and reseller customers
-
-Direct customers acquire plans from CAPTAiNFiN itself. Reseller customers receive eligible plans through a reseller estate. Reseller tiers separately control how many active downstream customer entitlements a reseller may operate.
 
 ## Future delivery types
 

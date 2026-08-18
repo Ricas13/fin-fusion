@@ -3,8 +3,7 @@ name: Request User Sync
 on:
   pull_request:
     paths:
-      - 'db/migrations/027_request_user_sync.sql'
-      - 'db/migrations/028_request_plan_policy.sql'
+      - 'db/migrations/**'
       - 'src/integrations/request-user-sync.js'
       - 'src/platform/admin-request-users.js'
       - 'src/platform/admin-request-plan-policy.js'

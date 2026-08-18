@@ -54,7 +54,7 @@ async function main() {
                     : 'no heartbeat');
 
             const jobs = await jobHealth.list();
-            const critical = new Set(['billing', 'entitlements', 'reseller_billing', 'plan_changes', 'reseller_estates']);
+            const critical = new Set(['billing', 'entitlements', 'plan_changes']);
             const bad = jobs.filter(job => critical.has(job.job_key) && ['failed', 'stale', 'missing'].includes(jobHealth.healthState(job)));
             add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${jobHealth.healthState(job)}`).join(', '));
 

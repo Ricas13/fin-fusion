@@ -8,12 +8,10 @@ const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const attention=read('src/platform/attention.js');
 const admin=read('src/platform/admin-attention.js');
 const operator=read('src/platform/admin-operator-state.js');
-const migration=read('db/migrations/051_attention_workflow.sql');
-const repair=read('db/migrations/073_attention_workflow_runtime_repair.sql');
+const baseline=read('db/migrations/000_database_baseline.sql');
 
-assert(migration.includes('CREATE TABLE IF NOT EXISTS attention_workflow'),'Attention workflow migration must define the canonical workflow table');
-assert(repair.includes('CREATE TABLE IF NOT EXISTS attention_workflow'),'Upgrade repair must recreate the canonical attention workflow table if a legacy rollout is incomplete');
-assert(repair.includes('ADD COLUMN IF NOT EXISTS acknowledged_at'),'Upgrade repair must restore acknowledgement columns');
+assert(/CREATE TABLE public\.attention_workflow \(/.test(baseline),'Baseline schema must define the canonical attention_workflow table');
+assert(/acknowledged_at timestamp with time zone/.test(baseline),'Canonical attention_workflow table must retain its acknowledgement column');
 assert(!attention.includes('attention_state'),'Attention runtime must not query the non-existent attention_state table');
 assert(attention.includes('attention_workflow'),'Attention runtime must use the canonical attention_workflow table');
 assert(attention.includes('fingerprint=ANY($1::text[])'),'Attention state lookup must join live findings by workflow fingerprint');

@@ -115,28 +115,6 @@ async function main() {
     if (!succeededRow || succeededRow.status !== 'succeeded') throw new Error('Retry must never rerun an item that already succeeded');
     if (!retriedRow || retriedRow.status !== 'pending') throw new Error('Retry must reset a failed item back to pending for reprocessing');
 
-    // #15 a reseller must never be able to view another reseller's bulk-job
-    // results, even with a job id they somehow obtained.
-    const resellerUser = await query(
-        `INSERT INTO app_users(username,password_hash,role) VALUES($1,'x','reseller') RETURNING id`,
-        [`bulk-smoke-reseller-${suffix}`]
-    );
-    const reseller = await query('INSERT INTO resellers(user_id) VALUES($1) RETURNING id', [resellerUser.rows[0].id]);
-    const resellerId = reseller.rows[0].id;
-    const otherResellerUser = await query(
-        `INSERT INTO app_users(username,password_hash,role) VALUES($1,'x','reseller') RETURNING id`,
-        [`bulk-smoke-reseller2-${suffix}`]
-    );
-    const otherReseller = await query('INSERT INTO resellers(user_id) VALUES($1) RETURNING id', [otherResellerUser.rows[0].id]);
-
-    const scopedJob = await bulkJobs.createJob('reconcile', {}, { createdBy: null, resellerScope: resellerId });
-    const ownResult = await bulkJobs.getJobForActor(scopedJob.job.id, { isReseller: true, resellerId });
-    if (!ownResult) throw new Error('A reseller must be able to view their own scoped job');
-    const foreignResult = await bulkJobs.getJobForActor(scopedJob.job.id, { isReseller: true, resellerId: otherReseller.rows[0].id });
-    if (foreignResult) throw new Error("A reseller must never be able to view another reseller's job results");
-    const adminResult = await bulkJobs.getJobForActor(scopedJob.job.id, null);
-    if (!adminResult) throw new Error('An admin (no reseller scope) must still be able to view any job');
-
     // Concurrent duplicate submission (review fix): two truly concurrent
     // createJob calls with the same idempotency key -- including the
     // createdBy=null system-job case, where plain SQL/unique-index equality

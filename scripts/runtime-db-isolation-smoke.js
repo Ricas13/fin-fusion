@@ -9,7 +9,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const compose = read('docker-compose.yml');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
 const verifyBackup = read('scripts/verify-backup.js');
-const sessionMigration = read('db/migrations/068_runtime_session_store.sql');
+const sessionMigration = read('db/migrations/002_add_runtime_session_store.sql');
 
 function service(name) {
     const marker = `  ${name}:\n`;

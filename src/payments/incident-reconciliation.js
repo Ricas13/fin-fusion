@@ -300,14 +300,7 @@ async function localMatch(provider, reference) {
         WHERE source=$1 AND provider_subscription_id=$2
         ORDER BY created_at DESC LIMIT 1
     `, [provider, reference]);
-    if (direct.rowCount) return direct.rows[0];
-    const reseller = await query(`
-        SELECT 'reseller' scope,reseller_id owner_id,id subscription_id,status,current_period_end
-        FROM reseller_subscriptions
-        WHERE source=$1 AND provider_subscription_id=$2
-        ORDER BY created_at DESC LIMIT 1
-    `, [provider, reference]);
-    return reseller.rows[0] || null;
+    return direct.rows[0] || null;
 }
 
 function assertMatchIdentity(incident, match) {
@@ -315,11 +308,6 @@ function assertMatchIdentity(incident, match) {
     if (incident.scope === 'direct' && incident.customer_id) {
         if (match.scope !== 'customer' || String(match.owner_id) !== String(incident.customer_id)) {
             throw new Error('Provider reconciliation matched a different customer than this incident.');
-        }
-    }
-    if (incident.scope === 'reseller' && incident.reseller_id) {
-        if (match.scope !== 'reseller' || String(match.owner_id) !== String(incident.reseller_id)) {
-            throw new Error('Provider reconciliation matched a different reseller than this incident.');
         }
     }
 }
@@ -362,16 +350,14 @@ async function reconcile(incidentId, actorUserId = null) {
     await query(`
         UPDATE payment_incidents
         SET customer_id=COALESCE($2,customer_id),
-            reseller_id=COALESCE($3,reseller_id),
-            provider_subscription_id=COALESCE($4,provider_subscription_id),
-            provider_object_id=COALESCE($5,provider_object_id),
-            metadata=COALESCE(metadata,'{}'::jsonb)||$6::jsonb,
+            provider_subscription_id=COALESCE($3,provider_subscription_id),
+            provider_object_id=COALESCE($4,provider_object_id),
+            metadata=COALESCE(metadata,'{}'::jsonb)||$5::jsonb,
             updated_at=NOW()
         WHERE id=$1
     `, [
         incidentId,
         match?.scope === 'customer' ? match.owner_id : null,
-        match?.scope === 'reseller' ? match.owner_id : null,
         reference,
         current.objectId || null,
         JSON.stringify({ providerReconciliation: snapshot })

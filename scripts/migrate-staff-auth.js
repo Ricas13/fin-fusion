@@ -38,13 +38,11 @@ async function main() {
     const pool = getPool();
     const client = await pool.connect();
     let admins = 0;
-    let resellers = 0;
     try {
         await client.query('BEGIN');
         for (const row of data.admins || []) if (await upsertStaff(client, row, 'admin')) admins += 1;
-        for (const row of data.resellers || []) if (await upsertStaff(client, row, 'reseller')) resellers += 1;
         await client.query('COMMIT');
-        console.log(`Staff auth migration complete: admins=${admins}, resellers=${resellers}`);
+        console.log(`Staff auth migration complete: admins=${admins}`);
         console.log('Existing PostgreSQL password hashes were preserved on conflict.');
     } catch (error) {
         await client.query('ROLLBACK');

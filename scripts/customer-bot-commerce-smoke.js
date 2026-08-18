@@ -16,14 +16,10 @@ const registration=read('views/customer/register.ejs');
 const communicationView=read('views/customer/communications.ejs');
 const adminNotifications=read('src/platform/admin-notification-preferences.js');
 const operations=read('src/platform/operations-settings.js');
-const legacyMigration=read('db/migrations/075_customer_bot_channels.sql');
-const scopedMigration=read('db/migrations/077_notifications_multicurrency_reporting.sql');
+const baseline=read('db/migrations/000_database_baseline.sql');
 
-assert(!/FROM reseller_tiers WHERE archived_at IS NULL/.test(plans),'Plans list must not query nonexistent reseller_tiers.archived_at');
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
-assert(plans.includes("['reseller','Reseller','/admin/reseller-tiers']"),'Unified Plans must expose the live monthly reseller catalogue');
-assert(plans.includes('/admin/plans/resellers')&&plans.includes('Reseller accounts'),'Unified Plans must expose reseller account management separately from customer plans');
-assert(!/reseller credit|credit wallet|buy credits/i.test(plans),'Unified Plans must not revive reseller-credit semantics');
+assert(!/credit wallet|buy credits/i.test(plans),'Unified Plans must not revive retired-product credit semantics');
 assert(shell.includes("paymentWorkflow.tabs(active)"),'Shared admin shell must render payment workflow tabs');
 for(const title of ['Payments','Provider mappings','Billing'])assert(shell.includes(`'${title}'`),`Payment workflow must recognise ${title}`);
 
@@ -53,8 +49,8 @@ assert(adminNotifications.includes('/admin/profile/notifications'),'Global Notif
 assert(adminNotifications.includes('customer_opt_in_allowed'),'Global Notifications must control which customer events may be exposed');
 assert(adminLinks.includes('admin_channel_link_tokens')&&adminLinks.includes('admin_communication_preferences'),'Admin Telegram/Discord linking must use each admin identity, not a global destination');
 assert(operations.includes('canonical=production||Boolean(requireCanonical)'),'Production external URLs must always use the canonical configured origin');
-assert(legacyMigration.includes('telegram_chat_id')&&legacyMigration.includes('discord_user_id')&&legacyMigration.includes('customer_channel_link_tokens'),'Original customer bot identity/linking architecture must remain present');
-assert(scopedMigration.includes('admin_notification_preferences')&&scopedMigration.includes('customer_notification_preferences'),'Scoped event routing tables must be created');
-assert(scopedMigration.includes("event_scope IN ('admin','customer','both')"),'Notification catalogue must explicitly distinguish customer/admin audiences');
+assert(baseline.includes('telegram_chat_id')&&baseline.includes('discord_user_id')&&baseline.includes('customer_channel_link_tokens'),'Original customer bot identity/linking architecture must remain present');
+assert(baseline.includes('admin_notification_preferences')&&baseline.includes('customer_notification_preferences'),'Scoped event routing tables must be created');
+assert(/event_scope = ANY \(ARRAY\['admin'::text, 'customer'::text, 'both'::text\]\)/.test(baseline),'Notification catalogue must explicitly distinguish customer/admin audiences');
 
 console.log('customer bot + commerce regression smoke: ok');

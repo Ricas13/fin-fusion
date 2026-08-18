@@ -3,7 +3,7 @@ name: Server Migration
 on:
   pull_request:
     paths:
-      - 'db/migrations/026_customer_server_migrations.sql'
+      - 'db/migrations/**'
       - 'src/jellyfin/provisioning.js'
       - 'src/jellyfin/resilient-provisioning.js'
       - 'src/jellyfin/server-migration.js'

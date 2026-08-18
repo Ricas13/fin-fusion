@@ -72,7 +72,6 @@ jobs:
               SELECT
                 (SELECT COUNT(*)::int FROM jellyfin_servers) AS servers,
                 (SELECT COUNT(*)::int FROM customers) AS customers,
-                (SELECT COUNT(*)::int FROM resellers) AS resellers,
                 (SELECT COUNT(*)::int FROM subscriptions) AS subscriptions
             `);
             for (const [name, value] of Object.entries(businessCounts.rows[0])) {

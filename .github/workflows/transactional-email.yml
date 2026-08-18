@@ -3,7 +3,7 @@ name: Transactional Email
 on:
   pull_request:
     paths:
-      - 'db/migrations/034_transactional_email.sql'
+      - 'db/migrations/**'
       - 'src/integrations/smtp-client.js'
       - 'src/integrations/email-settings.js'
       - 'src/integrations/email-outbox.js'

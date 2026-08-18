@@ -46,7 +46,7 @@ async function commerceData(){
     incidents.recent(100),
     query(`SELECT id,username FROM app_users WHERE role='admin' AND active=TRUE ORDER BY username`)
   ]);
-  const currentIncidents=(paymentIncidents||[]).filter(row=>String(row.scope||'customer')!=='reseller');
+  const currentIncidents=paymentIncidents||[];
   return{direct:direct.rows,states:states.rows,events:events.rows[0]||{},activations:activations.rows[0]||{},affiliateBalances:affiliateBalances.rows,affiliateActivity:affiliateActivity.rows,affiliateCount:Number(affiliateCount.rows[0]?.n||0),paymentIncidents:currentIncidents,admins:admins.rows};
 }
 

@@ -4,8 +4,8 @@ const { query, getPool } = require('../src/db');
 const { planCreateInput, createPlanRecord } = require('../src/platform/admin-catalog-shell');
 
 const CODES = [
-    'smoke-reseller-monthly',
-    'smoke-custom-both',
+    'smoke-direct-monthly',
+    'smoke-direct-custom',
     'smoke-direct',
     'smoke-stremio-addon',
     'smoke-bundle'
@@ -22,66 +22,54 @@ async function cleanup() {
 async function main() {
     await cleanup();
     try {
-        const reseller = planCreateInput({
-            code: 'smoke-reseller-monthly',
-            name: 'Smoke Reseller Monthly',
+        const monthly = planCreateInput({
+            code: 'smoke-direct-monthly',
+            name: 'Smoke Direct Monthly',
             description: 'Plan create commerce smoke',
-            audience: 'reseller',
             billingInterval: 'month',
             durationDays: '999',
             price: '4.50',
             currency: 'gbp',
-            resellerCreditCost: '2',
-            resellerTrialCreditCost: '1',
             serverClass: 'premium',
             visible: 'on',
             active: 'on'
         });
-        assert(reseller.duration === 30, 'Monthly frequency did not normalize to 30 days');
-        assert(reseller.priceMinor === 450 && reseller.currency === 'GBP', 'Price/currency parsing failed');
-        assert(reseller.resellerCreditCost === 2 && reseller.resellerTrialCreditCost === 1, 'Reseller credit costs were not parsed');
+        assert(monthly.duration === 30, 'Monthly frequency did not normalize to 30 days');
+        assert(monthly.priceMinor === 450 && monthly.currency === 'GBP', 'Price/currency parsing failed');
+        assert(monthly.audience === 'direct', 'Plans must always be created for the direct audience');
 
-        const created = await createPlanRecord(reseller, null);
+        const created = await createPlanRecord(monthly, null);
         const stored = (await query('SELECT * FROM plans WHERE id=$1', [created.id])).rows[0];
         assert(stored.billing_interval === 'month' && Number(stored.duration_days) === 30, 'Stored frequency/duration incorrect');
         assert(Number(stored.price_minor) === 450 && stored.currency === 'GBP', 'Stored pricing incorrect');
-        assert(Number(stored.reseller_credit_cost) === 2 && Number(stored.reseller_trial_credit_cost) === 1, 'Stored reseller credit costs incorrect');
-        assert(stored.audience === 'reseller', 'Stored reseller audience incorrect');
+        assert(stored.audience === 'direct', 'Stored audience incorrect');
 
         const custom = planCreateInput({
-            code: 'smoke-custom-both',
-            name: 'Smoke Custom Both',
-            audience: 'both',
+            code: 'smoke-direct-custom',
+            name: 'Smoke Direct Custom',
             billingInterval: 'custom',
             durationDays: '45',
             price: '12',
             currency: 'EUR',
-            resellerCreditCost: '',
-            resellerTrialCreditCost: '2',
             serverClass: 'custom',
             visible: 'on',
             active: 'on'
         });
         assert(custom.duration === 45, 'Custom duration was not retained');
-        assert(custom.resellerCreditCost === null && custom.resellerTrialCreditCost === 2, 'Optional reseller wallet availability failed');
         await createPlanRecord(custom, null);
 
         const direct = planCreateInput({
             code: 'smoke-direct',
             name: 'Smoke Direct',
-            audience: 'direct',
             billingInterval: 'year',
             durationDays: '3',
             price: '50.00',
             currency: 'USD',
-            resellerCreditCost: '99',
-            resellerTrialCreditCost: '9',
             serverClass: 'premium',
             visible: 'on',
             active: 'on'
         });
         assert(direct.duration === 365, 'Yearly frequency did not normalize to 365 days');
-        assert(direct.resellerCreditCost === null && direct.resellerTrialCreditCost === null, 'Direct plan retained reseller credit costs');
         await createPlanRecord(direct, null);
 
         // Regression for the actual Stremio-only plan workflow used by operators.
@@ -90,7 +78,6 @@ async function main() {
             name: 'Stremio Addon',
             description: 'Access to a stremio addon',
             serviceType: 'stremio',
-            audience: 'direct',
             billingInterval: 'month',
             durationDays: '30',
             price: '6',
@@ -112,7 +99,6 @@ async function main() {
             name: 'Smoke Bundle',
             description: 'Jellyfin and Stremio bundle',
             serviceType: 'bundle',
-            audience: 'direct',
             billingInterval: 'month',
             durationDays: '30',
             price: '9',
@@ -131,16 +117,16 @@ async function main() {
         assert(Number(audit.rows[0].count) === 1, 'Plan creation audit event missing');
 
         let duplicate = null;
-        try { await createPlanRecord(reseller, null); } catch (error) { duplicate = error; }
+        try { await createPlanRecord(monthly, null); } catch (error) { duplicate = error; }
         assert(duplicate?.code === '23505', 'Duplicate plan code was not rejected by the database');
 
         let invalidCurrency = false;
-        try { planCreateInput({ ...reseller, code: 'valid-code', name: 'X', audience: 'direct', billingInterval: 'month', price: '1', currency: 'GB' }); }
+        try { planCreateInput({ ...monthly, code: 'valid-code', name: 'X', billingInterval: 'month', price: '1', currency: 'GB' }); }
         catch (_) { invalidCurrency = true; }
         assert(invalidCurrency, 'Invalid currency was accepted');
 
         let invalidPrice = false;
-        try { planCreateInput({ code: 'valid-price-test', name: 'X', audience: 'direct', billingInterval: 'month', durationDays: '30', price: '-1', currency: 'GBP' }); }
+        try { planCreateInput({ code: 'valid-price-test', name: 'X', billingInterval: 'month', durationDays: '30', price: '-1', currency: 'GBP' }); }
         catch (_) { invalidPrice = true; }
         assert(invalidPrice, 'Negative price was accepted');
 

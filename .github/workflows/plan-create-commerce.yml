@@ -56,5 +56,5 @@ jobs:
         run: npm run db:migrate
       - name: Canonical V2 Jellyfin, Stremio and bundle creation
         run: node scripts/plan-create-v2-smoke.js
-      - name: Legacy shell pricing and reseller compatibility
+      - name: Legacy shell pricing and commerce compatibility
         run: node scripts/plan-create-commerce-smoke.js

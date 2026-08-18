@@ -8,10 +8,6 @@
 
 **Jellyfin account** — The media-server account associated with a CAPTAiNFiN customer. Its password is separate from the CAPTAiNFiN portal password.
 
-**Reseller** — A business or operator with an allocated CAPTAiNFiN reseller tier who manages downstream customers.
-
-**Seat** — Commercial reseller capacity consumed by an eligible live customer entitlement according to reseller policy.
-
 **Stream limit** — The allowed concurrent playback capacity associated with a service plan or entitlement.
 
 **Paid-through date** — The end of the currently paid service period.

@@ -2,7 +2,7 @@
 
 CAPTAiNFiN separates portal identity, Jellyfin credentials and infrastructure secrets.
 
-## Administrator and reseller sign-in
+## Administrator sign-in
 
 Two-factor authentication is optional unless the corresponding enforcement policy is enabled. When enforcement is enabled, users who have not enrolled are directed through setup at sign-in.
 

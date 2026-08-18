@@ -64,14 +64,12 @@ async function main() {
 
     const directCode = `smoke-direct-${suffix}`;
     const trialCode = `smoke-trial-${suffix}`;
-    const resellerCode = `smoke-reseller-${suffix}`;
     await query(`
-        INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,reseller_credit_cost,reseller_trial_credit_cost,sort_order)
+        INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,sort_order)
         VALUES
-          ($1,'Smoke direct plan','direct','month',30,600,'USD',3,'premium',TRUE,TRUE,1,NULL,10),
-          ($2,'Smoke trial plan','direct','trial',1,0,'USD',1,'premium',TRUE,TRUE,NULL,1,20),
-          ($3,'Smoke reseller plan','reseller','custom',45,0,'USD',2,'premium',TRUE,TRUE,3,2,30)
-    `, [directCode, trialCode, resellerCode]);
+          ($1,'Smoke direct plan','direct','month',30,600,'USD',3,'premium',TRUE,TRUE,10),
+          ($2,'Smoke trial plan','direct','trial',1,0,'USD',1,'premium',TRUE,TRUE,20)
+    `, [directCode, trialCode]);
 
     const registered = await customers.registerCustomer({
         email: `smoke-${suffix}@example.invalid`,
@@ -87,18 +85,6 @@ async function main() {
     if (!plans.some(plan => plan.code === directCode) || !plans.some(plan => plan.code === trialCode)) {
         throw new Error('Explicit public plan fixtures are missing');
     }
-    if (plans.some(plan => plan.code === resellerCode)) throw new Error('Reseller-only plan leaked into public Store plans');
-
-    const credits = await query(`
-        SELECT code,reseller_credit_cost,reseller_trial_credit_cost
-        FROM plans WHERE code=ANY($1::text[]) ORDER BY code
-    `, [[directCode, trialCode, resellerCode]]);
-    const direct = credits.rows.find(row => row.code === directCode);
-    const trial = credits.rows.find(row => row.code === trialCode);
-    const reseller = credits.rows.find(row => row.code === resellerCode);
-    if (Number(direct?.reseller_credit_cost) !== 1) throw new Error('Direct fixture reseller credit cost is missing');
-    if (Number(trial?.reseller_trial_credit_cost) !== 1) throw new Error('Trial fixture credit cost is missing');
-    if (Number(reseller?.reseller_credit_cost) !== 3) throw new Error('Reseller fixture credit cost is missing');
 
     const portal = await customers.getCustomerPortal(registered.customer.id);
     if (!portal || portal.customer.id !== registered.customer.id) throw new Error('Customer portal query failed');

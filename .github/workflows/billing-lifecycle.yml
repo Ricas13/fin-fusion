@@ -3,7 +3,7 @@ name: Billing Lifecycle
 on:
   pull_request:
     paths:
-      - 'db/migrations/033_billing_lifecycle_control.sql'
+      - 'db/migrations/**'
       - 'src/payments/billing-control.js'
       - 'src/platform/admin-billing.js'
       - 'src/platform/admin-html.js'

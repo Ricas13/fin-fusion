@@ -1,18 +1,14 @@
 # Getting started
 
-CAPTAiNFiN has separate areas for customers, resellers and administrators. Sign in with the account type you were given and use the navigation for your role.
+CAPTAiNFiN has separate areas for customers and administrators. Sign in with the account type you were given and use the navigation for your role.
 
 ## Customers
 
 A customer can use the portal to review service status, manage account security, set a separate Jellyfin password when required, adjust allowed library visibility, and access payment/subscription actions made available by the active plan.
 
-## Resellers
-
-A reseller manages a downstream customer estate within the capacity of the reseller subscription. Seats represent active downstream entitlements; temporary suspension does not create extra capacity.
-
 ## Administrators
 
-Administrators configure the platform itself: plans, servers, libraries, resellers, commerce, automation, security and system settings.
+Administrators configure the platform itself: plans, servers, libraries, commerce, automation, security and system settings.
 
 The admin interface groups controls by purpose. Each important setting includes a short explanation of what it changes; deeper topics are documented in the Administrator section of this guide.
 

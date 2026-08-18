@@ -3,13 +3,7 @@
 // Single source of truth for the People -> Customers filtered/paginated
 // query, reused by both the list page and bulk-operation "select all
 // matching" resolution -- so a bulk job can never see a wider set of
-// customers than the list page itself would show for the same filters, and
-// reseller scope is enforced in exactly one place instead of being
-// re-implemented per call site.
-//
-// `scope.resellerId` is set whenever the caller is a reseller -- it is
-// ALWAYS ANDed onto the query server-side and can never be widened by
-// anything in `filters`, regardless of what a request claims.
+// customers than the list page itself would show for the same filters.
 
 const { query } = require('../db');
 
@@ -26,8 +20,6 @@ function baseJoins() {
     return `
         FROM customers c
         LEFT JOIN app_users au ON au.id=c.user_id
-        LEFT JOIN resellers r ON r.id=c.reseller_id
-        LEFT JOIN app_users ru ON ru.id=r.user_id
         LEFT JOIN LATERAL (
             SELECT s.* FROM subscriptions s WHERE s.customer_id=c.id
             ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1
@@ -68,12 +60,6 @@ function buildWhere(filters, scope) {
     const where = [];
     const params = [];
     function p(value) { params.push(value); return `$${params.length}`; }
-
-    if (scope?.resellerId) {
-        where.push(`c.reseller_id=${p(scope.resellerId)}`);
-    } else if (filters.resellerId && isUuid(filters.resellerId)) {
-        where.push(`c.reseller_id=${p(filters.resellerId)}`);
-    }
 
     if (filters.q) {
         const term = `%${String(filters.q).trim().slice(0, 80)}%`;
@@ -139,9 +125,8 @@ function buildWhere(filters, scope) {
 }
 
 const SELECT_COLUMNS = `
-    c.id,c.display_name,c.email,c.created_at,c.reseller_id,
+    c.id,c.display_name,c.email,c.created_at,
     au.username AS login_username,au.active AS login_active,
-    ru.username AS reseller_username,
     cur.status AS subscription_status,cur.current_period_end,
     p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,
     acc.account_count,acc.last_activity_at,acc.has_enabled_account,acc.server_names,

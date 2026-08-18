@@ -7,10 +7,6 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const readiness=read('src/platform/product-readiness.js');
-const resellerSettings=read('src/resellers/settings.js');
-const resellerBusiness=read('src/platform/reseller-business.js');
-const resellerPortal=read('src/platform/reseller-service-aware-portal-v2.js');
-const resellerRetirement=read('src/platform/reseller-legacy-route-retirement.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const stremioDashboard=read('views/customer/stremio-dashboard.ejs');
 const planDelivery=read('src/platform/admin-plan-delivery.js');
@@ -18,17 +14,6 @@ const router=read('src/platform/router.js');
 const plansList=read('src/platform/admin-plans-list.js');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
-assert(/commercial_readiness/.test(resellerSettings)&&/sellable/.test(resellerSettings),'reseller catalogue must filter by canonical readiness');
-assert(/!owner\|\|productReadiness\.serviceType\(plan\)==='jellyfin'/.test(resellerSettings),'reseller owner plans must remain Jellyfin-only until owner Stremio install ownership exists');
-
-// Reseller runtime is seat licensing, not downstream customer sales.
-assert(/createResellerServiceAwarePortalRouter/.test(resellerBusiness)&&/createResellerLegacyRouteRetirementRouter/.test(resellerBusiness),'reseller business router must mount managed-user service and legacy retirement boundaries');
-assert(!/r\.post\(['"]\/reseller\/customer\/create/.test(resellerBusiness),'reseller business router must not own downstream customer-sale creation');
-assert(/\/reseller\/user\/create/.test(resellerPortal)&&/managedUsers\.createManagedUser/.test(resellerPortal),'reseller portal must create managed Jellyfin users through the managed-seat owner');
-assert(/managedUsers\.setSuspended/.test(resellerPortal)&&/managedUsers\.deleteManagedUser/.test(resellerPortal),'reseller portal must suspend/delete managed Jellyfin users through the managed-seat owner');
-assert(/\/reseller\/sales/.test(resellerPortal)&&/\/reseller\/ledger/.test(resellerPortal),'common legacy reseller sales and ledger entry points must be explicitly retired by the managed-user portal');
-assert(/\/reseller\/customer\/:id\/end-service/.test(resellerRetirement)&&/\/reseller\/customer\/:id\/credentials/.test(resellerRetirement),'remaining legacy reseller customer-operation URLs must be explicitly retired by the compatibility boundary');
-assert(/Downstream billing and customer administration stay outside CAPTAiNFiN/.test(resellerPortal),'reseller portal must explain that downstream commercial administration is external');
 
 assert(/delivery==='stremio'/.test(customerDashboard)&&/stremio-dashboard/.test(customerDashboard),'Stremio-only customers must use a service-specific dashboard');
 assert(/sellablePlans/.test(customerDashboard)&&/productReadiness\.evaluate/.test(customerDashboard),'customer acquisition catalogue must hide undeliverable products');

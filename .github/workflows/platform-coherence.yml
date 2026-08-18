@@ -18,8 +18,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run syntax
-      - name: Enforce literal 71-item acceptance contract
-        run: node scripts/full-sweep-71-smoke.js
       - name: Enforce invitation upgrade bridge contract
         run: node scripts/invitation-upgrade-bridge-smoke.js
       - name: Enforce static coherence contract

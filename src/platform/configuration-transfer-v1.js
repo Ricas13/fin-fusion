@@ -10,13 +10,12 @@ const SETTING_KEYS = new Set([
     'platform',
     'storefront',
     'storefront_features',
-    'reseller_defaults',
     'admin_defaults',
     'referral_program'
 ]);
 
 const ENUMS = {
-    audience: new Set(['direct', 'reseller', 'both']),
+    audience: new Set(['direct']),
     billing_interval: new Set(['trial', 'month', '6_months', 'year', 'custom']),
     server_class: new Set(['premium', 'free', 'custom']),
     library_access_mode: new Set(['all', 'exclude', 'include']),
@@ -126,13 +125,6 @@ function normalizeSetting(key, value) {
         return out;
     }
     if (key === 'storefront_features') return stringArray(value, 'settings.storefront_features', { maxItems: 50, maxLength: 200 });
-    if (key === 'reseller_defaults') {
-        const src = keepKeys(value, ['credits', 'trialCredits']);
-        const out = {};
-        if ('credits' in src) out.credits = integer(src.credits, 'settings.reseller_defaults.credits', 0, 100000);
-        if ('trialCredits' in src) out.trialCredits = integer(src.trialCredits, 'settings.reseller_defaults.trialCredits', 0, 20);
-        return out;
-    }
     if (key === 'admin_defaults') {
         const src = keepKeys(value, ['defaultPlanCode', 'defaultServerClass', 'defaultServerPriority', 'defaultServerMaxUsers', 'expiringWindowDays', 'recentCustomerLimit']);
         const out = {};
@@ -193,8 +185,6 @@ function normalizePlan(source, index) {
         active: bool(source.active, `${path}.active`),
         visible: bool(source.visible, `${path}.visible`),
         sort_order: integer(source.sort_order, `${path}.sort_order`, -100000, 100000),
-        reseller_credit_cost: integer(source.reseller_credit_cost, `${path}.reseller_credit_cost`, 0, 100000, { nullable: true }),
-        reseller_trial_credit_cost: integer(source.reseller_trial_credit_cost, `${path}.reseller_trial_credit_cost`, 0, 100000, { nullable: true }),
         library_access_mode: enumValue(source.library_access_mode, `${path}.library_access_mode`, ENUMS.library_access_mode),
         library_names: stringArray(source.library_names || [], `${path}.library_names`),
         placement_strategy: enumValue(source.placement_strategy, `${path}.placement_strategy`, ENUMS.placement_strategy),
@@ -270,7 +260,7 @@ async function exportPortableConfiguration() {
             SELECT p.code,p.name,p.description,p.audience,p.billing_interval,p.duration_days,p.price_minor,p.currency,
                    p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,
                    p.allow_live_tv_management,p.allow_4k,p.allow_remuxing,p.allow_remote_access,p.server_class,p.active,
-                   p.visible,p.sort_order,p.reseller_credit_cost,p.reseller_trial_credit_cost,p.library_access_mode,
+                   p.visible,p.sort_order,p.library_access_mode,
                    p.library_names,p.placement_strategy,
                    COALESCE((
                        SELECT jsonb_agg(jsonb_build_object('serverSlug',js.slug,'weight',pse.weight) ORDER BY js.slug)
@@ -293,7 +283,7 @@ async function exportPortableConfiguration() {
         exportedAt: new Date().toISOString(),
         configuration: { settings, plans, notifications },
         excluded: [
-            'administrator/reseller/customer identities and passwords',
+            'administrator/customer identities and passwords',
             'Jellyfin API keys and server URLs',
             'payment provider credentials and price mappings',
             'subscriptions, payment events and redemption history',
@@ -396,10 +386,10 @@ async function applyImport(document, actorUserId) {
                     code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
                     allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,
                     allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,
-                    reseller_credit_cost,reseller_trial_credit_cost,library_access_mode,library_names,placement_strategy,
+                    library_access_mode,library_names,placement_strategy,
                     created_at,updated_at
                 ) VALUES(
-                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::text[],$26,NOW(),NOW()
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::text[],$24,NOW(),NOW()
                 )
                 ON CONFLICT(code) DO UPDATE SET
                     name=EXCLUDED.name,description=EXCLUDED.description,audience=EXCLUDED.audience,
@@ -410,8 +400,7 @@ async function applyImport(document, actorUserId) {
                     allow_live_tv_management=EXCLUDED.allow_live_tv_management,allow_4k=EXCLUDED.allow_4k,
                     allow_remuxing=EXCLUDED.allow_remuxing,allow_remote_access=EXCLUDED.allow_remote_access,
                     server_class=EXCLUDED.server_class,active=EXCLUDED.active,visible=EXCLUDED.visible,
-                    sort_order=EXCLUDED.sort_order,reseller_credit_cost=EXCLUDED.reseller_credit_cost,
-                    reseller_trial_credit_cost=EXCLUDED.reseller_trial_credit_cost,
+                    sort_order=EXCLUDED.sort_order,
                     library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,
                     placement_strategy=EXCLUDED.placement_strategy,updated_at=NOW()
                 RETURNING id
@@ -420,7 +409,7 @@ async function applyImport(document, actorUserId) {
                 plan.price_minor, plan.currency, plan.streams, plan.allow_downloads, plan.allow_video_transcoding,
                 plan.allow_audio_transcoding, plan.allow_live_tv, plan.allow_live_tv_management, plan.allow_4k,
                 plan.allow_remuxing, plan.allow_remote_access, plan.server_class, plan.active, plan.visible, plan.sort_order,
-                plan.reseller_credit_cost, plan.reseller_trial_credit_cost, plan.library_access_mode, plan.library_names,
+                plan.library_access_mode, plan.library_names,
                 plan.placement_strategy
             ]);
             const planId = saved.rows[0].id;

@@ -156,8 +156,8 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   await form.locator('input[name="code"]').fill(code);
   await form.locator('input[name="name"]').fill(name);
   await form.locator('textarea[name="description"]').fill('Access to a stremio addon');
-  // Direct customer plans and monthly reseller plans are configured separately.
-  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose reseller audience routing');
+  // The plan creation form is direct-customer-only; there is no audience selector.
+  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose an audience selector');
   await form.locator('input[name="price"]').fill('6');
   await form.locator('select[name="currency"]').selectOption('USD');
   await form.locator('input[name="capacityLimit"]').fill('20');

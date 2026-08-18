@@ -3,7 +3,7 @@ name: Fleet Live Metrics
 on:
   pull_request:
     paths:
-      - 'db/migrations/031_jellyfin_server_metrics.sql'
+      - 'db/migrations/**'
       - 'scripts/activity-worker.js'
       - 'scripts/configure-activity-db-role.js'
       - 'scripts/fleet-live-metrics-smoke.js'

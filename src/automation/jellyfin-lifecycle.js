@@ -16,7 +16,7 @@ async function telemetryReady(){
 
 async function accounts(){
   const r=await query(`
-    SELECT ja.*,ja.id account_id,js.name server_name,js.server_class,c.reseller_id,r.estate_suspended_at,
+    SELECT ja.*,ja.id account_id,js.name server_name,js.server_class,
       ph.last_playback_at,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=ja.customer_id AND aps.server_id=ja.server_id) currently_playing,
       sub.subscription_id,sub.plan_id,sub.status subscription_status,sub.starts_at,sub.current_period_end,sub.source,
@@ -34,7 +34,6 @@ async function accounts(){
     FROM jellyfin_accounts ja
     JOIN jellyfin_servers js ON js.id=ja.server_id
     JOIN customers c ON c.id=ja.customer_id
-    LEFT JOIN resellers r ON r.id=c.reseller_id
     LEFT JOIN LATERAL (
       SELECT MAX(COALESCE(ended_at,last_seen_at,started_at)) last_playback_at
       FROM playback_history WHERE customer_id=ja.customer_id AND server_id=ja.server_id
@@ -56,18 +55,17 @@ async function accounts(){
 
 function classify(row,cfg){
   if(!row.subscription_id)return{shouldDisable:false,reason:'no_subscription_history'};
-  const category=policy.categoryFor({resellerId:row.reseller_id,serverClass:row.server_class,billingInterval:row.billing_interval,priceMinor:row.price_minor,source:row.source});
+  const category=policy.categoryFor({serverClass:row.server_class,billingInterval:row.billing_interval,priceMinor:row.price_minor,source:row.source});
   const plan={inactivity_policy:row.inactivity_policy||{}};
   const deletion=policy.deleteDays(cfg,category,plan);
-  if(category==='reseller'&&row.estate_suspended_at)return{shouldDisable:true,category,deleteDays:deletion.days,policySource:deletion.source,reason:'reseller_entitlement_lapsed'};
   if(category==='free'&&row.has_live_jellyfin_entitlement){
     const inactivity=policy.freeNoPlaybackDays(cfg,plan),reference=row.last_playback_at||row.last_activity_at||row.created_at;
     const oldEnough=reference&&new Date(reference).getTime()<=Date.now()-inactivity.days*86400000;
     if(oldEnough)return{shouldDisable:true,category,deleteDays:deletion.days,policySource:deletion.source==='plan'||inactivity.source==='plan'?'plan':'global',reason:`no_playback_${inactivity.days}_days`,reference};
     return{shouldDisable:false,category,reason:'free_usage_active'};
   }
-  if(!row.has_live_jellyfin_entitlement&&['trial','paid','reseller'].includes(category)){
-    return{shouldDisable:true,category,deleteDays:deletion.days,policySource:deletion.source,reason:category==='trial'?'trial_expired':category==='reseller'?'reseller_entitlement_lapsed':'paid_entitlement_lapsed'};
+  if(!row.has_live_jellyfin_entitlement&&['trial','paid'].includes(category)){
+    return{shouldDisable:true,category,deleteDays:deletion.days,policySource:deletion.source,reason:category==='trial'?'trial_expired':'paid_entitlement_lapsed'};
   }
   return{shouldDisable:false,category,reason:'entitled'};
 }
@@ -111,9 +109,7 @@ async function deleteDue(row,decision,cfg){
 async function restoreDeletedForEntitledCustomers(){
   const rows=await query(`SELECT DISTINCT lc.customer_id FROM jellyfin_account_lifecycle lc
     JOIN customers c ON c.id=lc.customer_id
-    LEFT JOIN resellers r ON r.id=c.reseller_id
     WHERE lc.deleted_at IS NOT NULL AND lc.restored_at IS NULL
-      AND (c.reseller_id IS NULL OR r.estate_suspended_at IS NULL)
       AND EXISTS(SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=lc.customer_id AND s.superseded_by IS NULL
         AND s.starts_at<=NOW() AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval>NOW()
         AND s.status IN('active','trialing','paused') AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')

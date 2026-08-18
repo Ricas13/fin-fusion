@@ -55,7 +55,7 @@ function main() {
     }), /refund incident cannot restore/i);
 
     // Identity binding prevents a provider reference from being used to restore
-    // a different local customer/reseller than the incident was opened for.
+    // a different local customer than the incident was opened for.
     reconciliation.assertMatchIdentity(
         { scope: 'direct', customer_id: 'customer-a' },
         { scope: 'customer', owner_id: 'customer-a' }

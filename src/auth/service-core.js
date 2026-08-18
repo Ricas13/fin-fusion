@@ -70,7 +70,7 @@ async function getStaffByIdentity(identity) {
                totp_enabled,totp_secret_encrypted,totp_enrolled_at,
                failed_login_count,locked_until,last_login_at,password_changed_at,session_version
         FROM app_users
-        WHERE role IN ('admin','reseller')
+        WHERE role='admin'
           AND (lower(username)=lower($1) OR lower(COALESCE(email,''))=lower($1))
         LIMIT 1
     `, [clean]);
@@ -83,7 +83,7 @@ async function getStaffById(userId) {
                totp_enabled,totp_secret_encrypted,totp_enrolled_at,
                failed_login_count,locked_until,last_login_at,password_changed_at,session_version
         FROM app_users
-        WHERE id=$1 AND role IN ('admin','reseller')
+        WHERE id=$1 AND role='admin'
     `, [userId]);
     return result.rows[0] || null;
 }
@@ -157,7 +157,6 @@ function requiresTwoFactor(user) {
     // Administrator enforcement is optional by default and is controlled by
     // the runtime setting (with REQUIRE_ADMIN_2FA=true as an env fallback).
     if (user.role === 'admin') return runtimeSettings.requireAdminTwoFactor();
-    if (user.role === 'reseller') return process.env.REQUIRE_RESELLER_2FA === 'true';
     return false;
 }
 
@@ -335,7 +334,7 @@ async function registerSession(req, user) {
 }
 
 async function validateStaffSession(req) {
-    if (!req.session?.authUserId || !['admin','reseller'].includes(req.session?.authRole)) return { valid: true };
+    if (!req.session?.authUserId || req.session?.authRole !== 'admin') return { valid: true };
     const result = await query(`
         SELECT s.session_id,s.session_version,s.user_agent_hash,s.last_seen_at,s.expires_at,s.revoked_at,
                u.id AS user_id,u.role,u.active,u.session_version AS current_session_version

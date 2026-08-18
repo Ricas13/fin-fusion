@@ -1,11 +1,10 @@
 # CAPTAiNFiN Guide
 
-Welcome to the CAPTAiNFiN user guide. This documentation is written for customers, resellers and administrators using the platform day to day.
+Welcome to the CAPTAiNFiN user guide. This documentation is written for customers and administrators using the platform day to day.
 
 Use the navigation to find the guide for your role:
 
 - **Customers** — account access, subscriptions, Jellyfin credentials, library visibility and security.
-- **Resellers** — reseller subscriptions, seats, downstream customers, sales records and estate controls.
 - **Administrators** — plans, servers, libraries, payments, automation, security and platform settings.
 - **Stremio** — foundation/roadmap information for the future stream-only addon service.
 

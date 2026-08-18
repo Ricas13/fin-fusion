@@ -69,7 +69,7 @@ async function makePlan(code, serverIds) {
             code,name,audience,billing_interval,duration_days,price_minor,currency,streams,
             allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,
             server_class,active,visible,library_access_mode,library_names,placement_strategy
-        ) VALUES($1,$2,'both','month',30,600,'USD',3,TRUE,FALSE,TRUE,TRUE,'premium',TRUE,TRUE,'include',ARRAY['Movies'],'balanced')
+        ) VALUES($1,$2,'direct','month',30,600,'USD',3,TRUE,FALSE,TRUE,TRUE,'premium',TRUE,TRUE,'include',ARRAY['Movies'],'balanced')
         RETURNING *
     `, [code, `Plan ${code}`]);
     for (const serverId of serverIds) {

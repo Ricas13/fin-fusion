@@ -6,7 +6,7 @@
 // job_type to a registered handler, and updates per-item + job status.
 // Handlers are registered by the modules that own each job type (see
 // registerHandler calls in admin bulk-operation routers) so this file stays
-// generic and doesn't need to know about libraries/plans/reseller
+// generic and doesn't need to know about libraries/plans
 // assignment/etc itself.
 
 const crypto = require('crypto');
