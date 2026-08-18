@@ -142,4 +142,6 @@ ALTER TABLE plans ADD CONSTRAINT plans_audience_check CHECK (audience IN ('direc
 ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_source_check;
 ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_source_check CHECK (source IN ('manual','stripe','paypal','migration','service_credit'));
 
+DELETE FROM schema_migrations WHERE filename <> '000_database_baseline.sql';
+
 COMMIT;

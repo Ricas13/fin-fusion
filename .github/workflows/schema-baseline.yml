@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
 permissions:
-  contents: write
+  contents: read
 jobs:
   baseline:
     runs-on: ubuntu-24.04
@@ -32,42 +32,22 @@ jobs:
       BACKUP_ENCRYPTION_KEY: 5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Build canonical database from historical chain
-        shell: bash
-        run: |
-          rm -f db/migrations/000_schema_baseline.sql db/migrations/000_database_baseline.sql
-          npm run db:migrate
-      - name: Generate and verify complete clean baseline
+      - run: npm run db:migrate
+      - name: Verify complete database vocabulary is clean
         shell: bash
         run: |
           docker run --rm --network host postgres:17-alpine \
             pg_dump "$DATABASE_URL" --no-owner --no-privileges --inserts \
             --exclude-table=schema_migrations \
             --exclude-table=user_sessions \
-            > /tmp/database-baseline.sql
+            > /tmp/database.sql
           term="$(printf 're%s' 'seller')"
-          if grep -in "$term" /tmp/database-baseline.sql; then
-            echo "::error::Retired product vocabulary remains in generated database baseline"
+          if grep -in "$term" /tmp/database.sql; then
+            echo "::error::Retired product vocabulary remains in generated database"
             exit 1
           fi
-          sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' /tmp/database-baseline.sql > db/migrations/000_database_baseline.sql
-      - name: Commit generated baseline when changed
-        shell: bash
-        run: |
-          git rm -f --ignore-unmatch db/migrations/000_schema_baseline.sql
-          git add -f db/migrations/000_database_baseline.sql
-          if git diff --cached --quiet; then
-            echo "Baseline already current."
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "Add complete clean PostgreSQL baseline"
-          git push origin "HEAD:${{ github.head_ref }}"

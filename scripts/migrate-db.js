@@ -27,9 +27,6 @@ async function ensureMigrationLedger(pool) {
 }
 
 async function detectFreshDatabase(pool) {
-    // Detect freshness from schema shape rather than migration-ledger count alone.
-    // Older deployments may have application tables but no historical ledger;
-    // those must NEVER receive fresh-install cleanup/defaults.
     const result = await pool.query(`
         SELECT COUNT(*)::int AS count
         FROM information_schema.tables
@@ -49,8 +46,6 @@ async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
 
     const recorded = existing.rows[0].checksum;
     if (!recorded) {
-        // Older installations predate checksum tracking. Baseline the exact file
-        // currently deployed so all subsequent edits are detected deterministically.
         await pool.query(
             'UPDATE schema_migrations SET checksum=$2 WHERE filename=$1 AND checksum IS NULL',
             [filename, checksum]
@@ -69,17 +64,25 @@ async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
     return true;
 }
 
+async function adoptBaseline(pool, filename, checksum) {
+    await pool.query(
+        'INSERT INTO schema_migrations(filename,checksum) VALUES($1,$2)',
+        [filename, checksum]
+    );
+    console.log(`adopt ${filename}`);
+}
+
 async function applyMigration(pool, filename, sql, checksum, freshInstall) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        // Expose a transaction-local marker to migrations that need to distinguish
-        // a truly blank database from an upgrade. Existing deployments always see
-        // "off"; this prevents cleanup/default migrations from rewriting live data.
         await client.query("SELECT set_config('steamfusion.fresh_install',$1,true)", [freshInstall ? 'on' : 'off']);
-        // Historical migrations include their own BEGIN/COMMIT wrappers. Strip only
-        // those outer wrappers so the schema change and ledger insert commit atomically.
         await client.query(unwrapTransaction(sql));
+        await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+            filename TEXT PRIMARY KEY,
+            checksum TEXT,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
         await client.query(
             'INSERT INTO schema_migrations(filename,checksum) VALUES($1,$2)',
             [filename, checksum]
@@ -102,7 +105,7 @@ async function main() {
     try {
         await ensureMigrationLedger(pool);
         const freshInstall = await detectFreshDatabase(pool);
-        if (freshInstall) console.log('fresh database detected: applying clean-install defaults');
+        if (freshInstall) console.log('fresh database detected: applying clean-install baseline');
 
         for (const filename of files) {
             const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
@@ -110,6 +113,11 @@ async function main() {
 
             if (await verifyOrBaselineAppliedMigration(pool, filename, checksum)) {
                 console.log(`skip ${filename}`);
+                continue;
+            }
+
+            if (filename === '000_database_baseline.sql' && !freshInstall) {
+                await adoptBaseline(pool, filename, checksum);
                 continue;
             }
 
