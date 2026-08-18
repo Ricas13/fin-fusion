@@ -4,6 +4,7 @@ const outbound=require('../security/outbound-url-policy');
 const {encryptWithEnv,decryptWithEnv}=require('../security/purpose-crypto');
 
 const TOKEN_PREFIX='stremio-source-token';
+const PASSWORD_PREFIX='stremio-source-password';
 const TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY';
 const LEGACY_TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY';
 
@@ -27,6 +28,8 @@ function cleanUsername(value){const username=String(value||'').trim();if(!userna
 function clientAuthorization(){return 'MediaBrowser Client="CAPTAiNFiN Stremio Source", Device="CAPTAiNFiN", DeviceId="captainfin-stremio-source", Version="1.0"';}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin access token.');return `MediaBrowser Token="${token}"`;}
 function encryptToken(token){return encryptWithEnv(token,TOKEN_ENV,TOKEN_PREFIX);}
+function encryptPassword(password){return encryptWithEnv(password,TOKEN_ENV,PASSWORD_PREFIX);}
+function decryptPassword(payload){return decryptWithEnv(payload,TOKEN_ENV,PASSWORD_PREFIX);}
 function decryptToken(payload){
   try{return decryptWithEnv(payload,TOKEN_ENV,TOKEN_PREFIX);}catch(primary){
     try{return decryptWithEnv(payload,LEGACY_TOKEN_ENV,TOKEN_PREFIX);}catch(_legacy){throw primary;}
@@ -110,4 +113,4 @@ async function discoverLibraries(source){
   return (Array.isArray(payload.Items)?payload.Items:[]).map(item=>({libraryId:String(item.Id||''),name:String(item.Name||'Library'),collectionType:String(item.CollectionType||'').toLowerCase()})).filter(item=>item.libraryId&&supported.has(item.collectionType));
 }
 
-module.exports={TOKEN_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,jellyfinAuthHeader,encryptToken,decryptToken,sourceError,connectionDiagnosis,httpDiagnosis,authenticate,sourceToken,logout,request,discoverLibraries};
+module.exports={TOKEN_PREFIX,PASSWORD_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,jellyfinAuthHeader,encryptToken,decryptToken,encryptPassword,decryptPassword,sourceError,connectionDiagnosis,httpDiagnosis,authenticate,sourceToken,logout,request,discoverLibraries};
