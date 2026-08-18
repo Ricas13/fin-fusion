@@ -37,15 +37,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Install matching PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-17
       - run: npm run db:migrate
       - name: Verify database vocabulary is clean
         shell: bash
         run: |
-          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges > /tmp/schema.sql
+          docker run --rm --network host postgres:17-alpine \
+            pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges > /tmp/schema.sql
           term="$(printf 're%s' 'seller')"
           if grep -in "$term" /tmp/schema.sql; then
             echo "::error::Retired product vocabulary remains in generated schema"
@@ -54,7 +51,8 @@ jobs:
       - name: Export baseline schema
         shell: bash
         run: |
-          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges \
+          docker run --rm --network host postgres:17-alpine \
+            pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges \
             --exclude-table=schema_migrations \
             --exclude-table=user_sessions \
             > schema-baseline.sql
