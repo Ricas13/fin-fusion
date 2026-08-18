@@ -17,12 +17,19 @@ async function selectedLibraries(sourceId){const r=await query(`SELECT library_i
 async function state(sourceId){const r=await query('SELECT * FROM stremio_source_index_state WHERE source_id=$1',[sourceId]);return r.rows[0]||null;}
 function fullDue(row,forceFull=false){if(forceFull||row?.force_full||!row?.last_full_completed_at)return true;return Date.now()-new Date(row.last_full_completed_at).getTime()>=FULL_RECONCILE_DAYS*86400000;}
 async function queue(sourceId,{full=false}={}){await query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,updated_at) VALUES($1,'queued',NOW(),$2,NOW()) ON CONFLICT(source_id) DO UPDATE SET status='queued',next_incremental_at=NOW(),force_full=stremio_source_index_state.force_full OR EXCLUDED.force_full,updated_at=NOW()`,[sourceId,Boolean(full)]);}
+async function refreshProgress(sourceId){
+  const count=await query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
+  const itemCount=Number(count.rows[0]?.n||0);
+  await query(`UPDATE stremio_source_index_state SET status='running',item_count=$2,updated_at=NOW() WHERE source_id=$1`,[sourceId,itemCount]);
+  return itemCount;
+}
 async function indexSource(sourceId,{forceFull=false}={}){
   const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');if(!src.enabled)return{sourceId,processed:0,skipped:'disabled'};
   const libraries=await selectedLibraries(sourceId);if(!libraries.length)throw new Error('Select at least one Jellyfin library before indexing this source.');
   const prior=await state(sourceId),mode=fullDue(prior,forceFull)?'full':'incremental',generation=crypto.randomUUID(),startedAt=new Date();
   const overlapSince=prior?.last_completed_at?new Date(new Date(prior.last_completed_at).getTime()-5*60*1000):null;
   await query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_error,updated_at) VALUES($1,'running',$2,NOW(),NULL,NOW()) ON CONFLICT(source_id) DO UPDATE SET status='running',last_mode=EXCLUDED.last_mode,last_started_at=NOW(),last_error=NULL,updated_at=NOW()`,[sourceId,mode]);
+  console.log(`Stremio source index started: ${src.name||sourceId} mode=${mode} libraries=${libraries.length}`);
   let changed=0;
   try{
     for(const library of libraries){
@@ -43,6 +50,7 @@ async function indexSource(sourceId,{forceFull=false}={}){
             changed++;
           }
         });
+        await refreshProgress(sourceId);
         startIndex+=items.length;
         const declared=Number(payload.TotalRecordCount||0);
         if(items.length<PAGE_SIZE||(declared&&startIndex>=declared))break;
@@ -55,6 +63,7 @@ async function indexSource(sourceId,{forceFull=false}={}){
       await db.query(`UPDATE stremio_source_index_state SET status='ready',last_mode=$2,last_completed_at=NOW(),last_full_completed_at=CASE WHEN $2='full' THEN NOW() ELSE last_full_completed_at END,next_incremental_at=NOW()+($3||' hours')::interval,force_full=FALSE,item_count=$4,last_error=NULL,updated_at=NOW() WHERE source_id=$1`,[sourceId,mode,String(INCREMENTAL_HOURS),itemCount]);
       await db.query(`UPDATE stremio_sources SET auth_state='connected',last_success_at=NOW(),last_auth_check_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[sourceId]);
     });
+    console.log(`Stremio source index completed: ${src.name||sourceId} mode=${mode} indexed=${itemCount} changed=${changed}`);
     return{sourceId,mode,processed:changed,itemCount,startedAt,ok:true};
   }catch(error){
     const auth=error?.code==='STREMIO_SOURCE_AUTH';
@@ -70,4 +79,4 @@ async function indexDueSources(){const rows=await dueSources();let processed=0,f
 async function lookup(sourceId,imdbId,itemType){const imdb=normalizeImdb(imdbId),type=itemType==='series'?'Series':'Movie';if(!imdb)return null;const r=await query(`SELECT * FROM stremio_source_media_index WHERE source_id=$1 AND imdb_id=$2 AND item_type=$3 ORDER BY updated_at DESC LIMIT 1`,[sourceId,imdb,type]);return r.rows[0]||null;}
 async function states(){const r=await query(`SELECT s.id,s.name,s.enabled,s.auth_state,s.jellyfin_username,s.base_url,s.last_connected_at,s.last_success_at,s.last_error,COALESCE(i.status,'never') index_status,COALESCE(i.item_count,0)::int item_count,i.last_mode,i.last_started_at,i.last_completed_at,i.last_full_completed_at,i.next_incremental_at,i.last_error index_error,COUNT(l.library_id) FILTER(WHERE l.selected AND l.available)::int selected_libraries FROM stremio_sources s LEFT JOIN stremio_source_index_state i ON i.source_id=s.id LEFT JOIN stremio_source_libraries l ON l.source_id=s.id GROUP BY s.id,i.source_id ORDER BY s.enabled DESC,s.priority,s.name`);return r.rows;}
 
-module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_DAYS,normalizeImdb,selectedLibraries,state,queue,indexSource,dueSources,indexDueSources,lookup,states};
+module.exports={PAGE_SIZE,PAGE_DELAY_MS,INCREMENTAL_HOURS,FULL_RECONCILE_DAYS,normalizeImdb,selectedLibraries,state,queue,refreshProgress,indexSource,dueSources,indexDueSources,lookup,states};

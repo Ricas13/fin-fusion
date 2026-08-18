@@ -15,6 +15,7 @@ const delivery=read('src/platform/admin-plan-delivery.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const sourceClient=read('src/stremio/source-client.js');
 const sourceIndex=read('src/stremio/source-index.js');
+const automationJobs=read('src/automation/jobs.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
@@ -45,6 +46,8 @@ assert(!sourceClient.includes('encryptWithEnv(password')&&!sourcePool.includes('
 
 assert(sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'Index policy must be six-hour incremental plus seven-day full reconciliation');
 assert(sourceIndex.includes("MinDateLastSaved")&&sourceIndex.includes("EnableImages:'false'")&&sourceIndex.includes('PAGE_SIZE=250'),'Indexing must be incremental and low-footprint');
+assert(sourceIndex.includes('refreshProgress')&&sourceIndex.includes('Stremio source index started')&&sourceIndex.includes('Stremio source index completed'),'Source indexing must expose live progress and operational logs');
+assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'Manual Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(explicit)return mapped.rows'),'Explicit plan mappings must be strict source allow-lists');
 assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own source selection');
 assert(delivery.includes('Lower priority numbers are tried first'),'Plan UI must explain source ordering');
