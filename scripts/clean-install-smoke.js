@@ -7,6 +7,27 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
 (async () => {
     const cleanExpected = String(process.env.CLEAN_INSTALL_EXPECTED || '').toLowerCase() === 'true';
     const expectedAdmins = Number.parseInt(process.env.CLEAN_INSTALL_EXPECT_ADMINS || (cleanExpected ? '1' : '0'), 10);
+    const schema = await query(`
+        SELECT
+            to_regclass('public.app_users') AS app_users,
+            to_regclass('public.platform_settings') AS platform_settings,
+            to_regclass('public.plans') AS plans,
+            to_regclass('public.legacy_marker') AS legacy_marker
+    `);
+    const hasAppSchema = Boolean(schema.rows[0].app_users && schema.rows[0].platform_settings && schema.rows[0].plans);
+
+    if (!hasAppSchema) {
+        assert.strictEqual(cleanExpected, false, 'fresh install migration did not create application tables');
+        assert(schema.rows[0].legacy_marker, 'skeletal upgrade simulation must retain its legacy marker table');
+        const ledger = await query(`SELECT filename FROM public.schema_migrations ORDER BY filename`);
+        const applied = new Set(ledger.rows.map(row => row.filename));
+        for (const filename of ['000_database_baseline.sql', '001_remove_retired_product.sql', '002_add_runtime_session_store.sql']) {
+            assert(applied.has(filename), `skeletal upgrade simulation must record ${filename}`);
+        }
+        console.log('skeletal upgrade adoption smoke: ok');
+        return;
+    }
+
     const settings = await query(`SELECT setting_key, setting_value FROM platform_settings`);
     const map = Object.fromEntries(settings.rows.map(row => [row.setting_key, row.setting_value]));
     const admins = await query(`SELECT COUNT(*)::int AS count FROM app_users WHERE role='admin'`);
