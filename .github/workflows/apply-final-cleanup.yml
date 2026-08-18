@@ -3,6 +3,8 @@ name: Apply Final Cleanup
 on:
   push:
     branches: [remove-reseller-feature-completely]
+  pull_request:
+    types: [synchronize, ready_for_review]
 
 permissions:
   contents: write
