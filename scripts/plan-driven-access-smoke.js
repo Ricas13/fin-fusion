@@ -50,7 +50,8 @@ assert(lifecycle.includes('await inactivityHolds.releaseObsoleteForCustomer(inpu
 // Server-scoped user import owns execution even though People exposes the entry point.
 assert(serverForm.includes('Users / Import')&&serverForm.includes('/users'),'Each Jellyfin server must expose Users / Import in its local tabs');
 assert(serverUsers.includes("'/admin/servers/:serverId/users'")&&serverUsers.includes('importer.discover({serverId:s.id})'),'Import must be scoped to exactly one Jellyfin server');
-assert(serverUsers.includes("'/admin/jellyfin-import'")&&serverUsers.includes("res.redirect(302,'/admin/servers"),'Legacy global import GET must guide the operator to a server');
+assert(serverUsers.includes("'/admin/jellyfin-import'")&&serverUsers.includes('res.send(await importLanding(req))'),'Global Jellyfin Import must render the server-picker landing page');
+assert(serverUsers.includes('Choose Jellyfin server')&&serverUsers.includes('/admin/servers/${esc(s.id)}/users'),'Jellyfin Import landing must guide the operator into a server-scoped import');
 assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libraries reached from a server must retain server tab context');
 
 // Storefront remains plan-first and sold-out products stay visible.
@@ -65,7 +66,7 @@ assert(!application.includes('createAdminCatalogShellRouter'),'Legacy catalogue 
 assert(application.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
 assert(!application.includes('createResellerCapacityGateRouter()'),'Retired reseller credit-era capacity middleware must not be mounted');
 assert(application.includes('createResellerMonthlyPortalRouter()'),'Monthly reseller seat-management portal must be mounted');
-assert(application.includes('createLegacyJellyfinImportRedirectRouter()')&&!application.includes('createAdminJellyfinImportRouter'),'Only the server-guidance redirect may own the legacy Jellyfin Import URL');
+assert(application.includes('createLegacyJellyfinImportRedirectRouter()')&&!application.includes('createAdminJellyfinImportRouter'),'Only the server-guidance landing route may own the legacy Jellyfin Import URL');
 assert(application.includes('createAdminServerUsersRouter()')&&application.includes('createAdminPlanLifecycleRouter()')&&application.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle/inventory and server import routes must be mounted');
 
 console.log('plan-driven access lifecycle smoke: ok');
