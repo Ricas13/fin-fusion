@@ -192,9 +192,17 @@ async function planCreationAudit(page){
 async function personalNotificationsAudit(page){
   await page.goto(`${BASE}/admin/profile/notifications`,{waitUntil:'networkidle'});
   const activeSidebar=(await page.locator('.adminTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
-  assert.deepStrictEqual(activeSidebar,['My Profile'],`Personal notifications should belong to My Profile, got ${JSON.stringify(activeSidebar)}`);
+  assert.deepStrictEqual(activeSidebar,[],`Personal notifications must not activate a global Settings destination: ${JSON.stringify(activeSidebar)}`);
+  const accountLabel=String(await page.locator('.headerActionLabel').textContent()).trim();
+  assert.equal(accountLabel,'My account','Personal workflow is not owned by the My account area');
+  const accountLinks=await page.locator('.headerActions a.headerButton[href^="/admin/"]').evaluateAll(nodes=>nodes.map(a=>({text:a.textContent.trim(),href:a.getAttribute('href')})));
+  assert(accountLinks.some(x=>x.text==='Profile'&&x.href==='/admin/profile'),'My account is missing Profile');
+  assert(accountLinks.some(x=>x.text==='Notifications'&&x.href==='/admin/profile/notifications'),'My account is missing Notifications');
+  assert(accountLinks.some(x=>x.text==='Security'&&x.href==='/admin/security'),'My account is missing Security');
+  const breadcrumbGroup=String(await page.locator('.topBreadcrumb span').textContent()).trim();
+  assert.equal(breadcrumbGroup,'My account','Personal notification breadcrumb must be owned by My account');
   const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
-  assert.equal(breadcrumb,'My Notifications','Personal notification breadcrumb has the wrong owner');
+  assert.equal(breadcrumb,'My Notifications','Personal notification breadcrumb has the wrong page');
   const body=await page.locator('body').innerText();
   assert(!/Preferred dashboard\/reporting currency/i.test(body),'Reporting currency is duplicated on the Notifications tab');
   assert(!/Profile & reporting/i.test(body),'Profile settings are duplicated on the Notifications tab');
@@ -244,12 +252,14 @@ async function main(){
       ['/admin/provisioning/migrations','Server migrations'],
       ['/admin/provisioning/drift','Policy drift']
     ]) await assertWorkflow(page,url,provisioningTabs,active);
-    const integrationTabs=['Integrations','Request service','Plan limits'];
+    const integrationTabs=['Integrations','Request service'];
     for(const [url,active] of [
       ['/admin/settings?section=integrations','Integrations'],
-      ['/admin/request-users','Request service'],
-      ['/admin/request-plan-policy','Plan limits']
+      ['/admin/request-users','Request service']
     ]) await assertWorkflow(page,url,integrationTabs,active);
+    await assertWorkflow(page,'/admin/request-plan-policy',[]);
+    assert.equal(String(await page.locator('.topBreadcrumb span').textContent()).trim(),'Commerce','Request limits must be owned by Commerce');
+    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Request limits','Request limits breadcrumb must reflect plan policy ownership');
     await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 

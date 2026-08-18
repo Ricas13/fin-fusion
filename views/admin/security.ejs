@@ -5,7 +5,7 @@
 <div class="appShell">
   <%- include('_nav',{siteName,activeNav:'security'}) %>
   <main class="mainPane">
-    <header class="topBar"><div class="topBreadcrumb"><span>Settings</span><strong>My Security</strong></div><div class="topBarActions"><a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a></div></header>
+    <header class="topBar"><div class="topBreadcrumb"><span>My account</span><strong>Security</strong></div><div class="topBarActions"><a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a></div></header>
     <div class="content">
       <div class="pageHeader"><div><h1>My security</h1><div class="pageSubtitle">Your administrator password, two-factor authentication, recovery and signed-in sessions</div></div></div>
       <nav class="operatorTabs" aria-label="My profile workflow"><a class="operatorTab" href="/admin/profile">Profile</a><a class="operatorTab" href="/admin/profile/notifications">Notifications</a><a class="operatorTab active" href="/admin/security">Security</a></nav>
@@ -20,7 +20,7 @@
         <div class="metric"><div class="metricLabel">Failed attempts</div><div class="metricValue small"><%= user.failed_login_count || 0 %></div></div>
       </div>
 
-      <div class="statusBanner"><strong>Platform administrator 2FA policy:</strong> <%= admin2faRequired ? 'required' : 'optional' %>. Your account is <%= user.totp_enabled ? 'enrolled' : 'not enrolled' %>.</div>
+      <div class="statusBanner"><strong>Platform administrator 2FA policy:</strong> <%= admin2faRequired ? 'required' : 'optional' %>. <a href="/admin/settings/admin-2fa">Manage the global policy under Settings → Security</a>.</div>
 
       <section class="section">
         <div class="sectionHead"><div><h2>My two-factor authentication</h2><div class="muted">Authenticator-based protection for this administrator account.</div></div><span class="pill <%= user.totp_enabled ? 'good' : 'warn' %>"><%= user.totp_enabled ? 'On' : 'Off' %></span></div>
@@ -53,8 +53,6 @@
       <section class="section"><div class="sectionHead"><div><h2>Recent authentication events</h2><div class="muted">Recent security events for this administrator account.</div></div></div><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Time</th><th>Event</th><th>Result</th></tr></thead><tbody>
         <% events.forEach(function(event){ const eventType=String(event.event_type||'Security event').replace(/^admin[._]/,'').replace(/[._]+/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}); %><tr><td><%= new Date(event.created_at).toLocaleString('en-GB') %></td><td><%= eventType %></td><td><span class="pill <%= event.success ? 'good' : 'bad' %>"><%= event.success ? 'Success' : 'Failed' %></span></td></tr><% }); %>
       </tbody></table></div></section>
-
-      <section class="section"><div class="sectionHead"><div><h2>Platform administrator 2FA policy</h2><div class="muted">Global sign-in requirement for every administrator. This is platform policy, not a personal preference.</div></div><span class="pill <%= admin2faRequired ? 'good' : 'warn' %>"><%= admin2faRequired ? 'Required' : 'Optional' %></span></div><form class="formPanel" method="post" action="/admin/security/2fa-policy"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="toggleRow"><input type="checkbox" name="requireAdminTwoFactor" <%= admin2faRequired ? 'checked' : '' %>><span><strong>Require 2FA for administrator sign-in</strong><small class="muted">When off, each administrator may choose whether to enrol their own account.</small></span></label><button class="button secondary" type="submit">Save platform 2FA policy</button></form></section>
     </div>
   </main>
 </div>

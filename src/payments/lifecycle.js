@@ -45,9 +45,6 @@ async function getProviderPlan(planCode, provider, checkoutMode = null) {
     return plan;
 }
 
-// This resolver is used for signed provider events after money may already have
-// moved. Catalogue/mapping retirement or a slot becoming full blocks NEW
-// checkout, not fulfilment of an already-authorised provider object.
 async function getProviderPlanByExternalId(provider, externalId) {
     const result = await query(`
         SELECT p.*,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata,pp.active AS mapping_active
@@ -144,14 +141,30 @@ async function startFreeTrial(customerId, planCode) {
     return created;
 }
 
-async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
+async function reservedFreePlan(reservationId){
+    if(!reservationId)return null;
+    const result=await query(`SELECT p.* FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id WHERE r.id=$1 AND r.consumed_at IS NULL AND r.released_at IS NULL AND r.expires_at>NOW() AND ${availableWindowSql('p')} LIMIT 1`,[reservationId]);
+    if(!result.rowCount)return null;
+    const plan=state.assertAudience(result.rows[0],'customer');
+    stremio.assertAcquirable(plan,{context:'reserved free claim'});
+    if(Number(plan.price_minor)!==0||plan.billing_interval==='trial'||plan.is_addon)throw new Error('This Free Access reservation is not valid.');
+    return plan;
+}
+
+async function claimFreePlan(customerId, planCode, { automatic = false, reservationId = null } = {}) {
     if(!automatic)await commerce.assertOpen();
-    const plan = await assertDirectPlan(planCode, { free: true });
+    const plan = reservationId ? await reservedFreePlan(reservationId) : await assertDirectPlan(planCode, { free: true });
+    if(!plan)throw new Error('Your Free Access hold has expired.');
     if(plan.is_addon)throw new Error('Free primary access cannot be claimed from an add-on product.');
     const policy = await trialPolicy();
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
-        await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan');
+        let reservation=null;
+        if(reservationId){
+            reservation=(await client.query(`SELECT * FROM free_access_registration_reservations WHERE id=$1 FOR UPDATE`,[reservationId])).rows[0]||null;
+            if(!reservation||reservation.consumed_at||reservation.released_at||new Date(reservation.expires_at).getTime()<=Date.now()||String(reservation.plan_id)!==String(plan.id))throw new Error('Your Free Access hold has expired.');
+        }
+        await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan',{excludeReservationId:reservationId});
         const prior = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`, [customerId, plan.id]);
         if (policy.freeMode !== 'renewable' && prior.rowCount) throw new Error('Free access on this plan has already been claimed.');
         const liveResult=await client.query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);
@@ -163,7 +176,8 @@ async function claimFreePlan(customerId, planCode, { automatic = false } = {}) {
         const endsAt=policy.freeMode==='permanent'?permanentEnd():addPlanDuration(plan,startsAt);
         const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',$3,$4) RETURNING *`,[customerId,plan.id,startsAt,endsAt]);
         if(live&&livePrice===0)await state.markSuperseded(client,{subscriptionId:live.subscription_id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode})]);
+        if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,reservationId:reservation?.id||null})]);
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
@@ -184,10 +198,6 @@ async function autoDowngradeEligibleCustomer(customerId) {
 }
 
 async function activatePurchase(input) {
-    // Provider callbacks run only after provider authentication/signature checks.
-    // At this point catalogue retirement/capacity changes must not strand a paid
-    // customer. Capacity is therefore enforced before checkout starts, while an
-    // already-authorised provider object is always fulfilled idempotently.
     const planResult = await query('SELECT * FROM plans WHERE id=$1', [input.planId]);
     if (!planResult.rowCount) throw new Error('Plan not found.');
     const plan=state.assertAudience(planResult.rows[0], 'customer');
@@ -197,9 +207,6 @@ async function activatePurchase(input) {
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
     const activated=await core.activatePurchase(input);
-    // The provider activation is committed before this point. If a previous
-    // free-plan usage rule had disabled Jellyfin, it is now obsolete; release
-    // only that hold and immediately reconcile the paid entitlement.
     const released=await inactivityHolds.releaseObsoleteForCustomer(input.customerId);
     if(released)await core.reconcileCommittedCustomer(input.customerId,'Paid plan');
     return activated;

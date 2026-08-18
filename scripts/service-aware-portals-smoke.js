@@ -32,7 +32,7 @@ assert(/Downstream billing and customer administration stay outside CAPTAiNFiN/.
 
 assert(/delivery==='stremio'/.test(customerDashboard)&&/stremio-dashboard/.test(customerDashboard),'Stremio-only customers must use a service-specific dashboard');
 assert(/sellablePlans/.test(customerDashboard)&&/productReadiness\.evaluate/.test(customerDashboard),'customer acquisition catalogue must hide undeliverable products');
-assert(/Manage Stremio installation/.test(stremioDashboard)&&/You do not need a normal Jellyfin login/.test(stremioDashboard),'Stremio-only dashboard must explain the delivery model');
+assert(/Create your private installation link/.test(stremioDashboard)&&/does not contain your portal password or Jellyfin administrator credentials/.test(stremioDashboard),'Stremio-only dashboard must explain the private installation delivery model safely');
 assert(/admin\/plans\/:id\/delivery/.test(planDelivery)&&/snapshots were preserved/.test(planDelivery),'plan delivery editor must preserve existing subscription snapshots');
 assert(/admin\.plan\.delivery\.update/.test(planDelivery)&&/mutationLimit/.test(planDelivery),'plan delivery mutation must be audited and rate limited');
 assert(/createAdminPlanDeliveryRouter/.test(router),'plan delivery router must be mounted');

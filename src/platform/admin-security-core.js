@@ -41,6 +41,20 @@ async function setAdminTwoFactorPolicy(required, userId) {
 function createAdminSecurityRouter() {
     const router = express.Router();
     router.use('/admin/security', requireNativeAdmin, noStore);
+    router.use('/admin/settings/admin-2fa', requireNativeAdmin, noStore);
+
+    router.get('/admin/settings/admin-2fa', async (req, res, next) => {
+        try {
+            await runtimeSettings.ensureLoaded();
+            return res.render('admin/security-policy', {
+                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+                admin2faRequired: runtimeSettings.requireAdminTwoFactor(),
+                csrfToken: csrf.token(req),
+                message: req.query.message || null,
+                error: req.query.error || null
+            });
+        } catch (error) { return next(error); }
+    });
 
     router.get('/admin/security', async (req, res, next) => {
         try {
@@ -96,7 +110,7 @@ function createAdminSecurityRouter() {
             const message = required
                 ? 'Administrator 2FA is now required at sign-in.'
                 : 'Administrator 2FA is now optional.';
-            return res.redirect('/admin/security?message=' + encodeURIComponent(message));
+            return res.redirect('/admin/settings/admin-2fa?message=' + encodeURIComponent(message));
         } catch (error) { return next(error); }
     });
 
@@ -126,7 +140,7 @@ function createAdminSecurityRouter() {
         try {
             await runtimeSettings.ensureLoaded();
             if (runtimeSettings.requireAdminTwoFactor()) {
-                return res.redirect('/admin/security?error=' + encodeURIComponent('Turn off the global 2FA requirement before disabling this account\'s 2FA.'));
+                return res.redirect('/admin/security?error=' + encodeURIComponent('Turn off the global 2FA requirement under Settings → Security before disabling this account\'s 2FA.'));
             }
             const disabled = await auth.disableTotp(req.session.authUserId, req.body.currentPassword, req);
             if (!disabled) return res.redirect('/admin/security?error=' + encodeURIComponent('Current password was not accepted.'));
@@ -191,4 +205,4 @@ function createAdminSecurityRouter() {
     return router;
 }
 
-module.exports = { createAdminSecurityRouter };
+module.exports = { createAdminSecurityRouter, setAdminTwoFactorPolicy };

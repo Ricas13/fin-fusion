@@ -67,7 +67,8 @@ mustContain('src/payments/stripe.js',"duration:'once'");
 mustContain('src/payments/paypal.js','Service credit cannot be combined with a recurring PayPal subscription');
 mustContain('views/customer/affiliate.ejs','Use credit + Stripe');
 mustContain('views/customer/affiliate.ejs','Use credit + PayPal');
-mustContain('views/customer/dashboard.ejs','Affiliate programme');
+mustContain('views/customer/dashboard.ejs','Benefits');
+mustContain('views/customer/dashboard.ejs','/account/affiliate');
 mustNotContain('views/customer/dashboard.ejs','Refer a friend');
 mustNotContain('src/platform/bulk-operations.js',/reseller_assign|reseller_detach/);
 
@@ -109,7 +110,9 @@ mustContain('src/platform/admin-original-settings.js','/admin/request-users');
 mustContain('src/platform/admin-original-settings.js','/admin/notifications/preferences');
 mustContain('src/platform/admin-original-settings.js','/admin/configuration');
 mustNotContain('src/platform/admin-original-settings.js','Regular credits');
-mustNotContain('src/platform/admin-original-settings.js','/admin/settings/resellers');
+mustContain('src/platform/admin-original-settings.js','/admin/settings/resellers','Reseller security must remain reachable for the live monthly reseller product.');
+mustContain('src/platform/admin-original-settings.js','Reseller security');
+mustNotContain('src/platform/admin-original-settings.js',/reseller credit|credit wallet|buy reseller credits/i,'Reseller settings must not revive reseller-credit semantics.');
 
 mustContain('views/customer/dashboard.ejs','/account/subscription/renewal');
 mustContain('views/customer/dashboard.ejs','Stop renewal');

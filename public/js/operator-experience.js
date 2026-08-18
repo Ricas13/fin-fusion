@@ -26,10 +26,25 @@
     const div=document.createElement('div');div.className=`operatorCallout ${kind}`;div.innerHTML=html;return div;
   }
 
-  // Customers and claims are one operator workflow. Keep the deep claim URL for
-  // compatibility, but expose it as a page tab instead of a separate sidebar app.
-  if(path==='/admin/users' || path.startsWith('/admin/customer-claims')){
-    insertAfterHeader(tabs([['Customers','/admin/users'],['Claims','/admin/customer-claims']],path));
+  // Portal claims are part of the Jellyfin import workflow, not a separate
+  // top-level People application.
+  if(path.startsWith('/admin/customer-claims') || path==='/admin/jellyfin-import'){
+    insertAfterHeader(tabs([['Import Jellyfin users','/admin/jellyfin-import'],['Portal claims','/admin/customer-claims']],path));
+  }
+
+  // Customer 360 owns customer-specific support actions. Keep Jellyfin password
+  // support out of permanent navigation while making it one click from a customer.
+  const customerMatch=path.match(/^\/admin\/users\/([^/]+)$/);
+  if(customerMatch && customerMatch[1]!=='new'){
+    const customerId=decodeURIComponent(customerMatch[1]);
+    const header=document.querySelector('.pageHeader');
+    if(header && !document.querySelector('[data-customer-password-support]')){
+      const link=document.createElement('a');
+      link.className='button secondary';link.href=`/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}`;
+      link.textContent='Change Jellyfin password';link.setAttribute('data-customer-password-support','1');
+      const actions=document.querySelector('.topBarActions');
+      if(actions)actions.appendChild(link);else header.appendChild(link);
+    }
   }
 
   // The common customer search fields stay visible; less frequently used fields
@@ -52,7 +67,7 @@
   }
 
   // Catalogue filters belong only to direct customer plan browsing / creation.
-  // The retired reseller product must never be reintroduced by client-side tabs.
+  // Reseller plans have their own monthly-seat product editor.
   const planCataloguePage=path==='/admin/plans' || path==='/admin/plans/new';
   if(planCataloguePage){
     const type=new URLSearchParams(location.search).get('type')||'';
@@ -65,15 +80,10 @@
     ],active));
   }
 
-  // Payments, Notifications, Provisioning and Backups/Transfer now render their
+  // Payments, Notifications, Provisioning and Backups/Transfer render their
   // workflow navigation server-side. Do not add a second client-side tab row.
   if(path==='/admin/notifications/preferences'){
-    // Top workflow tabs own navigation now; avoid repeating those destinations
-    // inside the status row. The profile link remains available in the explanatory callout.
     document.querySelectorAll('.buttonRow a[href="/admin/email"],.buttonRow a[href="/admin/profile/notifications"]').forEach(link=>link.remove());
-    // Legacy global destinations are retained for explicit manual/test callers,
-    // but normal event fan-out uses per-admin/per-customer identities. Keep the
-    // compatibility values without presenting them as required setup fields.
     document.querySelectorAll('form[action="/admin/notifications/preferences/delivery"] .formGroup').forEach(group=>{
       const legacyLabel=[...group.querySelectorAll(':scope > label')].find(label=>(label.textContent||'').trim().startsWith('Legacy global destination'));
       const legacyInput=legacyLabel?.nextElementSibling;
@@ -96,8 +106,6 @@
     insertAfterHeader(tabs([['Live playback','/admin/activity'],['Inactivity rules','/admin/activity/inactivity-policy']],path));
   }
 
-  // Compact the operator workflow on Needs Attention even when individual
-  // finding renderers evolve independently.
   if(path==='/admin/attention'){
     document.querySelectorAll('form').forEach(form=>{
       const selects=form.querySelectorAll('select');
@@ -111,8 +119,6 @@
     navigator.clipboard?.writeText(value).then(()=>{const old=button.textContent;button.textContent='Copied';setTimeout(()=>button.textContent=old,1200);}).catch(()=>{});
   });
 
-  // The unread endpoint is deliberately optional. Older deployments and pages
-  // continue to work if it is unavailable during a rolling update.
   fetch('/admin/api/operator-state/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : null)
     .then(data => {
@@ -131,8 +137,6 @@
       }
     }).catch(() => {});
 
-  // Provide lightweight discoverability on dense admin controls without
-  // replacing explicit labels or keyboard focus.
   document.querySelectorAll('[title]:not([data-help])').forEach(el => {
     const value = (el.getAttribute('title') || '').trim();
     if (value.length > 5 && value.length < 180) el.setAttribute('data-help', value);

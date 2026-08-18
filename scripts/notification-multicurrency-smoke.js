@@ -21,6 +21,7 @@ const communications=read('src/platform/customer-communications.js');
 const nav=read('src/platform/admin-nav.js');
 const navModel=require('../src/platform/admin-nav');
 const adminHtml=read('src/platform/admin-html.js');
+const adminHtmlCore=read('src/platform/admin-html-core.js');
 const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
 const provisioning=read('src/jellyfin/provisioning.js');
@@ -55,9 +56,10 @@ assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN 
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 const settingsKeys=settingsGroup?.pages?.map(page=>page[0])||[];
 assert(settingsKeys.includes('notification-settings'),'Global Notifications must remain under Settings');
-assert(settingsKeys.includes('my-profile'),'Administrators need a discoverable personal profile page');
-assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the sidebar');
-assert(navModel.hiddenPages?.['my-notifications'],'Per-admin notification preferences must remain discoverable from the My Profile workflow');
+assert(!settingsKeys.includes('my-profile'),'Personal administrator profile must stay out of global Settings navigation');
+assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the global Settings sidebar');
+assert(navModel.hiddenPages?.['my-profile']&&navModel.hiddenPages?.['my-notifications']&&navModel.hiddenPages?.['my-security'],'Personal admin pages must keep explicit My account workflow metadata');
+assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')&&adminHtmlCore.includes('href="/admin/profile">Profile')&&adminHtmlCore.includes('href="/admin/profile/notifications">Notifications')&&adminHtmlCore.includes('href="/admin/security">Security'),'Administrators need discoverable Profile, Notifications and Security links under My account');
 assert(!settingsKeys.includes('settings-commerce'),'Unused Settings Commerce navigation must remain removed');
 assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 

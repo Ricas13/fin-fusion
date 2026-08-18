@@ -18,10 +18,10 @@ const runtimeSettings=read('src/stremio/runtime-settings.js');
 const migration=read('db/migrations/082_stremio_source_catalog.sql');
 
 assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Servers-owned Stremio Sources router must be mounted');
-assert(nav.includes("['stremio-sources','Stremio Sources','/admin/servers/stremio']"),'Stremio Sources must be a Servers navigation destination');
-assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'"),'Legacy Stremio navigation must resolve to Servers → Stremio Sources');
+assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio']"),'Stremio must be a Servers navigation destination');
+assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'"),'Legacy Stremio navigation must resolve to Servers → Stremio');
 assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio Sources workflow');
-assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'Legacy Stremio settings URL must redirect to Stremio Sources');
+assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'Legacy Stremio settings URL must redirect to the Servers-owned Stremio workflow');
 
 for(const phrase of ['Add Jellyfin source','Connect Jellyfin source','Libraries to index','Sync now','Incremental every 6 hours','full reconciliation','Password is not stored'])assert(sources.includes(phrase),`Stremio Sources UI missing: ${phrase}`);
 assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&sources.includes('name="password"'),'External source form must use Jellyfin URL + ordinary user credentials');

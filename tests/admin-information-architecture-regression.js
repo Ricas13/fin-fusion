@@ -96,11 +96,11 @@ async function main(){
     // Stremio is a Servers/Delivery workflow, not a Settings workflow.
     await pool.query(`DELETE FROM platform_settings WHERE setting_key='stremio_runtime_v1'`);
     await page.goto(`${BASE}/admin/settings/stremio`,{waitUntil:'networkidle'});
-    assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Servers → Stremio Sources');
+    assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Servers → Stremio');
     let stremioText=await page.locator('body').innerText();
-    assert(/Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText)&&/independent from Servers → Servers/.test(stremioText),'Stremio Sources page is missing the manual-source workflow');
-    assert(!/Managed Jellyfin sources/.test(stremioText)&&!/Use for Stremio/.test(stremioText),'Stremio Sources must not expose the normal managed Jellyfin fleet');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio Sources'],'Servers sidebar does not own the Stremio workflow');
+    assert(/Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText)&&/independent from Servers → Servers/.test(stremioText),'Stremio page is missing the manual-source workflow');
+    assert(!/Managed Jellyfin sources/.test(stremioText)&&!/Use for Stremio/.test(stremioText),'Stremio must not expose the normal managed Jellyfin fleet');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio'],'Servers sidebar does not own the Stremio workflow');
     const addSource=page.locator('form[action="/admin/servers/stremio"]');
     assert.equal(await addSource.count(),1,'Manual Jellyfin source form is missing');
     for(const field of ['name','baseUrl','username','password'])assert.equal(await addSource.locator(`[name="${field}"]`).count(),1,`Source form is missing ${field}`);
@@ -143,12 +143,12 @@ async function main(){
     await submitAction(page,runtimeForm,'Enable runtime','/admin/servers/stremio/runtime');
     await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime enabled.'),null,{timeout:15000});
     let stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
-    assert.equal(stored?.enabled,true,'Stremio Sources runtime enablement was not persisted');
+    assert.equal(stored?.enabled,true,'Stremio runtime enablement was not persisted');
     runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
     await submitAction(page,runtimeForm,'Disable runtime','/admin/servers/stremio/runtime');
     await page.waitForFunction(()=>document.body.innerText.includes('Stremio runtime disabled.'),null,{timeout:15000});
     stored=(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='stremio_runtime_v1'`)).rows[0]?.setting_value;
-    assert.equal(stored?.enabled,false,'Stremio Sources runtime disablement was not persisted');
+    assert.equal(stored?.enabled,false,'Stremio runtime disablement was not persisted');
     await screenshot(page,'stremio-sources-runtime');
 
     await pool.query('DELETE FROM plan_stremio_sources WHERE source_id=$1',[seeded.id]);

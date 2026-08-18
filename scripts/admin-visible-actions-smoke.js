@@ -49,7 +49,7 @@ assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formmetho
 const settings=navModel.groups.find(group=>group.key==='settings'),automation=navModel.groups.find(group=>group.key==='automation'),dashboard=navModel.groups.find(group=>group.key==='dashboard');
 assert(settings&&automation&&dashboard,'Core navigation groups must exist');
 const settingsKeys=settings.pages.map(page=>page[0]),automationKeys=automation.pages.map(page=>page[0]),dashboardKeys=dashboard.pages.map(page=>page[0]);
-assert(settingsKeys.includes('my-profile'),'My Profile must remain a dedicated Settings sidebar item');
+assert(!settingsKeys.includes('my-profile'),'Personal My Profile must not be duplicated in global Settings navigation');
 assert(settingsKeys.includes('notification-settings'),'Global Notifications must remain a Settings sidebar item');
 assert(!settingsKeys.includes('my-notifications'),'My Notifications must not be duplicated in the Settings sidebar');
 assert(!settingsKeys.includes('settings-commerce'),'Unused Settings > Commerce must not be shown');
@@ -57,7 +57,10 @@ assert(!automationKeys.includes('policy-drift'),'Policy Drift is a Provisioning 
 assert(!automationKeys.includes('notification-gateway'),'Notification delivery health belongs to the Notifications workflow, not Automation');
 assert(automationKeys.includes('events'),'Cross-platform audit/event history belongs with operational automation, not the dashboard landing group');
 assert(!dashboardKeys.includes('events'),'Dashboard navigation should remain focused on current state and action');
+assert(navModel.hiddenPages?.['my-profile'],'Personal profile must remain addressable from the My account area');
 assert(navModel.hiddenPages?.['my-notifications'],'Personal notifications must remain addressable as a hidden My Profile workflow page');
+assert.equal(navModel.hiddenPages?.['my-notifications']?.parentKey,'my-profile','Personal notifications must remain owned by My Profile');
+assert.equal(navModel.groupFor('my-notifications').label,'My account','Personal notification breadcrumb must identify My account rather than global Settings');
 assert(navModel.hiddenPages?.['policy-drift'],'Policy Drift must remain addressable from Provisioning');
 assert(navModel.hiddenPages?.['notification-gateway'],'Notification delivery health must remain addressable from Notifications');
 assert(navSource.includes("'my-notifications':Object.freeze"),'Hidden personal notification workflow metadata must remain explicit');

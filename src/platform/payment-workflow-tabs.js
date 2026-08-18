@@ -4,7 +4,8 @@ function tabs(active='setup'){
   const items=[
     ['setup','Payment setup','/admin/payments'],
     ['mappings','Provider mappings','/admin/provider-mappings'],
-    ['billing','Billing','/admin/billing']
+    ['billing','Billing','/admin/billing'],
+    ['risk','Payment risk','/admin/payments/risk-policy']
   ];
   return `<div class="operatorTabs" aria-label="Payment workflow">${items.map(([key,label,url])=>`<a class="operatorTab ${active===key?'active':''}" href="${url}">${label}</a>`).join('')}</div>`;
 }

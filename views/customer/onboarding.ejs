@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Choose your access · <%= siteName %></title>
+  <link rel="icon" href="/branding/favicon">
+  <link rel="stylesheet" href="/css/customer-portal.css">
+  <link rel="stylesheet" href="/css/customer-navigation.css">
+  <style>
+    .choiceIntro{max-width:760px}.choiceGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:20px}.choiceCard{background:#121922;border:1px solid #26303d;border-radius:14px;padding:20px}.choiceCard.freeChoice{border-color:#2f6b54}.choiceCard h3{margin:0 0 6px}.choiceMeta{color:#8e9bad;font-size:13px;margin:8px 0 14px}.choicePrice{font-size:26px;font-weight:800;margin:12px 0}.choiceActions{display:grid;gap:8px;margin-top:16px}.soldNote{color:#f3bd67}.stepStrip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:22px 0}.stepCard{padding:13px;border:1px solid #26303d;border-radius:12px;background:#0e151d}.stepCard strong{display:block;margin-bottom:4px}@media(max-width:700px){.stepStrip{grid-template-columns:1fr}}
+  </style>
+</head>
+<%
+  const username=portal.customer.login_username||portal.customer.login_email||portal.customer.display_name||'there';
+  function price(plan){if(Number(plan.price_minor||0)===0)return'Free';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||currency}).format(Number(plan.price_minor||0)/100)}catch(_){return `${plan.currency||currency} ${(Number(plan.price_minor||0)/100).toFixed(2)}`;}}
+  function kind(plan){const t=String(plan.service_type||'jellyfin');return t==='bundle'?'Jellyfin + Stremio':t==='stremio'?'Stremio':'Jellyfin';}
+%>
+<body><div class="portalShell">
+<header class="portalTopbar"><div class="portalTopbarInner"><div class="brandLockup"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Getting started</div></div></div><div class="portalActions"><span class="signedIn">Signed in as <strong><%= username %></strong></span><form method="post" action="/account/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button ghost small">Sign out</button></form></div></div></header>
+<main class="customerPortalPage">
+<%- include('_nav',{active:'overview'}) %>
+<% if(message){ %><div class="notice success"><%= message %></div><% } %>
+<% if(error){ %><div class="notice error"><%= error %></div><% } %>
+<section class="accountHero"><div class="choiceIntro"><div class="eyebrow">Your account is ready</div><h1>Welcome, <%= username %>. Choose how you want to watch.</h1><p>You only need to choose access once. After a plan, trial or Free Access is active, this page becomes your normal account dashboard with streaming, billing, activity, notifications and security controls.</p></div><div class="heroActions"><a class="button secondary" href="/help">Help &amp; support</a><a class="button secondary" href="/account/security">Account security</a></div></section>
+<div class="stepStrip"><div class="stepCard"><strong>1. Choose access</strong><span class="accessMeta">Free, paid, Jellyfin, Stremio or a bundle — depending on what is currently available.</span></div><div class="stepCard"><strong>2. Finish setup</strong><span class="accessMeta">CAPTAiNFiN prepares the service and shows the exact next step.</span></div><div class="stepCard"><strong>3. Start watching</strong><span class="accessMeta">Open Jellyfin or install Stremio directly from your account.</span></div></div>
+<section class="sectionBlock" id="plans"><div class="sectionHead"><div><h2>Available access</h2><p>Only products that can be delivered are shown. Free Access always remains visible, even when all current free places are taken.</p></div></div>
+<% if(!plans.length){ %><div class="empty">No access products are currently available. Your account remains active; check again later or contact support.</div><% } %>
+<div class="choiceGrid">
+<% plans.forEach(function(p){const opts=Array.isArray(p.payment_options)?p.payment_options:[],stripeOpts=opts.filter(o=>o.provider==='stripe'),paypalOpts=opts.filter(o=>o.provider==='paypal'),isFree=Boolean(p.is_free_tier)||Number(p.price_minor||0)===0&&p.billing_interval!=='trial',isTrial=p.billing_interval==='trial',sold=Boolean(p.capacity&&p.capacity.soldOut); %>
+<article class="choiceCard <%= isFree?'freeChoice':'' %>"><div class="eyebrow"><%= isFree?'Free Access':kind(p) %></div><h3><%= p.name %></h3><div class="choicePrice"><%= price(p) %></div><div class="choiceMeta"><%= p.description||'Streaming access managed through your account.' %></div><ul class="featureList"><li><%= kind(p) %></li><li><%= p.streams||1 %> concurrent stream<%= Number(p.streams||1)===1?'':'s' %></li><% if(p.capacity&&p.capacity.limit!=null){ %><li><%= p.capacity.remaining %> of <%= p.capacity.limit %> places currently available</li><% } %></ul>
+<div class="choiceActions">
+<% if(isFree){ %>
+  <% if(sold){ %><div class="soldNote"><strong>Currently full.</strong> Free Access stays listed and opens again automatically when capacity becomes available.</div><span class="button secondary full" aria-disabled="true">No free places right now</span>
+  <% } else { %><form class="plainForm" method="post" action="/account/claim-free/<%= p.code %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button free full">Activate Free Access</button></form><% } %>
+<% } else if(isTrial){ %><div class="paymentNote">Starts immediately after you confirm.</div><form class="plainForm" method="post" action="/account/trial/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><button class="button primary full">Start free trial</button></form>
+<% } else { %>
+  <% if(stripeEnabled){stripeOpts.forEach(function(opt){ %><form class="plainForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="currency" value="<%= p.currency||currency %>"><input type="hidden" name="checkoutMode" value="<%= opt.checkoutMode||opt.checkout_mode||'payment' %>"><button class="button stripe full">Continue with Stripe</button></form><% })} %>
+  <% if(paypalEnabled){paypalOpts.forEach(function(opt){ %><form class="plainForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="currency" value="<%= p.currency||currency %>"><input type="hidden" name="checkoutMode" value="<%= opt.checkoutMode||opt.checkout_mode||'payment' %>"><button class="button paypal full">Continue with PayPal</button></form><% })} %>
+  <% if((!stripeEnabled||!stripeOpts.length)&&(!paypalEnabled||!paypalOpts.length)){ %><div class="paymentNote">No payment method is currently configured for this plan.</div><% } %>
+<% } %>
+</div></article>
+<% }) %>
+</div></section>
+</main></div></body></html>

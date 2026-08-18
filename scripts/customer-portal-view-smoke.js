@@ -7,7 +7,7 @@ const ejs = require('ejs');
 (async () => {
     const currentPlan = {
         id: 'plan-1', plan_id: 'plan-1', name: 'Monthly', code: 'monthly', status: 'active',
-        source: 'invitation', current_period_end: new Date(Date.now() + 86400000), streams: 3,
+        source: 'manual', current_period_end: new Date(Date.now() + 86400000), streams: 3,
         allow_downloads: true, allow_video_transcoding: false
     };
     const locals = {
@@ -46,12 +46,13 @@ const ejs = require('ejs');
     assert.match(html, /Welcome back, viewer1/);
     assert.match(html, /Your access/);
     assert.match(html, /Current plan/);
-    assert.match(html, /Library visibility/);
-    assert.match(html, /Plans/);
-    assert.match(html, /Affiliate programme/);
+    assert.match(html, /Your libraries/);
+    assert.match(html, /Hide or show libraries already included in your plan/);
+    assert.match(html, /Plans &amp; billing/);
+    assert.match(html, /Benefits/);
     assert.match(html, /\/account\/affiliate/);
     assert.match(html, /customerSidebar/);
-    assert.match(html, /Jellyfin access/);
+    assert.match(html, /Jellyfin/);
     assert.doesNotMatch(html, /Refer a friend/, 'Legacy referral-days copy must not reappear.');
     assert.match(html, /customer-portal\.css/);
     assert(!html.includes('Invalid Date'), 'Portal must never render Invalid Date');
@@ -64,14 +65,16 @@ const ejs = require('ejs');
         provisioningState: { status: 'blocked', last_error: 'No eligible Jellyfin server is currently available', next_attempt_at: new Date(Date.now() + 600000) },
         welcome: true
     });
-    assert.match(pending, /We are creating your Jellyfin account/);
+    assert.match(pending, /We are setting up your streaming access/);
     assert.match(pending, /No eligible Jellyfin server/);
-    assert.match(pending, /Retry Jellyfin setup now/);
+    assert.match(pending, /Try setup again now/);
+    assert.match(pending, /Setting up your Jellyfin account/);
 
     const readyWelcome = await ejs.renderFile(path.join(__dirname, '..', 'views', 'customer', 'dashboard.ejs'), { ...locals, welcome: true });
-    assert.match(readyWelcome, /You now have Jellyfin access/);
+    assert.match(readyWelcome, /Your streaming access is ready/);
     assert.match(readyWelcome, /https:\/\/jellyfin\.example\.test/);
     assert.match(readyWelcome, /viewer1/);
+    assert.match(readyWelcome, /Set up \/ manage password/);
 
     const empty = await ejs.renderFile(path.join(__dirname, '..', 'views', 'customer', 'dashboard.ejs'), {
         ...locals,
@@ -84,9 +87,9 @@ const ejs = require('ejs');
         hasJellyfin: false,
         hasStremio: false
     });
-    assert.match(empty, /do not currently have an active subscription/i);
+    assert.match(empty, /do not currently have an active plan/i);
     assert.match(empty, /No plans are currently available/i);
-    assert.doesNotMatch(empty, /Your affiliate code/, 'Disabled affiliate module must not appear in the portal');
+    assert.doesNotMatch(empty, /Your referral code/, 'Disabled Benefits module must not appear in the portal');
 
     console.log('customer portal view smoke: ok');
 })().catch(error => {
