@@ -25,8 +25,9 @@ has(transfer,'delete plan.reseller_trial_credit_cost','retired reseller trial-cr
 lacks(transfer,'delete document.configuration.settings.reseller_defaults_v2','live monthly reseller defaults must remain portable');
 
 const customerDashboard=read('views/customer/dashboard.ejs');
-has(customerDashboard,'href="/help"><span>Help &amp; Support</span>','customer portal must expose Help & Support');
-has(customerDashboard,'Your access entitlement is active','welcome pending state must work for paid and free access');
+const customerNav=read('views/customer/_nav.ejs');
+has(customerNav,'href="/help">Help &amp; support</a>','customer portal must expose Help & support');
+has(customerDashboard,'Your plan is active. We are still creating your Jellyfin account','welcome pending state must work for paid and free access');
 lacks(customerDashboard,'Your Free Access entitlement is active, but Jellyfin provisioning has not completed yet.','welcome copy must not incorrectly label paid users as Free Access');
 
 const adminPassword=read('src/platform/admin-customer-jellyfin-password.js');
@@ -37,7 +38,8 @@ lacks(adminPassword,'JSON.stringify({password','password must never be placed in
 const adminRouter=read('src/platform/router.js');
 has(adminRouter,'createAdminCustomerJellyfinPasswordRouter','admin password support router must be part of the live platform router');
 const adminNav=read('src/platform/admin-nav.js');
-has(adminNav,"['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password']",'admin password support must be discoverable under People');
+has(adminNav,"'customer-jellyfin-password':Object.freeze({groupKey:'people',parentKey:'users'",'admin password support must remain discoverable from the customer workflow without becoming permanent People navigation');
+lacks(adminNav,"['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password']",'Jellyfin password support must not return as a permanent People sidebar item');
 
 const paypalReturn=read('src/platform/customer-payment-return.js');
 has(paypalReturn,"/account?welcome=1&message=",'PayPal completion must enter the access welcome flow');
