@@ -46,7 +46,8 @@ mustContain('src/platform/reseller-monthly-portal.js','monthly.resellerEntitleme
 mustContain('src/platform/reseller-monthly-portal.js','/reseller/billing/stripe');
 mustContain('src/platform/reseller-monthly-portal.js','/reseller/billing/paypal');
 mustContain('src/resellers/managed-users.js','assertSeatAvailable');
-mustContain('src/resellers/managed-users.js','allow_video_transcoding');
+mustContain('src/resellers/monthly.js','allow_video_transcoding','Monthly reseller entitlement must expose the configured Jellyfin transcoding policy.');
+mustContain('src/resellers/monthly.js','library_access_mode','Monthly reseller entitlement must expose the configured Jellyfin library policy.');
 mustNotContain('src/platform/reseller-monthly-portal.js',/\/reseller\/(?:credits|wallet)/i);
 mustNotContain('src/platform/reseller-monthly-portal.js',/credit balance|buy credits|spend credits/i);
 
