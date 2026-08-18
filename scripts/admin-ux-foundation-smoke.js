@@ -8,6 +8,8 @@ const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const html=read('src/platform/admin-html.js');
 const core=read('src/platform/admin-html-core.js');
 const catalog=read('src/platform/admin-catalog-shell.js');
+const adminActions=read('src/platform/admin-actions.js');
+const accountActivation=read('src/auth/account-activation.js');
 const navModel=require('../src/platform/admin-nav');
 const baseCss=read('public/css/admin-original-base.css');
 const componentCss=read('public/css/admin-original-components.css');
@@ -30,6 +32,7 @@ assert(catalog.includes("int(body.streams,1,50,'Concurrent streams')"),'New plan
 assert(catalog.includes('sort_order,streams,allow_remuxing'),'New plan creation must persist the stream limit into plans.streams');
 assert(catalog.includes('streams:plan.streams'),'Plan creation audit metadata must record the selected stream limit');
 assert(catalog.includes('This limit applies to Jellyfin, Stremio and bundle delivery.'),'Concurrent-stream help must make Stremio applicability explicit');
+assert(catalog.includes('Prepare included services immediately')&&catalog.includes('Jellyfin + Stremio')&&catalog.includes("p.service_type==='stremio'?'Stremio'"),'Admin customer creation must label plan delivery type and avoid Jellyfin-only onboarding copy');
 assert(baseCss.includes('--sidebar-w:248px'),'Desktop admin shell should use the wider visual-hierarchy sidebar');
 assert(componentCss.includes('.fieldHelp'),'Admin controls must have a consistent helper-description style');
 assert(componentCss.includes('min-height:40px'),'Admin controls must use the larger readable control size');
@@ -42,6 +45,8 @@ assert(refinementCss.includes('.chartEmpty{height:108px}'),'Empty dashboard char
 assert(plans.includes('data-plan-table-wrap'),'Plan filtering must be able to hide the table when no rows match');
 assert(formFeedback.includes("'/admin/notifications/preferences/delivery'")&&/native submission/i.test(formFeedback),'Notification credential forms must use native browser submission for reliable CSRF handling');
 assert(formFeedback.includes("'/admin/users/new'")&&/one-time activation link/i.test(formFeedback),'Customer creation must preserve its one-time activation result through native navigation');
+assert(adminActions.includes("require('../jellyfin/resilient-provisioning')"),'Admin customer creation must use service-aware provisioning so Stremio-only plans do not create Jellyfin accounts');
+assert(accountActivation.includes("require('../jellyfin/resilient-provisioning')"),'Deferred customer activation provisioning must use service-aware provisioning');
 assert(formFeedback.includes("explicitSubmitterAttribute(submitter, 'formaction')"),'Enhanced forms must honor explicit per-button formaction targets without overriding ordinary form actions');
 assert(formFeedback.includes("'X-CSRF-Token': csrfToken"),'Enhanced admin POSTs must mirror the CSRF token in the request header');
 assert(formFeedback.includes('async function responseMessage(response)'),'Admin form errors must surface the server rejection reason instead of a generic HTTP status');
