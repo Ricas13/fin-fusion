@@ -21,7 +21,7 @@ function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.1.0',name:'CAP
 async function publicOrigin(req){try{const cfg=await operations.get();if(cfg.publicBaseUrl)return String(cfg.publicBaseUrl).replace(/\/$/,'');}catch(_error){}const host=req.get('x-forwarded-host')||req.get('host');const proto=req.get('x-forwarded-proto')||req.protocol||'https';return `${proto}://${host}`.replace(/\/$/,'');}
 function copyPlaybackHeaders(upstream,res){for(const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified','cache-control']){const value=upstream.headers?.[name];if(value!=null)res.setHeader(name,value);}}
 async function hasExplicitSources(entitlement){const r=await query(`SELECT EXISTS(SELECT 1 FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE WHERE s.id=$1) yes`,[entitlement.subscription_id]);return r.rows[0]?.yes===true;}
-function attachLeases(streams){return streams.map(stream=>{try{const url=new URL(stream.url);if(/\/stremio\/[^/]+\/source\//.test(url.pathname))url.searchParams.set('lease',sourceAdmission.issue());return{...stream,url:url.toString()};}catch{return stream;}});}
+function attachLease(streams,lease=sourceAdmission.issue()){return streams.map(stream=>{try{const url=new URL(stream.url);if(/\/stremio\/[^/]+\/source\//.test(url.pathname))url.searchParams.set('lease',lease);return{...stream,url:url.toString()};}catch{return stream;}});}
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
@@ -36,7 +36,7 @@ function createStremioRuntimeRouter(){
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const type=String(req.params.type||''),videoId=String(req.params.videoId||''),proxyBase=await publicOrigin(req),explicit=await hasExplicitSources(e);
       let streams=await sourcePool.streamsFor(e,type,videoId,{proxyBase,installToken:req.params.token});
-      if(streams.length)streams=attachLeases(streams);
+      if(streams.length)streams=attachLease(streams);
       else if(!explicit)streams=await jellyfin.streamsFor(e,type,videoId);
       await entitlements.markUse(e.id,'stream');return res.json({streams});
     }catch(_error){console.error('Stremio stream request failed.');return res.json({streams:[]});}
@@ -55,13 +55,14 @@ function createStremioRuntimeRouter(){
       if(isHead){upstream.resume();return res.end();}
       heartbeat=setInterval(()=>sourceAdmission.touch(e.id,lease).catch(()=>{}),60000);heartbeat.unref?.();
       const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};
-      upstream.on('error',()=>{stop();if(!res.headersSent)res.status(502);res.end();});
-      upstream.on('end',stop);
-      res.on('close',()=>{stop();if(!res.writableEnded)opened?.request?.destroy();});
+      const releaseSoon=()=>{if(admitted&&e&&lease)setTimeout(()=>sourceAdmission.release(e.id,lease).catch(()=>{}),5000).unref?.();};
+      upstream.on('error',()=>{stop();releaseSoon();if(!res.headersSent)res.status(502);res.end();});
+      upstream.on('end',()=>{stop();releaseSoon();});
+      res.on('close',()=>{stop();releaseSoon();if(!res.writableEnded)opened?.request?.destroy();});
       upstream.pipe(res);
     }catch(_error){if(heartbeat)clearInterval(heartbeat);opened?.request?.destroy();if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});if(!res.headersSent)return res.status(502).end();return res.end();}
   });
   return router;
 }
 
-module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLeases,createStremioRuntimeRouter};
+module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,createStremioRuntimeRouter};

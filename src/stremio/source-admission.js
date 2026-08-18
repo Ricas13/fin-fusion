@@ -16,8 +16,7 @@ async function admit(entitlement,rawLease,sourceId,itemId){
     await db.query(`DELETE FROM stremio_source_playback_leases WHERE entitlement_id=$1 AND expires_at<=NOW()`,[entitlementId]);
     const existing=await db.query(`SELECT lease_hash,source_id,item_id FROM stremio_source_playback_leases WHERE lease_hash=$1 AND entitlement_id=$2`,[leaseHash,entitlementId]);
     if(existing.rowCount){
-      if(String(existing.rows[0].source_id)!==String(sourceId)||String(existing.rows[0].item_id)!==String(itemId))return{allowed:false,reason:'lease_scope_mismatch',active:0,limit};
-      await db.query(`UPDATE stremio_source_playback_leases SET last_seen_at=NOW(),expires_at=NOW()+($3||' seconds')::interval WHERE lease_hash=$1 AND entitlement_id=$2`,[leaseHash,entitlementId,String(LEASE_SECONDS)]);
+      await db.query(`UPDATE stremio_source_playback_leases SET source_id=$3,item_id=$4,last_seen_at=NOW(),expires_at=NOW()+($5||' seconds')::interval WHERE lease_hash=$1 AND entitlement_id=$2`,[leaseHash,entitlementId,sourceId,String(itemId),String(LEASE_SECONDS)]);
       const count=await db.query(`SELECT COUNT(*)::int n FROM stremio_source_playback_leases WHERE entitlement_id=$1 AND expires_at>NOW()`,[entitlementId]);
       return{allowed:true,existing:true,active:Number(count.rows[0]?.n||1),limit,leaseHash};
     }

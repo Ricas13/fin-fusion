@@ -19,6 +19,9 @@ async function fakeQuery(sql,params=[]){
   if(text.startsWith('SELECT lease_hash,source_id,item_id FROM stremio_source_playback_leases')){
     const row=leases.get(params[0]);const match=row&&row.entitlement_id===params[1]?row:null;return{rowCount:match?1:0,rows:match?[{...match}]:[]};
   }
+  if(text.startsWith('UPDATE stremio_source_playback_leases SET source_id=$3,item_id=$4,last_seen_at=NOW(),expires_at=')){
+    const row=leases.get(params[0]);if(!row||row.entitlement_id!==params[1])return{rowCount:0,rows:[]};row.source_id=params[2];row.item_id=String(params[3]);row.last_seen_at=now();row.expires_at=now()+Number(params[4])*1000;return{rowCount:1,rows:[]};
+  }
   if(text.startsWith('UPDATE stremio_source_playback_leases SET last_seen_at=NOW(),expires_at=')){
     const row=leases.get(params[0]);if(!row||row.entitlement_id!==params[1])return{rowCount:0,rows:[]};row.last_seen_at=now();row.expires_at=now()+Number(params[2])*1000;return{rowCount:1,rows:[]};
   }
@@ -54,9 +57,9 @@ function fakeTransaction(fn){
     const retry=await admission.admit(entitlement,lease1,'source-a','item-a');
     assert.equal(retry.allowed,true,'Range/retry requests for the same playback lease must remain admitted');
     assert.equal(retry.existing,true);
-    const mismatch=await admission.admit(entitlement,lease1,'source-b','item-a');
-    assert.equal(mismatch.allowed,false,'A playback lease must not be reusable on another source');
-    assert.equal(mismatch.reason,'lease_scope_mismatch');
+    const alternate=await admission.admit(entitlement,lease1,'source-b','item-b');
+    assert.equal(alternate.allowed,true,'Alternate releases from one Stremio stream lookup must reuse the same playback lease');
+    assert.equal(alternate.existing,true);
     const blocked=await admission.admit(entitlement,lease2,'source-a','item-b');
     assert.equal(blocked.allowed,false,'A second concurrent stream must be blocked for a one-stream plan');
     assert.equal(blocked.reason,'stream_limit');
