@@ -1,7 +1,7 @@
 'use strict';
 
 const express=require('express');
-const {query}=require('../db');
+const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const {customer360,customerAccessDetail}=require('./customer-360');
 const view=require('./customer-360-view');
@@ -37,7 +37,7 @@ function createAdminCustomer360Router(){
             const activeTab=TABS.has(String(req.query.tab||''))?String(req.query.tab):'overview';
             const id=encodeURIComponent(req.params.customerId);
             const [accessDetail,incidentRows]=await Promise.all([activeTab==='access'?customerAccessDetail(req.params.customerId):null,activeTab==='billing'?query(`SELECT id,provider,incident_type,incident_status,created_at,resolved_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[req.params.customerId]):Promise.resolve({rows:[]})]);
-            const resellerLink=detail.customer.reseller_id?`<a class="button secondary" href="/admin/reseller-management/${encodeURIComponent(detail.customer.reseller_id)}">Reseller 360 · ${esc(detail.customer.reseller_username||'owner')}</a>`:'';
+            const resellerLink='';
             const extras=activeTab==='billing'?incidentPanel(incidentRows.rows):'';
             return res.send(layout({siteName:runtimeSettings.siteName(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req),accessDetail)}${extras}`,action:`<div class="buttonRow">${resellerLink}<a class="button secondary" href="${path(req.params.customerId,'activity')}">Activity</a><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
         }catch(error){return next(error)}
@@ -143,6 +143,8 @@ function createAdminCustomer360Router(){
     });
 
     router.use('/admin/users/:customerId',async(error,_req,res,_next)=>{console.error('Customer 360 route error:',error.message);await runtimeSettings.ensureLoaded().catch(()=>{});return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Customer unavailable',message:'The customer profile could not be loaded safely.',link:'/admin/users',linkText:'Back to Customers'})});
-    return router;
+    router.post('/admin/users/:customerId/email/verify',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await transaction(async client=>{const row=await client.query(`SELECT c.user_id,u.email_verified_at FROM customers c JOIN app_users u ON u.id=c.user_id WHERE c.id=$1 FOR UPDATE`,[req.params.customerId]);if(!row.rowCount)throw new Error('Customer not found.');await client.query(`UPDATE app_users SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1`,[row.rows[0].user_id]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.email.verify','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({manual:true,wasVerified:Boolean(row.rows[0].email_verified_at)})]);});return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?message=${encodeURIComponent('Email marked as verified by administrator.')}`);}catch(error){return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?error=${encodeURIComponent(error.message)}`);}});
+  router.post('/admin/users/:customerId/automation-protection',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=['1','true','on'].includes(String(req.body.enabled||'').toLowerCase()),reason=String(req.body.reason||'').trim().slice(0,500);await transaction(async client=>{const updated=await client.query(`UPDATE customers SET automation_protected=$2,automation_protected_reason=$3,automation_protected_at=CASE WHEN $2 THEN NOW() ELSE NULL END,automation_protected_by=CASE WHEN $2 THEN $4::uuid ELSE NULL END,updated_at=NOW() WHERE id=$1 RETURNING id`,[req.params.customerId,enabled,enabled?(reason||'Protected by administrator'):null,req.session.authUserId]);if(!updated.rowCount)throw new Error('Customer not found.');await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.automation_protection','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({enabled,reason:enabled?(reason||null):null})]);});return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?message=${encodeURIComponent(enabled?'Customer protected from automatic Jellyfin cleanup.':'Automatic cleanup protection removed.')}`);}catch(error){return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?error=${encodeURIComponent(error.message)}`);}});
+  return router;
 }
 module.exports={createAdminCustomer360Router,TABS,incidentPanel};

@@ -8,8 +8,9 @@ function mustContain(file,pattern,message){const text=read(file);assert(pattern 
 function mustNotContain(file,pattern,message){const text=read(file);assert(!(pattern instanceof RegExp?pattern.test(text):text.includes(pattern)),message||`${file} must not contain ${pattern}`);}
 function walk(dir){const out=[];for(const entry of fs.readdirSync(p(dir),{withFileTypes:true})){const rel=path.join(dir,entry.name);if(entry.isDirectory())out.push(...walk(rel));else out.push(rel);}return out;}
 
-// Keep the historical 71-point completion manifest intact, but validate the
-// current product architecture rather than retired reseller runtime contracts.
+// Keep the historical 71-point completion manifest intact, while validating
+// today's product architecture: affiliates/service credit for referrals and a
+// separate monthly-seat reseller product with no reseller credit wallet.
 const checklist=read('docs/FULL_SWEEP_71_CHECKLIST.md'),entries=[...checklist.matchAll(/^- \[x\] (\d{2})\./gm)].map(m=>m[1]);
 assert.strictEqual(entries.length,71,`full-sweep manifest must contain exactly 71 completed items, found ${entries.length}`);
 assert.deepStrictEqual(entries,Array.from({length:71},(_,i)=>String(i+1).padStart(2,'0')),'full-sweep manifest numbering must be exactly 01..71');
@@ -20,6 +21,7 @@ for(const file of [
   'src/application.js','src/affiliate-credits.js','src/referrals.js','src/payments/service-credit-reservations.js',
   'src/payments/checkout-intents.js','src/platform/customer-affiliate.js','views/customer/affiliate.ejs',
   'src/platform/admin-referrals.js','src/platform/storefront.js','src/platform/admin-plan-order.js',
+  'src/platform/reseller-monthly-portal.js','src/resellers/monthly.js','src/resellers/managed-users.js','public/css/reseller-portal.css',
   'public/js/admin-plan-order.js','scripts/affiliate-service-credit-smoke.js','scripts/affiliate-mixed-payment-smoke.js',
   'scripts/automation-worker.js','scripts/check-js-syntax.js'
 ])assert(exists(file),`${file} is required by the current acceptance contract`);
@@ -29,11 +31,25 @@ for(const file of ['import_users.js','check-expired.js','src/platform/reseller-p
 mustContain('package.json','node src/application.js');
 mustContain('src/application.js','createCustomerSubscriptionActionsRouter');
 mustContain('src/application.js','createAdminReferralsRouter');
-mustNotContain('src/application.js','createResellerTierChangesRouter','Retired reseller tier-change routes must not be mounted.');
-mustNotContain('src/application.js','createResellerBusinessRouter','Retired reseller portal routes must not be mounted.');
-mustNotContain('src/application.js','createResellerMonthlyPortalRouter','Retired reseller billing portal must not be mounted.');
+mustContain('src/application.js','createResellerMonthlyPortalRouter','The monthly reseller seat-management portal must be mounted.');
+mustContain('src/application.js','app.use(createResellerMonthlyPortalRouter())','The reseller portal must be reachable after reseller login.');
+mustNotContain('src/application.js','createResellerTierChangesRouter','Retired reseller credit-era tier-change routes must not be mounted.');
+mustNotContain('src/application.js','createResellerBusinessRouter','Retired reseller business/ledger portal routes must not be mounted.');
 mustNotContain('src/application.js',"require('./platform/reseller-portal')");
-mustContain('src/application.js','The reseller programme has been retired');
+mustNotContain('src/application.js','The reseller programme has been retired','The live monthly reseller product must not be blanket-retired.');
+
+// Monthly reseller product invariants: fixed managed-user allowance and policy,
+// with subscription billing but no credit wallet/downstream customer ledger.
+mustContain('src/platform/reseller-monthly-portal.js','managedUsers.createManagedUser');
+mustContain('src/platform/reseller-monthly-portal.js','managedUsers.setPassword');
+mustContain('src/platform/reseller-monthly-portal.js','monthly.resellerEntitlement');
+mustContain('src/platform/reseller-monthly-portal.js','/reseller/billing/stripe');
+mustContain('src/platform/reseller-monthly-portal.js','/reseller/billing/paypal');
+mustContain('src/resellers/managed-users.js','assertSeatAvailable');
+mustContain('src/resellers/monthly.js','allow_video_transcoding','Monthly reseller entitlement must expose the configured Jellyfin transcoding policy.');
+mustContain('src/resellers/monthly.js','library_access_mode','Monthly reseller entitlement must expose the configured Jellyfin library policy.');
+mustNotContain('src/platform/reseller-monthly-portal.js',/\/reseller\/(?:credits|wallet)/i);
+mustNotContain('src/platform/reseller-monthly-portal.js',/credit balance|buy credits|spend credits/i);
 
 // Affiliate/service-credit product invariants.
 mustContain('src/referrals.js','rewardIfQualifying');
@@ -55,19 +71,22 @@ mustContain('views/customer/dashboard.ejs','Affiliate programme');
 mustNotContain('views/customer/dashboard.ejs','Refer a friend');
 mustNotContain('src/platform/bulk-operations.js',/reseller_assign|reseller_detach/);
 
-// Existing subscription acquisition paths must survive service-credit extension.
+// Historical subscription sources remain readable during migration even when
+// the old reseller-credit acquisition path is no longer a live product.
 for(const source of ['manual','reseller_credit','stripe','paypal','migration','free_claim','reseller_sale','admin_grant','invitation','service_credit'])mustContain('db/migrations/090_preserve_subscription_sources_with_service_credit.sql',`'${source}'`);
 
-// Permanent free tier and explicit storefront ordering remain product invariants.
+// Free Access is permanent as a product rule, but customer-facing copy stays simple.
 mustContain('src/platform/storefront.js','freeTierPanel');
-mustContain('src/platform/storefront.js','Permanent free tier');
+mustContain('src/platform/storefront.js','Free access');
+mustNotContain('src/platform/storefront.js','Permanent free tier');
 mustContain('src/platform/admin-plan-order.js','data-order-list');
 mustContain('public/js/admin-plan-order.js','dragstart');
 mustContain('db/migrations/085_canonical_free_tier.sql','plans_single_free_tier_idx');
 
-// Portable configuration carries affiliate policy but not the retired reseller product.
+// Portable configuration retains affiliate settings and must never recreate
+// the obsolete reseller credit defaults. Reseller catalogue transfer is tested
+// separately as the monthly-plan configuration model is consolidated.
 mustContain('src/platform/configuration-transfer.js','affiliate_program');
-mustContain('src/platform/configuration-transfer.js','resellerTiers=[]');
 mustContain('src/platform/configuration-transfer.js','delete document.configuration.settings.reseller_defaults');
 
 // Normal admin/customer safety and lifecycle ownership.
@@ -81,7 +100,6 @@ mustContain('src/platform/configuration-transfer.js','payment_risk_policy');
 mustContain('src/platform/setup-readiness.js','Customer commerce');
 mustContain('src/platform/setup-readiness.js',"key:'direct-payments'");
 mustContain('src/platform/setup-readiness.js',"key:'affiliates'");
-mustNotContain('src/platform/setup-readiness.js',"key:'reseller-payments'");
 
 mustContain('src/platform/admin-original-settings.js',"require('../integrations/email-settings')");
 mustContain('src/platform/admin-original-settings.js',"require('../integrations/notification-settings')");
@@ -120,4 +138,4 @@ mustContain('README.md','PostgreSQL is authoritative');
 mustContain('README.md','Affiliate and service-credit model');
 mustContain('README.md','not the production architecture');
 
-console.log('full sweep acceptance: 71/71 manifest and current affiliate/service-credit runtime contracts OK');
+console.log('full sweep acceptance: 71/71 manifest and current monthly-reseller + affiliate/service-credit contracts OK');

@@ -15,10 +15,17 @@ async function main(){
     for(const route of routes){const key=`${route.method} ${route.path}`;if(!owners.has(key))owners.set(key,[]);owners.get(key).push(route);}
     const duplicates=[...owners.entries()].filter(([key,rows])=>rows.length>1&&!ALLOW.has(key));
     if(duplicates.length){const detail=duplicates.map(([key,rows])=>`${key} x${rows.length}`).join(', ');console.error('Duplicate assembled route owners:');for(const[key,rows]of duplicates)console.error(`  ${key} x${rows.length}`);console.error(`::error title=Duplicate assembled route ownership::${detail}`);assert.fail(`${duplicates.length} duplicate method/path ownership conflict(s): ${detail}`);}
-    for(const required of ['GET /','GET /admin','GET /account','GET /account/login','POST /account/login','GET /account/affiliate','POST /account/affiliate/redeem','GET /admin/referrals','GET /admin/attention','GET /admin/backups','GET /admin/operations','GET /help'])assert(owners.has(required),`Required assembled route missing: ${required}`);
-    const retired=[...owners.keys()].filter(key=>/^\w+ \/reseller(?:\/|$)/.test(key)||/^\w+ \/admin\/reseller(?:-|\/|$)/.test(key));
-    assert.deepStrictEqual(retired,[],`Retired reseller runtime routes are still mounted: ${retired.join(', ')}`);
-    console.log(`assembled route ownership OK: ${owners.size} unique method/path routes; affiliate runtime mounted, reseller runtime absent`);
+    for(const required of ['GET /','GET /admin','GET /account','GET /account/login','POST /account/login','GET /account/affiliate','POST /account/affiliate/redeem','GET /admin/referrals','GET /admin/attention','GET /admin/backups','GET /admin/operations','GET /help','GET /reseller','POST /reseller/users'])assert(owners.has(required),`Required assembled route missing: ${required}`);
+
+    // The monthly seat-management reseller portal is live. What remains retired
+    // is the old reseller credit/wallet/business administration surface.
+    const resellerRoutes=[...owners.keys()].filter(key=>/^\w+ \/reseller(?:\/|$)/.test(key));
+    assert(resellerRoutes.length>0,'Monthly reseller runtime routes are missing');
+    const prohibited=resellerRoutes.filter(key=>/\/(?:credits?|wallet|ledger|business)(?:\/|$)/i.test(key));
+    assert.deepStrictEqual(prohibited,[],`Retired reseller credit/wallet routes are mounted: ${prohibited.join(', ')}`);
+    const retiredAdmin=[...owners.keys()].filter(key=>/^\w+ \/admin\/reseller(?:-|\/|$)/.test(key));
+    assert.deepStrictEqual(retiredAdmin,[],`Retired reseller admin routes are still mounted: ${retiredAdmin.join(', ')}`);
+    console.log(`assembled route ownership OK: ${owners.size} unique method/path routes; affiliate and monthly reseller runtimes mounted; reseller credit runtime absent`);
   } finally {
     await getPool().end().catch(()=>{});
   }

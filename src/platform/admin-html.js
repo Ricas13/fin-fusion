@@ -3,6 +3,7 @@
 const core=require('./admin-html-core');
 const notificationWorkflow=require('./notification-workflow-tabs');
 const provisioningWorkflow=require('./provisioning-workflow-tabs');
+const integrationWorkflow=require('./integration-workflow-tabs');
 const backupWorkflow=require('./backup-workflow-tabs');
 
 function scriptBoundary(ch){return ch===undefined||/[\s/>]/.test(ch);}
@@ -128,12 +129,19 @@ function provisioningTabsFor(options={}){
     const active=String(options.active||'');
     const tab={
         provisioning:'provisioning',
-        'request-service':'requests',
-        'request-plan-limits':'limits',
         'server-migrations':'migrations',
         'policy-drift':'drift'
     }[active];
     return tab?provisioningWorkflow.tabs(tab):'';
+}
+function integrationTabsFor(options={}){
+    const active=String(options.active||'');
+    const tab={
+        'settings-integrations':'integrations',
+        'request-service':'requests',
+        'request-plan-limits':'limits'
+    }[active];
+    return tab?integrationWorkflow.tabs(tab):'';
 }
 function backupTabsFor(options={}){
     const active=String(options.active||'');
@@ -150,11 +158,11 @@ function planWorkflowScriptFor(options={}){
 }
 
 function layout(options={}){
-    const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+backupTabsFor(options);
+    const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
     const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options);
     options={...options,body:workflow+String(options.body||'')+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,SETTING_HELP};

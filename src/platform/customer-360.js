@@ -40,7 +40,7 @@ async function customer360(customerId){
         query(`SELECT action,status,detail,started_at,completed_at FROM provisioning_runs WHERE customer_id=$1 ORDER BY started_at DESC LIMIT 100`,[customerId]),
         userId?query(`SELECT created_at,last_seen_at,expires_at,revoked_at,user_agent_hash FROM auth_sessions WHERE user_id=$1 ORDER BY last_seen_at DESC LIMIT 50`,[userId]):Promise.resolve({rows:[]}),
         userId?query(`SELECT event_type,success,identity_hint,user_agent_hash,created_at FROM auth_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`,[userId]):Promise.resolve({rows:[]}),
-        query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id::text=$1::text) OR (entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1)) ORDER BY created_at DESC LIMIT 100`,[customerId])
+        query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id::text=$1::text) OR (entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)) ORDER BY created_at DESC LIMIT 100`,[customerId])
     ]);
 
     const timeline=buildTimeline([

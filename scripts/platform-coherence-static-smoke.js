@@ -21,7 +21,8 @@ const application=read('src/application.js'),platformRouter=read('src/platform/r
 assert(application.includes("require('./platform/admin-drift')"),'Policy Drift must be mounted by the canonical application');
 assert(platformRouter.includes('createCustomerAffiliateRouter')&&platformRouter.includes('router.use(createCustomerAffiliateRouter())'),'customer affiliate runtime must be mounted by the platform router');
 assert(application.includes('createAdminReferralsRouter'),'affiliate administration must be mounted');
-for(const retired of ['reseller-tier-changes','reseller-business','reseller-monthly-portal','reseller-portal','reseller-storefront'])assert(!application.includes(retired),`canonical application still loads retired reseller runtime: ${retired}`);
+assert(application.includes('createResellerMonthlyPortalRouter')&&application.includes('app.use(createResellerMonthlyPortalRouter())'),'monthly reseller seat-management runtime must be mounted');
+for(const retired of ['reseller-tier-changes','reseller-business','reseller-portal','reseller-storefront'])assert(!application.includes(retired),`canonical application still loads retired reseller runtime: ${retired}`);
 
 const automation=read('src/automation/jobs.js');
 for(const key of ['policy_drift','billing','plan_changes','referral_rewards','activation_cleanup','pending_registration_cleanup'])assert(new RegExp(`\\b${key}\\b`).test(automation),`automation worker is missing ${key}`);
@@ -89,4 +90,4 @@ const drift=read('src/jellyfin/drift-control.js');
 assert(drift.includes("method:'GET'")||drift.includes("method: 'GET'"),'drift audit must explicitly use read-only Jellyfin GET');
 assert(exists('scripts/jellyfin-drift-smoke.js'),'current-schema Policy Drift smoke test must exist');
 
-console.log(`platform coherence static contract: ok (${sourceFiles.length} source files inspected; affiliate runtime active, reseller runtime retired)`);
+console.log(`platform coherence static contract: ok (${sourceFiles.length} source files inspected; affiliate and monthly reseller runtimes active, reseller credit runtime retired)`);

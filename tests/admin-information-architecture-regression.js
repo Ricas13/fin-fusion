@@ -79,7 +79,7 @@ async function main(){
     const beforeSecurity=await operationsValue(pool);
     await page.goto(`${BASE}/admin/settings?section=security`,{waitUntil:'networkidle'});
     let security=await page.locator('body').innerText();
-    assert(/Session & registration limits/.test(security)&&/Staff\/reseller session lifetime/.test(security),'Security does not own session limits');
+    assert(/Session & registration limits/.test(security)&&/Staff session lifetime/.test(security),'Security does not own session limits');
     assert(/Trusted outbound hostnames/.test(security)&&/Trusted private CIDRs/.test(security),'Security does not own private integration trust');
     assert(/Abandoned activation cleanup/.test(security),'Security does not own abandoned-registration cleanup');
     const securityForm=page.locator('form[action="/admin/settings/runtime-security"]');
