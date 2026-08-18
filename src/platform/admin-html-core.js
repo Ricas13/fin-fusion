@@ -38,8 +38,8 @@ function header(active,site){
 
 function paymentTabsFor(options){
   const title=String(options.title||'');
-  if(!['Payments','Provider mappings','Billing'].includes(title))return'';
-  const active=title==='Billing'?'billing':title==='Provider mappings'?'mappings':'setup';
+  if(!['Payments','Provider mappings','Billing','Payment Risk Policy'].includes(title))return'';
+  const active=title==='Billing'?'billing':title==='Provider mappings'?'mappings':title==='Payment Risk Policy'?'risk':'setup';
   return paymentWorkflow.tabs(active);
 }
 
