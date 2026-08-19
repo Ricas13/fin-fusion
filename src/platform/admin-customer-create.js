@@ -5,7 +5,7 @@ const runtimeSettings=require('./runtime-settings');
 const {customerCreate}=require('./admin-catalog-shell');
 const {layout}=require('./admin-html');
 
-function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin')return next();return res.redirect('/login?session=expired');}
+function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function createAdminCustomerCreateRouter(){
   const r=express.Router();

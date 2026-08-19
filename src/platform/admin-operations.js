@@ -5,7 +5,7 @@ const csrf=require('../auth/csrf');
 const {query}=require('../db');
 const operations=require('./operations-settings');
 
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'?next():res.redirect('/login?session=expired');}
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function forwardQuery(req,target){const params=new URLSearchParams();if(req.query.message)params.set('message',String(req.query.message));if(req.query.error)params.set('error',String(req.query.error));const qs=params.toString();return `${target}${qs?`?${qs}`:''}`;}
 

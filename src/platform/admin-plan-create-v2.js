@@ -12,7 +12,7 @@ const {esc,layout}=require('./admin-html');
 const BILLING={trial:{label:'Trial',days:1},month:{label:'Monthly',days:30},'6_months':{label:'6 months',days:183},year:{label:'Yearly',days:365},custom:{label:'Custom duration',days:null}};
 const SERVICE_TYPES=['jellyfin','stremio','bundle'];
 const CURRENCIES=reportingCurrency.CURRENCIES;
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'?next():res.redirect('/login?session=expired')}
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
 function b(v){return v===true||['on','true','1','yes'].includes(String(v||'').toLowerCase())}
 function text(v,max){return String(v||'').trim().slice(0,max)}
