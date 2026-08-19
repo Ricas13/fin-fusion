@@ -35,6 +35,7 @@ assert(/account_purpose='jellyfin'/.test(bulk)&&!/account_purpose='primary'/.tes
 assert(/registerHandler\('migrate_server'/.test(bulkMigration)&&/createMigration/.test(bulkMigration)&&/executeMigration/.test(bulkMigration),'bulk server migration must execute through the controlled migration service');
 assert(/bulk-server-migration/.test(jobs),'automation worker must load the bulk server migration handler');
 assert(/accessKind/.test(serverMigration)&&/kind === 'paid'/.test(serverMigration),'server migration must distinguish free access from paid access');
+assert((serverMigration.match(/account_purpose='jellyfin'/g)||[]).length>=4&&!/account_purpose='stremio_internal'/.test(serverMigration),'server migration must only select, restore and roll back normal Jellyfin identities');
 assert(/serviceKind/.test(plans)&&/Stremio-only plan/.test(plans),'service-aware plan workflow missing');
 assert(/Individual customer overrides/.test(registry)&&/ownerForSetting/.test(registry),'settings registry missing customer ownership');
 assert(/customer\.permanentAccess/.test(registry)&&/Permanent customer access/.test(registry),'permanent access must have a canonical settings owner');
