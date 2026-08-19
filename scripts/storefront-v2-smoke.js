@@ -1,13 +1,40 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const storefront = require('../src/platform/storefront');
+const historicalStorefront = require('../src/platform/storefront-core');
 const {
     renderStorefront,
     planCard,
     savingForPlan,
     monthlyEquivalent,
     bestValueCode
-} = require('../src/platform/storefront');
+} = storefront;
+
+function assertStorefrontOwnership(){
+    const root=path.join(__dirname,'..','src','platform');
+    const canonical=fs.readFileSync(path.join(root,'storefront.js'),'utf8');
+    const core=fs.readFileSync(path.join(root,'storefront-core.js'),'utf8');
+    const base=fs.readFileSync(path.join(root,'storefront-base.js'),'utf8');
+    assert.strictEqual(historicalStorefront,storefront,'Historical storefront path must resolve to canonical storefront');
+    assert.strictEqual(historicalStorefront.storefrontPage,storefront.storefrontPage,'Historical storefront page must be the canonical capacity/currency-aware handler');
+    assert.match(core,/module\.exports\s*=\s*require\(['"]\.\/storefront['"]\)/,'storefront-core must delegate directly to canonical storefront');
+    assert.doesNotMatch(core,/\basync\s+function\s+storefrontPage\b|\bfunction\s+renderStorefront\b/,'storefront-core must not become a second storefront implementation');
+    assert.ok(canonical.includes("require('./storefront-base')"),'Canonical storefront must use the private base module');
+    assert.ok(!canonical.includes("require('./storefront-core')"),'Canonical storefront must not depend on historical storefront-core');
+    assert.ok(canonical.includes('planCapacity.usage'),'Canonical storefront must remain capacity-aware');
+    assert.ok(canonical.includes('planPricing.decoratePlans'),'Canonical storefront must decorate logical plans with selected-currency prices');
+    assert.ok(canonical.includes('planPricing.enabledCurrencies'),'Canonical storefront must expose enabled storefront currencies');
+    assert.ok(canonical.includes('supportPolicy.get()'),'Canonical storefront must include configured support/policy links');
+    assert.ok(canonical.includes('freeTierPanel'),'Canonical storefront must retain the permanent Free Access presentation');
+    assert.ok(base.includes('async function storefrontPage'),'Private storefront base must retain the historical implementation needed for compatibility helpers');
+    const baseImporters=fs.readdirSync(root).filter(name=>name.endsWith('.js')&&fs.readFileSync(path.join(root,name),'utf8').includes("require('./storefront-base')"));
+    assert.deepStrictEqual(baseImporters,['storefront.js'],'Only canonical storefront may import the private storefront base');
+}
+
+assertStorefrontOwnership();
 
 const plans = [
     {
