@@ -2,6 +2,7 @@
 const assert=require('assert'),fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
 const customer=read('src/platform/admin-customer-360.js');
+const customer360Data=read('src/platform/customer-360.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const permanent=read('src/entitlements/permanent-access.js');
 const permanentMigration=read('db/migrations/006_customer_permanent_access.sql');
@@ -41,6 +42,8 @@ assert(/COUNT\(\*\)::int n FROM jellyfin_accounts WHERE server_id=\$1 AND disabl
 assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=2&&!/account_purpose='primary'/.test(inactivity),'inactivity and cleanup automation must target normal Jellyfin accounts');
 assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
 assert(/formaction=\"\$\{esc\(withdrawAction\)\}\"/.test(customer)&&!/action=\"\/admin\/users\/\$\{encodeURIComponent\(c\.id\)\}\/marketing\/withdraw\">\$\{csrfHidden/.test(customer),'marketing withdrawal must not create a nested form');
+assert(/primaryEntitlement/.test(customer360Data)&&/primaryFirst/.test(customer360Data)&&/subscriptions:orderedSubscriptions/.test(customer360Data),'Customer 360 must order the canonical primary entitlement ahead of add-ons/history');
+assert(/account_purpose/.test(customer360Data)&&/is_primary/.test(customer360Data),'Customer 360 must expose Jellyfin account purpose so internal Stremio identities stay distinguishable');
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
 assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'raw UUID workflow copy returned');
 assert(/effective_customer_entitlements e ON e\.customer_id=c\.id/.test(bulk),'bulk customer summary must use the primary effective entitlement rather than the latest arbitrary subscription/add-on');
