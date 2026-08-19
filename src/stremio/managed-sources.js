@@ -63,7 +63,8 @@ async function enabled(){
 }
 
 async function accountsForEntitlement(entitlementId){
-  const result=await query(`SELECT sma.*,js.name server_name,js.public_url,js.stremio_priority,
+  const result=await query(`SELECT sma.*,js.name server_name,js.base_url,js.public_url,js.enabled server_enabled,
+      js.stremio_enabled,js.stremio_priority,js.priority server_priority,
       ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled account_disabled
     FROM stremio_managed_accounts sma
     JOIN jellyfin_servers js ON js.id=sma.server_id
