@@ -94,7 +94,7 @@ async function main() {
         setup: { configuredCount: 1, totalCount: 2 },
         options: {}
     });
-    for (const needle of ['Gross revenue', 'Revenue history', 'Customer base over time', 'Managed streaming volume', 'Server load', 'Top streamers', 'Recent payments', 'Top referrers']) {
+    for (const needle of ['Gross revenue', 'Revenue history', 'Customer base over time', 'Managed streaming volume', 'Server load', 'Revenue future', 'Recent payments', 'Top referrers']) {
         assert(html.includes(needle), `dashboard should render ${needle}`);
     }
     assert(html.includes('range=365d'), 'dashboard should expose shared period presets');

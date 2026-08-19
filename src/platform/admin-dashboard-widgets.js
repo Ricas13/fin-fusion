@@ -226,11 +226,11 @@ function statusTable(rows, columns) {
 
 // --- Widget shell / layout chrome --------------------------------------------
 
-function widgetShell(spec, bodyHtml, { span = 6, stat = null, dataUnavailable = false } = {}) {
+function widgetShell(spec, bodyHtml, { span = 6, stat = null, dataUnavailable = false, hidden = false } = {}) {
     const safeSpan = SPAN_VALUES.includes(Number(span)) ? Number(span) : 6;
     const statHtml = stat ? `<div class="analyticsCardHeaderStat"><strong>${stat.value}</strong><span>${esc(stat.label || '')}</span></div>` : '';
     const tooltip = spec.subtitle ? ` popover="manual" title="${esc(spec.subtitle)}"` : '';
-    return `<section class="analyticsCard widgetCard span-${safeSpan} ${dataUnavailable ? 'widgetUnavailable' : ''}" data-widget-key="${esc(spec.key || '')}" data-widget-span="${safeSpan}">
+    return `<section class="analyticsCard widgetCard span-${safeSpan} ${dataUnavailable ? 'widgetUnavailable' : ''} ${hidden ? 'widgetHidden' : ''}" data-widget-key="${esc(spec.key || '')}" data-widget-span="${safeSpan}">
         <div class="analyticsCardHeader">
             <div><h2>${esc(spec.title)}<button type="button" class="widgetInfo" aria-label="About ${esc(spec.title)}"${tooltip}>ⓘ</button></h2>${spec.subtitle ? `<p>${esc(spec.subtitle)}</p>` : ''}</div>
             ${statHtml}

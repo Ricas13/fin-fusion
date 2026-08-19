@@ -7,12 +7,30 @@
   const toggleButton = document.querySelector('[data-dashboard-customize-toggle]');
   const picker = document.querySelector('[data-widget-picker]');
   const resetButton = document.querySelector('[data-dashboard-reset]');
+  const layoutError = document.querySelector('[data-dashboard-layout-error]');
   let dirty = false;
 
   function csrfToken() {
     return root.getAttribute('data-csrf-token') || '';
   }
 
+  function showLayoutError(message) {
+    if (!layoutError) return;
+    layoutError.textContent = message;
+    layoutError.classList.remove('widgetHidden');
+  }
+
+  function clearLayoutError() {
+    if (!layoutError) return;
+    layoutError.textContent = '';
+    layoutError.classList.add('widgetHidden');
+  }
+
+  // Every registered widget has a DOM card (hidden ones included -- see
+  // admin-dashboard-page.js), so this always reflects the full layout, not
+  // just what happens to be visible right now. That's what makes a hidden
+  // widget survive an unrelated reorder/resize save: it's still in the DOM,
+  // still in this list, still marked invisible.
   function currentWidgets() {
     return [...root.querySelectorAll('[data-widget-key]')].map((card, index) => ({
       widgetKey: card.dataset.widgetKey,
@@ -25,13 +43,21 @@
   async function save() {
     if (!dirty) return;
     try {
-      await fetch(`/admin/api/dashboard/${encodeURIComponent(dashboardKey)}/layout`, {
+      const res = await fetch(`/admin/api/dashboard/${encodeURIComponent(dashboardKey)}/layout`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken() },
         body: JSON.stringify({ widgets: currentWidgets() })
       });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.ok) throw new Error((payload && payload.error) || `HTTP ${res.status}`);
       dirty = false;
-    } catch (_) { /* best-effort; layout stays as-is client-side */ }
+      clearLayoutError();
+    } catch (_) {
+      // Non-destructive: the current view is unaffected, but the change
+      // wasn't persisted, so keep `dirty` set and tell the admin plainly
+      // rather than silently discarding their edit.
+      showLayoutError('Your dashboard layout changes could not be saved. Nothing on screen was lost, but this change may not survive a reload -- try again.');
+    }
   }
 
   toggleButton?.addEventListener('click', () => {
@@ -56,7 +82,12 @@
     const card = root.querySelector(`[data-widget-key="${CSS.escape(key)}"]`);
     if (!card) return;
     card.classList.toggle('widgetHidden');
-    item.classList.toggle('active', !card.classList.contains('widgetHidden'));
+    const nowVisible = !card.classList.contains('widgetHidden');
+    item.classList.toggle('active', nowVisible);
+    if (nowVisible) {
+      const lazyBody = card.querySelector('[data-lazy-src]');
+      if (lazyBody) loadLazy(lazyBody);
+    }
     dirty = true;
   });
 
@@ -120,14 +151,22 @@
   [...root.querySelectorAll('[data-widget-key]')].forEach(card => card.setAttribute('draggable', 'true'));
 
   // Lazy widgets: fetch their fragment shortly after first paint so the initial
-  // page load isn't blocked on lower-priority queries.
-  const lazyBodies = [...root.querySelectorAll('[data-lazy-src]')];
+  // page load isn't blocked on lower-priority queries. Widgets that are
+  // currently hidden are skipped here -- there's no point fetching data the
+  // admin can't see -- and are instead loaded on demand from the picker
+  // handler above, the moment they're un-hidden.
   function loadLazy(el) {
+    if (el.dataset.lazyLoaded) return;
+    el.dataset.lazyLoaded = '1';
     fetch(el.getAttribute('data-lazy-src'))
       .then(res => res.json())
       .then(payload => { if (payload?.ok) el.innerHTML = payload.html; })
       .catch(() => { el.innerHTML = '<div class="analyticsEmpty widgetError">This widget could not be loaded.</div>'; });
   }
   const idle = window.requestIdleCallback || (fn => setTimeout(fn, 200));
-  lazyBodies.forEach(el => idle(() => loadLazy(el)));
+  [...root.querySelectorAll('[data-lazy-src]')].forEach(el => {
+    const card = el.closest('[data-widget-key]');
+    if (card && card.classList.contains('widgetHidden')) return;
+    idle(() => loadLazy(el));
+  });
 })();

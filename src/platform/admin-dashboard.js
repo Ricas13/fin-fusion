@@ -1,8 +1,9 @@
 'use strict';
 
-const { layout } = require('./admin-html');
+const { esc, layout } = require('./admin-html');
 const { renderMain } = require('./admin-dashboard-main');
-const { setupCompact, operationalAlerts, rangeControls } = require('./admin-dashboard-view');
+const { rangeControls } = require('./admin-dashboard-view');
+const { number } = require('./admin-dashboard-format');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
@@ -10,6 +11,27 @@ const runtimeSettings = require('./runtime-settings');
 
 function isNativeAdmin(req) {
     return Boolean(req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId);
+}
+
+// Page-chrome pieces specific to this dashboard's own layout (setup nudge +
+// operational alert row above the widget grid) -- kept local rather than
+// added to admin-dashboard-view.js, which is main's thin compatibility
+// facade for the legacy renderer and not meant to grow new exports.
+function setupCompact(s) {
+    const setup = s.setup;
+    if (!setup || setup.configuredCount >= setup.totalCount) return '';
+    return `<div class="setupCompact"><div><strong>Platform setup is not complete</strong><br><span>${esc(setup.configuredCount)} / ${esc(setup.totalCount)} configured · finish the optional setup areas when you are ready.</span></div><a class="button secondary" href="/admin/setup">Open Setup</a></div>`;
+}
+
+function operationalAlerts(s) {
+    const o = s.operational || {};
+    const items = [
+        [o.offline_servers, 'offline servers', '/admin/servers'],
+        [o.provisioning_problems, 'provisioning problems', '/admin/provisioning'],
+        [o.payment_errors_24h, 'payment errors · 24h', '/admin/payments'],
+        [o.request_sync_problems, 'request sync problems', '/admin/request-users']
+    ];
+    return `<div class="dashboardAlertRow">${items.map(([value, label, href]) => `<a class="dashboardAlert ${Number(value) ? 'warn' : ''}" href="${href}" style="text-decoration:none"><strong>${number(value)}</strong>${esc(label)}</a>`).join('')}</div>`;
 }
 
 function primaryAction(stats) {
