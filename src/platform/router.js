@@ -17,7 +17,6 @@ const { createAdminPaymentReconciliationRouter } = require('./admin-payment-reco
 const { createAdminStremioRouter } = require('./admin-stremio');
 const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
-const { createAdminPlanOrderRouter } = require('./admin-plan-order');
 const { createAdminFleetOperationsRouter } = require('./admin-fleet-operations');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPersonalNotificationPreferencesRouter } = require('./admin-personal-notification-preferences-v2');
@@ -100,7 +99,6 @@ function createRouter() {
     router.use(createAdminStremioSourcesRouter());
     router.use(createAdminStremioRouter());
     router.use(createAdminPlanDeliveryRouter());
-    router.use(createAdminPlanOrderRouter());
     router.use(createAdminFleetOperationsRouter());
     router.use(createAdminProfileAccountRouter());
     router.use(createAdminPersonalNotificationTestsRouter());
