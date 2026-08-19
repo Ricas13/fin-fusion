@@ -35,6 +35,7 @@ const { createCustomerActivityRouter } = require('./customer-activity');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
+const { createCustomerSupportRouter } = require('./customer-support');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerCommunicationsRouter, createMessagingBotWebhookRouter } = require('./customer-communications');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
@@ -80,6 +81,7 @@ function createRouter() {
     router.use(createCustomerStremioRouter());
     router.use(createCustomerAffiliateRouter());
     router.use(createCustomerDashboardRouter());
+    router.use(createCustomerSupportRouter());
     router.use(createAdminOperatorStateRouter());
     router.use(createAdminJellyfinLifecycleRouter());
     router.use(createAdminCustomerJellyfinPasswordRouter());
@@ -98,9 +100,6 @@ function createRouter() {
     router.use(createAdminPersonalNotificationTestsRouter());
     router.use(createAdminPersonalNotificationPreferencesRouter());
 
-    // The legacy notification module still contains personal routes for
-    // compatibility tests. Production only delegates the canonical global
-    // notification URL space to it; personal routes are owned by the v2 router.
     const globalNotificationRouter = createAdminNotificationPreferencesRouter();
     router.use(onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter));
 
@@ -127,10 +126,6 @@ function createRouter() {
         }
     });
 
-    // Only the three still-live compatibility routes and admin-actions are
-    // mounted in production. router-core remains temporarily available for
-    // compatibility tests but its replaced handlers are no longer constructed
-    // and then deleted from Express's private stack.
     router.use(createRuntimeLegacyRouter());
     return router;
 }
