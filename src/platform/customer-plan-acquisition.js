@@ -4,18 +4,13 @@ const express = require('express');
 const lifecycle = require('../payments/lifecycle');
 const routeRateLimit = require('../security/route-rate-limit');
 const { mutationGuard } = require('./customer-payment-return');
+const { requireCustomer } = require('./customer-session-guard');
 
 const trialFreeLimit = routeRateLimit.middleware({
     scope: 'customer-trial-free',
     max: 12,
     windowSeconds: 300
 });
-
-function requireCustomer(req, res, next) {
-    return req.session?.customerId && req.session?.customerUserId
-        ? next()
-        : res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account'));
-}
 
 function createCustomerPlanAcquisitionRouter() {
     const router = express.Router();
@@ -43,6 +38,5 @@ function createCustomerPlanAcquisitionRouter() {
 
 module.exports = {
     createCustomerPlanAcquisitionRouter,
-    requireCustomer,
     trialFreeLimit
 };
