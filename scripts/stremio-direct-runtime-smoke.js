@@ -51,6 +51,10 @@ assert(sessions.includes("'/Sessions?activeWithinSeconds=180'"),'managed concurr
 assert(sessions.includes('/Playing/Stop'),'managed concurrency must stop visible excess managed sessions');
 assert(sessions.includes('active.slice(limit)'),'cross-server reconciliation must preserve only the plan allowance');
 assert(sessions.includes('revokeInactiveMappings()'),'session reconciliation cycle must also enforce direct-token lifecycle cleanup');
+assert(sessions.includes('new Map(rows.map(row=>[String(row.server_id)'),'managed concurrency must deduplicate Jellyfin servers before polling sessions');
+assert(sessions.includes('Promise.allSettled(servers.map(fetchServerSessions))'),'managed concurrency must snapshot each managed server concurrently once per cycle');
+assert(!sessions.includes('accounts.map(sessionsFor)'),'managed session polling must not scale by customers × servers');
+assert(sessions.includes('snapshotServers(rows)'),'all entitlement reconciliation must reuse one server-session snapshot');
 assert(runtime.includes("managedSessions.start({intervalMs:15000})"),'managed session reconciliation must run continuously');
 
 console.log('stremio direct runtime smoke: ok');
