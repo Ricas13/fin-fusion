@@ -1,0 +1,18 @@
+name: UX Control Centre
+on:
+  pull_request:
+    paths:
+      - 'src/platform/**'
+      - 'views/customer/**'
+      - 'public/css/**'
+      - 'scripts/ux-control-centre-smoke.js'
+      - '.github/workflows/ux-control-centre.yml'
+jobs:
+  ux-control-centre:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/ux-control-centre-smoke.js
