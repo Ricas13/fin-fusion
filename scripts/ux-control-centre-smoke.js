@@ -42,6 +42,7 @@ assert(/Administrators cannot opt a customer into marketing/.test(customer),'mar
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
 assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'raw UUID workflow copy returned');
 assert(/COUNT\(ja\.id\) FILTER\(WHERE ja\.disabled=FALSE\)::int AS active_users/.test(bulk),'bulk server capacity labels must count every active managed Jellyfin identity');
+assert(/Permanent access — remove the permanent override before changing expiry/.test(bulk)&&/customer_entitlement_overrides/.test(bulk),'bulk expiry/extension actions must exclude active permanent-access customers');
 assert(/registerHandler\('migrate_server'/.test(bulkMigration)&&/createMigration/.test(bulkMigration)&&/executeMigration/.test(bulkMigration),'bulk server migration must execute through the controlled migration service');
 assert(/bulk-server-migration/.test(jobs),'automation worker must load the bulk server migration handler');
 assert(/accessKind/.test(serverMigration)&&/kind === 'paid'/.test(serverMigration),'server migration must distinguish free access from paid access');
