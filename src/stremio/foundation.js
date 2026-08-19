@@ -55,9 +55,9 @@ function parseFilenameMetadata(filename){
 }
 
 function streamDisplayFromFilename(filename,{prefix='CF ⚡'}={}){
-    const info=parseFilenameMetadata(filename),video=[info.source,info.codec,...info.dynamicRange].filter(Boolean),sound=[info.audio,info.channels].filter(Boolean),description=[];
+    const info=parseFilenameMetadata(filename),headline=[info.resolution||'Stream',info.source,info.codec].filter(Boolean),video=[info.source,info.codec,...info.dynamicRange].filter(Boolean),sound=[info.audio,info.channels].filter(Boolean),description=[];
     if(video.length)description.push(`🎞️ ${video.join(' • ')}`);if(sound.length)description.push(`🔊 ${sound.join(' • ')}`);if(info.releaseGroup)description.push(`🏷️ ${info.releaseGroup}`);
-    return {name:`[${prefix}] ${info.resolution||'Stream'}`,description:description.join('\n'),metadata:info};
+    return {name:`[${prefix}] ${headline.join(' • ')}`,description:description.join('\n'),metadata:info};
 }
 function bytesLabel(value){const bytes=Number(value||0);if(!(bytes>0))return'';const gb=bytes/(1024**3);return gb>=1?`${gb.toFixed(gb>=10?1:2)} GB`:`${(bytes/(1024**2)).toFixed(0)} MB`;}
 function richStreamDescription(display,media){
