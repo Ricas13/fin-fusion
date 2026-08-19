@@ -26,14 +26,13 @@ function sqlStatements(source) {
     return statements;
 }
 
-// Provider billing identities and provider-driven subscription state must remain
-// behind the lifecycle layer. lifecycle.js owns policy/orchestration; the
-// primitives module owns low-level provider persistence/event leasing.
 const PROVIDER_MUTATION_OWNERS = new Set([
     'src/payments/lifecycle-primitives.js',
     'src/payments/lifecycle.js',
     'src/payments/customer-plan-change.js'
 ]);
+
+const MANUAL_SUBSCRIPTION_OWNER = 'src/entitlements/manual-subscriptions.js';
 
 const ENTITLEMENT_CONSUMERS = [
     /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|placement|placement-preview|plan-servers)\.js$/,
@@ -44,6 +43,7 @@ const RAW_READ_EXCEPTIONS = new Set(['src/jellyfin/activity.js']);
 
 const failures = [];
 const sourceFiles = filesUnder(SRC);
+let manualOwnerHasInsert = false;
 for (const file of sourceFiles) {
     const name = rel(file);
     const source = fs.readFileSync(file, 'utf8');
@@ -60,6 +60,12 @@ for (const file of sourceFiles) {
         }
     }
 
+    const insertsSubscription = statements.some(sql => /\bINSERT\s+INTO\s+subscriptions\b/i.test(sql));
+    if (name === MANUAL_SUBSCRIPTION_OWNER) manualOwnerHasInsert = insertsSubscription;
+    if (['src/subscriptions.js', 'src/subscriptions-core.js'].includes(name) && insertsSubscription) {
+        failures.push(`${name}: manual subscription INSERT must delegate to ${MANUAL_SUBSCRIPTION_OWNER}`);
+    }
+
     if (ENTITLEMENT_CONSUMERS.some(pattern => pattern.test(name)) && !RAW_READ_EXCEPTIONS.has(name)) {
         const rawRead = statements.some(sql => /\b(?:FROM|JOIN)\s+subscriptions\b/i.test(sql));
         const canonical = /effective_customer_entitlements|subscription-state/.test(source);
@@ -67,8 +73,8 @@ for (const file of sourceFiles) {
     }
 }
 
-// The historical lifecycle-core path must never become a second implementation
-// again. Any direct importer receives the exact canonical lifecycle surface.
+if (!manualOwnerHasInsert) failures.push(`${MANUAL_SUBSCRIPTION_OWNER}: canonical manual subscription INSERT is missing`);
+
 const lifecycleCore = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle-core.js'), 'utf8');
 const lifecycle = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle.js'), 'utf8');
 const primitives = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle-primitives.js'), 'utf8');
@@ -90,9 +96,6 @@ for (const highLevel of ['startFreeTrial', 'claimFreePlan', 'getProviderPlan', '
     }
 }
 
-// subscriptions.js is the stable compatibility service. Keep the historical
-// subscriptions-core path as an alias so direct imports cannot create another
-// independent manual/provider compatibility implementation.
 const subscriptions = fs.readFileSync(path.join(SRC, 'subscriptions.js'), 'utf8');
 const subscriptionsCore = fs.readFileSync(path.join(SRC, 'subscriptions-core.js'), 'utf8');
 if (!/module\.exports\s*=\s*require\(['"]\.\/subscriptions['"]\)/.test(subscriptionsCore)) {
@@ -105,6 +108,9 @@ for (const exported of ['getPlanByCode', 'createManualSubscription', 'applyProvi
     if (!new RegExp(`\\b(?:async\\s+)?function\\s+${exported}\\b`).test(subscriptions)) {
         failures.push(`src/subscriptions.js: canonical subscriptions service must own ${exported}`);
     }
+}
+if (!subscriptions.includes("require('./entitlements/manual-subscriptions')")) {
+    failures.push('src/subscriptions.js: manual subscription creation must delegate to entitlement owner');
 }
 
 const migrationDir = path.join(ROOT, 'db', 'migrations');
