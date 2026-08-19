@@ -10,6 +10,8 @@ const policy=read('src/entitlements/jellyfin-lifecycle-policy.js');
 const jobs=read('src/automation/jobs.js');
 const pool=read('src/stremio/source-pool.js');
 const runtime=read('src/stremio/runtime.js');
+const managed=read('src/stremio/managed-runtime.js');
+const external=read('src/stremio/external-direct-runtime.js');
 const admin=read('src/platform/admin-stremio-sources.js');
 
 for(const expected of ['freeNoPlaybackDays:7','freeDeleteAfterDisableDays:7','trialDeleteAfterDisableDays:30','paidDeleteAfterDisableDays:30'])assert(policy.includes(expected),`missing default ${expected}`);
@@ -20,11 +22,14 @@ assert(jobs.includes('async customer_inactivity(){return jellyfinLifecycle.run()
 assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
 assert(/source_kind = 'owned'::text\) OR \(authorization_confirmed = true/.test(migration),'external Stremio sources must require authorization');
 assert(pool.includes('Confirm that you are authorized'),'external source connection must enforce authorization');
-assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTAiNFiN attribution');
-assert(runtime.indexOf('sourcePool.streamsFor')<runtime.indexOf('jellyfin.streamsFor'),'external Stremio Sources must be attempted before legacy managed fallback');
-assert(runtime.includes('!explicit')&&pool.includes('if(explicit)return mapped.rows'),'explicit plan source mappings must not fail open to unrelated sources or managed delivery');
+assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTaINFiN attribution for operator-side source diagnostics');
+assert(runtime.includes('managedRuntime.streamsFor')&&runtime.includes('externalRuntime.streamsFor'),'Stremio runtime must own separate managed and external resolution classes');
+assert(runtime.includes('const streams=[...managed,...external]'),'managed Stremio results must be returned before external results');
+assert(runtime.includes('Promise.all(['),'managed and external result classes must resolve concurrently');
+assert(managed.includes('/PlaybackInfo?'),'only managed Jellyfin delivery should negotiate PlaybackInfo');
+assert(!external.includes('/PlaybackInfo'),'external Jellyfin delivery must remain unmanaged and PlaybackInfo-free');
 assert(admin.includes('The upstream Jellyfin owner can still see activity'),'operator UI must be transparent about upstream activity visibility');
-assert(admin.includes('Password is not stored')&&admin.includes('choose its libraries'),'operator UI must explain credential and indexing boundaries');
-assert(sourceMigration.includes('plan_stremio_sources')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support source-only entitlements without weakening legacy managed integrity');
+assert(admin.includes('Password is not stored')&&admin.includes('choose its libraries'),'operator UI must explain external credential and indexing boundaries');
+assert(sourceMigration.includes('plan_stremio_sources')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support external source mappings without weakening managed identity integrity');
 assert(migration.includes('portal customer'),'migration must document portal identity invariant');
 console.log('Jellyfin lifecycle + Stremio Sources smoke: OK');
