@@ -12,6 +12,7 @@ const plans=read('src/platform/admin-plans.js');
 const registry=read('src/platform/settings-registry.js');
 const dashboard=read('views/customer/dashboard.ejs');
 const css=read('public/css/customer-360.css');
+const customerNav=read('public/css/customer-navigation.css');
 assert(/Customer control centre/.test(customer),'customer control centre missing');
 assert(/Make permanent/.test(customer)&&/Remove permanent access/.test(customer)&&/permanentAccess\.enable/.test(customer),'permanent customer access controls missing');
 assert(/providerBillingChanged:false/.test(permanent)&&/previous_automation_protected/.test(permanent),'permanent access must preserve billing and cleanup state');
@@ -26,4 +27,7 @@ assert(/serviceKind/.test(plans)&&/Stremio-only plan/.test(plans),'service-aware
 assert(/Individual customer overrides/.test(registry)&&/ownerForSetting/.test(registry),'settings registry missing customer ownership');
 assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
 assert(/controlCentreSummary/.test(css),'customer control centre styling missing');
+assert(/grid-template-columns:var\(--customer-nav-width\) minmax\(0,1fr\)/.test(customerNav),'signed-in customer subpages must use a left navigation shell on desktop');
+assert(/position:sticky/.test(customerNav)&&/My account/.test(customerNav),'customer navigation must remain obvious while moving through account pages');
+assert(/@media\(max-width:900px\)/.test(customerNav)&&/overflow-x:auto/.test(customerNav),'customer navigation must collapse safely on smaller screens');
 console.log('ux control centre smoke: ok');
