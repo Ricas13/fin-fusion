@@ -1,7 +1,7 @@
 'use strict';
 
 const {esc}=require('./admin-html');
-const {money,hours,barChart,areaChart,rangeControls}=require('./admin-dashboard-view');
+const {money,hours,barChart,areaChart,rangeControls}=require('./admin-dashboard-view-utils');
 function number(value,digits=0){return Number(value||0).toLocaleString('en-GB',{maximumFractionDigits:digits})}
 function dt(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})}
 function shortDate(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
