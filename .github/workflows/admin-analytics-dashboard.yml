@@ -49,6 +49,8 @@ jobs:
           node --check src/platform/admin-dashboard-view.js
           node --check src/platform/admin-dashboard.js
           node --check scripts/admin-analytics-dashboard-smoke.js
+      - name: Retired prospective forecast stays removed
+        run: test ! -e src/platform/admin-revenue-forecast.js
       - name: Apply database migrations
         run: npm run db:migrate
       - name: Period, revenue and PostgreSQL analytics smoke
