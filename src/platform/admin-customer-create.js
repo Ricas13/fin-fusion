@@ -60,21 +60,6 @@ async function createCustomer(req, res) {
             `, [username, email]);
             if (exists.rowCount) throw Object.assign(new Error('exists'), { code: '23505' });
 
-            let plan = null;
-            if (provisioningMode !== 'portal_only') {
-                const found = await client.query(`
-                    SELECT * FROM plans
-                    WHERE code=$1
-                      AND active=TRUE
-                      AND archived_at IS NULL
-                      AND (effective_from IS NULL OR effective_from<=NOW())
-                      AND (effective_until IS NULL OR effective_until>NOW())
-                      AND audience IN('direct','both')
-                `, [planCode]);
-                if (!found.rowCount) throw new Error('Choose an active direct-customer plan.');
-                plan = found.rows[0];
-            }
-
             const user = await client.query(`
                 INSERT INTO app_users(email,username,password_hash,role,active,email_verified_at)
                 VALUES($1,$2,$3,'customer',FALSE,NOW())
@@ -87,13 +72,17 @@ async function createCustomer(req, res) {
                 RETURNING id
             `, [user.rows[0].id, display, email, provisioningMode]);
 
-            const subscription = plan
-                ? await adminGrants.createAdminGrantTx(client, {
+            let plan = null;
+            let subscription = null;
+            if (provisioningMode !== 'portal_only') {
+                const grant = await adminGrants.createAdminGrantByPlanCodeTx(client, {
                     customerId: customer.rows[0].id,
-                    plan,
+                    planCode,
                     actorUserId: req.session.authUserId
-                })
-                : null;
+                });
+                plan = grant.plan;
+                subscription = grant.subscription;
+            }
 
             await client.query(`
                 INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
