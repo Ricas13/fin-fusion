@@ -49,11 +49,18 @@ async function hardDeletePortalCustomer(customerId,{actorUserId=null,reason='Por
     await client.query('DELETE FROM playback_history WHERE customer_id=$1',[customerId]);
     await client.query('DELETE FROM stream_policy_events WHERE customer_id=$1',[customerId]);
     await client.query('DELETE FROM affiliate_credit_ledger WHERE referred_customer_id=$1',[customerId]);
-    await client.query('DELETE FROM audit_log WHERE entity_type=$1 AND entity_id=$2',['customer',String(customerId)]);
+    // Audit history is intentionally append-only. Keep historical customer events
+    // and only allow PostgreSQL to clear actor_user_id when the deleted portal
+    // user itself appears as an audit actor via the ON DELETE SET NULL FK.
     await client.query('DELETE FROM customers WHERE id=$1',[customerId]);
     if(row.user_id){
       await client.query('DELETE FROM auth_events WHERE user_id=$1',[row.user_id]);
-      await client.query(`DELETE FROM app_users WHERE id=$1 AND role='customer' AND NOT EXISTS(SELECT 1 FROM customers WHERE user_id=$1)`,[row.user_id]);
+      await client.query("SELECT set_config('steamfusion.allow_audit_mutation','on',true)");
+      try{
+        await client.query(`DELETE FROM app_users WHERE id=$1 AND role='customer' AND NOT EXISTS(SELECT 1 FROM customers WHERE user_id=$1)`,[row.user_id]);
+      }finally{
+        await client.query("SELECT set_config('steamfusion.allow_audit_mutation','off',true)");
+      }
     }
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.hard_delete','customer_deleted',$2,$3::jsonb)`,[actorUserId,String(customerId),JSON.stringify({reason,jellyfin:{total:jellyfin.total,deleted:jellyfin.deleted,alreadyMissing:jellyfin.alreadyMissing}})]);
   });
