@@ -65,6 +65,26 @@ async function revenueMixByService(currency) {
     return result.rows;
 }
 
+async function revenueByPlan(currency, asOf = new Date()) {
+    const result = await query(`
+        SELECT p.name,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor,COUNT(*)::int subscriptions
+        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        WHERE ${MRR_FILTER} AND COALESCE(s.currency_snapshot,p.currency)=$2
+        GROUP BY p.id,p.name ORDER BY amount_minor DESC
+    `, [asOf, currency]);
+    return result.rows;
+}
+
+async function revenueByBillingInterval(currency, asOf = new Date()) {
+    const result = await query(`
+        SELECT COALESCE(s.billing_interval_snapshot,p.billing_interval) name,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor,COUNT(*)::int subscriptions
+        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        WHERE ${MRR_FILTER} AND COALESCE(s.currency_snapshot,p.currency)=$2
+        GROUP BY 1 ORDER BY amount_minor DESC
+    `, [asOf, currency]);
+    return result.rows;
+}
+
 async function recentCustomers(limit = 8) {
     const result = await query(`SELECT id,display_name,email,created_at FROM customers ORDER BY created_at DESC LIMIT $1`, [limit]);
     return result.rows;
@@ -183,4 +203,4 @@ async function renderMain(req) {
     return { ctx, html };
 }
 
-module.exports = { renderMain, buildContext, mrrByCurrency, primaryMrr, churnRate, revenueMixByService };
+module.exports = { renderMain, buildContext, mrrByCurrency, primaryMrr, churnRate, revenueMixByService, revenueByPlan, revenueByBillingInterval };
