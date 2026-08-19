@@ -19,6 +19,7 @@ function weight(value) {
     const parsed = Number.parseInt(String(value || ''), 10);
     return Number.isInteger(parsed) && parsed >= 1 && parsed <= 10000 ? parsed : 100;
 }
+function jellyfinPlan(plan){return ['jellyfin','bundle'].includes(String(plan?.service_type||'jellyfin'));}
 
 async function planById(id) {
     const result = await query('SELECT * FROM plans WHERE id=$1', [id]);
@@ -26,6 +27,7 @@ async function planById(id) {
 }
 
 async function savePlacement(req, plan) {
+    if(!jellyfinPlan(plan))throw new Error('This is a Stremio-only plan. Jellyfin server placement does not apply.');
     const strategy = placement.normalizeStrategy(req.body.placementStrategy);
     const poolMode = req.body.poolMode === 'selected' ? 'selected' : 'all';
     const requestedIds = list(req.body.serverIds);
@@ -64,14 +66,12 @@ async function savePlacement(req, plan) {
 function createAdminPlanPlacementRouter() {
     const router = express.Router();
     router.use('/admin/plans', gate, noStore);
-    // GET is intentionally owned by admin-plan-placement-fleet.js, which renders
-    // the live Jellyfin/fleet-aware placement dashboard. This router owns only
-    // the mutation so exact method/path ownership stays unambiguous.
     router.post('/admin/plans/:id/placement', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             const plan = await planById(req.params.id);
             if (!plan) return res.status(404).send('Plan not found');
+            if(!jellyfinPlan(plan))return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?error=${encodeURIComponent('This is a Stremio-only plan. Jellyfin server placement does not apply.')}`);
             await savePlacement(req, plan);
             return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/placement?message=${encodeURIComponent('Server placement saved.')}`);
         } catch (error) {
@@ -82,4 +82,4 @@ function createAdminPlanPlacementRouter() {
     return router;
 }
 
-module.exports = { createAdminPlanPlacementRouter, savePlacement };
+module.exports = { createAdminPlanPlacementRouter, savePlacement, jellyfinPlan };
