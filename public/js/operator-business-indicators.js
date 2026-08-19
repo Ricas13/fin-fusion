@@ -3,29 +3,69 @@
 (() => {
   const hrefByKey={customers:'/admin/users',orders:'/admin/orders',tickets:'/admin/tickets'};
   const labelByKey={
-    customers:['Customers','New customers in the last 7 days'],
-    orders:['Orders','New paid orders in the last 7 days'],
-    tickets:['Tickets','Tickets waiting for staff']
+    customers:['Customers','New customers since you last reviewed Customers'],
+    orders:['Orders','New paid orders since you last reviewed Orders'],
+    tickets:['Tickets','New tickets or customer replies since you last reviewed Tickets']
   };
   const operationalLabels={
     attention:['Needs Attention','Open operational issues','/admin/attention'],
     servers:['Servers','Offline or degraded fleet signals','/admin/servers'],
     payments:['Payments','Recent payment incidents','/admin/payments']
   };
-  function seen(href){try{return Number(localStorage.getItem(`captainfin.operator.seen.${href}`)||0)}catch{return 0}}
-  function unreadBusinessCount(data,key){const href=hrefByKey[key],count=Number(data.counts?.[key]||0),updatedAt=Number(data.updatedAt?.[key]||0);if(!href||count<=0||!updatedAt||seen(href)>=updatedAt)return 0;return count;}
-  function addSidebarBadge(key,count,updatedAt){const href=hrefByKey[key];if(!href||count<=0||!updatedAt||seen(href)>=updatedAt)return;const link=[...document.querySelectorAll('.adminTab')].find(a=>(a.getAttribute('href')||'').split('?')[0]===href);if(!link||link.querySelector('.unreadBadge'))return;const badge=document.createElement('span');badge.className='unreadBadge';badge.textContent=count>99?'99+':String(count);badge.setAttribute('aria-label',`${count} unread`);link.appendChild(badge);}
+  const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
+  const areaForCurrentPage=Object.entries(hrefByKey).find(([,href])=>normalizedPath===href)?.[0]||null;
+
+  function addSidebarBadge(key,count){
+    const href=hrefByKey[key];
+    if(!href||count<=0||key===areaForCurrentPage)return;
+    const link=[...document.querySelectorAll('.adminTab')].find(a=>(a.getAttribute('href')||'').split('?')[0]===href);
+    if(!link||link.querySelector('.unreadBadge'))return;
+    const badge=document.createElement('span');
+    badge.className='unreadBadge';
+    badge.textContent=count>99?'99+':String(count);
+    badge.setAttribute('aria-label',`${count} unread`);
+    link.appendChild(badge);
+  }
+
   function apply(data){
     if(!data?.counts)return;
-    Object.keys(hrefByKey).forEach(key=>addSidebarBadge(key,Number(data.counts[key]||0),Number(data.updatedAt?.[key]||0)));
-    const operationalRows=Object.entries(operationalLabels).map(([key,[label,meta,href]])=>({key,label,meta,href,count:Number(data.counts[key]||0)})).filter(row=>row.count>0);
-    const businessRows=Object.entries(labelByKey).map(([key,[label,meta]])=>({key,label,meta,href:hrefByKey[key],count:unreadBusinessCount(data,key)})).filter(row=>row.count>0);
+    if(areaForCurrentPage)data.counts[areaForCurrentPage]=0;
+    Object.keys(hrefByKey).forEach(key=>addSidebarBadge(key,Number(data.counts[key]||0)));
+    const operationalRows=Object.entries(operationalLabels)
+      .map(([key,[label,meta,href]])=>({key,label,meta,href,count:Number(data.counts[key]||0)}))
+      .filter(row=>row.count>0);
+    const businessRows=Object.entries(labelByKey)
+      .map(([key,[label,meta]])=>({key,label,meta,href:hrefByKey[key],count:Number(data.counts[key]||0)}))
+      .filter(row=>row.count>0);
     const rows=[...operationalRows,...businessRows];
     const total=rows.reduce((sum,row)=>sum+row.count,0);
     const top=document.querySelector('[data-operator-alerts]');
-    if(top){const count=top.querySelector('[data-operator-alert-count]');top.classList.toggle('warn',total>0);top.classList.toggle('clear',total<=0);top.setAttribute('aria-label',total>0?`${total} operator item${total===1?'':'s'} need review`:'System status clear');top.title=total>0?`${total} operator item${total===1?'':'s'} need review`:'System status clear';if(count)count.textContent=total>0?(total>99?'99+':String(total)):'Clear';}
+    if(top){
+      const count=top.querySelector('[data-operator-alert-count]');
+      top.classList.toggle('warn',total>0);
+      top.classList.toggle('clear',total<=0);
+      top.setAttribute('aria-label',total>0?`${total} operator item${total===1?'':'s'} need review`:'System status clear');
+      top.title=total>0?`${total} operator item${total===1?'':'s'} need review`:'System status clear';
+      if(count)count.textContent=total>0?(total>99?'99+':String(total)):'Clear';
+    }
     const menu=document.querySelector('[data-operator-alert-list]');
     if(menu)menu.innerHTML=rows.length?rows.map(row=>`<a class="topStatusItem" href="${row.href}"><span><strong>${row.label}</strong><br>${row.meta}</span><em>${row.count>99?'99+':row.count}</em></a>`).join(''):'<div class="topStatusEmpty">No visible alerts right now.</div>';
   }
-  setTimeout(()=>fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin'}).then(r=>r.ok?r.json():null).then(apply).catch(()=>{}),80);
+
+  function markCurrentAreaRead(data){
+    if(!areaForCurrentPage||!data?.csrfToken)return Promise.resolve();
+    const body=new URLSearchParams({area:areaForCurrentPage});
+    return fetch('/admin/api/operator-state/read',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-CSRF-Token':data.csrfToken,Accept:'application/json'},
+      body:body.toString(),
+      keepalive:true
+    }).then(()=>{}).catch(()=>{});
+  }
+
+  setTimeout(()=>fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin'})
+    .then(r=>r.ok?r.json():null)
+    .then(data=>{if(!data)return;apply(data);return markCurrentAreaRead(data);})
+    .catch(()=>{}),80);
 })();
