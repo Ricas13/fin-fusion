@@ -43,6 +43,7 @@ const db = String(packageJson.scripts?.['check:db'] || '');
 const releaseWorkflow = fs.readFileSync(path.join(workflowDir, 'release-integrity.yml'), 'utf8');
 const ciWorkflow = fs.readFileSync(path.join(workflowDir, 'ci.yml'), 'utf8');
 const adversarialWorkflow = fs.readFileSync(path.join(workflowDir, 'adversarial-concurrency.yml'), 'utf8');
+const provisioningWorkflow = fs.readFileSync(path.join(workflowDir, 'provisioning-control.yml'), 'utf8');
 
 if (!fast.includes('lifecycle-provider-scheduling-smoke.js')) {
   throw new Error('Provider scheduling lifecycle coverage must remain in check:fast.');
@@ -66,4 +67,14 @@ for (const unique of ['adversarial-concurrency-smoke.js', 'referral-safety-smoke
   if (!adversarialWorkflow.includes(unique)) throw new Error(`Adversarial workflow lost unique coverage: ${unique}`);
 }
 
-console.log(`workflow trigger/suite hygiene: ok (${files.length} workflows; fast suite owned by CI; lifecycle coverage split across CI + Release)`);
+if (!fast.includes('provisioning-control-smoke.js')) {
+  throw new Error('Pure provisioning-control coverage must remain in check:fast.');
+}
+if (provisioningWorkflow.includes('provisioning-control-smoke.js')) {
+  throw new Error('Provisioning Control must not rerun the pure smoke already owned by CI.');
+}
+if (!provisioningWorkflow.includes('provisioning-control-db-smoke.js')) {
+  throw new Error('Provisioning Control must retain its unique zero-server database integration test.');
+}
+
+console.log(`workflow trigger/suite hygiene: ok (${files.length} workflows; fast suite owned by CI; lifecycle/provisioning duplicates removed)`);
