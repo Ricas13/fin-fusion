@@ -63,6 +63,12 @@ function providerMetric(status, label) {
     return `<div class="metric"><div class="metricLabel">${esc(label)}</div><div class="metricValue small ${kind}">${esc(value)}</div><div class="subText">${esc(source)}</div></div>`;
 }
 
+function workflowIntro(d) {
+    const failedEvents = d.events.filter(event => event.failed).length;
+    const subscriptionStates = d.subscriptions.reduce((sum, row) => sum + Number(row.count || 0), 0);
+    return `<section class="section paymentWorkflowIntro"><div class="sectionHead"><div><h2>Payment workflow</h2><div class="muted">Setup controls and live payment problems are separated so daily operations do not feel like provider configuration.</div></div></div><div class="quick-actions"><a class="quick-action" href="#provider-setup"><strong>Provider setup</strong><span>Configure Stripe, PayPal, credentials, webhooks and connection tests.</span></a><a class="quick-action" href="#payment-operations"><strong>Operational monitoring</strong><span>${esc(subscriptionStates)} tracked subscription state${subscriptionStates === 1 ? '' : 's'} and ${esc(failedEvents)} failed recent provider event${failedEvents === 1 ? '' : 's'}.</span></a><a class="quick-action" href="/admin/commerce#payment-incidents"><strong>Payment incidents</strong><span>Customer-impacting failures, assignment, acknowledgement and resolution live in Commerce.</span></a></div></section>`;
+}
+
 function secretField(name, label, help, configured = false) {
     return `<div class="formGroup"><label>${esc(label)}</label><input class="input" type="password" name="${esc(name)}" autocomplete="new-password" placeholder="${configured ? 'Configured — leave blank to keep current value' : 'Enter value'}"><div class="inlineHelp">${esc(help)}</div><label class="toggleRow compact"><input type="checkbox" name="clear_${esc(name)}"><span>Clear saved value</span></label></div>`;
 }
@@ -78,7 +84,7 @@ function setupSteps(provider,url){
 
 function stripeForm(req, status,url) {
     const badge = !status.enabled ? pill('Disabled', 'warn') : status.configured ? pill(status.webhookConfigured ? 'Ready' : 'Webhook missing', status.webhookConfigured ? 'good' : 'warn') : pill('Not configured');
-    return `<section class="section"><div class="sectionHead"><div><h2>Stripe</h2><div class="muted">Checkout, recurring billing and verified event delivery in one setup flow.</div></div>${badge}</div>
+    return `<section class="section" id="stripe-provider"><div class="sectionHead"><div><h2>Stripe</h2><div class="muted">Checkout, recurring billing and verified event delivery in one setup flow.</div></div>${badge}</div>
     <details class="operatorDisclosure" ${!status.webhookConfigured?'open':''}><summary>Where do I get the Stripe webhook?</summary>${setupSteps('stripe',url)}</details>
     <form class="formPanel" method="post" action="/admin/payments/stripe">${csrfInput(req)}
       <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable Stripe gateway</strong><small class="muted">When disabled, Stripe checkout and webhook handling are unavailable while saved credentials are retained.</small></span></label>
@@ -95,7 +101,7 @@ function stripeForm(req, status,url) {
 
 function paypalForm(req, status,url) {
     const badge = !status.enabled ? pill('Disabled', 'warn') : status.configured ? pill(status.webhookConfigured ? 'Ready' : 'Webhook missing', status.webhookConfigured ? 'good' : 'warn') : pill('Not configured');
-    return `<section class="section"><div class="sectionHead"><div><h2>PayPal</h2><div class="muted">REST credentials, environment and verified recurring-event delivery.</div></div>${badge}</div>
+    return `<section class="section" id="paypal-provider"><div class="sectionHead"><div><h2>PayPal</h2><div class="muted">REST credentials, environment and verified recurring-event delivery.</div></div>${badge}</div>
     <details class="operatorDisclosure" ${!status.webhookConfigured?'open':''}><summary>Where do I get the PayPal webhook ID?</summary>${setupSteps('paypal',url)}</details>
     <form class="formPanel" method="post" action="/admin/payments/paypal">${csrfInput(req)}
       <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable PayPal gateway</strong><small class="muted">Disabling PayPal preserves the saved credentials but removes it from checkout.</small></span></label>
@@ -115,10 +121,10 @@ async function page(req) {
     await Promise.all([providerSettings.ensureLoaded(),runtimeSettings.ensureLoaded()]);
     const d = await paymentsData(req);
     const stored = d.paymentCustomers.reduce((n, row) => n + Number(row.count || 0), 0);
-    const metrics = `<div class="metrics">${providerMetric(d.stripeStatus, 'Stripe')}${providerMetric(d.paypalStatus, 'PayPal')}<div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div>`;
-    const state = `<section class="section"><div class="sectionHead"><h2>Subscription state</h2><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div>${d.subscriptions.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Source</th><th>Status</th><th>Count</th></tr></thead><tbody>${d.subscriptions.map(x => `<tr><td>${esc(x.source)}</td><td>${pill(x.status)}</td><td>${esc(x.count)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No subscriptions yet.</div>'}</section>`;
+    const metrics = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider setup</h2><div class="muted">Gateway readiness, saved credentials and webhook delivery. These controls affect checkout availability.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="metrics">${providerMetric(d.stripeStatus, 'Stripe')}${providerMetric(d.paypalStatus, 'PayPal')}<div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
+    const state = `<section class="section" id="payment-operations"><div class="sectionHead"><div><h2>Operational payment state</h2><div class="muted">Read-only subscription counts from local records. Customer-impacting exceptions are handled in Commerce incidents.</div></div><a class="button secondary btn-sm" href="/admin/commerce#payment-incidents">Open incidents</a></div>${d.subscriptions.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Source</th><th>Status</th><th>Count</th></tr></thead><tbody>${d.subscriptions.map(x => `<tr><td>${esc(x.source)}</td><td>${pill(x.status)}</td><td>${esc(x.count)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No subscriptions yet.</div>'}</section>`;
     const events = `<section class="section"><div class="sectionHead"><h2>Recent provider events</h2><span class="muted">Use this to confirm your public webhook is actually receiving and processing events.</span></div>${d.events.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${d.events.map(x => `<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill(x.failed ? 'error' : 'ok', x.failed ? 'bad' : 'good')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="emptyAction"><div><strong>No webhook events received yet.</strong><div>Finish one of the setup guides above and send a provider test/checkout event.</div></div></div>'}</section>`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Set up checkout, recurring billing and webhook verification without leaving the workflow', body: `${notice(req)}${metrics}${stripeForm(req, d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req, d.paypalStatus,d.webhookUrls.paypal)}${state}${events}` });
+    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider setup is separated from operational payment monitoring and customer incidents', body: `${notice(req)}${workflowIntro(d)}${metrics}${stripeForm(req, d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req, d.paypalStatus,d.webhookUrls.paypal)}${state}${events}` });
 }
 
 function createAdminPaymentSettingsRouter() {

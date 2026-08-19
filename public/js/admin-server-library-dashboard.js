@@ -70,8 +70,11 @@
             });
             if (visibleLabel) visibleLabel.textContent = `${visible} / ${rows.length} ${rows.length === 1 ? 'library' : 'libraries'}`;
             root.querySelectorAll('[data-library-sort-button]').forEach(button => {
-                button.classList.toggle('active', button.dataset.librarySortButton === sortKey);
-                button.dataset.direction = button.dataset.librarySortButton === sortKey ? sortDirection : '';
+                const active = button.dataset.librarySortButton === sortKey;
+                button.classList.toggle('active', active);
+                button.dataset.direction = active ? sortDirection : '';
+                const state = button.querySelector('[data-sort-state]');
+                if (state) state.textContent = active ? (sortDirection === 'asc' ? 'Ascending' : 'Descending') : 'Not sorted';
             });
         }
 
