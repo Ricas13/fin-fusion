@@ -7,12 +7,11 @@ const placement=require('./placement');
 
 function accessKind(plan){if(plan?.billing_interval==='trial')return'trial';return Number(plan?.price_minor||0)===0?'free':'paid';}
 function serviceType(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
-async function activeAccounts(customerId){const r=await query(`SELECT ja.*,js.name AS server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND COALESCE(ja.account_purpose,'primary')='primary' ORDER BY ja.is_primary DESC,ja.updated_at DESC`,[customerId]);return r.rows;}
+async function activeAccounts(customerId){const r=await query(`SELECT ja.*,js.name AS server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.updated_at DESC`,[customerId]);return r.rows;}
 // max_users is a server-wide managed Jellyfin-account capacity. Stremio-internal
 // identities consume real Jellyfin users too, so capacity checks must count all
 // active managed identities even though customer assignment itself only targets
-// the customer's primary Jellyfin identity. This matches automatic placement and
-// the Servers UI.
+// account_purpose='jellyfin'. This matches automatic placement and Servers UI.
 async function assignedUsers(serverId){const r=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`,[serverId]);return Number(r.rows[0]?.n||0);}
 function admissionAllowed(plan,server){const kind=accessKind(plan);if(kind==='trial'&&!server.trial_enabled)return false;if(kind==='paid'&&!server.paid_enabled)return false;return true;}
 
@@ -45,18 +44,18 @@ async function assign(customerId,targetServerId,{actorUserId=null}={}){
   const libraries=await provisioning.resolveLibraryAccessForServer(server.id,effective.unrestricted,effective.visibleNames,false);
   if(libraries.missing.length)throw new Error(`${server.name} is missing required libraries: ${libraries.missing.join(', ')}.`);
 
-  const previous=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND COALESCE(account_purpose,'primary')='primary' ORDER BY updated_at DESC LIMIT 1`,[customerId,server.id]);
+  const previous=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND account_purpose='jellyfin' ORDER BY updated_at DESC LIMIT 1`,[customerId,server.id]);
   let account,reused=false;
   if(previous.rowCount){
     account=previous.rows[0];
     await provisioning.applyPolicy(account,effective,false);
     await provisioning.markPrimaryAccount(customerId,account.id);
-    await query(`UPDATE jellyfin_accounts SET disabled=FALSE,password_setup_required=TRUE,password_reset_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
-    account={...account,disabled:false,is_primary:true,password_setup_required:true,password_reset_required:true};reused=true;
+    await query(`UPDATE jellyfin_accounts SET disabled=FALSE,password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
+    account={...account,disabled:false,is_primary:true,password_setup_required:true};reused=true;
   }else{
     account=await provisioning.createJellyfinAccount(customerId,server,effective,{makePrimary:true});
-    await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,password_reset_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
-    account.password_setup_required=true;account.password_reset_required=true;
+    await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`,[account.id]);
+    account.password_setup_required=true;
   }
 
   await query(`INSERT INTO customer_provisioning_state(customer_id,status,attempt_count,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at) VALUES($1,'healthy',1,0,NULL,NOW(),NOW(),NULL,$2,$3,$4,$5,$6::jsonb,NOW()) ON CONFLICT(customer_id) DO UPDATE SET status='healthy',consecutive_failures=0,last_error=NULL,last_attempt_at=NOW(),last_success_at=NOW(),next_attempt_at=NULL,subscription_id=EXCLUDED.subscription_id,plan_id=EXCLUDED.plan_id,jellyfin_account_id=EXCLUDED.jellyfin_account_id,server_id=EXCLUDED.server_id,last_result=EXCLUDED.last_result,updated_at=NOW()`,[customerId,state.entitlement.subscription_id,state.entitlement.plan_id,account.id,server.id,JSON.stringify({manualAssignment:true,reusedExistingAccount:reused,serverName:server.name})]);
