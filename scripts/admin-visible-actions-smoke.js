@@ -45,6 +45,8 @@ assert(publicFeedback.includes("hasAttribute?.(name)"),'Enhanced forms must dist
 assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formaction')"),'Enhanced forms must only honor explicit formaction overrides');
 assert(!publicFeedback.includes('submitter?.formAction || form.action'),'Reflected formAction must never override a form action implicitly');
 assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formmethod')"),'Enhanced forms must only honor explicit formmethod overrides');
+assert(publicFeedback.includes('async function renderHtmlResponse(response)'),'Enhanced forms must display successful POST-rendered HTML pages');
+assert(!publicFeedback.includes('finalUrl.href !== window.location.href'),'Enhanced forms must not turn successful POST-rendered pages into GET navigations');
 
 const settings=navModel.groups.find(group=>group.key==='settings'),automation=navModel.groups.find(group=>group.key==='automation'),dashboard=navModel.groups.find(group=>group.key==='dashboard');
 assert(settings&&automation&&dashboard,'Core navigation groups must exist');

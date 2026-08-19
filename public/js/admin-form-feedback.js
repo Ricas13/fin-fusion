@@ -136,6 +136,13 @@
         return `Request failed (${response.status}).`;
     }
 
+    async function renderHtmlResponse(response) {
+        const text = await response.text();
+        document.open();
+        document.write(text);
+        document.close();
+    }
+
     async function submitEnhanced(event) {
         if (event.defaultPrevented) return;
         const form = event.currentTarget;
@@ -169,7 +176,9 @@
             const disposition = response.headers.get('content-disposition') || '';
             if (/attachment/i.test(disposition)) { await downloadResponse(response); return; }
             if (!response.ok) { showFeedback(form, await responseMessage(response), null); return; }
-            if (response.redirected || finalUrl.href !== window.location.href) { window.location.assign(finalUrl.href); return; }
+            if (response.redirected) { window.location.assign(finalUrl.href); return; }
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.includes('text/html')) { await renderHtmlResponse(response); return; }
             window.location.reload();
         } catch (_) {
             showFeedback(form, 'The request could not be completed. Check your connection and try again.', null);
