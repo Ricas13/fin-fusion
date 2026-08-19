@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'src/platform/storefront.js'
+      - 'src/platform/storefront-core.js'
+      - 'src/platform/storefront-base.js'
       - 'public/css/storefront.css'
       - 'scripts/storefront-v2-smoke.js'
       - '.github/workflows/storefront-v2.yml'
@@ -22,6 +24,8 @@ jobs:
       - name: Syntax
         run: |
           node --check src/platform/storefront.js
+          node --check src/platform/storefront-core.js
+          node --check src/platform/storefront-base.js
           node --check scripts/storefront-v2-smoke.js
       - name: Storefront rendering and pricing behavior
         run: node scripts/storefront-v2-smoke.js
