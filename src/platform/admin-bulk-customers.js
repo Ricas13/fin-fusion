@@ -26,7 +26,7 @@ async function formChoices(action){
     return{plans:r.rows};
   }
   if(action==='migrate_server'){
-    const r=await query(`SELECT js.id,js.name,js.server_class,js.location,js.health_status,js.max_users,COUNT(ja.id) FILTER(WHERE ja.disabled=FALSE AND ja.account_purpose='primary')::int AS active_users FROM jellyfin_servers js LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id WHERE js.enabled=TRUE GROUP BY js.id ORDER BY CASE js.health_status WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,js.server_class,js.priority,js.name`);
+    const r=await query(`SELECT js.id,js.name,js.server_class,js.location,js.health_status,js.max_users,COUNT(ja.id) FILTER(WHERE ja.disabled=FALSE AND ja.account_purpose='jellyfin')::int AS active_users FROM jellyfin_servers js LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id WHERE js.enabled=TRUE GROUP BY js.id ORDER BY CASE js.health_status WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,js.server_class,js.priority,js.name`);
     return{servers:r.rows};
   }
   return{};
