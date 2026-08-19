@@ -59,7 +59,7 @@ assert(settingsKeys.includes('notification-settings'),'Global Notifications must
 assert(!settingsKeys.includes('my-profile'),'Personal administrator profile must stay out of global Settings navigation');
 assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the global Settings sidebar');
 assert(navModel.hiddenPages?.['my-profile']&&navModel.hiddenPages?.['my-notifications']&&navModel.hiddenPages?.['my-security'],'Personal admin pages must keep explicit My account workflow metadata');
-assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')&&adminHtmlCore.includes('href="/admin/profile">Profile')&&adminHtmlCore.includes('href="/admin/profile/notifications">Notifications')&&adminHtmlCore.includes('href="/admin/security">Security'),'Administrators need discoverable Profile, Notifications and Security links under My account');
+assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')&&adminHtmlCore.includes('href="/admin/profile">My profile')&&adminHtmlCore.includes('href="/admin/profile/notifications">My notifications')&&adminHtmlCore.includes('href="/admin/security">My security'),'Administrators need discoverable My profile, My notifications and My security links under My account');
 assert(!settingsKeys.includes('settings-commerce'),'Unused Settings Commerce navigation must remain removed');
 assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 

@@ -13,7 +13,10 @@ class ServerMigrationError extends Error {
     }
 }
 
-function isTrial(plan) { return plan?.billing_interval === 'trial'; }
+function accessKind(plan) {
+    if (plan?.billing_interval === 'trial') return 'trial';
+    return Number(plan?.price_minor || 0) === 0 ? 'free' : 'paid';
+}
 function same(a, b) { return String(a || '') === String(b || ''); }
 
 async function primaryAccount(customerId) {
@@ -22,7 +25,7 @@ async function primaryAccount(customerId) {
                js.enabled AS server_enabled,js.health_status AS server_health
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
-        WHERE ja.customer_id=$1
+        WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin'
         ORDER BY ja.is_primary DESC,ja.disabled ASC,js.enabled DESC,
                  COALESCE(ja.updated_at,ja.created_at) DESC
         LIMIT 1
@@ -79,8 +82,9 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     if (!target.allow_new_users) throw new ServerMigrationError('TARGET_CLOSED', 'Target server is closed to new users.', 'preflight');
     if (target.health_status === 'offline') throw new ServerMigrationError('TARGET_OFFLINE', 'Target Jellyfin server is offline.', 'preflight');
     if (target.server_class !== entitlement.server_class) throw new ServerMigrationError('TARGET_CLASS_MISMATCH', 'Target server class does not match the active plan.', 'preflight');
-    if (isTrial(entitlement) && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
-    if (!isTrial(entitlement) && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
+    const kind = accessKind(entitlement);
+    if (kind === 'trial' && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
+    if (kind === 'paid' && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
 
     const assignedUsers = await activeAccountCount(target.id);
     const maxUsers = Number(target.max_users || 0);
@@ -189,7 +193,7 @@ async function restoreSource(migration) {
     const entitlement = await provisioning.currentEntitlement(migration.customer_id);
     if (!entitlement) return false;
     const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
-    const source = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.source_account_id, migration.customer_id]);
+    const source = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.source_account_id, migration.customer_id]);
     if (!source.rowCount) return false;
     await provisioning.applyPolicy(source.rows[0], effective, false);
     await provisioning.markPrimaryAccount(migration.customer_id, migration.source_account_id);
@@ -221,8 +225,6 @@ async function executeMigration(migrationId) {
         `, [migrationId, targetAccount.id, JSON.stringify({ targetJellyfinUserId: targetAccount.jellyfin_user_id })]);
 
         stage = 'disable_source';
-        // From this point a thrown error is treated as if the remote source may
-        // already have accepted the disable call, so cleanup always attempts restore.
         sourceMayBeDisabled = true;
         await provisioning.disableJellyfinAccount(check.source);
 
@@ -289,8 +291,8 @@ async function rollbackMigration(migrationId, actorUserId) {
         throw new ServerMigrationError('ROLLBACK_SOURCE_NOT_ELIGIBLE', 'Original source server is no longer eligible/available for this plan.');
     }
 
-    const sourceResult = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.source_account_id, migration.customer_id]);
-    const targetResult = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.target_account_id, migration.customer_id]);
+    const sourceResult = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.source_account_id, migration.customer_id]);
+    const targetResult = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.target_account_id, migration.customer_id]);
     if (!sourceResult.rowCount || !targetResult.rowCount) throw new ServerMigrationError('ROLLBACK_ACCOUNT_MISSING', 'Source or target Jellyfin account is missing from CAPTAiNFiN.');
     const source = sourceResult.rows[0];
     const target = targetResult.rows[0];
@@ -319,8 +321,6 @@ async function rollbackMigration(migrationId, actorUserId) {
         await markProvisioningDue(migration.customer_id, source.id, source.server_id);
         return migrationForId(migrationId);
     } catch (error) {
-        // Roll back the rollback: prevent duplicate active accounts if target
-        // could not be disabled after source was restored.
         if (sourceEnabled) {
             try { await provisioning.disableJellyfinAccount(source); } catch (_) {}
         }
@@ -379,7 +379,7 @@ async function migrationCandidates(limit = 500) {
         LEFT JOIN app_users u ON u.id=c.user_id
         JOIN LATERAL (
             SELECT account.* FROM jellyfin_accounts account
-            WHERE account.customer_id=c.id
+            WHERE account.customer_id=c.id AND account.account_purpose='jellyfin'
             ORDER BY account.is_primary DESC,account.disabled ASC,account.updated_at DESC
             LIMIT 1
         ) ja ON TRUE

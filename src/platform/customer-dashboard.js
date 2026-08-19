@@ -6,6 +6,7 @@ const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
 const planPricing=require('../payments/plan-pricing');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const permanentAccess=require('../entitlements/permanent-access');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const requestUserSync=require('../integrations/request-user-sync');
 const runtimeSettings=require('./runtime-settings');
@@ -31,8 +32,8 @@ function onboardingMessage(portal,currentPlan,delivery){
   const account=portal.accounts.find(a=>a.is_primary&&!a.disabled)||portal.accounts.find(a=>!a.disabled);
   if(!account||account.disabled||account.last_activity_at)return null;
   const username=account.jellyfin_username||portal.customer?.login_username||'your Jellyfin username';
-  if(account.password_setup_required)return `Your Jellyfin access is ready. 1) Open “Jellyfin access” below and set your Jellyfin password. 2) Use the Open Jellyfin button. 3) Sign in as ${username}. 4) Start any title to confirm the setup. These instructions stay here until your first playback is detected.`;
-  return `Your Jellyfin access is ready. 1) Use the Open Jellyfin button below. 2) Sign in as ${username} with the Jellyfin password you set. 3) Start any title to confirm the setup. These instructions stay here until your first playback is detected.`;
+  if(account.password_setup_required)return 'Your Jellyfin account is ready. Choose your password below to start watching.';
+  return `Your Jellyfin account is ready. Open Jellyfin and sign in as ${username}.`;
 }
 function customerProvisioningMessage(state){
   const message=String(state?.last_error||'');
@@ -49,28 +50,34 @@ function createCustomerDashboardRouter(){
       await runtimeSettings.ensureLoaded();
       const restored=await cleanupReturn.restoreReturningCustomer(req.session.customerId,{reconcile:provisioning.reconcileCustomer}).catch(error=>({restored:false,error:error.message}));
       const sessionCurrency=String(req.session.storefrontCurrency||'').toUpperCase(),currency=planPricing.CURRENCIES.includes(sessionCurrency)?sessionCurrency:await planPricing.userPreferredCurrency(req.session.customerUserId);
-      const [portalRaw,plans,currentPlan,requestAccess,requestConfig,currencies,rawProvisioningState]=await Promise.all([
-        customers.getCustomerPortal(req.session.customerId),sellablePlans(currency),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration(),planPricing.enabledCurrencies(),provisioning.control.getCustomerState(req.session.customerId).catch(()=>null)
+      const [portalRaw,plans,currentPlan,requestAccess,requestConfig,currencies,rawProvisioningState,permanentState]=await Promise.all([
+        customers.getCustomerPortal(req.session.customerId),sellablePlans(currency),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration(),planPricing.enabledCurrencies(),provisioning.control.getCustomerState(req.session.customerId).catch(()=>null),permanentAccess.status(req.session.customerId).catch(()=>null)
       ]);
       const portal=await hideInternalAccounts(req.session.customerId,portalRaw),restoreMessage=restored.restored?'Your previous inactive Jellyfin profile was cleaned up. Because you returned, CAPTAiNFiN has prepared fresh access for you.':null;
       if(!currentPlan){
         return res.render('customer/onboarding',{portal,plans,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
       }
+      const isPermanent=Boolean(permanentState?.active&&String(permanentState.subscription_id)===String(currentPlan.subscription_id));
       const provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null;
       const delivery=deliveryType(currentPlan),hasJellyfin=['jellyfin','bundle'].includes(delivery),hasStremio=['stremio','bundle'].includes(delivery);
       if(delivery==='stremio'){
-        return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
+        return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null,permanentAccess:isPermanent});
       }
       const effective=currentPlan&&hasJellyfin?await provisioning.effectivePolicyForCustomer(req.session.customerId,currentPlan):null;
       const libraryEntitlement=effective?effective.entitlementRows.filter(row=>row.effective).map(row=>row.name):[],librarySelection=effective?effective.visibleNames:[];
       const welcome=onboardingMessage(portal,currentPlan,delivery),message=req.query.message||restoreMessage||welcome||((hasStremio&&delivery==='bundle')?'Your plan also includes Stremio. Open Stremio setup to create or manage your private installation.':null);
-      return res.render('customer/dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryEntitlement,librarySelection,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||restored.error||null,welcome:req.query.welcome==='1',deliveryType:delivery,hasJellyfin,hasStremio});
+      return res.render('customer/dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryEntitlement,librarySelection,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||restored.error||null,welcome:req.query.welcome==='1',deliveryType:delivery,hasJellyfin,hasStremio,permanentAccess:isPermanent});
     }catch(error){return next(error);}
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
     if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));
-    try{await provisioning.reconcileCustomer(req.session.customerId);return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access is ready.'));}
-    catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your plan is active, but Jellyfin setup is still pending.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}
+    try{
+      const outcome=await provisioning.reconcileCustomer(req.session.customerId);
+      if(outcome?.active&&outcome?.account?.id)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access is ready.'));
+      const state=await provisioning.control.getCustomerState(req.session.customerId).catch(()=>null);
+      const safe=customerProvisioningMessage(state)||'Your plan is active, but Jellyfin setup has not completed yet. We will keep retrying automatically.';
+      return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));
+    }catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your plan is active, but Jellyfin setup is still pending.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}
   });
   return r;
 }

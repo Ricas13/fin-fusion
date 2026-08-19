@@ -1,0 +1,1 @@
+Scope: customer/admin coherence, permanent access, human-readable operator controls, service-aware plan editing, settings ownership, semantic status styling, and simplified customer onboarding/dashboard.

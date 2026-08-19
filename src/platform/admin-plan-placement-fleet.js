@@ -35,6 +35,7 @@ function dt(value) {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
+function jellyfinPlan(plan){return ['jellyfin','bundle'].includes(String(plan?.service_type||'jellyfin'));}
 
 async function planById(id) {
     const result = await query('SELECT * FROM plans WHERE id=$1', [id]);
@@ -42,6 +43,7 @@ async function planById(id) {
 }
 
 async function placementData(plan) {
+    if(!jellyfinPlan(plan))return {servers:[],restricted:false};
     await placement.refreshFleetSnapshot().catch(() => {});
     const result = await query(`
         SELECT js.id,js.name,js.slug,js.server_class,js.location,js.enabled,js.allow_new_users,
@@ -108,7 +110,7 @@ function page(req, plan, data) {
     const strategy = placement.normalizeStrategy(plan.placement_strategy);
     const poolMode = data.restricted ? 'selected' : 'all';
     const empty = !data.servers.length;
-    const body = `${notice(req.query.message)}${notice(req.query.error, 'error')}${planSubnav(plan.id, 'placement')}
+    const body = `${notice(req.query.message)}${notice(req.query.error, 'error')}${planSubnav(plan.id, 'placement',plan.service_type)}
         <section class="section">
             <div class="sectionHead"><div><h2>Fleet-aware server placement</h2><div class="settings-hint">New accounts are placed using the real Jellyfin user and playback load when a fresh fleet sample is available.</div></div></div>
             <div class="notice">Existing customers are never moved automatically. If fleet metrics become stale or unavailable, placement safely falls back to CAPTAiNFiN-managed counts rather than blocking provisioning.</div>
@@ -125,11 +127,11 @@ function page(req, plan, data) {
                     <thead><tr><th>Use</th><th>Server</th><th>Health</th><th>Total users / capacity</th><th>Live streams</th><th>Load source</th><th>Weight</th></tr></thead>
                     <tbody>${serverRows(data)}</tbody>
                 </table></div>
-                <div class="inlineHelp">Maximum users is now treated as real Jellyfin server capacity when a fresh fleet sample exists. Legacy/unmanaged users therefore consume capacity too. Weighted distribution still respects capacity before applying weights.</div>`}
+                <div class="inlineHelp">Maximum users is treated as real Jellyfin server capacity when a fresh fleet sample exists. Legacy/unmanaged users consume capacity too. Weighted distribution still respects capacity before applying weights.</div>`}
                 <div class="buttonRow"><button class="button">Save placement</button></div>
             </form>
         </section><style>.fleetPlacementTable{min-width:1120px}</style>`;
-    return layout({ siteName: site(), active: 'plans', title: `${plan.name} · Placement`, subtitle: `${plan.server_class} server pool`, body });
+    return layout({ siteName: site(), active: 'plans', title: `${plan.name} · Servers`, subtitle: `${plan.server_class} server pool`, body });
 }
 
 function createAdminPlanPlacementFleetRouter() {
@@ -139,10 +141,11 @@ function createAdminPlanPlacementFleetRouter() {
         try {
             const plan = await planById(req.params.id);
             if (!plan) return res.status(404).send('Plan not found');
+            if(!jellyfinPlan(plan))return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?error=${encodeURIComponent('This is a Stremio-only plan. Jellyfin server placement does not apply.')}`);
             return res.send(page(req, plan, await placementData(plan)));
         } catch (error) { return next(error); }
     });
     return router;
 }
 
-module.exports = { createAdminPlanPlacementFleetRouter, placementData, page };
+module.exports = { createAdminPlanPlacementFleetRouter, placementData, page, jellyfinPlan };

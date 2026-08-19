@@ -1,0 +1,1 @@
+This branch intentionally remains unmerged until its exact-head CI and browser journeys pass. Partial UX work should not be deployed independently because customer lifecycle, provisioning and administrator override behavior are coupled in this release.

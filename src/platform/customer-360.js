@@ -1,7 +1,7 @@
 'use strict';
 
 const {query}=require('../db');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 
 function seconds(value){return Number(value||0)}
 function bytes(value){return Number(value||0)}
@@ -9,6 +9,7 @@ function bytes(value){return Number(value||0)}
 function buildTimeline(parts){
     return parts.flat().filter(Boolean).sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,150);
 }
+function primaryFirst(rows,primaryEntitlement){const primaryId=String(primaryEntitlement?.subscription_id||'');return [...rows].sort((a,b)=>{const ap=String(a.id)===primaryId?0:1,bp=String(b.id)===primaryId?0:1;if(ap!==bp)return ap-bp;return new Date(b.created_at||0)-new Date(a.created_at||0);});}
 
 async function customer360(customerId){
     const base=await query(`
@@ -23,9 +24,10 @@ async function customer360(customerId){
     const customer=base.rows[0];
     const userId=customer.app_user_id;
 
-    const [subscriptions,accounts,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
-        query(`SELECT s.id,s.status,s.source,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.code plan_code,p.name plan_name,p.price_minor,p.currency,p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class,p.library_access_mode,p.library_names FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 ORDER BY s.created_at DESC LIMIT 50`,[customerId]),
-        query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.created_at,ja.last_activity_at,ja.last_policy_sync,js.id server_id,js.name server_name,js.server_class,js.location,js.public_url,js.health_status,jpr.status recon_status,jpr.last_error recon_last_error,jpr.attempt_count recon_attempts,jpr.last_attempt_at recon_last_attempt FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id LEFT JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja.id WHERE ja.customer_id=$1 ORDER BY ja.created_at`,[customerId]),
+    const [subscriptions,primaryEntitlement,accounts,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
+        query(`SELECT s.id,s.status,s.source,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.id plan_id,p.code plan_code,p.name plan_name,p.price_minor,p.currency,p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class,p.library_access_mode,p.library_names,p.service_type,p.is_addon FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 ORDER BY s.created_at DESC LIMIT 50`,[customerId]),
+        provisioning.currentEntitlement(customerId),
+        query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.account_purpose,ja.is_primary,ja.created_at,ja.last_activity_at,ja.last_policy_sync,js.id server_id,js.name server_name,js.server_class,js.location,js.public_url,js.health_status,jpr.status recon_status,jpr.last_error recon_last_error,jpr.attempt_count recon_attempts,jpr.last_attempt_at recon_last_attempt FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id LEFT JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja.id WHERE ja.customer_id=$1 ORDER BY ja.created_at`,[customerId]),
         query(`SELECT provider,provider_customer_id,created_at,updated_at FROM payment_customers WHERE customer_id=$1 ORDER BY provider`,[customerId]),
         query(`SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,aps.playback_method,aps.is_paused,aps.first_seen_at,aps.last_seen_at,js.name server_name FROM active_playback_sessions aps LEFT JOIN jellyfin_servers js ON js.id=aps.server_id WHERE aps.customer_id=$1 ORDER BY aps.last_seen_at DESC`,[customerId]),
         query(`SELECT COUNT(*)::int sessions_30d,COUNT(*) FILTER(WHERE playback_method='transcode')::int transcodes_30d,COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at))),0)::bigint watch_seconds_30d,MAX(last_seen_at) last_playback_at FROM playback_history WHERE customer_id=$1 AND started_at>=NOW()-INTERVAL '30 days'`,[customerId]),
@@ -40,6 +42,7 @@ async function customer360(customerId){
         query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id::text=$1::text) OR (entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)) ORDER BY created_at DESC LIMIT 100`,[customerId])
     ]);
 
+    const orderedSubscriptions=primaryFirst(subscriptions.rows,primaryEntitlement);
     const timeline=buildTimeline([
         subscriptions.rows.map(x=>({at:x.created_at,type:'subscription',title:`${x.plan_name} · ${x.status}`,detail:x.source})),
         runs.rows.map(x=>({at:x.started_at,type:'provisioning',title:`${x.action} · ${x.status}`,detail:x.completed_at?'completed':'in progress'})),
@@ -50,7 +53,8 @@ async function customer360(customerId){
 
     return{
         customer,
-        subscriptions:subscriptions.rows,
+        primaryEntitlement,
+        subscriptions:orderedSubscriptions,
         accounts:accounts.rows,
         paymentCustomers:paymentCustomers.rows,
         activeStreams:activeStreams.rows,
@@ -77,4 +81,4 @@ async function customerAccessDetail(customerId){
     return{currentPlan,effective};
 }
 
-module.exports={customer360,customerAccessDetail};
+module.exports={customer360,customerAccessDetail,primaryFirst};

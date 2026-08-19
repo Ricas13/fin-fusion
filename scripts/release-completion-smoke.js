@@ -12,7 +12,8 @@ const customerDashboard=read('views/customer/dashboard.ejs');
 const customerNav=read('views/customer/_nav.ejs');
 has(customerNav,'showHelp','customer portal Help tab must be available only when support is configured');
 lacks(customerNav,'Help &amp; support','unconfigured support must not be a permanent customer portal tab');
-has(customerDashboard,'Your plan is active. We are still creating your Jellyfin account','welcome pending state must work for paid and free access');
+has(customerDashboard,"We're creating your Jellyfin account",'action-first pending state must work for paid and free Jellyfin access');
+has(customerDashboard,'We are setting up your streaming access','welcome overlay must make pending access obvious after activation');
 lacks(customerDashboard,'Your Free Access entitlement is active, but Jellyfin provisioning has not completed yet.','welcome copy must not incorrectly label paid users as Free Access');
 
 const adminPassword=read('src/platform/admin-customer-jellyfin-password.js');

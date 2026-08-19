@@ -2,7 +2,7 @@
 const assert=require('assert'),fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
 const nav=require('../src/platform/admin-nav');
-const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),bulkCustomers=read('src/platform/admin-bulk-customers.js'),customerDeletion=read('src/platform/customer-deletion.js'),settings=read('src/platform/admin-original-settings.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),attentionSource=read('src/platform/attention.js'),operatorState=read('src/platform/admin-operator-state.js'),operatorExperience=read('public/js/operator-experience.js'),migration=read('db/migrations/000_database_baseline.sql'),provisioningTabs=read('src/platform/provisioning-workflow-tabs.js'),integrationTabs=read('src/platform/integration-workflow-tabs.js'),adminShell=read('src/platform/admin-html-core.js');
+const storefront=read('src/platform/storefront.js'),customersList=read('src/platform/admin-customers-list.js'),bulkCustomers=read('src/platform/admin-bulk-customers.js'),customerDeletion=read('src/platform/customer-deletion.js'),settings=read('src/platform/admin-original-settings.js'),settingsRegistry=read('src/platform/settings-registry.js'),stremioPool=read('src/stremio/source-pool.js'),stremioAdmin=read('src/platform/admin-stremio-sources.js'),plans=read('src/platform/admin-plans.js'),customer=read('src/platform/admin-customer-360.js'),view=read('src/platform/customer-360-view-v2.js'),dashboard=read('views/customer/dashboard.ejs'),dashboardCss=read('public/css/customer-dashboard.css'),inactivity=read('src/automation/customer-inactivity.js'),attention=read('src/platform/admin-attention.js'),attentionSource=read('src/platform/attention.js'),operatorState=read('src/platform/admin-operator-state.js'),operatorExperience=read('public/js/operator-experience.js'),migration=read('db/migrations/000_database_baseline.sql'),provisioningTabs=read('src/platform/provisioning-workflow-tabs.js'),integrationTabs=read('src/platform/integration-workflow-tabs.js'),adminShell=read('src/platform/admin-html-core.js');
 assert(/marketing_features/.test(plans)&&/Homepage features/.test(plans),'plan marketing features missing');
 assert(/Free access/.test(storefront)&&!/Permanent free tier/.test(storefront),'free tier customer copy must be simple');
 assert(/email\/verify/.test(customer),'manual email verification override missing');
@@ -14,14 +14,23 @@ assert(/async function openSummary\(\)/.test(attentionSource)&&/count:sources\.l
 assert(/attention\.openSummary\(\)/.test(operatorState)&&/attention:\{n:attentionSummary\.count,updated:attentionSummary\.updatedAt\}/.test(operatorState),'Operator unread snapshot must include Needs Attention');
 assert(/\/admin\/api\/operator-state\/unread/.test(operatorExperience)&&/attention:'\/admin\/attention'/.test(operatorExperience),'Admin shell must fetch the unread snapshot and badge Needs Attention globally');
 assert(/marketing_features/.test(migration)&&/automation_protected/.test(migration),'migration missing coherence columns');
-assert(/Where settings live/.test(settings)&&/Plans & customer access/.test(settings),'settings directory missing');
+assert(/Where settings live/.test(settings)&&/settings-registry/.test(settings),'settings directory must use canonical registry');
+assert(/Find a setting/.test(settings)&&/settingsLookupPage/.test(settings),'settings lookup missing');
+assert(/Individual customer overrides/.test(settingsRegistry)&&/customer\.server/.test(settingsRegistry)&&/customer\.expiry/.test(settingsRegistry),'settings registry must own customer overrides');
 assert(!/allowPrivateConnected/.test(settings),'settings identifier was corrupted');
 assert(/discoveryWarning/.test(stremioPool)&&/source was saved/.test(stremioAdmin),'Stremio source resilience missing');
 assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 override routes must import transaction');
+assert(/Customer control centre/.test(customer)&&/plan_change/.test(customer)&&/set_expiry/.test(customer)&&/migrate_server/.test(customer),'Customer 360 must expose direct safe customer controls');
+assert(/marketing\/withdraw/.test(customer)&&!/name=\"marketingOptIn\"/.test(customer),'admins may withdraw but must not grant marketing consent');
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
 assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');
 assert(/portal_delete/.test(bulkCustomers)&&/Delete portal customer \+ all local data/.test(bulkCustomers),'Customer bulk actions must expose permanent portal deletion');
 assert(/confirmWord:'DELETE'/.test(bulkCustomers)&&/meta\.immediate/.test(bulkCustomers),'Permanent portal deletion must require a distinct confirmation and must not run as an async customer-referencing job');
+assert(/name=\"planId\" required><option/.test(bulkCustomers)&&!/Use the plan UUID/.test(bulkCustomers),'bulk plan changes must use human plan choices, not UUID entry');
+assert(/name=\"serverId\" required><option/.test(bulkCustomers)&&!/Use the server UUID/.test(bulkCustomers),'bulk server moves must use human server choices, not UUID entry');
+assert(/serviceKind/.test(plans)&&/data-plan-service/.test(plans)&&/Stremio-only plan/.test(plans),'plan workflow must be service-type aware');
+assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard)&&/journeyPrimary/.test(dashboard),'customer home must be action-first and hide management complexity');
+assert(/simpleHero\.ready/.test(dashboardCss)&&/rgba\(101,214,248/.test(dashboardCss),'customer dashboard must use semantic state colour and blue hover feedback');
 assert(/hardDeletePortalCustomer/.test(customerDeletion)&&/DELETE FROM customers WHERE id=\$1/.test(customerDeletion),'Permanent portal deletion must delete the CAPTAiNFiN customer row');
 assert(/deleteJellyfinAccounts/.test(customerDeletion)&&/Could not delete .* from Jellyfin/.test(customerDeletion),'Jellyfin delete failures must surface the failing account and reason');
 
