@@ -22,7 +22,7 @@ assert(jobs.includes('async customer_inactivity(){return jellyfinLifecycle.run()
 assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
 assert(/source_kind = 'owned'::text\) OR \(authorization_confirmed = true/.test(migration),'external Stremio sources must require authorization');
 assert(pool.includes('Confirm that you are authorized'),'external source connection must enforce authorization');
-assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTaINFiN attribution for operator-side source diagnostics');
+assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTAiNFiN attribution for operator-side source diagnostics');
 assert(runtime.includes('managedRuntime.streamsFor')&&runtime.includes('externalRuntime.streamsFor'),'Stremio runtime must own separate managed and external resolution classes');
 assert(runtime.includes('const streams=[...managed,...external]'),'managed Stremio results must be returned before external results');
 assert(runtime.includes('Promise.all(['),'managed and external result classes must resolve concurrently');
