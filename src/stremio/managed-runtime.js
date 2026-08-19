@@ -11,11 +11,11 @@ const entitlements=require('./entitlements');
 const sourceAdmission=require('./source-admission');
 
 function neutralGroup(type,videoId,filename){return `cf-${crypto.createHash('sha1').update(`${type}:${videoId}:${filename}`,'utf8').digest('hex').slice(0,16)}`;}
-function directUrl(mapping,itemId,mediaSourceId,playSessionId='',deviceId=''){
+function directUrl(mapping,itemId,mediaSourceId,playSessionId='',deviceId='',accessTokenOverride=''){
   const base=String(mapping.public_url||'').replace(/\/$/,'');if(!base)throw new Error('Managed Jellyfin public URL is missing.');
   const url=new URL(`${base}/Videos/${encodeURIComponent(String(itemId))}/stream`);
   url.searchParams.set('Static','true');url.searchParams.set('MediaSourceId',String(mediaSourceId));
-  const token=entitlements.accessToken({jellyfin_access_token_encrypted:mapping.access_token_encrypted});if(!token)throw new Error('Managed Stremio playback token is unavailable.');
+  const token=String(accessTokenOverride||'')||entitlements.accessToken({jellyfin_access_token_encrypted:mapping.access_token_encrypted});if(!token)throw new Error('Managed Stremio playback token is unavailable.');
   url.searchParams.set('api_key',token);if(playSessionId)url.searchParams.set('PlaySessionId',String(playSessionId));if(deviceId)url.searchParams.set('DeviceId',String(deviceId));return url.toString();
 }
 function admissionUrl({portalBase,installToken,mapping,itemId,mediaSourceId,playSessionId,lease}){
