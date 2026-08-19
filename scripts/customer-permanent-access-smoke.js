@@ -1,0 +1,24 @@
+'use strict';
+const assert=require('assert'),fs=require('fs');
+const read=p=>fs.readFileSync(p,'utf8');
+const migration=read('db/migrations/006_customer_permanent_access.sql');
+const state=read('src/entitlements/subscription-state.js');
+const provisioning=read('src/jellyfin/provisioning.js');
+const route=read('src/platform/admin-customer-permanent.js');
+const router=read('src/platform/router.js');
+const shell=read('src/platform/admin-html-core.js');
+const control=read('public/js/customer-permanent-control.js');
+
+assert(/permanent_access BOOLEAN NOT NULL DEFAULT FALSE/.test(migration),'permanent access column missing');
+assert(/customers_permanent_requires_cleanup_protection/.test(migration)&&/permanent_access=FALSE OR automation_protected=TRUE/.test(migration),'permanent customers must be DB-protected from cleanup');
+assert(/async function permanentFallback/.test(state)&&/s\.starts_at<=NOW\(\)/.test(state),'expired entitlement fallback must exist without activating future subscriptions');
+assert(/COALESCE\(p\.is_addon,FALSE\)=FALSE/.test(state),'permanent fallback must use a primary plan, not an addon');
+assert(/customer_access_holds/.test(state)&&/row\.blocked&&!includeBlocked/.test(state),'explicit holds must still block permanent access');
+assert(/COALESCE\(c\.permanent_access,FALSE\)=FALSE/.test(provisioning),'expiry automation must skip permanent customers');
+assert(/Billing is separate/.test(route)&&/does not cancel Stripe or PayPal renewal/.test(route),'permanent confirmation must warn that billing is separate');
+assert(/admin\.customer\.permanent_access/.test(route),'permanent override must be audited');
+assert(/provisioning\.reconcileCustomer/.test(route),'permanent changes must reconcile service access');
+assert(/createAdminCustomerPermanentRouter/.test(router),'permanent admin router must be mounted');
+assert(/customer-permanent-control\.js/.test(shell),'Customer Control Centre permanent action script must load');
+assert(/\.customerControlCentre \.controlCentreActions/.test(control)&&/Permanent access/.test(control),'Customer Control Centre must expose Permanent access');
+console.log('customer permanent access smoke: ok');
