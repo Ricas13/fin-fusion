@@ -4,7 +4,6 @@ const express=require('express');
 const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
-const reportingCurrency=require('./reporting-currency');
 const provisioning=require('../jellyfin/provisioning');
 const {page:emailInfrastructurePage}=require('./admin-email');
 const {layout,esc}=require('./admin-html');
@@ -32,9 +31,8 @@ function cleanName(value,fallback){
 function dt(value){return value?new Date(value).toLocaleString('en-GB'):'—';}
 
 async function profileData(userId){
-  const [user,reporting,customer,plans,accounts]=await Promise.all([
-    query(`SELECT id,username,email,preferred_currency FROM app_users WHERE id=$1 AND role='admin'`,[userId]),
-    reportingCurrency.getForUser(userId),
+  const [user,customer,plans,accounts]=await Promise.all([
+    query(`SELECT id,username,email FROM app_users WHERE id=$1 AND role='admin'`,[userId]),
     query(`SELECT c.id,c.display_name,c.email,
       (SELECT s.status FROM subscriptions s WHERE s.customer_id=c.id ORDER BY (s.status IN ('active','trialing')) DESC,s.created_at DESC LIMIT 1) subscription_status,
       (SELECT s.current_period_end FROM subscriptions s WHERE s.customer_id=c.id ORDER BY (s.status IN ('active','trialing')) DESC,s.created_at DESC LIMIT 1) current_period_end,
@@ -56,7 +54,7 @@ async function profileData(userId){
       WHERE c.user_id=$1
       ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at`,[userId])
   ]);
-  return {user:user.rows[0]||{},reporting,customer:customer.rows[0]||null,plans:plans.rows,accounts:accounts.rows};
+  return {user:user.rows[0]||{},customer:customer.rows[0]||null,plans:plans.rows,accounts:accounts.rows};
 }
 
 function jellyfinPasswordForms(req,accounts){
@@ -72,14 +70,13 @@ async function page(req){
     : `<form class="formPanel" method="post" action="/admin/profile/media">${token(req)}<div class="formGrid"><div class="formGroup"><label>Display name</label><input class="input" name="displayName" maxlength="100" value="${esc(d.user.username||'')}"></div><div class="formGroup"><label>Personal access plan</label><select class="input" name="planCode" required>${d.plans.map(p=>`<option value="${esc(p.code)}">${esc(p.name)} · ${esc(p.server_class)} · ${Number(p.streams||1)} stream${Number(p.streams||1)===1?'':'s'}</option>`).join('')}</select><div class="fieldHelp">This is an administrator grant using the normal plan duration, placement and Jellyfin policy. It does not create a payment.</div></div></div><div class="securityNote standalone">Your administrator role and administrator login stay unchanged. CAPTAiNFiN creates a linked customer/media profile only for entitlement and Jellyfin provisioning. Customer-portal authentication is not enabled for this admin identity.</div><button class="button" ${d.user.email&&d.plans.length?'':'disabled'}>Create my media profile &amp; provision</button>${!d.user.email?'<div class="muted">Set your email above before creating the media profile.</div>':''}${!d.plans.length?'<div class="muted">No active Jellyfin-capable direct plan is available.</div>':''}</form>`;
 
   const body=`${notice(req)}
-    <section class="section"><div class="sectionHead"><div><h2>Account</h2><div class="muted">Personal administrator contact details and reporting preference.</div></div><span class="pill accent">Administrator</span></div>
+    <section class="section"><div class="sectionHead"><div><h2>Account</h2><div class="muted">Personal administrator contact details. Currency is controlled once for the whole portal under Settings → Portal currency.</div></div><span class="pill accent">Administrator</span></div>
       <div class="formGrid">
         <form class="formPanel" method="post" action="/admin/profile/email">${token(req)}<h3>Email</h3><div class="muted">Used as your destination when you enable Email for an administrator notification event.</div><input class="input" type="email" name="email" maxlength="254" required value="${esc(d.user.email||'')}" placeholder="you@example.com"><button class="button">Save email</button></form>
-        <form class="formPanel" method="post" action="/admin/profile/currency">${token(req)}<h3>Reporting currency</h3><div class="muted">Presentation only; provider transaction currencies are never rewritten.</div><select class="input" name="currency">${reportingCurrency.CURRENCIES.map(c=>`<option value="${c}" ${d.reporting.currency===c?'selected':''}>${c}</option>`).join('')}</select><button class="button">Save currency</button></form>
       </div>
     </section>
     <section class="section"><div class="sectionHead"><div><h2>Personal media profile</h2><div class="muted">Optionally make this administrator a normal managed Jellyfin customer as well.</div></div></div>${media}</section>`;
-  return layout({siteName:runtimeSettings.siteName(),active:'my-profile',title:'My profile',subtitle:'Administrator email, reporting preferences and personal media access',body});
+  return layout({siteName:runtimeSettings.siteName(),active:'my-profile',title:'My profile',subtitle:'Administrator email and personal media access',body});
 }
 
 async function saveEmail(req,res){
@@ -165,7 +162,6 @@ function createAdminProfileAccountRouter(){
   r.use('/admin/profile',gate,noStore);
   r.get('/admin/profile',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){return next(error);}});
   r.post('/admin/profile/email',saveEmail);
-  r.post('/admin/profile/currency',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await reportingCurrency.saveUserCurrency(req.session.authUserId,req.body.currency,req.session.authUserId);return res.redirect('/admin/profile?message='+encodeURIComponent('Reporting currency saved.'));}catch(error){return res.redirect('/admin/profile?error='+encodeURIComponent(error.message));}});
   r.post('/admin/profile/media',createMediaProfile);
   r.post('/admin/profile/media/reconcile',reconcileMedia);
   r.post('/admin/profile/media/jellyfin/:accountId/password',setPersonalJellyfinPassword);

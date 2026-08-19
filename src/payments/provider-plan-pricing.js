@@ -7,8 +7,8 @@ const pricing=require('./plan-pricing');
 
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
 
-async function getProviderOptions(planCode,provider,currency){
-  const c=pricing.cleanCurrency(currency,'GBP');
+async function getProviderOptions(planCode,provider,_currency){
+  const c=await pricing.platformDefaultCurrency();
   const result=await query(`
     SELECT p.*,pr.id plan_price_id,pr.price_minor,pr.currency,pr.is_default,
            pp.id provider_mapping_id,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
@@ -24,8 +24,8 @@ async function getProviderOptions(planCode,provider,currency){
   return result.rows;
 }
 
-async function getProviderPlan(planCode,provider,checkoutMode,currency){
-  const mode=checkoutMode&&['payment','subscription'].includes(checkoutMode)?checkoutMode:null,c=pricing.cleanCurrency(currency,'GBP');
+async function getProviderPlan(planCode,provider,checkoutMode,_currency){
+  const mode=checkoutMode&&['payment','subscription'].includes(checkoutMode)?checkoutMode:null,c=await pricing.platformDefaultCurrency();
   const result=await query(`
     SELECT p.*,pr.id plan_price_id,pr.price_minor,pr.currency,pr.is_default,
            pp.id provider_mapping_id,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata

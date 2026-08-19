@@ -1,7 +1,7 @@
 'use strict';
 
 const DOMAINS=Object.freeze([
-  Object.freeze({key:'general',label:'General & branding',href:'/admin/settings?section=general',scope:'platform',description:'Site name, storefront publishing, public URL, locale, timezone and support links.'}),
+  Object.freeze({key:'general',label:'General & branding',href:'/admin/settings?section=general',scope:'platform',description:'Site name, storefront publishing, portal currency, public URL, locale, timezone and support links.'}),
   Object.freeze({key:'plans',label:'Plans & customer access',href:'/admin/plans',scope:'plan',description:'What customers buy or claim: service type, prices, access rules, Jellyfin policy, libraries, availability and storefront order.'}),
   Object.freeze({key:'servers',label:'Jellyfin servers',href:'/admin/servers',scope:'server',description:'Server connection, health, capacity, placement and controlled customer moves.'}),
   Object.freeze({key:'stremio',label:'Stremio',href:'/admin/servers/stremio',scope:'service',description:'Stremio source connections, library selection, indexing, runtime readiness and delivery.'}),
@@ -16,6 +16,7 @@ const DOMAINS=Object.freeze([
 const SETTINGS=Object.freeze([
   {key:'platform.siteName',owner:'general',label:'Site name',keywords:'brand portal name'},
   {key:'platform.storefrontEnabled',owner:'general',label:'Public storefront',keywords:'homepage publish website'},
+  {key:'platform.currency',owner:'general',label:'Portal currency',href:'/admin/settings/currency',keywords:'currency money price pricing gbp usd eur master reporting'},
   {key:'operations.publicBaseUrl',owner:'general',label:'Public base URL',keywords:'domain callback external url'},
   {key:'operations.locale',owner:'general',label:'Locale',keywords:'region language formatting'},
   {key:'operations.timezone',owner:'general',label:'Timezone',keywords:'time zone dates'},
