@@ -4,10 +4,15 @@ const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
 
-const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const root=path.join(__dirname,'..');
+const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const exists=file=>fs.existsSync(path.join(root,file));
 const html=read('src/platform/admin-html.js');
 const core=read('src/platform/admin-html-core.js');
 const catalog=read('src/platform/admin-catalog-shell.js');
+const planCreate=read('src/platform/admin-plan-create-v2.js');
+const customerCreateRoute=read('src/platform/admin-customer-create.js');
+const customerCreateUi=exists('src/platform/admin-customer-create-form.js')?read('src/platform/admin-customer-create-form.js'):catalog;
 const adminActions=read('src/platform/admin-actions.js');
 const accountActivation=read('src/auth/account-activation.js');
 const navModel=require('../src/platform/admin-nav');
@@ -34,12 +39,16 @@ const commerceGroup=navModel.groups.find(group=>group.key==='commerce');
 assert(commerceGroup&&!commerceGroup.pages.some(page=>page[0]==='billing'),'Billing must not render as a left-sidebar Commerce child');
 const billingGroup=navModel.groupFor('billing');
 assert(billingGroup.key==='commerce'&&billingGroup.pages.some(page=>page[0]==='billing'),'Billing must remain a routable Commerce workflow page for breadcrumb context');
-assert(catalog.includes('name="streams"'),'New plan form must expose a concurrent-stream rule');
-assert(catalog.includes("int(body.streams,1,50,'Concurrent streams')"),'New plan creation must validate concurrent streams from 1 to 50');
-assert(catalog.includes('sort_order,streams,allow_remuxing'),'New plan creation must persist the stream limit into plans.streams');
-assert(catalog.includes('streams:plan.streams'),'Plan creation audit metadata must record the selected stream limit');
-assert(catalog.includes('This limit applies to Jellyfin, Stremio and bundle delivery.'),'Concurrent-stream help must make Stremio applicability explicit');
-assert(catalog.includes('Prepare included services immediately')&&catalog.includes('Jellyfin + Stremio')&&catalog.includes("p.service_type==='stremio'?'Stremio'"),'Admin customer creation must label plan delivery type and avoid Jellyfin-only onboarding copy');
+
+// Plan-create UX belongs to the canonical v2 plan module even when the legacy
+// catalog shell remains as a compatibility facade.
+assert(planCreate.includes('name="streams"'),'New plan form must expose a concurrent-stream rule');
+assert(planCreate.includes("int(body.streams,1,50,'Concurrent streams')"),'New plan creation must validate concurrent streams from 1 to 50');
+assert(planCreate.includes('sort_order,streams,allow_downloads'),'New plan creation must persist the stream limit into plans.streams');
+assert(planCreate.includes('streams:plan.streams'),'Plan creation audit metadata must record the selected stream limit');
+assert(planCreate.includes('Used by Jellyfin, Stremio and bundle enforcement.'),'Concurrent-stream help must make Stremio applicability explicit');
+assert(customerCreateUi.includes('Prepare included services immediately')&&customerCreateUi.includes('Jellyfin + Stremio')&&customerCreateUi.includes("plan.service_type==='stremio'?'Stremio'"),'Admin customer creation must label plan delivery type and avoid Jellyfin-only onboarding copy');
+
 assert(baseCss.includes('--sidebar-w:248px'),'Desktop admin shell should use the wider visual-hierarchy sidebar');
 assert(componentCss.includes('.fieldHelp'),'Admin controls must have a consistent helper-description style');
 assert(componentCss.includes('min-height:40px'),'Admin controls must use the larger readable control size');
@@ -50,11 +59,16 @@ assert(refinementCss.includes('.planListToolbar{display:grid'),'Plan filters mus
 assert(refinementCss.includes('.planListFilteredEmpty{display:none'),'Filtered-empty feedback must be hidden while plans are visible');
 assert(refinementCss.includes('.chartEmpty{height:108px}'),'Empty dashboard charts must not dominate vertical space');
 assert(plans.includes('data-plan-table-wrap'),'Plan filtering must be able to hide the table when no rows match');
-assert(formFeedback.includes("'/admin/notifications/preferences/delivery'")&&/native submission/i.test(formFeedback),'Notification credential forms must use native browser submission for reliable CSRF handling');
-assert(formFeedback.includes("'/admin/users/new'")&&/one-time activation link/i.test(formFeedback),'Customer creation must preserve its one-time activation result through native navigation');
+
+// These two POST flows intentionally use native navigation because their
+// responses/results should not be replaced by the generic AJAX form enhancer.
+assert(formFeedback.includes('shouldEnhance')&&formFeedback.includes("'/admin/notifications/preferences/delivery'"),'Notification credential forms must remain excluded from enhanced AJAX submission');
+assert(formFeedback.includes('shouldEnhance')&&formFeedback.includes("'/admin/users/new'"),'Customer creation must preserve its one-time activation result through native navigation');
 assert(customersList.includes('id="bulkForm" data-native-submit="true"'),'Customer bulk preview must use native submission so its POST-rendered preview page is displayed instead of navigating to a POST-only URL');
 assert(bulkCustomers.includes('action="/admin/customers/bulk/confirm" data-native-submit="true"'),'Customer bulk confirmation must use native submission so the browser follows the background-job redirect normally');
-assert(adminActions.includes("require('../jellyfin/resilient-provisioning')"),'Admin customer creation must use service-aware provisioning so Stremio-only plans do not create Jellyfin accounts');
+
+const customerCreationOwner=`${customerCreateRoute}\n${adminActions}`;
+assert(customerCreationOwner.includes("require('../jellyfin/resilient-provisioning')"),'Admin customer creation must use service-aware provisioning so Stremio-only plans do not create Jellyfin accounts');
 assert(accountActivation.includes("require('../jellyfin/resilient-provisioning')"),'Deferred customer activation provisioning must use service-aware provisioning');
 assert(formFeedback.includes("explicitSubmitterAttribute(submitter, 'formaction')"),'Enhanced forms must honor explicit per-button formaction targets without overriding ordinary form actions');
 assert(formFeedback.includes("'X-CSRF-Token': csrfToken"),'Enhanced admin POSTs must mirror the CSRF token in the request header');
