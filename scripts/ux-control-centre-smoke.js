@@ -25,6 +25,7 @@ assert(/bulk-server-migration/.test(jobs),'automation worker must load the bulk 
 assert(/accessKind/.test(serverMigration)&&/kind === 'paid'/.test(serverMigration),'server migration must distinguish free access from paid access');
 assert(/serviceKind/.test(plans)&&/Stremio-only plan/.test(plans),'service-aware plan workflow missing');
 assert(/Individual customer overrides/.test(registry)&&/ownerForSetting/.test(registry),'settings registry missing customer ownership');
+assert(/customer\.permanentAccess/.test(registry)&&/Permanent customer access/.test(registry),'permanent access must have a canonical settings owner');
 assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
 assert(/controlCentreSummary/.test(css),'customer control centre styling missing');
 assert(/grid-template-columns:var\(--customer-nav-width\) minmax\(0,1fr\)/.test(customerNav),'signed-in customer subpages must use a left navigation shell on desktop');
