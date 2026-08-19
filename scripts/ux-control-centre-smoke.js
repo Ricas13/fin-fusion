@@ -17,6 +17,8 @@ const customerNav=read('public/css/customer-navigation.css');
 assert(/Customer control centre/.test(customer),'customer control centre missing');
 assert(/Make permanent/.test(customer)&&/Remove permanent access/.test(customer)&&/permanentAccess\.enable/.test(customer),'permanent customer access controls missing');
 assert(/providerBillingChanged:false/.test(permanent)&&/previous_automation_protected/.test(permanent),'permanent access must preserve billing and cleanup state');
+assert(/superseded_by/.test(permanent)&&/is_effective_subscription/.test(permanent)&&/stale:Boolean/.test(permanent),'permanent access status must reject stale subscription pins');
+assert(/admin\.customer\.permanent_access\.repin/.test(permanent)&&/repinned/.test(permanent),'permanent access must deliberately repin to the current effective entitlement');
 assert(/customer_entitlement_overrides/.test(permanentMigration)&&/'infinity'::timestamptz/.test(permanentMigration),'permanent entitlement must be implemented in the effective entitlement layer');
 assert(/account_purpose='primary'/.test(manualAssignment)&&!/account_purpose='jellyfin'/.test(manualAssignment),'manual Jellyfin assignment must use the canonical primary account purpose');
 assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
