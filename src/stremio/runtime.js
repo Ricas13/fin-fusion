@@ -10,6 +10,7 @@ const sourcePool=require('./source-pool');
 const sourcePlayback=require('./source-playback');
 const sourceAdmission=require('./source-admission');
 const managedRuntime=require('./managed-runtime');
+const managedSessions=require('./managed-session-reconciler');
 const externalRuntime=require('./external-direct-runtime');
 const runtimeSettings=require('./runtime-settings');
 
@@ -39,10 +40,10 @@ function pipePlayback(opened,res,{onUnauthorized=null,onFinished=null}={}){
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
-  // Keep the legacy reconciler while cached/provisioned single-server installations
-  // transition to the multi-managed-source model. New stream manifests do not use
-  // either CAPTAiNFiN playback proxy route below.
+  // Keep the legacy single-server reconciler while old cached manifests expire,
+  // and run the new cross-server reconciler for managed direct playback.
   jellyfin.startStreamManager({intervalMs:60000});
+  managedSessions.start({intervalMs:15000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
     if(!enabled())return res.status(404).json({error:'Not found'});
     try{const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).json({error:'Not found'});await entitlements.markUse(e.id,'manifest');return res.json(manifest());}
