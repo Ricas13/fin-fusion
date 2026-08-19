@@ -40,7 +40,7 @@ async function candidates(){
         AND COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE
       ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
     ), accounts AS (
-      SELECT customer_id,MIN(created_at) first_account_at,
+      SELECT customer_id,MIN(created_at) FILTER(WHERE account_purpose='jellyfin') first_account_at,
              COUNT(*) FILTER(WHERE disabled=FALSE AND account_purpose='jellyfin')::int active_accounts
       FROM jellyfin_accounts GROUP BY customer_id
     )
