@@ -53,6 +53,10 @@ function staticLocalTarget(value){
   if(/\.(css|js|png|jpg|jpeg|webp|gif|svg|ico|woff2?)($|[?#])/i.test(target))return null;
   return target.split('#')[0];
 }
+function dynamicLocalTarget(value){
+  const normalized=String(value||'').replace(/\$\{[^}]+\}/g,':param');
+  return staticLocalTarget(normalized);
+}
 
 const app=createApplication();
 const routes=collectRoutes(app._router?.stack||app.router?.stack||[]);
@@ -77,6 +81,11 @@ for(const file of sources){
   while((match=hrefRe.exec(source))){
     const href=staticLocalTarget(match[1]);
     if(href)checks.push({method:'GET',path:href,rel,kind:'href'});
+  }
+  const redirectRe=/res\.redirect\(\s*(?:\d{3}\s*,\s*)?(['"`])([\s\S]*?)\1/g;
+  while((match=redirectRe.exec(source))){
+    const target=dynamicLocalTarget(match[2]);
+    if(target)checks.push({method:'GET',path:target,rel,kind:'redirect'});
   }
 }
 const missing=checks.filter(check=>!routes.some(route=>(route.method===check.method||route.method==='ALL')&&sameShape(check.path,route.path)));
