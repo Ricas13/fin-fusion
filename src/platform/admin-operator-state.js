@@ -6,6 +6,7 @@ const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const reporting=require('./reporting-currency');
 const attention=require('./attention');
+const readCursors=require('./operator-read-cursors');
 const tickets=require('../support/tickets');
 const routeRateLimit=require('../security/route-rate-limit');
 
@@ -20,18 +21,21 @@ function epoch(value){return value?new Date(value).getTime():0;}
 function operatorKey(req){return req.session?.authUserId?`admin:${req.session.authUserId}`:`ip:${ipKeyGenerator(req.ip)}`;}
 
 const unreadBurstLimit=rateLimit({windowMs:60_000,limit:120,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
+const readBurstLimit=rateLimit({windowMs:60_000,limit:60,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const reportingCurrencyBurstLimit=rateLimit({windowMs:60_000,limit:20,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const unreadPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-unread',max:120,windowSeconds:60});
+const readPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-read',max:60,windowSeconds:60});
 const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
-async function snapshot(){
+async function snapshot(adminUserId=null){
+  const seen=adminUserId?await readCursors.list(adminUserId):{};
   const [customers,orders,attentionSummary,servers,payments,ticketSummary]=await Promise.all([
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM customers WHERE created_at>NOW()-INTERVAL '7 days'`),
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused')`),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM customers WHERE created_at>NOW()-INTERVAL '7 days' AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.customers||null]),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
     attention.openSummary(),
     query(`SELECT COUNT(*)::int n,MAX(last_health_check) updated FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN ('degraded','offline')`),
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`),
-    tickets.staffQueueSummary()
+    tickets.staffQueueSummary(seen.tickets||null)
   ]);
   const rows={
     customers:customers.rows[0],
@@ -50,9 +54,24 @@ async function snapshot(){
 function createAdminOperatorStateRouter(){
   const router=express.Router();
   router.use('/admin/api/operator-state/unread',unreadBurstLimit,unreadPersistentLimit,gate);
-  router.get('/admin/api/operator-state/unread',async(_req,res)=>{
-    try{res.setHeader('Cache-Control','no-store, private');res.json({ok:true,...await snapshot()});}
-    catch(error){console.error('operator unread snapshot failed:',error.message);res.status(500).json({ok:false,error:'snapshot_failed'});}
+  router.get('/admin/api/operator-state/unread',async(req,res)=>{
+    try{
+      res.setHeader('Cache-Control','no-store, private');
+      res.json({ok:true,csrfToken:csrf.token(req),...await snapshot(res.locals.operatorActorUserId)});
+    }catch(error){console.error('operator unread snapshot failed:',error.message);res.status(500).json({ok:false,error:'snapshot_failed'});}
+  });
+  router.use('/admin/api/operator-state/read',readBurstLimit,readPersistentLimit,gate);
+  router.post('/admin/api/operator-state/read',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).json({ok:false,error:'invalid_csrf'});
+    try{
+      const saved=await readCursors.markSeen(res.locals.operatorActorUserId,req.body.area);
+      res.setHeader('Cache-Control','no-store, private');
+      return res.json({ok:true,area:saved.area,seenAt:epoch(saved.seen_at)});
+    }catch(error){
+      if(error.message==='Invalid operator read area.')return res.status(400).json({ok:false,error:'invalid_area'});
+      console.error('operator read cursor update failed:',error.message);
+      return res.status(500).json({ok:false,error:'cursor_update_failed'});
+    }
   });
   router.use('/admin/reporting-currency',reportingCurrencyBurstLimit,reportingCurrencyPersistentLimit,gate);
   router.post('/admin/reporting-currency',async(req,res)=>{

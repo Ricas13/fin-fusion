@@ -60,10 +60,11 @@ async function replyAdmin({ticketId,adminUserId,message,internalNote=false}){
   return transaction(async client=>{
     const ticket=(await client.query(`SELECT * FROM support_tickets WHERE id=$1 FOR UPDATE`,[ticketId])).rows[0];
     if(!ticket)throw new Error('Ticket not found.');
-    await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body,internal_note) VALUES($1,'admin',$2,$3,$4)`,[ticketId,adminUserId||null,body,Boolean(internalNote)]);
+    const inserted=await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body,internal_note) VALUES($1,'admin',$2,$3,$4) RETURNING id,created_at`,[ticketId,adminUserId||null,body,Boolean(internalNote)]);
     if(!internalNote)await client.query(`UPDATE support_tickets SET status='awaiting_customer',last_staff_reply_at=NOW(),updated_at=NOW() WHERE id=$1`,[ticketId]);
     else await client.query(`UPDATE support_tickets SET updated_at=NOW() WHERE id=$1`,[ticketId]);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'support_ticket',$3,$4::jsonb)`,[adminUserId,internalNote?'support.ticket.internal_note':'support.ticket.staff_reply',ticketId,JSON.stringify({internalNote:Boolean(internalNote)})]);
+    return{messageId:inserted.rows[0].id,createdAt:inserted.rows[0].created_at,internalNote:Boolean(internalNote)};
   });
 }
 async function updateAdmin({ticketId,adminUserId,status:statusValue,priority:priorityValue,assignedAdminUserId=null}){
@@ -75,8 +76,8 @@ async function updateAdmin({ticketId,adminUserId,status:statusValue,priority:pri
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'support.ticket.update','support_ticket',$2,$3::jsonb)`,[adminUserId,ticketId,JSON.stringify({status:nextStatus,priority:nextPriority,assignedAdminUserId:assignedAdminUserId||null})]);
   });
 }
-async function staffQueueSummary(){
-  const row=(await query(`SELECT COUNT(*)::int n,MAX(COALESCE(last_customer_reply_at,created_at)) updated FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0];
+async function staffQueueSummary(since=null){
+  const row=(await query(`SELECT COUNT(*)::int n,MAX(COALESCE(last_customer_reply_at,created_at)) updated FROM support_tickets WHERE status IN ('open','awaiting_staff') AND ($1::timestamptz IS NULL OR COALESCE(last_customer_reply_at,created_at)>$1::timestamptz)`,[since])).rows[0];
   return{count:Number(row?.n||0),updatedAt:row?.updated||null};
 }
 
