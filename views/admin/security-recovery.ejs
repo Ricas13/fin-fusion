@@ -1,1 +1,29 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recovery codes · <%= siteName %></title><link rel="stylesheet" href="/css/platform-shell.css"></head><body><main class="authShell"><section class="authCard"><div class="authBrand"><%= siteName %></div><h1 class="authTitle">Recovery codes</h1><p class="muted">Remaining unused codes: <strong><%= remaining %></strong></p><% if (!enabled) { %><div class="notice error">Two-factor authentication is not enabled for this account.</div><% } else { %><p class="muted">Enter the current authenticator code to replace all existing unused recovery codes with a fresh set.</p><form method="post" action="/admin/security/recovery/regenerate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="formGroup"><label>Current authenticator code</label><input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus></div><div class="buttonRow"><button class="button" type="submit">Generate new codes</button><a class="button secondary" href="/admin/security">Cancel</a></div></form><% } %></section></main></body></html>
+<!doctype html>
+<html lang="en">
+<head><title>Recovery codes · <%= siteName %></title><%- include('_head') %></head>
+<body>
+<div class="appShell">
+  <%- include('_nav',{siteName,activeNav:'security'}) %>
+  <main class="mainPane">
+    <header class="topBar"><div class="topBreadcrumb"><span>My account</span><span>Security</span><strong>Recovery codes</strong></div></header>
+    <div class="content">
+      <div class="pageHeader"><div><h1>Recovery codes</h1><div class="pageSubtitle">Remaining unused codes: <strong><%= remaining %></strong></div></div></div>
+      <section class="section">
+        <div class="formPanel">
+          <% if (!enabled) { %>
+            <div class="notice error">Two-factor authentication is not enabled for this account.</div>
+          <% } else { %>
+            <p class="muted">Enter the current authenticator code to replace all existing unused recovery codes with a fresh set.</p>
+            <form method="post" action="/admin/security/recovery/regenerate">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <div class="formGroup"><label>Current authenticator code</label><input class="input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus></div>
+              <div class="buttonRow"><button class="button" type="submit">Generate new codes</button><a class="button secondary" href="/admin/security">Cancel</a></div>
+            </form>
+          <% } %>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</body>
+</html>
