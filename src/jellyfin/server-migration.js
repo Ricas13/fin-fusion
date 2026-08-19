@@ -25,7 +25,7 @@ async function primaryAccount(customerId) {
                js.enabled AS server_enabled,js.health_status AS server_health
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
-        WHERE ja.customer_id=$1
+        WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin'
         ORDER BY ja.is_primary DESC,ja.disabled ASC,js.enabled DESC,
                  COALESCE(ja.updated_at,ja.created_at) DESC
         LIMIT 1
@@ -193,7 +193,7 @@ async function restoreSource(migration) {
     const entitlement = await provisioning.currentEntitlement(migration.customer_id);
     if (!entitlement) return false;
     const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
-    const source = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.source_account_id, migration.customer_id]);
+    const source = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.source_account_id, migration.customer_id]);
     if (!source.rowCount) return false;
     await provisioning.applyPolicy(source.rows[0], effective, false);
     await provisioning.markPrimaryAccount(migration.customer_id, migration.source_account_id);
@@ -291,8 +291,8 @@ async function rollbackMigration(migrationId, actorUserId) {
         throw new ServerMigrationError('ROLLBACK_SOURCE_NOT_ELIGIBLE', 'Original source server is no longer eligible/available for this plan.');
     }
 
-    const sourceResult = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.source_account_id, migration.customer_id]);
-    const targetResult = await query('SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2', [migration.target_account_id, migration.customer_id]);
+    const sourceResult = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.source_account_id, migration.customer_id]);
+    const targetResult = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.target_account_id, migration.customer_id]);
     if (!sourceResult.rowCount || !targetResult.rowCount) throw new ServerMigrationError('ROLLBACK_ACCOUNT_MISSING', 'Source or target Jellyfin account is missing from CAPTAiNFiN.');
     const source = sourceResult.rows[0];
     const target = targetResult.rows[0];
@@ -379,7 +379,7 @@ async function migrationCandidates(limit = 500) {
         LEFT JOIN app_users u ON u.id=c.user_id
         JOIN LATERAL (
             SELECT account.* FROM jellyfin_accounts account
-            WHERE account.customer_id=c.id
+            WHERE account.customer_id=c.id AND account.account_purpose='jellyfin'
             ORDER BY account.is_primary DESC,account.disabled ASC,account.updated_at DESC
             LIMIT 1
         ) ja ON TRUE
