@@ -3,7 +3,7 @@
 const {query}=require('../db');
 const client=require('./source-client');
 const sourceIndex=require('./source-index');
-const sourcePool=require('./source-pool');
+const planExternalSources=require('./plan-external-sources');
 const episodeResolution=require('./episode-resolution');
 const foundation=require('./foundation');
 const {neutralGroup}=require('./managed-runtime');
@@ -19,14 +19,12 @@ async function itemDetails(source,item){const qs=new URLSearchParams({Fields:'Pa
 async function exactEpisode(source,row,args){
   const endpoint=episodeResolution.userItemsPath({userId:source.jellyfin_user_id,seriesId:row.item_id,season:args.season,episode:args.episode,fields:'Path,MediaSources,MediaStreams'}),payload=await client.request(source,endpoint),target=episodeResolution.pick(payload,args.season,args.episode);
   if(target)return target;
-  // Compatibility fallback for external Jellyfin versions/installations that do
-  // not honor the exact Items filters. It runs only when the targeted query misses.
   const qs=new URLSearchParams({UserId:String(source.jellyfin_user_id),Season:String(args.season),Fields:'Path,MediaSources,MediaStreams',StartIndex:'0',Limit:'500',EnableImages:'false'}),legacy=await client.request(source,`/Shows/${encodeURIComponent(row.item_id)}/Episodes?${qs.toString()}`);
   return(Array.isArray(legacy?.Items)?legacy.Items:[]).find(item=>Number(item.IndexNumber)===args.episode&&Number(item.ParentIndexNumber??args.season)===args.season)||null;
 }
 async function items(source,args){const indexed=await roots(source,args);if(!indexed.length)return[];if(args.type==='movie')return Promise.all(indexed.map(async row=>itemDetails(source,{Id:row.item_id,Name:row.name,Path:row.path})));const settled=await Promise.allSettled(indexed.map(row=>exactEpisode(source,row,args)));return settled.filter(row=>row.status==='fulfilled'&&row.value).map(row=>row.value);}
 function mediaSources(item){const sources=(Array.isArray(item?.MediaSources)?item.MediaSources:[]).filter(media=>media?.SupportsDirectPlay!==false);return sources.length?sources:[{Id:null,Path:item?.Path||item?.path||'',MediaStreams:Array.isArray(item?.MediaStreams)?item.MediaStreams:[],Size:item?.Size||null,Bitrate:item?.Bitrate||null}];}
 async function streamsFrom(source,args,type,videoId){const found=await items(source,args),out=[];for(const item of found){for(const media of mediaSources(item)){const file=filename(item,media),display=foundation.streamDisplayFromFilename(file),q=quality(media,display);out.push({rank:q.rank,stream:{name:display.name,description:description(display,media),url:directUrl(source,item.Id,media.Id||null),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,file),filename:file,...(Number(media.Size)>0?{videoSize:Number(media.Size)}:{})}}});}}return out.sort((a,b)=>b.rank-a.rank).map(row=>row.stream);}
-async function streamsFor(entitlement,type,videoId){const args=parseVideoId(type,videoId);if(!args)return[];const sources=await sourcePool.enabledSourcesForEntitlement(entitlement);if(!sources.length)return[];const settled=await Promise.allSettled(sources.map(source=>streamsFrom(source,args,type,videoId))),output=[];for(let i=0;i<settled.length;i+=1){const result=settled[i],source=sources[i];if(result.status==='fulfilled'){output.push(...result.value);await query(`UPDATE stremio_sources SET last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[source.id]).catch(()=>{});continue;}await query(`UPDATE stremio_sources SET auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE auth_state END,last_error=$3,updated_at=NOW() WHERE id=$1`,[source.id,result.reason?.code==='STREMIO_SOURCE_AUTH',String(result.reason?.message||result.reason).slice(0,1000)]).catch(()=>{});}return output;}
+async function streamsFor(entitlement,type,videoId){const args=parseVideoId(type,videoId);if(!args)return[];const sources=await planExternalSources.forEntitlement(entitlement);if(!sources.length)return[];const settled=await Promise.allSettled(sources.map(source=>streamsFrom(source,args,type,videoId))),output=[];for(let i=0;i<settled.length;i+=1){const result=settled[i],source=sources[i];if(result.status==='fulfilled'){output.push(...result.value);await query(`UPDATE stremio_sources SET last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[source.id]).catch(()=>{});continue;}await query(`UPDATE stremio_sources SET auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE auth_state END,last_error=$3,updated_at=NOW() WHERE id=$1`,[source.id,result.reason?.code==='STREMIO_SOURCE_AUTH',String(result.reason?.message||result.reason).slice(0,1000)]).catch(()=>{});}return output;}
 
 module.exports={parseVideoId,filename,quality,description,directUrl,roots,itemDetails,exactEpisode,items,mediaSources,streamsFrom,streamsFor};
