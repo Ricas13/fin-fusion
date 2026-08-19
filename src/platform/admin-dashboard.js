@@ -1,10 +1,11 @@
 'use strict';
 
 const { layout } = require('./admin-html');
+const { renderMain } = require('./admin-dashboard-main');
+const { setupCompact, operationalAlerts, rangeControls } = require('./admin-dashboard-view');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange } = require('./admin-dashboard-analytics');
-const { renderDashboard } = require('./admin-dashboard-view-v2');
-const reportingCurrency=require('./reporting-currency');
+const reportingCurrency = require('./reporting-currency');
 const runtimeSettings = require('./runtime-settings');
 
 function isNativeAdmin(req) {
@@ -25,15 +26,15 @@ async function dashboardPage(req, res) {
     res.setHeader('Pragma', 'no-cache');
     try {
         await Promise.all([runtimeSettings.ensureLoaded(),reportingCurrency.refreshRates().catch(()=>null)]);
-        const range = dashboardRange(req.query || {});
-        const reporting=await reportingCurrency.getForUser(req.session.authUserId);
-        const stats=await dashboardData(range,reporting);
+        const { ctx, html } = await renderMain(req);
+        const stats = ctx.data;
+        const body = `${messageBlock(req)}${rangeControls(ctx.range)}${setupCompact(stats)}${operationalAlerts(stats)}${html}`;
         return res.send(layout({
             siteName: runtimeSettings.siteName(),
             active: 'dashboard',
             title: 'Admin Dashboard',
-            subtitle: `Business and streaming performance · ${range.label} · ${reporting.currency}`,
-            body: `${messageBlock(req)}${renderDashboard(stats)}`,
+            subtitle: `Business and streaming performance · ${ctx.range.label} · ${ctx.reporting.currency}`,
+            body,
             action: primaryAction(stats)
         }));
     } catch (error) {
