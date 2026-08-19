@@ -24,6 +24,8 @@ const dashboard=read('views/customer/dashboard.ejs');
 const css=read('public/css/customer-360.css');
 const customerNav=read('public/css/customer-navigation.css');
 assert(/Customer control centre/.test(customer),'customer control centre missing');
+assert(/serviceKind\(detail\)/.test(customer)&&/Customer Jellyfin account/.test(customer)&&/Not required/.test(customer)&&/Stremio sources/.test(customer),'Customer Control Centre must explain that Stremio-only plans do not require customer Jellyfin placement');
+assert(/needsAssignment=.*serviceKind\(detail\)!=='stremio'/.test(customer),'Stremio-only customers must not enter the manual Jellyfin assignment path');
 assert(/Make permanent/.test(customer)&&/Remove permanent access/.test(customer)&&/permanentAccess\.enable/.test(customer),'permanent customer access controls missing');
 assert(/providerBillingChanged:false/.test(permanent)&&/previous_automation_protected/.test(permanent),'permanent access must preserve billing and cleanup state');
 assert(/require\('\.\.\/jellyfin\/resilient-provisioning'\)/.test(permanent),'permanent access follow-up must reconcile Jellyfin/Stremio service types through the service-aware orchestrator');
