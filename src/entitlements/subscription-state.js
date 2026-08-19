@@ -25,6 +25,7 @@ async function permanentFallback(customerId,db,includeBlocked){
  JOIN plans p ON p.id=s.plan_id
  WHERE s.customer_id=$1
    AND s.superseded_by IS NULL
+   AND s.starts_at<=NOW()
    AND COALESCE(p.is_addon,FALSE)=FALSE
  ORDER BY s.current_period_end DESC NULLS LAST,s.created_at DESC
  LIMIT 1
