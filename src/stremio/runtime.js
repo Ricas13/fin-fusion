@@ -11,6 +11,7 @@ const sourcePlayback=require('./source-playback');
 const sourceAdmission=require('./source-admission');
 const managedRuntime=require('./managed-runtime');
 const managedSessions=require('./managed-session-reconciler');
+const managedPlayback=require('./managed-playback-lifecycle');
 const externalRuntime=require('./external-direct-runtime');
 const runtimeSettings=require('./runtime-settings');
 
@@ -25,6 +26,15 @@ async function publicOrigin(req){try{const cfg=await operations.get();if(cfg.pub
 function copyPlaybackHeaders(upstream,res){for(const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified','cache-control']){const value=upstream.headers?.[name];if(value!=null)res.setHeader(name,value);}}
 async function hasExplicitSources(entitlement){const r=await query(`SELECT EXISTS(SELECT 1 FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE WHERE s.id=$1) yes`,[entitlement.subscription_id]);return r.rows[0]?.yes===true;}
 function attachLease(streams,lease=sourceAdmission.issue()){return streams.map(stream=>{try{const url=new URL(stream.url);if(/\/stremio\/[^/]+\/(?:source|jellyfin)\//.test(url.pathname))url.searchParams.set('lease',lease);return{...stream,url:url.toString()};}catch{return stream;}});}
+async function managedMapping(entitlementId,mappingId){
+  const result=await query(`SELECT sma.*,js.name server_name,js.base_url,js.public_url,js.enabled server_enabled,js.stremio_enabled,
+      ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled account_disabled
+    FROM stremio_managed_accounts sma
+    JOIN jellyfin_servers js ON js.id=sma.server_id
+    JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id
+    WHERE sma.id=$2 AND sma.entitlement_id=$1 AND sma.status='active' AND js.enabled=TRUE AND js.stremio_enabled=TRUE AND ja.disabled=FALSE`,[entitlementId,mappingId]);
+  return result.rows[0]||null;
+}
 
 function pipePlayback(opened,res,{onUnauthorized=null,onFinished=null}={}){
   const upstream=opened.response,status=Number(upstream.statusCode||502);
@@ -42,6 +52,7 @@ function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
   jellyfin.startStreamManager({intervalMs:60000});
   managedSessions.start({intervalMs:15000});
+  managedPlayback.startManager({intervalMs:15000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
     if(!enabled())return res.status(404).json({error:'Not found'});
     try{const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).json({error:'Not found'});await entitlements.markUse(e.id,'manifest');return res.json(manifest());}
@@ -51,14 +62,31 @@ function createStremioRuntimeRouter(){
     if(!enabled())return res.json({streams:[]});
     try{
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
-      const type=String(req.params.type||''),videoId=String(req.params.videoId||'');
+      const type=String(req.params.type||''),videoId=String(req.params.videoId||''),origin=await publicOrigin(req);
       const [managed,external]=await Promise.all([
-        managedRuntime.streamsFor(e,type,videoId),
+        managedRuntime.streamsFor(e,type,videoId,{proxyBase:origin,installToken:req.params.token}),
         externalRuntime.streamsFor(e,type,videoId)
       ]);
       const streams=[...managed,...external];
       await entitlements.markUse(e.id,'stream');return res.json({streams});
     }catch(error){console.error('Stremio stream request failed:',String(error?.message||error).slice(0,300));return res.json({streams:[]});}
+  });
+
+  // Managed playback admission is intentionally a tiny control-plane hop.
+  // CAPTAiNFiN checks the stream allowance and registers Jellyfin playback,
+  // then redirects the player to Jellyfin. No media bytes pass through here.
+  router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
+    if(!enabled())return res.status(404).end();const lease=String(req.query.lease||''),playSessionId=String(req.query.playSessionId||'');let e=null,admitted=false;
+    try{
+      e=await entitlements.findByInstallToken(req.params.token);if(!e||!lease)return res.status(404).end();
+      const mapping=await managedMapping(e.id,req.params.mappingId);if(!mapping)return res.status(404).end();
+      const id=managedPlayback.deviceId(lease),admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,{managedMappingId:mapping.id,serverId:mapping.server_id,jellyfinUserId:mapping.jellyfin_user_id,deviceId:id,playSessionId,mediaSourceId:req.params.mediaSourceId});
+      if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}admitted=true;
+      const started=await managedPlayback.start(mapping,lease,{itemId:req.params.itemId,mediaSourceId:req.params.mediaSourceId,playSessionId});
+      const target=managedRuntime.directUrl(mapping,req.params.itemId,req.params.mediaSourceId,playSessionId,started.deviceId);
+      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'stremio.managed_playback.admitted','stremio_entitlement',$1,$2::jsonb)`,[e.id,JSON.stringify({serverId:mapping.server_id,jellyfinSessionId:started.jellyfinSessionId||null,active:admission.active,limit:admission.limit})]).catch(()=>{});
+      return res.redirect(302,target);
+    }catch(error){if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});console.error('Managed Stremio admission failed:',String(error?.message||error).slice(0,300));return res.status(502).end();}
   });
 
   // Compatibility-only proxy routes for cached stream URLs from the previous
@@ -100,4 +128,4 @@ function createStremioRuntimeRouter(){
   return router;
 }
 
-module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,copyPlaybackHeaders,pipePlayback,createStremioRuntimeRouter};
+module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,managedMapping,copyPlaybackHeaders,pipePlayback,createStremioRuntimeRouter};
