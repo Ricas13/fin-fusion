@@ -6,6 +6,7 @@ const { query, getPool } = require('../src/db');
 const registry = require('../src/platform/admin-dashboard-registry');
 const { renderMain, buildContext } = require('../src/platform/admin-dashboard-main');
 const { dashboardRange } = require('../src/platform/admin-dashboard-analytics');
+const { dashboardPage } = require('../src/platform/admin-dashboard');
 
 function fakeReq(adminId, queryParams = {}) {
     return { session: { authUserId: adminId, authRole: 'admin', adminId }, query: queryParams };
@@ -74,6 +75,14 @@ async function main() {
     for (const spec of registry.listWidgets('main')) {
         await spec.render(emptyCtx);
     }
+
+    // The real /admin HTTP handler must render end to end -- not just the
+    // widget-grid pieces exercised above -- to catch bugs (e.g. a missing
+    // module export) that only surface on the actual request path.
+    let sentBody = null;
+    const fakeRes = { setHeader() {}, send(body) { sentBody = body; return fakeRes; } };
+    await dashboardPage(req, fakeRes);
+    assert(typeof sentBody === 'string' && sentBody.includes('data-dashboard-key="main"'), '/admin must render the widget grid without throwing');
 
     console.log('admin main dashboard widgets smoke: ok');
 }

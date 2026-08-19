@@ -27,6 +27,7 @@ async function renderWidgetGrid(dashboardKey, req, ctx) {
         return `<button type="button" class="widgetPickerItem ${current?.visible !== false ? 'active' : ''}" data-widget-picker-item="${esc(spec.key)}">${esc(spec.title)}</button>`;
     }).join('');
     return `
+        <link rel="stylesheet" href="/css/admin-dashboard-analytics.css">
         <div class="dashboardCustomizeBar"><button type="button" class="button secondary btn-sm" data-dashboard-customize-toggle>Customize dashboard</button></div>
         <div class="widgetPicker widgetHidden" data-widget-picker><h3>Show/hide widgets</h3><div class="widgetPickerList">${picker}</div><div class="buttonRow" style="margin-top:10px"><button type="button" class="button secondary btn-sm" data-dashboard-reset>Restore defaults</button></div></div>
         <div class="analyticsGrid" data-dashboard-key="${esc(dashboardKey)}" data-csrf-token="${esc(csrf.token(req))}">${body}</div>
