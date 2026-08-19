@@ -13,7 +13,10 @@ class ServerMigrationError extends Error {
     }
 }
 
-function isTrial(plan) { return plan?.billing_interval === 'trial'; }
+function accessKind(plan) {
+    if (plan?.billing_interval === 'trial') return 'trial';
+    return Number(plan?.price_minor || 0) === 0 ? 'free' : 'paid';
+}
 function same(a, b) { return String(a || '') === String(b || ''); }
 
 async function primaryAccount(customerId) {
@@ -79,8 +82,9 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     if (!target.allow_new_users) throw new ServerMigrationError('TARGET_CLOSED', 'Target server is closed to new users.', 'preflight');
     if (target.health_status === 'offline') throw new ServerMigrationError('TARGET_OFFLINE', 'Target Jellyfin server is offline.', 'preflight');
     if (target.server_class !== entitlement.server_class) throw new ServerMigrationError('TARGET_CLASS_MISMATCH', 'Target server class does not match the active plan.', 'preflight');
-    if (isTrial(entitlement) && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
-    if (!isTrial(entitlement) && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
+    const kind = accessKind(entitlement);
+    if (kind === 'trial' && !target.trial_enabled) throw new ServerMigrationError('TARGET_TRIAL_DISABLED', 'Target server does not accept trial users.', 'preflight');
+    if (kind === 'paid' && !target.paid_enabled) throw new ServerMigrationError('TARGET_PAID_DISABLED', 'Target server does not accept paid users.', 'preflight');
 
     const assignedUsers = await activeAccountCount(target.id);
     const maxUsers = Number(target.max_users || 0);
@@ -221,8 +225,6 @@ async function executeMigration(migrationId) {
         `, [migrationId, targetAccount.id, JSON.stringify({ targetJellyfinUserId: targetAccount.jellyfin_user_id })]);
 
         stage = 'disable_source';
-        // From this point a thrown error is treated as if the remote source may
-        // already have accepted the disable call, so cleanup always attempts restore.
         sourceMayBeDisabled = true;
         await provisioning.disableJellyfinAccount(check.source);
 
@@ -319,8 +321,6 @@ async function rollbackMigration(migrationId, actorUserId) {
         await markProvisioningDue(migration.customer_id, source.id, source.server_id);
         return migrationForId(migrationId);
     } catch (error) {
-        // Roll back the rollback: prevent duplicate active accounts if target
-        // could not be disabled after source was restored.
         if (sourceEnabled) {
             try { await provisioning.disableJellyfinAccount(source); } catch (_) {}
         }
