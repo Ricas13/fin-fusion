@@ -25,7 +25,7 @@ assert(adminServers.includes('SERVER_ID_PARAM')&&adminServers.includes('/admin/s
 assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio/managed']"),'Stremio must be a single Servers navigation destination landing on Manage Stremio');
 assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'"),'Legacy Stremio navigation must resolve to Servers → Stremio');
 assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio Sources workflow');
-assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'Legacy Stremio settings URL must redirect to the Servers-owned Stremio workflow');
+assert(legacy.includes("res.redirect(302,'/admin/servers/stremio/managed')"),'Legacy Stremio settings URLs must land on Manage Stremio');
 
 for(const phrase of ['Add Jellyfin source','Connect Jellyfin source','Libraries to index','Sync now','Incremental every 6 hours','full reconciliation','Rotate direct-playback token automatically'])assert(sources.includes(phrase),`Stremio Sources UI missing: ${phrase}`);
 assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&sources.includes('name="password"'),'External source form must use Jellyfin URL + ordinary user credentials');
