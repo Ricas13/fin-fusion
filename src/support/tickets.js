@@ -76,8 +76,8 @@ async function updateAdmin({ticketId,adminUserId,status:statusValue,priority:pri
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'support.ticket.update','support_ticket',$2,$3::jsonb)`,[adminUserId,ticketId,JSON.stringify({status:nextStatus,priority:nextPriority,assignedAdminUserId:assignedAdminUserId||null})]);
   });
 }
-async function staffQueueSummary(){
-  const row=(await query(`SELECT COUNT(*)::int n,MAX(COALESCE(last_customer_reply_at,created_at)) updated FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0];
+async function staffQueueSummary(since=null){
+  const row=(await query(`SELECT COUNT(*)::int n,MAX(COALESCE(last_customer_reply_at,created_at)) updated FROM support_tickets WHERE status IN ('open','awaiting_staff') AND ($1::timestamptz IS NULL OR COALESCE(last_customer_reply_at,created_at)>$1::timestamptz)`,[since])).rows[0];
   return{count:Number(row?.n||0),updatedAt:row?.updated||null};
 }
 
