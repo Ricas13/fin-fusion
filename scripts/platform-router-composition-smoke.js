@@ -22,6 +22,7 @@ function explicitRoutes(source) {
 function main() {
     const platformRouter = read('src/platform/router.js');
     const runtimeLegacy = read('src/platform/router-runtime-legacy.js');
+    const routerCore = read('src/platform/router-core.js');
 
     assert(!platformRouter.includes('pruneRoutes'), 'platform router must not prune Express route stacks at runtime');
     assert(!/\.stack\s*=/.test(platformRouter), 'platform router must not mutate Express private .stack internals');
@@ -44,6 +45,20 @@ function main() {
     );
     assert(runtimeLegacy.includes('createAdminActionsRouter()'), 'runtime compatibility router must retain canonical admin actions');
 
+    assert(routerCore.includes('createRuntimeLegacyRouter'), 'router-core compatibility constructor must delegate to the explicit runtime legacy router');
+    assert(!routerCore.includes("require('express')"), 'router-core must not construct an independent Express route generation');
+    assert(!/\brouter\.(get|post|put|patch|delete)\(/.test(routerCore), 'router-core must not own HTTP handlers');
+    for (const obsoleteDependency of [
+        '../payments/lifecycle',
+        '../payments/stripe',
+        '../payments/paypal',
+        '../jellyfin/resilient-provisioning',
+        '../integrations/request-user-sync',
+        '../integrations/email-outbox'
+    ]) {
+        assert(!routerCore.includes(obsoleteDependency), `router-core still imports superseded route dependency: ${obsoleteDependency}`);
+    }
+
     for (const retiredPath of [
         '/account/register',
         '/account/verify-email',
@@ -58,9 +73,10 @@ function main() {
         '/account/claim-free/:planCode'
     ]) {
         assert(!runtimeLegacy.includes(retiredPath), `replaced route leaked into runtime legacy router: ${retiredPath}`);
+        assert(!routerCore.includes(retiredPath), `replaced route remains in router-core: ${retiredPath}`);
     }
 
-    console.log('platform router composition: ok (no private stack pruning; runtime compatibility routes are explicit)');
+    console.log('platform router composition: ok (no private stack pruning; dead router-core generation retired; compatibility routes explicit)');
 }
 
 try {
