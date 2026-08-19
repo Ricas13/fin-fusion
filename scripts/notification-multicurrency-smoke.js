@@ -3,7 +3,8 @@
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
-const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const root=path.join(__dirname,'..');
+const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const migration=read('db/migrations/000_database_baseline.sql');
 const integrity=migration;
@@ -26,6 +27,8 @@ const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
 const provisioning=read('src/jellyfin/provisioning.js');
 const platformRouter=read('src/platform/router.js');
+const adminRuntimePath=path.join(root,'src/platform/admin-runtime-route-composition.js');
+const adminRuntime=fs.existsSync(adminRuntimePath)?fs.readFileSync(adminRuntimePath,'utf8'):platformRouter;
 const personalTests=read('src/platform/admin-personal-notification-tests.js');
 const personalTestUi=read('public/js/admin-personal-notification-tests.js');
 
@@ -67,12 +70,12 @@ assert(notificationTabs.includes("['global','Global notifications','/admin/notif
 assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Global notification workflow must expose the canonical email infrastructure route');
 assert(notificationTabs.includes("['profile','Profile','/admin/profile']"),'My Profile workflow must expose personal account settings');
 assert(notificationTabs.includes("['personal','Notifications','/admin/profile/notifications']"),'My Profile workflow must expose personal notification routing');
-assert(adminHtml.includes("notificationWorkflow.globalTabs"),'Global notification layouts must keep a stable global workflow tab set');
+assert(adminHtml.includes('notificationWorkflow.globalTabs'),'Global notification layouts must keep a stable global workflow tab set');
 assert(adminHtml.includes("notificationWorkflow.profileTabs('profile')")&&adminHtml.includes("notificationWorkflow.profileTabs('personal')"),'My Profile and My Notifications must share a stable personal workflow tab set');
-assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
+assert(adminRuntime.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the canonical admin runtime composition');
 assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must resolve to the canonical email infrastructure page');
-assert(adminProfile.includes("UPDATE app_users SET email=$2")&&adminProfile.includes("UPDATE customers SET email=$2"),'Changing administrator email must also keep an attached personal customer profile in sync');
-assert(adminProfile.includes("INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note)"),'Personal media access must attach a customer record to the existing administrator user');
+assert(adminProfile.includes('UPDATE app_users SET email=$2')&&adminProfile.includes('UPDATE customers SET email=$2'),'Changing administrator email must also keep an attached personal customer profile in sync');
+assert(adminProfile.includes('INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note)'),'Personal media access must attach a customer record to the existing administrator user');
 assert(adminProfile.includes("'admin_grant'")&&adminProfile.includes('provisioning.reconcileCustomer(created.customerId)'),'Personal media access must use an explicit admin grant and the normal Jellyfin reconciliation path');
 assert(!adminProfile.includes("UPDATE app_users SET role='customer'"),'Creating personal media access must never demote the administrator account');
 assert(adminProfile.includes("r.post('/admin/profile/media/jellyfin/:accountId/password',setPersonalJellyfinPassword)"),'Personal admins must have a scoped Jellyfin password setup route');
@@ -82,12 +85,12 @@ assert(adminProfile.includes('autocomplete="new-password"')&&adminProfile.includ
 assert(provisioning.includes("row.user_role==='admin'&&row.registration_source==='admin_personal'"),'Provisioning must recognize role-preserving personal administrator media profiles');
 assert(provisioning.includes('Settings > My Profile'),'Personal administrator onboarding must direct password setup to My Profile instead of the customer portal');
 
-assert(platformRouter.includes('createAdminPersonalNotificationTestsRouter'),'Personal notification test routes must be mounted in the assembled platform router');
+assert(adminRuntime.includes('createAdminPersonalNotificationTestsRouter'),'Personal notification test routes must be mounted in the canonical admin runtime composition');
 for(const channel of ['email','telegram','discord','whatsapp'])assert(personalTests.includes(`/admin/profile/notifications/test/${channel}`),`Personal ${channel} delivery must have a test route`);
 assert(personalTests.includes("notificationSettings.sendDiscord(testText(site,'Discord'),{userId:me.discord_user_id})"),'Discord test must send a real DM to the linked admin identity');
 assert(personalTests.includes("notificationSettings.sendTelegram(testText(site,'Telegram'),{chatId:me.telegram_chat_id})"),'Telegram test must send to the linked admin chat');
 assert(personalTests.includes("notificationSettings.sendWhatsapp(testText(site,'WhatsApp'),{to:me.phone_e164})"),'WhatsApp test must use the saved opted-in admin phone');
-assert(personalTests.includes("emailSettings.send({to:me.email"),'Email test must use the signed-in administrator email');
+assert(personalTests.includes('emailSettings.send({to:me.email'),'Email test must use the signed-in administrator email');
 assert(personalTests.includes("'admin.notifications.personal.test'"),'Personal delivery tests must be audit logged without masquerading as business events');
 assert(personalTestUi.includes('Send test Discord')&&personalTestUi.includes('Send test Telegram')&&personalTestUi.includes('Send test WhatsApp'),'My Notifications must expose real delivery test buttons');
 assert(adminHtml.includes('/js/admin-personal-notification-tests.js'),'The personal notification test controls must be loaded on My Notifications');
