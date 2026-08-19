@@ -1,14 +1,42 @@
 'use strict';
 
-const outbox=require('../integrations/email-outbox');
+const notifications=require('../integrations/notification-dispatch');
 
-function esc(value){return String(value||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
+function appendUrl(text,url,label){return url?`${text}\n\n${label}: ${url}`:text;}
+
+async function queueNeedsStaff({ticket,messageId=null,kind='created',ticketUrl=null}){
+  const isReply=kind==='reply';
+  const subject=isReply
+    ?`Customer replied to support ticket #${ticket.ticket_number}`
+    :`New support ticket #${ticket.ticket_number}`;
+  let text=`${ticket.subject}\nCategory: ${ticket.category}\nPriority: ${ticket.priority}`;
+  text=appendUrl(text,ticketUrl,'Open ticket');
+  return notifications.dispatch({
+    eventType:'support.ticket.needs_staff',
+    subject,
+    text,
+    dedupeKey:`support-ticket-needs-staff:${isReply?'reply':'created'}:${messageId||ticket.id}`
+  });
+}
+
 async function queueStaffReply({ticket,email,messageId,ticketUrl,siteName='CAPTAiNFiN'}){
   const recipient=String(email||'').trim();
   if(!recipient)return null;
   const subject=`${siteName} support replied to ticket #${ticket.ticket_number}`;
-  const text=`There is a new support reply on ticket #${ticket.ticket_number}: ${ticket.subject}\n\nView and reply: ${ticketUrl}\n\nThis is a service message about a support ticket you opened.`;
-  const html=`<p>There is a new support reply on <strong>ticket #${esc(ticket.ticket_number)}</strong>: ${esc(ticket.subject)}</p><p><a href="${esc(ticketUrl)}">View and reply to your ticket</a></p><p><small>This is a service message about a support ticket you opened.</small></p>`;
-  return outbox.enqueue({type:'support_ticket_reply',to:recipient,subject,text,html,dedupeKey:`support-ticket-reply:${messageId}`});
+  let text=`There is a new support reply on ticket #${ticket.ticket_number}: ${ticket.subject}`;
+  text=appendUrl(text,ticketUrl,'View and reply');
+  text+='\n\nThis is a service message about a support ticket you opened.';
+  return notifications.dispatch({
+    eventType:'support.ticket.staff_reply',
+    customerId:ticket.customer_id,
+    to:recipient,
+    subject,
+    text,
+    dedupeKey:`support-ticket-staff-reply:${messageId}`,
+    forceEmail:true
+  });
 }
-module.exports={queueStaffReply};
+
+function anyQueued(result){return Boolean(result&&(result.email||result.telegram||result.discord||result.whatsapp));}
+
+module.exports={queueNeedsStaff,queueStaffReply,anyQueued};
