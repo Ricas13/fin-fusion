@@ -9,13 +9,10 @@ const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 
 const { query } = require('./db');
-const firstRun = require('./auth/first-run-setup');
-const controller = require('./auth/staff-controller');
 const { guardSession } = require('./auth/session-guard');
-const runtimeSettings = require('./platform/runtime-settings');
 const operationsSettings = require('./platform/operations-settings');
 const adminNav = require('./platform/admin-nav');
-const { mountAdminRoutes } = require('./platform/admin-route-composition');
+const { mountApplicationRoutes } = require('./application-route-composition');
 const { consumeLoginAttempt, pruneLoginRateLimits } = require('./security/login-rate-limit');
 const customerRateLimit = require('./security/customer-rate-limit');
 const { requestMaintenanceGuard } = require('./security/maintenance-lock');
@@ -177,30 +174,10 @@ async function publicMutationRateLimit(req, res, next) {
   }
 }
 
-async function loginSetupGate(req, res, next) {
-  try {
-    if (await firstRun.isSetupRequired()) return res.redirect('/setup');
-    await runtimeSettings.ensureLoaded().catch(() => {});
-    return next();
-  } catch (error) {
-    return next(error);
-  }
-}
-
 function mountPlatform(app) {
   const { createHealthRouter } = require('./platform/health');
   const { createWebhookRouter } = require('./platform/webhooks');
   const { createStremioRuntimeRouter } = require('./stremio/runtime');
-  const { createFirstRunRouter } = require('./auth/first-run-controller');
-  const { createAdminSecurityRouter } = require('./platform/admin-security');
-  const { storefrontPage } = require('./platform/storefront');
-  const { createRouter } = require('./platform/router');
-  const { createCustomerPasswordSyncRouter } = require('./platform/customer-password-sync');
-  const { createCustomerSubscriptionActionsRouter } = require('./platform/customer-subscription-actions');
-  const { createFlexibleCheckoutRouter } = require('./platform/flexible-checkout');
-  const { createCustomerClaimRouter } = require('./platform/customer-claim');
-  const { createBrandingRouter } = require('./platform/branding');
-  const { createAdminPreviewRouter } = require('./platform/admin-preview');
 
   app.use(createHealthRouter());
   app.use(createWebhookRouter());
@@ -214,38 +191,7 @@ function mountPlatform(app) {
   app.use(staffLoginRateLimit);
   app.use(customerAuthRateLimit);
   app.use(publicMutationRateLimit);
-
-  app.use(createFirstRunRouter());
-  app.get('/login', loginSetupGate, controller.loginPage);
-  app.post('/login', loginSetupGate, controller.loginSubmit);
-  app.get('/logout', controller.logout);
-  app.use(controller.createAuthRouter());
-  app.use(createAdminSecurityRouter());
-
-  app.get('/', async (req, res, next) => {
-    try {
-      if (await firstRun.isSetupRequired()) return res.redirect('/setup');
-      return storefrontPage(req, res, next);
-    } catch (error) {
-      return next(error);
-    }
-  });
-
-  app.use(createBrandingRouter());
-  app.use(createCustomerClaimRouter());
-  app.use(createCustomerPasswordSyncRouter());
-  app.use(createCustomerSubscriptionActionsRouter());
-  app.use(createFlexibleCheckoutRouter());
-  app.use(createAdminPreviewRouter());
-
-  app.use('/invite', (_req, res) => res.status(410).send('Invitation onboarding is no longer available.'));
-  app.use('/admin/invitations', (_req, res) => res.redirect(
-    302,
-    '/admin/users?message=' + encodeURIComponent('Invitations are retired. Add or import customers instead.')
-  ));
-
-  mountAdminRoutes(app);
-  app.use(createRouter());
+  mountApplicationRoutes(app);
 }
 
 function createApplication() {
