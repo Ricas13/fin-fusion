@@ -8,6 +8,7 @@ on:
       - 'public/js/admin-plan-create-v2.js'
       - 'scripts/plan-create-v2-smoke.js'
       - 'src/platform/admin-catalog-shell.js'
+      - 'src/platform/admin-customer-create-form.js'
       - 'public/js/admin-plan-create.js'
       - 'scripts/plan-create-commerce-smoke.js'
       - 'db/migrations/**'
@@ -50,11 +51,12 @@ jobs:
           node --check public/js/admin-plan-create-v2.js
           node --check scripts/plan-create-v2-smoke.js
           node --check src/platform/admin-catalog-shell.js
+          node --check src/platform/admin-customer-create-form.js
           node --check public/js/admin-plan-create.js
           node --check scripts/plan-create-commerce-smoke.js
       - name: Apply database migrations
         run: npm run db:migrate
       - name: Canonical V2 Jellyfin, Stremio and bundle creation
         run: node scripts/plan-create-v2-smoke.js
-      - name: Legacy shell pricing and commerce compatibility
+      - name: Legacy shell delegates to canonical plan creation
         run: node scripts/plan-create-commerce-smoke.js
