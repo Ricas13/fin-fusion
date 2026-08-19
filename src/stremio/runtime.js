@@ -9,6 +9,9 @@ const jellyfin=require('./jellyfin-runtime');
 const sourcePool=require('./source-pool');
 const sourcePlayback=require('./source-playback');
 const sourceAdmission=require('./source-admission');
+const managedRuntime=require('./managed-runtime');
+const managedSessions=require('./managed-session-reconciler');
+const externalRuntime=require('./external-direct-runtime');
 const runtimeSettings=require('./runtime-settings');
 
 const manifestLimit=routeRateLimit.middleware({scope:'stremio-manifest',max:60,windowSeconds:60});
@@ -17,7 +20,7 @@ const playbackLimit=routeRateLimit.middleware({scope:'stremio-source-playback',m
 function enabled(){return runtimeSettings.enabled();}
 function cors(_req,res,next){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,HEAD,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type,Range');res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Cache-Control','no-store');next();}
 async function loadRuntimeSetting(_req,res,next){try{await runtimeSettings.ensureLoaded();return next();}catch(error){console.error('Stremio runtime setting unavailable:',error.message);return res.status(503).json({error:'Temporarily unavailable'});}}
-function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.2.0',name:'CAPTAiNFiN',description:'Your CAPTAiNFiN subscription streams through portal-managed Jellyfin playback.',resources:[{name:'stream',types:['movie','series'],idPrefixes:['tt']}],types:['movie','series'],catalogs:[],behaviorHints:{configurable:false,p2p:false}};}
+function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.3.0',name:'CAPTAiNFiN',description:'Stream results included with your CAPTAiNFiN subscription.',resources:[{name:'stream',types:['movie','series'],idPrefixes:['tt']}],types:['movie','series'],catalogs:[],behaviorHints:{configurable:false,p2p:false}};}
 async function publicOrigin(req){try{const cfg=await operations.get();if(cfg.publicBaseUrl)return String(cfg.publicBaseUrl).replace(/\/$/,'');}catch(_error){}const host=req.get('x-forwarded-host')||req.get('host');const proto=req.get('x-forwarded-proto')||req.protocol||'https';return `${proto}://${host}`.replace(/\/$/,'');}
 function copyPlaybackHeaders(upstream,res){for(const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified','cache-control']){const value=upstream.headers?.[name];if(value!=null)res.setHeader(name,value);}}
 async function hasExplicitSources(entitlement){const r=await query(`SELECT EXISTS(SELECT 1 FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE WHERE s.id=$1) yes`,[entitlement.subscription_id]);return r.rows[0]?.yes===true;}
@@ -37,7 +40,10 @@ function pipePlayback(opened,res,{onUnauthorized=null,onFinished=null}={}){
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
+  // Keep the legacy single-server reconciler while old cached manifests expire,
+  // and run the new cross-server reconciler for managed direct playback.
   jellyfin.startStreamManager({intervalMs:60000});
+  managedSessions.start({intervalMs:15000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
     if(!enabled())return res.status(404).json({error:'Not found'});
     try{const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).json({error:'Not found'});await entitlements.markUse(e.id,'manifest');return res.json(manifest());}
@@ -47,13 +53,22 @@ function createStremioRuntimeRouter(){
     if(!enabled())return res.json({streams:[]});
     try{
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
-      const type=String(req.params.type||''),videoId=String(req.params.videoId||''),proxyBase=await publicOrigin(req),explicit=await hasExplicitSources(e);
-      let streams=await sourcePool.streamsFor(e,type,videoId,{proxyBase,installToken:req.params.token});
-      if(!streams.length&&!explicit)streams=await jellyfin.streamsFor(e,type,videoId,{proxyBase,installToken:req.params.token});
-      if(streams.length)streams=attachLease(streams);
+      const type=String(req.params.type||''),videoId=String(req.params.videoId||'');
+      // Resolve both classes concurrently for latency, then deliberately flatten
+      // managed fleet results first. Source type/name is never added to customer
+      // stream labels or descriptions.
+      const [managed,external]=await Promise.all([
+        managedRuntime.streamsFor(e,type,videoId),
+        externalRuntime.streamsFor(e,type,videoId)
+      ]);
+      const streams=[...managed,...external];
       await entitlements.markUse(e.id,'stream');return res.json({streams});
-    }catch(_error){console.error('Stremio stream request failed.');return res.json({streams:[]});}
+    }catch(error){console.error('Stremio stream request failed:',String(error?.message||error).slice(0,300));return res.json({streams:[]});}
   });
+
+  // Compatibility-only proxy routes for stream manifests cached before the direct
+  // delivery migration. New manifests never point at these routes. They can be
+  // removed after the compatibility window has elapsed.
   router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
     if(!enabled())return res.status(404).end();let opened=null,heartbeat=null,e=null,admitted=false,released=false;const lease=String(req.query.lease||''),isHead=req.method==='HEAD';
     const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};

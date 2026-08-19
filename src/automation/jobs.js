@@ -20,6 +20,7 @@ const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
 const stremioSourcePool=require('../stremio/source-pool');
 const stremioSourceAdmission=require('../stremio/source-admission');
+const stremioManagedEntitlements=require('../stremio/managed-entitlements');
 require('../platform/bulk-operations');
 require('../platform/bulk-server-migration');
 require('../platform/operator-bulk-operations');
@@ -39,6 +40,7 @@ const jobs={
  async marketing_campaigns(){const cfg=await operationsSettings.get().catch(()=>operationsSettings.DEFAULTS),base=String(cfg.publicBaseUrl||'').replace(/\/$/,'');return marketingCampaigns.runDue({limit:20,storefrontUrl:base?`${base}/`:''})},
  async activation_cleanup(){return activationCleanup.process()},
  async pending_registration_cleanup(){return pendingRegistrations.cleanupExpired(500)},
+ async stremio_managed_accounts(){return stremioManagedEntitlements.syncActive()},
  async stremio_media_index(){let rotation={total:0,rotated:0,failed:0};try{rotation=await stremioSourcePool.rotateDueTokens({limit:25});}catch(error){rotation={total:0,rotated:0,failed:1};console.error('External Stremio source token rotation failed:',error.message);}let external={total:0,processed:0,failed:0};try{external=await stremioSourceIndex.indexDueSources();}catch(error){external={total:0,processed:0,failed:1};console.error('External Stremio source index failed:',error.message);}let managed={total:0,processed:0,failed:0};try{managed=await stremioMediaIndex.indexAll();}catch(error){managed={total:0,processed:0,failed:1};console.error('Managed Stremio media index failed:',error.message);}const expiredPlaybackLeases=await stremioSourceAdmission.cleanup(5000);return{total:Number(rotation.total||0)+Number(external.total||0)+Number(managed.total||0),processed:Number(rotation.rotated||0)+Number(external.processed||0)+Number(managed.processed||0)+Number(expiredPlaybackLeases||0),failed:Number(rotation.failed||0)+Number(external.failed||0)+Number(managed.failed||0),rotation,external,managed,expiredPlaybackLeases}}
 };
 function names(){return Object.keys(jobs)}
