@@ -8,6 +8,7 @@ ALTER TABLE public.stremio_source_playback_leases
     ADD COLUMN IF NOT EXISTS play_session_id text,
     ADD COLUMN IF NOT EXISTS media_source_id text,
     ADD COLUMN IF NOT EXISTS jellyfin_session_id text,
+    ADD COLUMN IF NOT EXISTS position_ticks bigint,
     ADD COLUMN IF NOT EXISTS lifecycle_started_at timestamp with time zone,
     ADD COLUMN IF NOT EXISTS lifecycle_last_seen_at timestamp with time zone;
 
