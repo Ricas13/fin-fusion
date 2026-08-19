@@ -6,10 +6,20 @@ async function getPlanByCode(code) {
     return result.rows[0] || null;
 }
 
-// Compatibility API retained for existing callers. Manual subscription writes
-// now have one entitlement-domain owner rather than being implemented here.
-async function createManualSubscription(options) {
-    return manualSubscriptions.createManualSubscription(options);
+// Compatibility API retained for existing callers. Preserve the historical
+// signature and active-status semantics while delegating the write itself to
+// the entitlement-domain owner.
+async function createManualSubscription({ customerId, planId, startsAt, endsAt, actorUserId = null, source = 'manual' }) {
+    return manualSubscriptions.createManualSubscription({
+        customerId,
+        planId,
+        startsAt,
+        endsAt,
+        actorUserId,
+        source,
+        status: 'active',
+        auditAction: 'subscription.create'
+    });
 }
 
 // Legacy compatibility entry point. Provider-backed subscription state is no
