@@ -15,7 +15,10 @@ const CURRENCIES = ['GBP', 'USD', 'EUR'];
 const SERVICE_TYPES = ['jellyfin', 'stremio', 'bundle'];
 
 function planCreateInput(body = {}) {
-    return planCreate.parse(body);
+    const input = { ...body };
+    if (input.capacityLimit === undefined || input.capacityLimit === null || String(input.capacityLimit).trim() === '') input.capacityLimit = '0';
+    if (input.streams === undefined || input.streams === null || String(input.streams).trim() === '') input.streams = '1';
+    return planCreate.parse(input);
 }
 
 async function createPlanRecord(plan, actorUserId = null) {
