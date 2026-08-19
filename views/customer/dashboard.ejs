@@ -21,7 +21,7 @@
   const primaryAccount=portal.accounts.find(a=>a.is_primary&&!a.disabled)||portal.accounts.find(a=>!a.disabled)||portal.accounts[0]||null;
   const activePlanId=currentPlan?(currentPlan.plan_id||currentPlan.id):null;
   const activeSubscription=Array.isArray(portal.subscriptions)?(portal.subscriptions.find(s=>['active','trialing','past_due','paused'].includes(String(s.status||''))&&(!s.current_period_end||(validDate(s.current_period_end)&&validDate(s.current_period_end).getTime()>Date.now())))||portal.subscriptions[0]||null):null;
-  const recurringSubscription=Boolean(activeSubscription&&((activeSubscription.source==='stripe'&&/^sub_/i.test(String(activeSubscription.provider_subscription_id||'')))||(activeSubscription.source==='paypal'&&/^I-/i.test(String(activeSubscription.provider_subscription_id||''))));
+  const recurringSubscription=Boolean(activeSubscription&&((activeSubscription.source==='stripe'&&/^sub_/i.test(String(activeSubscription.provider_subscription_id||'')))||(activeSubscription.source==='paypal'&&/^I-/i.test(String(activeSubscription.provider_subscription_id||'')))));
   const visibleLibraryCount=Array.isArray(librarySelection)?librarySelection.length:0;
   const referralsEnabled=Boolean(portal.referralsEnabled&&portal.referralCode),referralCode=portal.referralCode||'';
   const jellyfinReady=Boolean(primaryAccount&&!primaryAccount.disabled&&!primaryAccount.password_setup_required&&primaryAccount.public_url);
