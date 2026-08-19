@@ -3,9 +3,12 @@ on:
   pull_request:
     paths:
       - 'src/platform/**'
+      - 'src/entitlements/**'
+      - 'src/jellyfin/**'
       - 'views/customer/**'
       - 'public/css/**'
       - 'scripts/ux-control-centre-smoke.js'
+      - 'scripts/ux-release-contract-smoke.js'
       - '.github/workflows/ux-control-centre.yml'
 jobs:
   ux-control-centre:
@@ -16,3 +19,4 @@ jobs:
         with:
           node-version: '22'
       - run: node scripts/ux-control-centre-smoke.js
+      - run: node scripts/ux-release-contract-smoke.js
