@@ -66,7 +66,7 @@ assert(externalRuntime.includes('Promise.allSettled(sources.map'),'external sour
 assert(!managedRuntime.includes('source.name')&&!externalRuntime.includes('source.name'),'customer stream presentation must remain source-neutral');
 
 assert(managedSessions.includes("'/Sessions?activeWithinSeconds=180'"),'managed concurrency must observe Jellyfin sessions across the fleet');
-assert(managedSessions.includes("'/Playing/Stop'"),'managed concurrency must be able to stop excess Jellyfin sessions');
+assert(managedSessions.includes('/Playing/Stop'),'managed concurrency must be able to stop excess Jellyfin sessions');
 assert(managedSessions.includes('active.slice(limit)'),'managed concurrency must preserve only the plan stream allowance');
 assert(runtimeSource.includes("managedSessions.start({intervalMs:15000})"),'cross-server managed concurrency reconciliation must run continuously');
 
