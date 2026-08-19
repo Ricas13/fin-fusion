@@ -60,13 +60,16 @@ function fakeTransaction(fn){
     const alternate=await admission.admit(entitlement,lease1,'source-b','item-b');
     assert.equal(alternate.allowed,true,'Alternate releases from one Stremio stream lookup must reuse the same playback lease');
     assert.equal(alternate.existing,true);
+    const managedAlternate=await admission.admit(entitlement,lease1,null,'item-managed');
+    assert.equal(managedAlternate.allowed,true,'The same lease must be reusable when playback resolves through the managed hidden Jellyfin identity');
+    assert.equal(managedAlternate.existing,true);
     const blocked=await admission.admit(entitlement,lease2,'source-a','item-b');
     assert.equal(blocked.allowed,false,'A second concurrent stream must be blocked for a one-stream plan');
     assert.equal(blocked.reason,'stream_limit');
     assert.equal(await admission.active(entitlement.id),1);
     assert.equal(await admission.release(entitlement.id,lease1),true,'Failed/ended admission must be releasable');
-    const afterRelease=await admission.admit(entitlement,lease2,'source-a','item-b');
-    assert.equal(afterRelease.allowed,true,'A new stream must be admitted after the prior lease is released');
+    const afterRelease=await admission.admit(entitlement,lease2,null,'item-b');
+    assert.equal(afterRelease.allowed,true,'A managed hidden-user stream must be admitted after the prior lease is released');
 
     await admission.release(entitlement.id,lease2);
     const lease3=admission.issue(),lease4=admission.issue();
