@@ -11,6 +11,8 @@ const notificationOutbox=require('../integrations/notification-outbox');
 const billingControl=require('../payments/billing-control');
 const customerPlanChange=require('../payments/customer-plan-change');
 const referrals=require('../referrals');
+const marketingCampaigns=require('../marketing/campaigns');
+const operationsSettings=require('../platform/operations-settings');
 const activationCleanup=require('./activation-cleanup');
 const jellyfinLifecycle=require('./jellyfin-lifecycle');
 const pendingRegistrations=require('../security/pending-registration');
@@ -34,6 +36,7 @@ const jobs={
  async billing(){return billingControl.syncDue({all:false,limit:100})},
  async plan_changes(){return customerPlanChange.applyDueStripe()},
  async referral_rewards(){return referrals.processDueRewards({limit:100})},
+ async marketing_campaigns(){const cfg=await operationsSettings.get().catch(()=>operationsSettings.DEFAULTS),base=String(cfg.publicBaseUrl||'').replace(/\/$/,'');return marketingCampaigns.runDue({limit:20,storefrontUrl:base?`${base}/`:''})},
  async activation_cleanup(){return activationCleanup.process()},
  async pending_registration_cleanup(){return pendingRegistrations.cleanupExpired(500)},
  async stremio_media_index(){let rotation={total:0,rotated:0,failed:0};try{rotation=await stremioSourcePool.rotateDueTokens({limit:25});}catch(error){rotation={total:0,rotated:0,failed:1};console.error('External Stremio source token rotation failed:',error.message);}let external={total:0,processed:0,failed:0};try{external=await stremioSourceIndex.indexDueSources();}catch(error){external={total:0,processed:0,failed:1};console.error('External Stremio source index failed:',error.message);}let managed={total:0,processed:0,failed:0};try{managed=await stremioMediaIndex.indexAll();}catch(error){managed={total:0,processed:0,failed:1};console.error('Managed Stremio media index failed:',error.message);}const expiredPlaybackLeases=await stremioSourceAdmission.cleanup(5000);return{total:Number(rotation.total||0)+Number(external.total||0)+Number(managed.total||0),processed:Number(rotation.rotated||0)+Number(external.processed||0)+Number(managed.processed||0)+Number(expiredPlaybackLeases||0),failed:Number(rotation.failed||0)+Number(external.failed||0)+Number(managed.failed||0),rotation,external,managed,expiredPlaybackLeases}}
