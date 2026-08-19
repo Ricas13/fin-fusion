@@ -149,13 +149,16 @@ function notificationTestScriptFor(options={}){
 function planWorkflowScriptFor(options={}){
     return String(options.active||'')==='plans'?'<script src="/js/admin-plan-workflow.js" defer></script>':'';
 }
+function brandingScriptFor(options={}){
+    return String(options.active||'')==='branding'?'<script src="/js/admin-branding.js" defer></script>':'';
+}
 
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
-    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options);
+    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+brandingScriptFor(options);
     options={...options,body:workflow+String(options.body||'')+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,brandingScriptFor,SETTING_HELP};
