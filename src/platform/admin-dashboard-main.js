@@ -5,10 +5,9 @@ const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange, fillSeries } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
 const registry = require('./admin-dashboard-registry');
-const layoutModule = require('./admin-dashboard-layout');
 const widgets = require('./admin-dashboard-widgets');
+const { renderWidgetGrid } = require('./admin-dashboard-page');
 const { esc } = require('./admin-html');
-const csrf = require('../auth/csrf');
 const { number, money } = require('./admin-dashboard-format');
 
 // Recurring-revenue subscriptions only: active/trialing with a verified
@@ -180,25 +179,8 @@ registry.register('main', 'recentActivity', {
 
 async function renderMain(req) {
     const ctx = await buildContext(req);
-    const saved = await layoutModule.getLayout(req.session.authUserId, 'main');
-    const merged = layoutModule.mergeWithDefaults('main', saved);
-    const body = (await Promise.all(merged.filter(row => row.visible).map(async row => {
-        const spec = registry.getWidget('main', row.widget_key);
-        if (!spec) return '';
-        const html = spec.lazy ? widgets.loadingSkeleton() : await spec.render(ctx);
-        const lazyAttr = spec.lazy ? ` data-lazy-src="/admin/api/dashboard/main/widget/${encodeURIComponent(row.widget_key)}"` : '';
-        return widgets.widgetShell({ key: row.widget_key, title: row.title, subtitle: row.subtitle }, `<div class="widgetBody"${lazyAttr}>${html}</div>`, { span: row.span });
-    }))).join('');
-    const picker = registry.listWidgets('main').map(spec => {
-        const current = merged.find(row => row.widget_key === spec.key);
-        return `<button type="button" class="widgetPickerItem ${current?.visible !== false ? 'active' : ''}" data-widget-picker-item="${esc(spec.key)}">${esc(spec.title)}</button>`;
-    }).join('');
-    return { ctx, html: `
-        <div class="dashboardCustomizeBar"><button type="button" class="button secondary btn-sm" data-dashboard-customize-toggle>Customize dashboard</button></div>
-        <div class="widgetPicker widgetHidden" data-widget-picker><h3>Show/hide widgets</h3><div class="widgetPickerList">${picker}</div><div class="buttonRow" style="margin-top:10px"><button type="button" class="button secondary btn-sm" data-dashboard-reset>Restore defaults</button></div></div>
-        <div class="analyticsGrid" data-dashboard-key="main" data-csrf-token="${esc(csrf.token(req))}">${body}</div>
-        <script src="/js/admin-dashboard-widgets.js" defer></script>
-    ` };
+    const html = await renderWidgetGrid('main', req, ctx);
+    return { ctx, html };
 }
 
 module.exports = { renderMain, buildContext, mrrByCurrency, primaryMrr, churnRate, revenueMixByService };

@@ -2,7 +2,7 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['tickets','Tickets','/admin/tickets'],['jellyfin-import','Import users','/admin/jellyfin-import']]},
+  {key:'people',label:'People',pages:[['users-dashboard','Dashboard','/admin/users/dashboard'],['users','Customers','/admin/users'],['tickets','Tickets','/admin/tickets'],['jellyfin-import','Import users','/admin/jellyfin-import']]},
   {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['activity','Playback','/admin/activity'],['stremio-sources','Stremio','/admin/servers/stremio'],['fleet-operations','Fleet','/admin/servers/operations']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['orders','Orders','/admin/orders'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['marketing','Marketing','/admin/marketing'],['referrals','Affiliates','/admin/referrals']]},
   {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit log','/admin/events']]},
