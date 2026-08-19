@@ -1,6 +1,7 @@
 'use strict';
 
-const { transaction, query } = require('./db');
+const { query } = require('./db');
+const manualSubscriptions = require('./entitlements/manual-subscriptions');
 
 async function getPlanByCode(code) {
     const result = await query('SELECT * FROM plans WHERE code=$1 AND active=TRUE', [code]);
@@ -8,19 +9,15 @@ async function getPlanByCode(code) {
 }
 
 async function createManualSubscription({ customerId, planId, startsAt, endsAt, actorUserId = null, source = 'manual' }) {
-    return transaction(async client => {
-        const result = await client.query(`
-            INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
-            VALUES($1,$2,'active',$3,$4,$5)
-            RETURNING *
-        `, [customerId, planId, source, startsAt, endsAt]);
-
-        await client.query(`
-            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-            VALUES($1,'subscription.create','subscription',$2,$3::jsonb)
-        `, [actorUserId, result.rows[0].id, JSON.stringify({ source, customerId, planId })]);
-
-        return result.rows[0];
+    return manualSubscriptions.createManualSubscription({
+        customerId,
+        planId,
+        startsAt,
+        endsAt,
+        actorUserId,
+        source,
+        status: 'active',
+        auditAction: 'subscription.create'
     });
 }
 
