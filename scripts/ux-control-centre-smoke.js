@@ -11,6 +11,8 @@ const manualAssignment=read('src/jellyfin/manual-assignment.js');
 const inactivity=read('src/automation/customer-inactivity.js');
 const baseline=read('db/migrations/000_database_baseline.sql');
 const bulk=read('src/platform/admin-bulk-customers.js');
+const bulkOperations=read('src/platform/bulk-operations.js');
+const planChange=read('src/payments/customer-plan-change.js');
 const bulkMigration=read('src/platform/bulk-server-migration.js');
 const serverMigration=read('src/jellyfin/server-migration.js');
 const jobs=read('src/automation/jobs.js');
@@ -29,6 +31,8 @@ assert(/Remove permanent access before disabling automatic cleanup protection/.t
 assert(/superseded_by/.test(permanent)&&/is_effective_subscription/.test(permanent)&&/stale:Boolean/.test(permanent),'permanent access status must reject stale subscription pins');
 assert(/admin\.customer\.permanent_access\.repin/.test(permanent)&&/repinned/.test(permanent),'permanent access must deliberately repin to the current effective entitlement');
 assert(/customer_entitlement_overrides/.test(permanentMigration)&&/'infinity'::timestamptz/.test(permanentMigration),'permanent entitlement must be implemented in the effective entitlement layer');
+assert(/UPDATE subscriptions SET plan_id=\$2/.test(bulkOperations),'local plan changes must mutate the existing subscription row so permanent access remains pinned');
+assert(/applySnapshot\(db,subscriptionId,target,mapping\)/.test(planChange)&&/UPDATE subscriptions SET plan_id=\$2/.test(planChange),'Stripe plan changes must update the existing subscription row rather than replace the permanent-access pin');
 for(const field of ['service_type_snapshot','p.service_type','p.allow_remuxing','p.allow_remote_access','p.library_access_mode','p.library_names','p.placement_strategy'])assert(entitlementContract.includes(field),`effective entitlement contract missing ${field}`);
 assert(/account_purpose text DEFAULT 'jellyfin'/.test(baseline)&&/\['jellyfin'::text, 'stremio_internal'::text\]/.test(baseline),'baseline must define the canonical Jellyfin account purpose');
 assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='primary'/.test(manualAssignment),'manual Jellyfin assignment must use the schema-defined jellyfin account purpose');
