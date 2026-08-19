@@ -4,9 +4,7 @@ const express = require('express');
 const core = require('./router-core');
 const { createRuntimeLegacyRouter } = require('./router-runtime-legacy');
 const placement = require('../jellyfin/placement');
-const lifecycle = require('../payments/lifecycle');
 const publicAbuseProtection = require('../security/public-abuse-protection');
-const routeRateLimit = require('../security/route-rate-limit');
 const { createPublicHelpRouter } = require('./public-help');
 const { createPublicPagesRouter } = require('./public-pages');
 const { createAdminAutomationRouter } = require('./admin-automation');
@@ -37,9 +35,9 @@ const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerCommunicationsRouter, createMessagingBotWebhookRouter } = require('./customer-communications');
-const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
+const { createCustomerPaymentReturnRouter } = require('./customer-payment-return');
+const { createCustomerPlanAcquisitionRouter } = require('./customer-plan-acquisition');
 
-const trialFreeLimit = routeRateLimit.middleware({ scope: 'customer-trial-free', max: 12, windowSeconds: 300 });
 let fleetStarted = false;
 
 function ensureFleetSnapshot() {
@@ -47,12 +45,6 @@ function ensureFleetSnapshot() {
         fleetStarted = true;
         placement.startFleetSnapshotRefresh();
     }
-}
-
-function requireCustomer(req, res, next) {
-    return req.session?.customerId && req.session?.customerUserId
-        ? next()
-        : res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account'));
 }
 
 function onlyPathPrefix(prefix, childRouter) {
@@ -98,9 +90,6 @@ function createRouter() {
     router.use(createAdminPersonalNotificationTestsRouter());
     router.use(createAdminPersonalNotificationPreferencesRouter());
 
-    // The legacy notification module still contains personal routes for
-    // compatibility tests. Production only delegates the canonical global
-    // notification URL space to it; personal routes are owned by the v2 router.
     const globalNotificationRouter = createAdminNotificationPreferencesRouter();
     router.use(onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter));
 
@@ -108,29 +97,8 @@ function createRouter() {
     router.use(createCustomerActivityRouter());
     router.use(createCustomerHistoryRouter());
     router.use(createCustomerPaymentReturnRouter());
+    router.use(createCustomerPlanAcquisitionRouter());
 
-    router.post('/account/trial/start', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
-        try {
-            await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null);
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Your access details are below.'));
-        } catch (error) {
-            return res.redirect('/account?error=' + encodeURIComponent(error.message));
-        }
-    });
-
-    router.post('/account/claim-free/:planCode', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
-        try {
-            await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your access details are below.'));
-        } catch (error) {
-            return res.redirect('/account?error=' + encodeURIComponent(error.message));
-        }
-    });
-
-    // Only the three still-live compatibility routes and admin-actions are
-    // mounted in production. router-core remains temporarily available for
-    // compatibility tests but its replaced handlers are no longer constructed
-    // and then deleted from Express's private stack.
     router.use(createRuntimeLegacyRouter());
     return router;
 }
