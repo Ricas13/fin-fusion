@@ -1,42 +1,55 @@
 'use strict';
-const express=require('express');
-const {query,transaction}=require('../db');
-const csrf=require('../auth/csrf');
-const runtimeSettings=require('./runtime-settings');
-const {esc,layout}=require('./admin-html');
 
-const BILLING_TERMS={trial:{label:'Trial',days:1},month:{label:'Monthly',days:30},'6_months':{label:'6 months',days:183},year:{label:'Yearly',days:365},custom:{label:'Custom duration',days:null}};
-const CURRENCIES=['GBP','USD','EUR'];
-const SERVICE_TYPES=['jellyfin','stremio','bundle'];
-function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin')return next();return res.redirect('/login?session=expired')}
-function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
-function send(res,o,status=200){return res.status(status).send(layout({siteName:runtimeSettings.siteName(),...o}))}
-function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
-function b(v){return v==='on'||v==='true'||v===true}
-function text(v,max){return String(v||'').trim().slice(0,max)}
-function money(v){const raw=String(v??'').trim();if(!/^\d+(?:\.\d{1,2})?$/.test(raw))throw new Error('Enter a valid non-negative price with no more than two decimal places.');const amount=Number(raw);if(!Number.isFinite(amount)||amount<0||amount>100000)throw new Error('Price must be between 0 and 100,000.');return Math.round(amount*100)}
-function nullableInt(v,min=0,max=100000,label='Value'){if(v===undefined||v===null||String(v).trim()==='')return null;const x=Number.parseInt(v,10);if(!Number.isInteger(x)||String(x)!==String(v).trim()||x<min||x>max)throw new Error(`${label} must be a whole number from ${min} to ${max}.`);return x}
-function int(v,min,max,label){const x=Number.parseInt(v,10);if(!Number.isInteger(x)||String(x)!==String(v).trim()||x<min||x>max)throw new Error(`${label} must be a whole number from ${min} to ${max}.`);return x}
-function selected(value,current){return value===current?'selected':''}
-function checked(value){return value?'checked':''}
+const express = require('express');
+const planCreate = require('./admin-plan-create-v2');
+const { customerCreate } = require('./admin-customer-create-form');
 
-function planCreateInput(body={}){
- const code=text(body.code,50).toLowerCase(),name=text(body.name,80),description=text(body.description,500);
- if(!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code))throw new Error('Code must be 2–50 characters using lowercase letters, numbers and hyphens.');if(!name)throw new Error('Enter a plan name.');
- const serviceType=SERVICE_TYPES.includes(body.serviceType)?body.serviceType:'jellyfin';
- const audience='direct';
- const billing=Object.prototype.hasOwnProperty.call(BILLING_TERMS,body.billingInterval)?body.billingInterval:null;if(!billing)throw new Error('Choose a billing frequency.');
- const duration=BILLING_TERMS[billing].days??int(body.durationDays,1,3650,'Custom duration'),currency=text(body.currency,3).toUpperCase();if(!CURRENCIES.includes(currency))throw new Error('Currency must be GBP, USD or EUR.');
- const capacityLimit=nullableInt(body.capacityLimit,1,1000000,'Available slots'),streams=String(body.streams??'').trim()===''?1:int(body.streams,1,50,'Concurrent streams');
- return{code,name,description,serviceType,audience,billing,duration,priceMinor:money(body.price),currency,capacityLimit,streams,isAddon:b(body.isAddon),serverClass:['premium','free','custom'].includes(body.serverClass)?body.serverClass:'premium',visible:b(body.visible),active:b(body.active),sortOrder:100};
+const BILLING_TERMS = {
+    trial: { label: 'Trial', days: 1 },
+    month: { label: 'Monthly', days: 30 },
+    '6_months': { label: '6 months', days: 183 },
+    year: { label: 'Yearly', days: 365 },
+    custom: { label: 'Custom duration', days: null }
+};
+const CURRENCIES = ['GBP', 'USD', 'EUR'];
+const SERVICE_TYPES = ['jellyfin', 'stremio', 'bundle'];
+
+function planCreateInput(body = {}) {
+    return planCreate.parse(body);
 }
-async function createPlanRecord(plan,actorUserId=null){return transaction(async client=>{const created=await client.query(`INSERT INTO plans(code,name,description,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,is_addon,server_class,visible,active,sort_order,streams,allow_remuxing,allow_remote_access) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,FALSE,TRUE) RETURNING *`,[plan.code,plan.name,plan.description,plan.serviceType,plan.audience,plan.billing,plan.duration,plan.priceMinor,plan.currency,plan.capacityLimit,plan.isAddon,plan.serverClass,plan.visible,plan.active,plan.sortOrder,plan.streams]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.create','plan',$2,$3::jsonb)`,[actorUserId,created.rows[0].id,JSON.stringify({code:plan.code,name:plan.name,serviceType:plan.serviceType,audience:plan.audience,billingInterval:plan.billing,durationDays:plan.duration,priceMinor:plan.priceMinor,currency:plan.currency,capacityLimit:plan.capacityLimit,streams:plan.streams,isAddon:plan.isAddon})]);return created.rows[0]})}
-function planCreateError(error){if(error?.code==='23505')return'That plan code already exists. Choose a different code.';if(error?.code==='23514'||error?.code==='22P02')return'One of the plan values is outside the allowed range.';if(error?.message&&['Code must be','Enter a plan name.','Choose a billing frequency.','Currency must be','Enter a valid non-negative price','Price must be','Custom duration must be','Available slots must be','Concurrent streams must be'].some(prefix=>error.message.startsWith(prefix)))return error.message;return'Plan could not be created safely. Check the values and try again.'}
-async function customerCreate(req){const plans=await query(`SELECT code,name,service_type,price_minor,currency FROM plans WHERE active=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN('direct','both') ORDER BY sort_order,price_minor,name`),label=p=>p.service_type==='bundle'?'Jellyfin + Stremio':p.service_type==='stremio'?'Stremio':'Jellyfin',opts=plans.rows.map(p=>`<option value="${esc(p.code)}">${esc(p.name)} · ${esc(label(p))} · ${Number(p.price_minor)===0?'Free':esc(p.currency)+' '+(Number(p.price_minor)/100).toFixed(2)}</option>`).join('');return `${notice(req)}<section class="section"><form class="formPanel" method="post" action="/admin/users/new"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="formGrid"><div class="formGroup"><label>Username</label><input class="input" name="username" required pattern="[A-Za-z0-9._-]{3,40}" maxlength="40"></div><div class="formGroup"><label>Email</label><input class="input" name="email" type="email" required maxlength="254"></div><div class="formGroup"><label>Display name</label><input class="input" name="displayName" maxlength="100"></div><div class="formGroup"><label>Plan</label><select class="input" name="planCode">${opts}</select><div class="inlineHelp">Ignored for Portal only.</div></div></div><div class="formGroup"><label>Provisioning timing</label><select class="input" name="provisioningMode"><option value="immediate">Prepare included services immediately</option><option value="after_activation">Prepare included services after customer activates portal account</option><option value="portal_only">Portal account only — no streaming entitlement</option></select></div><div class="securityNote standalone">The customer receives a one-time activation link and chooses their own portal password. <strong>After activation</strong> avoids creating service access for an account the customer has not yet claimed. <strong>Portal only</strong> creates no subscription.</div><button class="button">Create customer</button></form></section>`}
-function planCreateForm(req,values={},error=''){
- const submitted=Boolean(values.__submitted),billing=Object.prototype.hasOwnProperty.call(BILLING_TERMS,values.billingInterval)?values.billingInterval:'month',serviceType=SERVICE_TYPES.includes(values.serviceType)?values.serviceType:(String(req.query?.type||'')==='stremio'?'stremio':String(req.query?.type||'')==='bundle'?'bundle':'jellyfin'),standardDays=BILLING_TERMS[billing].days,durationValue=values.durationDays||standardDays||30,currency=CURRENCIES.includes(text(values.currency||'GBP',3).toUpperCase())?text(values.currency||'GBP',3).toUpperCase():'GBP',price=values.price!==undefined&&values.price!==null&&String(values.price)!==''?String(values.price):'0.00',capacity=values.capacityLimit!==undefined?String(values.capacityLimit):'',streams=values.streams!==undefined&&String(values.streams).trim()!==''?String(values.streams):'1',visible=submitted?b(values.visible):true,active=submitted?b(values.active):true,isAddon=submitted?b(values.isAddon):false,errorBlock=error?`<div class="notice error">${esc(error)}</div>`:'',billingOptions=Object.entries(BILLING_TERMS).map(([key,item])=>`<option value="${key}" data-days="${item.days??''}" ${selected(key,billing)}>${esc(item.label)}</option>`).join('');
- return `${notice(req)}${errorBlock}<section class="section"><div class="sectionHead"><h2>New plan</h2><span class="muted">Choose the delivery type first; only relevant fields stay visible.</span></div><form class="formPanel" method="post" action="/admin/plans" data-plan-create-form><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="__submitted" value="1"><h3>Product type</h3><div class="formGrid"><div class="formGroup"><label>Plan type</label><select class="input" name="serviceType" data-plan-service><option value="jellyfin" ${selected('jellyfin',serviceType)}>Jellyfin access</option><option value="stremio" ${selected('stremio',serviceType)}>Stremio only</option><option value="bundle" ${selected('bundle',serviceType)}>Jellyfin + Stremio bundle</option></select></div><div class="formGroup"><label>Optional add-on</label><label class="toggleRow"><input type="checkbox" name="isAddon" ${checked(isAddon)}><span>Offer this product as an add-on to another purchase</span></label></div></div><h3>Plan details</h3><div class="formGrid"><div class="formGroup"><label>Code</label><input class="input" name="code" required pattern="[a-z0-9][a-z0-9-]{1,49}" maxlength="50" placeholder="premium-monthly" value="${esc(values.code||'')}"></div><div class="formGroup"><label>Name</label><input class="input" name="name" required maxlength="80" placeholder="Monthly - 3 Streams" value="${esc(values.name||'')}"></div></div><div class="formGroup"><label>Description</label><textarea class="input" name="description" maxlength="500">${esc(values.description||'')}</textarea></div><h3>Commercial terms</h3><div class="formGrid"><div class="formGroup"><label>Price</label><input class="input" type="number" step="0.01" min="0" max="100000" name="price" required value="${esc(price)}"></div><div class="formGroup"><label>Currency</label><select class="input" name="currency">${CURRENCIES.map(x=>`<option value="${x}" ${selected(x,currency)}>${x}</option>`).join('')}</select></div><div class="formGroup"><label>Available slots <span class="muted">(optional)</span></label><input class="input" type="number" min="1" max="1000000" name="capacityLimit" value="${esc(capacity)}" placeholder="Unlimited"><div class="inlineHelp">Successful activations consume a slot; ended access releases it.</div></div></div><div class="formGrid"><div class="formGroup"><label>Billing / access frequency</label><select class="input" name="billingInterval" data-plan-frequency>${billingOptions}</select></div><div class="formGroup"><label>Duration (days)</label><input class="input" type="number" name="durationDays" min="1" max="3650" required value="${esc(durationValue)}" data-plan-duration ${standardDays?'readonly':''}></div><div class="formGroup" data-jellyfin-field><label>Server class</label><select class="input" name="serverClass"><option value="premium" ${selected('premium',values.serverClass||'premium')}>Premium</option><option value="free" ${selected('free',values.serverClass)}>Free</option><option value="custom" ${selected('custom',values.serverClass)}>Custom</option></select></div></div><h3>Playback rules</h3><div class="formGrid"><div class="formGroup"><label>Concurrent streams</label><input class="input" type="number" name="streams" min="1" max="50" required value="${esc(streams)}"><div class="inlineHelp">Maximum simultaneous playback sessions for this plan. This limit applies to Jellyfin, Stremio and bundle delivery.</div></div></div><div class="toggleGrid"><label class="toggleRow"><input type="checkbox" name="visible" ${checked(visible)}><span>Visible in applicable catalogue</span></label><label class="toggleRow"><input type="checkbox" name="active" ${checked(active)}><span>Active</span></label></div><div class="buttonRow"><button class="button" type="submit">Create plan</button><a class="button secondary" href="/admin/plans">Cancel</a></div></form></section><script src="/js/admin-plan-create.js" defer></script>`;
+
+async function createPlanRecord(plan, actorUserId = null) {
+    return planCreate.create(plan, actorUserId);
 }
-async function createPlanPost(req,res){if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const input=planCreateInput(req.body),created=await createPlanRecord(input,req.session.authUserId);const next=input.serviceType==='stremio'?`/admin/plans/${encodeURIComponent(created.id)}/delivery`:`/admin/plans/${encodeURIComponent(created.id)}/jellyfin`;return res.redirect(`${next}?message=${encodeURIComponent('Plan created. Configure the remaining delivery settings next.')}`)}catch(error){console.error('Plan create failed:',error.message);return send(res,{active:'plans',title:'New plan',subtitle:'Product type, pricing, capacity and delivery',body:planCreateForm(req,req.body,planCreateError(error)),action:'<a class="button secondary" href="/admin/plans">Back to Plans</a>'},400)}}
-function createAdminCatalogShellRouter(){const r=express.Router();r.use('/admin',gate,noStore);r.get('/admin/users/new',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();return send(res,{active:'users',title:'Add customer',subtitle:'Choose activation and provisioning timing explicitly',body:await customerCreate(req),action:'<a class="button secondary" href="/admin/users">Back</a>'})}catch(e){next(e)}});r.get('/admin/plans/new',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();return send(res,{active:'plans',title:'New plan',subtitle:'Product type, pricing, capacity and delivery',body:planCreateForm(req),action:'<a class="button secondary" href="/admin/plans">Back to Plans</a>'})}catch(e){next(e)}});r.post('/admin/plans',createPlanPost);return r}
-module.exports={createAdminCatalogShellRouter,planCreateInput,createPlanRecord,planCreateError,planCreateForm,BILLING_TERMS,CURRENCIES,SERVICE_TYPES,customerCreate};
+
+function planCreateForm(req, values = {}, error = '') {
+    return planCreate.form(req, values, error);
+}
+
+function planCreateError(error) {
+    if (error?.code === '23505') return 'That plan code already exists. Choose a different code.';
+    if (error?.code === '23514' || error?.code === '22P02') return 'One of the plan values is outside the allowed range.';
+    return error?.message || 'Plan could not be created safely. Check the values and try again.';
+}
+
+function createAdminCatalogShellRouter() {
+    const router = express.Router();
+    // Lazy-load the customer router because that historical module imports the
+    // customerCreate compatibility export from this file.
+    const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
+    router.use(createAdminCustomerCreateRouter());
+    router.use(planCreate.createAdminPlanCreateV2Router());
+    return router;
+}
+
+module.exports = {
+    createAdminCatalogShellRouter,
+    planCreateInput,
+    createPlanRecord,
+    planCreateError,
+    planCreateForm,
+    BILLING_TERMS,
+    CURRENCIES,
+    SERVICE_TYPES,
+    customerCreate
+};
