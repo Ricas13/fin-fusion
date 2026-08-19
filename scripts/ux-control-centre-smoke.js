@@ -4,6 +4,7 @@ const read=p=>fs.readFileSync(p,'utf8');
 const customer=read('src/platform/admin-customer-360.js');
 const permanent=read('src/entitlements/permanent-access.js');
 const permanentMigration=read('db/migrations/006_customer_permanent_access.sql');
+const entitlementContract=read('db/migrations/009_complete_effective_entitlement_contract.sql');
 const manualAssignment=read('src/jellyfin/manual-assignment.js');
 const inactivity=read('src/automation/customer-inactivity.js');
 const baseline=read('db/migrations/000_database_baseline.sql');
@@ -22,6 +23,7 @@ assert(/providerBillingChanged:false/.test(permanent)&&/previous_automation_prot
 assert(/superseded_by/.test(permanent)&&/is_effective_subscription/.test(permanent)&&/stale:Boolean/.test(permanent),'permanent access status must reject stale subscription pins');
 assert(/admin\.customer\.permanent_access\.repin/.test(permanent)&&/repinned/.test(permanent),'permanent access must deliberately repin to the current effective entitlement');
 assert(/customer_entitlement_overrides/.test(permanentMigration)&&/'infinity'::timestamptz/.test(permanentMigration),'permanent entitlement must be implemented in the effective entitlement layer');
+for(const field of ['service_type_snapshot','p.service_type','p.allow_remuxing','p.allow_remote_access','p.library_access_mode','p.library_names','p.placement_strategy'])assert(entitlementContract.includes(field),`effective entitlement contract missing ${field}`);
 assert(/account_purpose text DEFAULT 'jellyfin'/.test(baseline)&&/\['jellyfin'::text, 'stremio_internal'::text\]/.test(baseline),'baseline must define the canonical Jellyfin account purpose');
 assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='primary'/.test(manualAssignment),'manual Jellyfin assignment must use the schema-defined jellyfin account purpose');
 assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=2&&!/account_purpose='primary'/.test(inactivity),'inactivity and cleanup automation must target normal Jellyfin accounts');
