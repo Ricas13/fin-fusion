@@ -1,12 +1,14 @@
 'use strict';
 require('dotenv').config();
 const fs = require('fs');
+const path = require('path');
 const ejs = require('ejs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { spawnSync } = require('child_process');
 const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
+const historicalAuth = require('../src/auth/service-core');
 const totp = require('../src/auth/totp');
 const serverAdmin = require('../src/platform/admin-servers');
 const adminDashboard = require('../src/platform/admin-dashboard');
@@ -30,9 +32,26 @@ function assertAdminErrorRedaction(){
   const hidden=serverAdmin.safeAdminError(new Error('SECRET_INTERNAL_DATABASE_DETAIL'));
   if(hidden!=='The server change could not be completed safely.'||hidden.includes('SECRET_INTERNAL')) throw new Error('Unexpected server error details were exposed');
 }
+function assertAuthOwnership(){
+  const root=path.join(__dirname,'..','src','auth');
+  const service=fs.readFileSync(path.join(root,'service.js'),'utf8');
+  const core=fs.readFileSync(path.join(root,'service-core.js'),'utf8');
+  const engine=fs.readFileSync(path.join(root,'service-engine.js'),'utf8');
+  if(historicalAuth!==auth) throw new Error('Historical auth service path does not resolve to canonical service');
+  if(!/module\.exports\s*=\s*require\(['"]\.\/service['"]\)/.test(core)) throw new Error('service-core must delegate directly to canonical service');
+  if(/\basync\s+function\b/.test(core)) throw new Error('service-core must not become a second auth implementation');
+  if(!service.includes("require('./service-engine')")) throw new Error('Canonical auth service must use the internal auth engine');
+  if(service.includes("require('./service-core')")) throw new Error('Canonical auth service must not depend on historical service-core');
+  if(!service.includes('pendingStaffAuth=prior||{stepUp:true')) throw new Error('Canonical auth service must force explicit second-factor step-up');
+  if(!service.includes('operations.get()')) throw new Error('Canonical auth service must honor runtime staff session duration');
+  if(!service.includes('issuer:runtimeSettings.siteName()')) throw new Error('Canonical auth service must use runtime branding for TOTP enrollment');
+  if(!engine.includes("eventType: '2fa.step_up_not_required'")) throw new Error('Internal auth engine copy is missing the login-only compatibility behavior wrapped by the canonical service');
+  const engineImporters=fs.readdirSync(root).filter(name=>name.endsWith('.js')&&fs.readFileSync(path.join(root,name),'utf8').includes("require('./service-engine')"));
+  if(JSON.stringify(engineImporters)!==JSON.stringify(['service.js'])) throw new Error(`Only service.js may import service-engine; got ${engineImporters.join(', ')}`);
+}
 async function cleanup(userId=null){ if(userId) await query('DELETE FROM auth_events WHERE user_id=$1',[userId]); await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]); await query('DELETE FROM app_users WHERE username=$1',[USERNAME]); }
 async function main(){
-  assertStartupPolicy(); assertAdminErrorRedaction();
+  assertStartupPolicy(); assertAdminErrorRedaction(); assertAuthOwnership();
   ejs.compile(fs.readFileSync('views/admin/dashboard.ejs','utf8'));
   const dash = await adminDashboard.dashboardData();
   for (const key of ['customers','activeSubscriptions','activeStreams','transcodes','servers','healthyServers','offlineServers','wouldStop24h','safetySkips24h']) {
@@ -47,6 +66,9 @@ async function main(){
     const enrollment=await auth.beginTotpEnrollment(userId); const codes=await auth.confirmTotpEnrollment(userId,totp.totp(enrollment.secret),mockReq()); if(!Array.isArray(codes)||codes.length!==10) throw new Error('2FA enrollment failed');
     if(!(await auth.verifySecondFactor(userId,totp.totp(enrollment.secret),mockReq()))) throw new Error('TOTP verification failed');
     if(!(await auth.verifySecondFactor(userId,codes[0],mockReq()))) throw new Error('Recovery verification failed'); if(await auth.verifySecondFactor(userId,codes[0],mockReq())) throw new Error('Recovery code reused');
+    const established=mockReq('ci-auth-step-up-session'); established.session={authUserId:userId,authRole:'admin'};
+    if(await auth.verifySecondFactor(userId,'definitely-not-a-valid-factor',established)) throw new Error('Explicit second-factor verification auto-passed an established admin session');
+    if(await historicalAuth.verifySecondFactor(userId,'definitely-not-a-valid-factor',established)) throw new Error('Historical auth import bypassed canonical step-up enforcement');
     const refreshed=await auth.getStaffById(userId); await auth.registerSession(mockReq(),refreshed); const session=await query('SELECT 1 FROM auth_sessions WHERE session_id=$1 AND user_id=$2',['ci-auth-smoke-session',userId]); if(!session.rowCount) throw new Error('Staff session registration failed');
     console.log('Auth and admin dashboard smoke tests passed');
   }finally{ await cleanup(userId); await getPool().end(); }
