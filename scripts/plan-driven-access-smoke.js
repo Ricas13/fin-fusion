@@ -22,10 +22,10 @@ const plansList=read('src/platform/admin-plans-list.js');
 
 // People owns customer records and Jellyfin import/claim discovery. Invitation
 // onboarding is retired; imported-user claims remain a subordinate import flow.
-assert(nav.includes("['jellyfin-import','Jellyfin Import'"),'Jellyfin Import must remain discoverable under People');
+assert(nav.includes("['jellyfin-import','Import users'"),'Jellyfin import must remain discoverable under People with a simple label');
 assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to People navigation');
 assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
-assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback Operations'"),'Customers must remain in People and playback operations in Servers');
+assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback'"),'Customers must remain in People and playback in Servers');
 assert(nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate administration must live in Commerce');
 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.

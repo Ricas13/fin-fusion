@@ -5,6 +5,7 @@ const fs=require('fs');
 const path=require('path');
 const nav=require('../src/platform/admin-nav');
 const dashboard=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-dashboard-view-v2.js'),'utf8');
+const commerce=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-commerce.js'),'utf8');
 const backupTabs=fs.readFileSync(path.join(__dirname,'..','src','platform','backup-workflow-tabs.js'),'utf8');
 const settings=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-original-settings.js'),'utf8');
 
@@ -23,4 +24,5 @@ assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('
 assert(dashboard.includes('businessPerformanceGrid')&&dashboard.includes('streamingOperationsGrid')&&dashboard.includes('commerceAnalyticsGrid'),'Dashboard sections must remain explicit for browser layout checks');
 assert(!dashboard.includes("customerGrowth(s){return card('Customer base over time','Cumulative CAPTAiNFiN customer accounts',areaChart(s.customerGrowth,'total'),{className:'wide'"),'Business performance must not pair two 8/12 cards and leave empty columns');
 assert(dashboard.includes("return card('Top referrers'" )&&dashboard.includes("{className:'wide'}"),'Commerce second row needs an 8/12 companion for Product usage');
+assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
 console.log('admin product audit smoke: ok');

@@ -2,11 +2,11 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['jellyfin-import','Jellyfin Import','/admin/jellyfin-import']]},
-  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['activity','Playback Operations','/admin/activity'],['stremio-sources','Stremio','/admin/servers/stremio'],['fleet-operations','Fleet operations','/admin/servers/operations']]},
-  {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payment providers','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
-  {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit & events','/admin/events']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups & Transfer','/admin/backups']]}
+  {key:'people',label:'People',pages:[['users','Customers','/admin/users'],['jellyfin-import','Import users','/admin/jellyfin-import']]},
+  {key:'servers',label:'Servers',pages:[['servers','Servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['activity','Playback','/admin/activity'],['stremio-sources','Stremio','/admin/servers/stremio'],['fleet-operations','Fleet','/admin/servers/operations']]},
+  {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
+  {key:'automation',label:'Automation',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit log','/admin/events']]},
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['notification-settings','Notifications','/admin/notifications/preferences'],['branding','Branding','/admin/settings/branding'],['settings-integrations','Integrations','/admin/settings?section=integrations'],['settings-security','Security','/admin/settings?section=security'],['backups','Backups','/admin/backups']]}
 ]);
 const hiddenPages=Object.freeze({
   search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),

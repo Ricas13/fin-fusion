@@ -47,7 +47,8 @@ function layout(options={}){
   const site=options.siteName||'CAPTAiNFiN';
   const current=activePage(options.active);
   const docsAction='<a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Docs</a>';
-  const topActions=`<div class="topBarActions">${docsAction}${options.action||''}</div>`;
+  const statusAction='<a class="topStatusLink clear" href="/admin/attention" data-operator-alerts title="Open status and alerts"><span class="topStatusDot" aria-hidden="true"></span><span>Status</span><strong data-operator-alert-count>Clear</strong></a>';
+  const topActions=`<div class="topBarActions">${statusAction}${docsAction}${options.action||''}</div>`;
   const quickFind='<form class="adminQuickFind" method="get" action="/admin/search" role="search"><input class="adminQuickFindInput" name="q" type="search" minlength="2" autocomplete="off" aria-label="Quick find customers, plans and servers" placeholder="Find customer, plan, server…"></form>';
   const favicon=`${branding.assetUrl('favicon')}?v=${Date.now()}`;
   const workflowTabs=paymentTabsFor(options);

@@ -29,11 +29,12 @@ for(const key of ['users','jellyfin-import'])assert(pageKeys('people').includes(
 assert(!pageKeys('people').includes('invitations'),'Retired Invitations must not return to People navigation');
 assert(nav.hiddenPages['customer-claims']?.groupKey==='people'&&nav.hiddenPages['customer-claims']?.parentKey==='jellyfin-import','Imported-user claims must remain subordinate to Jellyfin Import');
 assert(pageKeys('servers').includes('activity'),'Playback Operations must live under Servers');
-assert(group('commerce').pages.some(item=>item[0]==='payments'&&item[1]==='Payment providers'),'Payments sidebar entry must be named Payment providers');
+assert(group('commerce').pages.some(item=>item[0]==='payments'&&item[1]==='Payments'),'Payments sidebar entry must be named simply');
 assert(nav.hiddenPages['request-service']?.groupKey==='settings'&&nav.hiddenPages['request-service']?.parentKey==='settings-integrations','Request service must belong to Settings → Integrations');
 assert(nav.hiddenPages['request-plan-limits']?.groupKey==='commerce'&&nav.hiddenPages['request-plan-limits']?.parentKey==='plans','Request limits must belong to Commerce → Plans');
 assert(!/Request service|Plan limits/.test(provisioningTabs),'Provisioning tabs must not contain Overseerr configuration');
 assert(/Integrations/.test(integrationTabs)&&/Request service/.test(integrationTabs)&&!/Plan limits/.test(integrationTabs),'Integrations workflow must own connection settings, not plan policy');
 assert(/class=\"adminQuickFind\"/.test(adminShell)&&/action=\"\/admin\/search\"/.test(adminShell),'Admin shell must provide top-bar quick find');
+assert(/data-operator-alerts/.test(adminShell)&&/topStatusLink/.test(operatorExperience+adminShell),'Admin shell must expose top-right status and alerts');
 assert(!/Help & guides/.test(adminShell),'Admin shell must not duplicate Help & guides in sidebar and top bar');
 console.log('admin coherence user overrides smoke: ok');

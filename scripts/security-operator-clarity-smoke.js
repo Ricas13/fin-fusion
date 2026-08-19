@@ -59,7 +59,7 @@ const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
-for(const label of ['General','Notifications','Branding','Integrations','Security','Backups & Transfer'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
+for(const label of ['General','Notifications','Branding','Integrations','Security','Backups'])assert(labels.includes(label),`Settings navigation is missing ${label}.`);
 for(const personal of ['My Profile','My Notifications','My Security'])assert(!labels.includes(personal),`Personal ${personal} must live under My account rather than global Settings navigation.`);
 for(const obsolete of ['Commerce','Advanced','Operations','Stremio'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
 assert(/headerActionLabel\">My account/.test(adminShell),'Admin shell must expose a dedicated My account area.');
@@ -67,7 +67,7 @@ assert(/href=\"\/admin\/profile\">Profile/.test(adminShell)&&/href=\"\/admin\/pr
 assert(navModel.hiddenPages['admin-2fa-policy']?.page?.[2]==='/admin/settings/admin-2fa','Platform-wide administrator 2FA policy must remain owned by Settings → Security.');
 const serversGroup=navModel.groups.find(group=>group.key==='servers');
 assert(Boolean(serversGroup),'Servers navigation group must exist.');
-assert(serversGroup.pages.some(page=>page[1]==='Fleet operations'&&page[2]==='/admin/servers/operations'),'Server drain/placement controls must be discoverable as Servers → Fleet operations.');
+assert(serversGroup.pages.some(page=>page[1]==='Fleet'&&page[2]==='/admin/servers/operations'),'Server drain/placement controls must be discoverable as Servers → Fleet.');
 assert(serversGroup.pages.some(page=>page[1]==='Stremio'&&page[2]==='/admin/servers/stremio'),'External Jellyfin sources must be discoverable as Servers → Stremio.');
 assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
 assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');

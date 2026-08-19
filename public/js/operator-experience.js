@@ -122,6 +122,16 @@
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (!data || !data.counts) return;
+      const topAlert = document.querySelector('[data-operator-alerts]');
+      if (topAlert) {
+        const total = Number(data.counts.attention || 0) + Number(data.counts.servers || 0) + Number(data.counts.payments || 0);
+        const countNode = topAlert.querySelector('[data-operator-alert-count]');
+        topAlert.classList.toggle('warn', total > 0);
+        topAlert.classList.toggle('clear', total <= 0);
+        topAlert.setAttribute('aria-label', total > 0 ? `${total} status alert${total === 1 ? '' : 's'}` : 'System status clear');
+        topAlert.title = total > 0 ? `${total} alert${total === 1 ? '' : 's'} need attention` : 'System status clear';
+        if (countNode) countNode.textContent = total > 0 ? String(total > 99 ? '99+' : total) : 'Clear';
+      }
       const hrefByKey = {customers:'/admin/users',attention:'/admin/attention',servers:'/admin/servers',payments:'/admin/payments'};
       for (const [key,countValue] of Object.entries(data.counts)) {
         const count = Number(countValue || 0); if (count <= 0) continue;
