@@ -14,14 +14,21 @@ const TABS=new Set(view.TABS.map(x=>x[0]));
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
 function text(v,max){return String(v||'').trim().slice(0,max)}
-function bool(v){return v==='on'||v==='true'||v===true}
 function tags(v){return [...new Set(String(v||'').split(/[\n,]/).map(x=>x.trim()).filter(Boolean).map(x=>x.slice(0,40)))].slice(0,20)}
 function path(id,tab='overview'){return `/admin/users/${encodeURIComponent(id)}?tab=${encodeURIComponent(tab)}`}
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
 function dt(v){return v?new Date(v).toLocaleString('en-GB'):'—'}
+function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`}
+function currentSubscription(detail){return detail.subscriptions.find(s=>['active','trialing','past_due','paused'].includes(String(s.status||''))&&(!s.current_period_end||new Date(s.current_period_end)>new Date()))||detail.subscriptions[0]||null;}
 function incidentPanel(rows){return `<section class="section"><div class="sectionHead"><div><h2>Payment incidents</h2><div class="muted">Provider disputes, refunds, chargebacks and failed-renewal cases linked to this customer.</div></div><a class="button secondary" href="/admin/commerce">Open Commerce</a></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>When</th><th>Provider</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(dt(r.created_at))}</td><td>${esc(r.provider)}</td><td>${esc(r.incident_type)}</td><td><span class="pill ${r.resolved_at?'good':'warn'}">${esc(r.incident_status||'open')}</span></td><td><a class="button secondary btn-sm" href="/admin/commerce?incident=${encodeURIComponent(r.id)}#incident-${encodeURIComponent(r.id)}">Open incident</a></td></tr>`).join('')}</tbody></table></div>`:'<div class="emptyCompact">No payment incidents for this customer.</div>'}</section>`;}
+function bulkActionForm(token,customerId,action,label,tone='secondary'){return `<form class="plainForm" method="post" action="/admin/customers/bulk/preview">${csrfHidden(token)}<input type="hidden" name="customerId" value="${esc(customerId)}"><input type="hidden" name="action" value="${esc(action)}"><button class="button ${esc(tone)}" type="submit">${esc(label)}</button></form>`;}
+function controlCentre(detail,token){
+  const c=detail.customer,s=currentSubscription(detail),accounts=detail.accounts.filter(a=>!a.disabled),plan=s?(s.plan_name||s.contract_plan_name||s.plan_code||'Active plan'):'No active plan',expiry=s&&s.current_period_end?dt(s.current_period_end):'—';
+  const emailVerified=Boolean(c.email_verified_at),protectedState=Boolean(c.automation_protected),jellyfinState=accounts.length?`${accounts.length} active`:'Not provisioned';
+  return `<section class="section customerControlCentre"><div class="sectionHead"><div><h2>Customer control centre</h2><div class="muted">Routine administrator overrides in one place. High-impact changes still show a preview before anything is changed.</div></div><div class="buttonRow"><span class="pill ${emailVerified?'good':'bad'}">Email ${emailVerified?'verified':'not verified'}</span><span class="pill ${protectedState?'good':'accent'}">${protectedState?'Never auto-delete':'Normal cleanup'}</span></div></div><div class="controlCentreSummary"><div><span>Plan</span><strong>${esc(plan)}</strong></div><div><span>Access expiry</span><strong>${esc(expiry)}</strong></div><div><span>Jellyfin</span><strong>${esc(jellyfinState)}</strong></div><div><span>Server</span><strong>${esc(accounts.map(a=>a.server_name).join(', ')||'—')}</strong></div></div><div class="controlCentreActions">${bulkActionForm(token,c.id,'plan_change','Change plan')}${bulkActionForm(token,c.id,'set_expiry','Change expiry')}${bulkActionForm(token,c.id,'migrate_server','Move server')}${bulkActionForm(token,c.id,'retry_failed','Retry failed setup')}${bulkActionForm(token,c.id,'reconcile','Reconcile access')}<a class="button secondary" href="${path(c.id,'access')}">Advanced access overrides</a></div><div class="inlineHelp">“Never auto-delete” protects Jellyfin access from inactivity/cleanup automation. It does not silently change a paid subscription or its billing date; use Change expiry when you intentionally want to alter entitlement duration.</div></section>`;
+}
 
-function editBody(req,d){const c=d.customer;return `${notice(req)}<section class="section"><div class="sectionHead"><h2>Customer profile</h2><span class="muted">Portal username/email are managed by authentication, not here.</span></div><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(c.id)}/profile"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="formGrid"><div class="formGroup"><label>Display name</label><input class="input" name="displayName" maxlength="100" value="${esc(c.display_name||'')}"></div><div class="formGroup"><label>Phone</label><input class="input" name="phone" maxlength="40" value="${esc(c.phone||'')}"></div><div class="formGroup"><label>Country code</label><input class="input" name="countryCode" maxlength="2" placeholder="GB" value="${esc(c.country_code||'')}"></div><div class="formGroup"><label>Timezone</label><input class="input" name="timezone" maxlength="80" placeholder="Europe/London" value="${esc(c.timezone||'')}"></div><div class="formGroup"><label>Discord user ID</label><input class="input" name="discordUserId" inputmode="numeric" maxlength="32" value="${esc(c.discord_user_id||'')}"></div><div class="formGroup"><label>Discord username</label><input class="input" name="discordUsername" maxlength="100" value="${esc(c.discord_username||'')}"></div><div class="formGroup"><label>Referral source</label><input class="input" name="referralSource" maxlength="120" value="${esc(c.referral_source||'')}"></div><div class="formGroup"><label>Registration source</label><input class="input" name="registrationSource" maxlength="40" placeholder="self / admin" value="${esc(c.registration_source||'')}"></div></div><div class="formGroup"><label>Tags</label><input class="input" name="tags" maxlength="500" placeholder="VIP, support, beta" value="${esc((c.tags||[]).join(', '))}"></div><label class="toggleRow"><input type="checkbox" name="marketingOptIn" ${c.marketing_opt_in?'checked':''}><span>Marketing opt-in</span></label><div class="formGroup"><label>Admin notes</label><textarea class="input" name="note" maxlength="2000">${esc(c.note||'')}</textarea></div><div class="buttonRow"><button class="button">Save profile</button><a class="button secondary" href="${path(c.id)}">Cancel</a></div></form></section>`}
+function editBody(req,d){const c=d.customer;return `${notice(req)}<section class="section"><div class="sectionHead"><h2>Customer profile</h2><span class="muted">Portal username/email are managed by authentication, not here.</span></div><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(c.id)}/profile">${csrfHidden(csrf.token(req))}<div class="formGrid"><div class="formGroup"><label>Display name</label><input class="input" name="displayName" maxlength="100" value="${esc(c.display_name||'')}"></div><div class="formGroup"><label>Phone</label><input class="input" name="phone" maxlength="40" value="${esc(c.phone||'')}"></div><div class="formGroup"><label>Country code</label><input class="input" name="countryCode" maxlength="2" placeholder="GB" value="${esc(c.country_code||'')}"></div><div class="formGroup"><label>Timezone</label><input class="input" name="timezone" maxlength="80" placeholder="Europe/London" value="${esc(c.timezone||'')}"></div><div class="formGroup"><label>Discord user ID</label><input class="input" name="discordUserId" inputmode="numeric" maxlength="32" value="${esc(c.discord_user_id||'')}"></div><div class="formGroup"><label>Discord username</label><input class="input" name="discordUsername" maxlength="100" value="${esc(c.discord_username||'')}"></div><div class="formGroup"><label>Referral source</label><input class="input" name="referralSource" maxlength="120" value="${esc(c.referral_source||'')}"></div><div class="formGroup"><label>Registration source</label><input class="input" name="registrationSource" maxlength="40" placeholder="self / admin" value="${esc(c.registration_source||'')}"></div></div><div class="formGroup"><label>Tags</label><input class="input" name="tags" maxlength="500" placeholder="VIP, support, beta" value="${esc((c.tags||[]).join(', '))}"></div><div class="securityNote standalone"><strong>Marketing consent: ${c.marketing_opt_in?'Opted in':'Not opted in'}</strong><div class="subText">Administrators cannot opt a customer into marketing on their behalf. Consent must come from the customer. You can withdraw existing consent below if requested.</div></div>${c.marketing_opt_in?`<form method="post" action="/admin/users/${encodeURIComponent(c.id)}/marketing/withdraw">${csrfHidden(csrf.token(req))}<button class="button secondary" type="submit">Withdraw marketing consent</button></form>`:''}<div class="formGroup"><label>Admin notes</label><textarea class="input" name="note" maxlength="2000">${esc(c.note||'')}</textarea></div><div class="buttonRow"><button class="button">Save profile</button><a class="button secondary" href="${path(c.id)}">Cancel</a></div></form></section>`}
 
 function createAdminCustomer360Router(){
     const router=express.Router();
@@ -35,10 +42,11 @@ function createAdminCustomer360Router(){
             const detail=await customer360(req.params.customerId);
             if(!detail)return res.status(404).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Customer not found',message:'This managed customer does not exist.',link:'/admin/users',linkText:'Back to Customers'});
             const activeTab=TABS.has(String(req.query.tab||''))?String(req.query.tab):'overview';
-            const id=encodeURIComponent(req.params.customerId);
+            const id=encodeURIComponent(req.params.customerId),token=csrf.token(req);
             const [accessDetail,incidentRows]=await Promise.all([activeTab==='access'?customerAccessDetail(req.params.customerId):null,activeTab==='billing'?query(`SELECT id,provider,incident_type,incident_status,created_at,resolved_at FROM payment_incidents WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[req.params.customerId]):Promise.resolve({rows:[]})]);
             const extras=activeTab==='billing'?incidentPanel(incidentRows.rows):'';
-            return res.send(layout({siteName:runtimeSettings.siteName(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${view.body(detail,activeTab,csrf.token(req),accessDetail)}${extras}`,action:`<div class="buttonRow"><a class="button secondary" href="${path(req.params.customerId,'activity')}">Activity</a><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
+            const controls=activeTab==='overview'?controlCentre(detail,token):'';
+            return res.send(layout({siteName:runtimeSettings.siteName(),active:'users',title:'Customer',subtitle:'Registration, subscription, access and usage',body:`${notice(req)}${controls}${view.body(detail,activeTab,token,accessDetail)}${extras}`,action:`<div class="buttonRow"><a class="button secondary" href="${path(req.params.customerId,'activity')}">Activity</a><a class="button secondary" href="/admin/preview/customer/${id}" target="_blank" rel="noopener noreferrer">Preview customer portal</a><a class="button secondary" href="/admin/users">Back to Customers</a></div>`}));
         }catch(error){return next(error)}
     });
 
@@ -50,11 +58,13 @@ function createAdminCustomer360Router(){
             const timezone=text(req.body.timezone,80)||null,referral=text(req.body.referralSource,120)||null,registration=text(req.body.registrationSource,40)||null;
             const discordId=text(req.body.discordUserId,32)||null;if(discordId&&!/^\d{5,32}$/.test(discordId))throw new Error('discord');
             const discordUsername=text(req.body.discordUsername,100)||null,note=text(req.body.note,2000),nextTags=tags(req.body.tags);
-            await query(`UPDATE customers SET display_name=$2,phone=$3,country_code=$4,timezone=$5,referral_source=$6,registration_source=$7,discord_user_id=$8,discord_username=$9,marketing_opt_in=$10,tags=$11,note=$12,updated_at=NOW() WHERE id=$1`,[req.params.customerId,displayName,phone,country||null,timezone,referral,registration,discordId,discordUsername,bool(req.body.marketingOptIn),nextTags,note]);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.profile.update','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({fields:['display_name','phone','country_code','timezone','referral_source','registration_source','discord','marketing_opt_in','tags','note']})]);
+            await query(`UPDATE customers SET display_name=$2,phone=$3,country_code=$4,timezone=$5,referral_source=$6,registration_source=$7,discord_user_id=$8,discord_username=$9,tags=$10,note=$11,updated_at=NOW() WHERE id=$1`,[req.params.customerId,displayName,phone,country||null,timezone,referral,registration,discordId,discordUsername,nextTags,note]);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.profile.update','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({fields:['display_name','phone','country_code','timezone','referral_source','registration_source','discord','tags','note'],marketingConsentChanged:false})]);
             return res.redirect(path(req.params.customerId)+'&message='+encodeURIComponent('Customer profile updated.'));
         }catch(error){const message=error.message==='discord'?'Discord user ID must contain digits only.':error.code==='23505'?'That Discord user ID is already linked to another customer.':'Customer profile could not be updated safely.';return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}/edit-profile?error=${encodeURIComponent(message)}`)}
     });
+
+    router.post('/admin/users/:customerId/marketing/withdraw',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');try{await transaction(async client=>{const row=await client.query('SELECT marketing_opt_in FROM customers WHERE id=$1 FOR UPDATE',[req.params.customerId]);if(!row.rowCount)throw new Error('Customer not found.');await client.query('UPDATE customers SET marketing_opt_in=FALSE,updated_at=NOW() WHERE id=$1',[req.params.customerId]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.marketing.withdraw','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({previouslyOptedIn:Boolean(row.rows[0].marketing_opt_in),adminCanOptIn:false})]);});return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}/edit-profile?message=${encodeURIComponent('Marketing consent withdrawn. The administrator cannot opt the customer back in; the customer must consent themselves.')}`);}catch(error){return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}/edit-profile?error=${encodeURIComponent(error.message||'Marketing consent could not be withdrawn.')}`);}});
 
     router.post('/admin/users/:customerId/policy-overrides',async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
@@ -64,89 +74,27 @@ function createAdminCustomer360Router(){
                 const raw=req.body[field];
                 if(raw===undefined)continue;
                 const value=String(raw).trim();
-                if(value===''){
-                    await provisioning.resetPolicyOverrideField(req.params.customerId,field,req.session.authUserId);
-                }else if(field==='streams'){
-                    const parsed=Number.parseInt(value,10);
-                    if(!Number.isInteger(parsed)||parsed<1||parsed>50)throw new Error('validation');
-                    await provisioning.setPolicyOverrideField(req.params.customerId,field,parsed,req.session.authUserId);
-                }else{
-                    if(value!=='true'&&value!=='false')throw new Error('validation');
-                    await provisioning.setPolicyOverrideField(req.params.customerId,field,value==='true',req.session.authUserId);
-                }
+                if(value==='')await provisioning.resetPolicyOverrideField(req.params.customerId,field,req.session.authUserId);
+                else if(field==='streams'){const parsed=Number.parseInt(value,10);if(!Number.isInteger(parsed)||parsed<1||parsed>50)throw new Error('Concurrent streams must be between 1 and 50.');await provisioning.setPolicyOverrideField(req.params.customerId,field,parsed,req.session.authUserId);}
+                else{if(value!=='true'&&value!=='false')throw new Error(`Invalid ${field} override.`);await provisioning.setPolicyOverrideField(req.params.customerId,field,value==='true',req.session.authUserId);}
                 changed.push(field);
             }
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.policy_override','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({fields:changed})]);
-            let note='';
-            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){note=' Jellyfin is still catching up -- check reconciliation status below.'}
+            let note='';try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){note=' Jellyfin is still catching up — check reconciliation status below.'}
             return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('Policy overrides saved.'+note));
-        }catch(error){
-            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent('Policy overrides could not be saved safely.'));
-        }
+        }catch(error){console.error('Customer policy override failed:',{customerId:req.params.customerId,error:error.message});return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(`Could not save policy overrides. ${String(error.message||'Check the values and try again.').slice(0,300)}`));}
     });
 
-    router.post('/admin/users/:customerId/policy-overrides/reset-all',async(req,res)=>{
-        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-        try{
-            await provisioning.resetAllPolicyOverrides(req.params.customerId,req.session.authUserId);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.policy_override_reset_all','customer',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.customerId]);
-            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){}
-            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('All policy overrides reset to plan.'));
-        }catch(error){
-            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent('Overrides could not be reset safely.'));
-        }
-    });
+    router.post('/admin/users/:customerId/policy-overrides/reset-all',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');try{await provisioning.resetAllPolicyOverrides(req.params.customerId,req.session.authUserId);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.policy_override_reset_all','customer',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.customerId]);try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){}return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('All policy overrides reset to plan.'));}catch(error){return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(`Could not reset policy overrides. ${String(error.message||'Try again.').slice(0,300)}`));}});
 
-    router.post('/admin/users/:customerId/library-overrides',async(req,res)=>{
-        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-        try{
-            const plan=await provisioning.currentEntitlement(req.params.customerId);
-            if(!plan)throw new Error('no_plan');
-            const catalog=await provisioning.libraryCatalogForServerClass(plan.server_class);
-            const known=new Set(catalog.names.map(n=>policy.nameKey(n)));
-            const names=Array.isArray(req.body.libraryName)?req.body.libraryName:(req.body.libraryName!==undefined?[req.body.libraryName]:[]);
-            const values=Array.isArray(req.body.libraryValue)?req.body.libraryValue:(req.body.libraryValue!==undefined?[req.body.libraryValue]:[]);
-            const changed=[];
-            for(let i=0;i<names.length;i++){
-                const name=String(names[i]||'').trim();
-                const value=String(values[i]||'').trim();
-                if(!name||!known.has(policy.nameKey(name)))continue;
-                if(value===''){
-                    await provisioning.resetLibraryOverride(req.params.customerId,name);
-                }else if(value==='true'||value==='false'){
-                    await provisioning.setLibraryOverride(req.params.customerId,name,value==='true',req.session.authUserId);
-                }else{
-                    continue;
-                }
-                changed.push(name);
-            }
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.library_override','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({libraries:changed})]);
-            let note='';
-            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){note=' Jellyfin is still catching up -- check reconciliation status below.'}
-            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('Library overrides saved.'+note));
-        }catch(error){
-            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(error.message==='no_plan'?'This customer has no active plan to override libraries against.':'Library overrides could not be saved safely.'));
-        }
-    });
+    router.post('/admin/users/:customerId/library-overrides',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');try{const plan=await provisioning.currentEntitlement(req.params.customerId);if(!plan)throw new Error('This customer has no active plan to override libraries against.');const catalog=await provisioning.libraryCatalogForServerClass(plan.server_class),known=new Set(catalog.names.map(n=>policy.nameKey(n))),names=Array.isArray(req.body.libraryName)?req.body.libraryName:(req.body.libraryName!==undefined?[req.body.libraryName]:[]),values=Array.isArray(req.body.libraryValue)?req.body.libraryValue:(req.body.libraryValue!==undefined?[req.body.libraryValue]:[]),changed=[];for(let i=0;i<names.length;i++){const name=String(names[i]||'').trim(),value=String(values[i]||'').trim();if(!name||!known.has(policy.nameKey(name)))continue;if(value==='')await provisioning.resetLibraryOverride(req.params.customerId,name);else if(value==='true'||value==='false')await provisioning.setLibraryOverride(req.params.customerId,name,value==='true',req.session.authUserId);else continue;changed.push(name);}await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.library_override','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({libraries:changed})]);let note='';try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){note=' Jellyfin is still catching up — check reconciliation status below.'}return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('Library overrides saved.'+note));}catch(error){console.error('Customer library override failed:',{customerId:req.params.customerId,error:error.message});return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(`Could not save library overrides. ${String(error.message||'Try again.').slice(0,300)}`));}});
 
-    router.post('/admin/users/:customerId/library-overrides/reset-all',async(req,res)=>{
-        if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-        try{
-            await provisioning.resetAllLibraryOverrides(req.params.customerId);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.library_override_reset_all','customer',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.customerId]);
-            try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){}
-            return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('All library overrides reset to plan.'));
-        }catch(error){
-            return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent('Overrides could not be reset safely.'));
-        }
-    });
+    router.post('/admin/users/:customerId/library-overrides/reset-all',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');try{await provisioning.resetAllLibraryOverrides(req.params.customerId);await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.library_override_reset_all','customer',$2,'{}'::jsonb)`,[req.session.authUserId,req.params.customerId]);try{await provisioning.reconcileCustomer(req.params.customerId)}catch(_){}return res.redirect(path(req.params.customerId,'access')+'&message='+encodeURIComponent('All library overrides reset to plan.'));}catch(error){return res.redirect(path(req.params.customerId,'access')+'&error='+encodeURIComponent(`Could not reset library overrides. ${String(error.message||'Try again.').slice(0,300)}`));}});
 
     router.post('/admin/users/:customerId/email/verify',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await transaction(async client=>{const row=await client.query(`SELECT c.user_id,u.email_verified_at FROM customers c JOIN app_users u ON u.id=c.user_id WHERE c.id=$1 FOR UPDATE`,[req.params.customerId]);if(!row.rowCount)throw new Error('Customer not found.');await client.query(`UPDATE app_users SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1`,[row.rows[0].user_id]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.email.verify','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({manual:true,wasVerified:Boolean(row.rows[0].email_verified_at)})]);});return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?message=${encodeURIComponent('Email marked as verified by administrator.')}`);}catch(error){return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?error=${encodeURIComponent(error.message)}`);}});
     router.post('/admin/users/:customerId/automation-protection',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=['1','true','on'].includes(String(req.body.enabled||'').toLowerCase()),reason=String(req.body.reason||'').trim().slice(0,500);await transaction(async client=>{const updated=await client.query(`UPDATE customers SET automation_protected=$2,automation_protected_reason=$3,automation_protected_at=CASE WHEN $2 THEN NOW() ELSE NULL END,automation_protected_by=CASE WHEN $2 THEN $4::uuid ELSE NULL END,updated_at=NOW() WHERE id=$1 RETURNING id`,[req.params.customerId,enabled,enabled?(reason||'Protected by administrator'):null,req.session.authUserId]);if(!updated.rowCount)throw new Error('Customer not found.');await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.automation_protection','customer',$2,$3::jsonb)`,[req.session.authUserId,req.params.customerId,JSON.stringify({enabled,reason:enabled?(reason||null):null})]);});return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?message=${encodeURIComponent(enabled?'Customer protected from automatic Jellyfin cleanup.':'Automatic cleanup protection removed.')}`);}catch(error){return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?error=${encodeURIComponent(error.message)}`);}});
 
-    // Register the error boundary after every Customer 360 route so errors from
-    // later support/security actions cannot bypass the customer-safe fallback.
     router.use('/admin/users/:customerId',async(error,_req,res,_next)=>{console.error('Customer 360 route error:',error.message);await runtimeSettings.ensureLoaded().catch(()=>{});return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Customer unavailable',message:'The customer profile could not be loaded safely.',link:'/admin/users',linkText:'Back to Customers'})});
     return router;
 }
-module.exports={createAdminCustomer360Router,TABS,incidentPanel};
+module.exports={createAdminCustomer360Router,TABS,incidentPanel,controlCentre};
