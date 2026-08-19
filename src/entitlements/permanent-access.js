@@ -1,7 +1,7 @@
 'use strict';
 
 const {query,transaction}=require('../db');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 
 function reasonText(value){return String(value||'Permanent access granted by administrator').trim().slice(0,500)||'Permanent access granted by administrator';}
 
