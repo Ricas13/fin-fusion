@@ -7,6 +7,34 @@ function recurringProvider(row){const source=String(row?.source||''),id=String(r
 function audienceAllows(plan,channel){const audience=String(plan?.audience||'direct');if(channel==='customer')return DIRECT_AUDIENCES.has(audience);return false}
 function assertAudience(plan,channel){if(!audienceAllows(plan,channel))throw new Error('This plan is not available for direct customers.');return plan}
 
+async function permanentFallback(customerId,db,includeBlocked){
+ const state=await db.query(`SELECT permanent_access FROM customers WHERE id=$1`,[customerId]);
+ if(!state.rows[0]?.permanent_access)return null;
+ const result=await db.query(`
+ SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
+        COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
+        COALESCE(s.plan_code_snapshot,p.code) AS contract_plan_code,
+        COALESCE(s.price_minor_snapshot,p.price_minor) AS contract_price_minor,
+        COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
+        COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
+        COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
+        NULL::timestamptz AS access_expires_at,
+        EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.released_at IS NULL) AS blocked,
+        TRUE AS permanent_access
+ FROM subscriptions s
+ JOIN plans p ON p.id=s.plan_id
+ WHERE s.customer_id=$1
+   AND s.superseded_by IS NULL
+   AND COALESCE(p.is_addon,FALSE)=FALSE
+ ORDER BY s.current_period_end DESC NULLS LAST,s.created_at DESC
+ LIMIT 1
+ `,[customerId]);
+ const row=result.rows[0]||null;
+ if(!row)return null;
+ if(row.blocked&&!includeBlocked)return null;
+ return row;
+}
+
 async function effectiveSubscription(customerId,{client=null,includeBlocked=false}={}){
  const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
@@ -16,13 +44,13 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        e.access_expires_at,e.blocked
+        e.access_expires_at,e.blocked,FALSE AS permanent_access
  FROM effective_customer_entitlements e
  JOIN subscriptions s ON s.id=e.subscription_id
  JOIN plans p ON p.id=e.plan_id
  WHERE e.customer_id=$1 AND ($2::boolean OR e.blocked=FALSE)
  LIMIT 1
- `,[customerId,Boolean(includeBlocked)]);return result.rows[0]||null}
+ `,[customerId,Boolean(includeBlocked)]);if(result.rowCount)return result.rows[0];return permanentFallback(customerId,db,Boolean(includeBlocked))}
 async function effectiveAddons(customerId,{client=null,includeBlocked=false}={}){const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
         COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
