@@ -44,4 +44,19 @@ function getWidget(dashboardKey, widgetKey) {
     return registry.get(dashboardKey).get(widgetKey) || null;
 }
 
-module.exports = { register, listWidgets, getWidget, DASHBOARD_KEYS };
+// Each dashboard module registers the function that builds its render context
+// (ctx = {range, data, reporting}) from a request, so the lazy-widget JSON
+// endpoint can rebuild the same context a normal page load would use without
+// admin-dashboard-layout.js needing a direct dependency on every dashboard module.
+const contextBuilders = new Map();
+function registerContextBuilder(dashboardKey, buildContext) {
+    assertDashboardKey(dashboardKey);
+    if (typeof buildContext !== 'function') throw new Error('buildContext must be a function');
+    contextBuilders.set(dashboardKey, buildContext);
+}
+function getContextBuilder(dashboardKey) {
+    assertDashboardKey(dashboardKey);
+    return contextBuilders.get(dashboardKey) || null;
+}
+
+module.exports = { register, listWidgets, getWidget, registerContextBuilder, getContextBuilder, DASHBOARD_KEYS };
