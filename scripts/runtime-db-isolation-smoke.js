@@ -10,6 +10,7 @@ const compose = read('docker-compose.yml');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
 const verifyBackup = read('scripts/verify-backup.js');
 const sessionMigration = read('db/migrations/002_add_runtime_session_store.sql');
+const application = read('src/application.js');
 
 function service(name) {
     const match = new RegExp(`(^|\\r?\\n)  ${name}:\\r?\\n`).exec(compose);
@@ -66,6 +67,8 @@ assert(/auth_totp_enrollments/.test(roleScript) && /auth_sessions/.test(roleScri
 assert(/CREATE TABLE IF NOT EXISTS user_sessions/.test(sessionMigration), 'runtime session table must be migration-owned');
 for (const column of ['sid VARCHAR','sess JSON','expire TIMESTAMP']) assert(sessionMigration.includes(column), `session migration is missing ${column}`);
 assert(/PRIMARY KEY \(sid\)/.test(sessionMigration) && /user_sessions\(expire\)/.test(sessionMigration), 'session migration must include its key and expiry index');
+assert(/createTableIfMissing:\s*false/.test(application), 'web session store must rely on the migrated user_sessions table');
+assert(!/createTableIfMissing:\s*true/.test(application), 'web runtime must not retain session-store DDL fallback');
 
 assert(/BACKUP_VERIFY_DATABASE_URL/.test(verifyBackup), 'restore verification must use the dedicated verifier credential');
 assert(!/fs\.existsSync\(input\)/.test(verifyBackup), 'backup verification must not use check-then-open file validation');
