@@ -32,8 +32,8 @@ function onboardingMessage(portal,currentPlan,delivery){
   const account=portal.accounts.find(a=>a.is_primary&&!a.disabled)||portal.accounts.find(a=>!a.disabled);
   if(!account||account.disabled||account.last_activity_at)return null;
   const username=account.jellyfin_username||portal.customer?.login_username||'your Jellyfin username';
-  if(account.password_setup_required)return `Your Jellyfin access is ready. 1) Open “Jellyfin access” below and set your Jellyfin password. 2) Use the Open Jellyfin button. 3) Sign in as ${username}. 4) Start any title to confirm the setup. These instructions stay here until your first playback is detected.`;
-  return `Your Jellyfin access is ready. 1) Use the Open Jellyfin button below. 2) Sign in as ${username} with the Jellyfin password you set. 3) Start any title to confirm the setup. These instructions stay here until your first playback is detected.`;
+  if(account.password_setup_required)return 'Your Jellyfin account is ready. Choose your password below to start watching.';
+  return `Your Jellyfin account is ready. Open Jellyfin and sign in as ${username}.`;
 }
 function customerProvisioningMessage(state){
   const message=String(state?.last_error||'');
