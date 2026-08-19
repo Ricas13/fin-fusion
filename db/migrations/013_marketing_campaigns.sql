@@ -16,7 +16,7 @@ CREATE TABLE marketing_campaigns (
     created_by_user_id uuid,
     recipient_count integer DEFAULT 0 NOT NULL,
     queued_count integer DEFAULT 0 NOT NULL,
-    sent_at timestamp with time zone,
+    queued_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT marketing_campaign_name_length CHECK (char_length(name) BETWEEN 3 AND 160),
