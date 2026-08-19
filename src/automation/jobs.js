@@ -19,6 +19,7 @@ const stremioSourceIndex=require('../stremio/source-index');
 const stremioSourcePool=require('../stremio/source-pool');
 const stremioSourceAdmission=require('../stremio/source-admission');
 require('../platform/bulk-operations');
+require('../platform/bulk-server-migration');
 require('../platform/operator-bulk-operations');
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
