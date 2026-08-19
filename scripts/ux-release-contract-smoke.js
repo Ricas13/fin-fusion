@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('assert');
+const fs=require('fs');
+const read=p=>fs.readFileSync(p,'utf8');
+const bulk=read('src/platform/admin-bulk-customers.js');
+const plans=read('src/platform/admin-plans.js');
+const customer=read('views/customer/dashboard.ejs');
+const customer360=read('src/platform/customer-360-view-v2.js');
+const settings=read('src/platform/settings-registry.js');
+const permanent=read('src/entitlements/permanent-access.js');
+assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'bulk workflows must use human-readable selectors');
+assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'bulk workflows must not instruct operators to copy UUIDs');
+assert(/service_type/.test(plans)&&/planSubnav/.test(plans),'plan editor must derive workflow from service type');
+assert(/Open Jellyfin|Open Stremio/.test(customer),'customer home must surface a primary watch action');
+assert(/Administrator overrides|Permanent/.test(customer360),'Customer 360 must expose explicit admin override controls');
+assert(/owner|href|description/.test(settings),'settings registry must declare ownership metadata');
+assert(/permanent/i.test(permanent),'permanent access lifecycle module missing');
+console.log('ux release contract: ok');
