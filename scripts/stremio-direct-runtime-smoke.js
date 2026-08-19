@@ -25,7 +25,8 @@ assert(lifecycleMigration.includes('managed_mapping_id')&&lifecycleMigration.inc
 assert(identities.includes("account_purpose='stremio_internal'"),'managed playback must use hidden Stremio-only Jellyfin accounts');
 assert(identities.includes('EnableRemoteAccess:!disabled'),'hidden managed users must always permit remote Stremio authentication while enabled');
 assert(legacyEntitlements.includes('EnableRemoteAccess:!disabled'),'legacy hidden-user preparation must not reintroduce remote-auth denial');
-assert(identities.includes('MaxActiveSessions:disabled?0:limit'),'hidden managed users must retain Jellyfin-side session limits');
+assert(identities.includes('jellyfinSessionLimit(limit)')&&legacyEntitlements.includes('internalSessionLimit(limit)'),'Jellyfin hidden-user policy must reserve one control session outside the advertised playback allowance');
+assert(identities.includes('Number(limit||1)+1')&&legacyEntitlements.includes('Number(limit||1)+1'),'reserved control session must be exactly one above the customer playback limit');
 assert(identities.includes('playback_password_encrypted')&&identities.includes('PASSWORD_PREFIX'),'hidden-user playback password must use a separate encrypted purpose');
 assert(identities.includes('managedSources.enabled()'),'managed identity provisioning must follow managed source configuration');
 assert(identities.includes('currentMappings(entitlement.id,allowedIds)'),'normal search reconciliation must have a database-only ready-account fast path');
@@ -50,8 +51,10 @@ assert(runtime.includes('res.redirect(302,target)'),'managed admission must redi
 assert(runtime.includes('started.accessToken'),'managed redirect must use the per-playback Jellyfin token');
 assert(lifecycle.includes('/Users/AuthenticateByName'),'each admitted managed playback must mint its own Jellyfin device token');
 assert(lifecycle.includes("'/Sessions/Playing'"),'managed admission must explicitly report playback start to Jellyfin');
+assert(lifecycle.includes("'/Sessions/Playing/Stopped'"),'managed cleanup must explicitly report playback stop to Jellyfin');
 assert(lifecycle.includes("'/Sessions/Logout'"),'managed playback cleanup must revoke the per-playback Jellyfin token');
-assert(lifecycle.includes('/Playing/Stop'),'managed playback cleanup must clear the Jellyfin session');
+assert(lifecycle.includes('/Playing/Stop'),'managed playback cleanup must retain an admin fallback stop');
+assert(lifecycle.includes('existingPlayback'),'retries of one admitted result must reuse its playback token instead of creating duplicate Jellyfin sessions');
 assert(lifecycle.includes('deviceId(rawLease)'),'managed streams must get distinct Jellyfin device/session identities');
 assert(lifecycle.includes('Promise.allSettled(servers.map'),'managed playback lifecycle polling must snapshot each Jellyfin server once per cycle');
 
