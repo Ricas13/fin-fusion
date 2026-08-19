@@ -6,6 +6,7 @@ const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
 const planPricing=require('../payments/plan-pricing');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const permanentAccess=require('../entitlements/permanent-access');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const requestUserSync=require('../integrations/request-user-sync');
 const runtimeSettings=require('./runtime-settings');
@@ -49,22 +50,23 @@ function createCustomerDashboardRouter(){
       await runtimeSettings.ensureLoaded();
       const restored=await cleanupReturn.restoreReturningCustomer(req.session.customerId,{reconcile:provisioning.reconcileCustomer}).catch(error=>({restored:false,error:error.message}));
       const sessionCurrency=String(req.session.storefrontCurrency||'').toUpperCase(),currency=planPricing.CURRENCIES.includes(sessionCurrency)?sessionCurrency:await planPricing.userPreferredCurrency(req.session.customerUserId);
-      const [portalRaw,plans,currentPlan,requestAccess,requestConfig,currencies,rawProvisioningState]=await Promise.all([
-        customers.getCustomerPortal(req.session.customerId),sellablePlans(currency),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration(),planPricing.enabledCurrencies(),provisioning.control.getCustomerState(req.session.customerId).catch(()=>null)
+      const [portalRaw,plans,currentPlan,requestAccess,requestConfig,currencies,rawProvisioningState,permanentState]=await Promise.all([
+        customers.getCustomerPortal(req.session.customerId),sellablePlans(currency),provisioning.currentEntitlement(req.session.customerId),requestUserSync.requestAccessForCustomer(req.session.customerId),requestUserSync.configuration(),planPricing.enabledCurrencies(),provisioning.control.getCustomerState(req.session.customerId).catch(()=>null),permanentAccess.status(req.session.customerId).catch(()=>null)
       ]);
       const portal=await hideInternalAccounts(req.session.customerId,portalRaw),restoreMessage=restored.restored?'Your previous inactive Jellyfin profile was cleaned up. Because you returned, CAPTAiNFiN has prepared fresh access for you.':null;
       if(!currentPlan){
         return res.render('customer/onboarding',{portal,plans,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
       }
+      const isPermanent=Boolean(permanentState?.active&&String(permanentState.subscription_id)===String(currentPlan.subscription_id));
       const provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null;
       const delivery=deliveryType(currentPlan),hasJellyfin=['jellyfin','bundle'].includes(delivery),hasStremio=['stremio','bundle'].includes(delivery);
       if(delivery==='stremio'){
-        return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
+        return res.render('customer/stremio-dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null,permanentAccess:isPermanent});
       }
       const effective=currentPlan&&hasJellyfin?await provisioning.effectivePolicyForCustomer(req.session.customerId,currentPlan):null;
       const libraryEntitlement=effective?effective.entitlementRows.filter(row=>row.effective).map(row=>row.name):[],librarySelection=effective?effective.visibleNames:[];
       const welcome=onboardingMessage(portal,currentPlan,delivery),message=req.query.message||restoreMessage||welcome||((hasStremio&&delivery==='bundle')?'Your plan also includes Stremio. Open Stremio setup to create or manage your private installation.':null);
-      return res.render('customer/dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryEntitlement,librarySelection,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||restored.error||null,welcome:req.query.welcome==='1',deliveryType:delivery,hasJellyfin,hasStremio});
+      return res.render('customer/dashboard',{portal,plans,currentPlan,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,currencies,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryEntitlement,librarySelection,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||restored.error||null,welcome:req.query.welcome==='1',deliveryType:delivery,hasJellyfin,hasStremio,permanentAccess:isPermanent});
     }catch(error){return next(error);}
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
