@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 
 const AREAS = new Set(['customers', 'orders', 'tickets']);
+const NAV_PREFIX = 'operator.business.';
 
 function area(value) {
     const key = String(value || '').trim().toLowerCase();
@@ -10,13 +11,18 @@ function area(value) {
     return key;
 }
 
+function navKey(value) {
+    return `${NAV_PREFIX}${area(value)}`;
+}
+
 async function list(adminUserId) {
     if (!adminUserId) return {};
+    const keys = [...AREAS].map(key => `${NAV_PREFIX}${key}`);
     const result = await query(
-        `SELECT area,seen_at FROM admin_operator_read_cursors WHERE admin_user_id=$1`,
-        [adminUserId]
+        `SELECT nav_key,last_seen_at FROM admin_nav_read_state WHERE admin_user_id=$1 AND nav_key=ANY($2::text[])`,
+        [adminUserId, keys]
     );
-    return Object.fromEntries(result.rows.map(row => [row.area, row.seen_at]));
+    return Object.fromEntries(result.rows.map(row => [row.nav_key.slice(NAV_PREFIX.length), row.last_seen_at]));
 }
 
 async function latestFor(client, key) {
@@ -32,17 +38,18 @@ async function latestFor(client, key) {
 async function markSeen(adminUserId, value) {
     if (!adminUserId) throw new Error('Administrator identity is required.');
     const key = area(value);
+    const keyName = navKey(key);
     return transaction(async client => {
         const seenAt = await latestFor(client, key);
         const result = await client.query(`
-            INSERT INTO admin_operator_read_cursors(admin_user_id,area,seen_at)
+            INSERT INTO admin_nav_read_state(admin_user_id,nav_key,last_seen_at)
             VALUES($1,$2,$3)
-            ON CONFLICT(admin_user_id,area) DO UPDATE
-            SET seen_at=GREATEST(admin_operator_read_cursors.seen_at,EXCLUDED.seen_at),updated_at=NOW()
-            RETURNING area,seen_at
-        `, [adminUserId, key, seenAt]);
-        return result.rows[0];
+            ON CONFLICT(admin_user_id,nav_key) DO UPDATE
+            SET last_seen_at=GREATEST(admin_nav_read_state.last_seen_at,EXCLUDED.last_seen_at)
+            RETURNING last_seen_at
+        `, [adminUserId, keyName, seenAt]);
+        return { area:key, seen_at:result.rows[0].last_seen_at };
     });
 }
 
-module.exports = { AREAS, area, list, markSeen, latestFor };
+module.exports = { AREAS, NAV_PREFIX, area, navKey, list, markSeen, latestFor };
