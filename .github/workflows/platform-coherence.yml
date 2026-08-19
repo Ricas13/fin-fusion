@@ -22,6 +22,8 @@ jobs:
         run: node scripts/invitation-upgrade-bridge-smoke.js
       - name: Enforce static coherence contract
         run: node scripts/platform-coherence-static-smoke.js
+      - name: Enforce global vs personal notification ownership
+        run: node scripts/notification-route-ownership-smoke.js
       - name: Inspect exact assembled route contract
         run: node scripts/assembled-app-smoke.js
 
