@@ -41,7 +41,7 @@ async function createAdminGrantTx(client, { customerId, plan, actorUserId = null
         source: 'admin_grant',
         status: statusForPlan(plan),
         auditAction: 'subscription.admin_grant',
-        auditMetadata: { planCode: plan.code || null }
+        auditMetadata: { planCode: plan.code || null, startsAt, endsAt }
     });
 }
 
