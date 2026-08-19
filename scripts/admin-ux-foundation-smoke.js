@@ -15,6 +15,7 @@ const baseCss=read('public/css/admin-original-base.css');
 const componentCss=read('public/css/admin-original-components.css');
 const refinementCss=read('public/css/admin-visual-refinement.css');
 const plans=read('src/platform/admin-plans-list.js');
+const customersList=read('src/platform/admin-customers-list.js');
 const formFeedback=read('public/js/admin-form-feedback.js');
 const libraries=read('src/platform/admin-server-library-dashboard.js');
 const libraryJs=read('public/js/admin-server-library-dashboard.js');
@@ -50,6 +51,7 @@ assert(refinementCss.includes('.chartEmpty{height:108px}'),'Empty dashboard char
 assert(plans.includes('data-plan-table-wrap'),'Plan filtering must be able to hide the table when no rows match');
 assert(formFeedback.includes("'/admin/notifications/preferences/delivery'")&&/native submission/i.test(formFeedback),'Notification credential forms must use native browser submission for reliable CSRF handling');
 assert(formFeedback.includes("'/admin/users/new'")&&/one-time activation link/i.test(formFeedback),'Customer creation must preserve its one-time activation result through native navigation');
+assert(customersList.includes('id="bulkForm" data-native-submit="true"'),'Customer bulk preview must use native submission so its POST-rendered preview page is displayed instead of navigating to a POST-only URL');
 assert(adminActions.includes("require('../jellyfin/resilient-provisioning')"),'Admin customer creation must use service-aware provisioning so Stremio-only plans do not create Jellyfin accounts');
 assert(accountActivation.includes("require('../jellyfin/resilient-provisioning')"),'Deferred customer activation provisioning must use service-aware provisioning');
 assert(formFeedback.includes("explicitSubmitterAttribute(submitter, 'formaction')"),'Enhanced forms must honor explicit per-button formaction targets without overriding ordinary form actions');

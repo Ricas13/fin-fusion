@@ -112,7 +112,7 @@ function pagination(filters,page,pageSize,total){
 
 function bulkBar(req,filters,total){
     return `<section class="section bulkBar"><div class="sectionHead"><h2>Bulk actions</h2><span class="muted">${total} matching this filter</span></div>
-        <form method="post" action="/admin/customers/bulk/preview" id="bulkForm">
+        <form method="post" action="/admin/customers/bulk/preview" id="bulkForm" data-native-submit="true">
         <input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
         ${filterHiddenFields(filters)}
         <div class="formGrid">
