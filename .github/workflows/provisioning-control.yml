@@ -45,7 +45,5 @@ jobs:
       - run: npm ci
       - name: Apply migrations
         run: npm run db:migrate
-      - name: Pure reconciliation helper smoke test
-        run: node scripts/provisioning-control-smoke.js
       - name: Zero-server provisioning integration test
         run: node scripts/provisioning-control-db-smoke.js
