@@ -40,6 +40,7 @@ const { createAdminCustomersListRouter } = require('./admin-customers-list');
 const { createAdminPlanLibrariesRouter } = require('./admin-plan-libraries');
 const { createAdminServerFleetDashboardRouter } = require('./admin-server-fleet-dashboard');
 const { createAdminServerLibraryDashboardRouter } = require('./admin-server-library-dashboard');
+const { createAdminStremioManagedSourcesRouter } = require('./admin-stremio-managed-sources');
 const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
@@ -91,6 +92,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminPlanLibrariesRouter());
   app.use(createAdminServerFleetDashboardRouter());
   app.use(createAdminServerLibraryDashboardRouter());
+  app.use(createAdminStremioManagedSourcesRouter());
   app.use(createAdminServersRouter());
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
