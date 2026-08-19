@@ -16,6 +16,7 @@ assert(/COALESCE\(p\.is_addon,FALSE\)=FALSE/.test(state),'permanent fallback mus
 assert(/customer_access_holds/.test(state)&&/row\.blocked&&!includeBlocked/.test(state),'explicit holds must still block permanent access');
 assert(/COALESCE\(c\.permanent_access,FALSE\)=FALSE/.test(provisioning),'expiry automation must skip permanent customers');
 assert(/Billing is separate/.test(route)&&/does not cancel Stripe or PayPal renewal/.test(route),'permanent confirmation must warn that billing is separate');
+assert(/Assign a primary plan to this customer before enabling Permanent access/.test(route),'permanent access must require an existing started primary plan');
 assert(/admin\.customer\.permanent_access/.test(route),'permanent override must be audited');
 assert(/provisioning\.reconcileCustomer/.test(route),'permanent changes must reconcile service access');
 assert(/createAdminCustomerPermanentRouter/.test(router),'permanent admin router must be mounted');
