@@ -12,6 +12,7 @@ const requestUserSync=require('../integrations/request-user-sync');
 const runtimeSettings=require('./runtime-settings');
 const productReadiness=require('./product-readiness');
 const planCapacity=require('../entitlements/plan-capacity');
+const checkoutIntents=require('../payments/checkout-intents');
 const csrf=require('../auth/csrf');
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));}
@@ -55,7 +56,8 @@ function createCustomerDashboardRouter(){
       ]);
       const portal=await hideInternalAccounts(req.session.customerId,portalRaw),restoreMessage=restored.restored?'Your previous inactive Jellyfin profile was cleaned up. Because you returned, CAPTAiNFiN has prepared fresh access for you.':null;
       if(!currentPlan){
-        return res.render('customer/onboarding',{portal,plans,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
+        const openCheckout=await checkoutIntents.getOpenForOwner('customer',req.session.customerId).catch(()=>null);
+        return res.render('customer/onboarding',{portal,plans,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,openCheckout,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
       }
       const isPermanent=Boolean(permanentState?.active&&String(permanentState.subscription_id)===String(currentPlan.subscription_id));
       const provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null;
