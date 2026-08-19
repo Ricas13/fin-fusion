@@ -83,7 +83,7 @@ function createStremioRuntimeRouter(){
       const id=managedPlayback.deviceId(lease),admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,{managedMappingId:mapping.id,serverId:mapping.server_id,jellyfinUserId:mapping.jellyfin_user_id,deviceId:id,playSessionId,mediaSourceId:req.params.mediaSourceId});
       if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}admitted=true;
       const started=await managedPlayback.start(mapping,lease,{itemId:req.params.itemId,mediaSourceId:req.params.mediaSourceId,playSessionId});
-      const target=managedRuntime.directUrl(mapping,req.params.itemId,req.params.mediaSourceId,playSessionId,started.deviceId);
+      const target=managedRuntime.directUrl(mapping,req.params.itemId,req.params.mediaSourceId,playSessionId,started.deviceId,started.accessToken);
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'stremio.managed_playback.admitted','stremio_entitlement',$1,$2::jsonb)`,[e.id,JSON.stringify({serverId:mapping.server_id,jellyfinSessionId:started.jellyfinSessionId||null,active:admission.active,limit:admission.limit})]).catch(()=>{});
       return res.redirect(302,target);
     }catch(error){if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});console.error('Managed Stremio admission failed:',String(error?.message||error).slice(0,300));return res.status(502).end();}
