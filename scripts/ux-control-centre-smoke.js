@@ -4,6 +4,7 @@ const read=p=>fs.readFileSync(p,'utf8');
 const customer=read('src/platform/admin-customer-360.js');
 const permanent=read('src/entitlements/permanent-access.js');
 const permanentMigration=read('db/migrations/006_customer_permanent_access.sql');
+const manualAssignment=read('src/jellyfin/manual-assignment.js');
 const bulk=read('src/platform/admin-bulk-customers.js');
 const bulkMigration=read('src/platform/bulk-server-migration.js');
 const serverMigration=read('src/jellyfin/server-migration.js');
@@ -17,6 +18,7 @@ assert(/Customer control centre/.test(customer),'customer control centre missing
 assert(/Make permanent/.test(customer)&&/Remove permanent access/.test(customer)&&/permanentAccess\.enable/.test(customer),'permanent customer access controls missing');
 assert(/providerBillingChanged:false/.test(permanent)&&/previous_automation_protected/.test(permanent),'permanent access must preserve billing and cleanup state');
 assert(/customer_entitlement_overrides/.test(permanentMigration)&&/'infinity'::timestamptz/.test(permanentMigration),'permanent entitlement must be implemented in the effective entitlement layer');
+assert(/account_purpose='primary'/.test(manualAssignment)&&!/account_purpose='jellyfin'/.test(manualAssignment),'manual Jellyfin assignment must use the canonical primary account purpose');
 assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
 assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'raw UUID workflow copy returned');
