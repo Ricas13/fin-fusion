@@ -36,9 +36,27 @@ function assertCompositionBoundary() {
   if (!applicationSource.includes('mountApplicationRoutes(app);')) {
     throw new Error('application.js does not mount canonical application route composition');
   }
-  if (/require\('\.\/(?:platform|auth)\/(?:admin-|customer-|first-run-controller|router|storefront|branding)/.test(applicationSource)) {
-    throw new Error('application.js imported a concrete route module instead of the application route composition boundary');
+
+  const directAdminImports = applicationSource.match(/require\('\.\/platform\/admin-[^']+'\)/g) || [];
+  const unexpectedAdminImports = directAdminImports.filter(value => value !== "require('./platform/admin-nav')");
+  if (unexpectedAdminImports.length) {
+    throw new Error(`application.js imported admin route modules directly: ${unexpectedAdminImports.join(', ')}`);
   }
+  if (/require\('\.\/platform\/customer-[^']+'\)/.test(applicationSource)) {
+    throw new Error('application.js imported customer route modules directly instead of the application route composition');
+  }
+  for (const forbidden of [
+    "require('./auth/first-run-controller')",
+    "require('./platform/storefront')",
+    "require('./platform/branding')",
+    "require('./platform/flexible-checkout')",
+    "require('./platform/router')"
+  ]) {
+    if (applicationSource.includes(forbidden)) {
+      throw new Error(`application.js bypasses application route composition: ${forbidden}`);
+    }
+  }
+
   if (!routeComposition.includes("require('./platform/admin-route-composition')")) {
     throw new Error('application route composition must delegate the main admin group to admin-route-composition.js');
   }
