@@ -17,14 +17,27 @@ const playbackLimit=routeRateLimit.middleware({scope:'stremio-source-playback',m
 function enabled(){return runtimeSettings.enabled();}
 function cors(_req,res,next){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,HEAD,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type,Range');res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Cache-Control','no-store');next();}
 async function loadRuntimeSetting(_req,res,next){try{await runtimeSettings.ensureLoaded();return next();}catch(error){console.error('Stremio runtime setting unavailable:',error.message);return res.status(503).json({error:'Temporarily unavailable'});}}
-function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.1.0',name:'CAPTAiNFiN',description:'Your CAPTAiNFiN subscription streams through authorized Jellyfin sources.',resources:[{name:'stream',types:['movie','series'],idPrefixes:['tt']}],types:['movie','series'],catalogs:[],behaviorHints:{configurable:false,p2p:false}};}
+function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.2.0',name:'CAPTAiNFiN',description:'Your CAPTAiNFiN subscription streams through portal-managed Jellyfin playback.',resources:[{name:'stream',types:['movie','series'],idPrefixes:['tt']}],types:['movie','series'],catalogs:[],behaviorHints:{configurable:false,p2p:false}};}
 async function publicOrigin(req){try{const cfg=await operations.get();if(cfg.publicBaseUrl)return String(cfg.publicBaseUrl).replace(/\/$/,'');}catch(_error){}const host=req.get('x-forwarded-host')||req.get('host');const proto=req.get('x-forwarded-proto')||req.protocol||'https';return `${proto}://${host}`.replace(/\/$/,'');}
 function copyPlaybackHeaders(upstream,res){for(const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified','cache-control']){const value=upstream.headers?.[name];if(value!=null)res.setHeader(name,value);}}
 async function hasExplicitSources(entitlement){const r=await query(`SELECT EXISTS(SELECT 1 FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE WHERE s.id=$1) yes`,[entitlement.subscription_id]);return r.rows[0]?.yes===true;}
-function attachLease(streams,lease=sourceAdmission.issue()){return streams.map(stream=>{try{const url=new URL(stream.url);if(/\/stremio\/[^/]+\/source\//.test(url.pathname))url.searchParams.set('lease',lease);return{...stream,url:url.toString()};}catch{return stream;}});}
+function attachLease(streams,lease=sourceAdmission.issue()){return streams.map(stream=>{try{const url=new URL(stream.url);if(/\/stremio\/[^/]+\/(?:source|jellyfin)\//.test(url.pathname))url.searchParams.set('lease',lease);return{...stream,url:url.toString()};}catch{return stream;}});}
+
+function pipePlayback(opened,res,{onUnauthorized=null,onFinished=null}={}){
+  const upstream=opened.response,status=Number(upstream.statusCode||502);
+  if(status===401||status===403){onUnauthorized?.();onFinished?.();upstream.destroy();res.status(502).end();return false;}
+  if(status<200||status>=400){onFinished?.();upstream.destroy();res.status(502).end();return false;}
+  copyPlaybackHeaders(upstream,res);res.status(status);
+  if(opened.method==='HEAD'){upstream.resume();res.end();onFinished?.();return true;}
+  upstream.on('error',()=>{onFinished?.();if(!res.headersSent)res.status(502);res.end();});
+  upstream.on('end',()=>onFinished?.());
+  res.on('close',()=>{onFinished?.();if(!res.writableEnded)opened?.request?.destroy();});
+  upstream.pipe(res);return true;
+}
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
+  jellyfin.startStreamManager({intervalMs:60000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
     if(!enabled())return res.status(404).json({error:'Not found'});
     try{const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).json({error:'Not found'});await entitlements.markUse(e.id,'manifest');return res.json(manifest());}
@@ -36,10 +49,22 @@ function createStremioRuntimeRouter(){
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const type=String(req.params.type||''),videoId=String(req.params.videoId||''),proxyBase=await publicOrigin(req),explicit=await hasExplicitSources(e);
       let streams=await sourcePool.streamsFor(e,type,videoId,{proxyBase,installToken:req.params.token});
+      if(!streams.length&&!explicit)streams=await jellyfin.streamsFor(e,type,videoId,{proxyBase,installToken:req.params.token});
       if(streams.length)streams=attachLease(streams);
-      else if(!explicit)streams=await jellyfin.streamsFor(e,type,videoId);
       await entitlements.markUse(e.id,'stream');return res.json({streams});
     }catch(_error){console.error('Stremio stream request failed.');return res.json({streams:[]});}
+  });
+  router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
+    if(!enabled())return res.status(404).end();let opened=null,heartbeat=null,e=null,admitted=false,released=false;const lease=String(req.query.lease||''),isHead=req.method==='HEAD';
+    const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};
+    const releaseSoon=()=>{stop();if(!released&&admitted&&e&&lease){released=true;setTimeout(()=>sourceAdmission.release(e.id,lease).catch(()=>{}),5000).unref?.();}};
+    try{
+      e=await entitlements.findByInstallToken(req.params.token);if(!e||!e.jellyfin_account_id||!e.server_id||!lease)return res.status(404).end();
+      if(!isHead){const admission=await sourceAdmission.admit(e,lease,null,req.params.itemId);if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}admitted=true;}
+      opened=await jellyfin.openPlayback(e,req.params.itemId,req.params.mediaSourceId,req.get('range')||'',isHead?'HEAD':'GET');
+      if(!isHead){heartbeat=setInterval(()=>sourceAdmission.touch(e.id,lease).catch(()=>{}),60000);heartbeat.unref?.();}
+      return pipePlayback(opened,res,{onUnauthorized:()=>query(`UPDATE stremio_entitlements SET last_error='Managed Jellyfin authentication expired. Reissue the Stremio installation to rotate playback access.',updated_at=NOW() WHERE id=$1`,[e.id]).catch(()=>{}),onFinished:releaseSoon});
+    }catch(_error){stop();opened?.request?.destroy();if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});if(!res.headersSent)return res.status(502).end();return res.end();}
   });
   router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
     if(!enabled())return res.status(404).end();let opened,heartbeat=null,e=null,lease=String(req.query.lease||''),admitted=false;const isHead=req.method==='HEAD';
@@ -65,4 +90,4 @@ function createStremioRuntimeRouter(){
   return router;
 }
 
-module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,createStremioRuntimeRouter};
+module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,copyPlaybackHeaders,pipePlayback,createStremioRuntimeRouter};
