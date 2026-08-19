@@ -11,6 +11,8 @@ const managed=read('src/stremio/managed-sources.js');
 const admin=read('src/platform/admin-stremio-managed-sources.js');
 const composition=read('src/platform/admin-route-composition.js');
 const nav=read('src/platform/admin-nav.js');
+const html=read('src/platform/admin-html.js');
+const tabs=read('src/platform/stremio-workflow-tabs.js');
 
 assert(migration.includes('stremio_priority integer DEFAULT 100 NOT NULL'),'managed source priority migration missing');
 assert(migration.includes('CREATE TABLE IF NOT EXISTS stremio_managed_accounts'),'multi-server managed-account mapping missing');
@@ -29,9 +31,17 @@ assert(admin.includes('probeCredentials(server.base_url,key)'),'new API keys mus
 assert(admin.includes("encryptWithEnv(key,'JELLYFIN_ENCRYPTION_KEY','jf1')"),'managed API keys must use the canonical Jellyfin encryption purpose');
 assert(admin.includes("'admin.stremio.managed_source.api_key.rotate'"),'managed API-key rotation must be audited without recording the key');
 assert(!admin.includes('decryptWithEnv')&&!admin.includes('decryptJellyfinKey'),'managed source UI must never decrypt an API key for display');
-assert(admin.includes('API keys are write-only and never rendered back'),'admin UI must explain the API credential boundary');
+assert(admin.includes('Write-only. Leave blank to keep the current key'),'managed source UI must explain the API credential boundary without exposing the key');
+assert(admin.includes('<details class="managedCredential">'),'rarely changed API-key controls must be collapsed behind a compact disclosure');
+assert(admin.includes('managedControls')&&admin.includes('managedPriority')&&admin.includes('managedActions'),'managed controls must use the compact row layout');
 assert(composition.includes('createAdminStremioManagedSourcesRouter'),'managed source router must use canonical admin route composition');
-assert(nav.includes("['stremio-managed-sources','Managed Stremio','/admin/servers/stremio/managed']"),'managed source controls must be reachable from admin navigation');
+assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio/managed']"),'Stremio sidebar entry must land on Manage Stremio');
+assert(!nav.includes("['stremio-managed-sources','Managed Stremio','/admin/servers/stremio/managed']"),'Managed Stremio must not remain as a second sidebar item');
+assert(nav.includes("'stremio-managed-sources':'stremio-sources'"),'managed Stremio page must still highlight the single Stremio sidebar entry');
 assert(nav.includes('function sidebarKey(value){const key=activeKey(value)'),'navigation key resolver regression detected');
+assert(tabs.includes("['manage','Manage Stremio','/admin/servers/stremio/managed']"),'Stremio workflow must expose Manage Stremio as a top tab');
+assert(tabs.includes("['external','External Sources','/admin/servers/stremio']"),'Stremio workflow must retain external source management as a top tab');
+assert(html.includes("if(active==='stremio-managed-sources')return stremioWorkflow.tabs('manage')"),'managed Stremio page must render the top workflow tabs');
+assert(html.includes("if(active==='stremio-sources')return stremioWorkflow.tabs('external')"),'external Stremio pages must render the same top workflow tabs');
 
 console.log('stremio managed sources smoke: ok');
