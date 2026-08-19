@@ -4,9 +4,9 @@
 // shadow implementation when every router is mounted at the application root.
 // A route that mounts first wins, leaving later code/tests misleadingly alive.
 //
-// This audit also keeps the application bootstrap from becoming a second admin
-// router registry. Top-level admin route order belongs to
-// src/platform/admin-route-composition.js.
+// The bootstrap owns transport/security middleware only. Application route
+// order belongs to src/application-route-composition.js, while the main admin
+// group remains in src/platform/admin-route-composition.js.
 
 const fs = require('fs');
 const path = require('path');
@@ -14,30 +14,64 @@ const path = require('path');
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'route-ownership-audit-session-secret-2026-long-value';
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
+function assertOrder(source, markers, label) {
+  let previous = -1;
+  for (const marker of markers) {
+    const index = source.indexOf(marker);
+    if (index < 0) throw new Error(`${label} is missing ${marker}`);
+    if (index <= previous) throw new Error(`${label} order changed around ${marker}`);
+    previous = index;
+  }
+}
+
 function assertCompositionBoundary() {
-  const applicationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'application.js'), 'utf8');
-  const compositionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-route-composition.js'), 'utf8');
+  const root = path.join(__dirname, '..', 'src');
+  const applicationSource = fs.readFileSync(path.join(root, 'application.js'), 'utf8');
+  const routeComposition = fs.readFileSync(path.join(root, 'application-route-composition.js'), 'utf8');
+  const adminComposition = fs.readFileSync(path.join(root, 'platform', 'admin-route-composition.js'), 'utf8');
 
-  if (!applicationSource.includes("require('./platform/admin-route-composition')")) {
-    throw new Error('application.js must delegate top-level admin route composition to admin-route-composition.js');
+  if (!applicationSource.includes("require('./application-route-composition')")) {
+    throw new Error('application.js must delegate concrete route registration to application-route-composition.js');
   }
-  if (!applicationSource.includes('mountAdminRoutes(app);')) {
-    throw new Error('application.js does not mount the canonical admin route composition');
+  if (!applicationSource.includes('mountApplicationRoutes(app);')) {
+    throw new Error('application.js does not mount canonical application route composition');
+  }
+  if (/require\('\.\/(?:platform|auth)\/(?:admin-|customer-|first-run-controller|router|storefront|branding)/.test(applicationSource)) {
+    throw new Error('application.js imported a concrete route module instead of the application route composition boundary');
+  }
+  if (!routeComposition.includes("require('./platform/admin-route-composition')")) {
+    throw new Error('application route composition must delegate the main admin group to admin-route-composition.js');
   }
 
-  // admin-nav is application metadata; admin-security and admin-preview are
-  // deliberately mounted before the main admin route group. The composition
-  // module itself is the single boundary for the remaining top-level routers.
-  const directAdminModuleImports = applicationSource.match(/require\('\.\/platform\/admin-[^']+'\)/g) || [];
+  assertOrder(routeComposition, [
+    'app.use(createFirstRunRouter());',
+    "app.get('/login'",
+    "app.post('/login'",
+    "app.get('/logout'",
+    'app.use(controller.createAuthRouter());',
+    'app.use(createAdminSecurityRouter());',
+    "app.get('/',",
+    'app.use(createBrandingRouter());',
+    'app.use(createCustomerClaimRouter());',
+    'app.use(createCustomerPasswordSyncRouter());',
+    'app.use(createCustomerSubscriptionActionsRouter());',
+    'app.use(createFlexibleCheckoutRouter());',
+    'app.use(createAdminPreviewRouter());',
+    "app.use('/invite'",
+    "app.use('/admin/invitations'",
+    'mountAdminRoutes(app);',
+    'app.use(createRouter());'
+  ], 'application route composition');
+
+  const directAdminModuleImports = routeComposition.match(/require\('\.\/platform\/admin-[^']+'\)/g) || [];
   const allowedDirectImports = new Set([
-    "require('./platform/admin-nav')",
-    "require('./platform/admin-route-composition')",
     "require('./platform/admin-security')",
-    "require('./platform/admin-preview')"
+    "require('./platform/admin-preview')",
+    "require('./platform/admin-route-composition')"
   ]);
   const unexpected = directAdminModuleImports.filter(value => !allowedDirectImports.has(value));
   if (unexpected.length) {
-    throw new Error(`application.js bypasses canonical admin route composition: ${unexpected.join(', ')}`);
+    throw new Error(`application route composition bypasses canonical admin route group: ${unexpected.join(', ')}`);
   }
 
   for (const requiredFactory of [
@@ -47,7 +81,7 @@ function assertCompositionBoundary() {
     'createAdminCustomer360Router',
     'createAdminUsersRouter'
   ]) {
-    if (!compositionSource.includes(requiredFactory)) {
+    if (!adminComposition.includes(requiredFactory)) {
       throw new Error(`admin route composition is missing expected owner: ${requiredFactory}`);
     }
   }
@@ -98,7 +132,7 @@ function main() {
     }
     process.exit(1);
   }
-  console.log(`admin route ownership: ok (${routes.length} mounted admin method/path routes, no exact duplicates)`);
+  console.log(`admin route ownership: ok (${routes.length} mounted admin method/path routes, no exact duplicates; application composition explicit)`);
   process.exit(0);
 }
 
