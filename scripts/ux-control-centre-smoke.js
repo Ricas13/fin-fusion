@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('assert'),fs=require('fs');
+const read=p=>fs.readFileSync(p,'utf8');
+const customer=read('src/platform/admin-customer-360.js');
+const bulk=read('src/platform/admin-bulk-customers.js');
+const plans=read('src/platform/admin-plans.js');
+const registry=read('src/platform/settings-registry.js');
+const dashboard=read('views/customer/dashboard.ejs');
+const css=read('public/css/customer-360.css');
+assert(/Customer control centre/.test(customer),'customer control centre missing');
+assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
+assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
+assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'raw UUID workflow copy returned');
+assert(/serviceKind/.test(plans)&&/Stremio-only plan/.test(plans),'service-aware plan workflow missing');
+assert(/Individual customer overrides/.test(registry)&&/ownerForSetting/.test(registry),'settings registry missing customer ownership');
+assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
+assert(/controlCentreSummary/.test(css),'customer control centre styling missing');
+console.log('ux control centre smoke: ok');
