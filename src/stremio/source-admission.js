@@ -23,7 +23,9 @@ async function admit(entitlement,rawLease,sourceId,itemId,metadata={}){
     const locked=await db.query(`SELECT id,customer_id,stream_limit,status FROM stremio_entitlements WHERE id=$1 FOR UPDATE`,[entitlementId]);
     if(!locked.rowCount||locked.rows[0].status!=='active')return{allowed:false,reason:'inactive_entitlement',active:0,limit:0};
     const limit=Math.max(1,Math.min(50,Number(locked.rows[0].stream_limit||entitlement.stream_limit||1)));
-    await db.query(`DELETE FROM stremio_source_playback_leases WHERE entitlement_id=$1 AND expires_at<=NOW()`,[entitlementId]);
+    // External/proxy leases can be removed immediately. Managed leases carry
+    // per-playback Jellyfin tokens and are revoked by managed-playback-lifecycle.
+    await db.query(`DELETE FROM stremio_source_playback_leases WHERE entitlement_id=$1 AND expires_at<=NOW() AND managed_mapping_id IS NULL`,[entitlementId]);
     const existing=await db.query(`SELECT lease_hash,source_id,item_id FROM stremio_source_playback_leases WHERE lease_hash=$1 AND entitlement_id=$2`,[leaseHash,entitlementId]);
     if(existing.rowCount){
       await db.query(`UPDATE stremio_source_playback_leases SET source_id=$3,item_id=$4,last_seen_at=NOW(),expires_at=NOW()+($5||' seconds')::interval,
@@ -46,6 +48,6 @@ async function touchHash(leaseHash,{seconds=LEASE_SECONDS}={}){const value=Strin
 async function release(entitlementId,rawLease){let leaseHash;try{leaseHash=hash(rawLease);}catch{return false;}const r=await query(`DELETE FROM stremio_source_playback_leases WHERE lease_hash=$1 AND entitlement_id=$2`,[leaseHash,entitlementId]);return r.rowCount>0;}
 async function releaseHash(leaseHash){const value=String(leaseHash||'');if(!/^[a-f0-9]{64}$/.test(value))return false;const r=await query(`DELETE FROM stremio_source_playback_leases WHERE lease_hash=$1`,[value]);return r.rowCount>0;}
 async function active(entitlementId){const r=await query(`SELECT COUNT(*)::int n FROM stremio_source_playback_leases WHERE entitlement_id=$1 AND expires_at>NOW()`,[entitlementId]);return Number(r.rows[0]?.n||0);}
-async function cleanup(limit=1000){const r=await query(`DELETE FROM stremio_source_playback_leases WHERE lease_hash IN (SELECT lease_hash FROM stremio_source_playback_leases WHERE expires_at<=NOW() ORDER BY expires_at LIMIT $1)`,[Math.max(1,Math.min(10000,Number(limit)||1000))]);return r.rowCount;}
+async function cleanup(limit=1000){const r=await query(`DELETE FROM stremio_source_playback_leases WHERE lease_hash IN (SELECT lease_hash FROM stremio_source_playback_leases WHERE expires_at<=NOW() AND managed_mapping_id IS NULL ORDER BY expires_at LIMIT $1)`,[Math.max(1,Math.min(10000,Number(limit)||1000))]);return r.rowCount;}
 
 module.exports={LEASE_SECONDS,issue,hash,cleanMetadata,admit,touch,touchHash,release,releaseHash,active,cleanup};
