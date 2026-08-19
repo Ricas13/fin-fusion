@@ -26,6 +26,13 @@ async function rotateApiKey({serverId,value,actorUserId}){
   await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.stremio.managed_source.api_key.rotate','jellyfin_server',$2,'{"credentialRotated":true}'::jsonb)`,[actorUserId,serverId]);
   return true;
 }
+async function preflight(serverId,enabled,priorityValue){
+  const sourcePriority=managed.priority(priorityValue||100),server=await managed.get(serverId);
+  if(!server)throw new Error('Jellyfin server not found.');
+  if(enabled&&!server.enabled)throw new Error('Enable the Jellyfin server before enabling it for Stremio.');
+  if(enabled&&!server.public_url)throw new Error('A public Jellyfin URL is required for direct Stremio playback.');
+  return{server,sourcePriority};
+}
 
 function row(req,server){
   const playable=Boolean(server.public_url),healthy=server.health_status==='healthy';
@@ -48,9 +55,9 @@ function createAdminStremioManagedSourcesRouter(){
   router.post('/admin/servers/stremio/managed/:serverId',mutationLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{
+      const enabled=req.body.enabled==='1',checked=await preflight(req.params.serverId,enabled,req.body.priority);
       const rotated=await rotateApiKey({serverId:req.params.serverId,value:req.body.apiKey,actorUserId:req.session.authUserId});
-      const enabled=req.body.enabled==='1';
-      await managed.configure({serverId:req.params.serverId,enabled,sourcePriority:req.body.priority,actorUserId:req.session.authUserId});
+      await managed.configure({serverId:req.params.serverId,enabled,sourcePriority:checked.sourcePriority,actorUserId:req.session.authUserId});
       const message=`Managed Stremio source ${enabled?'enabled':'disabled'}.${rotated?' Jellyfin API key rotated.':''}`;
       return res.redirect('/admin/servers/stremio/managed?message='+encodeURIComponent(message));
     }catch(error){return res.redirect('/admin/servers/stremio/managed?error='+encodeURIComponent(error.message));}
@@ -58,4 +65,4 @@ function createAdminStremioManagedSourcesRouter(){
   return router;
 }
 
-module.exports={createAdminStremioManagedSourcesRouter,page,rotateApiKey,apiKey};
+module.exports={createAdminStremioManagedSourcesRouter,page,rotateApiKey,apiKey,preflight};
