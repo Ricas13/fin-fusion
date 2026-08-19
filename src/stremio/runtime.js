@@ -6,7 +6,7 @@ const routeRateLimit=require('../security/route-rate-limit');
 const operations=require('../platform/operations-settings');
 const entitlements=require('./entitlements');
 const jellyfin=require('./jellyfin-runtime');
-const sourcePool=require('./source-pool');
+const planExternalSources=require('./plan-external-sources');
 const sourcePlayback=require('./source-playback');
 const sourceAdmission=require('./source-admission');
 const managedRuntime=require('./managed-runtime');
@@ -40,8 +40,6 @@ function pipePlayback(opened,res,{onUnauthorized=null,onFinished=null}={}){
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
-  // Keep the legacy single-server reconciler while old cached manifests expire,
-  // and run the new cross-server reconciler for managed direct playback.
   jellyfin.startStreamManager({intervalMs:60000});
   managedSessions.start({intervalMs:15000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
@@ -54,9 +52,6 @@ function createStremioRuntimeRouter(){
     try{
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const type=String(req.params.type||''),videoId=String(req.params.videoId||'');
-      // Resolve both classes concurrently for latency, then deliberately flatten
-      // managed fleet results first. Source type/name is never added to customer
-      // stream labels or descriptions.
       const [managed,external]=await Promise.all([
         managedRuntime.streamsFor(e,type,videoId),
         externalRuntime.streamsFor(e,type,videoId)
@@ -66,9 +61,9 @@ function createStremioRuntimeRouter(){
     }catch(error){console.error('Stremio stream request failed:',String(error?.message||error).slice(0,300));return res.json({streams:[]});}
   });
 
-  // Compatibility-only proxy routes for stream manifests cached before the direct
-  // delivery migration. New manifests never point at these routes. They can be
-  // removed after the compatibility window has elapsed.
+  // Compatibility-only proxy routes for cached stream URLs from the previous
+  // runtime. External compatibility URLs are still checked against the plan's
+  // explicit external-source selection before any bytes are proxied.
   router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
     if(!enabled())return res.status(404).end();let opened=null,heartbeat=null,e=null,admitted=false,released=false;const lease=String(req.query.lease||''),isHead=req.method==='HEAD';
     const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};
@@ -85,7 +80,7 @@ function createStremioRuntimeRouter(){
     if(!enabled())return res.status(404).end();let opened,heartbeat=null,e=null,lease=String(req.query.lease||''),admitted=false;const isHead=req.method==='HEAD';
     try{
       e=await entitlements.findByInstallToken(req.params.token);if(!e||!lease)return res.status(404).end();
-      const source=await sourcePool.authorizedSourceForEntitlement(e,req.params.sourceId);if(!source)return res.status(404).end();
+      const source=await planExternalSources.authorized(e,req.params.sourceId);if(!source)return res.status(404).end();
       if(!isHead){const admission=await sourceAdmission.admit(e,lease,source.id,req.params.itemId);if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}admitted=true;}
       opened=await sourcePlayback.open(source,req.params.itemId,req.params.mediaSourceId,req.get('range')||'',isHead?'HEAD':'GET');
       const upstream=opened.response,status=Number(upstream.statusCode||502);
