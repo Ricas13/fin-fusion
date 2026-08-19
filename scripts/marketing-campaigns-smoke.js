@@ -17,6 +17,9 @@ assert(service.includes("type:'marketing_campaign'")&&service.includes('dedupeKe
 assert(!service.includes('emailSettings.send('),'marketing campaigns must not send directly through SMTP');
 assert(service.includes('No eligible opted-in recipients'),'empty campaigns must not be marked queued');
 assert(service.includes('opted in to marketing email'),'marketing email must explain why it was sent');
+assert(service.includes('LEFT JOIN app_users u ON u.id=c.user_id'),'marketing audience identity must fall back through the canonical app user relation');
+assert(service.includes("NULLIF(TRIM(c.email),'')")&&service.includes("NULLIF(TRIM(u.email),'')"),'marketing audience must use real customer/app-user email columns');
+assert(!service.includes('c.login_email')&&!service.includes('c.login_username'),'marketing audience must not reference retired/nonexistent customer login columns');
 assert(customer.includes("router.post('/account/communications/marketing-email',gate"),'marketing preference endpoint must require customer auth');
 assert(customer.includes('csrf.verify(req)'),'marketing preference mutation must use CSRF');
 assert(admin.includes("router.use('/admin/marketing',gate,noStore)"),'marketing admin must require administrator auth');

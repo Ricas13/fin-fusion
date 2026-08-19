@@ -16,6 +16,8 @@ const registration=read('views/customer/register.ejs');
 const communicationView=read('views/customer/communications.ejs');
 const adminNotifications=read('src/platform/admin-notification-preferences.js');
 const operations=read('src/platform/operations-settings.js');
+const orders=read('src/platform/admin-orders.js');
+const referrals=read('src/platform/admin-referrals.js');
 const baseline=read('db/migrations/000_database_baseline.sql');
 
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
@@ -49,6 +51,14 @@ assert(adminNotifications.includes('/admin/profile/notifications'),'Global Notif
 assert(adminNotifications.includes('customer_opt_in_allowed'),'Global Notifications must control which customer events may be exposed');
 assert(adminLinks.includes('admin_channel_link_tokens')&&adminLinks.includes('admin_communication_preferences'),'Admin Telegram/Discord linking must use each admin identity, not a global destination');
 assert(operations.includes('canonical=production||Boolean(requireCanonical)'),'Production external URLs must always use the canonical configured origin');
+
+assert(orders.includes('LEFT JOIN app_users u ON u.id=c.user_id'),'Orders must resolve customer identity through the canonical app-user relation');
+assert(orders.includes("COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) customer_email"),'Orders must use real customer/app-user email columns');
+assert(!orders.includes('c.login_email')&&!orders.includes('c.login_username'),'Orders must not reference retired/nonexistent customer login columns');
+assert(orders.includes("COALESCE(NULLIF(s.plan_name_snapshot,''),p.name) plan_name"),'Orders should prefer immutable subscription plan snapshots when available');
+assert(referrals.includes("'admin.affiliates.settings','platform_setting','affiliate_program'"),'Affiliate settings audit rows must identify the platform setting entity');
+assert(!referrals.includes("'admin.affiliates.settings',NULL,NULL"),'Affiliate settings must never append an audit row with a null entity type');
+
 assert(baseline.includes('telegram_chat_id')&&baseline.includes('discord_user_id')&&baseline.includes('customer_channel_link_tokens'),'Original customer bot identity/linking architecture must remain present');
 assert(baseline.includes('admin_notification_preferences')&&baseline.includes('customer_notification_preferences'),'Scoped event routing tables must be created');
 assert(/event_scope = ANY \(ARRAY\['admin'::text, 'customer'::text, 'both'::text\]\)/.test(baseline),'Notification catalogue must explicitly distinguish customer/admin audiences');
