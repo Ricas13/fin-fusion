@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { query, getPool } = require('../src/db');
 const { planCreateInput, createPlanRecord } = require('../src/platform/admin-catalog-shell');
 
@@ -15,11 +17,28 @@ function assert(condition, message) {
     if (!condition) throw new Error(message);
 }
 
+function assertCatalogOwnership() {
+    const root = path.join(__dirname, '..', 'src', 'platform');
+    const shell = fs.readFileSync(path.join(root, 'admin-catalog-shell.js'), 'utf8');
+    const customerForm = fs.readFileSync(path.join(root, 'admin-customer-create-form.js'), 'utf8');
+    assert(shell.includes("require('./admin-plan-create-v2')"), 'Legacy catalog shell must delegate plan behavior to canonical v2 create');
+    assert(shell.includes('planCreate.parse(input)'), 'Legacy plan parser must delegate to canonical v2 parser');
+    assert(shell.includes('planCreate.create(plan, actorUserId)'), 'Legacy plan persistence must delegate to canonical v2 creator');
+    assert(shell.includes('planCreate.form(req, values, error)'), 'Legacy plan form must delegate to canonical v2 form');
+    assert(shell.includes('planCreate.createAdminPlanCreateV2Router()'), 'Legacy combined router must compose canonical plan routes');
+    assert(shell.includes("require('./admin-customer-create')"), 'Legacy combined router must compose the dedicated customer-create router');
+    assert(!/INSERT\s+INTO\s+plans/i.test(shell), 'Legacy catalog shell must not own plan INSERT SQL');
+    assert(!/\.(?:get|post)\(\s*['"]\/admin\/(?:plans|users\/new)/.test(shell), 'Legacy catalog shell must not own customer/plan HTTP handlers');
+    assert(customerForm.includes('SELECT code,name,service_type,price_minor,currency'), 'Customer-create form must retain its direct-plan option query');
+    assert(!/INSERT\s+INTO\s+(?:plans|subscriptions|customers|app_users)/i.test(customerForm), 'Customer-create form module must remain render/read-only');
+}
+
 async function cleanup() {
     await query('DELETE FROM plans WHERE code = ANY($1::text[])', [CODES]);
 }
 
 async function main() {
+    assertCatalogOwnership();
     await cleanup();
     try {
         const monthly = planCreateInput({
@@ -37,12 +56,14 @@ async function main() {
         assert(monthly.duration === 30, 'Monthly frequency did not normalize to 30 days');
         assert(monthly.priceMinor === 450 && monthly.currency === 'GBP', 'Price/currency parsing failed');
         assert(monthly.audience === 'direct', 'Plans must always be created for the direct audience');
+        assert(monthly.capacityLimit === 0 && monthly.streams === 1, 'Legacy omitted capacity/streams must adapt to canonical safe defaults');
 
         const created = await createPlanRecord(monthly, null);
         const stored = (await query('SELECT * FROM plans WHERE id=$1', [created.id])).rows[0];
         assert(stored.billing_interval === 'month' && Number(stored.duration_days) === 30, 'Stored frequency/duration incorrect');
         assert(Number(stored.price_minor) === 450 && stored.currency === 'GBP', 'Stored pricing incorrect');
         assert(stored.audience === 'direct', 'Stored audience incorrect');
+        assert(Number(stored.capacity_limit) === 0 && Number(stored.streams) === 1, 'Canonical safe defaults were not persisted');
 
         const custom = planCreateInput({
             code: 'smoke-direct-custom',
@@ -72,7 +93,6 @@ async function main() {
         assert(direct.duration === 365, 'Yearly frequency did not normalize to 365 days');
         await createPlanRecord(direct, null);
 
-        // Regression for the actual Stremio-only plan workflow used by operators.
         const stremio = planCreateInput({
             code: 'smoke-stremio-addon',
             name: 'Stremio Addon',
