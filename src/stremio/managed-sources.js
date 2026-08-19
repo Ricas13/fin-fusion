@@ -12,6 +12,7 @@ function priority(value){
 async function list(){
   const result=await query(`SELECT js.id,js.name,js.slug,js.server_class,js.base_url,js.public_url,
       js.enabled,js.health_status,js.stremio_enabled,js.stremio_priority,
+      (js.api_key_encrypted IS NOT NULL) api_configured,
       COUNT(DISTINCT sma.id) FILTER(WHERE sma.status='active')::int managed_stremio_accounts,
       MAX(sma.last_playback_info_at) last_playback_info_at
     FROM jellyfin_servers js
@@ -23,7 +24,7 @@ async function list(){
 
 async function get(serverId){
   const result=await query(`SELECT id,name,slug,server_class,base_url,public_url,enabled,health_status,
-      stremio_enabled,stremio_priority
+      stremio_enabled,stremio_priority,(api_key_encrypted IS NOT NULL) api_configured
     FROM jellyfin_servers WHERE id=$1`,[serverId]);
   return result.rows[0]||null;
 }
@@ -33,6 +34,7 @@ async function validateForManagedStremio(serverId){
   if(!server)throw new Error('Jellyfin server not found.');
   if(!server.enabled)throw new Error('Enable the Jellyfin server before enabling it for Stremio.');
   if(!server.public_url)throw new Error('A public Jellyfin URL is required for direct Stremio playback.');
+  if(!server.api_configured)throw new Error('A Jellyfin API key is required before enabling this managed Stremio source.');
   // Uses the existing write-only server API credential. It never leaves CAPTAiNFiN.
   await registry.request(serverId,'/System/Info/Public',{timeoutMs:8000});
   return server;
@@ -57,7 +59,7 @@ async function configure({serverId,enabled,sourcePriority,actorUserId=null}){
 async function enabled(){
   const result=await query(`SELECT id,name,slug,server_class,base_url,public_url,priority,stremio_priority
     FROM jellyfin_servers
-    WHERE enabled=TRUE AND stremio_enabled=TRUE AND public_url IS NOT NULL
+    WHERE enabled=TRUE AND stremio_enabled=TRUE AND public_url IS NOT NULL AND api_key_encrypted IS NOT NULL
     ORDER BY stremio_priority,priority,name`);
   return result.rows;
 }
