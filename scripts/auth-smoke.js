@@ -9,6 +9,8 @@ const { spawnSync } = require('child_process');
 const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
 const historicalAuth = require('../src/auth/service-core');
+const adminSecurity = require('../src/platform/admin-security');
+const historicalAdminSecurity = require('../src/platform/admin-security-core');
 const totp = require('../src/auth/totp');
 const serverAdmin = require('../src/platform/admin-servers');
 const adminDashboard = require('../src/platform/admin-dashboard');
@@ -49,9 +51,34 @@ function assertAuthOwnership(){
   const engineImporters=fs.readdirSync(root).filter(name=>name.endsWith('.js')&&fs.readFileSync(path.join(root,name),'utf8').includes("require('./service-engine')"));
   if(JSON.stringify(engineImporters)!==JSON.stringify(['service.js'])) throw new Error(`Only service.js may import service-engine; got ${engineImporters.join(', ')}`);
 }
+function assertAdminSecurityOwnership(){
+  const root=path.join(__dirname,'..','src','platform');
+  const service=fs.readFileSync(path.join(root,'admin-security.js'),'utf8');
+  const core=fs.readFileSync(path.join(root,'admin-security-core.js'),'utf8');
+  const routes=fs.readFileSync(path.join(root,'admin-security-routes.js'),'utf8');
+  if(historicalAdminSecurity!==adminSecurity) throw new Error('Historical admin-security path does not resolve to canonical step-up-protected service');
+  if(historicalAdminSecurity.createAdminSecurityRouter!==adminSecurity.createAdminSecurityRouter) throw new Error('Historical admin-security constructor bypasses canonical router');
+  if(!/module\.exports\s*=\s*require\(['"]\.\/admin-security['"]\)/.test(core)) throw new Error('admin-security-core must delegate directly to canonical admin-security');
+  if(/\bfunction\s+createAdminSecurityRouter\b|\brouter\.(?:get|post|put|patch|delete)\(/.test(core)) throw new Error('admin-security-core must not own security routes');
+  if(!service.includes("require('./admin-security-routes')")) throw new Error('Canonical admin-security must use the internal routes module');
+  if(service.includes("require('./admin-security-core')")) throw new Error('Canonical admin-security must not depend on historical admin-security-core');
+  if(!service.includes('stepUp.createAdminStepUpRouter()')) throw new Error('Canonical admin-security router must mount the administrator step-up challenge');
+  if(!service.includes('stepUp.sensitiveMutationGuard')) throw new Error('Canonical admin-security router must retain the sensitive mutation guard');
+  for(const route of [
+    "router.post('/admin/security/2fa-policy'",
+    "router.post('/admin/security/2fa/enable'",
+    "router.post('/admin/security/2fa/disable'",
+    "router.post('/admin/security/sessions/revoke-others'",
+    "router.post('/admin/security/password'",
+    "router.post('/admin/security/recovery/regenerate'"
+  ]) if(!routes.includes(route)) throw new Error(`Internal admin security routes missing protected mutation: ${route}`);
+  if(!routes.includes('setAdminTwoFactorPolicy')) throw new Error('Internal admin security routes must retain 2FA policy persistence');
+  const routesImporters=fs.readdirSync(root).filter(name=>name.endsWith('.js')&&fs.readFileSync(path.join(root,name),'utf8').includes("require('./admin-security-routes')"));
+  if(JSON.stringify(routesImporters)!==JSON.stringify(['admin-security.js'])) throw new Error(`Only admin-security.js may import admin-security-routes; got ${routesImporters.join(', ')}`);
+}
 async function cleanup(userId=null){ if(userId) await query('DELETE FROM auth_events WHERE user_id=$1',[userId]); await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]); await query('DELETE FROM app_users WHERE username=$1',[USERNAME]); }
 async function main(){
-  assertStartupPolicy(); assertAdminErrorRedaction(); assertAuthOwnership();
+  assertStartupPolicy(); assertAdminErrorRedaction(); assertAuthOwnership(); assertAdminSecurityOwnership();
   ejs.compile(fs.readFileSync('views/admin/dashboard.ejs','utf8'));
   const dash = await adminDashboard.dashboardData();
   for (const key of ['customers','activeSubscriptions','activeStreams','transcodes','servers','healthyServers','offlineServers','wouldStop24h','safetySkips24h']) {
