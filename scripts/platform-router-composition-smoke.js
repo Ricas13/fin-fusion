@@ -1,0 +1,71 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+function read(relativePath) {
+    return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
+}
+
+function assert(condition, message) {
+    if (!condition) throw new Error(message);
+}
+
+function explicitRoutes(source) {
+    const routes = [];
+    const pattern = /router\.(get|post|put|patch|delete)\(\s*['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = pattern.exec(source))) routes.push(`${match[1].toUpperCase()} ${match[2]}`);
+    return routes.sort();
+}
+
+function main() {
+    const platformRouter = read('src/platform/router.js');
+    const runtimeLegacy = read('src/platform/router-runtime-legacy.js');
+
+    assert(!platformRouter.includes('pruneRoutes'), 'platform router must not prune Express route stacks at runtime');
+    assert(!/\.stack\s*=/.test(platformRouter), 'platform router must not mutate Express private .stack internals');
+    assert(!platformRouter.includes('core.createRouter()'), 'production must not construct the obsolete router-core route set');
+    assert(platformRouter.includes('createRuntimeLegacyRouter()'), 'production must mount the explicit runtime compatibility router');
+    assert(
+        platformRouter.includes("onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter)"),
+        'global notification compatibility router must be constrained to its canonical URL prefix'
+    );
+
+    const expected = [
+        'GET /api/platform/plans',
+        'POST /account/libraries',
+        'POST /account/requests/password'
+    ].sort();
+    const actual = explicitRoutes(runtimeLegacy);
+    assert(
+        JSON.stringify(actual) === JSON.stringify(expected),
+        `runtime legacy route set changed: expected ${expected.join(', ')}; got ${actual.join(', ')}`
+    );
+    assert(runtimeLegacy.includes('createAdminActionsRouter()'), 'runtime compatibility router must retain canonical admin actions');
+
+    for (const retiredPath of [
+        '/account/register',
+        '/account/verify-email',
+        '/account/forgot-password',
+        '/account/reset-password',
+        '/account/checkout/stripe',
+        '/account/checkout/paypal',
+        '/account/paypal/return',
+        '/account/stripe/portal',
+        '/account/jellyfin/:accountId/password',
+        '/account/trial/start',
+        '/account/claim-free/:planCode'
+    ]) {
+        assert(!runtimeLegacy.includes(retiredPath), `replaced route leaked into runtime legacy router: ${retiredPath}`);
+    }
+
+    console.log('platform router composition: ok (no private stack pruning; runtime compatibility routes are explicit)');
+}
+
+try {
+    main();
+} catch (error) {
+    console.error(error.stack || error);
+    process.exit(1);
+}
