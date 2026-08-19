@@ -9,7 +9,7 @@ const DOMAINS=Object.freeze([
   Object.freeze({key:'security',label:'Customer onboarding & security',href:'/admin/settings?section=security',scope:'platform',description:'Registration, email verification policy, sessions, administrator 2FA, Turnstile and trusted network destinations.'}),
   Object.freeze({key:'automation',label:'Automation',href:'/admin/automation',scope:'platform/customer',description:'Worker health, scheduled jobs, retention, provisioning retries and automated cleanup.'}),
   Object.freeze({key:'commerce',label:'Commerce',href:'/admin/commerce',scope:'platform/plan/customer',description:'Payment providers, billing incidents, discounts, reporting and affiliate service credit.'}),
-  Object.freeze({key:'customer',label:'Individual customer overrides',href:'/admin/users',scope:'customer',description:'Customer plan, Jellyfin placement, expiry, verification, automation protection, provisioning, libraries and technical policy overrides.'}),
+  Object.freeze({key:'customer',label:'Individual customer overrides',href:'/admin/users',scope:'customer',description:'Customer plan, Jellyfin placement, expiry/permanent access, verification, automation protection, provisioning, libraries and technical policy overrides.'}),
   Object.freeze({key:'backups',label:'Backups & configuration',href:'/admin/backups',scope:'platform',description:'Backups, restore readiness and configuration transfer.'})
 ]);
 
@@ -44,6 +44,7 @@ const SETTINGS=Object.freeze([
   {key:'customer.plan',owner:'customer',label:'Customer plan override'},
   {key:'customer.server',owner:'customer',label:'Customer server assignment'},
   {key:'customer.expiry',owner:'customer',label:'Customer access expiry'},
+  {key:'customer.permanentAccess',owner:'customer',label:'Permanent customer access'},
   {key:'customer.cleanupProtection',owner:'customer',label:'Customer automation protection'},
   {key:'customer.jellyfinPolicy',owner:'customer',label:'Customer Jellyfin policy override'},
   {key:'customer.libraries',owner:'customer',label:'Customer library override'}
