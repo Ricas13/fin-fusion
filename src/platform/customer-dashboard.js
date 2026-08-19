@@ -71,8 +71,13 @@ function createCustomerDashboardRouter(){
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
     if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));
-    try{await provisioning.reconcileCustomer(req.session.customerId);return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access is ready.'));}
-    catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your plan is active, but Jellyfin setup is still pending.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}
+    try{
+      const outcome=await provisioning.reconcileCustomer(req.session.customerId);
+      if(outcome?.active&&outcome?.account?.id)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access is ready.'));
+      const state=await provisioning.control.getCustomerState(req.session.customerId).catch(()=>null);
+      const safe=customerProvisioningMessage(state)||'Your plan is active, but Jellyfin setup has not completed yet. We will keep retrying automatically.';
+      return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));
+    }catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your plan is active, but Jellyfin setup is still pending.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}
   });
   return r;
 }
