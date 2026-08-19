@@ -6,16 +6,18 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const assert=(condition,message)=>{if(!condition)throw new Error(message)};
 
-const migration=read('db/migrations/014_admin_operator_read_cursors.sql');
+const baseline=read('db/migrations/000_database_baseline.sql');
 const cursors=read('src/platform/operator-read-cursors.js');
 const operator=read('src/platform/admin-operator-state.js');
 const tickets=read('src/support/tickets.js');
 const client=read('public/js/operator-business-indicators.js');
 
-assert(migration.includes('CREATE TABLE admin_operator_read_cursors'),'operator cursor migration missing');
-assert(migration.includes("area IN ('customers','orders','tickets')"),'operator cursor areas must be constrained');
-assert(migration.includes('PRIMARY KEY (admin_user_id, area)'),'operator cursor must be per-admin and per-area');
-assert(cursors.includes('GREATEST(admin_operator_read_cursors.seen_at,EXCLUDED.seen_at)'),'read cursor must move forward only');
+assert(baseline.includes('CREATE TABLE public.admin_nav_read_state'),'canonical admin nav read-state table missing from baseline');
+assert(baseline.includes('last_seen_at timestamp with time zone'),'canonical admin nav read-state timestamp missing');
+assert(cursors.includes('admin_nav_read_state'),'operator unread state must reuse canonical admin navigation read state');
+assert(!cursors.includes('admin_operator_read_cursors'),'operator unread state must not create a second read-state table');
+assert(cursors.includes("const NAV_PREFIX = 'operator.business.'"),'operator cursors must use a namespaced nav key');
+assert(cursors.includes('GREATEST(admin_nav_read_state.last_seen_at,EXCLUDED.last_seen_at)'),'read cursor must move forward only');
 assert(cursors.includes("MAX(COALESCE(last_customer_reply_at,created_at))"),'ticket read watermark must use latest customer activity');
 assert(operator.includes('snapshot(res.locals.operatorActorUserId)'),'unread snapshot must be administrator-specific');
 assert(operator.includes("router.post('/admin/api/operator-state/read'"),'read acknowledgement endpoint missing');
