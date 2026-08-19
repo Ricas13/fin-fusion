@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const { dashboardRange, analyticsData, revenueFromEvent, revenueSummary } = require('../src/platform/admin-dashboard-analytics');
 const { renderDashboard } = require('../src/platform/admin-dashboard-view');
+const fs = require('fs');
+const path = require('path');
 
 async function seed() {
     const suffix = crypto.randomBytes(5).toString('hex');
@@ -92,10 +94,16 @@ async function main() {
         setup: { configuredCount: 1, totalCount: 2 },
         options: {}
     });
-    for (const needle of ['Gross revenue', 'Revenue history', 'Customer base over time', 'Managed streaming volume', 'Server load', 'Top streamers', 'Recent payments', 'Top referrers']) {
+    for (const needle of ['Gross revenue', 'Revenue history', 'Customer base over time', 'Managed streaming volume', 'Server load', 'Revenue future', 'Recent payments', 'Top referrers']) {
         assert(html.includes(needle), `dashboard should render ${needle}`);
     }
     assert(html.includes('range=365d'), 'dashboard should expose shared period presets');
+
+    // The live /admin route no longer uses this file's own renderDashboard --
+    // it now composes widgets through the registry-based admin-dashboard-main.js.
+    // Keep asserting that wiring here so a future edit can't silently detach it.
+    const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-dashboard.js'), 'utf8');
+    assert(dashboardSource.includes("require('./admin-dashboard-main')"), 'the live dashboard route must render through admin-dashboard-main.js');
 
     console.log('admin analytics dashboard smoke: ok');
 }
