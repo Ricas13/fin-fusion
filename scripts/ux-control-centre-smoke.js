@@ -2,6 +2,7 @@
 const assert=require('assert'),fs=require('fs');
 const read=p=>fs.readFileSync(p,'utf8');
 const customer=read('src/platform/admin-customer-360.js');
+const customerDashboard=read('src/platform/customer-dashboard.js');
 const permanent=read('src/entitlements/permanent-access.js');
 const permanentMigration=read('db/migrations/006_customer_permanent_access.sql');
 const entitlementContract=read('db/migrations/009_complete_effective_entitlement_contract.sql');
@@ -43,6 +44,8 @@ assert(settingsRegistry.search('transcode').some(x=>x.key==='plan.jellyfinPolicy
 assert(settingsRegistry.search('2fa').some(x=>x.domain?.href==='/admin/settings/admin-2fa'),'2FA search must open its canonical policy page');
 assert(settingsRegistry.search('payment provider').some(x=>x.domain?.href==='/admin/payments'),'payment-provider search must open Payments, not a broad commerce landing');
 assert(settingsRegistry.search('captcha').some(x=>x.domain?.href==='/admin/settings/abuse-protection'),'captcha search must resolve to Turnstile / abuse protection');
+assert(/outcome\?\.active&&outcome\?\.account\?\.id/.test(customerDashboard),'customer provisioning retry must only announce ready when an active Jellyfin account exists');
+assert(/getCustomerState/.test(customerDashboard)&&/has not completed yet/.test(customerDashboard),'customer provisioning retry must preserve pending/blocked state instead of false success');
 assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
 assert(/controlCentreSummary/.test(css),'customer control centre styling missing');
 assert(/grid-template-columns:var\(--customer-nav-width\) minmax\(0,1fr\)/.test(customerNav),'signed-in customer subpages must use a left navigation shell on desktop');
