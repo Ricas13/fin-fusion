@@ -48,7 +48,7 @@ const ejs = require('ejs');
     assert.match(html, /Current plan/);
     assert.match(html, /Your libraries/);
     assert.match(html, /Hide or show libraries already included in your plan/);
-    assert.match(html, /Plans &amp; billing/);
+    assert.match(html, /Plan &amp; billing/);
     assert.match(html, /Benefits/);
     assert.match(html, /\/account\/affiliate/);
     assert.match(html, /customerSidebar/);

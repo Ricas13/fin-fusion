@@ -63,7 +63,7 @@ for(const label of ['General','Notifications','Branding','Integrations','Securit
 for(const personal of ['My Profile','My Notifications','My Security'])assert(!labels.includes(personal),`Personal ${personal} must live under My account rather than global Settings navigation.`);
 for(const obsolete of ['Commerce','Advanced','Operations','Stremio'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce duplicate/obsolete ${obsolete}.`);
 assert(/headerActionLabel\">My account/.test(adminShell),'Admin shell must expose a dedicated My account area.');
-assert(/href=\"\/admin\/profile\">Profile/.test(adminShell)&&/href=\"\/admin\/profile\/notifications\">Notifications/.test(adminShell)&&/href=\"\/admin\/security\">Security/.test(adminShell),'My account area must expose personal Profile, Notifications and Security.');
+assert(/href=\"\/admin\/profile\">My profile/.test(adminShell)&&/href=\"\/admin\/profile\/notifications\">My notifications/.test(adminShell)&&/href=\"\/admin\/security\">My security/.test(adminShell),'My account area must expose personal profile, notifications and security.');
 assert(navModel.hiddenPages['admin-2fa-policy']?.page?.[2]==='/admin/settings/admin-2fa','Platform-wide administrator 2FA policy must remain owned by Settings → Security.');
 const serversGroup=navModel.groups.find(group=>group.key==='servers');
 assert(Boolean(serversGroup),'Servers navigation group must exist.');

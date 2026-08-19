@@ -16,7 +16,7 @@ const selected=balances.get(currency)||{available_minor:0,pending_minor:0};
 const available=Number(selected.available_minor||0);
 %>
 <body><main class="customerPortalPage">
-<%- include('_nav',{active:'benefits'}) %>
+<%- include('_nav',{active:'benefits',showBenefits:true}) %>
 <div class="customerPortalPageHeader"><div><h1>Benefits</h1><p>Share your referral code and use earned service credit towards CAPTAiNFiN plans.</p></div></div>
 <% if(message){ %><div class="notice success"><%= message %></div><% } %>
 <% if(error){ %><div class="notice error"><%= error %></div><% } %>

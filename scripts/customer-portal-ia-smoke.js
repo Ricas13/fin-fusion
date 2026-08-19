@@ -20,13 +20,15 @@ const history=read('src/platform/customer-history.js');
 const activity=read('src/platform/customer-activity.js');
 const customerPortalCss=read('public/css/customer-portal.css');
 
-for(const label of ['Overview','Streaming','Plans &amp; billing','Activity','Notifications','Security','Benefits','Help &amp; support'])assert(nav.includes(label),`customer navigation missing ${label}`);
-assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must use shared customer navigation');
+for(const label of ['Home','Setup','Plan &amp; billing','Activity','Account'])assert(nav.includes(label),`customer navigation missing ${label}`);
+for(const conditional of ['showBenefits','showHelp'])assert(nav.includes(conditional),`customer navigation must keep ${conditional} conditional`);
+assert(!nav.includes('Help &amp; support'),'unconfigured support must not appear as a permanent customer tab');
+assert(dashboard.includes("include('_nav',{active:'overview',showBenefits:referralsEnabled})"),'dashboard must use shared customer navigation with conditional benefits');
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
 assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('scheduled for your next renewal'),'dashboard must disclose Stripe plan-change timing before checkout');
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
 assert(!/provisioning source|server placement|reconciliation/i.test(dashboard),'dashboard exposes operator-only jargon');
-assert(stremio.includes("include('_nav',{active:'overview'})"),'Stremio-only dashboard must use shared navigation');
+assert(stremio.includes("include('_nav',{active:'overview',showBenefits:Boolean(portal.referralsEnabled&&portal.referralCode)})"),'Stremio-only dashboard must use shared navigation with conditional benefits');
 assert(customerPortalCss.includes('.accountHero')&&customerPortalCss.includes('.overviewGrid')&&customerPortalCss.includes('.metricCard')&&customerPortalCss.includes('.notice.error'),'customer dashboard hero, metrics and warning surfaces must be styled');
 assert(!stremio.includes('style="font-size:20px"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
 assert(history.includes("customerNav.nav('plans')"),'billing history must use shared navigation');

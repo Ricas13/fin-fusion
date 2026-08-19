@@ -118,6 +118,21 @@
     navigator.clipboard?.writeText(value).then(()=>{const old=button.textContent;button.textContent='Copied';setTimeout(()=>button.textContent=old,1200);}).catch(()=>{});
   });
 
+  document.addEventListener('click',event=>{
+    const trigger=event.target.closest('[data-operator-alerts]');
+    const menu=document.querySelector('[data-operator-alert-menu]');
+    if(trigger&&menu){
+      const open=menu.hidden;
+      menu.hidden=!open;
+      trigger.setAttribute('aria-expanded',open?'true':'false');
+      return;
+    }
+    if(menu&&!menu.hidden&&!event.target.closest('.topStatusWrap')){
+      menu.hidden=true;
+      document.querySelector('[data-operator-alerts]')?.setAttribute('aria-expanded','false');
+    }
+  });
+
   fetch('/admin/api/operator-state/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
     .then(r => r.ok ? r.json() : null)
     .then(data => {
@@ -133,6 +148,22 @@
         if (countNode) countNode.textContent = total > 0 ? String(total > 99 ? '99+' : total) : 'Clear';
       }
       const hrefByKey = {customers:'/admin/users',attention:'/admin/attention',servers:'/admin/servers',payments:'/admin/payments'};
+      const labelByKey = {
+        attention:['Needs Attention','Open operational issues'],
+        servers:['Servers','Offline or degraded fleet signals'],
+        payments:['Payments','Recent payment incidents'],
+        customers:['Customers','Customer workflow items']
+      };
+      const menuList=document.querySelector('[data-operator-alert-list]');
+      if(menuList){
+        const rows=Object.entries(data.counts)
+          .map(([key,value])=>[key,Number(value||0)])
+          .filter(([key,value])=>key!=='customers'&&value>0&&hrefByKey[key]);
+        menuList.innerHTML=rows.length?rows.map(([key,value])=>{
+          const [label,meta]=labelByKey[key]||[key,'Needs review'];
+          return `<a class="topStatusItem" href="${hrefByKey[key]}"><span><strong>${label}</strong><br>${meta}</span><em>${value>99?'99+':value}</em></a>`;
+        }).join(''):'<div class="topStatusEmpty">No visible alerts right now.</div>';
+      }
       for (const [key,countValue] of Object.entries(data.counts)) {
         const count = Number(countValue || 0); if (count <= 0) continue;
         const href = hrefByKey[key]; if (!href) continue;

@@ -13,7 +13,8 @@ assert(/\$2::text='free'\s+THEN TRUE/.test(provision), 'free access must not req
 assert(/getCustomerState\(req\.session\.customerId\)/.test(dash), 'customer dashboard must expose provisioning state');
 assert(/\/account\/provisioning\/retry/.test(dash), 'customer must have provisioning retry route');
 assert(/include\('_nav'/.test(view), 'customer dashboard must use the shared left navigation');
-for(const label of ['Notifications','Benefits','Security','Help &amp; support'])assert(nav.includes(label),`customer left navigation missing ${label}`);
+for(const label of ['Home','Setup','Plan &amp; billing','Activity','Account'])assert(nav.includes(label),`customer left navigation missing ${label}`);
+assert(nav.includes('showBenefits')&&!nav.includes('Help &amp; support'),'Benefits and Help must not be unconditional customer tabs');
 assert(/accessWelcomeBackdrop/.test(view) && /Your streaming access is ready/.test(view), 'large access onboarding modal missing');
 assert(/primaryAccount\.public_url/.test(view) && /primaryAccount\.jellyfin_username/.test(view), 'onboarding must show server URL and Jellyfin username');
 assert(/provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');

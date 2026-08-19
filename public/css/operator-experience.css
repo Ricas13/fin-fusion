@@ -31,11 +31,23 @@
 .operatorTab { padding:8px 12px;border:1px solid var(--border);border-radius:9px;color:var(--muted);text-decoration:none;font-size:12px;font-weight:700;background:rgba(255,255,255,.015); }
 .operatorTab:hover { color:#fff;border-color:rgba(32,169,214,.34);background:rgba(32,169,214,.07); }
 .operatorTab.active { color:#fff;background:rgba(32,169,214,.12);border-color:rgba(32,169,214,.34);box-shadow:inset 0 -2px 0 var(--accent); }
-.topStatusLink{display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:7px 10px;border:1px solid #2f4050;border-radius:999px;background:rgba(57,217,138,.07);color:#b9f2d3;text-decoration:none;font-size:11px;font-weight:850;white-space:nowrap}
+.topStatusWrap{position:relative}
+.topStatusLink{display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:7px 10px;border:1px solid #2f4050;border-radius:999px;background:rgba(57,217,138,.07);color:#b9f2d3;text-decoration:none;font-size:11px;font-weight:850;white-space:nowrap;cursor:pointer}
 .topStatusLink.warn{border-color:rgba(255,97,116,.36);background:rgba(255,97,116,.09);color:#ffc4ca}
 .topStatusDot{width:8px;height:8px;border-radius:50%;background:var(--status-good);box-shadow:0 0 12px rgba(57,217,138,.75)}
 .topStatusLink.warn .topStatusDot{background:var(--status-bad);box-shadow:0 0 12px rgba(255,97,116,.72)}
 .topStatusLink strong{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 7px;border-radius:999px;background:rgba(255,255,255,.08);color:inherit;font-size:10px}
+.topStatusMenu{position:absolute;right:0;top:calc(100% + 9px);z-index:220;width:min(340px,calc(100vw - 28px));border:1px solid #344556;border-radius:12px;background:#111922;box-shadow:0 20px 55px rgba(0,0,0,.45);overflow:hidden}
+.topStatusMenuHead{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 13px;border-bottom:1px solid #283646}
+.topStatusMenuHead strong{font-size:12px;color:#eef5fa}
+.topStatusMenuHead a{font-size:11px;color:#8adcf4;text-decoration:none;font-weight:800}
+.topStatusMenuBody{display:grid;gap:1px;padding:7px}
+.topStatusItem{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:10px;border-radius:9px;color:#c6d0da;text-decoration:none}
+.topStatusItem:hover{background:rgba(76,201,240,.07)}
+.topStatusItem strong{font-size:12px;color:#f2f6fa}
+.topStatusItem span{font-size:11px;color:#92a0b0}
+.topStatusItem em{font-style:normal;display:grid;place-items:center;min-width:24px;height:24px;border-radius:999px;background:rgba(255,97,116,.14);color:#ffb6be;font-size:11px;font-weight:900}
+.topStatusEmpty{padding:14px;color:#92a0b0;font-size:12px;text-align:center}
 
 .operatorDisclosure { margin:10px 0 16px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.012); }
 .operatorDisclosure>summary { cursor:pointer;list-style:none;padding:11px 13px;font-weight:750;color:#b9c4cf;display:flex;align-items:center;justify-content:space-between; }

@@ -25,6 +25,12 @@ const LABELS = {
     stremio_media_index: ['Stremio media index', 'Refreshes managed and external Stremio catalogue indexes.']
 };
 const CORE_JOBS=new Set(['health','entitlements','billing','plan_changes','stale_reclaim']);
+const GROUPS=[
+    ['Access & servers','Core jobs that keep customer access, Jellyfin health and policy reconciliation moving.',new Set(['health','entitlements','policy_drift','customer_inactivity','stremio_media_index'])],
+    ['Commerce','Billing, plan transitions and affiliate-credit background work.',new Set(['billing','plan_changes','referral_rewards'])],
+    ['Messaging & onboarding','Activation cleanup, public registration cleanup, transactional email, notifications and request-service sync.',new Set(['activation_cleanup','pending_registration_cleanup','email_outbox','notification_outbox','request_users'])],
+    ['Operations','Bulk work queues and stale-job recovery.',new Set(['bulk_jobs','stale_reclaim'])]
+];
 const PRESETS=[60,300,900,1800,3600,10800,21600,43200,86400];
 
 function gate(req,res,next){ return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
@@ -36,6 +42,7 @@ function notice(req){ return `${req.query.message?`<div class="notice success">$
 function token(req){ return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
 function statePill(state){const cls=state==='healthy'?'good':state==='failed'||state==='stale'||state==='missing'?'bad':state==='disabled'?'warn':'';return `<span class="pill ${cls}">${esc(String(state).replace('_',' '))}</span>`}
 function scheduleOptions(value){const current=Number(value||0),values=[...new Set([...PRESETS,current].filter(n=>n>=30&&n<=86400))].sort((a,b)=>a-b);return values.map(n=>`<option value="${n}" ${n===current?'selected':''}>Every ${esc(intervalLabel(n))}</option>`).join('')}
+function groupFor(jobKey){return GROUPS.find(([, ,keys])=>keys.has(jobKey))||['Other','Less common background work.',new Set()]}
 
 async function workerState(){const result=await query(`SELECT *,EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state WHERE worker_key='automation'`);return result.rows[0]||null}
 async function page(req) {
@@ -44,12 +51,17 @@ async function page(req) {
     const cards = jobs.map(job => {
         const [name,description] = LABELS[job.job_key] || [job.job_key,'Background platform task'];
         const state=jobHealth.healthState(job),core=CORE_JOBS.has(job.job_key);
-        return `<article class="serverCard"><div class="serverTop"><div><strong>${esc(name)}</strong>${core?' <span class="pill warn">Core</span>':''}<div class="subText">${esc(description)}</div></div>${statePill(state)}</div>
+        return {group:groupFor(job.job_key)[0],html:`<article class="serverCard automationJobCard"><div class="serverTop"><div><strong>${esc(name)}</strong>${core?' <span class="pill warn">Core</span>':''}<div class="subText">${esc(description)}</div></div>${statePill(state)}</div>
             <div class="serverStats"><div><span class="metricMini">${esc(intervalLabel(job.interval_seconds))}</span><span class="subText">schedule</span></div><div><span class="metricMini">${esc(job.last_processed_count==null?'—':job.last_processed_count)}</span><span class="subText">last processed</span></div><div><span class="metricMini">${esc(job.consecutive_failures||0)}</span><span class="subText">failures</span></div></div>
             <div class="kvList"><div class="kvRow"><div class="kvLabel">Last start</div><div class="kvValue">${esc(dt(job.last_started_at))}</div></div><div class="kvRow"><div class="kvLabel">Last success</div><div class="kvValue">${esc(dt(job.last_success_at))}</div></div><div class="kvRow"><div class="kvLabel">Duration</div><div class="kvValue">${esc(duration(job.last_duration_ms))}</div></div><div class="kvRow"><div class="kvLabel">Next run</div><div class="kvValue">${esc(dt(job.next_run_at))}</div></div></div>
             ${job.force_run_requested?'<div class="notice">Manual run requested; the worker will execute this once even if its recurring schedule is disabled.</div>':''}${job.last_error?`<div class="notice error"><strong>Last error:</strong> ${esc(job.last_error)}</div>`:''}${core?'<div class="securityNote standalone"><strong>Core service job:</strong> disabling this can interrupt access, billing or server-state maintenance. Prefer changing the schedule only when you understand the operational effect.</div>':''}
             <form class="formPanel" method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="formGrid"><div class="formGroup"><label>Schedule</label><select class="input" name="intervalSeconds">${scheduleOptions(job.interval_seconds)}</select><div class="inlineHelp">Common schedules are shown in plain language. Existing custom values remain selectable.</div></div><label class="checkRow"><input type="checkbox" name="enabled" value="1" ${job.enabled?'checked':''}> Enabled</label></div>${core&&job.enabled?'<div class="formGroup"><label>Disable confirmation <span class="muted">(only required when turning this core job off)</span></label><input class="input" name="disableConfirmation" autocomplete="off" placeholder="Type DISABLE"></div>':''}<button class="button secondary btn-sm">Save schedule</button></form>
-            <form method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}/run">${token(req)}<button class="button btn-sm">Run now${job.enabled?'':' once'}</button></form></article>`;
+            <form method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}/run">${token(req)}<button class="button btn-sm">Run now${job.enabled?'':' once'}</button></form></article>`};
+    });
+    const groupedSections=GROUPS.concat([['Other','Less common background work.',new Set()]]).map(([title,description])=>{
+        const rows=cards.filter(card=>card.group===title);
+        if(!rows.length)return '';
+        return `<section class="section automationGroup"><div class="sectionHead"><div><h2>${esc(title)}</h2><div class="muted">${esc(description)}</div></div><span class="pill">${rows.length} job${rows.length===1?'':'s'}</span></div><div class="serverGrid">${rows.map(row=>row.html).join('')}</div></section>`;
     }).join('');
     const states=jobs.map(job=>jobHealth.healthState(job));
     const unhealthy=states.filter(state=>['failed','stale','missing'].includes(state)).length;
@@ -57,7 +69,7 @@ async function page(req) {
     const healthy=states.filter(state=>state==='healthy').length;
     const workerAlive=Boolean(worker&&Number(worker.heartbeat_age_seconds)<=Math.max(60,Math.ceil(Number(worker?.metadata?.pollMs||15000)/1000)*4));
     const workerBanner=worker?`<div class="statusBanner"><strong>Automation worker:</strong> ${workerAlive?'<span class="pill good">alive</span>':'<span class="pill bad">stale</span>'} · instance ${esc(worker.instance_id)} · version ${esc(worker.version||'unknown')} · heartbeat ${esc(worker.heartbeat_age_seconds)}s ago${worker.draining_at?` · draining since ${esc(dt(worker.draining_at))}`:''}.</div>`:'<div class="notice error"><strong>Automation worker heartbeat missing.</strong> The job configuration exists, but no current worker has registered itself.</div>';
-    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'Schedules, singleton locks and live worker health',body:`${notice(req)}<div class="metrics"><div class="metric"><div class="metricLabel">Jobs</div><div class="metricValue">${jobs.length}</div></div><div class="metric"><div class="metricLabel">Healthy</div><div class="metricValue">${healthy}</div></div><div class="metric"><div class="metricLabel">Needs attention</div><div class="metricValue">${unhealthy}</div></div><div class="metric"><div class="metricLabel">Disabled</div><div class="metricValue">${disabled}</div></div></div>${workerBanner}<div class="serverGrid">${cards}</div>`});
+    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'Schedules, singleton locks and live worker health',body:`${notice(req)}<div class="metrics"><div class="metric"><div class="metricLabel">Jobs</div><div class="metricValue">${jobs.length}</div></div><div class="metric"><div class="metricLabel">Healthy</div><div class="metricValue">${healthy}</div></div><div class="metric"><div class="metricLabel">Needs attention</div><div class="metricValue">${unhealthy}</div></div><div class="metric"><div class="metricLabel">Disabled</div><div class="metricValue">${disabled}</div></div></div>${workerBanner}<div class="operatorCallout"><strong>Manual controls are grouped by operational area.</strong> Use Run now for diagnosis or catch-up work; normal service should be driven by the schedule.</div>${groupedSections}`});
 }
 
 function createAdminAutomationRouter(){
