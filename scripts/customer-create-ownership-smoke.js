@@ -12,10 +12,14 @@ const entitlementWrite = read('src/entitlements/admin-grants.js');
 assert(customerCreate.includes("router.get('/admin/users/new'"));
 assert(customerCreate.includes("router.post('/admin/users/new'"));
 assert(customerCreate.includes("require('../entitlements/admin-grants')"));
+assert(customerCreate.includes('createAdminGrantByPlanCodeTx'));
 assert(!/INSERT\s+INTO\s+subscriptions/i.test(customerCreate));
+assert(!/FROM\s+plans/i.test(customerCreate));
 assert(!genericActions.includes("'/admin/users/new'"));
 assert(!/INSERT\s+INTO\s+subscriptions/i.test(genericActions));
+assert(/FROM\s+plans/i.test(entitlementWrite));
 assert(/INSERT\s+INTO\s+subscriptions/i.test(entitlementWrite));
+assert(entitlementWrite.includes("audience IN('direct','both')"));
 assert(entitlementWrite.includes("'subscription.admin_grant'"));
 
 console.log('customer create ownership: ok');
