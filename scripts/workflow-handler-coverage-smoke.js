@@ -8,6 +8,8 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const bulk=require('../src/platform/admin-bulk-customers');
+const bulkJobs=read('src/platform/bulk-jobs.js');
+const bulkUi=read('src/platform/admin-bulk-customers.js');
 const bulkSources=[
   read('src/platform/bulk-operations.js'),
   read('src/platform/operator-bulk-operations.js'),
@@ -21,6 +23,8 @@ for(const [key,,meta] of bulk.BULK_ACTIONS){
   if(!pattern.test(bulkSources))missingBulk.push(key);
 }
 assert.deepEqual(missingBulk,[],'Every queued customer bulk action must have a registered worker handler');
+assert(bulkJobs.includes('pg_advisory_xact_lock')&&!bulkJobs.includes('ON CONFLICT (created_by,idempotency_key)'),'Bulk job idempotency must not depend on fragile partial-index conflict inference');
+assert(bulkUi.includes('Bulk action could not be started: ${String(error.message||error).slice(0,500)}'),'Admin bulk failures must expose the specific server-side reason');
 
 const automation=require('../src/automation/jobs');
 const jobSource=read('src/automation/jobs.js');

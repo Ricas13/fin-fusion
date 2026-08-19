@@ -14,27 +14,20 @@ const MAX_ITEMS_PER_JOB = 5000;
 
 async function createJob(jobType, params, { createdBy = null, idempotencyKey = null } = {}) {
     if (idempotencyKey) {
-        // INSERT-first (not SELECT-then-INSERT): the uniqueness check and the
-        // insert must be one atomic operation, or two concurrent requests with
-        // the same key can both pass the SELECT and both insert. ON CONFLICT
-        // targets the NULLS NOT DISTINCT partial unique index from migration
-        // 018, so this is race-safe even when created_by is NULL (system jobs).
-        const inserted = await query(`
-            INSERT INTO background_jobs(job_type,created_by,idempotency_key,params,status)
-            VALUES($1,$2,$3,$4::jsonb,'pending')
-            ON CONFLICT (created_by,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-            RETURNING *
-        `, [jobType, createdBy, idempotencyKey, JSON.stringify(params || {})]);
-        if (inserted.rowCount) return { job: inserted.rows[0], reused: false };
-        // Lost the race (or this is a genuine resubmission) -- fetch the
-        // winner. IS NOT DISTINCT FROM (not =) so this still matches when
-        // created_by is NULL, where plain SQL equality is never true.
-        const existing = await query(
-            'SELECT * FROM background_jobs WHERE created_by IS NOT DISTINCT FROM $1 AND idempotency_key=$2',
-            [createdBy, idempotencyKey]
-        );
-        if (existing.rowCount) return { job: existing.rows[0], reused: true };
-        throw new Error('Job creation conflicted but the existing job could not be found');
+        return transaction(async client => {
+            await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`bulk-job:${createdBy || 'system'}:${idempotencyKey}`]);
+            const existing = await client.query(
+                'SELECT * FROM background_jobs WHERE created_by IS NOT DISTINCT FROM $1 AND idempotency_key=$2',
+                [createdBy, idempotencyKey]
+            );
+            if (existing.rowCount) return { job: existing.rows[0], reused: true };
+            const inserted = await client.query(`
+                INSERT INTO background_jobs(job_type,created_by,idempotency_key,params,status)
+                VALUES($1,$2,$3,$4::jsonb,'pending')
+                RETURNING *
+            `, [jobType, createdBy, idempotencyKey, JSON.stringify(params || {})]);
+            return { job: inserted.rows[0], reused: false };
+        });
     }
     const result = await query(`
         INSERT INTO background_jobs(job_type,created_by,params,status)
