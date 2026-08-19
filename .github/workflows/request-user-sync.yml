@@ -5,6 +5,7 @@ on:
     paths:
       - 'db/migrations/**'
       - 'src/integrations/request-user-sync.js'
+      - 'src/integrations/request-user-sync-v2.js'
       - 'src/platform/admin-request-users.js'
       - 'src/platform/admin-request-plan-policy.js'
       - 'src/platform/customer-password-sync.js'
@@ -13,6 +14,7 @@ on:
       - 'views/customer/dashboard.ejs'
       - 'platform-preload.js'
       - 'scripts/request-user-sync-smoke.js'
+      - 'scripts/request-user-sync-ownership-smoke.js'
       - '.github/workflows/request-user-sync.yml'
   workflow_dispatch:
 
@@ -44,13 +46,17 @@ jobs:
       - name: Syntax
         run: |
           node --check src/integrations/request-user-sync.js
+          node --check src/integrations/request-user-sync-v2.js
           node --check src/platform/admin-request-users.js
           node --check src/platform/admin-request-plan-policy.js
           node --check src/platform/customer-password-sync.js
           node --check src/platform/admin-provisioning.js
           node --check src/platform/router.js
           node --check scripts/request-user-sync-smoke.js
+          node --check scripts/request-user-sync-ownership-smoke.js
           node --check platform-preload.js
+      - name: Request sync ownership
+        run: node scripts/request-user-sync-ownership-smoke.js
       - name: Migrate database
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/request_user_sync
