@@ -25,6 +25,31 @@
   function callout(html,kind=''){
     const div=document.createElement('div');div.className=`operatorCallout ${kind}`;div.innerHTML=html;return div;
   }
+  function appendTopAction(label,href,marker){
+    if(marker&&document.querySelector(`[${marker}]`))return null;
+    const link=document.createElement('a');link.className='button secondary';link.href=href;link.textContent=label;
+    if(marker)link.setAttribute(marker,'1');
+    const actions=document.querySelector('.topBarActions');
+    if(actions)actions.appendChild(link);else document.querySelector('.pageHeader')?.appendChild(link);
+    return link;
+  }
+  function repairCustomerVerificationMarkup(){
+    document.querySelectorAll('.kvRow').forEach(row=>{
+      const label=(row.querySelector('.kvLabel')?.textContent||'').trim();
+      if(label!=='Email verified')return;
+      const value=row.querySelector('.kvValue');if(!value)return;
+      const literal=(value.textContent||'').trim();
+      const good='<span class="pill good">Verified</span>';
+      const bad='<span class="pill bad">Not verified</span>';
+      let prefix=null,kind=null;
+      if(literal.startsWith(good)){prefix=good;kind='good';}
+      else if(literal.startsWith(bad)){prefix=bad;kind='bad';}
+      if(!prefix)return;
+      const pill=document.createElement('span');pill.className=`pill ${kind}`;pill.textContent=kind==='good'?'Verified':'Not verified';
+      const tail=literal.slice(prefix.length).trim();value.replaceChildren(pill);
+      if(tail)value.append(document.createTextNode(` ${tail}`));
+    });
+  }
 
   // Portal claims are part of the Jellyfin import workflow, not a separate
   // top-level People application.
@@ -32,19 +57,37 @@
     insertAfterHeader(tabs([['Import Jellyfin users','/admin/jellyfin-import'],['Portal claims','/admin/customer-claims']],path));
   }
 
-  // Customer 360 owns customer-specific support actions. Keep Jellyfin password
-  // support out of permanent navigation while making it one click from a customer.
+  // Customer 360 is an overview. The management workspace owns identity,
+  // onboarding, validation and service recovery. Single-customer bulk preview
+  // forms must submit natively because their successful response is a full
+  // confirmation page, not an inline form-feedback fragment.
   const customerMatch=path.match(/^\/admin\/users\/([^/]+)$/);
   if(customerMatch && customerMatch[1]!=='new'){
     const customerId=decodeURIComponent(customerMatch[1]);
-    const header=document.querySelector('.pageHeader');
-    if(header && !document.querySelector('[data-customer-password-support]')){
-      const link=document.createElement('a');
-      link.className='button secondary';link.href=`/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}`;
-      link.textContent='Change Jellyfin password';link.setAttribute('data-customer-password-support','1');
-      const actions=document.querySelector('.topBarActions');
-      if(actions)actions.appendChild(link);else header.appendChild(link);
-    }
+    const base=`/admin/users/${encodeURIComponent(customerId)}`;
+    appendTopAction('Manage customer',`${base}/manage`,'data-customer-management');
+    document.querySelectorAll('form[action="/admin/customers/bulk/preview"]').forEach(form=>{
+      if(form.querySelector('input[name="customerId"]'))form.dataset.nativeSubmit='true';
+    });
+    repairCustomerVerificationMarkup();
+    fetch(`${base}/manage/context`,{headers:{Accept:'application/json'},credentials:'same-origin'})
+      .then(r=>r.ok?r.json():null)
+      .then(context=>{
+        if(!context?.ok)return;
+        if(context.hasJellyfinAccount)appendTopAction('Change Jellyfin password',`/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}`,'data-customer-password-support');
+        if(context.stremioEligible){
+          document.querySelectorAll(`a[href="${base}?tab=access"]`).forEach(link=>{link.href=`${base}/manage#stremio-installation`;if((link.textContent||'').trim()==='View service access')link.textContent='Stremio installation';});
+          const accessTab=[...document.querySelectorAll('a')].find(a=>(a.getAttribute('href')||'')===`${base}?tab=access`&&(a.textContent||'').trim()==='Access');
+          if(accessTab){accessTab.href=`${base}/manage#stremio-installation`;accessTab.textContent='Stremio';}
+          document.querySelectorAll('form[action="/admin/customers/bulk/preview"]').forEach(form=>{
+            const action=form.querySelector('input[name="action"]');
+            if(action?.value==='retry_failed'){
+              action.value='reconcile';
+              const button=form.querySelector('button[type="submit"],button:not([type])');if(button)button.textContent='Retry Stremio setup';
+            }
+          });
+        }
+      }).catch(()=>{});
   }
 
   // The common customer search fields stay visible; less frequently used fields
