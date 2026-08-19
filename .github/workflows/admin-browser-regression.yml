@@ -7,6 +7,7 @@ on:
       - 'views/**'
       - 'public/**'
       - 'scripts/admin-route-ownership-audit.js'
+      - 'scripts/customer-create-ownership-smoke.js'
       - 'tests/admin-browser-regression.js'
       - 'tests/admin-information-architecture-regression.js'
       - 'tests/admin-customer-activation-journey.js'
@@ -72,6 +73,8 @@ jobs:
           npm run auth:bootstrap
       - name: Audit mounted admin route ownership
         run: node scripts/admin-route-ownership-audit.js
+      - name: Audit customer creation ownership
+        run: node scripts/customer-create-ownership-smoke.js
       - name: Start CAPTAiNFiN
         run: |
           node src/application.js > /tmp/captainfin-browser.log 2>&1 &
