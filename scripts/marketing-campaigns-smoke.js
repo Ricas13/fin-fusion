@@ -16,6 +16,9 @@ assert(service.includes('discount_codes')&&service.includes('active=TRUE'),'camp
 assert(service.includes("type:'marketing_campaign'")&&service.includes('dedupeKey:`marketing:'),'campaign delivery must use deduped email outbox');
 assert(!service.includes('emailSettings.send('),'marketing campaigns must not send directly through SMTP');
 assert(service.includes('No eligible opted-in recipients'),'empty campaigns must not be marked queued');
+assert(service.includes('currentlyConsented')&&service.includes("marketing_email_opt_in=TRUE"),'queue() must re-check current marketing consent, not just consent at snapshot time');
+assert(service.includes("status='suppressed',suppression_reason='opted_out_before_send'"),'a recipient who opted out before send must be suppressed, not emailed, using the schema suppression columns');
+assert(admin.includes('consent was withdrawn since this campaign was queued'),'admin must be told when a retry skips recipients who withdrew consent');
 assert(service.includes('opted in to marketing email'),'marketing email must explain why it was sent');
 assert(service.includes('LEFT JOIN app_users u ON u.id=c.user_id'),'marketing audience identity must fall back through the canonical app user relation');
 assert(service.includes("NULLIF(TRIM(c.email),'')")&&service.includes("NULLIF(TRIM(u.email),'')"),'marketing audience must use real customer/app-user email columns');
