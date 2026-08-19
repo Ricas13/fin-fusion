@@ -2,8 +2,12 @@ name: Release Integrity
 
 on:
   push:
-    branches: [main, 'agent/**']
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -41,6 +45,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Workflow trigger hygiene
+        run: node scripts/workflow-trigger-hygiene-smoke.js
       - name: Apply schema on production PostgreSQL major
         run: npm run db:migrate
       - name: Full release checks
