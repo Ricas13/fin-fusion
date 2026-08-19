@@ -68,12 +68,7 @@
         if (String(form.enctype || '').toLowerCase() === 'multipart/form-data') return false;
         if (form.querySelector('input[type="file"]')) return false;
         const path = actionPath(form);
-        // Credential forms intentionally use native submission so browser
-        // formaction and CSRF behavior stay fully conventional.
         if (path === '/admin/notifications/preferences/delivery') return false;
-        // Customer creation returns a one-time activation link in the POST HTML
-        // response. Fetching it in the background and reloading the GET form would
-        // discard the only operator-visible copy of that result.
         if (path === '/admin/users/new') return false;
         return sameOrigin(form.action || window.location.href);
     }
@@ -203,42 +198,19 @@
             button.textContent = 'Copied';
             button.classList.add('copyDone');
             window.setTimeout(() => { button.textContent = old; button.classList.remove('copyDone'); }, 1400);
-        } catch (_) { window.prompt('Copy link', value); }
-    }
-
-    async function uploadBrandAsset(button) {
-        const kind = button.dataset.brandUpload;
-        if (!kind) return;
-        const fileInput = document.getElementById(`${kind}File`);
-        const status = document.getElementById(`${kind}Status`);
-        const file = fileInput?.files?.[0];
-        if (!file) { if (status) status.textContent = 'Choose a file first.'; return; }
-        const csrfToken = button.dataset.csrfToken || '';
-        button.disabled = true;
-        if (status) status.textContent = 'Uploading…';
-        try {
-            const response = await fetch(`/admin/settings/branding/${encodeURIComponent(kind)}`, {
-                method: 'POST', credentials: 'same-origin',
-                headers: {'Content-Type': file.type || 'application/octet-stream','X-CSRF-Token': csrfToken}, body: file
-            });
-            const result = await response.json().catch(() => ({ ok: false, error: 'Unexpected server response.' }));
-            if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed.');
-            window.location.reload();
-        } catch (error) { if (status) status.textContent = error.message || 'Upload failed.'; }
-        finally { button.disabled = false; }
+        } catch (_) {
+            window.prompt('Copy link', value);
+        }
     }
 
     document.addEventListener('submit', confirmSubmit, true);
     document.addEventListener('click', event => {
         const copy = event.target.closest?.('[data-copy-link]');
-        if (copy) { event.preventDefault(); copyLink(copy); return; }
-        const upload = event.target.closest?.('[data-brand-upload]');
-        if (upload) { event.preventDefault(); uploadBrandAsset(upload); }
+        if (!copy) return;
+        event.preventDefault();
+        copyLink(copy);
     });
     document.addEventListener('DOMContentLoaded', () => {
-        const all = document.getElementById('checkAllPage');
-        const table = document.getElementById('customersTable');
-        if (all && table) all.addEventListener('change', () => table.querySelectorAll('.rowCheck').forEach(control => { control.checked = all.checked; }));
         document.querySelectorAll('form').forEach(form => {
             if (shouldEnhance(form)) form.addEventListener('submit', submitEnhanced);
             form.addEventListener('input', event => {
