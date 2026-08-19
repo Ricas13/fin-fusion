@@ -10,9 +10,6 @@ const { renderWidgetGrid } = require('./admin-dashboard-page');
 const { esc } = require('./admin-html');
 const { number, money } = require('./admin-dashboard-format');
 
-// Recurring-revenue subscriptions only: active/trialing with a verified
-// provider-billed identity (mirrors the filter admin-commerce.js already uses
-// for its MRR figure, so Main and Commerce report the same number).
 const MRR_FILTER = `s.superseded_by IS NULL AND s.status IN('active','trialing') AND s.starts_at<=$1 AND s.current_period_end>$1
       AND ((s.source='stripe' AND COALESCE(s.provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\') OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') LIKE 'I-%'))`;
 const MONTHLY_EQUIVALENT = `ROUND(COALESCE(s.price_minor_snapshot,p.price_minor)::numeric * CASE COALESCE(s.billing_interval_snapshot,p.billing_interval)
@@ -29,9 +26,26 @@ async function mrrByCurrency(asOf = new Date()) {
     return result.rows;
 }
 
-function primaryMrr(rows, fallbackCurrency = 'USD') {
+function primaryMrr(rows, fallbackCurrency = 'GBP', reporting = null) {
+    const subscriptions = rows.reduce((sum, r) => sum + Number(r.subscriptions || 0), 0);
+    if (reporting?.currency) {
+        const target = reportingCurrency.cleanCurrency(reporting.currency);
+        const amountMinor = rows.reduce((sum, row) => sum + reportingCurrency.convertMinor(Number(row.amount_minor || 0), row.currency || target, target, reporting), 0);
+        return { currency: target, amountMinor, subscriptions };
+    }
     const top = rows[0];
-    return { currency: top?.currency || fallbackCurrency, amountMinor: Number(top?.amount_minor || 0), subscriptions: rows.reduce((sum, r) => sum + Number(r.subscriptions || 0), 0) };
+    return { currency: top?.currency || fallbackCurrency, amountMinor: Number(top?.amount_minor || 0), subscriptions };
+}
+
+function aggregateConverted(rows, reporting, {nameKey='name', valueKey='amount_minor', countKey=null} = {}) {
+    const target = reportingCurrency.cleanCurrency(reporting?.currency || 'GBP'), grouped = new Map();
+    for (const row of rows || []) {
+        const name = String(row[nameKey] || 'Unknown'), current = grouped.get(name) || { name, amount_minor: 0, count: 0, subscriptions: 0 };
+        current.amount_minor += reportingCurrency.convertMinor(Number(row[valueKey] || 0), row.currency || target, target, reporting);
+        if (countKey) current[countKey] = Number(current[countKey] || 0) + Number(row[countKey] || 0);
+        grouped.set(name, current);
+    }
+    return [...grouped.values()].sort((a,b)=>Number(b.amount_minor||0)-Number(a.amount_minor||0));
 }
 
 async function churnRate(range) {
@@ -55,34 +69,34 @@ async function newVsCancelledSeries(range) {
     return newSeries.map((row, index) => ({ label: row.label, key: row.key, new: row.n, cancelled: cancelledSeries[index]?.n || 0 }));
 }
 
-async function revenueMixByService(currency) {
+async function revenueMixByService(reporting) {
     const result = await query(`
-        SELECT COALESCE(s.service_type_snapshot,p.service_type) name,SUM(${MONTHLY_EQUIVALENT})::bigint count
+        SELECT COALESCE(s.service_type_snapshot,p.service_type) name,COALESCE(s.currency_snapshot,p.currency) currency,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE ${MRR_FILTER} AND COALESCE(s.currency_snapshot,p.currency)=$2
-        GROUP BY 1 ORDER BY 2 DESC
-    `, [new Date(), currency]);
-    return result.rows;
+        WHERE ${MRR_FILTER}
+        GROUP BY 1,2 ORDER BY 3 DESC
+    `, [new Date()]);
+    return aggregateConverted(result.rows, reporting).map(row=>({name:row.name,count:row.amount_minor}));
 }
 
-async function revenueByPlan(currency, asOf = new Date()) {
+async function revenueByPlan(reporting, asOf = new Date()) {
     const result = await query(`
-        SELECT p.name,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor,COUNT(*)::int subscriptions
+        SELECT p.name,COALESCE(s.currency_snapshot,p.currency) currency,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor,COUNT(*)::int subscriptions
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE ${MRR_FILTER} AND COALESCE(s.currency_snapshot,p.currency)=$2
-        GROUP BY p.id,p.name ORDER BY amount_minor DESC
-    `, [asOf, currency]);
-    return result.rows;
+        WHERE ${MRR_FILTER}
+        GROUP BY p.id,p.name,COALESCE(s.currency_snapshot,p.currency) ORDER BY amount_minor DESC
+    `, [asOf]);
+    return aggregateConverted(result.rows, reporting, {countKey:'subscriptions'});
 }
 
-async function revenueByBillingInterval(currency, asOf = new Date()) {
+async function revenueByBillingInterval(reporting, asOf = new Date()) {
     const result = await query(`
-        SELECT COALESCE(s.billing_interval_snapshot,p.billing_interval) name,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor,COUNT(*)::int subscriptions
+        SELECT COALESCE(s.billing_interval_snapshot,p.billing_interval) name,COALESCE(s.currency_snapshot,p.currency) currency,SUM(${MONTHLY_EQUIVALENT})::bigint amount_minor,COUNT(*)::int subscriptions
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE ${MRR_FILTER} AND COALESCE(s.currency_snapshot,p.currency)=$2
-        GROUP BY 1 ORDER BY amount_minor DESC
-    `, [asOf, currency]);
-    return result.rows;
+        WHERE ${MRR_FILTER}
+        GROUP BY 1,2 ORDER BY amount_minor DESC
+    `, [asOf]);
+    return aggregateConverted(result.rows, reporting, {countKey:'subscriptions'});
 }
 
 async function recentCustomers(limit = 8) {
@@ -94,17 +108,17 @@ async function buildContext(req) {
     const range = dashboardRange(req.query || {});
     const reporting = await reportingCurrency.getForUser(req.session.authUserId);
     const data = await dashboardData(range, reporting);
-    const fallbackCurrency = data.revenue?.primaryCurrency || reporting.currency || 'USD';
+    const fallbackCurrency = reporting.currency || data.revenue?.primaryCurrency || 'GBP';
     const [mrrRows, previousMrrRows, churn, newVsCancelled, revenueMix, recent] = await Promise.all([
         mrrByCurrency(range.end),
         mrrByCurrency(range.previousEnd),
         churnRate(range),
         newVsCancelledSeries(range),
-        revenueMixByService(fallbackCurrency),
+        revenueMixByService(reporting),
         recentCustomers(8)
     ]);
-    const mrr = primaryMrr(mrrRows, fallbackCurrency);
-    const previousMrr = primaryMrr(previousMrrRows, fallbackCurrency);
+    const mrr = primaryMrr(mrrRows, fallbackCurrency, reporting);
+    const previousMrr = primaryMrr(previousMrrRows, fallbackCurrency, reporting);
     return { range, reporting, data: { ...data, mrr, previousMrr, churn, newVsCancelled, revenueMix, recentCustomers: recent } };
 }
 registry.registerContextBuilder('main', buildContext);
@@ -115,7 +129,7 @@ function mrrDelta(current, previous) {
 }
 
 registry.register('main', 'mrr', {
-    title: 'Monthly recurring revenue', subtitle: 'Active/trialing subscriptions with a verified provider billing identity, normalized to a monthly equivalent.',
+    title: 'Monthly recurring revenue', subtitle: 'Active/trialing subscriptions with a verified provider billing identity, normalized to the portal currency.',
     defaultOrder: 1, defaultSpan: 3,
     render: async ctx => widgets.kpiCard({
         key: 'mrr', label: 'MRR', value: money(ctx.data.mrr.amountMinor, ctx.data.mrr.currency),
@@ -139,11 +153,11 @@ registry.register('main', 'churnRate', {
     }
 });
 registry.register('main', 'revenueTrend', {
-    title: 'Revenue trend', subtitle: 'Successful provider payments.', defaultOrder: 5, defaultSpan: 8,
+    title: 'Revenue trend', subtitle: 'Successful provider payments normalized to the portal currency.', defaultOrder: 5, defaultSpan: 8,
     render: async ctx => widgets.barChart(ctx.data.revenue.series, 'revenue_minor', value => money(value, ctx.data.revenue.primaryCurrency))
 });
 registry.register('main', 'revenueMix', {
-    title: 'Revenue mix', subtitle: 'Monthly-equivalent recurring revenue by delivery type.', defaultOrder: 6, defaultSpan: 4,
+    title: 'Revenue mix', subtitle: 'Monthly-equivalent recurring revenue by delivery type in the portal currency.', defaultOrder: 6, defaultSpan: 4,
     render: async ctx => widgets.donutChart(ctx.data.revenueMix, { formatter: value => money(value, ctx.data.revenue.primaryCurrency) })
 });
 registry.register('main', 'customerGrowth', {
@@ -203,4 +217,4 @@ async function renderMain(req) {
     return { ctx, html };
 }
 
-module.exports = { renderMain, buildContext, mrrByCurrency, primaryMrr, churnRate, revenueMixByService, revenueByPlan, revenueByBillingInterval };
+module.exports = { renderMain, buildContext, mrrByCurrency, primaryMrr, churnRate, revenueMixByService, revenueByPlan, revenueByBillingInterval, aggregateConverted };

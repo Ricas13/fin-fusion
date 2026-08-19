@@ -29,29 +29,34 @@ const platformRouter=read('src/platform/router.js');
 const personalTests=read('src/platform/admin-personal-notification-tests.js');
 const personalTestUi=read('public/js/admin-personal-notification-tests.js');
 
-assert(/CREATE TABLE (?:IF NOT EXISTS )?(?:public\.)?plan_prices/.test(migration),'Migration must create per-currency logical-plan prices');
-assert(/UNIQUE\s*\(\s*plan_id,\s*currency\s*\)/.test(migration),'A logical plan may have at most one price per currency');
-assert(/plan_price_id uuid/i.test(migration)&&/REFERENCES public\.plan_prices|REFERENCES plan_prices/i.test(migration),'Provider mappings must belong to a price variant');
-assert(/preferred_currency (?:CHAR|character)\(3\)/i.test(migration),'Users must have an independent reporting/display currency preference');
-assert(/preferred_currency[\s\S]+GBP[\s\S]+USD[\s\S]+EUR/.test(migration),'Only GBP/USD/EUR are supported');
+// Historical/provider integrity remains currency-aware even though the live
+// portal exposes exactly one master commercial currency at a time.
+assert(/CREATE TABLE (?:IF NOT EXISTS )?(?:public\.)?plan_prices/.test(migration),'Migration must retain historical/provider price rows');
+assert(/UNIQUE\s*\(\s*plan_id,\s*currency\s*\)/.test(migration),'A logical plan may have at most one stored price row per currency');
+assert(/plan_price_id uuid/i.test(migration)&&/REFERENCES public\.plan_prices|REFERENCES plan_prices/i.test(migration),'Provider mappings must belong to a stored price row');
+assert(/preferred_currency (?:CHAR|character)\(3\)/i.test(migration),'Legacy preferred-currency storage must remain migration-compatible during retirement');
 assert(/FOREIGN KEY\s*\(\s*plan_price_id,\s*plan_id\s*\) REFERENCES (?:public\.)?plan_prices\s*\(\s*id,\s*plan_id\s*\)/.test(integrity),'Provider mapping must not point at another logical plan price');
-assert(integrity.includes('snapshot_subscription_multicurrency_contract'),'Subscription rows must persist selected price/provider mapping audit identifiers');
+assert(integrity.includes('snapshot_subscription_multicurrency_contract'),'Subscription rows must preserve the historical price/provider mapping snapshot contract');
 assert(/customer\.subscription\.requested[\s\S]+both[\s\S]+false/i.test(transactional),'Mandatory customer acknowledgement events must stay customer-addressable without becoming optional customer toggles');
 
-assert(pricing.includes("const CURRENCIES=Object.freeze(['GBP','USD','EUR'])"),'Pricing service must explicitly support GBP/USD/EUR');
-assert(providerPricing.includes('JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE'),'Checkout provider resolution must join an active currency price');
-assert(providerPricing.includes('pr.currency=$3'),'Checkout provider resolution must require the selected currency');
-assert(checkout.includes('req.session?.storefrontCurrency'),'Checkout must honor the storefront-selected currency');
+assert(pricing.includes("const CURRENCIES=Object.freeze(['GBP','USD','EUR'])"),'Pricing storage must explicitly understand GBP/USD/EUR');
+assert(pricing.includes('const wanted=await platformDefaultCurrency()'),'Live plan decoration must resolve the master portal currency');
+assert(providerPricing.includes('JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE'),'Checkout provider resolution must join an active price row');
+assert(providerPricing.includes('const c=await pricing.platformDefaultCurrency()'),'Checkout provider resolution must derive currency from the platform setting');
+assert(providerPricing.includes('pr.currency=$3'),'Checkout provider resolution must bind mappings to the master currency row');
+assert(checkout.includes('async function requestedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Checkout must ignore customer/session currency input');
+assert(!checkout.includes('req.session?.storefrontCurrency'),'Checkout must not retain storefront-selected currency state');
 assert(checkout.includes('planPriceId:p.plan_price_id'),'Commercial snapshots must persist the selected plan price');
 assert(checkout.includes('providerMappingRecordId:p.provider_mapping_id'),'Commercial snapshots must persist the selected provider mapping record');
 assert(intents.includes('plan_price_id')&&intents.includes('snapshot.planPriceId'),'Checkout intent verification must bind the immutable snapshot to the selected price row');
-assert(stripe.includes('resolvedPlan')&&stripe.includes('internal_plan_price_id'),'Stripe checkout must use the already-resolved currency-specific price');
-assert(paypal.includes('resolvedPlan')&&paypal.includes('currency_code:String(plan.currency).toUpperCase()'),'PayPal one-time checkout must use the already-resolved selected currency');
-assert(validator.includes('JOIN plan_prices pr ON pr.id=pp.plan_price_id'),'Provider mapping verification must validate the exact currency variant amount');
-assert(commerce.includes('Multi-currency pricing'),'Plan Commerce must expose price variants under one logical plan');
+assert(stripe.includes('resolvedPlan')&&stripe.includes('internal_plan_price_id'),'Stripe checkout must use the already-resolved master-currency price');
+assert(paypal.includes('resolvedPlan')&&paypal.includes('currency_code:String(plan.currency).toUpperCase()'),'PayPal one-time checkout must use the already-resolved master currency');
+assert(validator.includes('JOIN plan_prices pr ON pr.id=pp.plan_price_id'),'Provider mapping verification must validate the exact stored amount/currency');
+assert(commerce.includes('Portal currency'),'Plan Commerce must present one portal-wide currency');
+assert(!commerce.includes('Multi-currency pricing'),'Plan Commerce must not expose multi-currency plan configuration');
 assert(commerce.includes('Plan price changed; re-verification required.'),'Editing a price must invalidate provider verification');
-assert(storefront.includes('currencySwitcher(currency,currencies)'),'Storefront must provide one currency switcher rather than duplicate products');
-assert(storefront.includes('planPricing.decoratePlans(logicalPlans,currency)'),'Storefront must decorate logical products with the selected currency price');
+assert(storefront.includes("function currencySwitcher(_currency,_currencies){return'';}"),'Storefront must not expose a customer currency switcher');
+assert(storefront.includes('async function selectedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Storefront must derive currency from the master setting');
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 const settingsKeys=settingsGroup?.pages?.map(page=>page[0])||[];
@@ -71,6 +76,7 @@ assert(adminHtml.includes("notificationWorkflow.globalTabs"),'Global notificatio
 assert(adminHtml.includes("notificationWorkflow.profileTabs('profile')")&&adminHtml.includes("notificationWorkflow.profileTabs('personal')"),'My Profile and My Notifications must share a stable personal workflow tab set');
 assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
 assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must resolve to the canonical email infrastructure page');
+assert(!adminProfile.includes('/admin/profile/currency')&&!adminProfile.includes('Reporting currency'),'My Profile must not expose a personal currency setting');
 assert(adminProfile.includes("UPDATE app_users SET email=$2")&&adminProfile.includes("UPDATE customers SET email=$2"),'Changing administrator email must also keep an attached personal customer profile in sync');
 assert(adminProfile.includes("INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note)"),'Personal media access must attach a customer record to the existing administrator user');
 assert(adminProfile.includes("'admin_grant'")&&adminProfile.includes('provisioning.reconcileCustomer(created.customerId)'),'Personal media access must use an explicit admin grant and the normal Jellyfin reconciliation path');
@@ -92,4 +98,4 @@ assert(personalTests.includes("'admin.notifications.personal.test'"),'Personal d
 assert(personalTestUi.includes('Send test Discord')&&personalTestUi.includes('Send test Telegram')&&personalTestUi.includes('Send test WhatsApp'),'My Notifications must expose real delivery test buttons');
 assert(adminHtml.includes('/js/admin-personal-notification-tests.js'),'The personal notification test controls must be loaded on My Notifications');
 
-console.log('notification + multi-currency smoke: ok');
+console.log('notification + master currency smoke: ok');

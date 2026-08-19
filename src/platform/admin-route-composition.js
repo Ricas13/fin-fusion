@@ -11,6 +11,7 @@ const { createAdminBackupsRouter } = require('./admin-backups');
 const { createAdminSupportPolicyRouter } = require('./admin-support-policy');
 const { createAdminCatalogVersioningRouter } = require('./admin-catalog-versioning');
 const { createAdminConfigurationTransferRouter } = require('./admin-configuration-transfer');
+const { createAdminCurrencySettingsRouter } = require('./admin-currency-settings');
 const { createAdminOriginalSettingsRouter } = require('./admin-original-settings');
 const { createAdminBrandingRouter } = require('./admin-branding');
 const { createAdminCommercialPoliciesRouter } = require('./admin-commercial-policies');
@@ -62,6 +63,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminSupportPolicyRouter());
   app.use(createAdminCatalogVersioningRouter());
   app.use(createAdminConfigurationTransferRouter());
+  app.use(createAdminCurrencySettingsRouter());
   app.use(createAdminOriginalSettingsRouter());
   app.use(createAdminBrandingRouter());
   app.use(createAdminCommercialPoliciesRouter());
