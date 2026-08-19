@@ -2,6 +2,8 @@
 
 const dashboard = require('./admin-dashboard');
 const { createAdminAttentionRouter } = require('./admin-attention');
+const { createAdminSupportTicketsRouter } = require('./admin-support-tickets');
+const { createAdminOrdersRouter } = require('./admin-orders');
 const { createAdminSetupRouter } = require('./admin-setup');
 const { createAdminOperationsRouter } = require('./admin-operations');
 const { createAdminBackupsRouter } = require('./admin-backups');
@@ -45,16 +47,11 @@ const { createAdminUsersRouter } = require('./admin-users');
 const { createAdminDiscountsRouter } = require('./admin-discounts');
 const { createAdminReferralsRouter } = require('./admin-referrals');
 
-/**
- * Mount the top-level admin routes in their canonical ownership order.
- *
- * Route order is intentionally explicit. Several admin endpoints have legacy
- * redirects or compatibility handlers, so changing this sequence is a
- * behaviour change and must be reviewed as such.
- */
 function mountAdminRoutes(app) {
   app.get('/admin', dashboard.dashboardPage);
   app.use(createAdminAttentionRouter());
+  app.use(createAdminSupportTicketsRouter());
+  app.use(createAdminOrdersRouter());
   app.use(createAdminSetupRouter());
   app.use(createAdminOperationsRouter());
   app.use(createAdminBackupsRouter());

@@ -120,20 +120,12 @@ function notificationTabsFor(options={}){
 
 function provisioningTabsFor(options={}){
     const active=String(options.active||'');
-    const tab={
-        provisioning:'provisioning',
-        'server-migrations':'migrations',
-        'policy-drift':'drift'
-    }[active];
+    const tab={provisioning:'provisioning','server-migrations':'migrations','policy-drift':'drift'}[active];
     return tab?provisioningWorkflow.tabs(tab):'';
 }
 function integrationTabsFor(options={}){
     const active=String(options.active||'');
-    const tab={
-        'settings-integrations':'integrations',
-        'request-service':'requests',
-        'request-plan-limits':'limits'
-    }[active];
+    const tab={'settings-integrations':'integrations','request-service':'requests','request-plan-limits':'limits'}[active];
     return tab?integrationWorkflow.tabs(tab):'';
 }
 function backupTabsFor(options={}){
@@ -152,7 +144,7 @@ function planWorkflowScriptFor(options={}){
 
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
-    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options);
+    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script>';
     options={...options,body:workflow+String(options.body||'')+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
