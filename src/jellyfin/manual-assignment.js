@@ -8,7 +8,11 @@ const placement=require('./placement');
 function accessKind(plan){if(plan?.billing_interval==='trial')return'trial';return Number(plan?.price_minor||0)===0?'free':'paid';}
 function serviceType(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
 async function activeAccounts(customerId){const r=await query(`SELECT ja.*,js.name AS server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.updated_at DESC`,[customerId]);return r.rows;}
-async function assignedUsers(serverId){const r=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE AND account_purpose='jellyfin'`,[serverId]);return Number(r.rows[0]?.n||0);}
+// max_users is a server-wide managed Jellyfin-account capacity. Stremio-internal
+// identities consume real Jellyfin users too, so capacity checks must count all
+// active managed identities even though customer assignment itself only targets
+// account_purpose='jellyfin'. This matches automatic placement and Servers UI.
+async function assignedUsers(serverId){const r=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`,[serverId]);return Number(r.rows[0]?.n||0);}
 function admissionAllowed(plan,server){const kind=accessKind(plan);if(kind==='trial'&&!server.trial_enabled)return false;if(kind==='paid'&&!server.paid_enabled)return false;return true;}
 
 async function candidates(customerId){
