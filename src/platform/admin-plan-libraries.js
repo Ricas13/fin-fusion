@@ -11,6 +11,8 @@ const {esc,layout}=require('./admin-html');
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
 function selectedValues(value){const values=Array.isArray(value)?value:[value];return Array.from(new Set(values.map(v=>String(v||'').trim()).filter(Boolean))).slice(0,500)}
+function jellyfinPlan(plan){return ['jellyfin','bundle'].includes(String(plan?.service_type||'jellyfin'));}
+function jellyfinOnlyRedirect(plan,message='This is a Stremio-only plan. Jellyfin libraries do not apply to it.'){return `/admin/plans/${encodeURIComponent(plan.id)}/edit?error=${encodeURIComponent(message)}`;}
 
 async function planById(id){const r=await query('SELECT * FROM plans WHERE id=$1',[id]);return r.rows[0]||null}
 async function liveEntitlements(planId){const r=await query(`SELECT COUNT(DISTINCT customer_id)::int n FROM subscriptions WHERE plan_id=$1 AND superseded_by IS NULL AND status IN ('active','trialing','past_due','paused') AND starts_at<=NOW() AND current_period_end>NOW()`,[planId]);return Number(r.rows[0]?.n||0)}
@@ -56,11 +58,11 @@ async function page(req,plan,discovery){
 function createAdminPlanLibrariesRouter(){
     const router=express.Router();
     router.use('/admin/plans',gate,noStore);
-    router.get('/admin/plans/:id/libraries',async(req,res,next)=>{try{const plan=await planById(req.params.id);if(!plan)return res.status(404).send('Plan not found');const discovery=await discoverLibraries(plan);return res.send(await page(req,plan,discovery))}catch(error){return next(error)}});
+    router.get('/admin/plans/:id/libraries',async(req,res,next)=>{try{const plan=await planById(req.params.id);if(!plan)return res.status(404).send('Plan not found');if(!jellyfinPlan(plan))return res.redirect(jellyfinOnlyRedirect(plan));const discovery=await discoverLibraries(plan);return res.send(await page(req,plan,discovery))}catch(error){return next(error)}});
     router.post('/admin/plans/:id/libraries',async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid security token');
         try{
-            const plan=await planById(req.params.id);if(!plan)throw new Error('missing');
+            const plan=await planById(req.params.id);if(!plan)throw new Error('missing');if(!jellyfinPlan(plan))return res.redirect(jellyfinOnlyRedirect(plan));
             const live=await liveEntitlements(plan.id);
             if(live&&String(req.body.impactConfirmation||'').trim()!==String(plan.code))throw new Error('impact');
             const mode=['all','exclude','include'].includes(req.body.libraryAccessMode)?req.body.libraryAccessMode:'all';
@@ -78,11 +80,11 @@ function createAdminPlanLibrariesRouter(){
             const job=await queuePlanReconciliation(plan.id,req.session.authUserId);
             return res.redirect(job?`/admin/jobs/${encodeURIComponent(job.id)}?message=${encodeURIComponent('Library access saved. Reconciliation queued for affected customers.')}`:`/admin/plans/${encodeURIComponent(plan.id)}/libraries?message=${encodeURIComponent('Library access saved.')}`);
         }catch(error){
-            const msg=error.message==='impact'?'Type the plan code exactly to confirm the impact on live customers.':error.message==='empty_include'?'Choose at least one library for selected-only access.':error.message==='discovery'?'Library access was not changed because one or more eligible Jellyfin servers could not be read.':error.message==='missing'?'Plan not found.':'Library access could not be updated safely.';
+            const msg=error.message==='impact'?'Type the plan code exactly to confirm the impact on live customers.':error.message==='empty_include'?'Choose at least one library for selected-only access.':error.message==='discovery'?'Library access was not changed because one or more eligible Jellyfin servers could not be read.':error.message==='missing'?'Plan not found.':`Library access could not be updated. ${String(error.message||'Try again.').slice(0,250)}`;
             return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/libraries?error=${encodeURIComponent(msg)}`);
         }
     });
     return router;
 }
 
-module.exports={createAdminPlanLibrariesRouter,discoverLibraries,liveEntitlements};
+module.exports={createAdminPlanLibrariesRouter,discoverLibraries,liveEntitlements,jellyfinPlan};
