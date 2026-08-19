@@ -6,8 +6,8 @@
 const {query}=require('../db');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const provisioning=require('../jellyfin/provisioning');
-const registry=require('../jellyfin/registry');
 const serverMigration=require('../jellyfin/server-migration');
+const deletion=require('./customer-deletion');
 
 async function actorFor(item){
   const r=await query('SELECT created_by FROM background_jobs WHERE id=$1',[item.job_id]);
@@ -33,26 +33,9 @@ bulkWorker.registerHandler('ban',async item=>{
 
 bulkWorker.registerHandler('jellyfin_delete',async item=>{
   const actor=await actorFor(item),reason=String(item.params?.reason||'Jellyfin access deleted by administrator').slice(0,500);
-  // An explicit hold prevents the entitlement reconciler from immediately
-  // recreating an account while the portal identity remains available.
-  await provisioning.holdAccess(item.customer_id,'jellyfin_deleted',actor);
-  const accounts=await query(`SELECT id,server_id,jellyfin_user_id,jellyfin_username FROM jellyfin_accounts WHERE customer_id=$1 ORDER BY created_at`,[item.customer_id]);
-  let deleted=0;
-  for(const account of accounts.rows){
-    try{
-      await registry.request(account.server_id,`/Users/${encodeURIComponent(account.jellyfin_user_id)}`,{method:'DELETE'});
-    }catch(error){
-      // A previous attempt may have deleted the remote account before the worker
-      // crashed. Treat a remote 404 as already deleted, but surface every other
-      // failure rather than erasing the local recovery record.
-      const message=String(error?.message||error);
-      if(!/\b404\b|not found/i.test(message))throw new Error(`Could not delete ${account.jellyfin_username} from Jellyfin: ${message}`);
-    }
-    await query('DELETE FROM jellyfin_accounts WHERE id=$1',[account.id]);
-    deleted++;
-  }
-  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{deleted,reason,portalAccountPreserved:true});
-  return {deleted,portalAccountPreserved:true,serviceHold:true};
+  const result=await deletion.deleteJellyfinAccounts(item.customer_id,{actorUserId:actor,reason,holdAccess:true,removeLocal:true,continueOnMissing:true});
+  await audit('admin.bulk.jellyfin_delete',item.customer_id,actor,{...result,portalAccountPreserved:true});
+  return {...result,portalAccountPreserved:true,serviceHold:true};
 });
 
 bulkWorker.registerHandler('migrate_server',async item=>{
