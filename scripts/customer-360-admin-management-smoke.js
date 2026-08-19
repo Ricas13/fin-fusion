@@ -36,11 +36,14 @@ for(const route of [
 ])assert(management.includes(route),`customer management route missing: ${route}`);
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
+assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
 assert(management.includes("password_changed_at")&&management.includes('Use the onboarding link'),'portal accounts must not be enabled before onboarding has established a customer password');
 assert(management.includes("'admin.customer.portal.enrol'")&&management.includes("'admin.customer.account.update'")&&management.includes("'admin.customer.service.reconcile'"),'high-impact Customer 360 management changes must be audited');
 assert(management.includes('activation.activeForUser')&&management.includes('/activate/${encodeURIComponent(row.raw)}'),'active onboarding links must be recoverable from Customer management');
 assert(management.includes('activation.create({userId')&&management.includes('A fresh onboarding link was generated'),'admins must be able to regenerate missed onboarding links');
 assert(management.includes('Generate / rotate installation URL')&&management.includes('Manifest / installation URL'),'Stremio install details must be visible and recoverable from Customer management');
+assert(management.includes('activeSubscriptions(detail)')&&management.includes("if(primary==='jellyfin'&&hasStremio)return'bundle'"),'Customer management must treat an active Stremio add-on alongside Jellyfin as combined service access');
+assert(management.includes('stremio.entitledSubscription(req.params.customerId)')&&management.includes('stremio.reconcileForCustomer(req.params.customerId,stremioEntitlement)'),'service reconciliation must preserve and reconcile active Stremio add-ons');
 assert(management.includes("serviceType:type")&&management.includes('hasJellyfinAccount'),'Customer 360 must expose service-aware action context');
 assert(management.includes('data-native-submit="true"'),'single-customer plan/expiry actions must bypass inline AJAX form handling');
 
