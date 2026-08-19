@@ -8,14 +8,19 @@ function reasonText(value){return String(value||'Permanent access granted by adm
 async function status(customerId,{client=null}={}){
     const db=client||{query};
     const result=await db.query(`
-        SELECT o.*,p.name AS plan_name,p.code AS plan_code,s.current_period_end,s.status AS subscription_status
+        SELECT o.*,p.name AS plan_name,p.code AS plan_code,s.current_period_end,s.status AS subscription_status,s.superseded_by,
+          EXISTS(
+            SELECT 1 FROM effective_customer_entitlements e
+            WHERE e.customer_id=o.customer_id AND e.subscription_id=o.subscription_id
+          ) AS is_effective_subscription
         FROM customer_entitlement_overrides o
         JOIN subscriptions s ON s.id=o.subscription_id
         JOIN plans p ON p.id=s.plan_id
         WHERE o.customer_id=$1
     `,[customerId]);
     const row=result.rows[0]||null;
-    return row?{...row,active:Boolean(row.permanent_access&&!row.revoked_at)}:null;
+    const current=Boolean(row&&!row.superseded_by&&row.is_effective_subscription);
+    return row?{...row,active:Boolean(row.permanent_access&&!row.revoked_at&&current),stale:Boolean(row.permanent_access&&!row.revoked_at&&!current)}:null;
 }
 
 async function enable(customerId,{actorUserId=null,reason=''}={}){
@@ -28,8 +33,10 @@ async function enable(customerId,{actorUserId=null,reason=''}={}){
         const subId=entitlement.rows[0].subscription_id;
         const existing=await client.query('SELECT * FROM customer_entitlement_overrides WHERE customer_id=$1 FOR UPDATE',[customerId]);
         if(existing.rowCount&&existing.rows[0].permanent_access&&!existing.rows[0].revoked_at){
-            await client.query(`UPDATE customer_entitlement_overrides SET reason=$2,updated_by=$3,updated_at=NOW() WHERE customer_id=$1`,[customerId,note,actorUserId]);
-            return{subscriptionId:existing.rows[0].subscription_id,reused:true};
+            const prior=existing.rows[0],repinned=String(prior.subscription_id)!==String(subId);
+            await client.query(`UPDATE customer_entitlement_overrides SET subscription_id=$2,reason=$3,updated_by=$4,updated_at=NOW() WHERE customer_id=$1`,[customerId,subId,note,actorUserId]);
+            if(repinned)await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.repin','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({fromSubscriptionId:prior.subscription_id,toSubscriptionId:subId,reason:note,providerBillingChanged:false})]);
+            return{subscriptionId:subId,reused:!repinned,repinned};
         }
         const previousProtected=Boolean(customer.rows[0].automation_protected),previousReason=customer.rows[0].automation_protected_reason||null;
         await client.query(`
@@ -39,7 +46,7 @@ async function enable(customerId,{actorUserId=null,reason=''}={}){
         `,[customerId,subId,note,actorUserId,previousProtected,previousReason]);
         await client.query(`UPDATE customers SET automation_protected=TRUE,automation_protected_reason=$2,automation_protected_at=NOW(),automation_protected_by=$3,updated_at=NOW() WHERE id=$1`,[customerId,`Permanent access: ${note}`.slice(0,500),actorUserId]);
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.enable','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:subId,reason:note,providerBillingChanged:false,previousAutomationProtected:previousProtected})]);
-        return{subscriptionId:subId,reused:false};
+        return{subscriptionId:subId,reused:false,repinned:false};
     });
     await provisioning.reconcileCustomer(customerId).catch(error=>console.warn('Permanent access reconciliation deferred:',error.message));
     return{...saved,status:await status(customerId)};
