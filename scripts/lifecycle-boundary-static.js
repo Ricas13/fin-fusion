@@ -39,6 +39,12 @@ const PROVIDER_MUTATION_OWNERS = new Set([
     'src/payments/customer-plan-change.js'
 ]);
 
+const MANUAL_SUBSCRIPTION_OWNER = 'src/entitlements/manual-subscriptions.js';
+const MANUAL_COMPATIBILITY_CALLERS = new Set([
+    'src/subscriptions-core.js',
+    'src/entitlements/admin-grants.js'
+]);
+
 const ENTITLEMENT_CONSUMERS = [
     /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|placement|placement-preview|plan-servers)\.js$/,
     /^src\/integrations\/.+\.js$/
@@ -52,6 +58,7 @@ const RAW_READ_EXCEPTIONS = new Set(['src/jellyfin/activity.js']);
 
 const failures = [];
 const sourceFiles = filesUnder(SRC);
+let manualOwnerHasInsert = false;
 for (const file of sourceFiles) {
     const name = rel(file);
     const source = fs.readFileSync(file, 'utf8');
@@ -68,6 +75,12 @@ for (const file of sourceFiles) {
         }
     }
 
+    const insertsSubscription = statements.some(sql => /\bINSERT\s+INTO\s+subscriptions\b/i.test(sql));
+    if (name === MANUAL_SUBSCRIPTION_OWNER) manualOwnerHasInsert = insertsSubscription;
+    if (MANUAL_COMPATIBILITY_CALLERS.has(name) && insertsSubscription) {
+        failures.push(`${name}: manual subscription INSERT must delegate to ${MANUAL_SUBSCRIPTION_OWNER}`);
+    }
+
     // Enforcement consumers must use the canonical entitlement view/service,
     // not reconstruct “active subscription” rules from raw subscriptions.
     if (ENTITLEMENT_CONSUMERS.some(pattern => pattern.test(name)) && !RAW_READ_EXCEPTIONS.has(name)) {
@@ -75,6 +88,10 @@ for (const file of sourceFiles) {
         const canonical = /effective_customer_entitlements|subscription-state/.test(source);
         if (rawRead && !canonical) failures.push(`${name}: raw subscription read in entitlement consumer`);
     }
+}
+
+if (!manualOwnerHasInsert) {
+    failures.push(`${MANUAL_SUBSCRIPTION_OWNER}: canonical manual subscription INSERT is missing`);
 }
 
 // Migration history is keyed by full filename, so historical duplicate numeric
