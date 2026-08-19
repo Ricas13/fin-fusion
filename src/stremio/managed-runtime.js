@@ -4,6 +4,8 @@ const crypto=require('crypto');
 const {query}=require('../db');
 const foundation=require('./foundation');
 const jellyfin=require('./jellyfin-runtime');
+const mediaIndex=require('./media-index');
+const episodeResolution=require('./episode-resolution');
 const managedEntitlements=require('./managed-entitlements');
 const entitlements=require('./entitlements');
 
@@ -16,8 +18,18 @@ function directUrl(mapping,itemId,mediaSourceId,playSessionId=''){
   url.searchParams.set('api_key',token);if(playSessionId)url.searchParams.set('PlaySessionId',String(playSessionId));return url.toString();
 }
 function runtimeEntitlement(mapping){return{server_id:mapping.server_id,base_url:mapping.base_url,public_url:mapping.public_url,server_name:mapping.server_name,jellyfin_user_id:mapping.jellyfin_user_id,jellyfin_access_token_encrypted:mapping.access_token_encrypted};}
+async function resolveManagedItem(mapping,runtime,args){
+  const indexed=await mediaIndex.lookup(mapping.server_id,args.imdb,args.type);if(!indexed)return null;
+  if(args.type==='movie')return{id:indexed.item_id,name:indexed.name,path:indexed.path,type:'Movie'};
+  const endpoint=episodeResolution.userItemsPath({userId:mapping.jellyfin_user_id,seriesId:indexed.item_id,season:args.season,episode:args.episode,fields:'Path'});
+  const payload=await jellyfin.restrictedRequest(runtime,endpoint),target=episodeResolution.pick(payload,args.season,args.episode);
+  if(target)return{...target,id:String(target.Id),name:target.Name||indexed.name,path:target.Path||null,type:'Episode'};
+  // Compatibility fallback for older/unusual Jellyfin servers that do not apply
+  // the exact Items filters as expected. Normal requests never pay this cost.
+  return jellyfin.resolveItem(runtime,args);
+}
 async function streamsFromMapping(mapping,args,type,videoId){
-  const runtime=runtimeEntitlement(mapping),item=await jellyfin.resolveItem(runtime,args);if(!item)return[];
+  const runtime=runtimeEntitlement(mapping),item=await resolveManagedItem(mapping,runtime,args);if(!item)return[];
   const qs=new URLSearchParams({UserId:String(mapping.jellyfin_user_id)}),playback=await jellyfin.restrictedRequest(runtime,`/Items/${encodeURIComponent(item.id)}/PlaybackInfo?${qs.toString()}`);
   await query(`UPDATE stremio_managed_accounts SET last_playback_info_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[mapping.id]).catch(()=>{});
   const sources=(Array.isArray(playback?.MediaSources)?playback.MediaSources:[]).filter(source=>source?.Id&&source.SupportsDirectPlay!==false);
@@ -30,4 +42,4 @@ async function streamsFor(entitlement,type,videoId){
   return output;
 }
 
-module.exports={neutralGroup,directUrl,runtimeEntitlement,streamsFromMapping,streamsFor};
+module.exports={neutralGroup,directUrl,runtimeEntitlement,resolveManagedItem,streamsFromMapping,streamsFor};
