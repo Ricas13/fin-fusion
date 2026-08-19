@@ -26,6 +26,7 @@ const { createAdminAbuseProtectionRouter } = require('./admin-abuse-protection')
 const { createAdminOperatorStateRouter } = require('./admin-operator-state');
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAdminCustomerJellyfinPasswordRouter } = require('./admin-customer-jellyfin-password');
+const { createAdminCustomerPermanentRouter } = require('./admin-customer-permanent');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
@@ -60,6 +61,7 @@ function createRouter(){
     router.use(createAdminOperatorStateRouter());
     router.use(createAdminJellyfinLifecycleRouter());
     router.use(createAdminCustomerJellyfinPasswordRouter());
+    router.use(createAdminCustomerPermanentRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
