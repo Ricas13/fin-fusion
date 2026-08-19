@@ -41,7 +41,7 @@ async function candidates(){
       ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
     ), accounts AS (
       SELECT customer_id,MIN(created_at) first_account_at,
-             COUNT(*) FILTER(WHERE disabled=FALSE AND account_purpose='primary')::int active_accounts
+             COUNT(*) FILTER(WHERE disabled=FALSE AND account_purpose='jellyfin')::int active_accounts
       FROM jellyfin_accounts GROUP BY customer_id
     )
     SELECT ca.*,COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,c.automation_protected,
@@ -113,7 +113,7 @@ async function cleanupCandidates(cfg=null){
       EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=ja.customer_id AND h.hold_type=$3 AND h.source_key=('server:'||ja.server_id::text) AND h.released_at IS NULL) already_held
     FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id JOIN customers c ON c.id=ja.customer_id LEFT JOIN app_users u ON u.id=c.user_id
     LEFT JOIN LATERAL (SELECT MAX(COALESCE(ended_at,last_seen_at,started_at)) last_playback_at FROM playback_history WHERE customer_id=ja.customer_id AND server_id=ja.server_id) ph ON TRUE
-    WHERE ja.account_purpose='primary' AND ja.created_at<=$2
+    WHERE ja.account_purpose='jellyfin' AND ja.created_at<=$2
       AND GREATEST(COALESCE(ph.last_playback_at,'epoch'::timestamptz),COALESCE(ja.last_activity_at,'epoch'::timestamptz),ja.created_at)<=$1
     ORDER BY GREATEST(COALESCE(ph.last_playback_at,'epoch'::timestamptz),COALESCE(ja.last_activity_at,'epoch'::timestamptz),ja.created_at)
   `,[cutoff,minimumCreated,CLEANUP_HOLD_TYPE]);
