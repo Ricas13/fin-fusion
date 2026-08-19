@@ -38,6 +38,7 @@ const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerSupportRouter } = require('./customer-support');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerCommunicationsRouter, createMessagingBotWebhookRouter } = require('./customer-communications');
+const { createCustomerMarketingPreferencesRouter } = require('./customer-marketing-preferences');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
 const trialFreeLimit = routeRateLimit.middleware({ scope: 'customer-trial-free', max: 12, windowSeconds: 300 });
@@ -78,6 +79,7 @@ function createRouter() {
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
     router.use(createCustomerCommunicationsRouter());
+    router.use(createCustomerMarketingPreferencesRouter());
     router.use(createCustomerStremioRouter());
     router.use(createCustomerAffiliateRouter());
     router.use(createCustomerDashboardRouter());
