@@ -39,6 +39,7 @@ assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='p
 assert(/COUNT\(\*\)::int n FROM jellyfin_accounts WHERE server_id=\$1 AND disabled=FALSE/.test(manualAssignment),'manual assignment capacity must count every active managed Jellyfin identity');
 assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=2&&!/account_purpose='primary'/.test(inactivity),'inactivity and cleanup automation must target normal Jellyfin accounts');
 assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
+assert(/formaction=\"\$\{esc\(withdrawAction\)\}\"/.test(customer)&&!/action=\"\/admin\/users\/\$\{encodeURIComponent\(c\.id\)\}\/marketing\/withdraw\">\$\{csrfHidden/.test(customer),'marketing withdrawal must not create a nested form');
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
 assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'raw UUID workflow copy returned');
 assert(/COUNT\(ja\.id\) FILTER\(WHERE ja\.disabled=FALSE\)::int AS active_users/.test(bulk),'bulk server capacity labels must count every active managed Jellyfin identity');
