@@ -159,8 +159,11 @@
     if (el.dataset.lazyLoaded) return;
     el.dataset.lazyLoaded = '1';
     fetch(el.getAttribute('data-lazy-src'))
-      .then(res => res.json())
-      .then(payload => { if (payload?.ok) el.innerHTML = payload.html; })
+      .then(res => res.json().then(payload => ({ ok: res.ok, payload })))
+      .then(({ ok, payload }) => {
+        if (ok && payload?.ok) el.innerHTML = payload.html;
+        else el.innerHTML = '<div class="analyticsEmpty widgetError">This widget could not be loaded.</div>';
+      })
       .catch(() => { el.innerHTML = '<div class="analyticsEmpty widgetError">This widget could not be loaded.</div>'; });
   }
   const idle = window.requestIdleCallback || (fn => setTimeout(fn, 200));
