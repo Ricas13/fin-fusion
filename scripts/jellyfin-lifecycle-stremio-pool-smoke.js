@@ -20,7 +20,6 @@ assert(!lifecycle.includes('accessHolds'),'lifecycle must not create portal/cust
 assert(!/UPDATE\s+customers|DELETE\s+FROM\s+customers/i.test(lifecycle),'lifecycle must never update/delete portal customers');
 assert(jobs.includes('async customer_inactivity(){return jellyfinLifecycle.run()}'),'legacy dormant cleanup must not remain canonical');
 assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
-
 assert(/source_kind = 'owned'::text\) OR \(authorization_confirmed = true/.test(migration),'external Stremio sources must require authorization');
 assert(pool.includes('Confirm that you are authorized'),'external source connection must enforce authorization');
 assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTAiNFiN attribution for operator-side source diagnostics');
@@ -33,5 +32,4 @@ assert(admin.includes('The upstream Jellyfin owner can still see activity'),'ope
 assert(admin.includes('Password is not stored')&&admin.includes('choose its libraries'),'operator UI must explain external credential and indexing boundaries');
 assert(sourceMigration.includes('plan_stremio_sources')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support external source mappings without weakening managed identity integrity');
 assert(migration.includes('portal customer'),'migration must document portal identity invariant');
-
 console.log('Jellyfin lifecycle + Stremio Sources smoke: OK');
