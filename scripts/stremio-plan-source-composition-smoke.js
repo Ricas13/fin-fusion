@@ -25,6 +25,8 @@ assert(admin.includes('Managed Jellyfin sources are always returned first'),'pla
 assert(admin.includes('Optional external sources'),'plan UI must present external sources as additions');
 assert(admin.includes('Leaving every external source unchecked is valid'),'plan UI must support managed-only plans');
 assert(admin.includes('no external source is implicitly added'),'plan UI must explain explicit external selection');
+assert(admin.includes('Preconfiguration only:'),'Jellyfin-only plans must be able to preconfigure Stremio sources before switching delivery');
+assert(admin.includes('${sourceSection}'),'source composition must remain visible regardless of current delivery type');
 assert(!admin.includes('Selecting at least one source removes the managed-server fallback'),'old replacement/fallback wording must be removed');
 assert(!admin.includes("throw new Error('Select at least one Stremio source.')"),'saving zero external sources must be valid');
 assert(admin.includes('sourcePool.savePlanSources(req.params.id,selections'),'admin must persist an empty selection as no external additions');
