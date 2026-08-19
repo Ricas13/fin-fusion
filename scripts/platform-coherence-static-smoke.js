@@ -18,9 +18,11 @@ for(const removed of ['import_users.js','check-expired.js'])assert(!exists(remov
 for(const migration of ['000_database_baseline.sql','001_remove_retired_product.sql'])assert(exists(`db/migrations/${migration}`),`missing baseline migration ${migration}`);
 
 const application=read('src/application.js'),platformRouter=read('src/platform/router.js');
-assert(application.includes("require('./platform/admin-drift')"),'Policy Drift must be mounted by the canonical application');
-assert(platformRouter.includes('createCustomerAffiliateRouter')&&platformRouter.includes('router.use(createCustomerAffiliateRouter())'),'customer affiliate runtime must be mounted by the platform router');
-assert(application.includes('createAdminReferralsRouter'),'affiliate administration must be mounted');
+const adminRouteComposition=exists('src/platform/admin-route-composition.js')?read('src/platform/admin-route-composition.js'):application;
+const customerRouteComposition=exists('src/platform/customer-route-composition.js')?read('src/platform/customer-route-composition.js'):platformRouter;
+assert(adminRouteComposition.includes('createAdminDriftRouter'),'Policy Drift must be mounted by the canonical admin route composition');
+assert(customerRouteComposition.includes('createCustomerAffiliateRouter')&&customerRouteComposition.includes('router.use(createCustomerAffiliateRouter())'),'customer affiliate runtime must be mounted by the canonical customer/platform route composition');
+assert(adminRouteComposition.includes('createAdminReferralsRouter'),'affiliate administration must be mounted by the canonical admin route composition');
 
 const automation=read('src/automation/jobs.js');
 for(const key of ['policy_drift','billing','plan_changes','referral_rewards','activation_cleanup','pending_registration_cleanup'])assert(new RegExp(`\\b${key}\\b`).test(automation),`automation worker is missing ${key}`);
