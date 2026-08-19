@@ -34,6 +34,14 @@
       <div class="notifyRow"><select class="input" name="currency"><% enabledCurrencies.forEach(function(c){ %><option value="<%= c %>" <%= currency===c?'selected':'' %>><%= c %></option><% }) %></select><button class="button primary">Save currency</button></div>
     </form>
   </section>
+  <section class="panel sectionBlock">
+    <div class="sectionHead"><div><h2>Offers &amp; discounts by email</h2><p>Marketing email is optional and separate from important account, security and payment messages.</p></div><span class="pill <%= prefs.marketing_email_opt_in?'good':'warn' %>"><%= prefs.marketing_email_opt_in?'Enabled':'Off' %></span></div>
+    <form method="post" action="/account/communications/marketing-email">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="libraryChoice"><input type="checkbox" name="enabled" value="1" <%= prefs.marketing_email_opt_in?'checked':'' %>><span>Send me occasional offers, discounts and service promotions by email</span></label>
+      <p><button class="button primary">Save marketing preference</button></p>
+    </form>
+  </section>
   <div class="notifyGrid sectionBlock">
     <section class="panel"><h2>Telegram</h2>
       <% if(prefs.telegram_chat_id){ %>
