@@ -20,9 +20,9 @@ async function create({customerId,customerUserId,subject,category:categoryValue,
   return transaction(async client=>{
     const created=await client.query(`INSERT INTO support_tickets(customer_id,subject,category,priority,status,last_customer_reply_at) VALUES($1,$2,$3,$4,'open',NOW()) RETURNING *`,[customerId,normalizedSubject,normalizedCategory,normalizedPriority]);
     const ticket=created.rows[0];
-    await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body) VALUES($1,'customer',$2,$3)`,[ticket.id,customerUserId||null,normalizedMessage]);
+    const inserted=await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body) VALUES($1,'customer',$2,$3) RETURNING id,created_at`,[ticket.id,customerUserId||null,normalizedMessage]);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'support.ticket.create','support_ticket',$2,$3::jsonb)`,[customerUserId||null,ticket.id,JSON.stringify({ticketNumber:ticket.ticket_number,customerId,category:normalizedCategory})]);
-    return ticket;
+    return {...ticket,initial_message_id:inserted.rows[0].id,initial_message_created_at:inserted.rows[0].created_at};
   });
 }
 
@@ -39,9 +39,10 @@ async function replyCustomer({ticketId,customerId,customerUserId,message}){
     const locked=(await client.query(`SELECT * FROM support_tickets WHERE id=$1 AND customer_id=$2 FOR UPDATE`,[ticketId,customerId])).rows[0];
     if(!locked)throw new Error('Ticket not found.');
     if(locked.status==='closed')throw new Error('This ticket is closed. Start a new ticket if you still need help.');
-    await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body) VALUES($1,'customer',$2,$3)`,[ticketId,customerUserId||null,body]);
-    await client.query(`UPDATE support_tickets SET status='awaiting_staff',last_customer_reply_at=NOW(),resolved_at=NULL,updated_at=NOW() WHERE id=$1`,[ticketId]);
+    const inserted=await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body) VALUES($1,'customer',$2,$3) RETURNING id,created_at`,[ticketId,customerUserId||null,body]);
+    const updated=(await client.query(`UPDATE support_tickets SET status='awaiting_staff',last_customer_reply_at=NOW(),resolved_at=NULL,updated_at=NOW() WHERE id=$1 RETURNING *`,[ticketId])).rows[0];
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'support.ticket.customer_reply','support_ticket',$2,'{}'::jsonb)`,[customerUserId||null,ticketId]);
+    return{ticket:updated,messageId:inserted.rows[0].id,createdAt:inserted.rows[0].created_at};
   });
 }
 
@@ -60,10 +61,11 @@ async function replyAdmin({ticketId,adminUserId,message,internalNote=false}){
   return transaction(async client=>{
     const ticket=(await client.query(`SELECT * FROM support_tickets WHERE id=$1 FOR UPDATE`,[ticketId])).rows[0];
     if(!ticket)throw new Error('Ticket not found.');
-    await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body,internal_note) VALUES($1,'admin',$2,$3,$4)`,[ticketId,adminUserId||null,body,Boolean(internalNote)]);
+    const inserted=await client.query(`INSERT INTO support_ticket_messages(ticket_id,author_kind,author_user_id,body,internal_note) VALUES($1,'admin',$2,$3,$4) RETURNING id,created_at`,[ticketId,adminUserId||null,body,Boolean(internalNote)]);
     if(!internalNote)await client.query(`UPDATE support_tickets SET status='awaiting_customer',last_staff_reply_at=NOW(),updated_at=NOW() WHERE id=$1`,[ticketId]);
     else await client.query(`UPDATE support_tickets SET updated_at=NOW() WHERE id=$1`,[ticketId]);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'support_ticket',$3,$4::jsonb)`,[adminUserId,internalNote?'support.ticket.internal_note':'support.ticket.staff_reply',ticketId,JSON.stringify({internalNote:Boolean(internalNote)})]);
+    return{messageId:inserted.rows[0].id,createdAt:inserted.rows[0].created_at,internalNote:Boolean(internalNote)};
   });
 }
 async function updateAdmin({ticketId,adminUserId,status:statusValue,priority:priorityValue,assignedAdminUserId=null}){
