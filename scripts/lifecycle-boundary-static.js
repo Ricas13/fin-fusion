@@ -90,6 +90,23 @@ for (const highLevel of ['startFreeTrial', 'claimFreePlan', 'getProviderPlan', '
     }
 }
 
+// subscriptions.js is the stable compatibility service. Keep the historical
+// subscriptions-core path as an alias so direct imports cannot create another
+// independent manual/provider compatibility implementation.
+const subscriptions = fs.readFileSync(path.join(SRC, 'subscriptions.js'), 'utf8');
+const subscriptionsCore = fs.readFileSync(path.join(SRC, 'subscriptions-core.js'), 'utf8');
+if (!/module\.exports\s*=\s*require\(['"]\.\/subscriptions['"]\)/.test(subscriptionsCore)) {
+    failures.push('src/subscriptions-core.js: historical path must delegate directly to subscriptions.js');
+}
+if (/\basync\s+function\b|\bINSERT\s+INTO\s+subscriptions\b/i.test(subscriptionsCore)) {
+    failures.push('src/subscriptions-core.js: duplicate subscriptions implementation detected');
+}
+for (const exported of ['getPlanByCode', 'createManualSubscription', 'applyProviderState']) {
+    if (!new RegExp(`\\b(?:async\\s+)?function\\s+${exported}\\b`).test(subscriptions)) {
+        failures.push(`src/subscriptions.js: canonical subscriptions service must own ${exported}`);
+    }
+}
+
 const migrationDir = path.join(ROOT, 'db', 'migrations');
 const modern = fs.readdirSync(migrationDir)
     .map(name => ({ name, match: name.match(/^(\d{3})_/)}))
