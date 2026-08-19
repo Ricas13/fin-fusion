@@ -35,6 +35,10 @@ assert(managed.includes("url.searchParams.set('api_key',token)"),'managed direct
 assert(!managed.includes('api_key_encrypted'),'managed runtime must never read the server administrator API key');
 assert(!managed.includes('/stremio/${'),'new managed stream URLs must not point at the CAPTAiNFiN byte proxy');
 assert(external.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external direct playback must use its dedicated Jellyfin source token');
+assert(!external.includes('/PlaybackInfo'),'external unmanaged streams must not call Jellyfin PlaybackInfo');
+assert(!external.includes('PlaySessionId'),'external unmanaged stream URLs must not carry managed playback-session telemetry');
+assert(external.includes('/Users/${encodeURIComponent(String(source.jellyfin_user_id))}/Items/'),'external media variants should come from ordinary Jellyfin item metadata, not playback negotiation');
+assert(external.includes('MediaSources,MediaStreams'),'external item metadata should preserve the existing quality/result presentation where available');
 assert(!external.includes('/stremio/${'),'new external stream URLs must not point at the CAPTAiNFiN byte proxy');
 assert(external.includes('Promise.allSettled(sources.map'),'external source resolution must run concurrently');
 assert(runtime.includes('Promise.all([')&&runtime.includes('managedRuntime.streamsFor')&&runtime.includes('externalRuntime.streamsFor'),'managed/external resolution must run concurrently');
