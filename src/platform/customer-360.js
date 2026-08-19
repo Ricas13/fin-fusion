@@ -9,6 +9,7 @@ function bytes(value){return Number(value||0)}
 function buildTimeline(parts){
     return parts.flat().filter(Boolean).sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,150);
 }
+function primaryFirst(rows,primaryEntitlement){const primaryId=String(primaryEntitlement?.subscription_id||'');return [...rows].sort((a,b)=>{const ap=String(a.id)===primaryId?0:1,bp=String(b.id)===primaryId?0:1;if(ap!==bp)return ap-bp;return new Date(b.created_at||0)-new Date(a.created_at||0);});}
 
 async function customer360(customerId){
     const base=await query(`
@@ -41,6 +42,7 @@ async function customer360(customerId){
         query(`SELECT action,entity_type,entity_id,created_at FROM audit_log WHERE (entity_type='customer' AND entity_id::text=$1::text) OR (entity_type='subscription' AND entity_id::text IN (SELECT id::text FROM subscriptions WHERE customer_id=$1::uuid)) ORDER BY created_at DESC LIMIT 100`,[customerId])
     ]);
 
+    const orderedSubscriptions=primaryFirst(subscriptions.rows,primaryEntitlement);
     const timeline=buildTimeline([
         subscriptions.rows.map(x=>({at:x.created_at,type:'subscription',title:`${x.plan_name} · ${x.status}`,detail:x.source})),
         runs.rows.map(x=>({at:x.started_at,type:'provisioning',title:`${x.action} · ${x.status}`,detail:x.completed_at?'completed':'in progress'})),
@@ -52,7 +54,7 @@ async function customer360(customerId){
     return{
         customer,
         primaryEntitlement,
-        subscriptions:subscriptions.rows,
+        subscriptions:orderedSubscriptions,
         accounts:accounts.rows,
         paymentCustomers:paymentCustomers.rows,
         activeStreams:activeStreams.rows,
@@ -79,4 +81,4 @@ async function customerAccessDetail(customerId){
     return{currentPlan,effective};
 }
 
-module.exports={customer360,customerAccessDetail};
+module.exports={customer360,customerAccessDetail,primaryFirst};
