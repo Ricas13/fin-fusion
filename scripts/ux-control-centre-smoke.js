@@ -35,12 +35,13 @@ assert(/UPDATE subscriptions SET plan_id=\$2/.test(bulkOperations),'local plan c
 assert(/applySnapshot\(db,subscriptionId,target,mapping\)/.test(planChange)&&/UPDATE subscriptions SET plan_id=\$2/.test(planChange),'Stripe plan changes must update the existing subscription row rather than replace the permanent-access pin');
 for(const field of ['service_type_snapshot','p.service_type','p.allow_remuxing','p.allow_remote_access','p.library_access_mode','p.library_names','p.placement_strategy'])assert(entitlementContract.includes(field),`effective entitlement contract missing ${field}`);
 assert(/account_purpose text DEFAULT 'jellyfin'/.test(baseline)&&/\['jellyfin'::text, 'stremio_internal'::text\]/.test(baseline),'baseline must define the canonical Jellyfin account purpose');
-assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='primary'/.test(manualAssignment),'manual Jellyfin assignment must use the schema-defined jellyfin account purpose');
+assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='primary'/.test(manualAssignment),'manual Jellyfin assignment must operate only on the schema-defined normal Jellyfin account purpose');
+assert(/COUNT\(\*\)::int n FROM jellyfin_accounts WHERE server_id=\$1 AND disabled=FALSE/.test(manualAssignment),'manual assignment capacity must count every active managed Jellyfin identity');
 assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=2&&!/account_purpose='primary'/.test(inactivity),'inactivity and cleanup automation must target normal Jellyfin accounts');
 assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
 assert(!/Use the plan UUID/.test(bulk)&&!/Use the server UUID/.test(bulk),'raw UUID workflow copy returned');
-assert(/account_purpose='jellyfin'/.test(bulk)&&!/account_purpose='primary'/.test(bulk),'bulk server capacity labels must count normal Jellyfin accounts');
+assert(/COUNT\(ja\.id\) FILTER\(WHERE ja\.disabled=FALSE\)::int AS active_users/.test(bulk),'bulk server capacity labels must count every active managed Jellyfin identity');
 assert(/registerHandler\('migrate_server'/.test(bulkMigration)&&/createMigration/.test(bulkMigration)&&/executeMigration/.test(bulkMigration),'bulk server migration must execute through the controlled migration service');
 assert(/bulk-server-migration/.test(jobs),'automation worker must load the bulk server migration handler');
 assert(/accessKind/.test(serverMigration)&&/kind === 'paid'/.test(serverMigration),'server migration must distinguish free access from paid access');
