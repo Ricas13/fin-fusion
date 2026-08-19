@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/platform/admin-dashboard*.js'
       - 'public/css/admin-dashboard-analytics.css'
+      - 'public/css/admin-dashboard-forecast-compact.css'
       - 'scripts/admin-analytics-dashboard-smoke.js'
       - '.github/workflows/admin-analytics-dashboard.yml'
       - 'db/migrations/**'
@@ -50,7 +51,9 @@ jobs:
           node --check src/platform/admin-dashboard.js
           node --check scripts/admin-analytics-dashboard-smoke.js
       - name: Retired prospective forecast stays removed
-        run: test ! -e src/platform/admin-revenue-forecast.js
+        run: |
+          test ! -e src/platform/admin-revenue-forecast.js
+          test ! -e public/css/admin-dashboard-forecast-compact.css
       - name: Apply database migrations
         run: npm run db:migrate
       - name: Period, revenue and PostgreSQL analytics smoke
