@@ -6,7 +6,6 @@ const modules = require('../modules/registry');
 const planComponents = require('../access/plan-components');
 const networkIdentity = require('../access/network-identity');
 const leases = require('../access/network-leases');
-const subscriptionState = require('../entitlements/subscription-state');
 const registry = require('./registry');
 
 async function activeSessions() {
@@ -32,7 +31,30 @@ function safeRemoteAddress(session) {
 }
 
 async function effectiveHousehold(customerId) {
-  const entitlement = await subscriptionState.effectiveSubscription(customerId);
+  // Keep the activity worker least-privilege: select only the subscription and
+  // plan columns required by the household driver instead of reusing the broad
+  // customer-portal effectiveSubscription() projection.
+  const result = await query(
+    `SELECT s.id AS subscription_id,s.customer_id,p.id AS plan_id,p.service_type,p.streams,
+            p.jellyfin_access_model,p.jellyfin_household_network_limit,p.jellyfin_household_lease_minutes
+     FROM subscriptions s
+     JOIN plans p ON p.id=s.plan_id
+     JOIN customers c ON c.id=s.customer_id
+     WHERE s.customer_id=$1
+       AND s.superseded_by IS NULL
+       AND s.starts_at<=NOW()
+       AND c.access_paused_at IS NULL
+       AND (
+         (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+         OR (COALESCE(s.service_extension_days,0)>0
+             AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
+             AND s.current_period_end+(s.service_extension_days||' days')::interval>NOW())
+       )
+     ORDER BY s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval DESC,s.created_at DESC
+     LIMIT 1`,
+    [customerId]
+  );
+  const entitlement = result.rows[0] || null;
   if (!entitlement) return null;
   const component = planComponents.componentForPlan(entitlement, 'jellyfin');
   if (!component || component.driver !== 'household_network') return null;
