@@ -12,11 +12,12 @@ const managedPlayback=require('./managed-playback-lifecycle');
 const externalRuntime=require('./external-direct-runtime');
 const runtimeSettings=require('./runtime-settings');
 
-const manifestLimit=routeRateLimit.middleware({scope:'stremio-manifest',max:60,windowSeconds:60});
-const streamLimit=routeRateLimit.middleware({scope:'stremio-stream',max:240,windowSeconds:60});
-const playbackLimit=routeRateLimit.middleware({scope:'stremio-playback-control',max:1200,windowSeconds:60});
+function stremioRateIdentity(req){const token=String(req.params?.token||'').trim();return token?`install:${token}`:null;}
+const manifestLimit=routeRateLimit.middleware({scope:'stremio-manifest',max:60,windowSeconds:60,identity:stremioRateIdentity,reason:'protocol_rate_limit'});
+const streamLimit=routeRateLimit.middleware({scope:'stremio-stream',max:240,windowSeconds:60,identity:stremioRateIdentity,reason:'protocol_rate_limit'});
+const playbackLimit=routeRateLimit.middleware({scope:'stremio-playback-control',max:1200,windowSeconds:60,identity:stremioRateIdentity,reason:'protocol_rate_limit'});
 function enabled(){return runtimeSettings.enabled();}
-function cors(_req,res,next){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,HEAD,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type,Range');res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Cache-Control','no-store');next();}
+function cors(_req,res,next){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,HEAD,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type,Range');res.setHeader('Access-Control-Expose-Headers','Retry-After,X-CAPTAiNFiN-429-Reason,X-CAPTAiNFiN-Stream-Active,X-CAPTAiNFiN-Stream-Limit');res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Cache-Control','no-store');next();}
 async function loadRuntimeSetting(_req,res,next){try{await runtimeSettings.ensureLoaded();return next();}catch(error){console.error('Stremio runtime setting unavailable:',error.message);return res.status(503).json({error:'Temporarily unavailable'});}}
 function manifest(){return{id:'cc.captainfin.jellyfin',version:'1.3.0',name:'CAPTAiNFiN',description:'Stream results included with your CAPTAiNFiN subscription.',resources:[{name:'stream',types:['movie','series'],idPrefixes:['tt']}],types:['movie','series'],catalogs:[],behaviorHints:{configurable:false,p2p:false}};}
 async function publicOrigin(req){try{const cfg=await operations.get();if(cfg.publicBaseUrl)return String(cfg.publicBaseUrl).replace(/\/$/,'');}catch(_error){}const host=req.get('x-forwarded-host')||req.get('host');const proto=req.get('x-forwarded-proto')||req.protocol||'https';return `${proto}://${host}`.replace(/\/$/,'');}
@@ -83,7 +84,14 @@ function createStremioRuntimeRouter(){
         await managedPlayback.reconcileEntitlement(e.id).catch(error=>console.warn('Unable to re-check managed Stremio sessions before admission retry:',error.message));
         admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,metadata);
       }
-      if(!admission.allowed){res.setHeader('Retry-After',String(managedPlayback.ADMISSION_ACTIVE_SECONDS));return res.status(429).end();}admitted=true;
+      if(!admission.allowed){
+        res.setHeader('Retry-After',String(managedPlayback.ADMISSION_ACTIVE_SECONDS));
+        res.setHeader('X-CAPTAiNFiN-429-Reason',String(admission.reason||'admission_limit'));
+        res.setHeader('X-CAPTAiNFiN-Stream-Active',String(Number(admission.active||0)));
+        res.setHeader('X-CAPTAiNFiN-Stream-Limit',String(Number(admission.limit||0)));
+        console.warn('Managed Stremio playback blocked:',{entitlementId:e.id,reason:admission.reason||'unknown',active:Number(admission.active||0),limit:Number(admission.limit||0)});
+        return res.status(429).end();
+      }admitted=true;
       const started=await managedPlayback.start(mapping,lease,{itemId:req.params.itemId,mediaSourceId:req.params.mediaSourceId,playSessionId,playMethod});
       const target=managedRuntime.playbackUrl(mapping,req.params.itemId,source,playback,{accessToken:started.accessToken,deviceId:started.deviceId});
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'stremio.managed_playback.admitted','stremio_entitlement',$1,$2::jsonb)`,[e.id,JSON.stringify({serverId:mapping.server_id,jellyfinSessionId:started.jellyfinSessionId||null,playMethod:target.playMethod,active:admission.active,limit:admission.limit})]).catch(()=>{});
@@ -100,4 +108,4 @@ function createStremioRuntimeRouter(){
   return router;
 }
 
-module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,managedMapping,settledStreams,createStremioRuntimeRouter};
+module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,managedMapping,settledStreams,stremioRateIdentity,createStremioRuntimeRouter};

@@ -9,20 +9,34 @@ function cleanScope(value) {
     return scope;
 }
 
-function requestIdentity(req) {
+function hashIdentity(value) {
+    return crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 40);
+}
+
+function requestIdentity(req, explicitIdentity = null) {
+    let supplied = null;
+    try {
+        supplied = typeof explicitIdentity === 'function' ? explicitIdentity(req) : explicitIdentity;
+    } catch (_) {
+        supplied = null;
+    }
+    if (supplied !== null && supplied !== undefined && String(supplied).trim()) {
+        return hashIdentity(`explicit:${String(supplied).trim()}`);
+    }
     const authenticated = req.session?.authUserId || req.session?.customerUserId || req.session?.customerId || null;
     const fallback = req.sessionID || req.ip || req.socket?.remoteAddress || 'unknown';
     const raw = authenticated ? `user:${authenticated}` : `request:${fallback}`;
-    return crypto.createHash('sha256').update(String(raw)).digest('hex').slice(0, 40);
+    return hashIdentity(raw);
 }
 
-function middleware({ scope, max = 10, windowSeconds = 60 } = {}) {
+function middleware({ scope, max = 10, windowSeconds = 60, identity = null, reason = 'rate_limit' } = {}) {
     const keyScope = cleanScope(scope);
     const limit = Math.max(1, Math.min(1000, Number(max) || 10));
     const seconds = Math.max(1, Math.min(86400, Number(windowSeconds) || 60));
+    const reasonHeader = String(reason || 'rate_limit').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 64) || 'rate_limit';
 
     return async function routeRateLimit(req, res, next) {
-        const bucket = `route:${keyScope}:${requestIdentity(req)}`;
+        const bucket = `route:${keyScope}:${requestIdentity(req, identity)}`;
         try {
             const result = await query(`
                 INSERT INTO login_rate_limits(bucket_key,window_started_at,attempt_count,updated_at)
@@ -44,6 +58,7 @@ function middleware({ scope, max = 10, windowSeconds = 60 } = {}) {
             if (count > limit) {
                 const retryAfter = Math.max(1, Number(result.rows[0]?.retry_after || seconds));
                 res.setHeader('Retry-After', String(retryAfter));
+                res.setHeader('X-CAPTAiNFiN-429-Reason', reasonHeader);
                 res.setHeader('Cache-Control', 'no-store');
                 return res.status(429).send('Too many requests. Please try again shortly.');
             }
@@ -59,4 +74,4 @@ function middleware({ scope, max = 10, windowSeconds = 60 } = {}) {
     };
 }
 
-module.exports = { middleware, requestIdentity, cleanScope };
+module.exports = { middleware, requestIdentity, hashIdentity, cleanScope };

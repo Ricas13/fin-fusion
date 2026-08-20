@@ -13,6 +13,7 @@ process.env.JELLYFIN_ENCRYPTION_KEY='22'.repeat(32);
 const foundation=require('../src/stremio/foundation');
 const runtime=require('../src/stremio/runtime');
 const jellyfin=require('../src/stremio/jellyfin-runtime');
+const routeRateLimit=require('../src/security/route-rate-limit');
 
 assert.strictEqual(runtime.available,true,'runtime must advertise its implementation');
 assert.strictEqual(foundation.runtimeReady(),true,'legacy enablement must remain compatible until browser-managed state is loaded');
@@ -23,6 +24,13 @@ assert(manifest.types.includes('movie')&&manifest.types.includes('series'),'mani
 assert(manifest.resources.some(r=>r.name==='stream'),'manifest must expose stream resources');
 assert(manifest.resources.find(r=>r.name==='stream').idPrefixes.includes('tt'),'stream IDs must be IMDb-addressable');
 assert.strictEqual(manifest.behaviorHints.p2p,false,'CAPTAiNFiN streams must not be advertised as P2P');
+assert.strictEqual(runtime.stremioRateIdentity({params:{token:'install-a'}}),'install:install-a','Stremio protocol limits must key from the bearer install token');
+const sameTokenA=routeRateLimit.requestIdentity({ip:'198.51.100.1'},'install:install-a');
+const sameTokenB=routeRateLimit.requestIdentity({ip:'203.0.113.9'},'install:install-a');
+const otherToken=routeRateLimit.requestIdentity({ip:'198.51.100.1'},'install:install-b');
+assert.strictEqual(sameTokenA,sameTokenB,'the same Stremio install token must keep one rate-limit bucket across proxy/client IP changes');
+assert.notStrictEqual(sameTokenA,otherToken,'different Stremio install tokens must never share a rate-limit bucket');
+assert(!sameTokenA.includes('install-a')&&sameTokenA.length===40,'raw Stremio install tokens must never be persisted as limiter identities');
 
 const filename='Movie.2025.2160p.UHD.BluRay.REMUX.HEVC.DV.HDR.TrueHD.Atmos.7.1-FraMeSToR.strm';
 const parsed=foundation.streamDisplayFromFilename(filename);
@@ -44,6 +52,7 @@ const sourceIndex=read('src/stremio/source-index.js');
 const sourceAdmission=read('src/stremio/source-admission.js');
 const managedSessions=read('src/stremio/managed-session-reconciler.js');
 const managedPlayback=read('src/stremio/managed-playback-lifecycle.js');
+const routeRateLimitSource=read('src/security/route-rate-limit.js');
 const matchMigration=read('db/migrations/003_stremio_source_match_fallbacks.sql');
 const managedLeaseMigration=read('db/migrations/011_stremio_managed_playback_leases.sql');
 
@@ -53,7 +62,7 @@ assert(entitlement.includes("account_purpose='stremio_internal'"),'managed path 
 assert(entitlement.includes('effective_customer_entitlements'),'addon bearer lookup must use authoritative effective access state');
 assert(!/SELECT[^;]+api_key_encrypted[^;]+stremio_entitlements/is.test(entitlement),'addon entitlement lookup must never expose administrator Jellyfin keys');
 assert(managedAccounts.includes('stremio_managed_accounts'),'managed entitlements must support one hidden account per managed server');
-assert(managedAccounts.includes('MaxActiveSessions:disabled?0:limit'),'each hidden managed account must receive the plan stream limit as Jellyfin defense in depth');
+assert(managedAccounts.includes('MaxActiveSessions:0'),'hidden managed Jellyfin accounts must not add a second Jellyfin-side session limiter');
 
 assert(runtimeSource.includes('managedRuntime.streamsFor')&&runtimeSource.includes('externalRuntime.streamsFor'),'runtime must use the managed and external source resolvers');
 assert(runtimeSource.includes('const streams=[...managed,...external]'),'managed sources must be returned before external sources');
@@ -68,6 +77,11 @@ assert(externalRuntime.includes("url.searchParams.set('api_key',client.sourceTok
 assert(externalRuntime.includes('/Videos/${encodeURIComponent(item)}/stream'),'external unmanaged results must point directly to Jellyfin media delivery');
 assert(externalRuntime.includes('Promise.allSettled(sources.map'),'external sources must be queried concurrently rather than serially');
 assert(!managedRuntime.includes('source.name')&&!externalRuntime.includes('source.name'),'customer stream presentation must remain source-neutral');
+
+assert(runtimeSource.match(/identity:stremioRateIdentity/g)?.length>=3,'all Stremio protocol rate limits must use the hashed install-token identity rather than shared proxy IPs');
+assert(routeRateLimitSource.includes('requestIdentity(req, identity)'),'route limiter must accept a route-specific identity provider while retaining generic fallback behavior');
+assert(routeRateLimitSource.includes("X-CAPTAiNFiN-429-Reason"),'rate-limit 429 responses must expose their reason for diagnostics');
+assert(runtimeSource.includes("X-CAPTAiNFiN-429-Reason")&&runtimeSource.includes("admission.reason||'admission_limit'"),'managed stream-limit 429s must identify themselves separately from protocol rate limiting');
 
 assert(managedSessions.includes('managedPlayback.ADMISSION_ACTIVE_SECONDS'),'managed concurrency must use the canonical managed-session liveness window');
 assert(managedSessions.includes('/Playing/Stop'),'managed concurrency must be able to stop excess Jellyfin sessions');
@@ -84,7 +98,9 @@ assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback 
 assert(runtimeSource.includes("require('./source-admission')")&&runtimeSource.includes('sourceAdmission.admit'),'managed playback must retain serialized CAPTAiNFiN admission');
 assert(runtimeSource.includes("admission.reason==='stream_limit'")&&runtimeSource.includes('managedPlayback.reconcileEntitlement(e.id)'),'stream-limit rejection must re-check stale managed sessions before returning 429');
 assert(sourceAdmission.includes('FOR UPDATE')&&sourceAdmission.includes('stream_limit')&&sourceAdmission.includes('active>=limit'),'managed admission must remain race-safe');
-assert(sourceAdmission.includes('LEASE_SECONDS=150'),'managed admission leases must remain short-lived until lifecycle renewal');
+assert(sourceAdmission.includes('LEASE_SECONDS=150')&&sourceAdmission.includes('MANAGED_LEASE_SECONDS=20'),'managed playback must use a short renewable lease without reducing legacy/external lease compatibility');
+assert(sourceAdmission.includes("meta.managedMappingId?MANAGED_LEASE_SECONDS:LEASE_SECONDS"),'managed admission must select the short lease at creation and retry time');
+assert(sourceAdmission.includes('Math.max(5,Math.min(600'),'managed lifecycle renewal must honor the five-second policy rather than imposing a hidden 30-second minimum');
 assert(managedLeaseMigration.includes('ALTER COLUMN source_id DROP NOT NULL'),'managed playback leases must remain representable without an external source id');
 assert(!runtimeSource.includes("require('./source-playback')")&&!runtimeSource.includes('sourcePlayback.open'),'runtime must not own a raw upstream playback boundary');
 assert(!runtimeSource.includes('upstream.pipe(res)')&&!runtimeSource.includes('pipePlayback('),'runtime must never pipe media responses through CAPTAiNFiN');
