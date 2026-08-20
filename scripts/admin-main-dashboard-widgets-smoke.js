@@ -2,6 +2,8 @@
 
 const assert = require('assert');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { query, getPool } = require('../src/db');
 const registry = require('../src/platform/admin-dashboard-registry');
 const { renderMain, buildContext } = require('../src/platform/admin-dashboard-main');
@@ -61,6 +63,11 @@ async function main() {
     assert(html.includes('data-widget-key='), 'rendered page must include at least one widget');
     assert(html.includes('data-csrf-token='), 'rendered page must embed a CSRF token for the drag/save script');
     assert(html.includes('/js/admin-dashboard-widgets.js'), 'rendered page must load the drag/customize client script');
+    assert(html.includes('/css/admin-dashboard-widget-layout.css'), 'rendered page must load the widget-specific layout correction layer');
+    const widgetLayoutCss = fs.readFileSync(path.join(__dirname, '..', 'public/css/admin-dashboard-widget-layout.css'), 'utf8');
+    assert(widgetLayoutCss.includes('.analyticsCardBody>.analyticsKpi') && widgetLayoutCss.includes('display:block'), 'clickable KPI content must be block-level inside the widget shell');
+    assert(widgetLayoutCss.includes('.analyticsKpi::after') && widgetLayoutCss.includes('display:none'), 'nested KPI decoration must not render as clipped shapes inside widget cards');
+    assert(widgetLayoutCss.includes('.dashboardCustomizeBar') && widgetLayoutCss.includes('margin:0 0 12px'), 'dashboard customize control must remain in normal flow with clear spacing');
 
     // No secret-shaped strings should ever end up in dashboard HTML output.
     const lower = html.toLowerCase();
