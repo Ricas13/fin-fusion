@@ -26,6 +26,8 @@ const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
 const provisioning=read('src/jellyfin/provisioning.js');
 const platformRouter=read('src/platform/router.js');
+const globalNotifications=read('src/platform/admin-notification-preferences.js');
+const personalNotifications=read('src/platform/admin-personal-notification-preferences-v2.js');
 const personalTests=read('src/platform/admin-personal-notification-tests.js');
 const personalTestUi=read('public/js/admin-personal-notification-tests.js');
 
@@ -87,6 +89,28 @@ assert(adminProfile.includes('provisioning.setJellyfinPassword(row.customer_id,r
 assert(adminProfile.includes('autocomplete="new-password"')&&adminProfile.includes('confirmPassword'),'My Profile must provide password and confirmation fields without exposing a stored password');
 assert(provisioning.includes("row.user_role==='admin'&&row.registration_source==='admin_personal'"),'Provisioning must recognize role-preserving personal administrator media profiles');
 assert(provisioning.includes('Settings > My Profile'),'Personal administrator onboarding must direct password setup to My Profile instead of the customer portal');
+
+// Route ownership: the global notification module must not carry a second,
+// filtered-out implementation of the personal profile workflow. The v2
+// personal router is the sole owner of all /admin/profile/notifications paths.
+for(const route of [
+  "/admin/notifications/preferences'",
+  '/admin/notifications/preferences/delivery',
+  '/admin/notifications/preferences/test-telegram',
+  '/admin/notifications/preferences/test-discord',
+  '/admin/notifications/preferences/outbox/:id/retry'
+]) assert(globalNotifications.includes(route),`Global notifications missing canonical route ${route}`);
+assert(!globalNotifications.includes("r.use('/admin/profile/notifications'")&&!globalNotifications.includes("r.get('/admin/profile/notifications'")&&!globalNotifications.includes("r.post('/admin/profile/notifications'"),'Global notification router must not contain dead duplicate personal notification routes');
+for(const route of [
+  "/admin/profile/notifications'",
+  '/admin/profile/notifications/currency',
+  '/admin/profile/notifications/telegram/start',
+  '/admin/profile/notifications/telegram/unlink',
+  '/admin/profile/notifications/discord/start',
+  '/admin/profile/notifications/discord/callback',
+  '/admin/profile/notifications/discord/unlink',
+  '/admin/profile/notifications/whatsapp'
+]) assert(personalNotifications.includes(route),`Personal v2 notifications missing canonical route ${route}`);
 
 assert(platformRouter.includes('createAdminPersonalNotificationTestsRouter'),'Personal notification test routes must be mounted in the assembled platform router');
 for(const channel of ['email','telegram','discord','whatsapp'])assert(personalTests.includes(`/admin/profile/notifications/test/${channel}`),`Personal ${channel} delivery must have a test route`);
