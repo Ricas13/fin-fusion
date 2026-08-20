@@ -4,9 +4,9 @@ Welcome to the CAPTAiNFiN user guide. This documentation is written for customer
 
 Use the navigation to find the guide for your role:
 
-- **Customers** — account access, subscriptions, Jellyfin credentials, library visibility and security.
+- **Customers** — account access, subscriptions, Jellyfin credentials, library visibility, Stremio setup and security.
 - **Administrators** — plans, servers, libraries, payments, automation, security and platform settings.
-- **Stremio** — foundation/roadmap information for the future stream-only addon service.
+- **Stremio** — customer setup and administrator delivery/source management for the live Stremio service.
 
 ## Documentation principles
 
