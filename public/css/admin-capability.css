@@ -96,11 +96,16 @@
 .diagnosticDetail summary{cursor:pointer;color:#ffd0d5;font-size:11px;font-weight:800}
 .diagnosticDetail code{display:block;margin-top:7px;padding:9px 10px;border:1px solid rgba(255,97,116,.22);border-radius:8px;background:rgba(0,0,0,.18);color:#ffc5ca;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.45}
 
-/* Dashboard KPI decoration must never sit on top of labels, help targets or
-   metadata. Isolate the card and keep all real content above decorative layers. */
-.analyticsKpi{position:relative!important;isolation:isolate;overflow:hidden}
-.analyticsKpi>*{position:relative;z-index:2}
-.analyticsKpi::before,.analyticsKpi::after{z-index:0!important;pointer-events:none!important}
+/* The dashboard screenshot exposed decorative pseudo-elements crossing the KPI
+   meta line. KPI cards are operational summaries, so remove that decoration
+   completely instead of stacking it behind useful text. */
+.analyticsKpi{position:relative!important;isolation:isolate;overflow:visible!important}
+.analyticsKpi::before,.analyticsKpi::after{display:none!important;content:none!important}
+.analyticsKpi>*{position:relative;z-index:1}
+.analyticsCardHeader>div:first-child{min-width:0;flex:1 1 auto}
+.analyticsCardHeader h2{display:flex;align-items:center;gap:4px;min-width:0}
+.analyticsCardHeader .widgetInfo{flex:0 0 auto;margin-left:1px}
+.analyticsKpiMeta{position:relative;z-index:2;overflow:visible}
 
 @media(max-width:1450px){.capabilityAddGrid{grid-template-columns:1fr 1.3fr 1fr 1fr 100px}.capabilityAddGrid label:last-child{grid-column:auto}}
 @media(max-width:1350px){.capabilityLibraryGrid{grid-template-columns:repeat(4,minmax(0,1fr))}.capabilitySummaryStats{grid-template-columns:repeat(3,minmax(120px,1fr))}.capabilityStat:nth-child(4){border-left:0}.capabilityAddGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
