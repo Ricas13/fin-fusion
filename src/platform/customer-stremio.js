@@ -23,7 +23,7 @@ async function model(req,{credential=null,message=null,error=null}={}){
   let manifestUrl=null,stremioUrl=null;
   if(effectiveCredential){manifestUrl=await operations.absoluteUrl(req,`/stremio/${encodeURIComponent(effectiveCredential)}/manifest.json`);stremioUrl=stremioDeepLink(manifestUrl);}
   const status=String(row?.status||'pending');
-  return{siteName:runtimeSettings.siteName(),csrfToken:csrf.token(req),eligible,runtimeReady:foundation.runtimeReady(),status,statusLabel:row?status.replace(/^./,c=>c.toUpperCase()):'Not installed',streamLimit:Number(row?.stream_limit||sub?.streams||1),tokenHint:row?.token_hint||null,credential:effectiveCredential,manifestUrl,stremioUrl,message,error};
+  return{siteName:runtimeSettings.siteName(),csrfToken:csrf.token(req),eligible,runtimeReady:foundation.runtimeReady(),status,statusLabel:row?status.replace(/^./,c=>c.toUpperCase()):'Not installed',accessModel:'1 Stremio household',tokenHint:row?.token_hint||null,credential:effectiveCredential,manifestUrl,stremioUrl,message,error};
 }
 async function preprovisionManaged(credential){
   try{const entitlement=await stremio.findByInstallToken(credential);if(entitlement)await managedEntitlements.ensure(entitlement);}catch(error){console.warn('Managed Stremio pre-provisioning deferred:',error.message);}
