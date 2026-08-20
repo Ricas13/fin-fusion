@@ -3,6 +3,7 @@
 const crypto=require('crypto');
 const {query,transaction}=require('../db');
 const client=require('./source-client');
+const indexLock=require('./index-lock');
 
 const PAGE_SIZE=250;
 const PAGE_DELAY_MS=100;
@@ -20,17 +21,19 @@ async function state(sourceId){const r=await query('SELECT * FROM stremio_source
 function fullDue(row,forceFull=false){if(forceFull||row?.force_full||!row?.last_full_completed_at)return true;return Date.now()-new Date(row.last_full_completed_at).getTime()>=FULL_RECONCILE_HOURS*3600000;}
 async function queue(sourceId,{full=false}={}){await query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,updated_at) VALUES($1,'queued',NOW(),$2,NOW()) ON CONFLICT(source_id) DO UPDATE SET status='queued',next_incremental_at=NOW(),force_full=stremio_source_index_state.force_full OR EXCLUDED.force_full,updated_at=NOW()`,[sourceId,Boolean(full)]);}
 async function clearAndQueue(sourceId,{actorUserId=null}={}){
-  const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');
-  const current=await state(sourceId);if(current?.status==='running')throw new Error('This source is currently indexing. Wait for the current run to finish, then clear and rebuild it.');
-  return transaction(async db=>{
-    const deleted=await db.query('DELETE FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
-    await db.query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,item_count,last_error,updated_at)
-      VALUES($1,'queued',NOW(),TRUE,0,NULL,NOW()) ON CONFLICT(source_id) DO UPDATE SET
-      status='queued',next_incremental_at=NOW(),force_full=TRUE,item_count=0,last_error=NULL,updated_at=NOW()`,[sourceId]);
-    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-      VALUES($1,'admin.stremio.source.index_rebuild','stremio_source',$2,$3::jsonb)`,[actorUserId,sourceId,JSON.stringify({deletedItems:Number(deleted.rowCount||0),queuedFull:true})]);
-    return{sourceId,deleted:Number(deleted.rowCount||0),queued:true};
-  });
+  return indexLock.withIndexLock(async()=>{
+    const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');
+    const current=await state(sourceId);if(current?.status==='running')throw new Error('This source is currently indexing. Wait for the current run to finish, then clear and rebuild it.');
+    return transaction(async db=>{
+      const deleted=await db.query('DELETE FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
+      await db.query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,item_count,last_error,updated_at)
+        VALUES($1,'queued',NOW(),TRUE,0,NULL,NOW()) ON CONFLICT(source_id) DO UPDATE SET
+        status='queued',next_incremental_at=NOW(),force_full=TRUE,item_count=0,last_error=NULL,updated_at=NOW()`,[sourceId]);
+      await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+        VALUES($1,'admin.stremio.source.index_rebuild','stremio_source',$2,$3::jsonb)`,[actorUserId,sourceId,JSON.stringify({deletedItems:Number(deleted.rowCount||0),queuedFull:true})]);
+      return{sourceId,deleted:Number(deleted.rowCount||0),queued:true};
+    });
+  },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding this external source.'});
 }
 async function refreshProgress(sourceId){
   const count=await query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
