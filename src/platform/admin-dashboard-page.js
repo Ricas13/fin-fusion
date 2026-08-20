@@ -43,6 +43,7 @@ async function renderWidgetGrid(dashboardKey, req, ctx) {
     }).join('');
     return `
         <link rel="stylesheet" href="/css/admin-dashboard-analytics.css">
+        <link rel="stylesheet" href="/css/admin-dashboard-widget-layout.css">
         <div class="dashboardCustomizeBar"><button type="button" class="button secondary btn-sm" data-dashboard-customize-toggle>Customize dashboard</button></div>
         <div class="notice error widgetHidden" data-dashboard-layout-error role="alert"></div>
         <div class="widgetPicker widgetHidden" data-widget-picker><h3>Show/hide widgets</h3><div class="widgetPickerList">${picker}</div><div class="buttonRow" style="margin-top:10px"><button type="button" class="button secondary btn-sm" data-dashboard-reset>Restore defaults</button></div></div>

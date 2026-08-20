@@ -3,7 +3,7 @@
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
   {key:'people',label:'Customers',pages:[['users-dashboard','Overview','/admin/users/dashboard'],['users','Customers','/admin/users'],['tickets','Tickets','/admin/tickets'],['jellyfin-import','Import Jellyfin users','/admin/jellyfin-import']]},
-  {key:'servers',label:'Delivery',pages:[['stremio-sources','Stremio','/admin/servers/stremio/managed'],['servers-dashboard','Overview','/admin/servers/dashboard'],['servers','Jellyfin servers','/admin/servers'],['libraries','Libraries','/admin/libraries'],['activity','Playback','/admin/activity']]},
+  {key:'servers',label:'Delivery',pages:[['stremio-sources','Stremio','/admin/servers/stremio/managed'],['servers-dashboard','Overview','/admin/servers/dashboard'],['servers','Jellyfin servers','/admin/servers'],['activity','Playback','/admin/activity']]},
   {key:'commerce',label:'Plans & Payments',pages:[['commerce-overview','Overview','/admin/commerce'],['orders','Orders','/admin/orders'],['plans','Plans','/admin/plans'],['payments','Payments','/admin/payments']]},
   {key:'automation',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit log','/admin/events'],['backups','Backups','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['branding','Branding','/admin/settings/branding'],['support-policy','Support & legal','/admin/settings/support'],['settings-security','Security','/admin/settings?section=security'],['notification-settings','Notifications','/admin/notifications/preferences'],['settings-integrations','Integrations','/admin/settings?section=integrations']]}
@@ -24,6 +24,7 @@ const hiddenPages=Object.freeze({
   marketing:Object.freeze({groupKey:'commerce',parentKey:'commerce-overview',page:Object.freeze(['marketing','Marketing','/admin/marketing'])}),
   referrals:Object.freeze({groupKey:'commerce',parentKey:'commerce-overview',page:Object.freeze(['referrals','Affiliates','/admin/referrals'])}),
   'payment-risk-policy':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
+  libraries:Object.freeze({groupKey:'servers',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
   'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Policy drift','/admin/provisioning/drift'])}),
   'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'notification-settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),

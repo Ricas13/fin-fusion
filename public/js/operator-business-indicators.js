@@ -13,7 +13,13 @@
     payments:['Payments','Recent payment incidents','/admin/payments']
   };
   const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
-  const areaForCurrentPage=Object.entries(hrefByKey).find(([,href])=>normalizedPath===href)?.[0]||null;
+  function businessAreaForPath(path){
+    if(path==='/admin/users'||path==='/admin/users/dashboard')return'customers';
+    if(path==='/admin/orders')return'orders';
+    if(path==='/admin/tickets')return'tickets';
+    return null;
+  }
+  const areaForCurrentPage=businessAreaForPath(normalizedPath);
 
   function addSidebarBadge(key,count){
     const href=hrefByKey[key];

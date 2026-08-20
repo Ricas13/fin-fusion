@@ -26,7 +26,9 @@ assert(operator.includes('csrfToken:csrf.token(req)'),'authenticated unread resp
 assert(operator.includes('seen.customers')&&operator.includes('seen.orders')&&operator.includes('seen.tickets'),'business counts must use stored cursors');
 assert(tickets.includes('staffQueueSummary(since=null)'),'ticket unread summary must accept a cursor');
 assert(client.includes("'X-CSRF-Token':data.csrfToken"),'browser read acknowledgement must send CSRF token');
-assert(client.includes("normalizedPath===href"),'only the exact business inbox page may mark its area read');
+assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before acknowledging unread state');
+assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
+assert(client.includes("path==='/admin/orders'")&&client.includes("path==='/admin/tickets'"),'orders and tickets must still clear only from their own inbox pages');
 assert(!client.includes('localStorage'),'business unread state must not depend on local browser storage');
 
 console.log('operator read cursors smoke: ok');
