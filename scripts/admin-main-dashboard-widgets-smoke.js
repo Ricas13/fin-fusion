@@ -58,6 +58,17 @@ async function main() {
     assert(ctx.data.churn.activeAtStart >= 0);
     assert(ctx.data.churn.cancelledCount >= 1, 'seeded cancelled subscription must be counted');
 
+    // Main and Commerce must not invent separate churn definitions again.
+    const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/admin-dashboard-main.js'), 'utf8');
+    const commerceSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/admin-commerce-dashboard.js'), 'utf8');
+    const subscriptionAnalyticsSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/subscription-analytics.js'), 'utf8');
+    assert(mainSource.includes("require('./subscription-analytics')"), 'Main churn must use canonical subscription analytics');
+    assert(commerceSource.includes("require('./subscription-analytics')"), 'Commerce subscription movement must use canonical subscription analytics');
+    assert(mainSource.includes('subscriptionAnalytics.churnSummary(range)'), 'Main churn definition must delegate to the canonical owner');
+    assert(commerceSource.includes('subscriptionAnalytics.movementSummary(range)'), 'Commerce movement must delegate to the canonical owner');
+    assert(!commerceSource.includes("status IN('cancelled','expired')"), 'Commerce must not collapse cancellations and expirations into one churn number');
+    assert(subscriptionAnalyticsSource.includes("COALESCE(p.is_addon,FALSE)=FALSE") && subscriptionAnalyticsSource.includes('s.superseded_by IS NULL'), 'subscription analytics must remain primary-only and ignore superseded rows');
+
     const { html } = await renderMain(req);
     assert(html.includes('data-dashboard-key="main"'), 'rendered page must expose the widget-drag root');
     assert(html.includes('data-widget-key='), 'rendered page must include at least one widget');
