@@ -27,12 +27,21 @@ async function notifyNewJellyfinAccess(customerId,account){
         : `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. The same instructions are shown in your ${site} portal.`;
     await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,subject:`Your ${site} Jellyfin access is ready`,text:steps,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
     const admin=String(process.env.ADMIN_NOTIFICATION_EMAIL||'').trim();
-    if(admin)await notifications.dispatch({eventType:'customer.service.provisioned',to:admin,subject:`${site}: Jellyfin access provisioned`,text:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,dedpeKey:`admin-jellyfin-provisioned:${account.id}`,forceEmail:true});
+    if(admin)await notifications.dispatch({eventType:'customer.service.provisioned',to:admin,subject:`${site}: Jellyfin access provisioned`,text:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,dedupeKey:`admin-jellyfin-provisioned:${account.id}`,forceEmail:true});
   }catch(error){console.warn('Jellyfin onboarding notification failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});}
 }
 async function reconcileCustomer(customerId){
+  // A plan-specific inactivity hold belongs only to the free plan that created
+  // it. Release it before policy calculation if the customer has since moved
+  // to a different/free-disabled/paid entitlement. Manual and cleanup holds are
+  // deliberately untouched here.
   await inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId);
   await syncAccess(customerId);
+  // Detect only accounts created by this reconciliation. Existing/imported
+  // Jellyfin users keep their current credential state, while a newly-created
+  // account whose bootstrap password is random is immediately flagged for the
+  // customer to choose a real password in the portal or, for a personal admin
+  // media profile, from the administrator's own My Profile page.
   const before=await query(`SELECT id FROM jellyfin_accounts WHERE customer_id=$1`,[customerId]);
   const existing=new Set(before.rows.map(r=>String(r.id)));
   const outcome=await core.reconcileCustomer(customerId);
