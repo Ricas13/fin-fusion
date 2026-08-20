@@ -35,7 +35,7 @@ const PROVIDER_MUTATION_OWNERS = new Set([
 const MANUAL_SUBSCRIPTION_OWNER = 'src/entitlements/manual-subscriptions.js';
 
 const ENTITLEMENT_CONSUMERS = [
-    /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|placement|placement-preview|plan-servers)\.js$/,
+    /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|provisioning-engine|placement|placement-preview|plan-servers)\.js$/,
     /^src\/integrations\/.+\.js$/
 ];
 
