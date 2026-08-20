@@ -133,8 +133,8 @@ registry.register('main', 'mrr', {
     })
 });
 registry.register('main', 'activeCustomers', {
-    title: 'Active customers', defaultOrder: 2, defaultSpan: 3,
-    render: async ctx => widgets.kpiCard({ key: 'activeCustomers', label: 'Active customers', value: number(ctx.data.current.customers), meta: `${number(ctx.data.period.newCustomers)} new this period`, delta: ctx.data.period.delta.newCustomers, href: '/admin/users/dashboard' })
+    title: 'Active customers', subtitle: 'Customers with effective primary access right now.', defaultOrder: 2, defaultSpan: 3,
+    render: async ctx => widgets.kpiCard({ key: 'activeCustomers', label: 'Active customers', value: number(ctx.data.current.activeCustomers), meta: `${number(ctx.data.period.newCustomers)} new accounts this period`, delta: ctx.data.period.delta.newCustomers, href: '/admin/users/dashboard' })
 });
 registry.register('main', 'liveStreams', {
     title: 'Live streams', subtitle: 'Current fleet-wide concurrent playback sessions.', defaultOrder: 3, defaultSpan: 3,
@@ -164,8 +164,8 @@ registry.register('main', 'newVsCancelled', {
     render: async ctx => widgets.stackedAreaChart(ctx.data.newVsCancelled, ['new', 'cancelled'])
 });
 registry.register('main', 'planDistribution', {
-    title: 'Plan distribution', subtitle: 'Active and trialing subscriptions by plan.', defaultOrder: 9, defaultSpan: 6,
-    render: async ctx => widgets.barChart(ctx.data.planMix.map(row => ({ label: row.name, count: row.count })), 'count', undefined, { orientation: 'horizontal' })
+    title: 'Primary plan distribution', subtitle: 'Customers with effective primary access, grouped by their current plan.', defaultOrder: 9, defaultSpan: 6,
+    render: async ctx => widgets.barChart(ctx.data.primaryPlanMix.map(row => ({ label: row.name, count: row.count })), 'count', undefined, { orientation: 'horizontal' })
 });
 registry.register('main', 'platformHealth', {
     title: 'Platform health', defaultOrder: 10, defaultSpan: 6,
