@@ -32,6 +32,11 @@ async function managedMapping(entitlementId,mappingId){
     WHERE sma.id=$2 AND sma.entitlement_id=$1 AND sma.status='active' AND js.enabled=TRUE AND js.stremio_enabled=TRUE AND ja.disabled=FALSE`,[entitlementId,mappingId]);
   return result.rows[0]||null;
 }
+function settledStreams(result,label){
+  if(result.status==='fulfilled')return Array.isArray(result.value)?result.value:[];
+  console.error(`Stremio ${label} source resolution failed:`,String(result.reason?.message||result.reason).slice(0,500));
+  return[];
+}
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
@@ -49,13 +54,15 @@ function createStremioRuntimeRouter(){
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const type=String(req.params.type||''),videoId=String(req.params.videoId||''),origin=await publicOrigin(req);
       const managedDelivery={proxyBase:origin,installToken:req.params.token};
-      const [managed,external]=await Promise.all([
+      const [managedResult,externalResult]=await Promise.allSettled([
         managedRuntime.streamsFor(e,type,videoId,managedDelivery),
         externalRuntime.streamsFor(e,type,videoId)
       ]);
+      const managed=settledStreams(managedResult,'managed'),external=settledStreams(externalResult,'external');
       const streams=[...managed,...external];
-      await entitlements.markUse(e.id,'stream');return res.json({streams});
-    }catch(error){console.error('Stremio stream request failed:',String(error?.message||error).slice(0,300));return res.json({streams:[]});}
+      await entitlements.markUse(e.id,'stream').catch(error=>console.warn('Unable to update Stremio usage timestamp:',error.message));
+      return res.json({streams});
+    }catch(error){console.error('Stremio stream request failed before source resolution:',String(error?.message||error).slice(0,500));return res.json({streams:[]});}
   });
 
   // Managed playback is a control-plane hop only. CAPTAiNFiN re-runs
@@ -87,4 +94,4 @@ function createStremioRuntimeRouter(){
   return router;
 }
 
-module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,managedMapping,createStremioRuntimeRouter};
+module.exports={available:true,enabled,manifest,publicOrigin,hasExplicitSources,attachLease,managedMapping,settledStreams,createStremioRuntimeRouter};

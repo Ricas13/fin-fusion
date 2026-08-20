@@ -7,6 +7,7 @@ const jellyfin=require('./jellyfin-runtime');
 const mediaIndex=require('./media-index');
 const episodeResolution=require('./episode-resolution');
 const managedEntitlements=require('./managed-entitlements');
+const managedSources=require('./managed-sources');
 const entitlements=require('./entitlements');
 const sourceAdmission=require('./source-admission');
 
@@ -49,9 +50,6 @@ function playMethodFor(source){
   if(!source?.Id)return null;
   if(source.SupportsDirectPlay!==false)return'DirectPlay';
   if(source.TranscodingUrl){if(source.SupportsDirectStream===true)return'DirectStream';if(source.SupportsTranscoding!==false)return'Transcode';}
-  // Keep the current optimistic direct-play behaviour as a final fallback when
-  // the plan forbids server-side conversion but the native Stremio player may
-  // still understand the original codec/container.
   return'DirectPlay';
 }
 function publicTranscodingUrl(mapping,relativeUrl,{accessToken,playSessionId='',deviceId=''}){
@@ -82,11 +80,18 @@ async function streamsFromMapping(mapping,args,type,videoId,{proxyBase,installTo
   const sources=(Array.isArray(playback?.MediaSources)?playback.MediaSources:[]).filter(source=>source?.Id);
   return sources.map(source=>{const filename=jellyfin.sourceFilename(item,source),quality=jellyfin.sourceQuality(source,filename),display=foundation.streamDisplayFromFilename(filename),lease=sourceAdmission.issue();return{rank:quality.rank,stream:{name:display.name,description:foundation.richStreamDescription(display,source),url:admissionUrl({portalBase:proxyBase,installToken,mapping,itemId:item.id,mediaSourceId:source.Id,playSessionId:playback?.PlaySessionId||'',lease}),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,filename),filename,...(Number(source.Size)>0?{videoSize:Number(source.Size)}:{})}}};}).sort((a,b)=>b.rank-a.rank);
 }
+async function mappingsForSearch(entitlement){
+  try{return await managedEntitlements.mappings(entitlement);}
+  catch(error){
+    console.warn('Managed Stremio policy refresh failed; falling back to active persisted mappings:',String(error?.message||error).slice(0,500));
+    return managedSources.accountsForEntitlement(entitlement.id);
+  }
+}
 async function streamsFor(entitlement,type,videoId,options={}){
-  const args=jellyfin.parseVideoId(type,videoId);if(!args)return[];const mappings=await managedEntitlements.mappings(entitlement);if(!mappings.length)return[];
+  const args=jellyfin.parseVideoId(type,videoId);if(!args)return[];const mappings=await mappingsForSearch(entitlement);if(!mappings.length)return[];
   const settled=await Promise.allSettled(mappings.map(mapping=>streamsFromMapping(mapping,args,type,videoId,options))),output=[];
   for(let index=0;index<settled.length;index+=1){const result=settled[index],mapping=mappings[index];if(result.status==='fulfilled'){output.push(...result.value.map(row=>row.stream));continue;}await query(`UPDATE stremio_managed_accounts SET last_error=$2,updated_at=NOW() WHERE id=$1`,[mapping.id,String(result.reason?.message||result.reason).slice(0,1000)]).catch(()=>{});console.warn(`Managed Stremio stream resolution failed on ${mapping.server_name}:`,result.reason?.message||result.reason);}
   return output;
 }
 
-module.exports={MAX_STREAMING_BITRATE,DIRECT_CONTAINERS,DIRECT_AUDIO_CODECS,neutralGroup,containerExtension,directUrl,admissionUrl,runtimeEntitlement,stremioDeviceProfile,playbackInfo,mediaSource,playMethodFor,publicTranscodingUrl,playbackUrl,resolveManagedItem,streamsFromMapping,streamsFor};
+module.exports={MAX_STREAMING_BITRATE,DIRECT_CONTAINERS,DIRECT_AUDIO_CODECS,neutralGroup,containerExtension,directUrl,admissionUrl,runtimeEntitlement,stremioDeviceProfile,playbackInfo,mediaSource,playMethodFor,publicTranscodingUrl,playbackUrl,resolveManagedItem,streamsFromMapping,mappingsForSearch,streamsFor};
