@@ -81,6 +81,25 @@
 .settingChannelBody>.input,.settingChannelBody>input.input{min-height:34px;padding:6px 8px}
 .settingChannelBody .muted{font-size:10px}
 
+/* Notification event catalogues read as group rows until the operator chooses
+   a group. This keeps dozens of boolean routes off the initial viewport. */
+.settingEventDisclosure{display:block;margin:0 0 7px;border:1px solid #2b3947;border-radius:9px;background:#101820;overflow:hidden}
+.settingEventDisclosure>summary{list-style:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px;min-height:42px;padding:7px 10px;cursor:pointer}
+.settingEventDisclosure>summary::-webkit-details-marker{display:none}
+.settingEventDisclosure>summary strong{color:#e4ebf1;font-size:12px;font-weight:760}
+.settingEventDisclosure>summary small,.settingEventDisclosure>summary .muted{color:#8190a0!important;font-size:10px}
+.settingEventDisclosure>summary>span:last-child{color:#7bd8f2;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.settingEventDisclosure[open]>summary{border-bottom:1px solid #293846;background:rgba(32,169,214,.035)}
+.settingEventDisclosure[open]>summary>span:last-child{color:#91a0b0}
+.settingEventDisclosure[open]>summary>span:last-child::after{content:' · close'}
+.settingEventBody{margin:0!important;border:0!important;border-radius:0!important;background:#0d141b!important;box-shadow:none!important;overflow:hidden!important}
+.settingEventBody>.tableWrap,.settingEventDisclosure>.tableWrap{margin:0;border:0;border-radius:0}
+.settingEventBody .dataTable,.settingEventDisclosure .dataTable{margin:0}
+.notificationEventGroup.settingEventDisclosure{margin-bottom:7px!important}
+.notificationEventGroup.settingEventDisclosure>summary{padding:7px 10px!important}
+.notificationEventGroup.settingEventDisclosure>summary::after{content:'Edit';margin-left:auto;color:#7bd8f2;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.notificationEventGroup.settingEventDisclosure[open]>summary::after{content:'Close';color:#91a0b0}
+
 /* Personal notification connections are naturally short cards: use the width
    of the page instead of stacking two oversized cards per row. */
 .notificationIdentityGrid{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;padding:10px!important}
@@ -90,4 +109,4 @@
 
 @media(max-width:1350px){.settingToggleGrid{grid-template-columns:repeat(3,minmax(0,1fr))}.notificationIdentityGrid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
 @media(max-width:1000px){.settingToggleGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.notificationIdentityGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
-@media(max-width:620px){.settingToggleGrid,.notificationIdentityGrid{grid-template-columns:1fr!important}.settingCredential{grid-template-columns:1fr auto}.settingCredential>.button{grid-column:1/-1;justify-self:start}.settingChannelDisclosure>summary,.settingSecretDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingChannelEdit,.settingSecretDisclosure>summary>em{display:none}}
+@media(max-width:620px){.settingToggleGrid,.notificationIdentityGrid{grid-template-columns:1fr!important}.settingCredential{grid-template-columns:1fr auto}.settingCredential>.button{grid-column:1/-1;justify-self:start}.settingChannelDisclosure>summary,.settingSecretDisclosure>summary,.settingEventDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingChannelEdit,.settingSecretDisclosure>summary>em,.settingEventDisclosure>summary>small{display:none}}
