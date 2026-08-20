@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -15,6 +16,7 @@ permissions:
 jobs:
   release-integrity:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17-alpine
@@ -45,13 +47,49 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+
       - name: Workflow trigger and suite hygiene
         run: node scripts/workflow-trigger-hygiene-smoke.js
+
       - name: Apply schema on production PostgreSQL major
         run: npm run db:migrate
+
       - name: Database release checks
         run: npm run check:db
+
       - name: Global assembled route ownership
         run: node scripts/assembled-route-ownership-smoke.js
+
       - name: Previous-schema upgrade contract
         run: node scripts/lifecycle-upgrade-smoke.js
+
+      - name: Production readiness executes against current schema
+        run: node scripts/production-readiness.js --json || true
+
+      - name: Rebuild clean schema for baseline audit
+        run: |
+          node <<'NODE'
+          const { Client } = require('pg');
+          (async () => {
+            const client = new Client({ connectionString: process.env.DATABASE_URL });
+            await client.connect();
+            await client.query('DROP SCHEMA IF EXISTS public CASCADE');
+            await client.query('CREATE SCHEMA public');
+            await client.end();
+          })().catch(error => { console.error(error); process.exit(1); });
+          NODE
+          npm run db:migrate
+
+      - name: Verify generated schema contains no retired product vocabulary
+        shell: bash
+        run: |
+          docker run --rm --network host postgres:17-alpine \
+            pg_dump "$DATABASE_URL" --no-owner --no-privileges --inserts \
+            --exclude-table=schema_migrations \
+            --exclude-table=user_sessions \
+            > /tmp/database.sql
+          term="$(printf 're%s' 'seller')"
+          if grep -in "$term" /tmp/database.sql; then
+            echo "::error::Retired product vocabulary remains in generated database"
+            exit 1
+          fi

@@ -1,29 +1,125 @@
-name: Clean Install
+name: Browser & Clean Install
 
 on:
   pull_request:
     paths:
+      - 'src/**'
+      - 'views/**'
+      - 'public/**'
+      - 'tests/**'
+      - 'scripts/**'
       - 'db/migrations/**'
-      - 'scripts/migrate-db.js'
-      - 'scripts/bootstrap-admin.js'
-      - 'scripts/rotate-first-run-claim.js'
-      - 'scripts/clean-install-smoke.js'
-      - 'src/application.js'
-      - 'src/auth/first-run-setup.js'
-      - 'src/auth/first-run-controller.js'
-      - 'views/auth/first-run-*.ejs'
-      - 'src/platform/**'
-      - 'src/customers.js'
-      - 'views/customer/dashboard.ejs'
-      - 'staff-auth-preload.js'
-      - 'secure-start.js'
       - 'docker-compose.yml'
-      - '.github/workflows/clean-install.yml'
+      - 'secure-start.js'
+      - 'staff-auth-preload.js'
+      - '.github/workflows/browser.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
+  admin-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion_browser
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion_browser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion_browser
+      NODE_ENV: test
+      PORT: '3030'
+      COOKIE_SECURE: 'false'
+      SESSION_SECRET: browser-regression-session-secret-2026-very-long-and-unique-value
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      STREMIO_JELLYFIN_TOKEN_KEY: 4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ADMIN_USERNAME: browseradmin
+      ADMIN_PASSWORD: BrowserAuditPass!2026
+      ADMIN_EMAIL: browseradmin@example.invalid
+      REQUIRE_ADMIN_2FA: 'false'
+      BROWSER_ADMIN_USERNAME: browseradmin
+      BROWSER_ADMIN_PASSWORD: BrowserAuditPass!2026
+      BROWSER_BASE_URL: http://127.0.0.1:3030
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install application dependencies
+        run: npm ci
+      - name: Install browser harness
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Prepare clean browser database
+        run: |
+          npm run db:migrate
+          npm run auth:bootstrap
+      - name: Audit mounted admin route ownership
+        run: node scripts/admin-route-ownership-audit.js
+      - name: Start CAPTAiNFiN
+        run: |
+          node src/application.js > /tmp/captainfin-browser.log 2>&1 &
+          echo $! > /tmp/captainfin-browser.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3030/health/ready >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/captainfin-browser.log
+          exit 1
+      - name: Crawl authenticated admin UI in Chromium
+        run: node tests/admin-browser-regression.js
+      - name: Verify admin information architecture in Chromium
+        shell: bash
+        run: |
+          set +e
+          OUTPUT="$(node tests/admin-information-architecture-regression.js 2>&1)"
+          STATUS=$?
+          printf '%s\n' "$OUTPUT"
+          if [ "$STATUS" -ne 0 ]; then
+            DETAIL="$(printf '%s' "$OUTPUT" | tail -c 2500 | tr '\n' ' ')"
+            echo "::error title=Admin IA regression::$DETAIL"
+            exit "$STATUS"
+          fi
+      - name: Simulate admin to customer activation and sign-in
+        run: node tests/admin-customer-activation-journey.js
+      - name: Simulate deferred Jellyfin provisioning after activation
+        run: node tests/admin-deferred-provisioning-journey.js
+      - name: Print app log on failure
+        if: failure()
+        run: cat /tmp/captainfin-browser.log || true
+      - name: Upload browser audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-browser-audit
+          path: test-results/admin-browser
+          if-no-files-found: warn
+          retention-days: 14
+
   clean-install:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17-alpine
