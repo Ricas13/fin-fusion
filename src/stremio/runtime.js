@@ -57,7 +57,7 @@ function createStremioRuntimeRouter(){
       const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};
       upstream.on('error',()=>{stop();if(!res.headersSent)res.status(502);res.end();});
       upstream.on('end',stop);
-      res.on('close',()=>{stop();if(!res.writableEnded)opened?.request?.destroy();});
+      res.on('close',()=>{stop();if(admitted)sourceAdmission.release(e.id,lease).catch(()=>{});if(!res.writableEnded)opened?.request?.destroy();});
       upstream.pipe(res);
     }catch(_error){if(heartbeat)clearInterval(heartbeat);opened?.request?.destroy();if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});if(!res.headersSent)return res.status(502).end();return res.end();}
   });
