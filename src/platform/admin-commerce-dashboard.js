@@ -108,13 +108,8 @@ async function checkoutFunnel(range) {
 }
 
 async function topPlansBySubscribers(limit = 10) {
-    const result = await query(`
-        SELECT p.name,p.service_type,p.billing_interval,COUNT(*)::int subscribers
-        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.status IN('active','trialing') AND s.current_period_end>NOW()
-        GROUP BY p.id,p.name,p.service_type,p.billing_interval ORDER BY subscribers DESC LIMIT $1
-    `, [limit]);
-    return result.rows;
+    const summary = await subscriptionAnalytics.effectivePrimarySummary(new Date(), { limit });
+    return summary.planMix.map(row => ({ ...row, subscribers: Number(row.count || 0) }));
 }
 
 async function paymentStateBreakdown() {
@@ -154,6 +149,6 @@ registry.register('commerce','planPerformance',{title:'Plan performance',subtitl
 registry.register('commerce','paymentStateBreakdown',{title:'Payment incident states',subtitle:'Provider verification and access-recovery workflow items.',defaultOrder:10,defaultSpan:6,lazy:true,render:async ctx=>{const s=ctx.data.paymentStates;if(!s.total)return widgets.emptyState('No customer payment incidents recorded yet.');return widgets.donutChart([{name:'New',count:s.open},{name:'Acknowledged',count:s.acknowledged},{name:'Resolved',count:s.resolved}]);}});
 registry.register('commerce','checkoutFunnel',{title:'Checkout funnel',subtitle:'CAPTAiNFiN does not track pre-checkout visitors, so this funnel starts at checkout creation.',defaultOrder:11,defaultSpan:6,render:async ctx=>widgets.funnelChart(ctx.data.funnel)});
 registry.register('commerce','refundFailedTrend',{title:'Refunds & failed payments',defaultOrder:12,defaultSpan:8,lazy:true,render:async ctx=>ctx.data.refundFailureSeries.some(row=>row.refunds||row.failed)?widgets.stackedAreaChart(ctx.data.refundFailureSeries,['refunds','failed']):widgets.emptyState('No refunds or failed payment events in this period.')});
-registry.register('commerce','topPlans',{title:'Top plans by subscribers',defaultOrder:13,defaultSpan:4,lazy:true,render:async ctx=>{if(!ctx.data.topPlans.length)return widgets.emptyState('No active plans have subscribers yet.');return widgets.statusTable(ctx.data.topPlans,[{key:'name',label:'Plan',render:row=>esc(row.name)},{key:'service_type',label:'Service',render:row=>esc(row.service_type)},{key:'subscribers',label:'Subscribers',align:'numeric',render:row=>esc(row.subscribers)}]);}});
+registry.register('commerce','topPlans',{title:'Top primary plans by active customers',subtitle:'Effective primary access, not raw billing status.',defaultOrder:13,defaultSpan:4,lazy:true,render:async ctx=>{if(!ctx.data.topPlans.length)return widgets.emptyState('No customers currently have effective primary access.');return widgets.statusTable(ctx.data.topPlans,[{key:'name',label:'Plan',render:row=>esc(row.name)},{key:'service_type',label:'Service',render:row=>esc(row.service_type)},{key:'subscribers',label:'Active customers',align:'numeric',render:row=>esc(row.subscribers)}]);}});
 
 module.exports = { buildContext, refundFromEvent, summarizeEvents };
