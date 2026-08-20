@@ -18,11 +18,6 @@ function filesUnder(dir) {
 
 function rel(file) { return path.relative(ROOT, file).split(path.sep).join('/'); }
 
-// Extract SQL text passed directly to query()/client.query(). The earlier
-// checker combined unrelated SQL statements from the same source file, which
-// could falsely flag a safe manual UPDATE merely because another SELECT in the
-// file mentioned provider_subscription_id. Lifecycle ownership is a statement
-// invariant, so inspect each SQL statement independently.
 function sqlStatements(source) {
     const statements = [];
     const re = /\b(?:query|client\.query)\s*\(\s*([`'"])([\s\S]*?)\1/g;
@@ -31,27 +26,24 @@ function sqlStatements(source) {
     return statements;
 }
 
-// Provider billing identities and provider-driven subscription state must remain
-// behind the lifecycle layer. Route and UI modules remain outside this list.
 const PROVIDER_MUTATION_OWNERS = new Set([
-    'src/payments/lifecycle-core.js',
+    'src/payments/lifecycle-primitives.js',
     'src/payments/lifecycle.js',
     'src/payments/customer-plan-change.js'
 ]);
+
+const MANUAL_SUBSCRIPTION_OWNER = 'src/entitlements/manual-subscriptions.js';
 
 const ENTITLEMENT_CONSUMERS = [
     /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|placement|placement-preview|plan-servers)\.js$/,
     /^src\/integrations\/.+\.js$/
 ];
 
-// Activity takes a read-only batch snapshot to attach a stream-limit number to
-// observed Jellyfin sessions. It does not grant/provision access or mutate the
-// subscription lifecycle; destructive enforcement still revalidates live
-// sessions immediately before action. Keep this exception narrow and explicit.
 const RAW_READ_EXCEPTIONS = new Set(['src/jellyfin/activity.js']);
 
 const failures = [];
 const sourceFiles = filesUnder(SRC);
+let manualOwnerHasInsert = false;
 for (const file of sourceFiles) {
     const name = rel(file);
     const source = fs.readFileSync(file, 'utf8');
@@ -68,8 +60,12 @@ for (const file of sourceFiles) {
         }
     }
 
-    // Enforcement consumers must use the canonical entitlement view/service,
-    // not reconstruct “active subscription” rules from raw subscriptions.
+    const insertsSubscription = statements.some(sql => /\bINSERT\s+INTO\s+subscriptions\b/i.test(sql));
+    if (name === MANUAL_SUBSCRIPTION_OWNER) manualOwnerHasInsert = insertsSubscription;
+    if (['src/subscriptions.js', 'src/subscriptions-core.js'].includes(name) && insertsSubscription) {
+        failures.push(`${name}: manual subscription INSERT must delegate to ${MANUAL_SUBSCRIPTION_OWNER}`);
+    }
+
     if (ENTITLEMENT_CONSUMERS.some(pattern => pattern.test(name)) && !RAW_READ_EXCEPTIONS.has(name)) {
         const rawRead = statements.some(sql => /\b(?:FROM|JOIN)\s+subscriptions\b/i.test(sql));
         const canonical = /effective_customer_entitlements|subscription-state/.test(source);
@@ -77,9 +73,46 @@ for (const file of sourceFiles) {
     }
 }
 
-// Migration history is keyed by full filename, so historical duplicate numeric
-// prefixes cannot safely be renamed after deployment. Enforce monotonic unique
-// numeric prefixes from migration 063 onward instead.
+if (!manualOwnerHasInsert) failures.push(`${MANUAL_SUBSCRIPTION_OWNER}: canonical manual subscription INSERT is missing`);
+
+const lifecycleCore = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle-core.js'), 'utf8');
+const lifecycle = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle.js'), 'utf8');
+const primitives = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle-primitives.js'), 'utf8');
+if (!/module\.exports\s*=\s*require\(['"]\.\/lifecycle['"]\)/.test(lifecycleCore)) {
+    failures.push('src/payments/lifecycle-core.js: historical path must delegate directly to lifecycle.js');
+}
+if (/\basync\s+function\b|\bfunction\s+(?:startFreeTrial|claimFreePlan|getProviderPlan)\b/.test(lifecycleCore)) {
+    failures.push('src/payments/lifecycle-core.js: duplicate lifecycle implementation detected');
+}
+if (/require\(['"]\.\/lifecycle-core['"]\)/.test(lifecycle)) {
+    failures.push('src/payments/lifecycle.js: canonical lifecycle must depend on primitives, not lifecycle-core');
+}
+if (!/require\(['"]\.\/lifecycle-primitives['"]\)/.test(lifecycle)) {
+    failures.push('src/payments/lifecycle.js: canonical lifecycle must use lifecycle-primitives');
+}
+for (const highLevel of ['startFreeTrial', 'claimFreePlan', 'getProviderPlan', 'getProviderOptions', 'getProviderPlanByExternalId']) {
+    if (new RegExp(`\\b(?:async\\s+)?function\\s+${highLevel}\\b`).test(primitives)) {
+        failures.push(`src/payments/lifecycle-primitives.js: high-level policy ${highLevel} belongs in lifecycle.js`);
+    }
+}
+
+const subscriptions = fs.readFileSync(path.join(SRC, 'subscriptions.js'), 'utf8');
+const subscriptionsCore = fs.readFileSync(path.join(SRC, 'subscriptions-core.js'), 'utf8');
+if (!/module\.exports\s*=\s*require\(['"]\.\/subscriptions['"]\)/.test(subscriptionsCore)) {
+    failures.push('src/subscriptions-core.js: historical path must delegate directly to subscriptions.js');
+}
+if (/\basync\s+function\b|\bINSERT\s+INTO\s+subscriptions\b/i.test(subscriptionsCore)) {
+    failures.push('src/subscriptions-core.js: duplicate subscriptions implementation detected');
+}
+for (const exported of ['getPlanByCode', 'createManualSubscription', 'applyProviderState']) {
+    if (!new RegExp(`\\b(?:async\\s+)?function\\s+${exported}\\b`).test(subscriptions)) {
+        failures.push(`src/subscriptions.js: canonical subscriptions service must own ${exported}`);
+    }
+}
+if (!subscriptions.includes("require('./entitlements/manual-subscriptions')")) {
+    failures.push('src/subscriptions.js: manual subscription creation must delegate to entitlement owner');
+}
+
 const migrationDir = path.join(ROOT, 'db', 'migrations');
 const modern = fs.readdirSync(migrationDir)
     .map(name => ({ name, match: name.match(/^(\d{3})_/)}))

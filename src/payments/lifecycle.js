@@ -1,6 +1,6 @@
 'use strict';
 
-const core = require('./lifecycle-core');
+const primitives = require('./lifecycle-primitives');
 const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
 const capacity = require('../entitlements/plan-capacity');
@@ -137,7 +137,7 @@ async function startFreeTrial(customerId, planCode) {
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
-    await core.reconcileCommittedCustomer(customerId, 'Trial');
+    await primitives.reconcileCommittedCustomer(customerId, 'Trial');
     return created;
 }
 
@@ -181,7 +181,7 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
-    await core.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan');
+    await primitives.reconcileCommittedCustomer(customerId, automatic ? 'Automatic free plan' : 'Free plan');
     return created;
 }
 
@@ -206,14 +206,14 @@ async function activatePurchase(input) {
     if (state.recurringProvider({ source: input.provider, provider_subscription_id: input.providerSubscriptionId })) {
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
-    const activated=await core.activatePurchase(input);
+    const activated=await primitives.activatePurchase(input);
     const released=await inactivityHolds.releaseObsoleteForCustomer(input.customerId);
-    if(released)await core.reconcileCommittedCustomer(input.customerId,'Paid plan');
+    if(released)await primitives.reconcileCommittedCustomer(input.customerId,'Paid plan');
     return activated;
 }
 
 module.exports = {
-    ...core,
+    ...primitives,
     getProviderOptions,
     getProviderPlan,
     getProviderPlanByExternalId,
