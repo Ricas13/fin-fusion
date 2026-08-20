@@ -22,6 +22,7 @@ const planCreate=read('src/platform/admin-plan-create-v2.js');
 const abuse=read('src/platform/admin-abuse-protection.js');
 const automation=read('src/platform/admin-automation.js');
 const payments=read('src/platform/admin-payment-settings.js');
+const requestUsers=read('src/platform/admin-request-users.js');
 const indexLock=read('src/stremio/index-lock.js');
 const managedIndex=read('src/stremio/media-index.js');
 const externalIndex=read('src/stremio/source-index.js');
@@ -33,14 +34,16 @@ assert(capability.includes("@import url('/css/admin-capability-base.css')")&&cap
 assert(capabilityBase.includes('.capabilityPage')&&capabilityBase.includes('.capabilityLibraryGrid'),'capability-page layout must remain available');
 
 for(const token of ['.settingToggleGrid','.settingToggleInput','.settingSwitchInput','.settingInlineSwitch','.settingSecretDisclosure','.settingChannelDisclosure','.settingEventDisclosure','.booleanMatrix','.notificationIdentityGrid'])assert(controls.includes(token),`shared setting CSS missing ${token}`);
-assert(providerControls.includes('.settingProviderDisclosure')&&providerControls.includes('.settingProviderBody'),'payment-provider configuration must use the shared summary/expand philosophy');
+assert(providerControls.includes('.settingProviderDisclosure')&&providerControls.includes('.settingProviderBody'),'provider/integration configuration must use the shared summary/expand philosophy');
 assert(controlRenderer.includes('function toggle(')&&controlRenderer.includes('function grid(')&&controlRenderer.includes('function switchInput(')&&controlRenderer.includes('function configured('),'server-rendered settings must have reusable boolean/credential helpers');
 assert(enhancer.includes("label.toggleRow, label.checkRow")&&enhancer.includes("label.inlineToggle")&&enhancer.includes(".toggleGrid"),'legacy boolean controls must be promoted into the shared setting language');
 assert(enhancer.includes('/admin/notifications/preferences')&&enhancer.includes('/admin/profile/notifications'),'global and personal notification matrices must use shared switch behavior');
 assert(enhancer.includes('compactGlobalNotificationChannels')&&enhancer.includes('settingChannelDisclosure'),'global messaging credentials must collapse behind compact channel rows');
 assert(enhancer.includes('compactConfiguredSecrets')&&enhancer.includes('settingSecretDisclosure'),'configured password/API-key inputs must collapse to state-first credential rows');
+assert(enhancer.includes('input[type="checkbox"][name^="clear"]')&&enhancer.includes('.inlineHelp, .fieldHelp, .settings-hint'),'configured-secret disclosure must carry clear controls and helper copy with the hidden secret field');
 assert(enhancer.includes('compactNotificationEventGroups')&&enhancer.includes('settingEventDisclosure'),'notification event catalogues must collapse by job/group until editing');
 assert(enhancer.includes('compactPaymentProviders')&&enhancer.includes('settingProviderDisclosure'),'Stripe/PayPal setup must collapse to provider status rows until editing');
+assert(enhancer.includes('compactRequestService')&&enhancer.includes('request-service-config'),'Request Service setup must collapse to a status/configure row ahead of daily operations');
 
 assert(settings.includes('class="toggleRow"'),'general/security settings must remain discoverable by the compatibility upgrader while migration is in progress');
 assert(plans.includes('class="toggleGrid"')&&plans.includes('class="toggleRow"'),'existing plan boolean policy must feed the canonical toggle grid');
@@ -48,6 +51,7 @@ assert(planCreate.includes('class="toggleGrid"')&&planCreate.includes('class="to
 assert(abuse.includes('clearTurnstileSecret')&&abuse.includes('Configured — leave blank to keep'),'configured Turnstile secrets must be eligible for global credential disclosure');
 assert(automation.includes('class="checkRow"')&&automation.includes('name="enabled"'),'automation enabled flags must feed the canonical boolean language');
 assert(payments.includes('id="stripe-provider"')&&payments.includes('id="paypal-provider"')&&payments.includes('Configured — leave blank to keep current value'),'payment provider cards and configured secrets must remain discoverable by compact enhancement');
+assert(requestUsers.includes('action="/admin/request-users/settings"')&&requestUsers.includes('Configured — leave blank to keep current key'),'Request Service must expose a discoverable configuration form and state-preserving API-key field');
 assert(notifications.includes('telegramEnabled')&&notifications.includes('discordEnabled')&&notifications.includes('whatsappEnabled'),'global notification channel booleans must remain connected to persisted settings');
 assert(personalNotifications.includes('notificationEventGroup')&&personalNotifications.includes('type="checkbox"'),'personal event routing must remain a boolean matrix for the shared enhancer');
 
