@@ -27,8 +27,9 @@ assert(playMethodMigration.includes('play_method'),'managed playback leases must
 assert(identities.includes("account_purpose='stremio_internal'"),'managed playback must use hidden Stremio-only Jellyfin accounts');
 assert(identities.includes('EnableRemoteAccess:!disabled'),'hidden managed users must always permit remote Stremio authentication while enabled');
 assert(legacyEntitlements.includes('EnableRemoteAccess:!disabled'),'legacy hidden-user preparation must not reintroduce remote-auth denial');
-assert(identities.includes('jellyfinSessionLimit(limit)')&&legacyEntitlements.includes('internalSessionLimit(limit)'),'Jellyfin hidden-user policy must reserve one control session outside the advertised playback allowance');
-assert(identities.includes('Number(limit||1)+1')&&legacyEntitlements.includes('Number(limit||1)+1'),'reserved control session must be exactly one above the customer playback limit');
+assert(identities.includes('MaxActiveSessions:0')&&legacyEntitlements.includes('MaxActiveSessions:0'),'hidden Stremio users must leave Jellyfin session counting unlimited; CAPTAiNFiN owns stream admission');
+assert(!identities.includes('jellyfinSessionLimit')&&!legacyEntitlements.includes('internalSessionLimit'),'Jellyfin session caps must not mirror or reserve around the customer stream limit');
+assert(identities.includes('policyReady')&&identities.includes('pending=accounts.filter'),'existing hidden users must be repaired to the portal-owned session policy before managed results are returned after a restart');
 assert(identities.includes('playback_password_encrypted')&&identities.includes('PASSWORD_PREFIX'),'hidden-user playback password must use a separate encrypted purpose');
 assert(identities.includes('managedSources.enabled()'),'managed identity provisioning must follow managed source configuration');
 assert(identities.includes('currentMappings(entitlement.id,allowedIds)'),'normal search reconciliation must have a database-only ready-account fast path');
@@ -63,6 +64,7 @@ assert(lifecycle.includes('existingPlayback'),'retries of one admitted result mu
 assert(lifecycle.includes('deviceId(rawLease)'),'managed streams must get distinct Jellyfin device/session identities');
 assert(lifecycle.includes('PlayMethod:normalizePlayMethod(playMethod)'),'Jellyfin start/stop lifecycle must report the negotiated play method rather than always claiming DirectPlay');
 assert(lifecycle.includes('Promise.allSettled(servers.map'),'managed playback lifecycle polling must snapshot each Jellyfin server once per cycle');
+assert(lifecycle.includes('sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS})'),'active managed playback must renew its CAPTAiNFiN admission lease for the full playback lifetime');
 
 assert(external.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external direct playback must use its dedicated Jellyfin source token');
 assert(!external.includes('/PlaybackInfo'),'external unmanaged streams must not call Jellyfin PlaybackInfo');
