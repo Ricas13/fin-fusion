@@ -1,0 +1,88 @@
+'use strict';
+
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const root=path.resolve(__dirname,'..');
+const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+
+const modules=require('../src/modules/registry');
+const drivers=require('../src/access/drivers');
+const components=require('../src/access/plan-components');
+const identity=require('../src/access/network-identity');
+const policy=require('../src/jellyfin/policy');
+
+const defaultModules=modules.snapshot({enabledModules:''});
+assert(defaultModules.modules.every(item=>item.enabled),'legacy/self-hosted compatibility must not disable shipped modules before licensing is configured');
+const limited=modules.snapshot({enabledModules:'jellyfin',deploymentMode:'hosted',tenantKey:'tenant-a'});
+assert.strictEqual(limited.deploymentMode,'hosted');
+assert.strictEqual(limited.tenantKey,'tenant-a');
+assert(modules.isEnabled('jellyfin',{enabledModules:'jellyfin'}));
+assert(!modules.isEnabled('stremio',{enabledModules:'jellyfin'}));
+assert(modules.definition('reseller').capabilities.includes('reseller.access'),'future commercial modules must have stable capability identities');
+
+const streamPlan={service_type:'jellyfin',jellyfin_access_model:'concurrent_streams',streams:3};
+const streamComponent=components.componentForPlan(streamPlan,'jellyfin');
+assert.strictEqual(streamComponent.driver,'concurrent_streams');
+assert.strictEqual(streamComponent.config.streamLimit,3);
+assert.strictEqual(components.accessLabel(streamPlan),'3 Jellyfin streams');
+
+const householdPlan={service_type:'jellyfin',jellyfin_access_model:'household_network',streams:null,jellyfin_household_network_limit:1,jellyfin_household_lease_minutes:180};
+const householdComponent=components.componentForPlan(householdPlan,'jellyfin');
+assert.strictEqual(householdComponent.driver,'household_network');
+assert.deepStrictEqual(householdComponent.config,{networkLimit:1,leaseMinutes:180});
+assert.strictEqual(components.accessLabel(householdPlan),'1 Jellyfin household network');
+assert.deepStrictEqual(policy.effectiveTechnicalPolicy(householdPlan,{streams:9}).streams,{plan:null,override:null,effective:null},'stream overrides must not reactivate concurrent limits on a household plan');
+
+const bundle={service_type:'bundle',jellyfin_access_model:'household_network',jellyfin_household_network_limit:2,jellyfin_household_lease_minutes:120,stremio_household_lease_minutes:300};
+const bundleComponents=components.componentsForPlan(bundle);
+assert.strictEqual(bundleComponents.length,2);
+assert.deepStrictEqual(bundleComponents.find(c=>c.module==='jellyfin').config,{networkLimit:2,leaseMinutes:120});
+assert.deepStrictEqual(bundleComponents.find(c=>c.module==='stremio').config,{networkLimit:1,leaseMinutes:300},'Stremio must remain exactly one household and keep an independent lease duration');
+
+assert.strictEqual(identity.canonicalNetwork('203.0.113.44:8096'),'ipv4:203.0.113.44');
+assert.strictEqual(identity.canonicalNetwork('::ffff:203.0.113.44'),'ipv4:203.0.113.44');
+assert.strictEqual(identity.canonicalNetwork('[2001:db8:abcd:12::1]:443'),'ipv6:2001:0db8:abcd:0012::/64');
+assert.strictEqual(identity.canonicalNetwork('2001:db8:abcd:12:ffff::99'),'ipv6:2001:0db8:abcd:0012::/64','IPv6 privacy addresses inside one /64 must share a household identity');
+assert.notStrictEqual(identity.canonicalNetwork('2001:db8:abcd:13::1'),identity.canonicalNetwork('2001:db8:abcd:12::1'));
+assert.strictEqual(drivers.householdConfig({household_network_limit:99,household_lease_minutes:1}).networkLimit,1,'invalid household limits must fail back to safe defaults');
+
+const migration=read('db/migrations/023_modular_access_drivers.sql');
+const leases=read('src/access/network-leases.js');
+const stremio=read('src/stremio/runtime.js');
+const external=read('src/stremio/external-direct-runtime.js');
+const jellyfin=read('src/jellyfin/household-network-policy.js');
+const worker=read('scripts/activity-worker.js');
+const planCreate=read('src/platform/admin-plan-create-v2.js');
+const planAccess=read('src/platform/admin-plan-access.js');
+const composition=read('src/platform/admin-route-composition.js');
+const storefront=read('src/platform/storefront-core.js');
+const catalogVersioning=read('src/platform/catalog-versioning.js');
+
+for(const token of ['jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes','access_network_leases','access_network_events'])assert(migration.includes(token),`migration is missing ${token}`);
+assert(migration.includes('ALTER COLUMN streams DROP NOT NULL'),'household Jellyfin plans must be able to represent a non-applicable stream count as NULL');
+assert(leases.includes('pg_advisory_xact_lock'),'household lease claims must serialize per subject');
+assert(leases.includes("decision === 'denied'")&&leases.includes("INTERVAL '5 minutes'"),'repeated denials must be audit-throttled');
+assert(leases.includes('expires_at=NOW()+($6::int*INTERVAL'),'same-network playback must refresh a time-limited lease');
+assert(!leases.includes('remote_endpoint'),'generic lease persistence must not store plaintext network endpoints');
+
+assert(stremio.includes('claimHouseholdOrReject'),'Stremio playback starts must pass household admission');
+assert(stremio.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'"),'external Stremio must use a playback-start control hop');
+assert(stremio.includes('res.redirect(307, target)')&&stremio.includes('res.redirect(307, target.url)'),'both Stremio source classes must exit through 307 redirects');
+assert(!stremio.includes('pipe(res)')&&!external.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
+assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external control hop must resolve to direct Jellyfin delivery');
+
+assert(jellyfin.includes("scope: 'jellyfin'"),'Jellyfin household access must use the shared lease engine');
+assert(jellyfin.includes('effectiveSubscription(customerId)'),'Jellyfin household enforcement must use the effective subscription contract');
+assert(jellyfin.includes("cfg.effectiveMode !== 'enforce'"),'Jellyfin household stopping must retain the existing observe/enforce safety gate');
+assert(jellyfin.includes('freshSession(candidate'),'Jellyfin household enforcement must revalidate the session before stopping playback');
+assert(worker.includes('householdNetworkPolicy.runHouseholdNetworkCycle'),'the activity worker must execute the Jellyfin household driver');
+
+for(const token of ['jellyfinAccessModel','jellyfinHouseholdNetworkLimit','jellyfinHouseholdLeaseMinutes','stremioHouseholdLeaseMinutes'])assert(planCreate.includes(token),`plan creation is missing ${token}`);
+assert(planAccess.includes("queuePlanReconciliation(plan.id"),'existing plan access changes must use the established reconciliation job fanout');
+assert(planAccess.includes('clearPlanLeases'),'policy edits must invalidate old household lease state immediately');
+assert(composition.indexOf('createAdminPlanAccessRouter()')<composition.indexOf('createAdminPlansRouter()'),'household-aware access routes must own the established endpoint before the legacy controller');
+assert(storefront.includes('planComponents.accessLabel(plan)'),'public plan cards must render the shared component access model');
+assert(catalogVersioning.includes("information_schema.columns")&&catalogVersioning.includes('source[c]'),'dynamic plan cloning must automatically preserve the new component-driver columns');
+
+console.log('modular access drivers smoke: ok');
