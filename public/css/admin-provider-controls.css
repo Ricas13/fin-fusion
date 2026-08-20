@@ -1,0 +1,19 @@
+/* Provider setup follows the same summary → expand-to-configure philosophy. */
+.settingProviderDisclosure{display:block;margin:0 0 9px;border:1px solid #2b3947;border-radius:10px;background:#101820;overflow:hidden}
+.settingProviderDisclosure>summary{list-style:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px;min-height:48px;padding:8px 11px;cursor:pointer}
+.settingProviderDisclosure>summary::-webkit-details-marker{display:none}
+.settingProviderDisclosure[open]>summary{border-bottom:1px solid #293846;background:rgba(32,169,214,.035)}
+.settingProviderIdentity{display:grid;gap:2px;min-width:0}
+.settingProviderIdentity strong{color:#e7edf3;font-size:13px;font-weight:760}
+.settingProviderIdentity small{color:#8190a0;font-size:10px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.settingProviderEdit{color:#7bd8f2;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.settingProviderDisclosure[open] .settingProviderEdit{color:#91a0b0}
+.settingProviderDisclosure[open] .settingProviderEdit::after{content:' · close'}
+.settingProviderBody{margin:0!important;border:0!important;border-radius:0!important;background:#0d141b!important;box-shadow:none!important;overflow:visible!important}
+.settingProviderBody>.operatorDisclosure{margin:8px 10px!important}
+.settingProviderBody>.formPanel{padding:12px 14px!important}
+.settingProviderBody>.formPanel+.formPanel{margin:0!important;border-top:1px solid #293846}
+.settingProviderBody .formGrid{gap:9px 10px}
+.settingProviderBody .formGroup{margin-bottom:8px}
+.settingProviderBody .buttonRow{margin-top:9px}
+@media(max-width:620px){.settingProviderDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingProviderEdit{display:none}.settingProviderIdentity small{white-space:normal}}
