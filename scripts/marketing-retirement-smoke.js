@@ -13,6 +13,7 @@ const nav=read('src/platform/admin-nav.js');
 const communications=read('views/customer/communications.ejs');
 const jobs=read('src/automation/jobs.js');
 const worker=read('scripts/automation-worker.js');
+const retireMigration=read('db/migrations/018_retire_marketing_runtime.sql');
 const historicalCampaignMigration=read('db/migrations/013_marketing_campaigns.sql');
 const historicalScheduleMigration=read('db/migrations/015_marketing_campaign_scheduling.sql');
 
@@ -23,6 +24,7 @@ assert(!communications.includes('/account/communications/marketing-email'),'cust
 assert(!communications.includes('Offers &amp; discounts by email')&&!communications.includes('marketing_email_opt_in'),'customer notifications page must not advertise retired Marketing');
 assert(!jobs.includes('marketingCampaigns')&&!jobs.includes('marketing_campaigns'),'automation registry must not run retired marketing campaigns');
 assert(!worker.includes('marketing_campaigns'),'automation worker must not schedule retired marketing campaigns');
+assert(retireMigration.includes("DELETE FROM public.automation_job_state")&&retireMigration.includes("job_key='marketing_campaigns'"),'upgrade migration must remove stale Marketing from Operations → Jobs');
 
 for(const file of [
   'src/platform/admin-marketing.js',
