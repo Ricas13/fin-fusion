@@ -37,6 +37,19 @@
 .settingCredential>strong{font-size:11px;color:#dce5ec}
 .settingCredential>strong.good{color:#79dfa9}.settingCredential>strong.warn{color:#e8bd6d}
 
+/* Configured secrets collapse globally. Operators see state first and only open
+   the actual password/API-key input when they intend to replace it. */
+.settingSecretDisclosure{margin:5px 0;border:1px solid #293846;border-radius:8px;background:#0f171f;overflow:hidden}
+.settingSecretDisclosure>summary{list-style:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:9px;min-height:36px;padding:6px 8px;cursor:pointer}
+.settingSecretDisclosure>summary::-webkit-details-marker{display:none}
+.settingSecretDisclosure>summary>span{color:#8b98a8;font-size:11px}.settingSecretDisclosure>summary>strong{color:#79dfa9;font-size:11px}.settingSecretDisclosure>summary>em{color:#7bd8f2;font-style:normal;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.settingSecretDisclosure[open]>summary{border-bottom:1px solid #293846;background:rgba(32,169,214,.025)}
+.settingSecretDisclosure[open]>summary>em::after{content:' · close';color:#91a0b0}
+.settingSecretBody{display:grid;gap:6px;padding:8px;background:#0d141b}
+.settingSecretBody>label:not(.settingToggle){margin:0;color:#c7d0d9;font-size:11px;font-weight:680}
+.settingSecretBody>.input{min-height:34px;padding:6px 8px}
+.settingSecretBody>.settingToggle{margin:0;min-height:38px}
+
 /* Allow forms to opt into the global dense-settings rhythm without shrinking type. */
 .compactSettingsForm{display:grid;gap:10px}
 .compactSettingsForm>.formGroup{margin-bottom:0}
@@ -63,4 +76,4 @@
 
 @media(max-width:1350px){.settingToggleGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:1000px){.settingToggleGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:620px){.settingToggleGrid{grid-template-columns:1fr}.settingCredential{grid-template-columns:1fr auto}.settingCredential>.button{grid-column:1/-1;justify-self:start}.settingChannelDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingChannelEdit{display:none}}
+@media(max-width:620px){.settingToggleGrid{grid-template-columns:1fr}.settingCredential{grid-template-columns:1fr auto}.settingCredential>.button{grid-column:1/-1;justify-self:start}.settingChannelDisclosure>summary,.settingSecretDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingChannelEdit,.settingSecretDisclosure>summary>em{display:none}}
