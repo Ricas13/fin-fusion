@@ -39,7 +39,7 @@ async function dashboardData(range = null, reporting = null) {
         dashboardOptions(),
         legacyPolicyMetrics(),
         attention.openSummary().catch(() => ({ count: 0, updatedAt: null })),
-        subscriptionAnalytics.effectivePrimarySummary(selectedRange.end)
+        subscriptionAnalytics.effectivePrimarySummary(new Date())
     ]);
     analytics.current.activeCustomers = Number(effectivePrimary.activeCustomers || 0);
     analytics.primaryPlanMix = effectivePrimary.planMix || [];
