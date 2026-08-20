@@ -3,7 +3,7 @@
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
   {key:'jellyfin',label:'Jellyfin',pages:[['jellyfin-overview','Overview','/admin/jellyfin'],['servers','Servers','/admin/servers'],['jellyfin-plans','Plans','/admin/plans?type=jellyfin'],['jellyfin-customers','Customers','/admin/users?service=jellyfin'],['activity','Playback','/admin/activity']]},
-  {key:'stremio',label:'Stremio',pages:[['stremio-overview','Overview','/admin/stremio'],['stremio-sources','Sources','/admin/servers/stremio'],['stremio-plans','Plans','/admin/plans?type=stremio'],['stremio-customers','Customers','/admin/users?service=stremio'],['stremio-playback','Playback','/admin/servers/stremio#activity']]},
+  {key:'stremio',label:'Stremio',pages:[['stremio-overview','Overview','/admin/stremio'],['stremio-sources','Sources','/admin/servers/stremio'],['stremio-plans','Plans','/admin/plans?type=stremio'],['stremio-customers','Customers','/admin/users?service=stremio'],['stremio-playback','Playback','/admin/stremio/playback']]},
   {key:'resellers',label:'Resellers',pages:[['reseller-overview','Overview','/admin/resellers'],['reseller-accounts','Resellers','/admin/resellers/resellers'],['reseller-plans','Plans','/admin/resellers/plans'],['reseller-users','Users','/admin/resellers/users'],['reseller-servers','Servers','/admin/resellers/servers'],['reseller-activity','Activity','/admin/resellers/activity']]},
   {key:'people',label:'Customers',pages:[['users-dashboard','Overview','/admin/users/dashboard'],['users','Customers','/admin/users'],['tickets','Tickets','/admin/tickets']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['orders','Orders','/admin/orders'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals']]},
@@ -12,6 +12,7 @@ const groups=Object.freeze([
 ]);
 const hiddenPages=Object.freeze({
   search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
+  plans:Object.freeze({groupKey:'commerce',parentKey:'commerce-overview',page:Object.freeze(['plans','All plans','/admin/plans'])}),
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   'customer-claims':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['customer-claims','Imported-user claims','/admin/customer-claims'])}),
   'jellyfin-import':Object.freeze({groupKey:'jellyfin',parentKey:'jellyfin-customers',page:Object.freeze(['jellyfin-import','Import Jellyfin users','/admin/jellyfin-import'])}),
