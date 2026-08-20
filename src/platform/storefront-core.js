@@ -274,7 +274,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
         <div class="storeWrap">
             <div class="sectionIntro"><div class="sectionKicker">Straightforward pricing</div><h2>Choose the access that fits you.</h2><p>No mystery tiers. Compare the plans available right now.</p></div>
             <div class="pricingGrid">${planMarkup}</div>
-            ${registrationOpen ? '' : '<div class="storeNotice"><strong>Already a customer?</strong> Sign in to manage or renew your access. New customers can currently join by invitation.</div>'}
+            ${registrationOpen ? '' : '<div class="storeNotice"><strong>Already a customer?</strong> Sign in to manage or renew your access. New customer signup is currently managed by the service administrator.</div>'}
         </div>
     </section>
 
@@ -282,7 +282,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
         <div class="storeWrap">
             <div class="sectionIntro"><div class="sectionKicker">Three simple steps</div><h2>From account to watching in minutes.</h2></div>
             <div class="stepsGrid">
-                <article class="stepCard"><span>01</span><h3>${registrationOpen ? 'Create your account' : 'Sign in or use your invite'}</h3><p>${registrationOpen ? 'Set up your customer account and choose how you want to access the service.' : 'Existing customers can sign in. New customers can join with an invitation from the service administrator.'}</p></article>
+                <article class="stepCard"><span>01</span><h3>${registrationOpen ? 'Create your account' : 'Sign in with your portal account'}</h3><p>${registrationOpen ? 'Set up your customer account and choose how you want to access the service.' : 'Existing customers can sign in. New customers are added or imported by the service administrator.'}</p></article>
                 <article class="stepCard"><span>02</span><h3>Choose your plan</h3><p>Compare stream limits, downloads and plan duration, then choose the option that works for you.</p></article>
                 <article class="stepCard"><span>03</span><h3>Open Jellyfin and watch</h3><p>Your streaming access is managed from one customer portal, including account settings and content requests.</p></article>
             </div>

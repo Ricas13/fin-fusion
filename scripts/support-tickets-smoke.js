@@ -38,6 +38,6 @@ assert(composition.includes('createAdminSupportTicketsRouter')&&composition.incl
 assert(router.includes('createCustomerSupportRouter'),'customer support must be mounted in the customer runtime');
 for(const key of ['customers','orders','tickets'])assert(operator.includes(`${key}:`)||operator.includes(`const [customers,orders`),`operator state missing ${key}`);
 for(const href of ['/admin/users','/admin/orders','/admin/tickets'])assert(indicator.includes(href),`business indicator missing ${href}`);
-assert(indicator.includes('unreadBusinessCount')&&indicator.includes('seen(href)>=updatedAt'),'top-right business indicators must clear after the operator views the relevant area');
+assert(indicator.includes('markCurrentAreaRead')&&indicator.includes('/admin/api/operator-state/read'),'top-right business indicators must clear after the operator views the relevant area');
 assert(orders.includes("source IN ('stripe','paypal')"),'orders view must be provider-backed');
 console.log('support tickets smoke: ok');
