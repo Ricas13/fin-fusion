@@ -6,10 +6,18 @@ const path=require('path');
 const nav=require('../src/platform/admin-nav');
 const registry=require('../src/platform/admin-dashboard-registry');
 require('../src/platform/admin-dashboard-main');
-const commerce=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-commerce.js'),'utf8');
-const backupTabs=fs.readFileSync(path.join(__dirname,'..','src','platform','backup-workflow-tabs.js'),'utf8');
-const settings=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-original-settings.js'),'utf8');
-const exists=file=>fs.existsSync(path.join(__dirname,'..',file));
+const root=path.join(__dirname,'..');
+const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const commerce=read('src/platform/admin-commerce.js');
+const backupTabs=read('src/platform/backup-workflow-tabs.js');
+const settings=read('src/platform/admin-original-settings.js');
+const customer360View=read('src/platform/customer-360-view.js');
+const securityCore=read('src/platform/admin-security-core.js');
+const adminHtml=read('src/platform/admin-html.js');
+const discountUi=read('public/js/admin-discounts.js');
+const adminSettingsGuide=read('docs/guide/admin-settings.md');
+const gettingStartedGuide=read('docs/guide/getting-started.md');
+const exists=file=>fs.existsSync(path.join(root,file));
 
 const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.map(page=>page[0])]));
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard should contain current-state/action destinations only');
@@ -33,4 +41,14 @@ assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Pay
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
 for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
 assert(exists('public/js/admin-plan-create-v2.js'),'canonical plan creation browser controller must remain available');
+
+assert(customer360View.includes('/admin/customer-jellyfin-password?customerId='),'Customer 360 Access must expose the existing administrator Jellyfin password-support workflow');
+assert(securityCore.includes("const { layout, esc } = require('./admin-html')")&&securityCore.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
+assert(!securityCore.includes("res.render('admin/security-policy'"),'Administrator 2FA policy must not fall back to the retired EJS shell');
+assert(!exists('views/admin/security-policy.ejs'),'retired standalone 2FA policy shell must remain absent');
+assert(adminHtml.includes("discountScriptFor(options={})")&&adminHtml.includes('/js/admin-discounts.js'),'Discounts page must load its dedicated browser controller');
+assert(discountUi.includes("type.value === 'fixed'")&&discountUi.includes('percent.disabled')&&discountUi.includes('fixed.required'),'Discount type selection must hide and disable the irrelevant amount controls');
+assert(adminSettingsGuide.includes('Invitation onboarding is retired'),'Administrator guide must not describe invitation onboarding as live');
+assert(!gettingStartedGuide.includes('Planned Stremio service')&&gettingStartedGuide.includes('## Stremio service'),'Getting-started guide must describe the current Stremio service rather than the retired roadmap state');
+
 console.log('admin product audit smoke: ok');
