@@ -72,11 +72,12 @@ assert(!managedRuntime.includes('source.name')&&!externalRuntime.includes('sourc
 assert(managedSessions.includes('managedPlayback.ADMISSION_ACTIVE_SECONDS'),'managed concurrency must use the canonical managed-session liveness window');
 assert(managedSessions.includes('/Playing/Stop'),'managed concurrency must be able to stop excess Jellyfin sessions');
 assert(managedSessions.includes('active.slice(limit)'),'managed concurrency must preserve only the plan stream allowance');
-assert(runtimeSource.includes("managedSessions.start({intervalMs:15000})"),'cross-server managed concurrency reconciliation must run continuously');
-assert(runtimeSource.includes("managedPlayback.startManager({intervalMs:15000})"),'managed playback lifecycle cleanup must run continuously');
+assert(runtimeSource.includes("managedSessions.start({intervalMs:5000})"),'cross-server managed concurrency reconciliation must run every five seconds');
+assert(runtimeSource.includes("managedPlayback.startManager({intervalMs:5000})"),'managed playback lifecycle cleanup must run every five seconds');
 assert(!runtimeSource.includes('jellyfin.startStreamManager'),'legacy single-entitlement reconciliation must not run beside the multi-server authority');
-assert(managedPlayback.includes('SESSION_ACTIVE_SECONDS=60')&&managedPlayback.includes('ADMISSION_ACTIVE_SECONDS=30'),'managed stopped-session cleanup must be prompt without removing startup grace');
+assert(managedPlayback.includes('SESSION_ACTIVE_SECONDS=20')&&managedPlayback.includes('ADMISSION_ACTIVE_SECONDS=5')&&managedPlayback.includes('START_GRACE_SECONDS=10'),'managed stopped-session cleanup must use the tightened liveness windows');
 assert(managedPlayback.includes('failedServerIds'),'managed session cleanup must fail closed if a Jellyfin session snapshot cannot be trusted');
+assert(managedPlayback.includes("if(!row.jellyfin_session_id&&started&&now-started<START_GRACE_SECONDS*1000)continue"),'startup grace must not protect a known stale Jellyfin session');
 
 assert(runtimeSource.includes('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId'),'managed playback control route must remain available');
 assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback control must redirect to Jellyfin after admission');
