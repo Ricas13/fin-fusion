@@ -19,6 +19,9 @@ const runtime=read('src/stremio/runtime.js');
 const customer=read('src/platform/customer-stremio.js');
 const jobs=read('src/automation/jobs.js');
 const sessions=read('src/stremio/managed-session-reconciler.js');
+const between=(text,start,end)=>text.slice(text.indexOf(start),text.indexOf(end));
+const reconcileBody=between(legacyEntitlements,'async function reconcileForCustomer','async function current');
+const installBody=between(legacyEntitlements,'async function issueInstallation','async function revoke');
 
 assert(foundationMigration.includes('stremio_managed_accounts'),'managed multi-server identity foundation missing');
 assert(lifecycleMigration.includes('playback_password_encrypted')&&lifecycleMigration.includes('playback_token_encrypted'),'managed playback must persist encrypted control-plane credentials with separate lifecycle state');
@@ -41,6 +44,10 @@ assert(identities.includes('effective_customer_entitlements')&&identities.includ
 assert(customer.includes('preprovisionManaged(issued.credential)'),'Stremio installation should pre-provision managed identities before the first search');
 assert(customer.includes('managedEntitlements.revokeInactiveMappings()'),'customer revoke must immediately invalidate direct managed identities');
 assert(jobs.includes('async stremio_managed_accounts()')&&jobs.includes('stremioManagedEntitlements.syncActive()'),'automation worker must continuously reconcile managed identities and plan policy');
+assert(reconcileBody.includes('persistEntitlementRecord')&&!reconcileBody.includes('prepareInternalAccount')&&!reconcileBody.includes('forceTokenRefresh'),'entitlement reconciliation must not own or rotate hidden Jellyfin credentials');
+assert(installBody.includes('reconcileForCustomer(customerId,sub)')&&!installBody.includes('forceTokenRefresh')&&!installBody.includes('jellyfin_access_token_encrypted'),'install-link rotation must rotate only the CAPTAiNFiN credential, never a Jellyfin password/token');
+assert(legacyEntitlements.includes('server_id=NULL,jellyfin_account_id=NULL')&&legacyEntitlements.includes('managedAccountOwned(accountId)'),'legacy Stremio identity pointers must be detached without disabling an account owned by managed mappings');
+assert(legacyEntitlements.includes("if(!row||!['stremio','bundle'].includes(serviceType(row)))return null;return row;"),'install-token lookup must not depend on the retired single-server Jellyfin identity');
 
 assert(managed.includes('/PlaybackInfo?'),'managed streams must be resolved through Jellyfin PlaybackInfo');
 assert(managed.includes("{method:'POST',body}")&&managed.includes('DeviceProfile:stremioDeviceProfile()'),'managed PlaybackInfo must describe a Stremio client so Jellyfin can choose direct/remux/transcode compatibility');
