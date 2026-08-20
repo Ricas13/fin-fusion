@@ -30,10 +30,26 @@ function normalizedOptions(options = {}) {
 }
 
 async function recordEvent(client, cfg, decision, activeNetworkCount, expiresAt) {
+  const params = [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, decision, activeNetworkCount, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)];
+  if (decision === 'denied') {
+    // A denied Jellyfin session may be observed every polling cycle. Keep a
+    // useful audit signal without writing the same denial every 30 seconds.
+    await client.query(
+      `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,decision,active_network_count,network_limit,lease_expires_at,detail)
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM access_network_events
+         WHERE tenant_key=$1 AND scope=$2 AND subject_key=$3 AND decision='denied'
+           AND created_at>NOW()-INTERVAL '5 minutes'
+       )`,
+      params
+    );
+    return;
+  }
   await client.query(
     `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,decision,active_network_count,network_limit,lease_expires_at,detail)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
-    [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, decision, activeNetworkCount, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)]
+    params
   );
 }
 
@@ -65,9 +81,6 @@ async function claim(options = {}) {
          RETURNING expires_at`,
         [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.networkHash, cfg.customerId, cfg.leaseMinutes, JSON.stringify(cfg.metadata)]
       );
-      // Refreshes are intentionally not written to access_network_events. The
-      // Jellyfin activity worker can refresh an active household every polling
-      // cycle; only claims and denials are durable audit events.
       const expiresAt = refreshed.rows[0]?.expires_at || existing.expires_at;
       return { allowed: true, decision: 'refreshed', activeNetworkCount: active.rowCount, networkLimit: cfg.networkLimit, expiresAt };
     }
