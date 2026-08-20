@@ -87,7 +87,7 @@ assert(!externalRuntime.includes('sourceAdmission')&&!externalRuntime.includes('
 
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'"),'external Jellyfin tokens must use the platform Jellyfin encryption key');
 assert(sourceClient.includes('/Users/AuthenticateByName'),'external sources must authenticate as normal Jellyfin users');
-assert(sourceIndex.includes('MinDateLastSaved')&&sourceIndex.includes('INCREMENTAL_HOURS=6')&&sourceIndex.includes('FULL_RECONCILE_DAYS=7'),'source indexing must be incremental with periodic reconciliation');
+assert(sourceIndex.includes('MinDateLastSaved')&&sourceIndex.includes('INCREMENTAL_HOURS=3')&&sourceIndex.includes('FULL_RECONCILE_HOURS=84'),'source indexing must run three-hour incrementals with twice-weekly full reconciliation');
 assert(sourceIndex.includes('tmdb_id')&&sourceIndex.includes('tvdb_id')&&sourceIndex.includes('title_key'),'source index must retain alternate metadata IDs and normalized title keys');
 assert(sourcePool.includes('sourceIndex.lookupAll'),'legacy source resolver must retain indexed lookup support');
 assert(matchMigration.includes('ALTER COLUMN imdb_id DROP NOT NULL')&&matchMigration.includes('stremio_source_media_tmdb_idx')&&matchMigration.includes('stremio_source_media_title_idx'),'metadata fallback migration must keep alternate lookup indexes');
