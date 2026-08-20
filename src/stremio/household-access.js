@@ -9,7 +9,9 @@ const networkIdentity = require('../access/network-identity');
 async function planForEntitlement(entitlement) {
   if (!entitlement?.plan_id) throw new Error('Stremio entitlement has no plan.');
   const result = await query(
-    `SELECT id,service_type,streams,jellyfin_access_model,household_network_limit,household_lease_minutes
+    `SELECT id,service_type,streams,jellyfin_access_model,
+            jellyfin_household_network_limit,jellyfin_household_lease_minutes,
+            stremio_household_lease_minutes
      FROM plans WHERE id=$1`,
     [entitlement.plan_id]
   );
@@ -30,7 +32,7 @@ async function claim(entitlement, req, options = {}) {
     address,
     networkLimit: component.config.networkLimit,
     leaseMinutes: component.config.leaseMinutes,
-    metadata: { kind: String(options.kind || 'playback').slice(0,80) }
+    metadata: { kind: String(options.kind || 'playback').slice(0, 80) }
   });
 }
 
