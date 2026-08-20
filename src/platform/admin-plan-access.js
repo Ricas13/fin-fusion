@@ -4,8 +4,7 @@ const express = require('express');
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const runtimeSettings = require('./runtime-settings');
-const provisioning = require('../jellyfin/provisioning');
-const audit = require('../audit');
+const { queuePlanReconciliation } = require('./bulk-jobs');
 const { esc, layout } = require('./admin-html');
 
 const ACCESS_MODELS = ['concurrent_streams', 'household_network'];
@@ -34,23 +33,27 @@ function serviceIncludes(plan, service) {
 function planSubnav(plan, active) {
   const id = encodeURIComponent(plan.id);
   const links = [
-    ['overview', `/admin/plans/${id}`, 'Overview'],
-    ['access', `/admin/plans/${id}/jellyfin`, 'Access'],
-    ['delivery', `/admin/plans/${id}/delivery`, 'Delivery'],
-    ['libraries', `/admin/plans/${id}/libraries`, 'Libraries']
+    ['overview', `/admin/plans/${id}/edit`, 'Overview'],
+    ['access', `/admin/plans/${id}/access`, 'Access'],
+    ['commerce', `/admin/plans/${id}/commerce`, 'Pricing']
   ];
-  return `<nav class="tabs">${links.map(([key, href, label]) => `<a class="${key === active ? 'active' : ''}" href="${href}">${esc(label)}</a>`).join('')}</nav>`;
+  if (serviceIncludes(plan, 'jellyfin')) {
+    links.push(['libraries', `/admin/plans/${id}/libraries`, 'Libraries'], ['placement', `/admin/plans/${id}/placement`, 'Servers']);
+  }
+  if (serviceIncludes(plan, 'stremio')) links.push(['stremio', `/admin/plans/${id}/stremio`, 'Stremio sources']);
+  return `<div class="buttonRow planSubnav">${links.map(([key, href, label]) => `<a class="button ${key === active ? '' : 'secondary'}" href="${href}">${esc(label)}</a>`).join('')}</div>`;
 }
 async function loadPlan(id) {
   const result = await query('SELECT * FROM plans WHERE id=$1', [id]);
   return result.rows[0] || null;
 }
-async function subscriberCount(planId) {
-  const result = await query(
-    `SELECT COUNT(*)::int count FROM subscriptions
+async function subscriberCount(planId, client = null) {
+  const runner = client || { query };
+  const result = await runner.query(
+    `SELECT COUNT(DISTINCT customer_id)::int count FROM subscriptions
      WHERE plan_id=$1 AND superseded_by IS NULL
        AND status IN ('active','trialing','past_due','paused')
-       AND starts_at<=NOW()`,
+       AND starts_at<=NOW() AND current_period_end>NOW()`,
     [planId]
   );
   return Number(result.rows[0]?.count || 0);
@@ -76,23 +79,30 @@ function values(plan, body = null) {
     allowRemuxing: body ? b(source.allowRemuxing) : Boolean(plan.allow_remuxing),
     allowLiveTv: body ? b(source.allowLiveTv) : Boolean(plan.allow_live_tv),
     allowLiveTvManagement: body ? b(source.allowLiveTvManagement) : Boolean(plan.allow_live_tv_management),
-    allowRemoteAccess: body ? b(source.allowRemoteAccess) : Boolean(plan.allow_remote_access)
+    allowRemoteAccess: body ? b(source.allowRemoteAccess) : Boolean(plan.allow_remote_access),
+    allow4k: body ? b(source.allow4k) : Boolean(plan.allow_4k)
   };
 }
 function toggle(name, label, value) {
   return `<label class="toggleRow"><input type="checkbox" name="${esc(name)}" ${checked(value)}><span><strong>${esc(label)}</strong></span></label>`;
 }
-function page(plan, req, error = '', body = null) {
+function impactConfirmation(plan, count, body) {
+  if (!count) return '';
+  return `<div class="notice warn"><strong>Impact preview:</strong> this policy currently affects ${esc(count)} live customer entitlement${count === 1 ? '' : 's'}. Type <strong>${esc(plan.code)}</strong> to confirm the change.</div><div class="formGroup"><label>Impact confirmation</label><input class="input" name="impactConfirmation" autocomplete="off" required value="${esc(body?.impactConfirmation || '')}" placeholder="${esc(plan.code)}"></div>`;
+}
+async function page(plan, req, error = '', body = null) {
   const v = values(plan, body);
   const household = v.jellyfin && v.accessModel === 'household_network';
+  const affected = await subscriberCount(plan.id);
   return `${planSubnav(plan, 'access')}${error ? `<div class="notice error">${esc(error)}</div>` : ''}${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}
-  <section class="section"><div class="sectionHead"><div><h2>Access & playback</h2><div class="muted">Each product component keeps its own enforcement driver and household lease settings.</div></div></div>
-  <form class="formPanel" method="post" action="/admin/plans/${esc(plan.id)}/jellyfin" data-plan-access-editor><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
-  ${v.jellyfin ? `<h3>Jellyfin access</h3><div class="formGrid"><div class="formGroup"><label>Playback enforcement</label><select class="input" name="jellyfinAccessModel" data-jellyfin-access-model><option value="concurrent_streams" ${selected('concurrent_streams', v.accessModel)}>Concurrent streams</option><option value="household_network" ${selected('household_network', v.accessModel)}>Household network / IP lease</option></select></div><div class="formGroup" data-jellyfin-stream-fields ${household ? 'hidden' : ''}><label>Concurrent streams</label><input class="input" type="number" min="1" max="50" name="streams" value="${esc(v.streams)}"><div class="inlineHelp">The existing stream monitor enforces this limit.</div></div><div class="formGroup" data-jellyfin-household-fields ${household ? '' : 'hidden'}><label>Simultaneous household networks</label><input class="input" type="number" min="1" max="10" name="jellyfinHouseholdNetworkLimit" value="${esc(v.jellyfinHouseholdNetworkLimit)}"><label>Network lease</label><div class="inputUnit"><input class="input" type="number" min="15" max="1440" name="jellyfinHouseholdLeaseMinutes" value="${esc(v.jellyfinHouseholdLeaseMinutes)}"><span>minutes</span></div><div class="inlineHelp">Same-network playback refreshes the lease. IPv6 devices sharing a /64 count as one network.</div></div></div>
-  <h3>Jellyfin user policy</h3><div class="toggleGrid">${toggle('allowDownloads','Downloads',v.allowDownloads)}${toggle('allowVideoTranscoding','Video transcoding',v.allowVideoTranscoding)}${toggle('allowAudioTranscoding','Audio transcoding',v.allowAudioTranscoding)}${toggle('allowRemuxing','Remuxing',v.allowRemuxing)}${toggle('allowLiveTv','Live TV',v.allowLiveTv)}${toggle('allowLiveTvManagement','Live TV management',v.allowLiveTvManagement)}${toggle('allowRemoteAccess','Remote access',v.allowRemoteAccess)}</div>` : ''}
-  ${v.stremio ? `<h3>Stremio household</h3><div class="securityNote standalone"><strong>1 active household network</strong><div class="subText">Unlimited Stremio playback inside the active household network. A second network is rejected until the lease expires.</div></div><div class="formGroup narrow"><label>Stremio network lease</label><div class="inputUnit"><input class="input" type="number" min="15" max="1440" name="stremioHouseholdLeaseMinutes" value="${esc(v.stremioHouseholdLeaseMinutes)}"><span>minutes</span></div></div>` : ''}
-  <div class="operatorCallout statusInfo"><strong>Policy changes:</strong> saving clears active household leases for subscriptions on this plan so the new policy applies immediately. Existing customer access is reconciled in the background.</div>
-  <div class="buttonRow"><button class="button" type="submit">Save access policy</button><a class="button secondary" href="/admin/plans/${esc(plan.id)}">Cancel</a></div></form></section>
+  <section class="section"><div class="sectionHead"><div><h2>Access & playback</h2><div class="muted">Each product component keeps its own enforcement driver and household lease settings.</div></div><span class="muted">${affected} live entitlement${affected === 1 ? '' : 's'}</span></div>
+  <form class="formPanel" method="post" action="/admin/plans/${esc(plan.id)}/access" data-plan-access-editor><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
+  ${v.jellyfin ? `<h3>Jellyfin access</h3><div class="formGrid"><div class="formGroup"><label>Playback enforcement</label><select class="input" name="jellyfinAccessModel" data-jellyfin-access-model><option value="concurrent_streams" ${selected('concurrent_streams', v.accessModel)}>Concurrent streams</option><option value="household_network" ${selected('household_network', v.accessModel)}>Household network / IP lease</option></select><div class="inlineHelp">The policy driver can change without changing the rest of the Jellyfin provisioning policy.</div></div><div class="formGroup" data-jellyfin-stream-fields ${household ? 'hidden' : ''}><label>Concurrent streams</label><input class="input" type="number" min="1" max="50" name="streams" value="${esc(v.streams)}"><div class="inlineHelp">The existing stream monitor enforces this limit.</div></div><div class="formGroup" data-jellyfin-household-fields ${household ? '' : 'hidden'}><label>Simultaneous household networks</label><input class="input" type="number" min="1" max="10" name="jellyfinHouseholdNetworkLimit" value="${esc(v.jellyfinHouseholdNetworkLimit)}"><label>Network lease</label><div class="inputUnit"><input class="input" type="number" min="15" max="1440" name="jellyfinHouseholdLeaseMinutes" value="${esc(v.jellyfinHouseholdLeaseMinutes)}"><span>minutes</span></div><div class="inlineHelp">Same-network playback refreshes the lease. IPv6 devices sharing a /64 count as one network.</div></div></div>
+  <h3>Jellyfin user policy</h3><div class="toggleGrid">${toggle('allowDownloads','Downloads',v.allowDownloads)}${toggle('allowVideoTranscoding','Video transcoding',v.allowVideoTranscoding)}${toggle('allowAudioTranscoding','Audio transcoding',v.allowAudioTranscoding)}${toggle('allowRemuxing','Remuxing',v.allowRemuxing)}${toggle('allowLiveTv','Live TV',v.allowLiveTv)}${toggle('allowLiveTvManagement','Live TV management',v.allowLiveTvManagement)}${toggle('allowRemoteAccess','Remote access',v.allowRemoteAccess)}${toggle('allow4k','4K catalogue flag',v.allow4k)}</div>` : ''}
+  ${v.stremio ? `<h3>Stremio household</h3><div class="securityNote standalone"><strong>1 active household network</strong><div class="subText">Unlimited Stremio playback inside the active household network. A second network is rejected until the lease expires.</div></div><div class="formGroup narrow"><label>Stremio network lease</label><div class="inputUnit"><input class="input" type="number" min="15" max="1440" name="stremioHouseholdLeaseMinutes" value="${esc(v.stremioHouseholdLeaseMinutes)}"><span>minutes</span></div><div class="inlineHelp">This setting is independent from the Jellyfin component in a bundle.</div></div>` : ''}
+  <div class="operatorCallout statusInfo"><strong>Policy changes:</strong> saving clears active household leases for subscriptions on this plan so the new policy applies immediately. Jellyfin customers are reconciled through the existing bounded background-job queue.</div>
+  ${impactConfirmation(plan, affected, body)}
+  <div class="buttonRow"><button class="button" type="submit">Save access policy</button><a class="button secondary" href="/admin/plans/${esc(plan.id)}/edit">Cancel</a></div></form></section>
   <script src="/js/admin-plan-access.js" defer></script>`;
 }
 function parse(plan, body) {
@@ -103,17 +113,18 @@ function parse(plan, body) {
     jellyfin,
     stremio,
     accessModel,
-    streams: jellyfin && accessModel === 'concurrent_streams' ? int(body.streams, 1, 50, 'Concurrent streams') : null,
+    streams: jellyfin ? (accessModel === 'concurrent_streams' ? int(body.streams, 1, 50, 'Concurrent streams') : null) : (Number.isInteger(Number(plan.streams)) ? Number(plan.streams) : 1),
     jellyfinHouseholdNetworkLimit: jellyfin && accessModel === 'household_network' ? int(body.jellyfinHouseholdNetworkLimit, 1, 10, 'Jellyfin household networks') : 1,
     jellyfinHouseholdLeaseMinutes: jellyfin && accessModel === 'household_network' ? int(body.jellyfinHouseholdLeaseMinutes, 15, 1440, 'Jellyfin household lease') : 240,
     stremioHouseholdLeaseMinutes: stremio ? int(body.stremioHouseholdLeaseMinutes, 15, 1440, 'Stremio household lease') : 240,
-    allowDownloads: jellyfin && b(body.allowDownloads),
-    allowVideoTranscoding: jellyfin && b(body.allowVideoTranscoding),
-    allowAudioTranscoding: jellyfin && b(body.allowAudioTranscoding),
-    allowRemuxing: jellyfin && b(body.allowRemuxing),
-    allowLiveTv: jellyfin && b(body.allowLiveTv),
-    allowLiveTvManagement: jellyfin && b(body.allowLiveTvManagement),
-    allowRemoteAccess: jellyfin && b(body.allowRemoteAccess)
+    allowDownloads: jellyfin ? b(body.allowDownloads) : Boolean(plan.allow_downloads),
+    allowVideoTranscoding: jellyfin ? b(body.allowVideoTranscoding) : Boolean(plan.allow_video_transcoding),
+    allowAudioTranscoding: jellyfin ? b(body.allowAudioTranscoding) : Boolean(plan.allow_audio_transcoding),
+    allowRemuxing: jellyfin ? b(body.allowRemuxing) : Boolean(plan.allow_remuxing),
+    allowLiveTv: jellyfin ? b(body.allowLiveTv) : Boolean(plan.allow_live_tv),
+    allowLiveTvManagement: jellyfin ? b(body.allowLiveTvManagement) : Boolean(plan.allow_live_tv_management),
+    allowRemoteAccess: jellyfin ? b(body.allowRemoteAccess) : Boolean(plan.allow_remote_access),
+    allow4k: jellyfin ? b(body.allow4k) : Boolean(plan.allow_4k)
   };
 }
 async function clearPlanLeases(client, planId) {
@@ -126,16 +137,16 @@ async function clearPlanLeases(client, planId) {
 }
 async function save(plan, input, actorUserId) {
   return transaction(async client => {
-    const count = await subscriberCount(plan.id);
+    const count = await subscriberCount(plan.id, client);
     await client.query(
       `UPDATE plans SET
          jellyfin_access_model=$2,jellyfin_household_network_limit=$3,jellyfin_household_lease_minutes=$4,
          stremio_household_lease_minutes=$5,streams=$6,
          allow_downloads=$7,allow_video_transcoding=$8,allow_audio_transcoding=$9,allow_remuxing=$10,
-         allow_live_tv=$11,allow_live_tv_management=$12,allow_remote_access=$13,updated_at=NOW()
+         allow_live_tv=$11,allow_live_tv_management=$12,allow_remote_access=$13,allow_4k=$14,updated_at=NOW()
        WHERE id=$1`,
       [plan.id, input.accessModel, input.jellyfinHouseholdNetworkLimit, input.jellyfinHouseholdLeaseMinutes, input.stremioHouseholdLeaseMinutes, input.streams,
-       input.allowDownloads, input.allowVideoTranscoding, input.allowAudioTranscoding, input.allowRemuxing, input.allowLiveTv, input.allowLiveTvManagement, input.allowRemoteAccess]
+       input.allowDownloads, input.allowVideoTranscoding, input.allowAudioTranscoding, input.allowRemuxing, input.allowLiveTv, input.allowLiveTvManagement, input.allowRemoteAccess, input.allow4k]
     );
     await clearPlanLeases(client, plan.id);
     await client.query(
@@ -150,33 +161,38 @@ async function save(plan, input, actorUserId) {
 function createAdminPlanAccessRouter() {
   const router = express.Router();
   router.use('/admin/plans', gate, noStore);
-  router.get('/admin/plans/:id/jellyfin', async (req, res, next) => {
+  const paths = ['/admin/plans/:id/access', '/admin/plans/:id/jellyfin'];
+  router.get(paths, async (req, res, next) => {
     try {
       const plan = await loadPlan(req.params.id);
       if (!plan) return res.status(404).send('Plan not found');
       await runtimeSettings.ensureLoaded();
-      return res.send(layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: plan.name, subtitle: 'Access & playback policy', body: page(plan, req), action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }));
+      return res.send(layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: plan.name, subtitle: 'Access & playback policy', body: await page(plan, req), action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }));
     } catch (error) { next(error); }
   });
-  router.post('/admin/plans/:id/jellyfin', async (req, res, next) => {
+  router.post(paths, async (req, res, next) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
       const plan = await loadPlan(req.params.id);
       if (!plan) return res.status(404).send('Plan not found');
+      const affected = await subscriberCount(plan.id);
+      if (affected > 0 && String(req.body?.impactConfirmation || '').trim() !== String(plan.code)) {
+        throw new Error(`Type ${plan.code} exactly to confirm the impact on ${affected} live customer entitlement${affected === 1 ? '' : 's'}.`);
+      }
       const input = parse(plan, req.body || {});
-      const affected = await save(plan, input, req.session.authUserId);
-      provisioning.queuePlanReconciliation(plan.id, req.session.authUserId).catch(error => console.error('Plan access reconciliation queue failed:', error.message));
-      audit.log({ actorUserId: req.session.authUserId, action: 'admin.plan.access_policy.saved', entityType: 'plan', entityId: plan.id, metadata: { affected } }).catch(() => {});
-      return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/jellyfin?message=${encodeURIComponent(`Access policy saved. ${affected} active subscription${affected === 1 ? '' : 's'} queued for reconciliation.`)}`);
+      await save(plan, input, req.session.authUserId);
+      const job = serviceIncludes(plan, 'jellyfin') ? await queuePlanReconciliation(plan.id, req.session.authUserId) : null;
+      if (job) return res.redirect(`/admin/jobs/${encodeURIComponent(job.id)}?message=${encodeURIComponent('Access policy saved; affected Jellyfin customers were queued for update.')}`);
+      return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/access?message=${encodeURIComponent('Access policy saved.')}`);
     } catch (error) {
       try {
         const plan = await loadPlan(req.params.id);
         if (!plan) return res.status(404).send('Plan not found');
-        return res.status(400).send(layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: plan.name, subtitle: 'Access & playback policy', body: page(plan, req, error.message, req.body || {}), action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }));
+        return res.status(400).send(layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: plan.name, subtitle: 'Access & playback policy', body: await page(plan, req, error.message, req.body || {}), action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }));
       } catch (renderError) { next(renderError); }
     }
   });
   return router;
 }
 
-module.exports = { createAdminPlanAccessRouter, values, parse, page, clearPlanLeases, save };
+module.exports = { createAdminPlanAccessRouter, values, parse, page, clearPlanLeases, save, subscriberCount };
