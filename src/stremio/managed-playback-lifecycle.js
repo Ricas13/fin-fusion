@@ -105,7 +105,7 @@ async function reconcile({entitlementId=null,activeSeconds=SESSION_ACTIVE_SECOND
       await sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS});
       await query(`UPDATE stremio_source_playback_leases SET jellyfin_session_id=COALESCE($2,jellyfin_session_id),position_ticks=$3 WHERE lease_hash=$1`,[row.lease_hash,session?.Id?String(session.Id):null,position||null]);continue;
     }
-    if(!row.jellyfin_session_id&&started&&now-started<START_GRACE_SECONDS*1000)continue;
+    if(!session&&started&&now-started<START_GRACE_SECONDS*1000)continue;
     await stopLease(row,session?'jellyfin_session_stale':'jellyfin_session_missing');ended+=1;
   }
   return{leases:rows.length,active,ended,serverFailures:snapshot.failures.length};
