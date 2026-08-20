@@ -72,7 +72,7 @@ assert(sourceIndex.includes('clearAndQueue')&&sourceIndex.includes("DELETE FROM 
 assert(sourceIndex.includes('refreshProgress')&&sourceIndex.includes('Stremio source index started')&&sourceIndex.includes('Stremio source index completed'),'Source indexing must expose live progress and operational logs');
 assert(automationJobs.indexOf('stremioSourceIndex.indexDueSources()')<automationJobs.indexOf('stremioMediaIndex.indexAll()'),'External Jellyfin source indexing must run before the managed Stremio catalogue');
 assert(automationJobs.includes('stremio_external_tokens')&&automationJobs.includes('stremioExternalTokens.maintain'),'External token maintenance must be a dedicated automation job');
-assert(automationWorker.includes('stremio_external_tokens:3600')&&automationWorker.includes('stremio_media_index:10800'),'Worker defaults must run token maintenance hourly and media indexing every three hours');
+assert(automationWorker.includes('stremio_external_tokens:300')&&automationWorker.includes('stremio_media_index:10800'),'Worker defaults must sweep external token maintenance every five minutes and media indexing every three hours');
 assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(explicit)return mapped.rows'),'Explicit plan mappings must be strict external source allow-lists');
 assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own external source selection');
 assert(delivery.includes('Lower priority numbers are tried first'),'Plan UI must explain source ordering');
@@ -81,6 +81,6 @@ for(const table of ['stremio_source_libraries','stremio_source_media_index','str
 assert(migration.includes('either selected shared sources or a managed Jellyfin delivery identity'),'Entitlement integrity must support source-only and managed delivery');
 assert(runtimeSettings.includes('externalSources')&&runtimeSettings.includes('externalReadyIndexes')&&runtimeSettings.includes('eligibleSources'),'Runtime readiness must account for external and managed Stremio sources');
 assert(rotationMigration.includes('password_encrypted')&&rotationMigration.includes('token_rotation_enabled')&&rotationMigration.includes('stremio_sources_token_rotation_idx'),'Token rotation migration must add encrypted password storage and due-token lookup');
-assert(maintenanceMigration.includes('stremio_source_retired_tokens')&&maintenanceMigration.includes("'stremio_external_tokens',TRUE,3600")&&maintenanceMigration.includes("'stremio_media_index',TRUE,10800"),'External maintenance migration must persist token grace and the new automation cadences');
+assert(maintenanceMigration.includes('stremio_source_retired_tokens')&&maintenanceMigration.includes("'stremio_external_tokens',TRUE,300")&&maintenanceMigration.includes("'stremio_media_index',TRUE,10800"),'External maintenance migration must persist token grace and the new automation cadences');
 
 console.log('stremio admin sources smoke: ok');
