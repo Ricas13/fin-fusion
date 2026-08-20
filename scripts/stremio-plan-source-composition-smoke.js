@@ -16,10 +16,12 @@ const sourcePool=read('src/stremio/source-pool.js');
 assert(planExternal.includes('JOIN plan_stremio_sources ps'),'external runtime sources must come from explicit plan mappings');
 assert(planExternal.includes("i.status='ready'")&&planExternal.includes('i.item_count>0'),'selected external sources must still be indexed and ready');
 assert(!planExternal.includes('SELECT s.*,s.priority plan_priority FROM stremio_sources'),'explicit plan source helper must not fall back to every external source');
-assert(externalRuntime.includes("require('./plan-external-sources')"),'new external stream generation must use explicit plan source composition');
+assert(externalRuntime.includes("require('./plan-external-sources')"),'external stream generation must use explicit plan source composition');
 assert(externalRuntime.includes('planExternalSources.forEntitlement(entitlement)'),'external stream generation must not implicitly add unselected sources');
-assert(runtime.includes("require('./plan-external-sources')"),'cached external proxy compatibility must use the same plan source authorization');
-assert(runtime.includes('planExternalSources.authorized(e,req.params.sourceId)'),'cached external proxy must reject sources not selected by the plan');
+assert(!runtime.includes("require('./plan-external-sources')"),'protocol runtime must not own external source authorization after relay retirement');
+assert(runtime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId',playbackLimit,retiredPlayback)"),'legacy external CAPTAiNFiN proxy URLs must remain retired with 410');
+assert(externalRuntime.includes('url:directPlaybackUrl({source,itemId:item.Id,mediaSourceId:media.Id})'),'external streams must point directly at their Jellyfin source');
+assert(externalRuntime.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external direct playback URL must carry the source credential to Jellyfin');
 
 assert(admin.includes('Managed Jellyfin sources are always returned first'),'plan UI must state managed-first composition');
 assert(admin.includes('Optional external sources'),'plan UI must present external sources as additions');
