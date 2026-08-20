@@ -148,13 +148,16 @@ function notificationTestScriptFor(options={}){
 function planWorkflowScriptFor(options={}){
     return String(options.active||'')==='plans'?'<script src="/js/admin-plan-workflow.js" defer></script>':'';
 }
+function discountScriptFor(options={}){
+    return String(options.active||'')==='discounts'?'<script src="/js/admin-discounts.js" defer></script>':'';
+}
 
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options)+stremioTabsFor(options);
-    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script>';
+    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script>';
     options={...options,body:workflow+String(options.body||'')+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,stremioTabsFor,notificationTestScriptFor,planWorkflowScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,stremioTabsFor,notificationTestScriptFor,planWorkflowScriptFor,discountScriptFor,SETTING_HELP};
