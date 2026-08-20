@@ -12,6 +12,7 @@ const stremioDashboard=read('views/customer/stremio-dashboard.ejs');
 const planDelivery=read('src/platform/admin-plan-delivery.js');
 const router=read('src/platform/router.js');
 const plansList=read('src/platform/admin-plans-list.js');
+const bulkOperations=read('src/platform/bulk-operations.js');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
 
@@ -22,5 +23,6 @@ assert(/admin\/plans\/:id\/delivery/.test(planDelivery)&&/snapshots were preserv
 assert(/admin\.plan\.delivery\.update/.test(planDelivery)&&/mutationLimit/.test(planDelivery),'plan delivery mutation must be audited and rate limited');
 assert(/createAdminPlanDeliveryRouter/.test(router),'plan delivery router must be mounted');
 assert(/\/delivery/.test(plansList)&&/>Delivery</.test(plansList),'Plans list must link to normal delivery management');
+assert(/registerHandler\('retry_failed'.*provisioning\.reconcileCustomer\(item\.customer_id\)/s.test(bulkOperations)&&/retriedThrough:'service-aware-reconciliation'/.test(bulkOperations),'Retry failed setup must use service-aware reconciliation for Jellyfin, Stremio and bundle customers');
 
 console.log('service-aware portals smoke: ok');
