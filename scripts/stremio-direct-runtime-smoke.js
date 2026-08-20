@@ -8,6 +8,7 @@ const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 
 const foundationMigration=read('db/migrations/016_stremio_managed_source_foundation.sql');
 const lifecycleMigration=read('db/migrations/017_stremio_managed_playback_lifecycle.sql');
+const playMethodMigration=read('db/migrations/019_stremio_managed_play_method.sql');
 const identities=read('src/stremio/managed-entitlements.js');
 const legacyEntitlements=read('src/stremio/entitlements.js');
 const managed=read('src/stremio/managed-runtime.js');
@@ -22,6 +23,7 @@ const sessions=read('src/stremio/managed-session-reconciler.js');
 assert(foundationMigration.includes('stremio_managed_accounts'),'managed multi-server identity foundation missing');
 assert(lifecycleMigration.includes('playback_password_encrypted')&&lifecycleMigration.includes('playback_token_encrypted'),'managed playback must persist encrypted control-plane credentials with separate lifecycle state');
 assert(lifecycleMigration.includes('managed_mapping_id')&&lifecycleMigration.includes('jellyfin_session_id'),'managed playback leases must bind to the exact managed mapping and Jellyfin session');
+assert(playMethodMigration.includes('play_method'),'managed playback leases must remember DirectPlay/DirectStream/Transcode for lifecycle reporting');
 assert(identities.includes("account_purpose='stremio_internal'"),'managed playback must use hidden Stremio-only Jellyfin accounts');
 assert(identities.includes('EnableRemoteAccess:!disabled'),'hidden managed users must always permit remote Stremio authentication while enabled');
 assert(legacyEntitlements.includes('EnableRemoteAccess:!disabled'),'legacy hidden-user preparation must not reintroduce remote-auth denial');
@@ -40,14 +42,17 @@ assert(customer.includes('managedEntitlements.revokeInactiveMappings()'),'custom
 assert(jobs.includes('async stremio_managed_accounts()')&&jobs.includes('stremioManagedEntitlements.syncActive()'),'automation worker must continuously reconcile managed identities and plan policy');
 
 assert(managed.includes('/PlaybackInfo?'),'managed streams must be resolved through Jellyfin PlaybackInfo');
+assert(managed.includes("{method:'POST',body}")&&managed.includes('DeviceProfile:stremioDeviceProfile()'),'managed PlaybackInfo must describe a Stremio client so Jellyfin can choose direct/remux/transcode compatibility');
+assert(managed.includes('TranscodingUrl')&&managed.includes('publicTranscodingUrl'),'managed playback must honor Jellyfin compatibility URLs instead of forcing Static direct play for every codec');
 assert(managed.includes('admissionUrl(')&&managed.includes('/play/${encodeURIComponent(String(mapping.id))}'),'managed results must enter the CAPTAiNFiN admission control plane before playback');
 assert(managed.includes("url.searchParams.set('PlaySessionId'"),'final managed Jellyfin URL must carry PlaybackInfo PlaySessionId when available');
 assert(managed.includes("url.searchParams.set('api_key',token)"),'final managed Jellyfin URL must carry only the admitted playback token');
-assert(managed.includes('accessTokenOverride'),'managed redirect must be able to use a per-playback token instead of the persistent mapping token');
+assert(managed.includes('accessTokenOverride'),'managed direct redirect must be able to use a per-playback token instead of the persistent mapping token');
 assert(!managed.includes('api_key_encrypted'),'managed runtime must never read the server administrator API key');
 assert(runtime.includes("router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId'"),'runtime must expose a managed playback admission endpoint');
 assert(runtime.includes('sourceAdmission.admit')&&runtime.includes('managedPlayback.start'),'managed admission must check the plan stream limit before creating Jellyfin playback');
-assert(runtime.includes('res.redirect(302,target)'),'managed admission must redirect to Jellyfin instead of proxying media bytes');
+assert(runtime.includes('managedRuntime.playbackInfo(mapping,req.params.itemId,req.params.mediaSourceId)'),'admission must refresh PlaybackInfo for the exact selected media source');
+assert(runtime.includes('res.redirect(307,target.url)'),'managed admission must redirect to Jellyfin instead of proxying media bytes and must preserve request semantics');
 assert(runtime.includes('started.accessToken'),'managed redirect must use the per-playback Jellyfin token');
 assert(lifecycle.includes('/Users/AuthenticateByName'),'each admitted managed playback must mint its own Jellyfin device token');
 assert(lifecycle.includes("'/Sessions/Playing'"),'managed admission must explicitly report playback start to Jellyfin');
@@ -56,6 +61,7 @@ assert(lifecycle.includes("'/Sessions/Logout'"),'managed playback cleanup must r
 assert(lifecycle.includes('/Playing/Stop'),'managed playback cleanup must retain an admin fallback stop');
 assert(lifecycle.includes('existingPlayback'),'retries of one admitted result must reuse its playback token instead of creating duplicate Jellyfin sessions');
 assert(lifecycle.includes('deviceId(rawLease)'),'managed streams must get distinct Jellyfin device/session identities');
+assert(lifecycle.includes('PlayMethod:normalizePlayMethod(playMethod)'),'Jellyfin start/stop lifecycle must report the negotiated play method rather than always claiming DirectPlay');
 assert(lifecycle.includes('Promise.allSettled(servers.map'),'managed playback lifecycle polling must snapshot each Jellyfin server once per cycle');
 
 assert(external.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external direct playback must use its dedicated Jellyfin source token');

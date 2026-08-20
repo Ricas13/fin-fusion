@@ -72,20 +72,24 @@ function createStremioRuntimeRouter(){
     }catch(error){console.error('Stremio stream request failed:',String(error?.message||error).slice(0,300));return res.json({streams:[]});}
   });
 
-  // Managed playback admission is intentionally a tiny control-plane hop.
-  // CAPTAiNFiN checks the stream allowance and registers Jellyfin playback,
-  // then redirects the player to Jellyfin. No media bytes pass through here.
+  // Managed playback admission is a control-plane hop only. CAPTAiNFiN
+  // re-runs PlaybackInfo for the selected media source using a conservative
+  // Stremio device profile, enforces the stream allowance, registers Jellyfin
+  // playback and redirects to Jellyfin's negotiated DirectPlay/DirectStream/
+  // Transcode URL. Media bytes never pass through CAPTAiNFiN.
   router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
-    if(!enabled())return res.status(404).end();const lease=String(req.query.lease||''),playSessionId=String(req.query.playSessionId||'');let e=null,admitted=false;
+    if(!enabled())return res.status(404).end();const lease=String(req.query.lease||'');let e=null,admitted=false;
     try{
       e=await entitlements.findByInstallToken(req.params.token);if(!e||!lease)return res.status(404).end();
       const mapping=await managedMapping(e.id,req.params.mappingId);if(!mapping)return res.status(404).end();
-      const id=managedPlayback.deviceId(lease),admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,{managedMappingId:mapping.id,serverId:mapping.server_id,jellyfinUserId:mapping.jellyfin_user_id,deviceId:id,playSessionId,mediaSourceId:req.params.mediaSourceId});
+      const playback=await managedRuntime.playbackInfo(mapping,req.params.itemId,req.params.mediaSourceId),source=managedRuntime.mediaSource(playback,req.params.mediaSourceId);if(!source)return res.status(404).end();
+      const playMethod=managedRuntime.playMethodFor(source),playSessionId=String(playback?.PlaySessionId||req.query.playSessionId||'');if(!playMethod)return res.status(502).end();
+      const id=managedPlayback.deviceId(lease),admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,{managedMappingId:mapping.id,serverId:mapping.server_id,jellyfinUserId:mapping.jellyfin_user_id,deviceId:id,playSessionId,mediaSourceId:req.params.mediaSourceId,playMethod});
       if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}admitted=true;
-      const started=await managedPlayback.start(mapping,lease,{itemId:req.params.itemId,mediaSourceId:req.params.mediaSourceId,playSessionId});
-      const target=managedRuntime.directUrl(mapping,req.params.itemId,req.params.mediaSourceId,playSessionId,started.deviceId,started.accessToken);
-      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'stremio.managed_playback.admitted','stremio_entitlement',$1,$2::jsonb)`,[e.id,JSON.stringify({serverId:mapping.server_id,jellyfinSessionId:started.jellyfinSessionId||null,active:admission.active,limit:admission.limit})]).catch(()=>{});
-      return res.redirect(302,target);
+      const started=await managedPlayback.start(mapping,lease,{itemId:req.params.itemId,mediaSourceId:req.params.mediaSourceId,playSessionId,playMethod});
+      const target=managedRuntime.playbackUrl(mapping,req.params.itemId,source,playback,{accessToken:started.accessToken,deviceId:started.deviceId});
+      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'stremio.managed_playback.admitted','stremio_entitlement',$1,$2::jsonb)`,[e.id,JSON.stringify({serverId:mapping.server_id,jellyfinSessionId:started.jellyfinSessionId||null,playMethod:target.playMethod,active:admission.active,limit:admission.limit})]).catch(()=>{});
+      return res.redirect(307,target.url);
     }catch(error){if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});console.error('Managed Stremio admission failed:',String(error?.message||error).slice(0,300));return res.status(502).end();}
   });
 
