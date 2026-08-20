@@ -10,12 +10,12 @@ const managedEntitlements=require('./managed-entitlements');
 const sourceAdmission=require('./source-admission');
 
 // Direct Stremio playback never returns through CAPTAiNFiN, so Jellyfin session
-// activity is the authoritative liveness signal. Keep the background window
-// short enough that a stopped direct stream cannot hold a concurrency slot for
-// several minutes, while retaining a startup grace for newly registered plays.
-const SESSION_ACTIVE_SECONDS=60;
-const ADMISSION_ACTIVE_SECONDS=30;
-const START_GRACE_SECONDS=45;
+// activity is the authoritative liveness signal. Admission rechecks are kept
+// very tight to release a stopped stream quickly, while the background window
+// is slightly wider to avoid unnecessary churn during normal playback.
+const SESSION_ACTIVE_SECONDS=20;
+const ADMISSION_ACTIVE_SECONDS=5;
+const START_GRACE_SECONDS=10;
 const PLAYBACK_TOKEN_PREFIX='stremio-jf-playback-token';
 let timer=null;
 let running=false;
@@ -39,8 +39,8 @@ async function restrictedPost(mapping,token,endpoint,body,id){
 }
 function normalizePlayMethod(value){const method=String(value||'DirectPlay');return['DirectPlay','DirectStream','Transcode'].includes(method)?method:'DirectPlay';}
 function playbackBody({itemId,mediaSourceId,playSessionId,positionTicks=0,playMethod='DirectPlay'}){return{ItemId:String(itemId),MediaSourceId:String(mediaSourceId||''),PlaySessionId:String(playSessionId||''),PositionTicks:Number.isFinite(Number(positionTicks))?Math.max(0,Math.floor(Number(positionTicks))):0,IsPaused:false,IsMuted:false,CanSeek:true,PlayMethod:normalizePlayMethod(playMethod)};}
-async function resolveSession(mapping,id,itemId,{activeWithinSeconds=60}={}){
-  const sessions=await registry.request(mapping.server_id,`/Sessions?activeWithinSeconds=${encodeURIComponent(Math.max(30,Math.min(600,Number(activeWithinSeconds)||60)))}`,{timeoutMs:8000});
+async function resolveSession(mapping,id,itemId,{activeWithinSeconds=SESSION_ACTIVE_SECONDS}={}){
+  const sessions=await registry.request(mapping.server_id,`/Sessions?activeWithinSeconds=${encodeURIComponent(Math.max(5,Math.min(600,Number(activeWithinSeconds)||SESSION_ACTIVE_SECONDS)))}`,{timeoutMs:8000});
   if(!Array.isArray(sessions))return null;const userId=String(mapping.jellyfin_user_id||'').toLowerCase(),item=String(itemId||'').toLowerCase();
   return sessions.find(session=>String(session?.UserId||'').toLowerCase()===userId&&String(session?.DeviceId||'')===String(id)&&(!item||String(session?.NowPlayingItem?.Id||'').toLowerCase()===item))||null;
 }
@@ -76,7 +76,7 @@ async function activeManagedLeases(limit=2000,entitlementId=null){
 }
 async function snapshotServers(rows){
   const valid=rows.filter(row=>row.server_id&&row.server_enabled&&row.stremio_enabled&&row.mapping_status==='active'&&!row.account_disabled),servers=[...new Map(valid.map(row=>[String(row.server_id),{id:row.server_id,name:row.server_name}])).values()],byServer=new Map(),failures=[];
-  const settled=await Promise.allSettled(servers.map(server=>registry.request(server.id,'/Sessions?activeWithinSeconds=600',{timeoutMs:8000})));
+  const activeWindow=Math.max(30,SESSION_ACTIVE_SECONDS),settled=await Promise.allSettled(servers.map(server=>registry.request(server.id,`/Sessions?activeWithinSeconds=${encodeURIComponent(activeWindow)}`,{timeoutMs:8000})));
   for(let i=0;i<settled.length;i+=1){const server=servers[i],result=settled[i];if(result.status==='fulfilled'){byServer.set(String(server.id),Array.isArray(result.value)?result.value:[]);}else failures.push({serverId:server.id,error:String(result.reason?.message||result.reason)});}
   return{byServer,failures,failedServerIds:new Set(failures.map(row=>String(row.serverId)))};
 }
@@ -84,7 +84,7 @@ function matchingSession(row,sessions){
   const id=String(row.jellyfin_session_id||''),device=String(row.device_id||''),user=String(row.jellyfin_user_id||'').toLowerCase(),item=String(row.item_id||'').toLowerCase();
   return sessions.find(session=>id&&String(session?.Id||'')===id)||sessions.find(session=>String(session?.UserId||'').toLowerCase()===user&&device&&String(session?.DeviceId||'')===device&&(!item||String(session?.NowPlayingItem?.Id||'').toLowerCase()===item))||null;
 }
-function sessionFresh(session,now=Date.now(),activeSeconds=SESSION_ACTIVE_SECONDS){if(!session?.NowPlayingItem)return false;const last=Date.parse(session.LastActivityDate||''),window=Math.max(10,Math.min(600,Number(activeSeconds)||SESSION_ACTIVE_SECONDS));return Number.isFinite(last)&&now-last<=window*1000;}
+function sessionFresh(session,now=Date.now(),activeSeconds=SESSION_ACTIVE_SECONDS){if(!session?.NowPlayingItem)return false;const last=Date.parse(session.LastActivityDate||''),window=Math.max(2,Math.min(600,Number(activeSeconds)||SESSION_ACTIVE_SECONDS));return Number.isFinite(last)&&now-last<=window*1000;}
 async function stopLease(row,reason='stale'){
   let token=null;if(row.playback_token_encrypted){try{token=decryptWithEnv(row.playback_token_encrypted,entitlements.TOKEN_ENV,PLAYBACK_TOKEN_PREFIX);}catch(error){console.warn(`Unable to decrypt managed Stremio playback token: ${error.message}`);}}
   if(token&&row.base_url&&row.device_id){try{await restrictedPost(row,token,'/Sessions/Playing/Stopped',playbackBody({itemId:row.item_id,mediaSourceId:row.media_source_id,playSessionId:row.play_session_id,positionTicks:row.position_ticks||0,playMethod:row.play_method||'DirectPlay'}),row.device_id);}catch(error){console.warn(`Unable to report managed Stremio playback stop: ${error.message}`);}}
@@ -98,14 +98,14 @@ async function reconcile({entitlementId=null,activeSeconds=SESSION_ACTIVE_SECOND
   const snapshot=await snapshotServers(rows),now=Date.now();let active=0,ended=0;
   for(const row of rows){
     if(row.mapping_status!=='active'||!row.server_enabled||!row.stremio_enabled||row.account_disabled){await stopLease(row,'mapping_inactive');ended+=1;continue;}
-    if(snapshot.failedServerIds.has(String(row.server_id))){active+=1;continue;}
+    if(snapshot.failedServerIds.has(String(row.server_id))){await sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS});active+=1;continue;}
     const sessions=snapshot.byServer.get(String(row.server_id))||[],session=matchingSession(row,sessions),started=Date.parse(row.lifecycle_started_at||row.first_seen_at||'')||0;
     if(sessionFresh(session,now,activeSeconds)){
       active+=1;const position=Number(session?.PlayState?.PositionTicks||0)||0;
       await sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS});
       await query(`UPDATE stremio_source_playback_leases SET jellyfin_session_id=COALESCE($2,jellyfin_session_id),position_ticks=$3 WHERE lease_hash=$1`,[row.lease_hash,session?.Id?String(session.Id):null,position||null]);continue;
     }
-    if(started&&now-started<START_GRACE_SECONDS*1000)continue;
+    if(!row.jellyfin_session_id&&started&&now-started<START_GRACE_SECONDS*1000)continue;
     await stopLease(row,session?'jellyfin_session_stale':'jellyfin_session_missing');ended+=1;
   }
   return{leases:rows.length,active,ended,serverFailures:snapshot.failures.length};
@@ -114,8 +114,8 @@ async function reconcileEntitlement(entitlementId,{activeSeconds=ADMISSION_ACTIV
   if(!entitlementId)return{leases:0,active:0,ended:0,serverFailures:0};
   return reconcile({entitlementId,activeSeconds});
 }
-function startManager({intervalMs=15000}={}){
-  if(timer)return timer;const delay=Math.max(5000,Math.min(60000,Number(intervalMs)||15000));timer=setInterval(async()=>{if(running)return;running=true;try{await reconcile();}catch(error){console.warn(`Managed Stremio playback lifecycle cycle failed: ${error.message}`);}finally{running=false;}},delay);timer.unref?.();return timer;
+function startManager({intervalMs=5000}={}){
+  if(timer)return timer;const delay=Math.max(5000,Math.min(60000,Number(intervalMs)||5000));timer=setInterval(async()=>{if(running)return;running=true;try{await reconcile();}catch(error){console.warn(`Managed Stremio playback lifecycle cycle failed: ${error.message}`);}finally{running=false;}},delay);timer.unref?.();return timer;
 }
 
 module.exports={SESSION_ACTIVE_SECONDS,ADMISSION_ACTIVE_SECONDS,START_GRACE_SECONDS,PLAYBACK_TOKEN_PREFIX,deviceId,safeHeaderValue,loginAuthorization,authorization,serverUrl,authenticatePlayback,restrictedPost,normalizePlayMethod,playbackBody,resolveSession,existingPlayback,start,logoutToken,activeManagedLeases,snapshotServers,matchingSession,sessionFresh,stopLease,reconcile,reconcileEntitlement,startManager};
