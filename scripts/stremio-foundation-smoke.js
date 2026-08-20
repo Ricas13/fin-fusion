@@ -28,6 +28,24 @@ assert.strictEqual(rich.metadata.channels,'5.1');
 assert.strictEqual(rich.metadata.releaseGroup,'MGE');
 assert(rich.description.includes('WEB-DL')&&rich.description.includes('Dolby Vision')&&rich.description.includes('MGE'));
 
+const card=foundation.richStreamDescription(rich,{
+    Container:'mkv',
+    Bitrate:24000000,
+    Size:18*(1024**3),
+    MediaStreams:[
+        {Type:'Video',DisplayTitle:'4K HEVC Dolby Vision Profile 8.1 (HDR10)'},
+        {Type:'Audio',DisplayTitle:'English - Dolby Digital Plus + Dolby Atmos - 5.1 - Default - Original'},
+        {Type:'Subtitle',Language:'eng',DisplayTitle:'English - SUBRIP - SDH'}
+    ]
+});
+assert.deepStrictEqual(card.split('\n'),[
+    '🎬 WEB-DL • MGE',
+    '📺 HEVC • Dolby Vision P8.1 • HDR10',
+    '🔊 English • DD+ Atmos • 5.1',
+    '💬 English • SDH',
+    '📦 18.0 GB • 24.0 Mbps • MKV'
+]);
+
 const web1080=foundation.streamDisplayFromFilename('Future.Man.S02E12.The.Brain.Job.WEBRip-1080p-DEFLATE.strm');
 assert.strictEqual(web1080.name,'[CF ⚡] 1080p');
 assert.strictEqual(web1080.metadata.source,'WEBRip');
