@@ -21,7 +21,6 @@ const hiddenPages=Object.freeze({
   'request-plan-limits':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['request-plan-limits','Request limits','/admin/request-plan-policy'])}),
   'plan-access-rules':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
   discounts:Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['discounts','Discounts','/admin/discounts'])}),
-  marketing:Object.freeze({groupKey:'commerce',parentKey:'commerce-overview',page:Object.freeze(['marketing','Marketing','/admin/marketing'])}),
   referrals:Object.freeze({groupKey:'commerce',parentKey:'commerce-overview',page:Object.freeze(['referrals','Affiliates','/admin/referrals'])}),
   'payment-risk-policy':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
   libraries:Object.freeze({groupKey:'servers',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
