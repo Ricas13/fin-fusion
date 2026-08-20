@@ -4,7 +4,7 @@ CAPTAiNFiN has separate areas for customers and administrators. Sign in with the
 
 ## Customers
 
-A customer can use the portal to review service status, manage account security, set a separate Jellyfin password when required, adjust allowed library visibility, and access payment/subscription actions made available by the active plan.
+A customer can use the portal to review service status, manage account security, set a separate Jellyfin password when required, adjust allowed library visibility, configure Stremio when included, and access payment/subscription actions made available by the active plan.
 
 ## Administrators
 
@@ -20,6 +20,6 @@ CAPTAiNFiN portal passwords and Jellyfin passwords are separate. A portal passwo
 
 For a normal validation error, the platform should explain what needs to be corrected. For an unexpected server error, note what page/action you were using and contact the administrator. Administrators can use the application request ID and logs to locate the underlying exception.
 
-## Planned Stremio service
+## Stremio service
 
-Stremio support is being built as a stream-only delivery option backed by Jellyfin. It is not a live customer service until the addon runtime is released and explicitly enabled.
+When a plan includes Stremio, the customer can create a private installation link from the portal. Managed CAPTAiNFiN Jellyfin delivery and any configured external sources are presented as source-neutral Stremio results; customers should not need to understand the internal source topology.
