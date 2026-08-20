@@ -38,11 +38,12 @@ assert.strictEqual(transcoded.searchParams.get('PlaySessionId'),'play2');
 assert.strictEqual(transcoded.searchParams.get('DeviceId'),'device2');
 
 assert.strictEqual(lifecycle.playbackBody({itemId:'i',mediaSourceId:'m',playSessionId:'p',playMethod:'Transcode'}).PlayMethod,'Transcode','Jellyfin lifecycle reporting must match the negotiated play method');
-assert.strictEqual(lifecycle.SESSION_ACTIVE_SECONDS,60,'managed playback must not retain silent sessions for several minutes');
-assert.strictEqual(lifecycle.ADMISSION_ACTIVE_SECONDS,30,'blocked admission must use a stricter live-session recheck');
+assert.strictEqual(lifecycle.SESSION_ACTIVE_SECONDS,20,'background managed playback liveness must stay short');
+assert.strictEqual(lifecycle.ADMISSION_ACTIVE_SECONDS,5,'blocked admission must use a five-second live-session recheck');
+assert.strictEqual(lifecycle.START_GRACE_SECONDS,10,'startup grace must not hold a stopped slot for tens of seconds');
 const now=Date.now();
-assert(lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-29000).toISOString()},now,30),'recent managed playback must remain active');
-assert(!lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-31000).toISOString()},now,30),'silent managed playback must become stale promptly for admission');
+assert(lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-4000).toISOString()},now,5),'recent managed playback must remain active');
+assert(!lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-6000).toISOString()},now,5),'silent managed playback must become stale within the admission window');
 assert.strictEqual(admission.cleanMetadata({playMethod:'DirectStream'}).playMethod,'DirectStream');
 assert.strictEqual(admission.cleanMetadata({playMethod:'anything'}).playMethod,null,'lease metadata must reject unknown play methods');
 
@@ -60,12 +61,15 @@ assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,
 assert(managedSource.includes('`${item.id}:${source.Id}:${filename}`'),'separate Jellyfin items/media sources must keep distinct Stremio binge groups');
 assert(runtimeSource.includes('managedRuntime.playbackInfo(mapping,req.params.itemId,req.params.mediaSourceId)'),'playback admission must refresh the selected media-source negotiation');
 assert(runtimeSource.includes("admission.reason==='stream_limit'")&&runtimeSource.includes('managedPlayback.reconcileEntitlement(e.id)'),'a blocked managed play must re-check stale Jellyfin sessions before returning 429');
+assert(runtimeSource.includes("managedSessions.start({intervalMs:5000})")&&runtimeSource.includes("managedPlayback.startManager({intervalMs:5000})"),'managed Stremio reconciliation must run every five seconds');
 assert(!runtimeSource.includes('jellyfin.startStreamManager'),'the retired single-entitlement stream manager must not run alongside the multi-server reconciler');
 assert(reconcilerSource.includes('managedPlayback.ADMISSION_ACTIVE_SECONDS'),'managed concurrency enforcement must use the same live-session window as admission rechecks');
 assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback must remain no-byte direct delivery while preserving request semantics across the Jellyfin redirect');
 assert(runtimeSource.includes('playMethod:target.playMethod'),'managed admission audit must record the actual delivery method');
 assert(lifecycleSource.includes("playMethod:row.play_method||'DirectPlay'"),'managed stop reporting must reuse the negotiated play method');
 assert(lifecycleSource.includes('failedServerIds')&&lifecycleSource.includes("snapshot.failedServerIds.has(String(row.server_id))"),'managed admission rechecks must fail closed when Jellyfin session snapshots fail');
+assert(lifecycleSource.includes("if(!row.jellyfin_session_id&&started&&now-started<START_GRACE_SECONDS*1000)continue"),'startup grace must only protect a playback whose Jellyfin session has not resolved yet');
+assert(lifecycleSource.includes("sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS})"),'fail-closed session checks must retain the managed admission lease');
 assert(migration.includes('play_method')&&migration.includes("'DirectStream'")&&migration.includes("'Transcode'"),'managed playback migration must persist the negotiated Jellyfin play method');
 
 console.log('stremio playback compatibility smoke: ok');
