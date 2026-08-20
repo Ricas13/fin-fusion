@@ -25,11 +25,11 @@ assert(pool.includes('Confirm that you are authorized'),'external source connect
 assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTAiNFiN attribution for operator-side source diagnostics');
 assert(runtime.includes('managedRuntime.streamsFor')&&runtime.includes('externalRuntime.streamsFor'),'Stremio runtime must own separate managed and external resolution classes');
 assert(runtime.includes('const streams=[...managed,...external]'),'managed Stremio results must be returned before external results');
-assert(runtime.includes('Promise.all(['),'managed and external result classes must resolve concurrently');
+assert(runtime.includes('Promise.allSettled(['),'managed and external result classes must resolve independently so one provider failure cannot hide healthy results');
 assert(managed.includes('/PlaybackInfo?'),'only managed Jellyfin delivery should negotiate PlaybackInfo');
 assert(!external.includes('/PlaybackInfo'),'external Jellyfin delivery must remain unmanaged and PlaybackInfo-free');
-assert(admin.includes('The upstream Jellyfin owner can still see activity'),'operator UI must be transparent about upstream activity visibility');
-assert(admin.includes('Password is not stored')&&admin.includes('choose its libraries'),'operator UI must explain external credential and indexing boundaries');
+assert(admin.includes('External fallback playback goes directly to this Jellyfin server')&&admin.includes('Media bytes never pass through the portal'),'operator UI must be transparent about direct upstream playback and the no-byte-proxy boundary');
+assert(admin.includes('The password is stored encrypted only when automatic token rotation is enabled.')&&admin.includes('Libraries included in Stremio'),'operator UI must explain external credential storage and indexing boundaries');
 assert(sourceMigration.includes('plan_stremio_sources')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support external source mappings without weakening managed identity integrity');
 assert(migration.includes('portal customer'),'migration must document portal identity invariant');
 console.log('Jellyfin lifecycle + Stremio Sources smoke: OK');

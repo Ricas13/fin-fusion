@@ -13,7 +13,10 @@ const foundation=require('./foundation');
 const TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY';
 const TOKEN_PREFIX='stremio-jf-token';
 function serviceType(row){return String(row?.service_type_snapshot||row?.service_type||'jellyfin');}
-function streamLimit(row){return Math.max(1,Math.min(50,Number(row?.streams||1)));}
+// stream_limit remains a compatibility column in the persisted Stremio
+// entitlement schema. Household access no longer derives any runtime or
+// commercial concurrency allowance from the plan's Jellyfin stream count.
+function streamLimit(_row){return 1;}
 function internalUsername(customerId){return `cf_stremio_${String(customerId).replace(/-/g,'').slice(0,12)}`;}
 function randomPassword(){return crypto.randomBytes(32).toString('base64url');}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin user token');return `MediaBrowser Token="${token}"`;}

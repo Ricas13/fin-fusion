@@ -111,6 +111,7 @@ async function managedAccountsByServer() {
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
         WHERE js.enabled=TRUE
+          AND COALESCE(ja.account_purpose,'jellyfin')<>'stremio_internal'
     `);
     const byServer = new Map();
     for (const row of result.rows) {
@@ -254,7 +255,9 @@ async function freshCustomerSnapshot(customerId, cfg) {
         SELECT ja.id,ja.customer_id,ja.server_id,ja.jellyfin_user_id
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
-        WHERE ja.customer_id=$1 AND js.enabled=TRUE
+        WHERE ja.customer_id=$1
+          AND js.enabled=TRUE
+          AND COALESCE(ja.account_purpose,'jellyfin')<>'stremio_internal'
     `, [customerId]);
     const byServer = new Map();
     for (const account of accountsResult.rows) {

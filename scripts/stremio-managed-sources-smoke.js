@@ -34,20 +34,18 @@ assert(admin.includes("'admin.stremio.managed_source.api_key.rotate'"),'managed 
 assert(!admin.includes('decryptWithEnv')&&!admin.includes('decryptJellyfinKey'),'managed source handling must never decrypt an API key for display');
 assert(admin.includes("res.redirect('/admin/servers/stremio?message='"),'managed source saves must return to the single Stremio page');
 
-for(const phrase of ['Your Jellyfin servers','External Jellyfin servers','Recent connection attempts','One private Stremio source pool'])assert(sources.includes(phrase),`single-page Stremio control centre missing: ${phrase}`);
-assert(sources.indexOf('Your Jellyfin servers')<sources.indexOf('External Jellyfin servers'),'managed server table must render before external sources');
-assert(sources.indexOf('External Jellyfin servers')<sources.indexOf('Recent connection attempts'),'connection history must follow both source tables');
+for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Managed Stremio activity','Libraries included in Stremio'])assert(sources.includes(phrase),`single-page Stremio control centre missing: ${phrase}`);
+assert(sources.indexOf('Managed Jellyfin sources')<sources.indexOf('External Jellyfin sources'),'managed server table must render before external sources');
+assert(sources.indexOf('External Jellyfin sources')<sources.indexOf('Managed Stremio activity'),'managed activity must follow both source groups');
 assert(sources.includes("managedSources=require('../stremio/managed-sources')")&&sources.includes("managedMediaIndex=require('../stremio/media-index')"),'single page must load managed fleet and managed index state');
+assert(sources.includes('capabilitySourceDisclosure')&&sources.includes('sourceInlineSettings'),'source maintenance must stay inline in the compact control centre');
 assert(sources.includes('action="/admin/servers/stremio/managed/${esc(server.id)}"'),'managed rows must save through the canonical managed mutation route');
-assert(sources.includes('type="password" name="apiKey"'),'single Stremio page must retain write-only managed API-key entry');
-assert(sources.includes('autocomplete="new-password"'),'managed API key field must not be treated as a readable saved credential');
-assert(sources.includes('Managed results always appear before external results'),'admin UI must explain managed-first ordering');
-assert(sources.includes('External Jellyfin servers')&&sources.includes('action="/admin/servers/stremio/${esc(source.id)}/configure"'),'external sources must be configurable inline on the same page');
+assert(sources.includes('action="/admin/servers/stremio/${esc(source.id)}/configure"'),'external sources must be configurable inline on the same page');
 assert(sources.includes('name="enabled" value="1"')&&sources.includes('name="priority"'),'both source groups must expose participation and priority controls');
+assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must state that fallback playback bypasses CAPTAiNFiN media transport');
+assert(sources.includes('Media bytes never pass through the portal'),'source UI must state the no-byte-proxy invariant');
 assert(externalConfig.includes('UPDATE stremio_sources SET enabled=$2,priority=$3'),'external source participation and priority must update atomically');
 assert(externalConfig.includes("'admin.stremio.source.configure'"),'external source inline configuration must be audited');
-assert(sources.includes('sourceInlineManage')&&sources.includes('sourceManageGrid'),'external source maintenance must expand inline rather than requiring navigation away');
-assert(sources.includes('name="returnTo" value="main"'),'inline external maintenance must return to the single control centre');
 assert(!sources.includes('href="/admin/servers/stremio/${esc(source.id)}">Manage'),'main Stremio page must not expose a second external-management page');
 
 assert(composition.includes('createAdminStremioManagedSourcesRouter'),'managed source mutation router must use canonical admin route composition');
