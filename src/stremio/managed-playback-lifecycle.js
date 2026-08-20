@@ -78,7 +78,7 @@ async function snapshotServers(rows){
   const valid=rows.filter(row=>row.server_id&&row.server_enabled&&row.stremio_enabled&&row.mapping_status==='active'&&!row.account_disabled),servers=[...new Map(valid.map(row=>[String(row.server_id),{id:row.server_id,name:row.server_name}])).values()],byServer=new Map(),failures=[];
   const settled=await Promise.allSettled(servers.map(server=>registry.request(server.id,'/Sessions?activeWithinSeconds=600',{timeoutMs:8000})));
   for(let i=0;i<settled.length;i+=1){const server=servers[i],result=settled[i];if(result.status==='fulfilled'){byServer.set(String(server.id),Array.isArray(result.value)?result.value:[]);}else failures.push({serverId:server.id,error:String(result.reason?.message||result.reason)});}
-  return{byServer,failures};
+  return{byServer,failures,failedServerIds:new Set(failures.map(row=>String(row.serverId)))};
 }
 function matchingSession(row,sessions){
   const id=String(row.jellyfin_session_id||''),device=String(row.device_id||''),user=String(row.jellyfin_user_id||'').toLowerCase(),item=String(row.item_id||'').toLowerCase();
@@ -98,6 +98,7 @@ async function reconcile({entitlementId=null,activeSeconds=SESSION_ACTIVE_SECOND
   const snapshot=await snapshotServers(rows),now=Date.now();let active=0,ended=0;
   for(const row of rows){
     if(row.mapping_status!=='active'||!row.server_enabled||!row.stremio_enabled||row.account_disabled){await stopLease(row,'mapping_inactive');ended+=1;continue;}
+    if(snapshot.failedServerIds.has(String(row.server_id))){active+=1;continue;}
     const sessions=snapshot.byServer.get(String(row.server_id))||[],session=matchingSession(row,sessions),started=Date.parse(row.lifecycle_started_at||row.first_seen_at||'')||0;
     if(sessionFresh(session,now,activeSeconds)){
       active+=1;const position=Number(session?.PlayState?.PositionTicks||0)||0;
