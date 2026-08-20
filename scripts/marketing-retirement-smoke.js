@@ -10,6 +10,7 @@ const exists=file=>fs.existsSync(path.join(root,file));
 const composition=read('src/platform/admin-route-composition.js');
 const router=read('src/platform/router.js');
 const nav=read('src/platform/admin-nav.js');
+const customer360=read('src/platform/admin-customer-360.js');
 const communications=read('views/customer/communications.ejs');
 const jobs=read('src/automation/jobs.js');
 const worker=read('scripts/automation-worker.js');
@@ -22,6 +23,7 @@ assert(!router.includes('customer-marketing-preferences')&&!router.includes('cre
 assert(!nav.includes("['marketing','Marketing','/admin/marketing']")&&!nav.includes('marketing:Object.freeze'),'Marketing must not remain in admin navigation context');
 assert(!communications.includes('/account/communications/marketing-email'),'customer portal must not expose retired marketing consent controls');
 assert(!communications.includes('Offers &amp; discounts by email')&&!communications.includes('marketing_email_opt_in'),'customer notifications page must not advertise retired Marketing');
+assert(!customer360.includes('/marketing/withdraw')&&!customer360.includes('Marketing consent')&&!customer360.includes('marketingConsentChanged'),'Customer 360 must not retain Marketing controls, routes or mutation metadata');
 assert(!jobs.includes('marketingCampaigns')&&!jobs.includes('marketing_campaigns'),'automation registry must not run retired marketing campaigns');
 assert(!worker.includes('marketing_campaigns'),'automation worker must not schedule retired marketing campaigns');
 assert(retireMigration.includes("DELETE FROM public.automation_job_state")&&retireMigration.includes("job_key='marketing_campaigns'"),'upgrade migration must remove stale Marketing from Operations → Jobs');
