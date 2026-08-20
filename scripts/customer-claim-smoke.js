@@ -2,8 +2,14 @@
 
 const assert = require('assert');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 const { query, getPool } = require('../src/db');
 const claims = require('../src/customer-claims');
+
+const root = path.join(__dirname, '..');
+const claimRoute = fs.readFileSync(path.join(root, 'src/platform/customer-claim.js'), 'utf8');
+const operatorExperience = fs.readFileSync(path.join(root, 'public/js/operator-experience.js'), 'utf8');
 
 async function importedCustomer({ name, email, jellyfinUsername, serverName, serverSlug }) {
     const server = (await query(`
@@ -24,6 +30,14 @@ async function importedCustomer({ name, email, jellyfinUsername, serverName, ser
 }
 
 (async () => {
+    assert(claimRoute.includes('const created = await claims.createClaim'), 'admin claim creation must retain the one-time raw token returned by createClaim');
+    assert(claimRoute.includes('req.session.customerClaimFlash') && claimRoute.includes('takeClaimFlash(req)'), 'claim URL must cross the redirect only through a one-time admin session flash');
+    assert(claimRoute.includes('delete req.session.customerClaimFlash'), 'one-time claim URL must be deleted when rendered/revoked');
+    assert(claimRoute.includes('absoluteUrl(req, `/claim/${encodeURIComponent(created.token)}`)'), 'admin flash must contain the usable full claim URL');
+    assert(claimRoute.includes('shown only once') && claimRoute.includes('not stored in plaintext'), 'claim UI must explain the one-time bearer-token boundary');
+    assert(!claimRoute.includes('row.raw_token'), 'admin claim table must not pretend a hash-only persisted claim can recover its raw token');
+    assert(operatorExperience.includes("'[data-copy-value],[data-copy-link]'"), 'shared admin clipboard handler must support claim link controls');
+
     const imported = await importedCustomer({
         name: 'Legacy Alice',
         email: 'alice-old@example.test',
