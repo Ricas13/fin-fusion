@@ -34,6 +34,7 @@
 .capabilityTable .rowActions form{margin:0}
 .capabilityTable .inlineToggle{margin:0}
 .capabilityTable .priorityInput{width:78px;min-width:78px;min-height:32px;padding:5px 8px}
+.sourceInlineSettings{display:flex;align-items:center;gap:8px;white-space:nowrap}
 .capabilityExpandRow>td{padding:0!important;background:#0e151d!important}
 .capabilitySourceDisclosure{display:block}
 .capabilitySourceDisclosure>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:36px;padding:7px 11px;color:#9eabba;font-size:11px;font-weight:720;cursor:pointer;user-select:none}
@@ -45,8 +46,10 @@
 .capabilityControlGrid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(220px,.8fr);gap:10px;align-items:start}
 .capabilityControlPanel{min-width:0;padding:10px 11px;border:1px solid #293846;border-radius:9px;background:rgba(255,255,255,.012)}
 .capabilityControlHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px}
+.capabilityControlHead>div{display:grid;gap:2px;min-width:0}
 .capabilityControlHead strong{color:#e9eef3;font-size:12px}
 .capabilityControlHead span{color:#8392a2;font-size:11px;line-height:1.35}
+.capabilityControlHead form{margin:0;flex:0 0 auto}
 .capabilityControlActions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
 .capabilityControlActions form{margin:0}
 
@@ -70,10 +73,28 @@
 .capabilityInlineForm{display:grid;grid-template-columns:minmax(130px,1fr) minmax(150px,1fr) auto 76px auto;gap:6px;align-items:center}
 .capabilityInlineForm .input{min-height:34px;padding:6px 8px}
 
+.capabilityAddDisclosure{border-top:1px solid #263442;background:#0f161e}
+.capabilityAddDisclosure>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:42px;padding:9px 13px;color:#8fdcf2;font-size:12px;font-weight:800;cursor:pointer}
+.capabilityAddDisclosure>summary::-webkit-details-marker{display:none}
+.capabilityAddDisclosure>summary::after{content:'Add';font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.capabilityAddDisclosure[open]>summary::after{content:'Close'}
+.capabilityAddForm{display:grid;gap:10px;padding:11px 13px 13px;border-top:1px solid #263442;background:#0d141c}
+.capabilityAddGrid{display:grid;grid-template-columns:1.1fr 1.4fr 1fr 1fr 100px 150px;gap:7px}
+.capabilityAddGrid label{display:grid;gap:4px;min-width:0;color:#8391a1;font-size:10px;font-weight:700}
+.capabilityAddGrid .input{min-width:0;min-height:34px;padding:6px 8px}
+.capabilityAddToggles{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.capabilityAddToggles .inlineToggle{margin:0}
+
 .capabilityActivityMeta{display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:2px;color:#8290a0;font-size:11px}
 .capabilityPagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border-top:1px solid #263442;background:#0f161e;color:#8391a1;font-size:11px}
 .capabilityPaginationActions{display:flex;gap:6px}
 .capabilityEmpty{padding:22px 14px;text-align:center;color:#7f8e9e;font-size:12px}
+
+.diagnosticNotice strong{display:block;color:#ffd2d6}
+.diagnosticHint{margin-top:5px;color:#f3bbc1;line-height:1.45}
+.diagnosticDetail{margin-top:8px}
+.diagnosticDetail summary{cursor:pointer;color:#ffd0d5;font-size:11px;font-weight:800}
+.diagnosticDetail code{display:block;margin-top:7px;padding:9px 10px;border:1px solid rgba(255,97,116,.22);border-radius:8px;background:rgba(0,0,0,.18);color:#ffc5ca;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.45}
 
 /* Dashboard KPI decoration must never sit on top of labels, help targets or
    metadata. Isolate the card and keep all real content above decorative layers. */
@@ -81,7 +102,8 @@
 .analyticsKpi>*{position:relative;z-index:2}
 .analyticsKpi::before,.analyticsKpi::after{z-index:0!important;pointer-events:none!important}
 
-@media(max-width:1350px){.capabilityLibraryGrid{grid-template-columns:repeat(4,minmax(0,1fr))}.capabilitySummaryStats{grid-template-columns:repeat(3,minmax(120px,1fr))}.capabilityStat:nth-child(4){border-left:0}}
+@media(max-width:1450px){.capabilityAddGrid{grid-template-columns:1fr 1.3fr 1fr 1fr 100px}.capabilityAddGrid label:last-child{grid-column:auto}}
+@media(max-width:1350px){.capabilityLibraryGrid{grid-template-columns:repeat(4,minmax(0,1fr))}.capabilitySummaryStats{grid-template-columns:repeat(3,minmax(120px,1fr))}.capabilityStat:nth-child(4){border-left:0}.capabilityAddGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:1100px){.capabilityLibraryGrid{grid-template-columns:repeat(3,minmax(0,1fr))}.capabilityControlGrid{grid-template-columns:1fr}.capabilitySummary{grid-template-columns:1fr}.capabilitySummaryActions{max-width:none;justify-content:flex-start}.capabilityInlineForm{grid-template-columns:1fr 1fr auto 76px}.capabilityInlineForm .button{grid-column:1/-1;justify-self:start}}
-@media(max-width:800px){.capabilityLibraryGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.capabilitySummaryStats{grid-template-columns:repeat(2,minmax(0,1fr))}.capabilityStat:nth-child(odd){border-left:0}.capabilityTable{min-width:760px}.capabilitySectionHead{align-items:flex-start;flex-direction:column}.capabilitySectionActions{justify-content:flex-start}.capabilityInlineForm{grid-template-columns:1fr}}
+@media(max-width:800px){.capabilityLibraryGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.capabilitySummaryStats{grid-template-columns:repeat(2,minmax(0,1fr))}.capabilityStat:nth-child(odd){border-left:0}.capabilityTable{min-width:760px}.capabilitySectionHead{align-items:flex-start;flex-direction:column}.capabilitySectionActions{justify-content:flex-start}.capabilityInlineForm,.capabilityAddGrid{grid-template-columns:1fr}.sourceInlineSettings{align-items:flex-start;flex-direction:column}}
 @media(max-width:520px){.capabilityLibraryGrid,.capabilitySummaryStats{grid-template-columns:1fr}.capabilityStat{border-left:0;border-top:1px solid #2b3947;padding-left:2px}.capabilityStat:first-child{border-top:0}.capabilitySummaryActions{display:grid;grid-template-columns:1fr}.capabilitySummaryActions .button,.capabilitySummaryActions button{width:100%}.capabilitySourceBody{padding-left:8px;padding-right:8px}}
