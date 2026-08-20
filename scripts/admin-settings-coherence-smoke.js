@@ -51,9 +51,10 @@ assert(payments.includes('id="stripe-provider"')&&payments.includes('id="paypal-
 assert(notifications.includes('telegramEnabled')&&notifications.includes('discordEnabled')&&notifications.includes('whatsappEnabled'),'global notification channel booleans must remain connected to persisted settings');
 assert(personalNotifications.includes('notificationEventGroup')&&personalNotifications.includes('type="checkbox"'),'personal event routing must remain a boolean matrix for the shared enhancer');
 
-assert(indexLock.includes("INDEX_JOB_KEY='captainfin:stremio_media_index'")&&indexLock.includes('pg_try_advisory_lock(hashtext($1))'),'manual Stremio index maintenance must use the same advisory key as the singleton worker');
-assert(managedIndex.includes("require('./index-lock')")&&managedIndex.includes('indexLock.withIndexLock'),'managed index clear/rebuild must be serialized against scheduled indexing');
-assert(externalIndex.includes("require('./index-lock')")&&externalIndex.includes('indexLock.withIndexLock'),'external index clear/rebuild must be serialized against scheduled indexing');
+assert(indexLock.includes("INDEX_JOB_KEY='captainfin:stremio_media_index'")&&indexLock.includes('pg_try_advisory_xact_lock(hashtext($1))'),'manual Stremio index maintenance must use the same advisory key as the singleton worker');
+assert(indexLock.includes('RESTORE_MAINTENANCE_LOCK')&&indexLock.includes('pg_advisory_xact_lock_shared'),'manual Stremio maintenance must preserve the database restore-maintenance lock contract');
+assert(managedIndex.includes("require('./index-lock')")&&managedIndex.includes('indexLock.withIndexTransaction'),'managed index clear/rebuild must be serialized against scheduled indexing on one DB connection');
+assert(externalIndex.includes("require('./index-lock')")&&externalIndex.includes('indexLock.withIndexTransaction'),'external index clear/rebuild must be serialized against scheduled indexing on one DB connection');
 assert(!controls.includes('font-size:8px')&&!controls.includes('font-size:9px'),'shared toggle system must not achieve density by shrinking normal setting labels');
 
 console.log('admin settings coherence smoke: ok');
