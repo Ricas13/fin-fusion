@@ -14,7 +14,7 @@ Controls whether the public sales homepage is visible. Turning it off does not d
 
 ### Public registration
 
-Allows visitors to create a customer portal account without an invitation. Invitations and administrator-created accounts can still work while public registration is closed.
+Controls whether new customers can register through the public storefront. When public registration is closed, new storefront registrations are blocked while existing customers can still sign in. Imported Jellyfin users can still use the administrator-created claim workflow. Invitation onboarding is retired and is not a supported registration path.
 
 ### Require email verification
 
