@@ -68,10 +68,11 @@ async function persistEntitlementRecord(customerId,sub,{sharedSources=false}={})
   const refreshed=await query(`SELECT status,token_hash FROM stremio_entitlements WHERE subscription_id=$1`,[sub.subscription_id]),row=refreshed.rows[0]||{};
   return{active:row.status==='active'&&Boolean(row.token_hash),status:row.status||'pending',serverId:null,accountId:null,subscriptionId:sub.subscription_id,isAddon:Boolean(sub.is_addon),sharedSources:Boolean(sharedSources)};
 }
-async function reconcileSharedForCustomer(customerId,sub){const mapped=await explicitSourceCount(sub.subscription_id);if(!mapped)return null;return persistEntitlementRecord(customerId,sub,{sharedSources:true});}
+async function reconcileSharedForCustomer(customerId,sub){const mapped=await explicitSourceCount(sub.subscription_id);if(!mapped)return null;const ready=await explicitSourceCount(sub.subscription_id,{readyOnly:true});if(!ready)throw new Error('No selected Stremio source is currently ready. Check Servers → Stremio Sources.');return persistEntitlementRecord(customerId,sub,{sharedSources:true});}
 async function reconcileForCustomer(customerId,entitlement=null,_options={}){
   const sub=entitlement||await entitledSubscription(customerId);if(!sub||!['stremio','bundle'].includes(serviceType(sub)))return suspend(customerId,'Stremio service is not currently entitled.');
-  return persistEntitlementRecord(customerId,sub,{sharedSources:await usesSharedSources(sub.subscription_id)});
+  const shared=await reconcileSharedForCustomer(customerId,sub);if(shared)return shared;
+  return persistEntitlementRecord(customerId,sub,{sharedSources:false});
 }
 async function current(customerId){const r=await query(`SELECT e.*,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code,p.is_addon FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id WHERE e.customer_id=$1 ORDER BY e.created_at DESC LIMIT 1`,[customerId]);return r.rows[0]||null;}
 async function suspend(customerId,reason='No active Stremio entitlement'){
