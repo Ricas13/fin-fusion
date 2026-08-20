@@ -4,6 +4,7 @@ const crypto=require('crypto');
 const {query,transaction}=require('../db');
 const registry=require('../jellyfin/registry');
 const managedLibraries=require('./managed-library-selection');
+const indexLock=require('./index-lock');
 
 function normalizeImdb(value){const id=String(value||'').trim().toLowerCase();return /^tt\d{5,12}$/.test(id)?id:null;}
 function valueItems(payload){return Array.isArray(payload?.Items)?payload.Items:Array.isArray(payload?.items)?payload.items:[];}
@@ -76,7 +77,7 @@ async function indexAll(){
 }
 
 async function clearAndReset(serverId,actorUserId=null){
-  return transaction(async client=>{
+  return indexLock.withIndexLock(()=>transaction(async client=>{
     const deleted=await client.query(`DELETE FROM stremio_media_index WHERE server_id=$1`,[serverId]);
     await client.query(`INSERT INTO stremio_media_index_state(server_id,status,item_count,last_error,updated_at)
       VALUES($1,'never',0,NULL,NOW()) ON CONFLICT(server_id) DO UPDATE
@@ -84,16 +85,16 @@ async function clearAndReset(serverId,actorUserId=null){
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.stremio.managed_index.clear','jellyfin_server',$2,$3::jsonb)`,[actorUserId,serverId,JSON.stringify({deleted:deleted.rowCount})]);
     return{deleted:deleted.rowCount};
-  });
+  }),{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding this managed source.'});
 }
 async function clearAll(actorUserId=null){
-  return transaction(async client=>{
+  return indexLock.withIndexLock(()=>transaction(async client=>{
     const deleted=await client.query(`DELETE FROM stremio_media_index`);
     await client.query(`UPDATE stremio_media_index_state SET status='never',item_count=0,last_error=NULL,updated_at=NOW()`);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.stremio.managed_index.clear_all','stremio_runtime',NULL,$2::jsonb)`,[actorUserId,JSON.stringify({deleted:deleted.rowCount})]);
     return{deleted:deleted.rowCount};
-  });
+  }),{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before clearing managed indexes.'});
 }
 
 async function lookup(serverId,imdbId,itemType){
