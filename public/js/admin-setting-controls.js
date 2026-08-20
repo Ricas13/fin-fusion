@@ -128,6 +128,33 @@
     });
   }
 
+  function compactConfiguredSecrets() {
+    document.querySelectorAll('input[type="password"]').forEach(input => {
+      if (input.closest('.settingSecretDisclosure')) return;
+      const placeholder=(input.getAttribute('placeholder')||'').toLowerCase();
+      if (!placeholder.includes('configured') || (!placeholder.includes('leave blank') && !placeholder.includes('keep'))) return;
+      const parent=input.parentElement;
+      if(!parent)return;
+      const fieldLabel=input.previousElementSibling?.matches('label:not(.settingToggle)')?input.previousElementSibling:null;
+      const clearControl=input.nextElementSibling?.matches('label.settingToggle, label.checkRow, label.toggleRow')?input.nextElementSibling:null;
+      const labelText=(fieldLabel?.textContent||input.getAttribute('aria-label')||input.name||'Credential').replace(/\s+/g,' ').trim();
+      const details=document.createElement('details');
+      details.className='settingSecretDisclosure';
+      const summary=document.createElement('summary');
+      const name=document.createElement('span');name.textContent=labelText;
+      const state=document.createElement('strong');state.textContent='Configured';
+      const edit=document.createElement('em');edit.textContent='Edit';
+      summary.append(name,state,edit);
+      const body=document.createElement('div');body.className='settingSecretBody';
+      parent.insertBefore(details,fieldLabel||input);
+      details.append(summary,body);
+      if(fieldLabel)body.appendChild(fieldLabel);
+      body.appendChild(input);
+      if(clearControl)body.appendChild(clearControl);
+      input.setAttribute('aria-label',labelText);
+    });
+  }
+
   function compactSettingsForms() {
     document.querySelectorAll('.settings-card form, .section form.formPanel').forEach(form => {
       if (form.querySelector('.settingToggle, .settingToggleGrid')) form.classList.add('compactSettingsForm');
@@ -138,6 +165,7 @@
     promoteLegacyToggles();
     promoteBooleanMatrices();
     compactGlobalNotificationChannels();
+    compactConfiguredSecrets();
     compactSettingsForms();
   }
 
