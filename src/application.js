@@ -100,7 +100,7 @@ function sessionMiddleware() {
   if (process.env.DATABASE_URL) {
     options.store = new PgStore({
       conString: process.env.DATABASE_URL,
-      createTableIfMissing: true,
+      createTableIfMissing: false,
       tableName: 'user_sessions',
       pruneSessionInterval: 900
     });
