@@ -33,11 +33,11 @@ SET next_incremental_at=LEAST(COALESCE(next_incremental_at,NOW()),NOW()+INTERVAL
     updated_at=NOW();
 
 INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at)
-VALUES('stremio_external_tokens',TRUE,3600,NOW())
+VALUES('stremio_external_tokens',TRUE,300,NOW())
 ON CONFLICT(job_key) DO UPDATE
 SET enabled=TRUE,
-    interval_seconds=3600,
-    next_run_at=LEAST(COALESCE(automation_job_state.next_run_at,NOW()),NOW()+INTERVAL '1 hour'),
+    interval_seconds=300,
+    next_run_at=LEAST(COALESCE(automation_job_state.next_run_at,NOW()),NOW()+INTERVAL '5 minutes'),
     updated_at=NOW();
 
 INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at)
