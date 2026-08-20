@@ -8,6 +8,21 @@ function serviceType(plan) {
   return value === 'stremio' || value === 'bundle' ? value : 'jellyfin';
 }
 
+function jellyfinHouseholdConfig(plan) {
+  return drivers.householdConfig({
+    household_network_limit: plan?.jellyfin_household_network_limit,
+    household_lease_minutes: plan?.jellyfin_household_lease_minutes
+  });
+}
+
+function stremioHouseholdConfig(plan) {
+  const config = drivers.householdConfig({
+    household_network_limit: 1,
+    household_lease_minutes: plan?.stremio_household_lease_minutes
+  });
+  return { ...config, networkLimit: 1 };
+}
+
 function componentsForPlan(plan) {
   if (!plan) return [];
   const type = serviceType(plan);
@@ -19,17 +34,16 @@ function componentsForPlan(plan) {
       module: 'jellyfin',
       capability: driver === 'household_network' ? 'jellyfin.household_network' : 'jellyfin.concurrent_streams',
       driver,
-      config: driver === 'household_network' ? drivers.householdConfig(plan) : drivers.concurrentStreamConfig(plan)
+      config: driver === 'household_network' ? jellyfinHouseholdConfig(plan) : drivers.concurrentStreamConfig(plan)
     });
   }
 
   if (type === 'stremio' || type === 'bundle') {
-    const household = drivers.householdConfig(plan);
     output.push({
       module: 'stremio',
       capability: 'stremio.household_network',
       driver: 'household_network',
-      config: { ...household, networkLimit: 1 }
+      config: stremioHouseholdConfig(plan)
     });
   }
 
@@ -54,4 +68,4 @@ function accessLabel(plan) {
   return parts.join(' · ');
 }
 
-module.exports = { serviceType, componentsForPlan, componentForPlan, assertComponentsLicensed, accessLabel };
+module.exports = { serviceType, jellyfinHouseholdConfig, stremioHouseholdConfig, componentsForPlan, componentForPlan, assertComponentsLicensed, accessLabel };
