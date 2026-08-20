@@ -32,7 +32,8 @@ async function restrictedPost(mapping,token,endpoint,body,id){
   const response=await outbound.safeFetch(serverUrl(mapping,endpoint),{purpose:`Managed Stremio playback lifecycle on ${mapping.server_name||mapping.server_id}`,method:'POST',timeoutMs:8000,headers:{Authorization:authorization(token,id),Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!response.ok){const error=new Error(`Managed Jellyfin playback lifecycle returned HTTP ${response.status}`);error.status=response.status;throw error;}return true;
 }
-function playbackBody({itemId,mediaSourceId,playSessionId,positionTicks=0}){return{ItemId:String(itemId),MediaSourceId:String(mediaSourceId||''),PlaySessionId:String(playSessionId||''),PositionTicks:Number.isFinite(Number(positionTicks))?Math.max(0,Math.floor(Number(positionTicks))):0,IsPaused:false,IsMuted:false,CanSeek:true,PlayMethod:'DirectPlay'};}
+function normalizePlayMethod(value){const method=String(value||'DirectPlay');return['DirectPlay','DirectStream','Transcode'].includes(method)?method:'DirectPlay';}
+function playbackBody({itemId,mediaSourceId,playSessionId,positionTicks=0,playMethod='DirectPlay'}){return{ItemId:String(itemId),MediaSourceId:String(mediaSourceId||''),PlaySessionId:String(playSessionId||''),PositionTicks:Number.isFinite(Number(positionTicks))?Math.max(0,Math.floor(Number(positionTicks))):0,IsPaused:false,IsMuted:false,CanSeek:true,PlayMethod:normalizePlayMethod(playMethod)};}
 async function resolveSession(mapping,id,itemId,{activeWithinSeconds=60}={}){
   const sessions=await registry.request(mapping.server_id,`/Sessions?activeWithinSeconds=${encodeURIComponent(Math.max(30,Math.min(600,Number(activeWithinSeconds)||60)))}`,{timeoutMs:8000});
   if(!Array.isArray(sessions))return null;const userId=String(mapping.jellyfin_user_id||'').toLowerCase(),item=String(itemId||'').toLowerCase();
@@ -43,14 +44,14 @@ async function existingPlayback(mapping,rawLease){
   if(!row?.playback_token_encrypted||!row.device_id)return null;
   try{return{deviceId:String(row.device_id),jellyfinSessionId:row.jellyfin_session_id?String(row.jellyfin_session_id):null,accessToken:decryptWithEnv(row.playback_token_encrypted,entitlements.TOKEN_ENV,PLAYBACK_TOKEN_PREFIX),reused:true};}catch{return null;}
 }
-async function start(mapping,rawLease,{itemId,mediaSourceId,playSessionId}){
+async function start(mapping,rawLease,{itemId,mediaSourceId,playSessionId,playMethod='DirectPlay'}){
   const prior=await existingPlayback(mapping,rawLease);if(prior)return prior;
-  const id=deviceId(rawLease),token=await authenticatePlayback(mapping,id),body=playbackBody({itemId,mediaSourceId,playSessionId,positionTicks:0});
+  const id=deviceId(rawLease),token=await authenticatePlayback(mapping,id),method=normalizePlayMethod(playMethod),body=playbackBody({itemId,mediaSourceId,playSessionId,positionTicks:0,playMethod:method});
   try{
     await restrictedPost(mapping,token,'/Sessions/Playing',body,id);
     let session=null;try{session=await resolveSession(mapping,id,itemId,{activeWithinSeconds:60});}catch(error){console.warn(`Unable to resolve newly started managed Stremio Jellyfin session: ${error.message}`);}
     const leaseHash=sourceAdmission.hash(rawLease),encryptedToken=encryptWithEnv(token,entitlements.TOKEN_ENV,PLAYBACK_TOKEN_PREFIX);
-    await query(`UPDATE stremio_source_playback_leases SET device_id=$2,jellyfin_session_id=$3,playback_token_encrypted=$4,lifecycle_started_at=COALESCE(lifecycle_started_at,NOW()),lifecycle_last_seen_at=NOW(),last_seen_at=NOW() WHERE lease_hash=$1`,[leaseHash,id,session?.Id?String(session.Id):null,encryptedToken]);
+    await query(`UPDATE stremio_source_playback_leases SET device_id=$2,jellyfin_session_id=$3,playback_token_encrypted=$4,play_method=$5,lifecycle_started_at=COALESCE(lifecycle_started_at,NOW()),lifecycle_last_seen_at=NOW(),last_seen_at=NOW() WHERE lease_hash=$1`,[leaseHash,id,session?.Id?String(session.Id):null,encryptedToken,method]);
     return{deviceId:id,jellyfinSessionId:session?.Id?String(session.Id):null,accessToken:token,reused:false};
   }catch(error){await logoutToken(mapping,token,id).catch(()=>{});throw error;}
 }
@@ -81,7 +82,7 @@ function matchingSession(row,sessions){
 function sessionFresh(session,now=Date.now()){if(!session?.NowPlayingItem)return false;const last=Date.parse(session.LastActivityDate||'');return Number.isFinite(last)&&now-last<=SESSION_ACTIVE_SECONDS*1000;}
 async function stopLease(row,reason='stale'){
   let token=null;if(row.playback_token_encrypted){try{token=decryptWithEnv(row.playback_token_encrypted,entitlements.TOKEN_ENV,PLAYBACK_TOKEN_PREFIX);}catch(error){console.warn(`Unable to decrypt managed Stremio playback token: ${error.message}`);}}
-  if(token&&row.base_url&&row.device_id){try{await restrictedPost(row,token,'/Sessions/Playing/Stopped',playbackBody({itemId:row.item_id,mediaSourceId:row.media_source_id,playSessionId:row.play_session_id,positionTicks:row.position_ticks||0}),row.device_id);}catch(error){console.warn(`Unable to report managed Stremio playback stop: ${error.message}`);}}
+  if(token&&row.base_url&&row.device_id){try{await restrictedPost(row,token,'/Sessions/Playing/Stopped',playbackBody({itemId:row.item_id,mediaSourceId:row.media_source_id,playSessionId:row.play_session_id,positionTicks:row.position_ticks||0,playMethod:row.play_method||'DirectPlay'}),row.device_id);}catch(error){console.warn(`Unable to report managed Stremio playback stop: ${error.message}`);}}
   if(row.jellyfin_session_id&&row.server_id){try{await registry.request(row.server_id,`/Sessions/${encodeURIComponent(String(row.jellyfin_session_id))}/Playing/Stop`,{method:'POST',timeoutMs:8000});}catch(error){console.warn(`Unable to issue fallback stop for managed Stremio Jellyfin session ${row.jellyfin_session_id}: ${error.message}`);}}
   if(token&&row.base_url)await logoutToken(row,token,row.device_id).catch(()=>{});
   await sourceAdmission.releaseHash(row.lease_hash);
@@ -106,4 +107,4 @@ function startManager({intervalMs=15000}={}){
   if(timer)return timer;const delay=Math.max(5000,Math.min(60000,Number(intervalMs)||15000));timer=setInterval(async()=>{if(running)return;running=true;try{await reconcile();}catch(error){console.warn(`Managed Stremio playback lifecycle cycle failed: ${error.message}`);}finally{running=false;}},delay);timer.unref?.();return timer;
 }
 
-module.exports={SESSION_ACTIVE_SECONDS,START_GRACE_SECONDS,PLAYBACK_TOKEN_PREFIX,deviceId,loginAuthorization,authorization,authenticatePlayback,playbackBody,resolveSession,existingPlayback,start,logoutToken,activeManagedLeases,snapshotServers,matchingSession,sessionFresh,stopLease,reconcile,startManager};
+module.exports={SESSION_ACTIVE_SECONDS,START_GRACE_SECONDS,PLAYBACK_TOKEN_PREFIX,deviceId,safeHeaderValue,loginAuthorization,authorization,serverUrl,authenticatePlayback,restrictedPost,normalizePlayMethod,playbackBody,resolveSession,existingPlayback,start,logoutToken,activeManagedLeases,snapshotServers,matchingSession,sessionFresh,stopLease,reconcile,startManager};
