@@ -1,5 +1,7 @@
 'use strict';
 
+// The stable base renderer owns the admin document chrome and the
+// /css/admin-capability.css link. This wrapper only adds progressive behavior.
 const base=require('./admin-html-core-base');
 
 function layout(options={}){
