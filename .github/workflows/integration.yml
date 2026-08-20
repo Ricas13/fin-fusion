@@ -1,0 +1,83 @@
+name: Integration
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'views/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'db/migrations/**'
+      - 'platform-preload.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/integration.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: steamfusion
+          POSTGRES_PASSWORD: steamfusion
+          POSTGRES_DB: steamfusion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamfusion -d steamfusion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://steamfusion:steamfusion@127.0.0.1:5432/steamfusion
+      NODE_ENV: test
+      SESSION_SECRET: integration-session-secret-0123456789abcdef0123456789
+      DATA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      JELLYFIN_ENCRYPTION_KEY: 1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ACTIVITY_ENCRYPTION_KEY: 2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      AUTH_ENCRYPTION_KEY: 3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      BACKUP_ENCRYPTION_KEY: 5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ADMIN_2FA_ENROLLMENT_TOKEN: integration-admin-enrollment-token-2026-long-value
+      REQUIRE_ADMIN_2FA: 'false'
+      PLACEMENT_FLEET_METRICS_STALE_SECONDS: '300'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Specialist static contracts
+        run: |
+          node scripts/csp-inline-audit.js
+          node scripts/payment-incident-safety-smoke.js
+          node scripts/customer-portal-view-smoke.js
+          node scripts/storefront-v2-smoke.js
+          node scripts/ux-control-centre-smoke.js
+          node scripts/ux-release-contract-smoke.js
+          node scripts/invitation-upgrade-bridge-smoke.js
+          node scripts/platform-coherence-static-smoke.js
+          node scripts/assembled-app-smoke.js
+          node scripts/request-user-sync-ownership-smoke.js
+          node --check scripts/production-readiness.js
+
+      - name: Isolated feature database contracts
+        run: node scripts/ci-integration-suite.js

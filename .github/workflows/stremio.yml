@@ -1,0 +1,51 @@
+name: Stremio
+
+on:
+  pull_request:
+    paths:
+      - 'src/stremio/**'
+      - 'src/application.js'
+      - 'src/jellyfin/resilient-provisioning.js'
+      - 'src/platform/admin-stremio*.js'
+      - 'src/platform/admin-plan-delivery.js'
+      - 'src/platform/admin-nav.js'
+      - 'src/platform/product-readiness.js'
+      - 'src/platform/customer-stremio.js'
+      - 'src/platform/customer-dashboard.js'
+      - 'src/platform/router.js'
+      - 'views/customer/stremio.ejs'
+      - 'db/migrations/**'
+      - 'scripts/stremio-*.js'
+      - 'tests/admin-information-architecture-regression.js'
+      - 'package.json'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.github/workflows/stremio.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Source capability contract
+        run: node scripts/stremio-source-capability-smoke.js
+      - name: Runtime and source contracts
+        run: |
+          node scripts/stremio-source-client-smoke.js
+          node scripts/stremio-source-admission-smoke.js
+          node scripts/stremio-admin-smoke.js
+          node scripts/stremio-runtime-smoke.js
