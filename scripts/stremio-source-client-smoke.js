@@ -13,6 +13,7 @@ const client=require('../src/stremio/source-client');
       calls.push({url:String(url),options});
       if(String(url).includes('/Users/AuthenticateByName'))return new Response(JSON.stringify({AccessToken:'normal-user-access-token-123456789',User:{Id:'user-123',Name:'source-user'}}),{status:200,headers:{'content-type':'application/json'}});
       if(String(url).includes('/Users/user-123/Views'))return new Response(JSON.stringify({Items:[{Id:'movies',Name:'Movies',CollectionType:'movies'},{Id:'shows',Name:'TV',CollectionType:'tvshows'},{Id:'music',Name:'Music',CollectionType:'music'}]}),{status:200,headers:{'content-type':'application/json'}});
+      if(String(url).includes('/Sessions/Logout'))return new Response(null,{status:204});
       throw new Error(`Unexpected source request: ${url}`);
     };
 
@@ -35,6 +36,11 @@ const client=require('../src/stremio/source-client');
     assert.equal(new URL(calls[1].url).pathname,'/jellyfin/Users/user-123/Views','Library discovery must preserve the configured Jellyfin base path');
     assert(calls[1].options.headers.Authorization.includes('normal-user-access-token'),'Library discovery must authenticate as the ordinary Jellyfin source user');
     assert.equal(client.sourceUrl('https://jellyfin.example.test/jellyfin','/Items?Limit=1').pathname,'/jellyfin/Items','Internal source requests must preserve the base path');
+
+    const revoked=await client.logoutToken(auth.baseUrl,'retired-token-123456789','External');
+    assert.equal(revoked,true,'Retired direct-playback tokens must be revocable through Jellyfin logout');
+    assert.equal(new URL(calls[2].url).pathname,'/jellyfin/Sessions/Logout','Token logout must preserve the configured Jellyfin base path');
+    assert(calls[2].options.headers.Authorization.includes('retired-token-123456789'),'Token logout must authenticate with the exact retired token');
 
     await assert.rejects(()=>client.authenticate('ftp://jellyfin.example.test','x','y'),/HTTP or HTTPS/);
     await assert.rejects(()=>client.authenticate('https://user:pass@jellyfin.example.test','x','y'),/credentials/);
