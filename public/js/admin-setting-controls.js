@@ -128,6 +128,37 @@
     });
   }
 
+  function compactNotificationEventGroups() {
+    if (location.pathname === '/admin/notifications/preferences') {
+      const form=document.querySelector('form[action="/admin/notifications/preferences"]');
+      if(form && form.dataset.compactEvents!=='1'){
+        form.dataset.compactEvents='1';
+        [...form.children].filter(node=>node.matches?.('section.section')).forEach(section=>{
+          const head=section.querySelector(':scope > .sectionHead');
+          const heading=head?.querySelector('h2')?.textContent?.trim();
+          if(!heading)return;
+          const count=head.querySelector('.muted')?.textContent?.trim()||'';
+          const details=document.createElement('details');details.className='settingEventDisclosure';
+          const summary=document.createElement('summary');
+          const strong=document.createElement('strong');strong.textContent=heading;
+          const small=document.createElement('small');small.textContent=count||'Notification events';
+          const edit=document.createElement('span');edit.textContent='Edit';
+          summary.append(strong,small,edit);
+          head.remove();
+          form.insertBefore(details,section);
+          section.classList.add('settingEventBody');
+          details.append(summary,section);
+        });
+      }
+    }
+    if(location.pathname === '/admin/profile/notifications'){
+      document.querySelectorAll('details.notificationEventGroup').forEach(group=>{
+        group.removeAttribute('open');
+        group.classList.add('settingEventDisclosure');
+      });
+    }
+  }
+
   function compactConfiguredSecrets() {
     document.querySelectorAll('input[type="password"]').forEach(input => {
       if (input.closest('.settingSecretDisclosure')) return;
@@ -165,6 +196,7 @@
     promoteLegacyToggles();
     promoteBooleanMatrices();
     compactGlobalNotificationChannels();
+    compactNotificationEventGroups();
     compactConfiguredSecrets();
     compactSettingsForms();
   }
