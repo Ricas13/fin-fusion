@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const registry=require('../jellyfin/registry');
 const managedEntitlements=require('./managed-entitlements');
+const managedPlayback=require('./managed-playback-lifecycle');
 
 let timer=null;
 let running=false;
@@ -26,7 +27,8 @@ async function activeEntitlements(){
 }
 async function mappings(entitlementId){return(await activeMappings()).filter(row=>String(row.entitlement_id)===String(entitlementId));}
 async function fetchServerSessions(server){
-  const payload=await registry.request(server.server_id,'/Sessions?activeWithinSeconds=180',{timeoutMs:8000});
+  const seconds=managedPlayback.ADMISSION_ACTIVE_SECONDS;
+  const payload=await registry.request(server.server_id,`/Sessions?activeWithinSeconds=${encodeURIComponent(seconds)}`,{timeoutMs:8000});
   return Array.isArray(payload)?payload:[];
 }
 async function snapshotServers(rows){
