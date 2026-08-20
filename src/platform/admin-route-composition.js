@@ -46,6 +46,7 @@ const { createAdminStremioManagedSourcesRouter } = require('./admin-stremio-mana
 const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
+const { createAdminCustomerManagementRouter } = require('./admin-customer-management');
 const { createAdminCustomer360Router } = require('./admin-customer-360');
 const { createAdminUsersDashboardRouter } = require('./admin-users-dashboard');
 const { createAdminUsersRouter } = require('./admin-users');
@@ -101,6 +102,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
   app.use(createAdminUsersDashboardRouter());
+  app.use(createAdminCustomerManagementRouter());
   app.use(createAdminCustomer360Router());
   app.use(createAdminUsersRouter());
   app.use(createAdminDiscountsRouter());

@@ -55,9 +55,20 @@ function parseFilenameMetadata(filename){
 }
 
 function streamDisplayFromFilename(filename,{prefix='CF ⚡'}={}){
-    const info=parseFilenameMetadata(filename),video=[info.source,info.codec,...info.dynamicRange].filter(Boolean),sound=[info.audio,info.channels].filter(Boolean),description=[];
+    const info=parseFilenameMetadata(filename),headline=[info.resolution||'Stream',info.source,info.codec].filter(Boolean),video=[info.source,info.codec,...info.dynamicRange].filter(Boolean),sound=[info.audio,info.channels].filter(Boolean),description=[];
     if(video.length)description.push(`🎞️ ${video.join(' • ')}`);if(sound.length)description.push(`🔊 ${sound.join(' • ')}`);if(info.releaseGroup)description.push(`🏷️ ${info.releaseGroup}`);
-    return {name:`[${prefix}] ${info.resolution||'Stream'}`,description:description.join('\n'),metadata:info};
+    return {name:`[${prefix}] ${headline.join(' • ')}`,description:description.join('\n'),metadata:info};
+}
+function bytesLabel(value){const bytes=Number(value||0);if(!(bytes>0))return'';const gb=bytes/(1024**3);return gb>=1?`${gb.toFixed(gb>=10?1:2)} GB`:`${(bytes/(1024**2)).toFixed(0)} MB`;}
+function richStreamDescription(display,media){
+    const parts=String(display?.description||'').split('\n').map(value=>value.trim()).filter(Boolean),streams=Array.isArray(media?.MediaStreams)?media.MediaStreams:[];
+    const video=streams.find(stream=>String(stream?.Type||'').toLowerCase()==='video'),audio=streams.find(stream=>String(stream?.Type||'').toLowerCase()==='audio'),subtitles=streams.filter(stream=>String(stream?.Type||'').toLowerCase()==='subtitle');
+    if(video?.DisplayTitle&&!parts.some(part=>part.includes(video.DisplayTitle)))parts.push(`📺 ${video.DisplayTitle}`);
+    if(audio?.DisplayTitle&&!parts.some(part=>part.includes(audio.DisplayTitle)))parts.push(`🔊 ${audio.DisplayTitle}`);
+    const subtitleLabels=[...new Set(subtitles.map(stream=>String(stream.DisplayTitle||stream.Language||'').trim()).filter(Boolean))].slice(0,4);
+    if(subtitleLabels.length)parts.push(`💬 ${subtitleLabels.join(' • ')}${subtitles.length>subtitleLabels.length?` +${subtitles.length-subtitleLabels.length}`:''}`);
+    const technical=[];if(media?.Container)technical.push(String(media.Container).toUpperCase());if(Number(media?.Bitrate)>0)technical.push(`${(Number(media.Bitrate)/1000000).toFixed(1)} Mbps`);const size=bytesLabel(media?.Size);if(size)technical.push(size);if(technical.length)parts.push(`📦 ${technical.join(' • ')}`);
+    return parts.join('\n')||'▶️ Stream';
 }
 
-module.exports={SERVICE_TYPES,normalizeServiceType,allowsJellyfin,allowsStremio,runtimeReady,assertAcquirable,hashInstallCredential,issueInstallCredential,parseFilenameMetadata,streamDisplayFromFilename};
+module.exports={SERVICE_TYPES,normalizeServiceType,allowsJellyfin,allowsStremio,runtimeReady,assertAcquirable,hashInstallCredential,issueInstallCredential,parseFilenameMetadata,streamDisplayFromFilename,bytesLabel,richStreamDescription};
