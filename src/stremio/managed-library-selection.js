@@ -51,21 +51,28 @@ async function refresh(serverId,actorUserId=null){
   });
   return stored(serverId);
 }
-async function save(serverId,libraryIds,actorUserId=null){
-  const requested=new Set((Array.isArray(libraryIds)?libraryIds:[libraryIds]).map(value=>String(value||'')).filter(Boolean)),discovered=await discover(serverId),allowed=new Set(discovered.map(library=>String(library.libraryId)));
+function requestedSet(libraryIds){return new Set((Array.isArray(libraryIds)?libraryIds:[libraryIds]).map(value=>String(value||'')).filter(Boolean));}
+async function prepareSave(serverId,libraryIds){
+  const requested=requestedSet(libraryIds),discovered=await discover(serverId),allowed=new Set(discovered.map(library=>String(library.libraryId)));
   for(const id of requested)if(!allowed.has(id))throw new Error('One or more selected Jellyfin libraries are no longer available.');
-  await transaction(async db=>{
-    await db.query(`UPDATE stremio_managed_source_libraries SET selected=FALSE,available=FALSE,updated_at=NOW() WHERE server_id=$1`,[serverId]);
-    for(const library of discovered){
-      await db.query(`INSERT INTO stremio_managed_source_libraries(server_id,library_id,name,collection_type,selected,available)
-        VALUES($1,$2,$3,$4,$5,TRUE)
-        ON CONFLICT(server_id,library_id) DO UPDATE SET name=EXCLUDED.name,collection_type=EXCLUDED.collection_type,selected=EXCLUDED.selected,available=TRUE,updated_at=NOW()`,
-        [serverId,library.libraryId,library.name,library.collectionType,requested.has(String(library.libraryId))]);
-    }
-    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-      VALUES($1,'admin.stremio.managed_libraries.update','jellyfin_server',$2,$3::jsonb)`,[actorUserId,serverId,JSON.stringify({libraryIds:[...requested]})]);
-  });
+  return{requested:[...requested],discovered};
+}
+async function writePrepared(db,serverId,prepared,actorUserId=null){
+  const requested=new Set(prepared?.requested||[]),discovered=Array.isArray(prepared?.discovered)?prepared.discovered:[];
+  await db.query(`UPDATE stremio_managed_source_libraries SET selected=FALSE,available=FALSE,updated_at=NOW() WHERE server_id=$1`,[serverId]);
+  for(const library of discovered){
+    await db.query(`INSERT INTO stremio_managed_source_libraries(server_id,library_id,name,collection_type,selected,available)
+      VALUES($1,$2,$3,$4,$5,TRUE)
+      ON CONFLICT(server_id,library_id) DO UPDATE SET name=EXCLUDED.name,collection_type=EXCLUDED.collection_type,selected=EXCLUDED.selected,available=TRUE,updated_at=NOW()`,
+      [serverId,library.libraryId,library.name,library.collectionType,requested.has(String(library.libraryId))]);
+  }
+  await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+    VALUES($1,'admin.stremio.managed_libraries.update','jellyfin_server',$2,$3::jsonb)`,[actorUserId,serverId,JSON.stringify({libraryIds:[...requested]})]);
   return[...requested];
+}
+async function save(serverId,libraryIds,actorUserId=null){
+  const prepared=await prepareSave(serverId,libraryIds);
+  return transaction(db=>writePrepared(db,serverId,prepared,actorUserId));
 }
 async function indexFilter(serverId){
   const result=await query(`SELECT library_id FROM stremio_managed_source_libraries
@@ -79,4 +86,4 @@ async function counts(serverId){
   return result.rows[0]||{available:0,selected:0};
 }
 
-module.exports={SUPPORTED_TYPES,normalizedLibrary,discover,stored,mergeDiscovered,forPage,refresh,save,indexFilter,counts};
+module.exports={SUPPORTED_TYPES,normalizedLibrary,discover,stored,mergeDiscovered,forPage,refresh,requestedSet,prepareSave,writePrepared,save,indexFilter,counts};
