@@ -1,9 +1,10 @@
 'use strict';
 
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const base = require('./provisioning');
 const control = require('./reconciliation-control');
 const accessHolds = require('../entitlements/access-holds');
+const subscriptionExpiry = require('../entitlements/subscription-expiry');
 
 function serviceType(entitlement){return String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin');}
 function stateDetail(entitlement, outcome) {
@@ -102,36 +103,11 @@ async function maybeAutoDowngrade(customerId){
     catch(error){console.error(`Automatic free-tier downgrade failed for ${customerId}:`,error.message);return null}
 }
 async function expireSubscriptionsAndReconcile() {
-    const expired = await transaction(async client => {
-        const rows=await client.query(`
-            WITH expired AS (
-                UPDATE subscriptions
-                SET status='expired',service_extension_days=0,updated_at=NOW()
-                WHERE superseded_by IS NULL
-                  AND (
-                    (status IN('active','trialing','past_due','paused','cancelled')
-                     AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW())
-                    OR
-                    (status='expired' AND COALESCE(service_extension_days,0)>0
-                     AND current_period_end+(service_extension_days||' days')::interval<=NOW())
-                  )
-                RETURNING customer_id,plan_id,source
-            )
-            SELECT DISTINCT e.customer_id,BOOL_OR(p.price_minor>0) AS had_paid_expiry
-            FROM expired e JOIN plans p ON p.id=e.plan_id
-            GROUP BY e.customer_id
-        `);
-        return rows.rows;
+    return subscriptionExpiry.expireAndReconcile({
+        reconcileCustomer,
+        autoDowngrade: maybeAutoDowngrade,
+        onReconcileError: (customerId,error) => console.error(`Entitlement reconcile failed for ${customerId}:`, error.message)
     });
-    for (const row of expired) {
-        const customerId=row.customer_id;
-        let downgraded=null;
-        if(row.had_paid_expiry)downgraded=await maybeAutoDowngrade(customerId);
-        if(downgraded)continue;
-        try { await reconcileCustomer(customerId); }
-        catch (error) { console.error(`Entitlement reconcile failed for ${customerId}:`, error.message); }
-    }
-    return expired.length;
 }
 
 module.exports = {
