@@ -28,6 +28,7 @@ const indexLock=read('src/stremio/index-lock.js');
 const managedLibraries=read('src/stremio/managed-library-selection.js');
 const managedIndex=read('src/stremio/media-index.js');
 const externalIndex=read('src/stremio/source-index.js');
+const sourcePool=read('src/stremio/source-pool.js');
 
 assert(shell.includes("require('./admin-html-core-base')"),'admin shell must wrap the stable base layout');
 assert(shell.includes('/js/admin-setting-controls.js'),'compact setting enhancer must load on every admin page');
@@ -65,6 +66,9 @@ assert(managedIndex.includes("require('./index-lock')")&&managedIndex.includes('
 assert(managedIndex.includes('saveLibrariesAndReset')&&managedIndex.includes('managedLibraries.writePrepared'),'managed library selection and index reset must commit in one locked transaction');
 assert(stremioAdmin.includes('managedMediaIndex.saveLibrariesAndReset')&&!stremioAdmin.includes('managedLibraries.save(req.params.id,req.body.libraryId,req.session.authUserId);await managedMediaIndex.clearAndReset'),'managed-library route must not reintroduce the old save-then-clear race');
 assert(externalIndex.includes("require('./index-lock')")&&externalIndex.includes('indexLock.withIndexTransaction'),'external index clear/rebuild must be serialized against scheduled indexing on one DB connection');
+assert(sourcePool.includes("require('./index-lock')")&&sourcePool.includes('indexLock.withIndexTransaction'),'external library selection changes must use the same Stremio worker lock');
+assert(sourcePool.includes("VALUES($1,'queued',NOW(),TRUE,$2,NULL,NOW())")&&sourcePool.includes('deletedItems:Number(deleted.rowCount||0)'),'external library selection must remove deselected rows and queue a full reconcile atomically');
+assert(externalIndex.includes('JOIN stremio_source_libraries l ON l.source_id=i.source_id AND l.library_id=i.library_id AND l.selected=TRUE AND l.available=TRUE'),'external runtime lookup must fail closed for deselected or unavailable libraries even if stale rows exist');
 assert(!controls.includes('font-size:8px')&&!controls.includes('font-size:9px'),'shared toggle system must not achieve density by shrinking normal setting labels');
 
 console.log('admin settings coherence smoke: ok');
