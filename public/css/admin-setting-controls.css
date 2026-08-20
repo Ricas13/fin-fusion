@@ -50,7 +50,14 @@
 .settingSecretBody>.input{min-height:34px;padding:6px 8px}
 .settingSecretBody>.settingToggle{margin:0;min-height:38px}
 
-/* Allow forms to opt into the global dense-settings rhythm without shrinking type. */
+/* Shared density for settings pages. The typography is unchanged. */
+.settings-grid{gap:12px!important}
+.settings-card>.card-header{min-height:50px!important;padding:10px 14px!important}
+.settings-card>.card-body{padding:12px 14px!important}
+.settings-card .formGroup{margin-bottom:10px}
+.settings-card .buttonRow,.settings-card .cardActions{margin-top:10px}
+.settings-card .quick-actions{gap:7px}
+.section:has(.settingToggleGrid)>.formPanel{padding:14px}
 .compactSettingsForm{display:grid;gap:10px}
 .compactSettingsForm>.formGroup{margin-bottom:0}
 .compactSettingsForm>.formGrid{gap:9px 10px}
@@ -74,6 +81,13 @@
 .settingChannelBody>.input,.settingChannelBody>input.input{min-height:34px;padding:6px 8px}
 .settingChannelBody .muted{font-size:10px}
 
-@media(max-width:1350px){.settingToggleGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:1000px){.settingToggleGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:620px){.settingToggleGrid{grid-template-columns:1fr}.settingCredential{grid-template-columns:1fr auto}.settingCredential>.button{grid-column:1/-1;justify-self:start}.settingChannelDisclosure>summary,.settingSecretDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingChannelEdit,.settingSecretDisclosure>summary>em{display:none}}
+/* Personal notification connections are naturally short cards: use the width
+   of the page instead of stacking two oversized cards per row. */
+.notificationIdentityGrid{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;padding:10px!important}
+.notificationIdentityGrid .serverTop{min-height:46px;padding:9px 10px}
+.notificationIdentityGrid .card-body{padding:10px!important}
+.notificationIdentityGrid .buttonRow{margin-top:8px!important;gap:5px}
+
+@media(max-width:1350px){.settingToggleGrid{grid-template-columns:repeat(3,minmax(0,1fr))}.notificationIdentityGrid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+@media(max-width:1000px){.settingToggleGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.notificationIdentityGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:620px){.settingToggleGrid,.notificationIdentityGrid{grid-template-columns:1fr!important}.settingCredential{grid-template-columns:1fr auto}.settingCredential>.button{grid-column:1/-1;justify-self:start}.settingChannelDisclosure>summary,.settingSecretDisclosure>summary{grid-template-columns:minmax(0,1fr) auto}.settingChannelEdit,.settingSecretDisclosure>summary>em{display:none}}
