@@ -2,6 +2,9 @@
 
 const {esc}=require('./admin-html-core');
 
+const STYLESHEET='<link rel="stylesheet" href="/css/admin-setting-controls.css">';
+function stylesheet(){return STYLESHEET;}
+
 function checkboxAttrs({name,value='on',checked=false,disabled=false,form='',ariaLabel='',title=''}){
   return [
     'type="checkbox"',
@@ -37,4 +40,4 @@ function configured(label,configured,{configuredLabel='Configured',missingLabel=
   return `<div class="settingCredential"><span>${esc(label)}</span><strong class="${configured?'good':'warn'}">${esc(configured?configuredLabel:missingLabel)}</strong>${href?`<a class="button secondary btn-sm" href="${esc(href)}">${esc(actionLabel)}</a>`:''}</div>`;
 }
 
-module.exports={toggle,grid,switchInput,configured};
+module.exports={stylesheet,toggle,grid,switchInput,configured};
