@@ -20,6 +20,17 @@ function main() {
         assert.ok(params.includes(evilLibrary), 'filter values must be passed as bound parameters instead');
     }
 
+    // Product workspaces use the shared customer list with a bound service
+    // context. Bundle subscriptions must participate in both product views.
+    {
+        const jellyfin=buildWhere({service:'jellyfin'},null);
+        const stremio=buildWhere({service:'stremio'},null);
+        assert.ok(jellyfin.whereSql.includes("IN ('jellyfin','bundle')"),'Jellyfin context must include Jellyfin and bundle history');
+        assert.ok(stremio.whereSql.includes("IN ('stremio','bundle')"),'Stremio context must include Stremio and bundle history');
+        assert.deepStrictEqual(jellyfin.params,['jellyfin'],'service context must stay parameterized');
+        assert.deepStrictEqual(stremio.params,['stremio'],'service context must stay parameterized');
+    }
+
     // #17 reauthorizeCustomerIds (used when confirming a bulk action with
     // explicit checkbox selections) is built on the exact same buildWhere as
     // the list/select-all path -- verify the WHERE clause is deterministic
