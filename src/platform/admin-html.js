@@ -5,7 +5,6 @@ const notificationWorkflow=require('./notification-workflow-tabs');
 const provisioningWorkflow=require('./provisioning-workflow-tabs');
 const integrationWorkflow=require('./integration-workflow-tabs');
 const backupWorkflow=require('./backup-workflow-tabs');
-const stremioWorkflow=require('./stremio-workflow-tabs');
 
 function scriptBoundary(ch){return ch===undefined||/[\s/>]/.test(ch);}
 function externalScriptTag(openTag){return /\bsrc\s*=/i.test(openTag);}
@@ -135,12 +134,6 @@ function backupTabsFor(options={}){
     if(active==='configuration-transfer')return backupWorkflow.tabs('transfer');
     return'';
 }
-function stremioTabsFor(options={}){
-    const active=String(options.active||'');
-    if(active==='stremio-managed-sources')return stremioWorkflow.tabs('manage');
-    if(active==='stremio-sources')return stremioWorkflow.tabs('external');
-    return'';
-}
 
 function notificationTestScriptFor(options={}){
     return String(options.title||'')==='My notification preferences'?'<script src="/js/admin-personal-notification-tests.js" defer></script>':'';
@@ -153,11 +146,11 @@ function discountScriptFor(options={}){
 }
 
 function layout(options={}){
-    const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options)+stremioTabsFor(options);
+    const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
     const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script>';
     options={...options,body:workflow+String(options.body||'')+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,stremioTabsFor,notificationTestScriptFor,planWorkflowScriptFor,discountScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,discountScriptFor,SETTING_HELP};
