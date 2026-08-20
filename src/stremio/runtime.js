@@ -40,10 +40,10 @@ function settledStreams(result,label){
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
   // Multi-server reconciliation and the managed playback lifecycle are the
-  // only live managed-stream authorities. The legacy single-entitlement
-  // jellyfin-runtime stream manager must not run alongside them.
-  managedSessions.start({intervalMs:15000});
-  managedPlayback.startManager({intervalMs:15000});
+  // only live managed-stream authorities. Keep both on a five-second cadence
+  // so stopped direct streams release their slot promptly without 1s polling.
+  managedSessions.start({intervalMs:5000});
+  managedPlayback.startManager({intervalMs:5000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
     if(!enabled())return res.status(404).json({error:'Not found'});
     try{const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.status(404).json({error:'Not found'});await entitlements.markUse(e.id,'manifest');return res.json(manifest());}
