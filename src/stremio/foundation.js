@@ -55,20 +55,59 @@ function parseFilenameMetadata(filename){
 }
 
 function streamDisplayFromFilename(filename,{prefix='CF ⚡'}={}){
-    const info=parseFilenameMetadata(filename),headline=[info.resolution||'Stream',info.source,info.codec].filter(Boolean),video=[info.source,info.codec,...info.dynamicRange].filter(Boolean),sound=[info.audio,info.channels].filter(Boolean),description=[];
-    if(video.length)description.push(`🎞️ ${video.join(' • ')}`);if(sound.length)description.push(`🔊 ${sound.join(' • ')}`);if(info.releaseGroup)description.push(`🏷️ ${info.releaseGroup}`);
-    return {name:`[${prefix}] ${headline.join(' • ')}`,description:description.join('\n'),metadata:info};
+    const info=parseFilenameMetadata(filename),description=[];
+    const release=[info.source,info.releaseGroup].filter(Boolean),video=[info.codec,...info.dynamicRange].filter(Boolean),sound=[info.audio,info.channels].filter(Boolean);
+    if(release.length)description.push(`🎬 ${release.join(' • ')}`);
+    if(video.length)description.push(`📺 ${video.join(' • ')}`);
+    if(sound.length)description.push(`🔊 ${sound.join(' • ')}`);
+    return {name:`[${prefix}] ${info.resolution||'Stream'}`,description:description.join('\n'),metadata:info};
 }
 function bytesLabel(value){const bytes=Number(value||0);if(!(bytes>0))return'';const gb=bytes/(1024**3);return gb>=1?`${gb.toFixed(gb>=10?1:2)} GB`:`${(bytes/(1024**2)).toFixed(0)} MB`;}
+function cleanTechnicalTitle(value){
+    return String(value||'').trim()
+        .replace(/\s+-\s+/g,' • ')
+        .replace(/\s+\+\s+/g,' • ')
+        .replace(/\b(?:Default|Original)\b/gi,'')
+        .replace(/Dolby Digital Plus/gi,'DD+')
+        .replace(/Dolby Atmos/gi,'Atmos')
+        .replace(/Dolby Vision Profile\s*/gi,'Dolby Vision P')
+        .replace(/\((HDR10\+?|HDR)\)/gi,' • $1')
+        .replace(/\b(HEVC|AVC|AV1)\s+(Dolby Vision|HDR10\+?|HDR)\b/gi,'$1 • $2')
+        .replace(/\bDD\+\s*•\s*Atmos\b/gi,'DD+ Atmos')
+        .replace(/\s*•\s*•\s*/g,' • ')
+        .replace(/^\s*•\s*|\s*•\s*$/g,'')
+        .replace(/\s{2,}/g,' ')
+        .trim();
+}
+function withoutResolution(value,resolution){
+    let text=cleanTechnicalTitle(value),token=String(resolution||'').trim();
+    if(!token)return text;
+    const escaped=token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    text=text.replace(new RegExp(`^${escaped}(?:\\s+|\\s*•\\s*)`,'i'),'').trim();
+    if(token==='4K')text=text.replace(/^2160p(?:\s+|\s*•\s*)/i,'').trim();
+    return text;
+}
+function subtitleLabel(stream){
+    const title=String(stream?.DisplayTitle||'').trim(),first=title.split(/\s+-\s+/)[0]?.trim(),language=first||String(stream?.Language||'').trim()||'Subtitle',flags=[];
+    if(stream?.IsForced||/\bforced\b/i.test(title))flags.push('Forced');
+    if(stream?.IsHearingImpaired||/\bSDH\b/i.test(title))flags.push('SDH');
+    if(/\bCC\b/i.test(title))flags.push('CC');
+    return [language,...flags].join(' • ');
+}
+function replaceLine(parts,icon,value){
+    const label=String(value||'').trim();if(!label)return;
+    const index=parts.findIndex(part=>part.startsWith(`${icon} `));
+    if(index>=0)parts[index]=`${icon} ${label}`;else parts.push(`${icon} ${label}`);
+}
 function richStreamDescription(display,media){
     const parts=String(display?.description||'').split('\n').map(value=>value.trim()).filter(Boolean),streams=Array.isArray(media?.MediaStreams)?media.MediaStreams:[];
-    const video=streams.find(stream=>String(stream?.Type||'').toLowerCase()==='video'),audio=streams.find(stream=>String(stream?.Type||'').toLowerCase()==='audio'),subtitles=streams.filter(stream=>String(stream?.Type||'').toLowerCase()==='subtitle');
-    if(video?.DisplayTitle&&!parts.some(part=>part.includes(video.DisplayTitle)))parts.push(`📺 ${video.DisplayTitle}`);
-    if(audio?.DisplayTitle&&!parts.some(part=>part.includes(audio.DisplayTitle)))parts.push(`🔊 ${audio.DisplayTitle}`);
-    const subtitleLabels=[...new Set(subtitles.map(stream=>String(stream.DisplayTitle||stream.Language||'').trim()).filter(Boolean))].slice(0,4);
+    const video=streams.find(stream=>String(stream?.Type||'').toLowerCase()==='video'),audio=streams.find(stream=>String(stream?.Type||'').toLowerCase()==='audio'),subtitles=streams.filter(stream=>String(stream?.Type||'').toLowerCase()==='subtitle'),resolution=display?.metadata?.resolution||'';
+    if(video?.DisplayTitle)replaceLine(parts,'📺',withoutResolution(video.DisplayTitle,resolution));
+    if(audio?.DisplayTitle)replaceLine(parts,'🔊',cleanTechnicalTitle(audio.DisplayTitle));
+    const subtitleLabels=[...new Set(subtitles.map(subtitleLabel).filter(Boolean))].slice(0,3);
     if(subtitleLabels.length)parts.push(`💬 ${subtitleLabels.join(' • ')}${subtitles.length>subtitleLabels.length?` +${subtitles.length-subtitleLabels.length}`:''}`);
-    const technical=[];if(media?.Container)technical.push(String(media.Container).toUpperCase());if(Number(media?.Bitrate)>0)technical.push(`${(Number(media.Bitrate)/1000000).toFixed(1)} Mbps`);const size=bytesLabel(media?.Size);if(size)technical.push(size);if(technical.length)parts.push(`📦 ${technical.join(' • ')}`);
+    const technical=[],size=bytesLabel(media?.Size);if(size)technical.push(size);if(Number(media?.Bitrate)>0)technical.push(`${(Number(media.Bitrate)/1000000).toFixed(1)} Mbps`);if(media?.Container)technical.push(String(media.Container).toUpperCase());if(technical.length)parts.push(`📦 ${technical.join(' • ')}`);
     return parts.join('\n')||'▶️ Stream';
 }
 
-module.exports={SERVICE_TYPES,normalizeServiceType,allowsJellyfin,allowsStremio,runtimeReady,assertAcquirable,hashInstallCredential,issueInstallCredential,parseFilenameMetadata,streamDisplayFromFilename,bytesLabel,richStreamDescription};
+module.exports={SERVICE_TYPES,normalizeServiceType,allowsJellyfin,allowsStremio,runtimeReady,assertAcquirable,hashInstallCredential,issueInstallCredential,parseFilenameMetadata,streamDisplayFromFilename,bytesLabel,cleanTechnicalTitle,subtitleLabel,richStreamDescription};
