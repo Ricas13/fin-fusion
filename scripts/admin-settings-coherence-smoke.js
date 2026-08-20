@@ -23,7 +23,9 @@ const abuse=read('src/platform/admin-abuse-protection.js');
 const automation=read('src/platform/admin-automation.js');
 const payments=read('src/platform/admin-payment-settings.js');
 const requestUsers=read('src/platform/admin-request-users.js');
+const stremioAdmin=read('src/platform/admin-stremio-sources.js');
 const indexLock=read('src/stremio/index-lock.js');
+const managedLibraries=read('src/stremio/managed-library-selection.js');
 const managedIndex=read('src/stremio/media-index.js');
 const externalIndex=read('src/stremio/source-index.js');
 
@@ -48,6 +50,7 @@ assert(enhancer.includes('compactRequestService')&&enhancer.includes('request-se
 assert(settings.includes('class="toggleRow"'),'general/security settings must remain discoverable by the compatibility upgrader while migration is in progress');
 assert(plans.includes('class="toggleGrid"')&&plans.includes('class="toggleRow"'),'existing plan boolean policy must feed the canonical toggle grid');
 assert(planCreate.includes('class="toggleGrid"')&&planCreate.includes('class="toggleRow"'),'new-plan boolean policy must use the same canonical toggle grid');
+assert(abuse.includes("require('./admin-setting-controls')")&&abuse.includes('settingControls.grid'),'Abuse Protection must be a direct consumer of the canonical server-rendered setting controls');
 assert(abuse.includes('clearTurnstileSecret')&&abuse.includes('Configured — leave blank to keep'),'configured Turnstile secrets must be eligible for global credential disclosure');
 assert(automation.includes('class="checkRow"')&&automation.includes('name="enabled"'),'automation enabled flags must feed the canonical boolean language');
 assert(payments.includes('id="stripe-provider"')&&payments.includes('id="paypal-provider"')&&payments.includes('Configured — leave blank to keep current value'),'payment provider cards and configured secrets must remain discoverable by compact enhancement');
@@ -57,7 +60,10 @@ assert(personalNotifications.includes('notificationEventGroup')&&personalNotific
 
 assert(indexLock.includes("INDEX_JOB_KEY='captainfin:stremio_media_index'")&&indexLock.includes('pg_try_advisory_xact_lock(hashtext($1))'),'manual Stremio index maintenance must use the same advisory key as the singleton worker');
 assert(indexLock.includes('RESTORE_MAINTENANCE_LOCK')&&indexLock.includes('pg_advisory_xact_lock_shared'),'manual Stremio maintenance must preserve the database restore-maintenance lock contract');
+assert(managedLibraries.includes('prepareSave')&&managedLibraries.includes('writePrepared'),'managed library changes must support validation before the locked transaction and persistence inside it');
 assert(managedIndex.includes("require('./index-lock')")&&managedIndex.includes('indexLock.withIndexTransaction'),'managed index clear/rebuild must be serialized against scheduled indexing on one DB connection');
+assert(managedIndex.includes('saveLibrariesAndReset')&&managedIndex.includes('managedLibraries.writePrepared'),'managed library selection and index reset must commit in one locked transaction');
+assert(stremioAdmin.includes('managedMediaIndex.saveLibrariesAndReset')&&!stremioAdmin.includes('managedLibraries.save(req.params.id,req.body.libraryId,req.session.authUserId);await managedMediaIndex.clearAndReset'),'managed-library route must not reintroduce the old save-then-clear race');
 assert(externalIndex.includes("require('./index-lock')")&&externalIndex.includes('indexLock.withIndexTransaction'),'external index clear/rebuild must be serialized against scheduled indexing on one DB connection');
 assert(!controls.includes('font-size:8px')&&!controls.includes('font-size:9px'),'shared toggle system must not achieve density by shrinking normal setting labels');
 
