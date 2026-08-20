@@ -42,8 +42,7 @@ assert(/account_purpose text DEFAULT 'jellyfin'/.test(baseline)&&/\['jellyfin'::
 assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='primary'/.test(manualAssignment),'manual Jellyfin assignment must operate only on the schema-defined normal Jellyfin account purpose');
 assert(/COUNT\(\*\)::int n FROM jellyfin_accounts WHERE server_id=\$1 AND disabled=FALSE/.test(manualAssignment),'manual assignment capacity must count every active managed Jellyfin identity');
 assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=2&&!/account_purpose='primary'/.test(inactivity),'inactivity and cleanup automation must target normal Jellyfin accounts');
-assert(/Administrators cannot opt a customer into marketing/.test(customer),'marketing consent safeguard missing');
-assert(/formaction=\"\$\{esc\(withdrawAction\)\}\"/.test(customer)&&!/action=\"\/admin\/users\/\$\{encodeURIComponent\(c\.id\)\}\/marketing\/withdraw\">\$\{csrfHidden/.test(customer),'marketing withdrawal must not create a nested form');
+assert(!/Marketing consent/.test(customer)&&!/marketing\/withdraw/.test(customer)&&!/marketingConsentChanged/.test(customer),'Customer 360 must not retain the retired Marketing product surface');
 assert(/primaryEntitlement/.test(customer360Data)&&/primaryFirst/.test(customer360Data)&&/subscriptions:orderedSubscriptions/.test(customer360Data),'Customer 360 must order the canonical primary entitlement ahead of add-ons/history');
 assert(/account_purpose/.test(customer360Data)&&/is_primary/.test(customer360Data),'Customer 360 must expose Jellyfin account purpose so internal Stremio identities stay distinguishable');
 assert(/Choose a plan/.test(bulk)&&/Choose a server/.test(bulk),'human-readable bulk selectors missing');
