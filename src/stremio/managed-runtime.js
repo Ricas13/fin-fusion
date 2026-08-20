@@ -8,8 +8,8 @@ const mediaIndex=require('./media-index');
 const episodeResolution=require('./episode-resolution');
 const managedEntitlements=require('./managed-entitlements');
 const managedSources=require('./managed-sources');
+const managedPlayback=require('./managed-playback-lifecycle');
 const entitlements=require('./entitlements');
-const sourceAdmission=require('./source-admission');
 
 const MAX_STREAMING_BITRATE=200000000;
 const DIRECT_CONTAINERS='mp4,m4v,mkv,webm,ts,m2ts,mov';
@@ -25,10 +25,10 @@ function directUrl(mapping,itemId,mediaSourceId,playSessionId='',deviceId='',acc
   const token=String(accessTokenOverride||'')||entitlements.accessToken({jellyfin_access_token_encrypted:mapping.access_token_encrypted});if(!token)throw new Error('Managed Stremio playback token is unavailable.');
   url.searchParams.set('api_key',token);if(playSessionId)url.searchParams.set('PlaySessionId',String(playSessionId));if(deviceId)url.searchParams.set('DeviceId',String(deviceId));return url.toString();
 }
-function admissionUrl({portalBase,installToken,mapping,itemId,mediaSourceId,playSessionId,lease}){
-  const base=String(portalBase||'').replace(/\/$/,''),install=String(installToken||'').trim();if(!base||!install)throw new Error('Managed Stremio admission URL is unavailable.');
+function playbackControlUrl({portalBase,installToken,mapping,itemId,mediaSourceId,playSessionId,playbackKey}){
+  const base=String(portalBase||'').replace(/\/$/,''),install=String(installToken||'').trim();if(!base||!install)throw new Error('Managed Stremio playback control URL is unavailable.');
   const url=new URL(`/stremio/${encodeURIComponent(install)}/play/${encodeURIComponent(String(mapping.id))}/${encodeURIComponent(String(itemId))}/${encodeURIComponent(String(mediaSourceId))}`,`${base}/`);
-  url.searchParams.set('lease',String(lease));if(playSessionId)url.searchParams.set('playSessionId',String(playSessionId));return url.toString();
+  url.searchParams.set('playbackKey',String(playbackKey));if(playSessionId)url.searchParams.set('playSessionId',String(playSessionId));return url.toString();
 }
 function runtimeEntitlement(mapping){return{server_id:mapping.server_id,base_url:mapping.base_url,public_url:mapping.public_url,server_name:mapping.server_name,jellyfin_user_id:mapping.jellyfin_user_id,jellyfin_access_token_encrypted:mapping.access_token_encrypted};}
 function stremioDeviceProfile(){return{
@@ -79,11 +79,11 @@ async function resolveManagedItems(mapping,runtime,args){
   const fallback=await jellyfin.resolveItem(runtime,args);return fallback?[{...fallback,id:String(fallback.id||fallback.Id),name:fallback.name||fallback.Name,path:fallback.path||fallback.Path||null,type:'Episode'}]:[];
 }
 async function resolveManagedItem(mapping,runtime,args){return (await resolveManagedItems(mapping,runtime,args))[0]||null;}
-async function streamsFromMapping(mapping,args,type,videoId,{proxyBase,installToken}={}){
+async function streamsFromMapping(mapping,args,type,videoId,{portalBase,installToken}={}){
   const runtime=runtimeEntitlement(mapping),items=await resolveManagedItems(mapping,runtime,args);if(!items.length)return[];
   const settled=await Promise.allSettled(items.map(async item=>{
     const playback=await playbackInfo(mapping,item.id),sources=(Array.isArray(playback?.MediaSources)?playback.MediaSources:[]).filter(source=>source?.Id);
-    return sources.map(source=>{const filename=jellyfin.sourceFilename(item,source),quality=jellyfin.sourceQuality(source,filename),display=foundation.streamDisplayFromFilename(filename),lease=sourceAdmission.issue();return{rank:quality.rank,stream:{name:display.name,description:foundation.richStreamDescription(display,source),url:admissionUrl({portalBase:proxyBase,installToken,mapping,itemId:item.id,mediaSourceId:source.Id,playSessionId:playback?.PlaySessionId||'',lease}),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,`${item.id}:${source.Id}:${filename}`),filename,...(Number(source.Size)>0?{videoSize:Number(source.Size)}:{})}}};});
+    return sources.map(source=>{const filename=jellyfin.sourceFilename(item,source),quality=jellyfin.sourceQuality(source,filename),display=foundation.streamDisplayFromFilename(filename),playbackKey=managedPlayback.issuePlaybackKey();return{rank:quality.rank,stream:{name:display.name,description:foundation.richStreamDescription(display,source),url:playbackControlUrl({portalBase,installToken,mapping,itemId:item.id,mediaSourceId:source.Id,playSessionId:playback?.PlaySessionId||'',playbackKey}),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,`${item.id}:${source.Id}:${filename}`),filename,...(Number(source.Size)>0?{videoSize:Number(source.Size)}:{})}}};});
   }));
   const output=[],failures=[];let successfulItems=0;
   for(const result of settled){if(result.status==='fulfilled'){successfulItems+=1;output.push(...result.value);}else failures.push(result.reason);}
@@ -106,4 +106,4 @@ async function streamsFor(entitlement,type,videoId,options={}){
   return output;
 }
 
-module.exports={MAX_STREAMING_BITRATE,DIRECT_CONTAINERS,DIRECT_AUDIO_CODECS,neutralGroup,containerExtension,directUrl,admissionUrl,runtimeEntitlement,stremioDeviceProfile,playbackInfo,mediaSource,playMethodFor,publicTranscodingUrl,playbackUrl,resolveManagedItems,resolveManagedItem,streamsFromMapping,mappingsForSearch,streamsFor};
+module.exports={MAX_STREAMING_BITRATE,DIRECT_CONTAINERS,DIRECT_AUDIO_CODECS,neutralGroup,containerExtension,directUrl,playbackControlUrl,runtimeEntitlement,stremioDeviceProfile,playbackInfo,mediaSource,playMethodFor,publicTranscodingUrl,playbackUrl,resolveManagedItems,resolveManagedItem,streamsFromMapping,mappingsForSearch,streamsFor};

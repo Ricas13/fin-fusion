@@ -25,7 +25,7 @@ assert(pool.includes('Confirm that you are authorized'),'external source connect
 assert(pool.includes('stremio_stream_attribution'),'source pool must retain CAPTAiNFiN attribution for operator-side source diagnostics');
 assert(runtime.includes('managedRuntime.streamsFor')&&runtime.includes('externalRuntime.streamsFor'),'Stremio runtime must own separate managed and external resolution classes');
 assert(runtime.includes('const streams=[...managed,...external]'),'managed Stremio results must be returned before external results');
-assert(runtime.includes('Promise.all(['),'managed and external result classes must resolve concurrently');
+assert(runtime.includes('Promise.allSettled(['),'managed and external result classes must resolve independently so one provider failure cannot hide healthy results');
 assert(managed.includes('/PlaybackInfo?'),'only managed Jellyfin delivery should negotiate PlaybackInfo');
 assert(!external.includes('/PlaybackInfo'),'external Jellyfin delivery must remain unmanaged and PlaybackInfo-free');
 assert(admin.includes('The upstream Jellyfin owner can still see activity'),'operator UI must be transparent about upstream activity visibility');

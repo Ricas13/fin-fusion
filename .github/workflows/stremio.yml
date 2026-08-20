@@ -5,15 +5,23 @@ on:
     paths:
       - 'src/stremio/**'
       - 'src/application.js'
+      - 'src/jellyfin/activity.js'
       - 'src/jellyfin/resilient-provisioning.js'
+      - 'src/automation/jobs.js'
       - 'src/platform/admin-stremio*.js'
+      - 'src/platform/admin-plan-create-v2.js'
       - 'src/platform/admin-plan-delivery.js'
+      - 'src/platform/admin-plans-list.js'
       - 'src/platform/admin-nav.js'
       - 'src/platform/product-readiness.js'
       - 'src/platform/customer-stremio.js'
       - 'src/platform/customer-dashboard.js'
+      - 'src/platform/storefront-core.js'
       - 'src/platform/router.js'
+      - 'public/js/admin-plan-create-v2.js'
       - 'views/customer/stremio.ejs'
+      - 'views/customer/stremio-dashboard.ejs'
+      - 'views/customer/dashboard.ejs'
       - 'db/migrations/**'
       - 'scripts/stremio-*.js'
       - 'tests/admin-information-architecture-regression.js'
@@ -41,11 +49,11 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Source capability contract
-        run: node scripts/stremio-source-capability-smoke.js
+      - name: JavaScript syntax
+        run: npm run syntax
       - name: Runtime and source contracts
         run: |
           node scripts/stremio-source-client-smoke.js
-          node scripts/stremio-source-admission-smoke.js
           node scripts/stremio-admin-smoke.js
-          node scripts/stremio-runtime-smoke.js
+          node scripts/stremio-playback-compatibility-smoke.js
+          node scripts/stremio-household-access-smoke.js
