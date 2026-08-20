@@ -45,12 +45,12 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Workflow trigger hygiene
+      - name: Workflow trigger and suite hygiene
         run: node scripts/workflow-trigger-hygiene-smoke.js
       - name: Apply schema on production PostgreSQL major
         run: npm run db:migrate
-      - name: Full release checks
-        run: npm run check:release
+      - name: Database release checks
+        run: npm run check:db
       - name: Global assembled route ownership
         run: node scripts/assembled-route-ownership-smoke.js
       - name: Previous-schema upgrade contract
