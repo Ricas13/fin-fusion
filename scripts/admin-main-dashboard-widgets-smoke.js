@@ -54,20 +54,31 @@ async function main() {
     assert(ctx.data.mrr.amountMinor > 0, 'MRR must reflect the seeded recurring subscription');
     assert(ctx.data.mrr.subscriptions >= 1, 'MRR subscription count must include the seeded row');
 
+    // Active-customer reporting must reflect effective access, not total signup count.
+    assert(ctx.data.current.activeCustomers >= 1, 'effective primary access must count the seeded active customer');
+    assert(Array.isArray(ctx.data.primaryPlanMix) && ctx.data.primaryPlanMix.some(row => row.name === 'Main Dashboard Smoke'), 'primary plan mix must be sourced from effective primary access');
+
     // Churn rate must be a real ratio, not a placeholder.
     assert(ctx.data.churn.activeAtStart >= 0);
     assert(ctx.data.churn.cancelledCount >= 1, 'seeded cancelled subscription must be counted');
 
-    // Main and Commerce must not invent separate churn definitions again.
+    // Main and Commerce must not invent separate churn/live-customer definitions again.
     const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/admin-dashboard-main.js'), 'utf8');
     const commerceSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/admin-commerce-dashboard.js'), 'utf8');
+    const dashboardDataSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/admin-dashboard-data.js'), 'utf8');
     const subscriptionAnalyticsSource = fs.readFileSync(path.join(__dirname, '..', 'src/platform/subscription-analytics.js'), 'utf8');
     assert(mainSource.includes("require('./subscription-analytics')"), 'Main churn must use canonical subscription analytics');
     assert(commerceSource.includes("require('./subscription-analytics')"), 'Commerce subscription movement must use canonical subscription analytics');
     assert(mainSource.includes('subscriptionAnalytics.churnSummary(range)'), 'Main churn definition must delegate to the canonical owner');
     assert(commerceSource.includes('subscriptionAnalytics.movementSummary(range)'), 'Commerce movement must delegate to the canonical owner');
     assert(!commerceSource.includes("status IN('cancelled','expired')"), 'Commerce must not collapse cancellations and expirations into one churn number');
-    assert(subscriptionAnalyticsSource.includes("COALESCE(p.is_addon,FALSE)=FALSE") && subscriptionAnalyticsSource.includes('s.superseded_by IS NULL'), 'subscription analytics must remain primary-only and ignore superseded rows');
+    assert(subscriptionAnalyticsSource.includes("COALESCE(p.is_addon,FALSE)=FALSE") && subscriptionAnalyticsSource.includes('s.superseded_by IS NULL'), 'subscription movement analytics must remain primary-only and ignore superseded rows');
+    assert(subscriptionAnalyticsSource.includes('effective_customer_entitlements') && subscriptionAnalyticsSource.includes('blocked=FALSE') && subscriptionAnalyticsSource.includes('access_expires_at>$1'), 'active-customer reporting must use the canonical effective entitlement contract');
+    assert(dashboardDataSource.includes('subscriptionAnalytics.effectivePrimarySummary(new Date())'), 'dashboard active-customer snapshot must use current effective access rather than pretending the view is historical');
+    assert(mainSource.includes('value: number(ctx.data.current.activeCustomers)'), 'Active customers KPI must not fall back to total registered customers');
+    assert(mainSource.includes('ctx.data.primaryPlanMix.map'), 'Main plan distribution must use effective primary access');
+    assert(commerceSource.includes('subscriptionAnalytics.effectivePrimarySummary(new Date(), { limit })'), 'Commerce top plans must use the same effective-access definition');
+    assert(!commerceSource.includes("s.status IN('active','trialing') AND s.current_period_end>NOW()"), 'Commerce must not keep a second raw definition of active plan subscribers');
 
     const { html } = await renderMain(req);
     assert(html.includes('data-dashboard-key="main"'), 'rendered page must expose the widget-drag root');

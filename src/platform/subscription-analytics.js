@@ -40,4 +40,24 @@ async function movementSummary(range) {
     return result.rows[0] || { activations: 0, cancellations: 0, expirations: 0 };
 }
 
-module.exports = { PRIMARY_SUBSCRIPTION_SQL, LIVE_AT_POINT_SQL, churnSummary, movementSummary };
+// “Active customer” is an access concept, not a billing-status shortcut. Use
+// the canonical effective primary-entitlement view so permanent extensions,
+// holds/blocks and provider-state normalization are interpreted once.
+async function effectivePrimarySummary(asOf = new Date(), { limit = null } = {}) {
+    const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Math.min(1000, Number(limit)) : null;
+    const [countResult, planResult] = await Promise.all([
+        query(`SELECT COUNT(DISTINCT customer_id)::int n
+               FROM effective_customer_entitlements
+               WHERE blocked=FALSE AND access_expires_at>$1`, [asOf]),
+        query(`SELECT p.id,p.name,p.code,p.service_type,COUNT(*)::int count
+               FROM effective_customer_entitlements e
+               JOIN plans p ON p.id=e.plan_id
+               WHERE e.blocked=FALSE AND e.access_expires_at>$1
+               GROUP BY p.id,p.name,p.code,p.service_type
+               ORDER BY count DESC,p.name
+               ${safeLimit ? 'LIMIT $2' : ''}`, safeLimit ? [asOf, safeLimit] : [asOf])
+    ]);
+    return { activeCustomers: Number(countResult.rows[0]?.n || 0), planMix: planResult.rows };
+}
+
+module.exports = { PRIMARY_SUBSCRIPTION_SQL, LIVE_AT_POINT_SQL, churnSummary, movementSummary, effectivePrimarySummary };
