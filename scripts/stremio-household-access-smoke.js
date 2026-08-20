@@ -7,6 +7,7 @@ const root=path.resolve(__dirname,'..');
 function read(file){return fs.readFileSync(path.join(root,file),'utf8');}
 
 const runtime=read('src/stremio/runtime.js');
+const entitlements=read('src/stremio/entitlements.js');
 const managedRuntime=read('src/stremio/managed-runtime.js');
 const lifecycle=read('src/stremio/managed-playback-lifecycle.js');
 const managedEntitlements=read('src/stremio/managed-entitlements.js');
@@ -15,8 +16,11 @@ const jellyfinActivity=read('src/jellyfin/activity.js');
 const planCreate=read('src/platform/admin-plan-create-v2.js');
 const plansList=read('src/platform/admin-plans-list.js');
 const storefront=read('src/platform/storefront-core.js');
+const customerStremio=read('src/platform/customer-stremio.js');
+const stremioSetup=read('views/customer/stremio.ejs');
 const stremioDashboard=read('views/customer/stremio-dashboard.ejs');
 const customerDashboard=read('views/customer/dashboard.ejs');
+const migration=read('db/migrations/022_retire_stremio_stream_admission.sql');
 const jobs=read('src/automation/jobs.js');
 
 assert(!runtime.includes("require('./source-admission')"),'runtime must not depend on Stremio commercial source admission');
@@ -28,6 +32,10 @@ assert(runtime.includes('managedPlayback.startManager({intervalMs:5000})'),'mana
 assert(runtime.includes('managedPlayback.start(mapping,playbackKey'),'managed control path must track per-playback Jellyfin lifecycle state');
 assert(runtime.includes('res.redirect(307,target.url)'),'managed playback must end in a Jellyfin redirect');
 assert(runtime.includes('media bytes never pass through CAPTAiNFiN'),'managed playback contract must explicitly remain control-plane only');
+
+assert(entitlements.includes('function streamLimit(_row){return 1;}'),'persisted Stremio stream_limit must be a compatibility sentinel rather than a plan-derived allowance');
+assert(!entitlements.includes('Math.max(1,Math.min(50,Number(row?.streams||1)))'),'Stremio entitlement compatibility value must not derive from Jellyfin plan streams');
+assert(migration.includes('UPDATE stremio_entitlements')&&migration.includes('SET stream_limit=1'),'existing Stremio entitlements must be normalized to the compatibility sentinel');
 
 assert(!managedRuntime.includes("require('./source-admission')"),'managed stream discovery must not depend on commercial admission');
 assert(managedRuntime.includes('managedPlayback.issuePlaybackKey()'),'managed stream discovery must mint an opaque playback lifecycle key');
@@ -53,6 +61,9 @@ assert(planCreate.includes('1 Stremio household per subscription'),'plan creatio
 assert(plansList.includes("if(type==='stremio')return'1 Stremio household'"),'admin plan list must describe Stremio as household access');
 assert(plansList.includes('Jellyfin stream${streams===1?\'\':\'s\'} · 1 Stremio household'),'bundle plan list must separate Jellyfin streams from Stremio household access');
 assert(storefront.includes("if(type==='stremio')return'1 Stremio household'"),'storefront must describe Stremio as household access');
+assert(customerStremio.includes("accessModel:'1 Stremio household'")&&!customerStremio.includes('streamLimit:Number('),'Stremio setup model must expose household access rather than a stream allowance');
+assert(stremioSetup.includes('1 Stremio household')&&stremioSetup.includes('No CAPTAiNFiN concurrent-stream counter'),'Stremio setup page must explain household access and lack of a portal stream counter');
+assert(!stremioSetup.includes('Concurrent streams')&&!stremioSetup.includes('Your plan allowance'),'Stremio setup page must not expose retired per-stream language');
 assert(stremioDashboard.includes('Stremio household'),'Stremio customer dashboard must show household access');
 assert(stremioDashboard.includes('no concurrent-stream limit'),'Stremio customer dashboard must not imply a plan stream cap');
 assert(customerDashboard.includes('Jellyfin streams'),'bundle/Jellyfin dashboard must label its stream count as Jellyfin-only');
