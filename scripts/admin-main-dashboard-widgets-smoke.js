@@ -74,7 +74,7 @@ async function main() {
     assert(!commerceSource.includes("status IN('cancelled','expired')"), 'Commerce must not collapse cancellations and expirations into one churn number');
     assert(subscriptionAnalyticsSource.includes("COALESCE(p.is_addon,FALSE)=FALSE") && subscriptionAnalyticsSource.includes('s.superseded_by IS NULL'), 'subscription movement analytics must remain primary-only and ignore superseded rows');
     assert(subscriptionAnalyticsSource.includes('effective_customer_entitlements') && subscriptionAnalyticsSource.includes('blocked=FALSE') && subscriptionAnalyticsSource.includes('access_expires_at>$1'), 'active-customer reporting must use the canonical effective entitlement contract');
-    assert(dashboardDataSource.includes('subscriptionAnalytics.effectivePrimarySummary(selectedRange.end)'), 'dashboard data must hydrate active customers from effective access');
+    assert(dashboardDataSource.includes('subscriptionAnalytics.effectivePrimarySummary(new Date())'), 'dashboard active-customer snapshot must use current effective access rather than pretending the view is historical');
     assert(mainSource.includes('value: number(ctx.data.current.activeCustomers)'), 'Active customers KPI must not fall back to total registered customers');
     assert(mainSource.includes('ctx.data.primaryPlanMix.map'), 'Main plan distribution must use effective primary access');
     assert(commerceSource.includes('subscriptionAnalytics.effectivePrimarySummary(new Date(), { limit })'), 'Commerce top plans must use the same effective-access definition');
