@@ -1,15 +1,16 @@
 'use strict';
 
-// Single source of truth for the People -> Customers filtered/paginated
-// query, reused by both the list page and bulk-operation "select all
-// matching" resolution -- so a bulk job can never see a wider set of
-// customers than the list page itself would show for the same filters.
+// Single source of truth for the Customers filtered/paginated query, reused by
+// the list page and bulk-operation "select all matching" resolution. Product
+// workspaces deep-link here with a service filter rather than owning duplicate
+// customer implementations.
 
 const { query } = require('../db');
 
 const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 'expired'];
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
 const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
+const SERVICE_VALUES = ['jellyfin', 'stremio'];
 const MAX_MATCHING = 5000;
 
 function isUuid(v) {
@@ -67,6 +68,17 @@ function buildWhere(filters, scope) {
         where.push(`(COALESCE(c.display_name,'') ILIKE ${idx} OR COALESCE(c.email,'') ILIKE ${idx} OR COALESCE(au.username,'') ILIKE ${idx} OR EXISTS (SELECT 1 FROM jellyfin_accounts jaq WHERE jaq.customer_id=c.id AND jaq.jellyfin_username ILIKE ${idx}))`);
     }
 
+    if (filters.service && SERVICE_VALUES.includes(filters.service)) {
+        const service = p(filters.service);
+        where.push(`EXISTS (
+            SELECT 1 FROM subscriptions ss
+            JOIN plans sp ON sp.id=ss.plan_id
+            WHERE ss.customer_id=c.id
+              AND ((${service}='jellyfin' AND COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') IN ('jellyfin','bundle'))
+                   OR (${service}='stremio' AND COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') IN ('stremio','bundle')))
+        )`);
+    }
+
     if (filters.serverId && isUuid(filters.serverId)) {
         where.push(`EXISTS (SELECT 1 FROM jellyfin_accounts jas WHERE jas.customer_id=c.id AND jas.server_id=${p(filters.serverId)})`);
     }
@@ -91,10 +103,8 @@ function buildWhere(filters, scope) {
 
     if (filters.expiryFrom) where.push(`cur.current_period_end >= ${p(filters.expiryFrom)}::timestamptz`);
     if (filters.expiryTo) where.push(`cur.current_period_end <= ${p(filters.expiryTo)}::timestamptz`);
-
     if (filters.lastActiveFrom) where.push(`acc.last_activity_at >= ${p(filters.lastActiveFrom)}::timestamptz`);
     if (filters.lastActiveTo) where.push(`acc.last_activity_at <= ${p(filters.lastActiveTo)}::timestamptz`);
-
     if (filters.registeredFrom) where.push(`c.created_at >= ${p(filters.registeredFrom)}::timestamptz`);
     if (filters.registeredTo) where.push(`c.created_at <= ${p(filters.registeredTo)}::timestamptz`);
 
@@ -145,26 +155,20 @@ async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = '
     const offset = (boundedPage - 1) * boundedPageSize;
     const limitIdx = params.length + 1;
     const offsetIdx = params.length + 2;
-    const rows = await query(`
-        SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ${orderSql} LIMIT $${limitIdx} OFFSET $${offsetIdx}
-    `, [...params, boundedPageSize, offset]);
+    const rows = await query(`SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ${orderSql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`, [...params, boundedPageSize, offset]);
     const countResult = await query(`SELECT COUNT(*)::int AS n ${baseJoins()} ${whereSql}`, params);
     return { rows: rows.rows, total: countResult.rows[0].n, page: boundedPage, pageSize: boundedPageSize };
 }
 
 async function exportRows(filters, scope) {
     const { whereSql, params } = buildWhere(filters, scope);
-    const result = await query(`
-        SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ORDER BY c.id LIMIT ${MAX_MATCHING}
-    `, params);
+    const result = await query(`SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ORDER BY c.id LIMIT ${MAX_MATCHING}`, params);
     return result.rows;
 }
 
 async function matchingCustomerIds(filters, scope) {
     const { whereSql, params } = buildWhere(filters, scope);
-    const result = await query(`
-        SELECT c.id ${baseJoins()} ${whereSql} ORDER BY c.id LIMIT ${MAX_MATCHING}
-    `, params);
+    const result = await query(`SELECT c.id ${baseJoins()} ${whereSql} ORDER BY c.id LIMIT ${MAX_MATCHING}`, params);
     return result.rows.map(row => row.id);
 }
 
@@ -173,9 +177,7 @@ async function reauthorizeCustomerIds(candidateIds, scope) {
     if (!ids.length) return [];
     const { whereSql, params } = buildWhere({}, scope);
     const idParamIdx = params.length + 1;
-    const result = await query(`
-        SELECT c.id ${baseJoins()} ${whereSql}${whereSql ? ' AND' : 'WHERE'} c.id=ANY($${idParamIdx}::uuid[])
-    `, [...params, ids]);
+    const result = await query(`SELECT c.id ${baseJoins()} ${whereSql}${whereSql ? ' AND' : 'WHERE'} c.id=ANY($${idParamIdx}::uuid[])`, [...params, ids]);
     return result.rows.map(row => row.id);
 }
 
@@ -184,6 +186,7 @@ module.exports = {
     STATUS_VALUES,
     RECON_VALUES,
     PAYMENT_PROVIDERS,
+    SERVICE_VALUES,
     isUuid,
     buildWhere,
     listCustomers,

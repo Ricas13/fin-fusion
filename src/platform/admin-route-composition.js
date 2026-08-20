@@ -1,6 +1,7 @@
 'use strict';
 
 const dashboard = require('./admin-dashboard');
+const { createAdminProductModulesRouter } = require('./admin-product-modules');
 const { createAdminAttentionRouter } = require('./admin-attention');
 const { createAdminSupportTicketsRouter } = require('./admin-support-tickets');
 const { createAdminOrdersRouter } = require('./admin-orders');
@@ -54,6 +55,7 @@ const { createAdminReferralsRouter } = require('./admin-referrals');
 
 function mountAdminRoutes(app) {
   app.get('/admin', dashboard.dashboardPage);
+  app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
   app.use(createAdminSupportTicketsRouter());
   app.use(createAdminOrdersRouter());
