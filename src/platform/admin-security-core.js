@@ -6,6 +6,7 @@ const { query } = require('../db');
 const auth = require('../auth/service');
 const csrf = require('../auth/csrf');
 const runtimeSettings = require('./runtime-settings');
+const { layout, esc } = require('./admin-html');
 
 function requireNativeAdmin(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -38,6 +39,13 @@ async function setAdminTwoFactorPolicy(required, userId) {
     await runtimeSettings.reload();
 }
 
+function securityPolicyPage(req) {
+    const required = runtimeSettings.requireAdminTwoFactor();
+    const notice = `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`;
+    const body = `<nav class="operatorTabs" aria-label="Security settings"><a class="operatorTab" href="/admin/settings?section=security">Platform security</a><a class="operatorTab active" href="/admin/settings/admin-2fa">Administrator 2FA</a><a class="operatorTab" href="/admin/settings/abuse-protection">Abuse protection</a></nav>${notice}<section class="section"><div class="sectionHead"><div><h2>Administrator sign-in requirement</h2><div class="muted">This is platform policy. Individual administrators enrol and manage their own authenticator under My account → Security.</div></div><span class="pill ${required ? 'good' : 'warn'}">${required ? 'Required' : 'Optional'}</span></div><form class="formPanel" method="post" action="/admin/security/2fa-policy"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><label class="toggleRow"><input type="checkbox" name="requireAdminTwoFactor" ${required ? 'checked' : ''}><span><strong>Require 2FA for administrator sign-in</strong><small class="muted">When off, each administrator may choose whether to enrol their own account.</small></span></label><div class="securityNote standalone"><strong>Before requiring 2FA:</strong> make sure every active administrator can enrol an authenticator and retain recovery codes. Enabling this affects their next sign-in.</div><button class="button" type="submit">Save administrator 2FA policy</button></form></section><div class="buttonRow"><a class="button secondary" href="/admin/security">Open my personal security</a></div>`;
+    return layout({siteName:runtimeSettings.siteName(),active:'admin-2fa-policy',title:'Administrator 2FA policy',subtitle:'Global sign-in requirement for every administrator account',body});
+}
+
 function createAdminSecurityRouter() {
     const router = express.Router();
     router.use('/admin/security', requireNativeAdmin, noStore);
@@ -46,13 +54,7 @@ function createAdminSecurityRouter() {
     router.get('/admin/settings/admin-2fa', async (req, res, next) => {
         try {
             await runtimeSettings.ensureLoaded();
-            return res.render('admin/security-policy', {
-                siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
-                admin2faRequired: runtimeSettings.requireAdminTwoFactor(),
-                csrfToken: csrf.token(req),
-                message: req.query.message || null,
-                error: req.query.error || null
-            });
+            return res.send(securityPolicyPage(req));
         } catch (error) { return next(error); }
     });
 
@@ -194,7 +196,7 @@ function createAdminSecurityRouter() {
     router.use('/admin/security', (error, _req, res, _next) => {
         console.error('Admin security route error:', error.message);
         return res.status(500).render('auth/message', {
-            siteName: process.env.SITE_NAME || 'CAPTAiNFiN',
+            siteName: runtimeSettings.siteName(),
             title: 'Security request failed',
             message: 'The request could not be completed safely. No security settings were changed.',
             link: '/admin/security',
@@ -205,4 +207,4 @@ function createAdminSecurityRouter() {
     return router;
 }
 
-module.exports = { createAdminSecurityRouter, setAdminTwoFactorPolicy };
+module.exports = { createAdminSecurityRouter, setAdminTwoFactorPolicy, securityPolicyPage };
