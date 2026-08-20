@@ -13,10 +13,8 @@ async function clearAllAndQueue(actorUserId=null){
   const active=await running();
   if(active.managed||active.external)throw new Error('A Stremio index is currently running. Wait for active indexing to finish before clearing all indexes.');
   return transaction(async db=>{
-    const [managedDeleted,externalDeleted]=await Promise.all([
-      db.query('DELETE FROM stremio_media_index'),
-      db.query('DELETE FROM stremio_source_media_index')
-    ]);
+    const managedDeleted=await db.query('DELETE FROM stremio_media_index');
+    const externalDeleted=await db.query('DELETE FROM stremio_source_media_index');
     await db.query(`UPDATE stremio_media_index_state SET status='never',item_count=0,last_error=NULL,updated_at=NOW()`);
     await db.query(`UPDATE stremio_source_index_state SET status='queued',next_incremental_at=NOW(),force_full=TRUE,item_count=0,last_error=NULL,updated_at=NOW()`);
     await db.query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested,updated_at)
