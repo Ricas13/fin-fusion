@@ -96,7 +96,8 @@ async function reconcile(){
     const sessions=snapshot.byServer.get(String(row.server_id))||[],session=matchingSession(row,sessions),started=Date.parse(row.lifecycle_started_at||row.first_seen_at||'')||0;
     if(sessionFresh(session,now)){
       active+=1;const position=Number(session?.PlayState?.PositionTicks||0)||0;
-      await query(`UPDATE stremio_source_playback_leases SET jellyfin_session_id=COALESCE($2,jellyfin_session_id),lifecycle_last_seen_at=NOW(),position_ticks=$3 WHERE lease_hash=$1`,[row.lease_hash,session?.Id?String(session.Id):null,position||null]);continue;
+      await sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS});
+      await query(`UPDATE stremio_source_playback_leases SET jellyfin_session_id=COALESCE($2,jellyfin_session_id),position_ticks=$3 WHERE lease_hash=$1`,[row.lease_hash,session?.Id?String(session.Id):null,position||null]);continue;
     }
     if(started&&now-started<START_GRACE_SECONDS*1000)continue;
     await stopLease(row,session?'jellyfin_session_stale':'jellyfin_session_missing');ended+=1;
