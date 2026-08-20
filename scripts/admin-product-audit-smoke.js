@@ -9,6 +9,7 @@ require('../src/platform/admin-dashboard-main');
 const commerce=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-commerce.js'),'utf8');
 const backupTabs=fs.readFileSync(path.join(__dirname,'..','src','platform','backup-workflow-tabs.js'),'utf8');
 const settings=fs.readFileSync(path.join(__dirname,'..','src','platform','admin-original-settings.js'),'utf8');
+const exists=file=>fs.existsSync(path.join(__dirname,'..',file));
 
 const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.map(page=>page[0])]));
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard should contain current-state/action destinations only');
@@ -30,4 +31,6 @@ for(const key of ['mrr','revenueTrend','customerGrowth','planDistribution','plat
 assert(mainWidgets.every(w=>[3,4,6,8,9,12].includes(w.defaultSpan)),'every Main dashboard widget must declare a valid default grid span');
 assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Payments, and Operations'),'Settings directory must point operators back to the simplified product areas');
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
+for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
+assert(exists('public/js/admin-plan-create-v2.js'),'canonical plan creation browser controller must remain available');
 console.log('admin product audit smoke: ok');
