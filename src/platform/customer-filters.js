@@ -74,7 +74,6 @@ function buildWhere(filters, scope) {
             SELECT 1 FROM subscriptions ss
             JOIN plans sp ON sp.id=ss.plan_id
             WHERE ss.customer_id=c.id
-              AND COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') = CASE WHEN ${service}='jellyfin' THEN COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') ELSE COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') END
               AND ((${service}='jellyfin' AND COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') IN ('jellyfin','bundle'))
                    OR (${service}='stremio' AND COALESCE(NULLIF(ss.service_type_snapshot,''),sp.service_type,'jellyfin') IN ('stremio','bundle')))
         )`);
