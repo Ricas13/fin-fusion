@@ -186,6 +186,33 @@
     });
   }
 
+  function compactPaymentProviders() {
+    if(location.pathname!=='/admin/payments')return;
+    ['stripe-provider','paypal-provider'].forEach(id=>{
+      const section=document.getElementById(id);
+      if(!section || section.closest('.settingProviderDisclosure'))return;
+      const head=section.querySelector(':scope > .sectionHead');
+      const name=head?.querySelector('h2')?.textContent?.trim();
+      if(!name)return;
+      const badge=head.querySelector('.pill');
+      const description=head.querySelector('.muted')?.textContent?.trim()||'Provider configuration';
+      const details=document.createElement('details');details.className='settingProviderDisclosure';details.id=id;
+      const summary=document.createElement('summary');
+      const identity=document.createElement('span');identity.className='settingProviderIdentity';
+      const strong=document.createElement('strong');strong.textContent=name;
+      const small=document.createElement('small');small.textContent=description;
+      identity.append(strong,small);
+      if(badge)summary.append(identity,badge);
+      else summary.append(identity);
+      const edit=document.createElement('span');edit.className='settingProviderEdit';edit.textContent='Configure';summary.append(edit);
+      section.removeAttribute('id');head.remove();
+      section.parentNode.insertBefore(details,section);
+      section.classList.add('settingProviderBody');
+      details.append(summary,section);
+      if(location.hash===`#${id}`)details.open=true;
+    });
+  }
+
   function compactSettingsForms() {
     document.querySelectorAll('.settings-card form, .section form.formPanel').forEach(form => {
       if (form.querySelector('.settingToggle, .settingToggleGrid')) form.classList.add('compactSettingsForm');
@@ -198,6 +225,7 @@
     compactGlobalNotificationChannels();
     compactNotificationEventGroups();
     compactConfiguredSecrets();
+    compactPaymentProviders();
     compactSettingsForms();
   }
 
