@@ -34,8 +34,18 @@
     }
   }
 
+  function promoteInlineSwitch(label) {
+    if (!label || label.dataset.settingInlineReady === '1') return;
+    const input=label.querySelector(':scope > input[type="checkbox"]');
+    if(!input)return;
+    label.dataset.settingInlineReady='1';
+    label.classList.add('settingInlineSwitch');
+    input.classList.add('settingSwitchInput');
+  }
+
   function promoteLegacyToggles() {
     document.querySelectorAll('label.toggleRow, label.checkRow').forEach(promoteToggle);
+    document.querySelectorAll('label.inlineToggle').forEach(promoteInlineSwitch);
     document.querySelectorAll('.toggleGrid').forEach(grid => grid.classList.add('settingToggleGrid'));
   }
 
