@@ -4,6 +4,7 @@ const { query } = require('../db');
 const { dashboardData } = require('./admin-dashboard-data');
 const { dashboardRange, fillSeries } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
+const subscriptionAnalytics = require('./subscription-analytics');
 const registry = require('./admin-dashboard-registry');
 const widgets = require('./admin-dashboard-widgets');
 const { renderWidgetGrid } = require('./admin-dashboard-page');
@@ -49,13 +50,7 @@ function aggregateConverted(rows, reporting, {nameKey='name', valueKey='amount_m
 }
 
 async function churnRate(range) {
-    const [cancelled, activeAtStart] = await Promise.all([
-        query(`SELECT COUNT(*)::int n FROM subscriptions WHERE status='cancelled' AND updated_at>=$1 AND updated_at<$2`, [range.start, range.end]),
-        query(`SELECT COUNT(*)::int n FROM subscriptions WHERE status IN('active','trialing','past_due','paused') AND starts_at<$1 AND current_period_end>$1`, [range.start])
-    ]);
-    const activeStart = Number(activeAtStart.rows[0]?.n || 0);
-    const cancelledCount = Number(cancelled.rows[0]?.n || 0);
-    return { cancelledCount, activeAtStart: activeStart, rate: activeStart ? (cancelledCount / activeStart * 100) : null };
+    return subscriptionAnalytics.churnSummary(range);
 }
 
 async function newVsCancelledSeries(range) {
@@ -146,10 +141,10 @@ registry.register('main', 'liveStreams', {
     render: async ctx => widgets.kpiCard({ key: 'liveStreams', label: 'Live streams', value: number(ctx.data.current.fleetStreams), meta: `${number(ctx.data.current.managedStreams)} managed`, href: '/admin/servers/dashboard' })
 });
 registry.register('main', 'churnRate', {
-    title: 'Churn rate', subtitle: 'Subscriptions cancelled this period ÷ subscriptions active at the start of the period.', defaultOrder: 4, defaultSpan: 3,
+    title: 'Churn rate', subtitle: 'Primary subscriptions cancelled this period ÷ primary subscriptions live at the start of the period.', defaultOrder: 4, defaultSpan: 3,
     render: async ctx => {
         const rate = ctx.data.churn.rate;
-        return widgets.kpiCard({ key: 'churnRate', label: 'Churn rate', value: rate == null ? '—' : `${number(rate, 1)}%`, meta: rate == null ? 'no active subscriptions at period start' : `${number(ctx.data.churn.cancelledCount)} cancelled of ${number(ctx.data.churn.activeAtStart)}`, href: '/admin/commerce' });
+        return widgets.kpiCard({ key: 'churnRate', label: 'Churn rate', value: rate == null ? '—' : `${number(rate, 1)}%`, meta: rate == null ? 'no live primary subscriptions at period start' : `${number(ctx.data.churn.cancelledCount)} cancelled of ${number(ctx.data.churn.activeAtStart)}`, href: '/admin/commerce' });
     }
 });
 registry.register('main', 'revenueTrend', {
