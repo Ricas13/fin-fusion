@@ -5,7 +5,6 @@ const {query}=require('../db');
 const routeRateLimit=require('../security/route-rate-limit');
 const operations=require('../platform/operations-settings');
 const entitlements=require('./entitlements');
-const jellyfin=require('./jellyfin-runtime');
 const sourceAdmission=require('./source-admission');
 const managedRuntime=require('./managed-runtime');
 const managedSessions=require('./managed-session-reconciler');
@@ -40,7 +39,9 @@ function settledStreams(result,label){
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
-  jellyfin.startStreamManager({intervalMs:60000});
+  // Multi-server reconciliation and the managed playback lifecycle are the
+  // only live managed-stream authorities. The legacy single-entitlement
+  // jellyfin-runtime stream manager must not run alongside them.
   managedSessions.start({intervalMs:15000});
   managedPlayback.startManager({intervalMs:15000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
@@ -76,8 +77,13 @@ function createStremioRuntimeRouter(){
       const mapping=await managedMapping(e.id,req.params.mappingId);if(!mapping)return res.status(404).end();
       const playback=await managedRuntime.playbackInfo(mapping,req.params.itemId,req.params.mediaSourceId),source=managedRuntime.mediaSource(playback,req.params.mediaSourceId);if(!source)return res.status(404).end();
       const playMethod=managedRuntime.playMethodFor(source),playSessionId=String(playback?.PlaySessionId||req.query.playSessionId||'');if(!playMethod)return res.status(502).end();
-      const id=managedPlayback.deviceId(lease),admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,{managedMappingId:mapping.id,serverId:mapping.server_id,jellyfinUserId:mapping.jellyfin_user_id,deviceId:id,playSessionId,mediaSourceId:req.params.mediaSourceId,playMethod});
-      if(!admission.allowed){res.setHeader('Retry-After','60');return res.status(429).end();}admitted=true;
+      const id=managedPlayback.deviceId(lease),metadata={managedMappingId:mapping.id,serverId:mapping.server_id,jellyfinUserId:mapping.jellyfin_user_id,deviceId:id,playSessionId,mediaSourceId:req.params.mediaSourceId,playMethod};
+      let admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,metadata);
+      if(!admission.allowed&&admission.reason==='stream_limit'){
+        await managedPlayback.reconcileEntitlement(e.id).catch(error=>console.warn('Unable to re-check managed Stremio sessions before admission retry:',error.message));
+        admission=await sourceAdmission.admit(e,lease,null,req.params.itemId,metadata);
+      }
+      if(!admission.allowed){res.setHeader('Retry-After',String(managedPlayback.ADMISSION_ACTIVE_SECONDS));return res.status(429).end();}admitted=true;
       const started=await managedPlayback.start(mapping,lease,{itemId:req.params.itemId,mediaSourceId:req.params.mediaSourceId,playSessionId,playMethod});
       const target=managedRuntime.playbackUrl(mapping,req.params.itemId,source,playback,{accessToken:started.accessToken,deviceId:started.deviceId});
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES(NULL,'stremio.managed_playback.admitted','stremio_entitlement',$1,$2::jsonb)`,[e.id,JSON.stringify({serverId:mapping.server_id,jellyfinSessionId:started.jellyfinSessionId||null,playMethod:target.playMethod,active:admission.active,limit:admission.limit})]).catch(()=>{});

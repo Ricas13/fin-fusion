@@ -65,20 +65,32 @@ function playbackUrl(mapping,itemId,source,playback,{accessToken,deviceId=''}){
   if(method!=='DirectPlay'&&source.TranscodingUrl)return{url:publicTranscodingUrl(mapping,source.TranscodingUrl,{accessToken,playSessionId,deviceId}),playMethod:method,playSessionId};
   return{url:directUrl(mapping,itemId,source.Id,playSessionId,deviceId,accessToken,source.Container),playMethod:'DirectPlay',playSessionId};
 }
-async function resolveManagedItem(mapping,runtime,args){
-  const indexed=await mediaIndex.lookup(mapping.server_id,args.imdb,args.type);if(!indexed)return null;
-  if(args.type==='movie')return{id:indexed.item_id,name:indexed.name,path:indexed.path,type:'Movie'};
-  const endpoint=episodeResolution.userItemsPath({userId:mapping.jellyfin_user_id,seriesId:indexed.item_id,season:args.season,episode:args.episode,fields:'Path'});
-  const payload=await jellyfin.restrictedRequest(runtime,endpoint),target=episodeResolution.pick(payload,args.season,args.episode);
-  if(target)return{...target,id:String(target.Id),name:target.Name||indexed.name,path:target.Path||null,type:'Episode'};
-  return jellyfin.resolveItem(runtime,args);
+async function resolveManagedItems(mapping,runtime,args){
+  const indexedRows=await mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type);if(!indexedRows.length)return[];
+  if(args.type==='movie')return indexedRows.map(indexed=>({id:String(indexed.item_id),name:indexed.name,path:indexed.path,type:'Movie'}));
+  const settled=await Promise.allSettled(indexedRows.map(async indexed=>{
+    const endpoint=episodeResolution.userItemsPath({userId:mapping.jellyfin_user_id,seriesId:indexed.item_id,season:args.season,episode:args.episode,fields:'Path'});
+    const payload=await jellyfin.restrictedRequest(runtime,endpoint),target=episodeResolution.pick(payload,args.season,args.episode);
+    return target?{...target,id:String(target.Id),name:target.Name||indexed.name,path:target.Path||null,type:'Episode'}:null;
+  }));
+  const items=settled.filter(result=>result.status==='fulfilled'&&result.value).map(result=>result.value),seen=new Set(),unique=[];
+  for(const item of items){if(seen.has(String(item.id)))continue;seen.add(String(item.id));unique.push(item);}
+  if(unique.length)return unique;
+  const fallback=await jellyfin.resolveItem(runtime,args);return fallback?[{...fallback,id:String(fallback.id||fallback.Id),name:fallback.name||fallback.Name,path:fallback.path||fallback.Path||null,type:'Episode'}]:[];
 }
+async function resolveManagedItem(mapping,runtime,args){return (await resolveManagedItems(mapping,runtime,args))[0]||null;}
 async function streamsFromMapping(mapping,args,type,videoId,{proxyBase,installToken}={}){
-  const runtime=runtimeEntitlement(mapping),item=await resolveManagedItem(mapping,runtime,args);if(!item)return[];
-  const playback=await playbackInfo(mapping,item.id);
-  await query(`UPDATE stremio_managed_accounts SET last_playback_info_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[mapping.id]).catch(()=>{});
-  const sources=(Array.isArray(playback?.MediaSources)?playback.MediaSources:[]).filter(source=>source?.Id);
-  return sources.map(source=>{const filename=jellyfin.sourceFilename(item,source),quality=jellyfin.sourceQuality(source,filename),display=foundation.streamDisplayFromFilename(filename),lease=sourceAdmission.issue();return{rank:quality.rank,stream:{name:display.name,description:foundation.richStreamDescription(display,source),url:admissionUrl({portalBase:proxyBase,installToken,mapping,itemId:item.id,mediaSourceId:source.Id,playSessionId:playback?.PlaySessionId||'',lease}),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,filename),filename,...(Number(source.Size)>0?{videoSize:Number(source.Size)}:{})}}};}).sort((a,b)=>b.rank-a.rank);
+  const runtime=runtimeEntitlement(mapping),items=await resolveManagedItems(mapping,runtime,args);if(!items.length)return[];
+  const settled=await Promise.allSettled(items.map(async item=>{
+    const playback=await playbackInfo(mapping,item.id),sources=(Array.isArray(playback?.MediaSources)?playback.MediaSources:[]).filter(source=>source?.Id);
+    return sources.map(source=>{const filename=jellyfin.sourceFilename(item,source),quality=jellyfin.sourceQuality(source,filename),display=foundation.streamDisplayFromFilename(filename),lease=sourceAdmission.issue();return{rank:quality.rank,stream:{name:display.name,description:foundation.richStreamDescription(display,source),url:admissionUrl({portalBase:proxyBase,installToken,mapping,itemId:item.id,mediaSourceId:source.Id,playSessionId:playback?.PlaySessionId||'',lease}),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,`${item.id}:${source.Id}:${filename}`),filename,...(Number(source.Size)>0?{videoSize:Number(source.Size)}:{})}}};});
+  }));
+  const output=[],failures=[];let successfulItems=0;
+  for(const result of settled){if(result.status==='fulfilled'){successfulItems+=1;output.push(...result.value);}else failures.push(result.reason);}
+  if(successfulItems)await query(`UPDATE stremio_managed_accounts SET last_playback_info_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[mapping.id]).catch(()=>{});
+  if(!successfulItems&&failures.length)throw failures[0];
+  for(const error of failures)console.warn(`Managed Stremio PlaybackInfo failed for one matching item on ${mapping.server_name}:`,error?.message||error);
+  return output.sort((a,b)=>b.rank-a.rank);
 }
 async function mappingsForSearch(entitlement){
   try{return await managedEntitlements.mappings(entitlement);}
@@ -94,4 +106,4 @@ async function streamsFor(entitlement,type,videoId,options={}){
   return output;
 }
 
-module.exports={MAX_STREAMING_BITRATE,DIRECT_CONTAINERS,DIRECT_AUDIO_CODECS,neutralGroup,containerExtension,directUrl,admissionUrl,runtimeEntitlement,stremioDeviceProfile,playbackInfo,mediaSource,playMethodFor,publicTranscodingUrl,playbackUrl,resolveManagedItem,streamsFromMapping,mappingsForSearch,streamsFor};
+module.exports={MAX_STREAMING_BITRATE,DIRECT_CONTAINERS,DIRECT_AUDIO_CODECS,neutralGroup,containerExtension,directUrl,admissionUrl,runtimeEntitlement,stremioDeviceProfile,playbackInfo,mediaSource,playMethodFor,publicTranscodingUrl,playbackUrl,resolveManagedItems,resolveManagedItem,streamsFromMapping,mappingsForSearch,streamsFor};

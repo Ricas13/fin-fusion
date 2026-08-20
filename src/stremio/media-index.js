@@ -113,11 +113,14 @@ async function clearAll(actorUserId=null){
   },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before clearing managed indexes.'});
 }
 
-async function lookup(serverId,imdbId,itemType){
-  const imdb=normalizeImdb(imdbId);if(!imdb)return null;
+async function lookupAll(serverId,imdbId,itemType){
+  const imdb=normalizeImdb(imdbId);if(!imdb)return[];
   const type=itemType==='series'?'Series':'Movie';
-  const r=await query(`SELECT * FROM stremio_media_index WHERE server_id=$1 AND imdb_id=$2 AND item_type=$3 ORDER BY updated_at DESC LIMIT 1`,[serverId,imdb,type]);
-  return r.rows[0]||null;
+  const r=await query(`SELECT * FROM stremio_media_index WHERE server_id=$1 AND imdb_id=$2 AND item_type=$3 ORDER BY updated_at DESC,item_id`,[serverId,imdb,type]);
+  return r.rows;
+}
+async function lookup(serverId,imdbId,itemType){
+  return (await lookupAll(serverId,imdbId,itemType))[0]||null;
 }
 
 async function states(){
@@ -128,4 +131,4 @@ async function states(){
   return r.rows;
 }
 
-module.exports={normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,saveLibrariesAndReset,clearAndReset,clearAll,lookup,states};
+module.exports={normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,saveLibrariesAndReset,clearAndReset,clearAll,lookupAll,lookup,states};

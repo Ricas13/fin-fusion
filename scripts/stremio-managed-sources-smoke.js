@@ -51,7 +51,7 @@ assert(sources.includes('name="returnTo" value="main"'),'inline external mainten
 assert(!sources.includes('href="/admin/servers/stremio/${esc(source.id)}">Manage'),'main Stremio page must not expose a second external-management page');
 
 assert(composition.includes('createAdminStremioManagedSourcesRouter'),'managed source mutation router must use canonical admin route composition');
-assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio']"),'Stremio sidebar entry must land on the single control centre');
+assert(nav.includes("['stremio-sources','Sources','/admin/servers/stremio']"),'Stremio product workspace must expose Sources as the canonical source control centre');
 assert(!nav.includes("['stremio-managed-sources','Managed Stremio'"),'Managed Stremio must not return as a second sidebar item');
 assert(nav.includes("'stremio-managed-sources':'stremio-sources'"),'managed compatibility pages must still highlight the single Stremio sidebar entry');
 assert(nav.includes('function sidebarKey(value){const key=activeKey(value)'),'navigation key resolver regression detected');

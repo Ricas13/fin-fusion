@@ -38,20 +38,34 @@ assert.strictEqual(transcoded.searchParams.get('PlaySessionId'),'play2');
 assert.strictEqual(transcoded.searchParams.get('DeviceId'),'device2');
 
 assert.strictEqual(lifecycle.playbackBody({itemId:'i',mediaSourceId:'m',playSessionId:'p',playMethod:'Transcode'}).PlayMethod,'Transcode','Jellyfin lifecycle reporting must match the negotiated play method');
+assert.strictEqual(lifecycle.SESSION_ACTIVE_SECONDS,60,'managed playback must not retain silent sessions for several minutes');
+assert.strictEqual(lifecycle.ADMISSION_ACTIVE_SECONDS,30,'blocked admission must use a stricter live-session recheck');
+const now=Date.now();
+assert(lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-29000).toISOString()},now,30),'recent managed playback must remain active');
+assert(!lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-31000).toISOString()},now,30),'silent managed playback must become stale promptly for admission');
 assert.strictEqual(admission.cleanMetadata({playMethod:'DirectStream'}).playMethod,'DirectStream');
 assert.strictEqual(admission.cleanMetadata({playMethod:'anything'}).playMethod,null,'lease metadata must reject unknown play methods');
 
 const managedSource=read('src/stremio/managed-runtime.js');
+const mediaIndexSource=read('src/stremio/media-index.js');
 const runtimeSource=read('src/stremio/runtime.js');
 const lifecycleSource=read('src/stremio/managed-playback-lifecycle.js');
+const reconcilerSource=read('src/stremio/managed-session-reconciler.js');
 const migration=read('db/migrations/019_stremio_managed_play_method.sql');
 assert(managedSource.includes("{method:'POST',body}"),'managed PlaybackInfo must send a device profile in a POST body');
 assert(managedSource.includes('DeviceProfile:stremioDeviceProfile()'),'managed PlaybackInfo must declare Stremio playback capabilities');
 assert(managedSource.includes('source.TranscodingUrl'),'managed playback must honor Jellyfin compatibility URLs instead of forcing Static direct play');
+assert(mediaIndexSource.includes('async function lookupAll')&&!mediaIndexSource.includes('item_type=$3 ORDER BY updated_at DESC LIMIT 1'),'managed IMDb lookup must preserve separate Jellyfin items such as 1080p and 4K copies');
+assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'managed result resolution must fan out across every indexed item with the same IMDb id');
+assert(managedSource.includes('`${item.id}:${source.Id}:${filename}`'),'separate Jellyfin items/media sources must keep distinct Stremio binge groups');
 assert(runtimeSource.includes('managedRuntime.playbackInfo(mapping,req.params.itemId,req.params.mediaSourceId)'),'playback admission must refresh the selected media-source negotiation');
+assert(runtimeSource.includes("admission.reason==='stream_limit'")&&runtimeSource.includes('managedPlayback.reconcileEntitlement(e.id)'),'a blocked managed play must re-check stale Jellyfin sessions before returning 429');
+assert(!runtimeSource.includes('jellyfin.startStreamManager'),'the retired single-entitlement stream manager must not run alongside the multi-server reconciler');
+assert(reconcilerSource.includes('managedPlayback.ADMISSION_ACTIVE_SECONDS'),'managed concurrency enforcement must use the same live-session window as admission rechecks');
 assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback must remain no-byte direct delivery while preserving request semantics across the Jellyfin redirect');
 assert(runtimeSource.includes('playMethod:target.playMethod'),'managed admission audit must record the actual delivery method');
 assert(lifecycleSource.includes("playMethod:row.play_method||'DirectPlay'"),'managed stop reporting must reuse the negotiated play method');
+assert(lifecycleSource.includes('failedServerIds')&&lifecycleSource.includes("snapshot.failedServerIds.has(String(row.server_id))"),'managed admission rechecks must fail closed when Jellyfin session snapshots fail');
 assert(migration.includes('play_method')&&migration.includes("'DirectStream'")&&migration.includes("'Transcode'"),'managed playback migration must persist the negotiated Jellyfin play method');
 
 console.log('stremio playback compatibility smoke: ok');

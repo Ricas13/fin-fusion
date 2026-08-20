@@ -43,6 +43,7 @@ const sourceClient=read('src/stremio/source-client.js');
 const sourceIndex=read('src/stremio/source-index.js');
 const sourceAdmission=read('src/stremio/source-admission.js');
 const managedSessions=read('src/stremio/managed-session-reconciler.js');
+const managedPlayback=read('src/stremio/managed-playback-lifecycle.js');
 const matchMigration=read('db/migrations/003_stremio_source_match_fallbacks.sql');
 const managedLeaseMigration=read('db/migrations/011_stremio_managed_playback_leases.sql');
 
@@ -62,19 +63,25 @@ assert(managedRuntime.includes('/PlaybackInfo?'),'managed results must use Playb
 assert(managedRuntime.includes("url.searchParams.set('api_key',token)"),'managed direct playback must use the restricted hidden-user token');
 assert(!managedRuntime.includes('api_key_encrypted'),'managed direct playback must never expose administrator Jellyfin API-key storage');
 assert(managedRuntime.includes('mappingsForSearch')&&managedRuntime.includes('managedSources.accountsForEntitlement'),'managed search must fall back to active persisted mappings when a policy refresh fails');
+assert(managedRuntime.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'managed search must return every indexed Jellyfin copy for the requested title');
 assert(externalRuntime.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external unmanaged results must resolve to their direct Jellyfin URL');
 assert(externalRuntime.includes('/Videos/${encodeURIComponent(item)}/stream'),'external unmanaged results must point directly to Jellyfin media delivery');
 assert(externalRuntime.includes('Promise.allSettled(sources.map'),'external sources must be queried concurrently rather than serially');
 assert(!managedRuntime.includes('source.name')&&!externalRuntime.includes('source.name'),'customer stream presentation must remain source-neutral');
 
-assert(managedSessions.includes("'/Sessions?activeWithinSeconds=180'"),'managed concurrency must observe Jellyfin sessions across the fleet');
+assert(managedSessions.includes('managedPlayback.ADMISSION_ACTIVE_SECONDS'),'managed concurrency must use the canonical managed-session liveness window');
 assert(managedSessions.includes('/Playing/Stop'),'managed concurrency must be able to stop excess Jellyfin sessions');
 assert(managedSessions.includes('active.slice(limit)'),'managed concurrency must preserve only the plan stream allowance');
 assert(runtimeSource.includes("managedSessions.start({intervalMs:15000})"),'cross-server managed concurrency reconciliation must run continuously');
+assert(runtimeSource.includes("managedPlayback.startManager({intervalMs:15000})"),'managed playback lifecycle cleanup must run continuously');
+assert(!runtimeSource.includes('jellyfin.startStreamManager'),'legacy single-entitlement reconciliation must not run beside the multi-server authority');
+assert(managedPlayback.includes('SESSION_ACTIVE_SECONDS=60')&&managedPlayback.includes('ADMISSION_ACTIVE_SECONDS=30'),'managed stopped-session cleanup must be prompt without removing startup grace');
+assert(managedPlayback.includes('failedServerIds'),'managed session cleanup must fail closed if a Jellyfin session snapshot cannot be trusted');
 
 assert(runtimeSource.includes('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId'),'managed playback control route must remain available');
 assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback control must redirect to Jellyfin after admission');
 assert(runtimeSource.includes("require('./source-admission')")&&runtimeSource.includes('sourceAdmission.admit'),'managed playback must retain serialized CAPTAiNFiN admission');
+assert(runtimeSource.includes("admission.reason==='stream_limit'")&&runtimeSource.includes('managedPlayback.reconcileEntitlement(e.id)'),'stream-limit rejection must re-check stale managed sessions before returning 429');
 assert(sourceAdmission.includes('FOR UPDATE')&&sourceAdmission.includes('stream_limit')&&sourceAdmission.includes('active>=limit'),'managed admission must remain race-safe');
 assert(sourceAdmission.includes('LEASE_SECONDS=150'),'managed admission leases must remain short-lived until lifecycle renewal');
 assert(managedLeaseMigration.includes('ALTER COLUMN source_id DROP NOT NULL'),'managed playback leases must remain representable without an external source id');
