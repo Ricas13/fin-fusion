@@ -3,6 +3,7 @@
 const crypto=require('crypto');
 const {query,transaction}=require('../db');
 const client=require('./source-client');
+const indexLock=require('./index-lock');
 
 const PAGE_SIZE=250;
 const PAGE_DELAY_MS=100;
@@ -20,9 +21,11 @@ async function state(sourceId){const r=await query('SELECT * FROM stremio_source
 function fullDue(row,forceFull=false){if(forceFull||row?.force_full||!row?.last_full_completed_at)return true;return Date.now()-new Date(row.last_full_completed_at).getTime()>=FULL_RECONCILE_HOURS*3600000;}
 async function queue(sourceId,{full=false}={}){await query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,updated_at) VALUES($1,'queued',NOW(),$2,NOW()) ON CONFLICT(source_id) DO UPDATE SET status='queued',next_incremental_at=NOW(),force_full=stremio_source_index_state.force_full OR EXCLUDED.force_full,updated_at=NOW()`,[sourceId,Boolean(full)]);}
 async function clearAndQueue(sourceId,{actorUserId=null}={}){
-  const src=await source(sourceId);if(!src)throw new Error('Stremio source not found.');
-  const current=await state(sourceId);if(current?.status==='running')throw new Error('This source is currently indexing. Wait for the current run to finish, then clear and rebuild it.');
-  return transaction(async db=>{
+  return indexLock.withIndexTransaction(async db=>{
+    const sourceResult=await db.query('SELECT * FROM stremio_sources WHERE id=$1',[sourceId]),src=sourceResult.rows[0]||null;
+    if(!src)throw new Error('Stremio source not found.');
+    const stateResult=await db.query('SELECT * FROM stremio_source_index_state WHERE source_id=$1',[sourceId]),current=stateResult.rows[0]||null;
+    if(current?.status==='running')throw new Error('This source is currently indexing. Wait for the current run to finish, then clear and rebuild it.');
     const deleted=await db.query('DELETE FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
     await db.query(`INSERT INTO stremio_source_index_state(source_id,status,next_incremental_at,force_full,item_count,last_error,updated_at)
       VALUES($1,'queued',NOW(),TRUE,0,NULL,NOW()) ON CONFLICT(source_id) DO UPDATE SET
@@ -30,7 +33,7 @@ async function clearAndQueue(sourceId,{actorUserId=null}={}){
     await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.stremio.source.index_rebuild','stremio_source',$2,$3::jsonb)`,[actorUserId,sourceId,JSON.stringify({deletedItems:Number(deleted.rowCount||0),queuedFull:true})]);
     return{sourceId,deleted:Number(deleted.rowCount||0),queued:true};
-  });
+  },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before rebuilding this external source.'});
 }
 async function refreshProgress(sourceId){
   const count=await query('SELECT COUNT(*)::int n FROM stremio_source_media_index WHERE source_id=$1',[sourceId]);
@@ -93,7 +96,7 @@ async function dueSources(){const r=await query(`SELECT s.id FROM stremio_source
 async function indexDueSources(){const rows=await dueSources();let processed=0,failed=0,sources=0;for(const row of rows){sources++;try{const result=await indexSource(row.id);processed+=Number(result.processed||0);}catch(error){failed++;console.error('Stremio source index failed:',error.message);}}return{total:sources,processed,failed};}
 async function lookupAll(sourceId,identity,itemType){const input=typeof identity==='string'?{imdb:identity}:identity||{},imdb=normalizeImdb(input.imdb),tmdb=input.tmdb?String(input.tmdb):null,tvdb=input.tvdb?String(input.tvdb):null,key=titleKey(input.title),year=Number.parseInt(input.year,10),type=itemType==='series'?'Series':'Movie';if(!imdb&&!tmdb&&!tvdb&&!key)return[];const r=await query(`SELECT i.*,l.name library_name,l.collection_type,
     CASE WHEN i.imdb_id=$3 THEN 100 WHEN i.tmdb_id=$4 THEN 90 WHEN i.tvdb_id=$5 THEN 85 WHEN i.title_key=$6 AND ($7::int IS NULL OR i.production_year IS NULL OR abs(i.production_year-$7::int)<=1) THEN 50 ELSE 0 END match_score
-    FROM stremio_source_media_index i LEFT JOIN stremio_source_libraries l ON l.source_id=i.source_id AND l.library_id=i.library_id
+    FROM stremio_source_media_index i JOIN stremio_source_libraries l ON l.source_id=i.source_id AND l.library_id=i.library_id AND l.selected=TRUE AND l.available=TRUE
     WHERE i.source_id=$1 AND i.item_type=$2 AND ((i.imdb_id IS NOT NULL AND i.imdb_id=$3) OR (i.tmdb_id IS NOT NULL AND i.tmdb_id=$4) OR (i.tvdb_id IS NOT NULL AND i.tvdb_id=$5) OR (i.title_key IS NOT NULL AND i.title_key=$6 AND ($7::int IS NULL OR i.production_year IS NULL OR abs(i.production_year-$7::int)<=1)))
     ORDER BY match_score DESC,i.updated_at DESC,i.name`,[sourceId,type,imdb,tmdb,tvdb,key,Number.isFinite(year)?year:null]);return r.rows;}
 async function lookup(sourceId,imdbId,itemType){const rows=await lookupAll(sourceId,imdbId,itemType);return rows[0]||null;}

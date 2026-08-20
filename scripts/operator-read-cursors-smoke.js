@@ -11,6 +11,7 @@ const cursors=read('src/platform/operator-read-cursors.js');
 const operator=read('src/platform/admin-operator-state.js');
 const tickets=read('src/support/tickets.js');
 const client=read('public/js/operator-business-indicators.js');
+const experience=read('public/js/operator-experience.js');
 
 assert(baseline.includes('CREATE TABLE public.admin_nav_read_state'),'canonical admin nav read-state table missing from baseline');
 assert(baseline.includes('last_seen_at timestamp with time zone'),'canonical admin nav read-state timestamp missing');
@@ -30,5 +31,8 @@ assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must reso
 assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
 assert(client.includes("path==='/admin/orders'")&&client.includes("path==='/admin/tickets'"),'orders and tickets must still clear only from their own inbox pages');
 assert(!client.includes('localStorage'),'business unread state must not depend on local browser storage');
+assert(!experience.includes('localStorage'),'legacy operator experience must not maintain a second local unread cursor');
+assert(!experience.includes("fetch('/admin/api/operator-state/unread'"),'legacy operator experience must not independently fetch unread counts');
+assert(experience.includes('operator-business-indicators.js'),'legacy helper must document the canonical unread owner to prevent drift');
 
 console.log('operator read cursors smoke: ok');

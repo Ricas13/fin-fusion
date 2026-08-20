@@ -6,7 +6,8 @@ const path=require('path');
 
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const html=read('src/platform/admin-html.js');
-const core=read('src/platform/admin-html-core.js');
+const core=read('src/platform/admin-html-core-base.js');
+const coreWrapper=read('src/platform/admin-html-core.js');
 const catalog=read('src/platform/admin-catalog-shell.js');
 const planCreateV2=read('src/platform/admin-plan-create-v2.js');
 const adminActions=read('src/platform/admin-actions.js');
@@ -27,6 +28,7 @@ const typoMigration=read('db/migrations/005_fix_stremio_monthly_plan_typo.sql');
 
 assert(html.includes('decorateSettingHelp'),'Shared admin renderer must decorate settings with helper descriptions');
 assert(html.includes('SETTING_HELP'),'Shared setting-help registry must exist');
+assert(coreWrapper.includes("require('./admin-html-core-base')"),'Admin shell wrapper must preserve the stable base renderer');
 assert(core.includes('topBreadcrumb'),'Admin shell must render a stable top breadcrumb');
 assert(core.includes('<details class="navSection'),'Admin navigation groups must be collapsible');
 assert(core.includes("${activeGroup?'open':''}"),'The active navigation group must start expanded');

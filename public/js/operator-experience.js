@@ -2,9 +2,6 @@
 
 (() => {
   const path = location.pathname;
-  const pageKey = document.querySelector('.adminTab.active')?.getAttribute('href') || path;
-  const seenKey = `captainfin.operator.seen.${pageKey}`;
-  try { localStorage.setItem(seenKey, String(Date.now())); } catch (_) {}
 
   function tabs(items, activeHref) {
     const wrap=document.createElement('nav');
@@ -176,49 +173,11 @@
     }
   });
 
-  fetch('/admin/api/operator-state/unread', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
-    .then(r => r.ok ? r.json() : null)
-    .then(data => {
-      if (!data || !data.counts) return;
-      const topAlert = document.querySelector('[data-operator-alerts]');
-      if (topAlert) {
-        const total = Number(data.counts.attention || 0) + Number(data.counts.servers || 0) + Number(data.counts.payments || 0);
-        const countNode = topAlert.querySelector('[data-operator-alert-count]');
-        topAlert.classList.toggle('warn', total > 0);
-        topAlert.classList.toggle('clear', total <= 0);
-        topAlert.setAttribute('aria-label', total > 0 ? `${total} status alert${total === 1 ? '' : 's'}` : 'System status clear');
-        topAlert.title = total > 0 ? `${total} alert${total === 1 ? '' : 's'} need attention` : 'System status clear';
-        if (countNode) countNode.textContent = total > 0 ? String(total > 99 ? '99+' : total) : 'Clear';
-      }
-      const hrefByKey = {customers:'/admin/users',attention:'/admin/attention',servers:'/admin/servers',payments:'/admin/payments'};
-      const labelByKey = {
-        attention:['Needs Attention','Open operational issues'],
-        servers:['Servers','Offline or degraded fleet signals'],
-        payments:['Payments','Recent payment incidents'],
-        customers:['Customers','Customer workflow items']
-      };
-      const menuList=document.querySelector('[data-operator-alert-list]');
-      if(menuList){
-        const rows=Object.entries(data.counts)
-          .map(([key,value])=>[key,Number(value||0)])
-          .filter(([key,value])=>key!=='customers'&&value>0&&hrefByKey[key]);
-        menuList.innerHTML=rows.length?rows.map(([key,value])=>{
-          const [label,meta]=labelByKey[key]||[key,'Needs review'];
-          return `<a class="topStatusItem" href="${hrefByKey[key]}"><span><strong>${label}</strong><br>${meta}</span><em>${value>99?'99+':value}</em></a>`;
-        }).join(''):'<div class="topStatusEmpty">No visible alerts right now.</div>';
-      }
-      for (const [key,countValue] of Object.entries(data.counts)) {
-        const count = Number(countValue || 0); if (count <= 0) continue;
-        const href = hrefByKey[key]; if (!href) continue;
-        const link = [...document.querySelectorAll('.adminTab')].find(a => (a.getAttribute('href') || '').split('?')[0] === href);
-        if (!link) continue;
-        const serverUpdated = Number(data.updatedAt?.[key] || 0);
-        let localSeen = 0;
-        try { localSeen = Number(localStorage.getItem(`captainfin.operator.seen.${href}`) || 0); } catch (_) {}
-        if (serverUpdated && localSeen >= serverUpdated) continue;
-        const badge = document.createElement('span');badge.className='unreadBadge';badge.textContent=count>99?'99+':String(count);badge.setAttribute('aria-label',`${count} unread`);link.appendChild(badge);
-      }
-    }).catch(() => {});
+  // Business unread badges and the top Status summary are owned exclusively by
+  // operator-business-indicators.js. That implementation persists a server-side
+  // administrator read cursor, so opening Customers Overview and Customers are
+  // intentionally the same read workspace. Do not reintroduce localStorage or a
+  // second /operator-state/unread fetch here.
 
   document.querySelectorAll('[title]:not([data-help])').forEach(el => {
     const value = (el.getAttribute('title') || '').trim();
