@@ -3,8 +3,9 @@
 
 ALTER TABLE plans
     ADD COLUMN IF NOT EXISTS jellyfin_access_model TEXT NOT NULL DEFAULT 'concurrent_streams',
-    ADD COLUMN IF NOT EXISTS household_network_limit INTEGER NOT NULL DEFAULT 1,
-    ADD COLUMN IF NOT EXISTS household_lease_minutes INTEGER NOT NULL DEFAULT 240;
+    ADD COLUMN IF NOT EXISTS jellyfin_household_network_limit INTEGER NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS jellyfin_household_lease_minutes INTEGER NOT NULL DEFAULT 240,
+    ADD COLUMN IF NOT EXISTS stremio_household_lease_minutes INTEGER NOT NULL DEFAULT 240;
 
 -- A stream count is not applicable to household-network Jellyfin plans. NULL is
 -- therefore the compatibility-safe representation: the existing stream policy
@@ -29,21 +30,30 @@ BEGIN
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
-        WHERE conname='plans_household_network_limit_check'
+        WHERE conname='plans_jellyfin_household_network_limit_check'
           AND conrelid='plans'::regclass
     ) THEN
         ALTER TABLE plans
-            ADD CONSTRAINT plans_household_network_limit_check
-            CHECK (household_network_limit BETWEEN 1 AND 10);
+            ADD CONSTRAINT plans_jellyfin_household_network_limit_check
+            CHECK (jellyfin_household_network_limit BETWEEN 1 AND 10);
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
-        WHERE conname='plans_household_lease_minutes_check'
+        WHERE conname='plans_jellyfin_household_lease_minutes_check'
           AND conrelid='plans'::regclass
     ) THEN
         ALTER TABLE plans
-            ADD CONSTRAINT plans_household_lease_minutes_check
-            CHECK (household_lease_minutes BETWEEN 15 AND 1440);
+            ADD CONSTRAINT plans_jellyfin_household_lease_minutes_check
+            CHECK (jellyfin_household_lease_minutes BETWEEN 15 AND 1440);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname='plans_stremio_household_lease_minutes_check'
+          AND conrelid='plans'::regclass
+    ) THEN
+        ALTER TABLE plans
+            ADD CONSTRAINT plans_stremio_household_lease_minutes_check
+            CHECK (stremio_household_lease_minutes BETWEEN 15 AND 1440);
     END IF;
 END $$;
 
