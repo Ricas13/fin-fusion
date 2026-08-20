@@ -24,11 +24,12 @@ function componentsForPlan(plan) {
   }
 
   if (type === 'stremio' || type === 'bundle') {
+    const household = drivers.householdConfig(plan);
     output.push({
       module: 'stremio',
       capability: 'stremio.household_network',
       driver: 'household_network',
-      config: drivers.householdConfig(plan)
+      config: { ...household, networkLimit: 1 }
     });
   }
 
@@ -46,7 +47,7 @@ function assertComponentsLicensed(plan, options = {}) {
 
 function accessLabel(plan) {
   const parts = componentsForPlan(plan).map(component => {
-    if (component.module === 'stremio') return `${component.config.networkLimit} Stremio household${component.config.networkLimit === 1 ? '' : 's'}`;
+    if (component.module === 'stremio') return '1 Stremio household';
     if (component.driver === 'household_network') return `${component.config.networkLimit} Jellyfin household network${component.config.networkLimit === 1 ? '' : 's'}`;
     return `${component.config.streamLimit} Jellyfin stream${component.config.streamLimit === 1 ? '' : 's'}`;
   });
