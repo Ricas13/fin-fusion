@@ -4,6 +4,7 @@ const { query } = require('../db');
 const { setupReadiness } = require('./setup-readiness');
 const { analyticsData, dashboardRange } = require('./admin-dashboard-analytics');
 const { normalizedDashboardMoney } = require('./admin-dashboard-money');
+const subscriptionAnalytics = require('./subscription-analytics');
 const attention = require('./attention');
 
 function boundedInt(value, min, max, fallback) {
@@ -32,13 +33,16 @@ async function legacyPolicyMetrics() {
 
 async function dashboardData(range = null, reporting = null) {
     const selectedRange = range || dashboardRange({ range: '30d' });
-    const [analytics, setup, options, policy, attentionSummary] = await Promise.all([
+    const [analytics, setup, options, policy, attentionSummary, effectivePrimary] = await Promise.all([
         analyticsData(selectedRange),
         setupReadiness(),
         dashboardOptions(),
         legacyPolicyMetrics(),
-        attention.openSummary().catch(() => ({ count: 0, updatedAt: null }))
+        attention.openSummary().catch(() => ({ count: 0, updatedAt: null })),
+        subscriptionAnalytics.effectivePrimarySummary(selectedRange.end)
     ]);
+    analytics.current.activeCustomers = Number(effectivePrimary.activeCustomers || 0);
+    analytics.primaryPlanMix = effectivePrimary.planMix || [];
     if (reporting) {
         const normalized = await normalizedDashboardMoney(selectedRange, analytics.revenue?.series || [], reporting);
         analytics.revenue = normalized.revenue;
