@@ -156,8 +156,8 @@
   }
 
   document.addEventListener('click',event=>{
-    const button=event.target.closest('[data-copy-value]');if(!button)return;
-    const value=button.getAttribute('data-copy-value')||'';
+    const button=event.target.closest('[data-copy-value],[data-copy-link]');if(!button)return;
+    const value=button.getAttribute('data-copy-value')||button.getAttribute('data-copy-link')||'';
     navigator.clipboard?.writeText(value).then(()=>{const old=button.textContent;button.textContent='Copied';setTimeout(()=>button.textContent=old,1200);}).catch(()=>{});
   });
 

@@ -32,6 +32,15 @@ function notice(req) {
 }
 function csrfInput(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
 function pill(label, kind = '') { return `<span class="pill ${kind}">${esc(label)}</span>`; }
+function takeClaimFlash(req) {
+    const flash = req.session?.customerClaimFlash || null;
+    if (req.session) delete req.session.customerClaimFlash;
+    return flash && typeof flash.url === 'string' && flash.url.startsWith('http') ? flash : null;
+}
+function claimFlashPanel(flash) {
+    if (!flash) return '';
+    return `<section class="section claimFlash"><div class="sectionHead"><div><h2>New claim link</h2><div class="muted">Copy this link now. For security, the bearer token is shown only once and is not stored in plaintext.</div></div>${pill('Shown once', 'warn')}</div><div class="claimFlashRow"><input class="input" type="text" readonly value="${esc(flash.url)}" aria-label="New customer claim link"><button type="button" class="button" data-copy-link="${esc(flash.url)}">Copy link</button></div></section>`;
+}
 
 function adminStatus(row) {
     if (row.user_id) return pill('Claimed', 'good');
@@ -55,13 +64,10 @@ function createForm(req, row) {
 }
 
 function adminRow(req, row) {
-    const activeUrl = row.claim_status === 'active' && row.raw_token
-        ? absoluteUrl(req, `/claim/${encodeURIComponent(row.raw_token)}`)
-        : null;
     const identity = row.jellyfin_usernames || row.display_name || 'Imported customer';
     const action = row.user_id
         ? `<a class="button secondary btn-sm" href="/admin/users/${esc(row.customer_id)}">Open customer</a>`
-        : `<div class="claimActions">${activeUrl ? `<button type="button" class="button btn-sm" data-copy-link="${esc(activeUrl)}">Copy link</button>` : ''}${row.claim_status === 'active' ? `<form method="post" action="/admin/customer-claims/${esc(row.claim_id)}/revoke">${csrfInput(req)}<button class="button secondary btn-sm" type="submit">Revoke</button></form>` : ''}</div>${createForm(req, row)}`;
+        : `<div class="claimActions">${row.claim_status === 'active' ? `<span class="muted claimStored">Link stored hash-only. Rotate to reveal a new link.</span><form method="post" action="/admin/customer-claims/${esc(row.claim_id)}/revoke">${csrfInput(req)}<button class="button secondary btn-sm" type="submit">Revoke</button></form>` : ''}</div>${createForm(req, row)}`;
     return `<tr>
         <td>${adminStatus(row)}</td>
         <td><strong>${esc(identity)}</strong><div class="subText">${esc(row.display_name || '')}</div></td>
@@ -74,16 +80,17 @@ function adminRow(req, row) {
 
 async function adminPage(req) {
     await runtimeSettings.ensureLoaded();
+    const flash = takeClaimFlash(req);
     const rows = await claims.listAdminClaims();
     const unclaimed = rows.filter(row => !row.user_id).length;
     const activeLinks = rows.filter(row => !row.user_id && row.claim_status === 'active').length;
     const claimed = rows.filter(row => row.user_id).length;
-    const body = `${notice(req)}
+    const body = `${notice(req)}${claimFlashPanel(flash)}
         <div class="metrics"><div class="metric"><div class="metricLabel">Unclaimed</div><div class="metricValue smallish">${unclaimed}</div></div><div class="metric"><div class="metricLabel">Active links</div><div class="metricValue smallish">${activeLinks}</div></div><div class="metric"><div class="metricLabel">Claimed</div><div class="metricValue smallish">${claimed}</div></div></div>
         <section class="section"><div class="sectionHead"><div><h2>Imported customer claims</h2><div class="muted">Give an existing Jellyfin user a CAPTAiNFiN portal login without recreating the Jellyfin user or changing their Jellyfin password.</div></div><span class="muted">${rows.length} imported customers</span></div>
         ${rows.length ? `<div class="tableWrap"><table class="dataTable claimTable"><thead><tr><th>Status</th><th>Jellyfin user</th><th>Server</th><th>Portal</th><th>Claim link</th><th class="right">Actions</th></tr></thead><tbody>${rows.map(row => adminRow(req, row)).join('')}</tbody></table></div>` : '<div class="empty">No imported Jellyfin customers are available yet. Import users first from People → Import users.</div>'}</section>
         <div class="notice">Claim links authorize creation of the CAPTAiNFiN portal identity only. Existing Jellyfin passwords and policies are not modified during claim.</div>
-        <style>.claimTable{min-width:1180px}.claimCreate{display:grid;grid-template-columns:105px minmax(180px,1fr) auto;gap:6px;margin-top:7px}.claimActions{display:flex;justify-content:flex-end;gap:6px}.claimActions form{margin:0}.metricValue.smallish{font-size:22px}@media(max-width:760px){.claimCreate{grid-template-columns:1fr}.claimTable{min-width:1000px}}</style>`;
+        <style>.claimTable{min-width:1180px}.claimCreate{display:grid;grid-template-columns:105px minmax(180px,1fr) auto;gap:6px;margin-top:7px}.claimActions{display:flex;justify-content:flex-end;align-items:center;gap:6px}.claimActions form{margin:0}.claimStored{font-size:11px}.claimFlash{border-color:rgba(59,196,129,.34);background:rgba(59,196,129,.05)}.claimFlashRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}.metricValue.smallish{font-size:22px}@media(max-width:760px){.claimCreate,.claimFlashRow{grid-template-columns:1fr}.claimTable{min-width:1000px}}</style>`;
     return layout({
         siteName: runtimeSettings.siteName(),
         active: 'customer-claims',
@@ -164,8 +171,13 @@ function createCustomerClaimRouter() {
     router.post('/admin/customer-claims/:customerId/create', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
-            await claims.createClaim({ customerId: req.params.customerId, emailLock: req.body.emailLock || null, ttlHours: req.body.ttlHours, actorUserId: req.session.authUserId });
-            return res.redirect('/admin/customer-claims?message=' + encodeURIComponent('Claim link created.'));
+            const created = await claims.createClaim({ customerId: req.params.customerId, emailLock: req.body.emailLock || null, ttlHours: req.body.ttlHours, actorUserId: req.session.authUserId });
+            req.session.customerClaimFlash = {
+                claimId: String(created.claim.id),
+                customerId: String(req.params.customerId),
+                url: absoluteUrl(req, `/claim/${encodeURIComponent(created.token)}`)
+            };
+            return res.redirect('/admin/customer-claims?message=' + encodeURIComponent('Claim link created. Copy it now; it will not be shown again.'));
         } catch (error) {
             return res.redirect('/admin/customer-claims?error=' + encodeURIComponent(error.message || 'Claim link could not be created.'));
         }
@@ -174,6 +186,7 @@ function createCustomerClaimRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             await claims.revokeClaim({ claimId: req.params.claimId, actorUserId: req.session.authUserId });
+            if (String(req.session?.customerClaimFlash?.claimId || '') === String(req.params.claimId)) delete req.session.customerClaimFlash;
             return res.redirect('/admin/customer-claims?message=' + encodeURIComponent('Claim link revoked.'));
         } catch (error) {
             return res.redirect('/admin/customer-claims?error=' + encodeURIComponent(error.message || 'Claim link could not be revoked.'));
@@ -187,4 +200,4 @@ function createCustomerClaimRouter() {
     return router;
 }
 
-module.exports = { createCustomerClaimRouter, adminPage, publicForm, unavailable, statusMessage };
+module.exports = { createCustomerClaimRouter, adminPage, publicForm, unavailable, statusMessage, takeClaimFlash, claimFlashPanel };
