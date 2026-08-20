@@ -5,7 +5,6 @@ const {query}=require('../db');
 const routeRateLimit=require('../security/route-rate-limit');
 const operations=require('../platform/operations-settings');
 const entitlements=require('./entitlements');
-const jellyfin=require('./jellyfin-runtime');
 const sourceAdmission=require('./source-admission');
 const managedRuntime=require('./managed-runtime');
 const managedSessions=require('./managed-session-reconciler');
@@ -40,7 +39,9 @@ function settledStreams(result,label){
 
 function createStremioRuntimeRouter(){
   const router=express.Router();router.use('/stremio',cors,loadRuntimeSetting);router.options('/stremio/*',(_req,res)=>res.sendStatus(204));
-  jellyfin.startStreamManager({intervalMs:60000});
+  // Multi-server reconciliation and the managed playback lifecycle are the
+  // only live managed-stream authorities. The legacy single-entitlement
+  // jellyfin-runtime stream manager must not run alongside them.
   managedSessions.start({intervalMs:15000});
   managedPlayback.startManager({intervalMs:15000});
   router.get('/stremio/:token/manifest.json',manifestLimit,async(req,res)=>{
