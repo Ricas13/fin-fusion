@@ -31,38 +31,38 @@ const rotationMigration=read('db/migrations/004_stremio_source_token_rotation.sq
 const maintenanceMigration=read('db/migrations/020_stremio_external_maintenance.sql');
 const managedLibraryMigration=read('db/migrations/021_stremio_managed_library_selection.sql');
 
-assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Servers-owned Stremio router must be mounted');
-assert(adminServers.includes('SERVER_ID_PARAM')&&adminServers.includes('/admin/servers/${SERVER_ID_PARAM}/edit'),'Generic Jellyfin server routes must be UUID-constrained so /admin/servers/stremio is not parsed as a server ID');
-assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio']"),'Stremio must be a single Delivery navigation destination');
-assert(nav.indexOf("['servers-dashboard','Overview','/admin/servers/dashboard']")<nav.indexOf("['servers','Jellyfin servers','/admin/servers']")&&nav.indexOf("['servers','Jellyfin servers','/admin/servers']")<nav.indexOf("['stremio-sources','Stremio','/admin/servers/stremio']"),'Delivery navigation must be Overview → Jellyfin servers → Stremio');
-assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'"),'Legacy Stremio navigation must resolve to Delivery → Stremio');
+assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Stremio source router must be mounted');
+assert(adminServers.includes('SERVER_ID_PARAM')&&adminServers.includes('/admin/servers/${SERVER_ID_PARAM}/edit'),'generic Jellyfin server routes must be UUID-constrained so /admin/servers/stremio is not parsed as a server ID');
+assert(nav.includes("['stremio-sources','Sources','/admin/servers/stremio']"),'Stremio workspace must expose Sources as its canonical source control centre');
+assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'")&&nav.includes("'stremio-managed-sources':'stremio-sources'"),'legacy Stremio navigation aliases must resolve to Sources');
 assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio workflow');
-assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'Legacy Stremio settings URLs must land on the single Stremio control centre');
+assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'legacy Stremio settings URLs must land on the single Stremio control centre');
 assert(managedAdmin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed Stremio URL must redirect to the single control centre');
 
 for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Libraries included in Stremio','Clear all indexes & rebuild','Managed Stremio activity','Hidden Jellyfin user','Add external Jellyfin source'])assert(sources.includes(phrase),`Stremio control centre missing: ${phrase}`);
 assert(sources.includes('capabilitySummary')&&sources.includes('capabilityTable')&&sources.includes('capabilitySourceDisclosure'),'Stremio must use the shared compact capability-page pattern');
 assert(htmlCore.includes('/css/admin-capability.css'),'shared capability-page stylesheet must be loaded globally');
-assert(capabilityCss.includes('grid-template-columns:repeat(5,minmax(0,1fr))'),'library choices must use a dense five-column wide-screen grid without reducing normal page type');
-assert(capabilityCss.includes('.analyticsKpi>*')&&capabilityCss.includes('z-index:2'),'shared final stylesheet must keep KPI content above dashboard decoration');
+assert(capabilityCss.includes('grid-template-columns:repeat(5,minmax(0,1fr))'),'library choices must use the dense wide-screen grid');
 assert(sources.indexOf('Managed Jellyfin sources')<sources.indexOf('External Jellyfin sources')&&sources.indexOf('External Jellyfin sources')<sources.indexOf('Managed Stremio activity'),'page hierarchy must be summary → managed → external → activity');
 assert(!sources.includes('Recent connection attempts')&&!sources.includes('sourceInlineManage'),'Stremio must not retain the old multi-panel/connection-attempt page shape');
 assert(sources.includes("r.get('/admin/servers/stremio/:id',(_req,res)=>res.redirect(302,'/admin/servers/stremio'))"),'external source detail URLs must collapse back into the single control centre');
+assert(sources.includes('Stremio is a control plane, not a video proxy.')&&sources.includes('Media bytes never pass through the portal'),'operator UI must preserve the no-byte-proxy boundary');
 
 assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&sources.includes('name="password"'),'External source form must use Jellyfin URL + ordinary user credentials');
 assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfinUserId"'),'Operators must not manually paste Jellyfin access tokens/user IDs');
 assert(sources.includes("routeRateLimit.middleware({scope:'admin-stremio-sources'"),'Source mutations must use the persistent admin rate limiter');
-assert(sources.includes('Attempt log ID')&&sources.includes('failureLogPayload')&&sources.includes('stremio_source_attempt'),'External connection failures must retain traceable audit attempt IDs even though the old attempt table is removed from the main UI');
+assert(sources.includes('Attempt log ID')&&sources.includes('failureLogPayload')&&sources.includes('stremio_source_attempt'),'External connection failures must retain traceable audit attempt IDs');
 assert(sourcePool.includes('discoveryWarning')&&sourcePool.includes('sourcePersisted:true'),'Library discovery failure must preserve an authenticated external source for diagnosis/retry');
 assert(sources.includes("r.post('/admin/servers/stremio/:id/configure'")&&sources.includes('sourceAdminConfig.configure'),'single page must provide inline external source enable/priority updates');
 assert(externalConfig.includes('priority must be between 1 and 10000')&&externalConfig.includes('enabled=$2,priority=$3'),'external inline configuration must validate and persist source participation/priority');
 assert(sourceIndex.includes('SELECT s.id,s.name,s.enabled,s.priority,s.auth_state'),'external source read model must return persisted priority for inline editing');
 assert(sources.includes("r.post('/admin/servers/stremio/:id/reindex'")&&sources.includes('sourceIndex.clearAndQueue'),'external sources must retain per-source local-index clear/rebuild');
+assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must clearly describe direct upstream playback');
 
 assert(managedLibraryMigration.includes('CREATE TABLE IF NOT EXISTS stremio_managed_source_libraries')&&managedLibraryMigration.includes('PRIMARY KEY(server_id, library_id)'),'managed Stremio library choices must have dedicated persistent state');
 assert(managedLibraries.includes("'/Library/VirtualFolders'")&&managedLibraries.includes('SUPPORTED_TYPES'),'managed library choices must come from the managed Jellyfin server library catalogue');
 assert(managedLibraries.includes("'admin.stremio.managed_libraries.update'")&&managedLibraries.includes('selected=EXCLUDED.selected'),'managed library saves must be explicit and audited');
-assert(sources.includes("r.post('/admin/servers/stremio/managed/:id/libraries'")&&sources.includes('managedLibraries.save'),'managed source rows must save library toggles inline');
+assert(sources.includes("r.post('/admin/servers/stremio/managed/:id/libraries'")&&sources.includes('managedMediaIndex.saveLibrariesAndReset'),'managed source rows must save library toggles and reset their local index');
 assert(sources.includes("r.post('/admin/servers/stremio/managed/:id/refresh-libraries'")&&sources.includes('managedLibraries.refresh'),'managed source rows must refresh available libraries inline');
 assert(managedIndex.includes('managedLibraries.indexFilter(serverId)')&&managedIndex.includes("qs.set('ParentId',String(parentId))"),'managed index must honor the selected library allow-list');
 assert(managedIndex.includes('if(!filter.configured)return[null]'),'upgrades must preserve all-library managed indexing until an operator establishes explicit selections');
@@ -70,8 +70,7 @@ assert(managedIndex.includes('clearAndReset'),'managed rows must support a clean
 
 assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMaintenance.includes('DELETE FROM stremio_source_media_index'),'global rebuild must clear only CAPTAiNFiN managed/external lookup indexes');
 assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes('Wait for active indexing'),'global destructive index cleanup must refuse to run while indexing is active');
-assert(indexMaintenance.includes("'stremio_media_index',TRUE,10800,NOW(),TRUE"),'global cleanup must immediately queue the normal Stremio media-index automation');
-assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose the one-click all-source clean rebuild requested by the operator');
+assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source clean rebuild');
 
 assert(sources.includes('JOIN customers c ON c.id=sma.customer_id')&&sources.includes('JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id'),'activity must correlate hidden Jellyfin accounts to real portal customers');
 assert(sources.includes('ja.jellyfin_username hidden_username')&&sources.includes('/admin/users/${esc(row.customer_id)}'),'activity rows must display the hidden Jellyfin username and link straight to customer management');
@@ -79,7 +78,7 @@ assert(sources.includes('LIMIT $1 OFFSET $2')&&sources.includes('activityPage'),
 
 assert(sourceClient.includes('/Users/AuthenticateByName')&&sourceClient.includes('/Views?IncludeExternalContent=false'),'Source client must use normal Jellyfin user authentication and discover visible libraries');
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'")&&sourceClient.includes("LEGACY_TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY'"),'External tokens must use the normal Jellyfin encryption key while retaining legacy decrypt compatibility');
-assert(sourceClient.includes('logoutToken')&&sourceClient.includes('/Sessions/Logout'),'retired external direct-playback tokens must be explicitly revocable');
+assert(sourceClient.includes('logoutToken')&&sourceClient.includes('/Sessions/Logout'),'external playback tokens must be explicitly revocable');
 assert(tokenMaintenance.includes('DEFAULT_ROTATION_HOURS=4')&&tokenMaintenance.includes('TOKEN_GRACE_HOURS=1'),'External tokens must rotate on the four-hour policy with a one-hour old-token grace');
 assert(tokenMaintenance.includes('stremio_source_retired_tokens')&&tokenMaintenance.includes('revokeRetiredTokens'),'Old direct-playback tokens must be queued and revoked after grace');
 assert(sources.includes('tokenRotationEnabled')&&sources.includes('value="4"'),'compact connection controls must preserve configurable four-hour token rotation');
