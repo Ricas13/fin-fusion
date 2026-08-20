@@ -56,10 +56,12 @@ assert(managedAccounts.includes('MaxActiveSessions:disabled?0:limit'),'each hidd
 
 assert(runtimeSource.includes('managedRuntime.streamsFor')&&runtimeSource.includes('externalRuntime.streamsFor'),'runtime must use the managed and external source resolvers');
 assert(runtimeSource.includes('const streams=[...managed,...external]'),'managed sources must be returned before external sources');
-assert(runtimeSource.includes('Promise.all(['),'managed and external source classes should resolve concurrently');
+assert(runtimeSource.includes('Promise.allSettled(['),'managed and external source classes must resolve concurrently without one failure blanking the other');
+assert(runtimeSource.includes("settledStreams(managedResult,'managed')")&&runtimeSource.includes("settledStreams(externalResult,'external')"),'source-class failures must degrade independently to empty results');
 assert(managedRuntime.includes('/PlaybackInfo?'),'managed results must use PlaybackInfo');
 assert(managedRuntime.includes("url.searchParams.set('api_key',token)"),'managed direct playback must use the restricted hidden-user token');
 assert(!managedRuntime.includes('api_key_encrypted'),'managed direct playback must never expose administrator Jellyfin API-key storage');
+assert(managedRuntime.includes('mappingsForSearch')&&managedRuntime.includes('managedSources.accountsForEntitlement'),'managed search must fall back to active persisted mappings when a policy refresh fails');
 assert(externalRuntime.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external unmanaged results must resolve to their direct Jellyfin URL');
 assert(externalRuntime.includes('/Videos/${encodeURIComponent(item)}/stream'),'external unmanaged results must point directly to Jellyfin media delivery');
 assert(externalRuntime.includes('Promise.allSettled(sources.map'),'external sources must be queried concurrently rather than serially');
@@ -70,9 +72,6 @@ assert(managedSessions.includes('/Playing/Stop'),'managed concurrency must be ab
 assert(managedSessions.includes('active.slice(limit)'),'managed concurrency must preserve only the plan stream allowance');
 assert(runtimeSource.includes("managedSessions.start({intervalMs:15000})"),'cross-server managed concurrency reconciliation must run continuously');
 
-// CAPTAiNFiN is strictly the managed Stremio control plane. It may authorize
-// and redirect managed playback, but it must never relay media bytes. External
-// fallback results bypass CAPTAiNFiN playback entirely.
 assert(runtimeSource.includes('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId'),'managed playback control route must remain available');
 assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback control must redirect to Jellyfin after admission');
 assert(runtimeSource.includes("require('./source-admission')")&&runtimeSource.includes('sourceAdmission.admit'),'managed playback must retain serialized CAPTAiNFiN admission');
