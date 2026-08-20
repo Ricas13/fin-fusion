@@ -63,9 +63,10 @@ function createStremioRuntimeRouter(){
     try{
       const e=await entitlements.findByInstallToken(req.params.token);if(!e)return res.json({streams:[]});
       const type=String(req.params.type||''),videoId=String(req.params.videoId||''),origin=await publicOrigin(req);
+      const delivery={proxyBase:origin,installToken:req.params.token};
       const [managed,external]=await Promise.all([
-        managedRuntime.streamsFor(e,type,videoId,{proxyBase:origin,installToken:req.params.token}),
-        externalRuntime.streamsFor(e,type,videoId)
+        managedRuntime.streamsFor(e,type,videoId,delivery),
+        externalRuntime.streamsFor(e,type,videoId,delivery)
       ]);
       const streams=[...managed,...external];
       await entitlements.markUse(e.id,'stream');return res.json({streams});
@@ -93,9 +94,7 @@ function createStremioRuntimeRouter(){
     }catch(error){if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});console.error('Managed Stremio admission failed:',String(error?.message||error).slice(0,300));return res.status(502).end();}
   });
 
-  // Compatibility-only proxy routes for cached stream URLs from the previous
-  // runtime. External compatibility URLs are still checked against the plan's
-  // explicit external-source selection before any bytes are proxied.
+  // Compatibility proxy for cached managed URLs from the previous runtime.
   router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
     if(!enabled())return res.status(404).end();let opened=null,heartbeat=null,e=null,admitted=false,released=false;const lease=String(req.query.lease||''),isHead=req.method==='HEAD';
     const stop=()=>{if(heartbeat){clearInterval(heartbeat);heartbeat=null;}};
@@ -108,6 +107,10 @@ function createStremioRuntimeRouter(){
       return pipePlayback(opened,res,{onUnauthorized:()=>query(`UPDATE stremio_entitlements SET last_error='Managed Jellyfin authentication expired. Reissue the Stremio installation to rotate playback access.',updated_at=NOW() WHERE id=$1`,[e.id]).catch(()=>{}),onFinished:releaseSoon});
     }catch(_error){stop();opened?.request?.destroy();if(admitted&&e&&lease)await sourceAdmission.release(e.id,lease).catch(()=>{});if(!res.headersSent)return res.status(502).end();return res.end();}
   });
+
+  // External sources deliberately stay behind this proxy boundary: the
+  // persisted Jellyfin source token is never exposed to the Stremio client,
+  // and CAPTAiNFiN admission/heartbeat owns the customer stream limit.
   router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId',playbackLimit,async(req,res)=>{
     if(!enabled())return res.status(404).end();let opened,heartbeat=null,e=null,lease=String(req.query.lease||''),admitted=false;const isHead=req.method==='HEAD';
     try{
