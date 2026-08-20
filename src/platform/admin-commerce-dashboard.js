@@ -4,6 +4,7 @@ const { query } = require('../db');
 const incidents = require('../payments/incidents');
 const { dashboardRange, fillSeries, revenueFromEvent } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
+const subscriptionAnalytics = require('./subscription-analytics');
 const { mrrByCurrency, primaryMrr, revenueMixByService, revenueByPlan, revenueByBillingInterval } = require('./admin-dashboard-main');
 const registry = require('./admin-dashboard-registry');
 const widgets = require('./admin-dashboard-widgets');
@@ -91,13 +92,7 @@ async function refundAndFailureSeries(range) {
 }
 
 async function renewalVsChurn(range) {
-    const result = await query(`
-        SELECT
-          COUNT(*) FILTER(WHERE source IN('stripe','paypal','service_credit') AND created_at>=$1 AND created_at<$2)::int activations,
-          COUNT(*) FILTER(WHERE source IN('stripe','paypal','service_credit') AND status IN('cancelled','expired') AND updated_at>=$1 AND updated_at<$2)::int churn
-        FROM subscriptions
-    `, [range.start, range.end]);
-    return result.rows[0] || { activations: 0, churn: 0 };
+    return subscriptionAnalytics.movementSummary(range);
 }
 
 async function checkoutFunnel(range) {
@@ -151,7 +146,7 @@ registry.register('commerce', 'mrr', {title:'Monthly recurring revenue',subtitle
 registry.register('commerce', 'grossRevenue', {title:'Gross revenue',subtitle:'Successful provider payments normalized to the portal currency.',defaultOrder:2,defaultSpan:3,render:async ctx=>widgets.kpiCard({key:'grossRevenue',label:'Gross revenue',value:money(ctx.data.revenue.grossMinor,ctx.data.revenue.primaryCurrency),delta:mrrDelta(ctx.data.revenue.grossMinor,ctx.data.revenue.previousGrossMinor),href:'/admin/payments'})});
 registry.register('commerce', 'netRevenue', {title:'Net revenue',subtitle:'Gross revenue minus refunds, normalized to the portal currency.',defaultOrder:3,defaultSpan:3,render:async ctx=>widgets.kpiCard({key:'netRevenue',label:'Net revenue',value:money(ctx.data.revenue.netMinor,ctx.data.revenue.primaryCurrency),meta:ctx.data.revenue.refundCount?`${money(ctx.data.revenue.refundMinor,ctx.data.revenue.primaryCurrency)} refunded (${number(ctx.data.revenue.refundCount)})`:'No refunds this period',delta:mrrDelta(ctx.data.revenue.netMinor,ctx.data.revenue.previousNetMinor)})});
 registry.register('commerce','payingCustomersArpu',{title:'Paying customers & ARPU',subtitle:'Deduplicated by payment email, not internal customer ID -- a customer paying with two different emails counts twice.',defaultOrder:4,defaultSpan:3,render:async ctx=>widgets.kpiCard({key:'arpu',label:'ARPU',value:money(ctx.data.revenue.arpuMinor,ctx.data.revenue.primaryCurrency),meta:`${number(ctx.data.revenue.payingCustomers)} paying customer(s) this period`})});
-registry.register('commerce','renewalVsChurn',{title:'Activations vs churn',subtitle:'New paid/free-service activations against cancelled or expired subscriptions in the selected period.',defaultOrder:5,defaultSpan:6,render:async ctx=>widgets.barChart([{label:'Activations',count:ctx.data.renewal.activations},{label:'Churn',count:ctx.data.renewal.churn}],'count',undefined,{orientation:'horizontal'})});
+registry.register('commerce','renewalVsChurn',{title:'Subscription movement',subtitle:'Primary subscription activations, cancellations and expirations. Cancellations use the same definition as the Main churn-rate widget.',defaultOrder:5,defaultSpan:6,render:async ctx=>widgets.barChart([{label:'Activations',count:ctx.data.renewal.activations},{label:'Cancellations',count:ctx.data.renewal.cancellations},{label:'Expirations',count:ctx.data.renewal.expirations}],'count',undefined,{orientation:'horizontal'})});
 registry.register('commerce','revenueOverTime',{title:'Revenue over time',subtitle:'Successful provider payments converted to the portal currency for a single comparable trend.',defaultOrder:6,defaultSpan:6,render:async ctx=>{const currency=ctx.data.revenue.primaryCurrency,buckets=fillSeries(ctx.range,[],[]),rows=buckets.map(point=>{const bucketMap=ctx.data.revenue.byBucketCurrency.get(point.key)||new Map();return{label:point.label,key:point.key,[currency]:bucketMap.get(currency)||0};});return rows.some(row=>row[currency])?widgets.stackedAreaChart(rows,[currency],value=>money(value,currency)):widgets.emptyState('No provider payments recorded in this period.');}});
 registry.register('commerce','mrrComposition',{title:'MRR composition',subtitle:'Monthly-equivalent recurring revenue by delivery type in the portal currency.',defaultOrder:7,defaultSpan:4,render:async ctx=>ctx.data.revenueMix.length?widgets.donutChart(ctx.data.revenueMix,{formatter:value=>money(value,ctx.data.revenue.primaryCurrency)}):widgets.emptyState('No recurring revenue to break down yet.')});
 registry.register('commerce','revenueByInterval',{title:'Revenue by billing interval',defaultOrder:8,defaultSpan:4,render:async ctx=>ctx.data.billingInterval.length?widgets.donutChart(ctx.data.billingInterval.map(row=>({name:row.name,count:row.amount_minor})),{formatter:value=>money(value,ctx.data.revenue.primaryCurrency)}):widgets.emptyState('No recurring revenue to break down yet.')});
