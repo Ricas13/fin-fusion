@@ -1,8 +1,9 @@
 'use strict';
 
 const core=require('./provisioning-engine');
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const subscriptionState=require('../entitlements/subscription-state');
+const subscriptionExpiry=require('../entitlements/subscription-expiry');
 const accessHolds=require('../entitlements/access-holds');
 const inactivityHoldReconciliation=require('../entitlements/inactivity-hold-reconciliation');
 function safeLog(value,max=500){return String(value==null?'':value).replace(/[\r\n\t\u2028\u2029]+/g,' ').slice(0,max)}
@@ -59,5 +60,5 @@ function adminHoldType(reason){if(reason==='disabled')return'admin_disabled';if(
 async function holdAccess(customerId,reason='suspended',actorUserId=null){const type=adminHoldType(String(reason||'suspended'));await accessHolds.addHold({customerId,type,sourceKey:'admin',reason:String(reason||type).slice(0,500),actorUserId});return reconcileCustomer(customerId)}
 async function releaseAccess(customerId,actorUserId=null){await accessHolds.releaseAllAdminHolds(customerId,actorUserId);return reconcileCustomer(customerId)}
 async function maybeAutoDowngrade(customerId){const lifecycle=require('../payments/lifecycle');try{return await lifecycle.autoDowngradeEligibleCustomer(customerId)}catch(error){console.error('Automatic free-tier downgrade failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});return null}}
-async function expireSubscriptionsAndReconcile(){const expired=await transaction(async client=>{const rows=await client.query(`WITH expired AS (UPDATE subscriptions SET status='expired',service_extension_days=0,updated_at=NOW() WHERE superseded_by IS NULL AND ((status IN('active','trialing','past_due','paused','cancelled') AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW()) OR (status='expired' AND COALESCE(service_extension_days,0)>0 AND current_period_end+(service_extension_days||' days')::interval<=NOW())) RETURNING customer_id,plan_id,source) SELECT DISTINCT e.customer_id,BOOL_OR(p.price_minor>0) AS had_paid_expiry FROM expired e JOIN plans p ON p.id=e.plan_id GROUP BY e.customer_id`);return rows.rows});for(const row of expired){const customerId=row.customer_id;let downgraded=null;if(row.had_paid_expiry)downgraded=await maybeAutoDowngrade(customerId);if(downgraded)continue;try{await reconcileCustomer(customerId)}catch(error){console.error('Entitlement reconcile failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)})}}return expired.length}
+async function expireSubscriptionsAndReconcile(){return subscriptionExpiry.expireAndReconcile({reconcileCustomer,autoDowngrade:maybeAutoDowngrade,onReconcileError:(customerId,error)=>console.error('Entitlement reconcile failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)})})}
 module.exports={...core,currentEntitlement,reconcileCustomer,reconcileAccount,createJellyfinAccount,setJellyfinPassword,holdAccess,releaseAccess,expireSubscriptionsAndReconcile,notifyNewJellyfinAccess};

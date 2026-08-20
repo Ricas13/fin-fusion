@@ -41,12 +41,19 @@ assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/pla
 // Jellyfin provisioning: all public calls pass through the entitlement/lifecycle facade.
 alias('src/jellyfin/provisioning-core.js','./provisioning');
 const provisioning=read('src/jellyfin/provisioning.js');
+const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
+const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
 assert(provisioning.includes("require('./provisioning-engine')"),'canonical provisioning facade must use internal engine');
 assert(!provisioning.includes("require('./provisioning-core')"),'canonical provisioning facade must not depend on its historical alias');
 assert(provisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical provisioning must retain inactivity-hold reconciliation');
 assert(provisioning.includes('markPasswordSetupRequired'),'canonical provisioning must retain password-setup state');
 assert(provisioning.includes('maybeAutoDowngrade'),'canonical provisioning must retain automatic free-tier downgrade behavior');
 assert.deepStrictEqual(importers("require('./provisioning-engine')"),['src/jellyfin/provisioning.js'],'only the canonical provisioning facade may import provisioning-engine');
+assert(provisioning.includes("require('../entitlements/subscription-expiry')")&&resilientProvisioning.includes("require('../entitlements/subscription-expiry')"),'both provisioning facades must delegate expiry selection to the canonical entitlement helper');
+assert(provisioning.includes('subscriptionExpiry.expireAndReconcile')&&resilientProvisioning.includes('subscriptionExpiry.expireAndReconcile'),'provisioning facades must retain their own reconcile callbacks while sharing expiry ownership');
+assert(!provisioning.includes('WITH expired AS')&&!resilientProvisioning.includes('WITH expired AS'),'subscription expiry SQL must not be duplicated across provisioning layers');
+assert(subscriptionExpiry.includes('WITH expired AS')&&subscriptionExpiry.includes("status IN('active','trialing','past_due','paused','cancelled')"),'canonical subscription expiry helper must own the expiry state transition');
+assert.deepStrictEqual(importers("require('../entitlements/subscription-expiry')"),['src/jellyfin/provisioning.js','src/jellyfin/resilient-provisioning.js'],'subscription expiry helper consumers must stay limited to provisioning facades');
 
 // Database schema ownership: migrations create the session table; web runtime only uses it.
 const application=read('src/application.js');
