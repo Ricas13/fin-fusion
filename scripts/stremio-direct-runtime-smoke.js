@@ -73,16 +73,18 @@ assert(lifecycle.includes('PlayMethod:normalizePlayMethod(playMethod)'),'Jellyfi
 assert(lifecycle.includes('Promise.allSettled(servers.map'),'managed playback lifecycle polling must snapshot each Jellyfin server once per cycle');
 assert(lifecycle.includes('sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS})'),'active managed playback must renew its CAPTAiNFiN admission lease for the full playback lifetime');
 
-assert(!external.includes('client.sourceToken')&&!external.includes("searchParams.set('api_key'"),'external stream manifests must never expose the persisted Jellyfin source credential');
+assert(external.includes('client.sourceToken(source)')&&external.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external fallback streams must authenticate directly to Jellyfin with the dedicated source user token');
 assert(!external.includes('/PlaybackInfo'),'external unmanaged streams must not call Jellyfin PlaybackInfo');
 assert(!external.includes('PlaySessionId'),'external unmanaged stream URLs must not carry managed playback-session telemetry');
 assert(external.includes('/Users/${encodeURIComponent(String(source.jellyfin_user_id))}/Items/'),'external media variants should come from ordinary Jellyfin item metadata, not playback negotiation');
 assert(external.includes('MediaSources,MediaStreams'),'external item metadata should preserve the existing quality/result presentation where available');
-assert(external.includes('/source/${encodeURIComponent(String(source.id))}')&&external.includes('sourceAdmission.issue()'),'external results must enter CAPTAiNFiN admission with an opaque per-result lease');
+assert(external.includes('/Videos/${encodeURIComponent(item)}/stream')&&external.includes("url.searchParams.set('Static','true')")&&external.includes("url.searchParams.set('MediaSourceId',media)"),'external fallback results must point directly at Jellyfin static playback URLs');
+assert(!external.includes('sourceAdmission')&&!external.includes('/stremio/'),'external result construction must not create CAPTAiNFiN playback admission or proxy URLs');
 assert(external.includes('Promise.allSettled(sources.map'),'external source resolution must run concurrently');
-assert(runtime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId'")&&runtime.includes('sourcePlayback.open(source'),'external playback must use the server-side credential boundary rather than exposing the source token');
-assert(runtime.includes('sourceAdmission.admit(e,lease,source.id,req.params.itemId)')&&runtime.includes('sourceAdmission.touch(e.id,lease)'),'external playback must be counted and heartbeated by CAPTAiNFiN for the full proxied stream lifetime');
-assert(runtime.includes('const delivery={proxyBase:origin,installToken:req.params.token}')&&runtime.includes('externalRuntime.streamsFor(e,type,videoId,delivery)'),'external result construction must receive only the portal origin/install credential, never the source Jellyfin token');
+assert(!runtime.includes('sourcePlayback')&&!runtime.includes('upstream.pipe(res)')&&!runtime.includes('pipePlayback('),'Stremio runtime must contain no media relay implementation');
+assert(runtime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId'")&&runtime.includes("router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId'")&&runtime.includes('res.status(410).end()'),'cached historical proxy URLs must fail closed rather than relay media');
+assert(runtime.includes('const managedDelivery={proxyBase:origin,installToken:req.params.token}')&&runtime.includes('managedRuntime.streamsFor(e,type,videoId,managedDelivery)'),'only managed result construction should receive the CAPTAiNFiN control-plane origin and install token');
+assert(runtime.includes('externalRuntime.streamsFor(e,type,videoId)')&&!runtime.includes('externalRuntime.streamsFor(e,type,videoId,managedDelivery)'),'external fallback result construction must bypass CAPTAiNFiN playback delivery entirely');
 assert(runtime.includes('Promise.all([')&&runtime.includes('managedRuntime.streamsFor')&&runtime.includes('externalRuntime.streamsFor'),'managed/external resolution must run concurrently');
 assert(runtime.includes('const streams=[...managed,...external]'),'managed results must always be emitted before external results');
 assert(!managed.includes('source.name')&&!external.includes('source.name'),'customer stream builders must not label results with source names');
