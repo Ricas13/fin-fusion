@@ -27,5 +27,5 @@ assert(admin.includes('csrf.verify(req)'),'marketing campaign mutations must use
 assert(template.includes('/account/communications/marketing-email')&&template.includes('separate from important account'),'customer portal must expose explicit separate marketing consent');
 assert(router.includes('createCustomerMarketingPreferencesRouter'),'customer marketing preference router must be mounted');
 assert(composition.includes('createAdminMarketingRouter'),'admin marketing router must use canonical composition');
-assert(nav.includes("['marketing','Marketing','/admin/marketing']"),'Marketing must be visible in Commerce navigation');
+assert(nav.includes("marketing:Object.freeze")&&nav.includes("['marketing','Marketing','/admin/marketing']"),'Marketing must remain routable without occupying primary Plans & Payments navigation');
 console.log('marketing campaigns smoke: ok');

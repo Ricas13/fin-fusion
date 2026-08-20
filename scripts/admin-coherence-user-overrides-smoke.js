@@ -17,6 +17,7 @@ assert(/marketing_features/.test(migration)&&/automation_protected/.test(migrati
 assert(/Where settings live/.test(settings)&&/settings-registry/.test(settings),'settings directory must use canonical registry');
 assert(/Find a setting/.test(settings)&&/settingsLookupPage/.test(settings),'settings lookup missing');
 assert(/Individual customer overrides/.test(settingsRegistry)&&/customer\.server/.test(settingsRegistry)&&/customer\.expiry/.test(settingsRegistry),'settings registry must own customer overrides');
+assert(/Where settings live/.test(settings)&&/Daily work belongs in Customers, Delivery, Plans & Payments, and Operations/.test(settings),'settings directory missing');
 assert(!/allowPrivateConnected/.test(settings),'settings identifier was corrupted');
 assert(/discoveryWarning/.test(stremioPool)&&/source was saved/.test(stremioAdmin),'Stremio source resilience missing');
 assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 override routes must import transaction');
@@ -41,10 +42,12 @@ assert(nav.hiddenPages.search?.parentKey==='dashboard','Quick-find results must 
 for(const key of ['users','jellyfin-import'])assert(pageKeys('people').includes(key),`People navigation must expose ${key}`);
 assert(!pageKeys('people').includes('invitations'),'Retired Invitations must not return to People navigation');
 assert(nav.hiddenPages['customer-claims']?.groupKey==='people'&&nav.hiddenPages['customer-claims']?.parentKey==='jellyfin-import','Imported-user claims must remain subordinate to Jellyfin Import');
-assert(pageKeys('servers').includes('activity'),'Playback Operations must live under Servers');
+assert(pageKeys('servers').includes('stremio-sources')&&pageKeys('servers').includes('activity'),'Delivery navigation must foreground Stremio sources and playback health');
 assert(group('commerce').pages.some(item=>item[0]==='payments'&&item[1]==='Payments'),'Payments sidebar entry must be named simply');
 assert(nav.hiddenPages['request-service']?.groupKey==='settings'&&nav.hiddenPages['request-service']?.parentKey==='settings-integrations','Request service must belong to Settings → Integrations');
-assert(nav.hiddenPages['request-plan-limits']?.groupKey==='commerce'&&nav.hiddenPages['request-plan-limits']?.parentKey==='plans','Request limits must belong to Commerce → Plans');
+assert(nav.hiddenPages['request-plan-limits']?.groupKey==='settings'&&nav.hiddenPages['request-plan-limits']?.parentKey==='settings-integrations','Request limits must stay with the optional request-service integration');
+assert(nav.hiddenPages.referrals?.parentKey==='commerce-overview'&&!pageKeys('commerce').includes('referrals'),'Affiliates must stay routable without crowding Plans & Payments');
+assert(nav.hiddenPages['fleet-operations']?.groupKey==='automation'&&!pageKeys('servers').includes('fleet-operations'),'Fleet operations must live under Operations, not primary Delivery navigation');
 assert(!/Request service|Plan limits/.test(provisioningTabs),'Provisioning tabs must not contain Overseerr configuration');
 assert(/Integrations/.test(integrationTabs)&&/Request service/.test(integrationTabs)&&!/Plan limits/.test(integrationTabs),'Integrations workflow must own connection settings, not plan policy');
 assert(/class=\"adminQuickFind\"/.test(adminShell)&&/action=\"\/admin\/search\"/.test(adminShell),'Admin shell must provide top-bar quick find');
