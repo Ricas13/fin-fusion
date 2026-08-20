@@ -64,6 +64,7 @@ assert(lifecycle.includes('existingPlayback'),'retries of one admitted result mu
 assert(lifecycle.includes('deviceId(rawLease)'),'managed streams must get distinct Jellyfin device/session identities');
 assert(lifecycle.includes('PlayMethod:normalizePlayMethod(playMethod)'),'Jellyfin start/stop lifecycle must report the negotiated play method rather than always claiming DirectPlay');
 assert(lifecycle.includes('Promise.allSettled(servers.map'),'managed playback lifecycle polling must snapshot each Jellyfin server once per cycle');
+assert(lifecycle.includes('sourceAdmission.touchHash(row.lease_hash,{seconds:SESSION_ACTIVE_SECONDS})'),'active managed playback must renew its CAPTAiNFiN admission lease for the full playback lifetime');
 
 assert(external.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external direct playback must use its dedicated Jellyfin source token');
 assert(!external.includes('/PlaybackInfo'),'external unmanaged streams must not call Jellyfin PlaybackInfo');
