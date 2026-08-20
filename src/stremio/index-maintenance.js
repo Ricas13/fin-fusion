@@ -1,7 +1,7 @@
 'use strict';
 
 const {query,transaction}=require('../db');
-const INDEX_JOB_KEY='captainfin:stremio_media_index';
+const {INDEX_JOB_KEY}=require('./index-lock');
 
 async function running(){
   const [managed,external]=await Promise.all([
