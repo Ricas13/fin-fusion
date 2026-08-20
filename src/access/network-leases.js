@@ -29,6 +29,14 @@ function normalizedOptions(options = {}) {
   };
 }
 
+async function recordEvent(client, cfg, decision, activeNetworkCount, expiresAt) {
+  await client.query(
+    `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,decision,active_network_count,network_limit,lease_expires_at,detail)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+    [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, decision, activeNetworkCount, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)]
+  );
+}
+
 async function claim(options = {}) {
   const cfg = normalizedOptions(options);
   return transaction(async client => {
@@ -57,21 +65,15 @@ async function claim(options = {}) {
          RETURNING expires_at`,
         [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.networkHash, cfg.customerId, cfg.leaseMinutes, JSON.stringify(cfg.metadata)]
       );
+      // Refreshes are intentionally not written to access_network_events. The
+      // Jellyfin activity worker can refresh an active household every polling
+      // cycle; only claims and denials are durable audit events.
       const expiresAt = refreshed.rows[0]?.expires_at || existing.expires_at;
-      await client.query(
-        `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,decision,active_network_count,network_limit,lease_expires_at,detail)
-         VALUES($1,$2,$3,$4,'refreshed',$5,$6,$7,$8::jsonb)`,
-        [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, active.rowCount, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)]
-      );
       return { allowed: true, decision: 'refreshed', activeNetworkCount: active.rowCount, networkLimit: cfg.networkLimit, expiresAt };
     }
     if (active.rowCount >= cfg.networkLimit) {
       const expiresAt = active.rows.reduce((earliest, row) => !earliest || new Date(row.expires_at) < new Date(earliest) ? row.expires_at : earliest, null);
-      await client.query(
-        `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,decision,active_network_count,network_limit,lease_expires_at,detail)
-         VALUES($1,$2,$3,$4,'denied',$5,$6,$7,$8::jsonb)`,
-        [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, active.rowCount, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)]
-      );
+      await recordEvent(client, cfg, 'denied', active.rowCount, expiresAt);
       return {
         allowed: false,
         decision: 'denied',
@@ -91,11 +93,7 @@ async function claim(options = {}) {
       [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, cfg.networkHash, cfg.leaseMinutes, JSON.stringify(cfg.metadata)]
     );
     const expiresAt = inserted.rows[0]?.expires_at || null;
-    await client.query(
-      `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,decision,active_network_count,network_limit,lease_expires_at,detail)
-       VALUES($1,$2,$3,$4,'claimed',$5,$6,$7,$8::jsonb)`,
-      [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, active.rowCount + 1, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)]
-    );
+    await recordEvent(client, cfg, 'claimed', active.rowCount + 1, expiresAt);
     return { allowed: true, decision: 'claimed', activeNetworkCount: active.rowCount + 1, networkLimit: cfg.networkLimit, expiresAt };
   });
 }
@@ -124,4 +122,4 @@ async function cleanupExpired() {
   return result.rowCount;
 }
 
-module.exports = { normalizedOptions, claim, activeForSubject, releaseSubject, cleanupExpired };
+module.exports = { normalizedOptions, recordEvent, claim, activeForSubject, releaseSubject, cleanupExpired };
