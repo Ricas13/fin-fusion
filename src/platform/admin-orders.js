@@ -5,7 +5,7 @@ const {query}=require('../db');
 const runtimeSettings=require('./runtime-settings');
 const {esc,layout}=require('./admin-html');
 
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'?next():res.redirect('/login?session=expired');}
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function when(value){try{return new Date(value).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})}catch{return String(value||'—')}}
 async function rows(){return(await query(`SELECT s.id,s.customer_id,s.status,s.source,s.created_at,
  COALESCE(NULLIF(s.plan_name_snapshot,''),p.name) plan_name,

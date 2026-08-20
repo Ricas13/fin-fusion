@@ -10,7 +10,7 @@ const activation=require('../auth/account-activation');
 const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const {esc,layout}=require('./admin-html');
-function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin')return next();return res.redirect('/login?session=expired')}
+function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function txt(value,max=500){return String(value||'').trim().slice(0,max)}
 function redirect(res,path,key,message){return res.redirect(`${path}?${key}=${encodeURIComponent(message)}`)}
 function page(res,{siteName,title,body,active='users'}){res.setHeader('Cache-Control','no-store, private, max-age=0');return res.send(layout({siteName,title,body,active}))}

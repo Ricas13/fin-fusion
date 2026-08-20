@@ -32,6 +32,7 @@ const { createAdminPlanLifecycleRouter } = require('./admin-plan-lifecycle');
 const { createAdminPlanInventoryRouter } = require('./admin-plan-inventory');
 const { createAdminPlansListRouter } = require('./admin-plans-list');
 const { createAdminPlanPaymentOptionsRouter } = require('./admin-plan-payment-options');
+const { createAdminPlanOrderRouter } = require('./admin-plan-order');
 const { createAdminPlansRouter } = require('./admin-plans');
 const { createAdminPlanPlacementFleetRouter } = require('./admin-plan-placement-fleet');
 const { createAdminPlanPlacementRouter } = require('./admin-plan-placement');
@@ -86,6 +87,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminPlanInventoryRouter());
   app.use(createAdminPlansListRouter());
   app.use(createAdminPlanPaymentOptionsRouter());
+  app.use(createAdminPlanOrderRouter());
   app.use(createAdminPlansRouter());
   app.use(createAdminPlanPlacementFleetRouter());
   app.use(createAdminPlanPlacementRouter());

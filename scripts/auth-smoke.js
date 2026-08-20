@@ -1,7 +1,5 @@
 'use strict';
 require('dotenv').config();
-const fs = require('fs');
-const ejs = require('ejs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { spawnSync } = require('child_process');
@@ -33,7 +31,6 @@ function assertAdminErrorRedaction(){
 async function cleanup(userId=null){ if(userId) await query('DELETE FROM auth_events WHERE user_id=$1',[userId]); await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]); await query('DELETE FROM app_users WHERE username=$1',[USERNAME]); }
 async function main(){
   assertStartupPolicy(); assertAdminErrorRedaction();
-  ejs.compile(fs.readFileSync('views/admin/dashboard.ejs','utf8'));
   const dash = await adminDashboard.dashboardData();
   for (const key of ['customers','activeSubscriptions','activeStreams','transcodes','servers','healthyServers','offlineServers','wouldStop24h','safetySkips24h']) {
     if (!Number.isFinite(dash[key])) throw new Error(`Admin dashboard metric invalid: ${key}`);

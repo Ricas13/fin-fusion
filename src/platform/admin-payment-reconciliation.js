@@ -4,7 +4,7 @@ const csrf=require('../auth/csrf');
 const reconciliation=require('../payments/incident-reconciliation');
 const routeRateLimit=require('../security/route-rate-limit');
 const reconciliationLimit=routeRateLimit.middleware({scope:'admin-payment-reconciliation',max:30,windowSeconds:60});
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'?next():res.redirect('/login?session=expired')}
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired')}
 function createAdminPaymentReconciliationRouter(){const r=express.Router();
   // Compatibility only: the incident list and provider-reconciliation action
   // now live in Commerce so operators have one financial incident workflow.

@@ -30,7 +30,7 @@ function createCustomerSupportRouter(){
       return res.redirect(`/account/support/${ticket.id}?message=${encodeURIComponent(`Ticket #${ticket.ticket_number} created.`)}`);
     }catch(error){return res.redirect('/account/support?error='+encodeURIComponent(error.message));}
   });
-  router.get('/account/support/:id',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const data=await tickets.getForCustomer(req.params.id,req.session.customerId);if(!data)return res.status(404).send('Ticket not found');return res.render('customer/support-thread',{siteName:runtimeSettings.siteName(),csrfToken:csrf.token(req),...data,...message(req)});}catch(error){next(error)}});
+  router.get('/account/support/:id',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const data=await tickets.getForCustomer(req.params.id,req.session.customerId);if(!data)return res.status(404).render('customer/message',{siteName:runtimeSettings.siteName(),title:'Ticket not found',message:'This support ticket does not exist or is not linked to your account.'});return res.render('customer/support-thread',{siteName:runtimeSettings.siteName(),csrfToken:csrf.token(req),...data,...message(req)});}catch(error){next(error)}});
   router.post('/account/support/:id/reply',async(req,res)=>{
     if(!csrf.verify(req))return res.redirect(`/account/support/${encodeURIComponent(req.params.id)}?error=${encodeURIComponent('Invalid or expired security token.')}`);
     try{

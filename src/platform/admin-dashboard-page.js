@@ -23,7 +23,17 @@ async function renderWidgetGrid(dashboardKey, req, ctx) {
         if (!spec) return '';
         const isHidden = row.visible === false;
         const deferRender = spec.lazy || isHidden;
-        const html = deferRender ? widgets.loadingSkeleton() : await spec.render(ctx);
+        let html;
+        if (deferRender) {
+            html = widgets.loadingSkeleton();
+        } else {
+            try {
+                html = await spec.render(ctx);
+            } catch (error) {
+                console.error(`Dashboard widget "${row.widget_key}" failed to render:`, error.message);
+                html = widgets.errorState('This widget could not be loaded.');
+            }
+        }
         const lazyAttr = deferRender ? ` data-lazy-src="/admin/api/dashboard/${encodeURIComponent(dashboardKey)}/widget/${encodeURIComponent(row.widget_key)}"` : '';
         return widgets.widgetShell({ key: row.widget_key, title: row.title, subtitle: row.subtitle }, `<div class="widgetBody"${lazyAttr}>${html}</div>`, { span: row.span, hidden: isHidden });
     }))).join('');

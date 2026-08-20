@@ -8,7 +8,7 @@ const runtimeSettings=require('./runtime-settings');
 const placementPreview=require('../jellyfin/placement-preview');
 const {layout,esc}=require('./admin-html');
 
-function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'?next():res.redirect('/login?session=expired');}
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
 function modeLabel(mode){return mode==='drain'?'Drain':mode==='maintenance'?'Maintenance':'Active';}
