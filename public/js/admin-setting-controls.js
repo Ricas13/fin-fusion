@@ -166,8 +166,10 @@
       if (!placeholder.includes('configured') || (!placeholder.includes('leave blank') && !placeholder.includes('keep'))) return;
       const parent=input.parentElement;
       if(!parent)return;
+      const children=[...parent.children];
       const fieldLabel=input.previousElementSibling?.matches('label:not(.settingToggle)')?input.previousElementSibling:null;
-      const clearControl=input.nextElementSibling?.matches('label.settingToggle, label.checkRow, label.toggleRow')?input.nextElementSibling:null;
+      const clearControl=children.find(node=>node!==fieldLabel&&node!==input&&node.matches?.('label.settingToggle, label.checkRow, label.toggleRow')&&node.querySelector('input[type="checkbox"][name^="clear"]'))||null;
+      const helpers=children.filter(node=>node!==fieldLabel&&node!==input&&node!==clearControl&&node.matches?.('.inlineHelp, .fieldHelp, .settings-hint'));
       const labelText=(fieldLabel?.textContent||input.getAttribute('aria-label')||input.name||'Credential').replace(/\s+/g,' ').trim();
       const details=document.createElement('details');
       details.className='settingSecretDisclosure';
@@ -181,36 +183,47 @@
       details.append(summary,body);
       if(fieldLabel)body.appendChild(fieldLabel);
       body.appendChild(input);
+      helpers.forEach(node=>body.appendChild(node));
       if(clearControl)body.appendChild(clearControl);
       input.setAttribute('aria-label',labelText);
     });
   }
 
+  function collapseConfigurationSection(section,{id='',actionLabel='Configure'}={}){
+    if(!section||section.closest('.settingProviderDisclosure'))return;
+    const head=section.querySelector(':scope > .sectionHead');
+    const name=head?.querySelector('h2')?.textContent?.trim();
+    if(!name)return;
+    const badge=head.querySelector('.pill');
+    const description=head.querySelector('.muted')?.textContent?.trim()||'Configuration';
+    const details=document.createElement('details');details.className='settingProviderDisclosure';
+    if(id)details.id=id;
+    const summary=document.createElement('summary');
+    const identity=document.createElement('span');identity.className='settingProviderIdentity';
+    const strong=document.createElement('strong');strong.textContent=name;
+    const small=document.createElement('small');small.textContent=description;
+    identity.append(strong,small);
+    if(badge)summary.append(identity,badge);
+    else summary.append(identity);
+    const edit=document.createElement('span');edit.className='settingProviderEdit';edit.textContent=actionLabel;summary.append(edit);
+    if(id)section.removeAttribute('id');
+    head.remove();
+    section.parentNode.insertBefore(details,section);
+    section.classList.add('settingProviderBody');
+    details.append(summary,section);
+    if(id&&location.hash===`#${id}`)details.open=true;
+  }
+
   function compactPaymentProviders() {
     if(location.pathname!=='/admin/payments')return;
-    ['stripe-provider','paypal-provider'].forEach(id=>{
-      const section=document.getElementById(id);
-      if(!section || section.closest('.settingProviderDisclosure'))return;
-      const head=section.querySelector(':scope > .sectionHead');
-      const name=head?.querySelector('h2')?.textContent?.trim();
-      if(!name)return;
-      const badge=head.querySelector('.pill');
-      const description=head.querySelector('.muted')?.textContent?.trim()||'Provider configuration';
-      const details=document.createElement('details');details.className='settingProviderDisclosure';details.id=id;
-      const summary=document.createElement('summary');
-      const identity=document.createElement('span');identity.className='settingProviderIdentity';
-      const strong=document.createElement('strong');strong.textContent=name;
-      const small=document.createElement('small');small.textContent=description;
-      identity.append(strong,small);
-      if(badge)summary.append(identity,badge);
-      else summary.append(identity);
-      const edit=document.createElement('span');edit.className='settingProviderEdit';edit.textContent='Configure';summary.append(edit);
-      section.removeAttribute('id');head.remove();
-      section.parentNode.insertBefore(details,section);
-      section.classList.add('settingProviderBody');
-      details.append(summary,section);
-      if(location.hash===`#${id}`)details.open=true;
-    });
+    ['stripe-provider','paypal-provider'].forEach(id=>collapseConfigurationSection(document.getElementById(id),{id}));
+  }
+
+  function compactRequestService() {
+    if(location.pathname!=='/admin/request-users')return;
+    const form=document.querySelector('form[action="/admin/request-users/settings"]');
+    const section=form?.closest('section.section');
+    collapseConfigurationSection(section,{id:'request-service-config'});
   }
 
   function compactSettingsForms() {
@@ -226,6 +239,7 @@
     compactNotificationEventGroups();
     compactConfiguredSecrets();
     compactPaymentProviders();
+    compactRequestService();
     compactSettingsForms();
   }
 
