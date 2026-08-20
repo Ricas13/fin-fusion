@@ -76,6 +76,22 @@ async function indexAll(){
   return{total:servers.length,processed,failed};
 }
 
+async function saveLibrariesAndReset(serverId,libraryIds,actorUserId=null){
+  // Jellyfin discovery/validation happens before taking the worker lock so a slow
+  // server cannot hold the database transaction open. Once validated, selection
+  // persistence and local-index reset are one locked transaction: both happen or neither does.
+  const prepared=await managedLibraries.prepareSave(serverId,libraryIds);
+  return indexLock.withIndexTransaction(async client=>{
+    const selected=await managedLibraries.writePrepared(client,serverId,prepared,actorUserId);
+    const deleted=await client.query(`DELETE FROM stremio_media_index WHERE server_id=$1`,[serverId]);
+    await client.query(`INSERT INTO stremio_media_index_state(server_id,status,item_count,last_error,updated_at)
+      VALUES($1,'never',0,NULL,NOW()) ON CONFLICT(server_id) DO UPDATE
+      SET status='never',item_count=0,last_error=NULL,updated_at=NOW()`,[serverId]);
+    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+      VALUES($1,'admin.stremio.managed_index.clear','jellyfin_server',$2,$3::jsonb)`,[actorUserId,serverId,JSON.stringify({deleted:deleted.rowCount,reason:'library_selection_update'})]);
+    return{selected,deleted:deleted.rowCount};
+  },{busyMessage:'Stremio indexing is currently running. Wait for the current run to finish before changing managed library selections.'});
+}
 async function clearAndReset(serverId,actorUserId=null){
   return indexLock.withIndexTransaction(async client=>{
     const deleted=await client.query(`DELETE FROM stremio_media_index WHERE server_id=$1`,[serverId]);
@@ -112,4 +128,4 @@ async function states(){
   return r.rows;
 }
 
-module.exports={normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,clearAndReset,clearAll,lookup,states};
+module.exports={normalizeImdb,valueItems,eligibleServers,scanTargets,scanTarget,indexServer,indexAll,saveLibrariesAndReset,clearAndReset,clearAll,lookup,states};
