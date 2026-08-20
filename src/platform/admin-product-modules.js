@@ -9,6 +9,7 @@ const stremioRuntime=require('../stremio/runtime-settings');
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function number(value){return Number(value||0).toLocaleString('en-GB');}
+function date(value){if(!value)return'Never';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB');}
 function metric(label,value,meta='',href=''){const body=`<div class="metricLabel">${esc(label)}</div><div class="metricValue">${esc(number(value))}</div>${meta?`<div class="subText">${esc(meta)}</div>`:''}`;return href?`<a class="metric" href="${esc(href)}" style="text-decoration:none">${body}</a>`:`<div class="metric">${body}</div>`;}
 function actions(items){return `<div class="quick-actions">${items.map(item=>`<a class="quick-action" href="${esc(item.href)}"><strong>${esc(item.title)}</strong><span>${esc(item.text)}</span></a>`).join('')}</div>`;}
 
@@ -37,6 +38,27 @@ async function stremioData(){
   return{...result.rows[0],runtime_enabled:stremioRuntime.enabled(),ready_indexes:checks.readyIndexes,eligible_sources:checks.eligibleSources};
 }
 
+async function stremioPlaybackData(){
+  const [summary,recent]=await Promise.all([
+    query(`SELECT
+      COUNT(*)::int managed_accounts,
+      COUNT(*) FILTER(WHERE status='active')::int active_accounts,
+      COUNT(*) FILTER(WHERE last_playback_info_at>=NOW()-INTERVAL '24 hours')::int playback_24h,
+      COUNT(*) FILTER(WHERE status='error' OR last_error IS NOT NULL)::int attention
+      FROM stremio_managed_accounts`),
+    query(`SELECT sma.customer_id,sma.status,sma.last_playback_info_at,sma.last_error,sma.updated_at,
+      COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.email customer_email,
+      js.name server_name,ja.jellyfin_username hidden_username
+      FROM stremio_managed_accounts sma
+      JOIN customers c ON c.id=sma.customer_id
+      LEFT JOIN app_users u ON u.id=c.user_id
+      JOIN jellyfin_servers js ON js.id=sma.server_id
+      JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id
+      ORDER BY COALESCE(sma.last_playback_info_at,sma.updated_at) DESC LIMIT 50`)
+  ]);
+  return{summary:summary.rows[0]||{},recent:recent.rows};
+}
+
 async function jellyfinPage(){
   await runtimeSettings.ensureLoaded();const d=await jellyfinData(),attention=Number(d.offline_servers||0)+Number(d.provisioning_attention||0);
   const body=`<div class="metrics">${metric('Active customers',d.customers,'Jellyfin or bundle access','/admin/users?service=jellyfin')}${metric('Servers',d.enabled_servers,`${number(d.offline_servers)} offline`,'/admin/servers')}${metric('Plans',d.plans,'Jellyfin and bundle products','/admin/plans?type=jellyfin')}${metric('Playing now',d.active_streams,'Jellyfin sessions','/admin/activity')}</div>${attention?`<div class="notice warning"><strong>${number(attention)} Jellyfin item${attention===1?'':'s'} need attention.</strong> Review offline servers and provisioning problems before changing commercial settings.</div>`:''}${actions([
@@ -55,9 +77,16 @@ async function stremioPage(){
     {title:'Sources',text:'Managed Jellyfin and external fallback sources',href:'/admin/servers/stremio'},
     {title:'Plans',text:'Stremio products, bundles and source assignment',href:'/admin/plans?type=stremio'},
     {title:'Customers',text:'Open the shared customer system filtered to Stremio',href:'/admin/users?service=stremio'},
-    {title:'Playback',text:'Managed Stremio account and playback activity',href:'/admin/servers/stremio#activity'}
+    {title:'Playback',text:'Managed Stremio account and playback activity',href:'/admin/stremio/playback'}
   ])}`;
   return layout({siteName:runtimeSettings.siteName(),active:'stremio-overview',title:'Stremio',subtitle:'Runtime, sources, products and managed activity in one product workspace',body});
+}
+
+async function stremioPlaybackPage(){
+  await runtimeSettings.ensureLoaded();const d=await stremioPlaybackData(),s=d.summary;
+  const rows=d.recent.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Hidden user</th><th>Server</th><th>State</th><th>Last managed playback</th></tr></thead><tbody>${d.recent.map(row=>`<tr><td><a href="/admin/users/${esc(row.customer_id)}"><strong>${esc(row.customer_name)}</strong></a><div class="subText">${esc(row.customer_email||'')}</div></td><td>${esc(row.hidden_username||'—')}</td><td>${esc(row.server_name)}</td><td><span class="pill ${row.status==='active'&&!row.last_error?'good':row.status==='error'?'bad':'warn'}">${esc(row.status)}</span>${row.last_error?`<div class="subText">${esc(row.last_error)}</div>`:''}</td><td>${esc(date(row.last_playback_info_at||row.updated_at))}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No managed Stremio accounts have been created yet.</div>';
+  const body=`<div class="metrics">${metric('Managed accounts',s.managed_accounts,'Hidden Jellyfin identities')}${metric('Active',s.active_accounts,'Ready managed mappings')}${metric('Used in 24h',s.playback_24h,'Managed PlaybackInfo activity')}${metric('Needs attention',s.attention,'Mappings with an error','/admin/servers/stremio')}</div><div class="securityNote standalone"><strong>External playback is intentionally not tracked here.</strong><div class="subText">External Stremio results go directly from the customer to the external Jellyfin server, so CAPTAiNFiN never sees or proxies those media bytes.</div></div><section class="section"><div class="sectionHead"><h2>Recent managed playback</h2><a class="button secondary btn-sm" href="/admin/servers/stremio#activity">Open source activity</a></div>${rows}</section>`;
+  return layout({siteName:runtimeSettings.siteName(),active:'stremio-playback',title:'Stremio playback',subtitle:'Managed account activity and playback health',body});
 }
 
 const resellerSections={
@@ -79,8 +108,9 @@ function createAdminProductModulesRouter(){
   const router=express.Router();router.use('/admin',gate,noStore);
   router.get('/admin/jellyfin',async(_req,res,next)=>{try{return res.send(await jellyfinPage());}catch(error){return next(error);}});
   router.get('/admin/stremio',async(_req,res,next)=>{try{return res.send(await stremioPage());}catch(error){return next(error);}});
+  router.get('/admin/stremio/playback',async(_req,res,next)=>{try{return res.send(await stremioPlaybackPage());}catch(error){return next(error);}});
   for(const path of Object.keys(resellerSections))router.get(path,async(_req,res,next)=>{try{await runtimeSettings.ensureLoaded();return res.send(resellerPage(path));}catch(error){return next(error);}});
   return router;
 }
 
-module.exports={createAdminProductModulesRouter,jellyfinData,stremioData,resellerSections};
+module.exports={createAdminProductModulesRouter,jellyfinData,stremioData,stremioPlaybackData,resellerSections};
