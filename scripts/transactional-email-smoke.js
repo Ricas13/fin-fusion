@@ -23,11 +23,7 @@ function startFakeSmtp() {
         function command(line) {
             const upper = line.toUpperCase();
             if (upper.startsWith('EHLO ')) return reply('250-fake-smtp\r\n250 AUTH PLAIN LOGIN\r\n');
-            if (upper.startsWith('AUTH PLAIN ')) {
-                const encoded = line.slice('AUTH PLAIN '.length).trim();
-                const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-                return decoded === '\0smtp-user\0smtp-password' ? reply('235 2.7.0 authenticated\r\n') : reply('535 5.7.8 bad credentials\r\n');
-            }
+            if (upper.startsWith('AUTH ')) return reply('535 5.7.8 authentication must not be attempted on plaintext test transport\r\n');
             if (upper.startsWith('MAIL FROM:')) return reply('250 2.1.0 sender ok\r\n');
             if (upper.startsWith('RCPT TO:')) return reply('250 2.1.5 recipient ok\r\n');
             if (upper === 'DATA') { dataMode = true; dataBuffer = ''; return reply('354 End data with <CR><LF>.<CR><LF>\r\n'); }
@@ -81,13 +77,33 @@ function startFakeSmtp() {
 (async () => {
     const smtp = await startFakeSmtp();
     try {
+        await assert.rejects(
+            emailSettings.save({
+                enabled: true,
+                host: '127.0.0.1',
+                port: smtp.port,
+                secureMode: 'plain',
+                username: 'smtp-user',
+                password: 'smtp-password',
+                fromName: 'CAPTAiNFiN Test',
+                fromEmail: 'noreply@example.test',
+                replyTo: 'support@example.test'
+            }),
+            /authentication requires STARTTLS or TLS/i,
+            'plaintext SMTP credentials must be rejected before persistence or transport'
+        );
+        assert.strictEqual((await query('SELECT COUNT(*)::int n FROM email_gateway_settings')).rows[0].n, 0, 'unsafe SMTP settings were persisted');
+
+        // Plain SMTP remains available for trusted local/relay deployments, but
+        // only without credentials. The fake server advertises AUTH so this
+        // also proves the client does not opportunistically authenticate.
         await emailSettings.save({
             enabled: true,
             host: '127.0.0.1',
             port: smtp.port,
             secureMode: 'plain',
-            username: 'smtp-user',
-            password: 'smtp-password',
+            username: '',
+            password: '',
             fromName: 'CAPTAiNFiN Test',
             fromEmail: 'noreply@example.test',
             replyTo: 'support@example.test'
@@ -96,13 +112,14 @@ function startFakeSmtp() {
         assert.strictEqual(status.source, 'browser');
         assert.strictEqual(status.enabled, true);
         assert.strictEqual(status.configured, true);
-        assert.strictEqual(status.passwordConfigured, true);
+        assert.strictEqual(status.usernameConfigured, false);
+        assert.strictEqual(status.passwordConfigured, false);
         assert.strictEqual(status.host, '127.0.0.1');
         assert.strictEqual(Number(status.port), smtp.port);
 
-        const storedSettings = (await query('SELECT password_encrypted FROM email_gateway_settings WHERE id=1')).rows[0];
-        assert(storedSettings.password_encrypted, 'encrypted SMTP password missing');
-        assert(!storedSettings.password_encrypted.includes('smtp-password'), 'SMTP password was stored in plaintext');
+        const storedSettings = (await query('SELECT username,password_encrypted FROM email_gateway_settings WHERE id=1')).rows[0];
+        assert.strictEqual(storedSettings.username, null, 'plain SMTP relay unexpectedly stored a username');
+        assert.strictEqual(storedSettings.password_encrypted, null, 'plain SMTP relay unexpectedly stored a password');
 
         const connectionTest = await emailSettings.testConnection();
         assert.strictEqual(connectionTest.ok, true);
