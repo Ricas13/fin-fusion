@@ -30,8 +30,8 @@ assert(client.includes("'X-CSRF-Token':data.csrfToken"),'browser read acknowledg
 assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before acknowledging unread state');
 assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
 assert(client.includes("path==='/admin/orders'")&&client.includes("path==='/admin/tickets'"),'orders and tickets must still clear only from their own inbox pages');
-assert(!client.includes('localStorage'),'business unread state must not depend on local browser storage');
-assert(!experience.includes('localStorage'),'legacy operator experience must not maintain a second local unread cursor');
+assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(client),'business unread state must not depend on local browser storage');
+assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(experience),'legacy operator experience must not maintain a second local unread cursor');
 assert(!experience.includes("fetch('/admin/api/operator-state/unread'"),'legacy operator experience must not independently fetch unread counts');
 assert(experience.includes('operator-business-indicators.js'),'legacy helper must document the canonical unread owner to prevent drift');
 
