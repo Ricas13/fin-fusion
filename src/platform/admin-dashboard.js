@@ -39,7 +39,7 @@ function primaryAction(stats) {
     return '<a class="button" href="/admin/users/new">+ Add customer</a>';
 }
 
-function messageBlock(req){return `${req.query.message?`<div class="notice success">${String(req.query.message).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</div>`:''}${req.query.error?`<div class="notice error">${String(req.query.error).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}</div>`:''}`}
+function messageBlock(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
 
 async function dashboardPage(req, res) {
     if (!isNativeAdmin(req)) return res.redirect('/login?session=expired');
