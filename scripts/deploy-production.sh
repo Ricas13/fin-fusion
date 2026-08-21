@@ -49,10 +49,13 @@ command -v docker >/dev/null 2>&1 || fail 'docker is required'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required'
 [[ -f .env ]] || fail '.env is missing; copy .env.example to .env and configure the installation first'
 
+CAPTAINFIN_BUILD_SHA=unknown
+CAPTAINFIN_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if command -v git >/dev/null 2>&1 && [[ -d .git ]]; then
   if ! git diff --quiet || ! git diff --cached --quiet; then
     fail 'tracked files have local changes; deploy from a clean checkout so rollback remains predictable'
   fi
+  CAPTAINFIN_BUILD_SHA="$(git rev-parse HEAD)"
   log "Deploying commit $(git rev-parse --short HEAD)"
 fi
 
@@ -90,7 +93,10 @@ done
 # Serialising those builds substantially lowers peak RAM/CPU on small VPS hosts.
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 log "Building the release images conservatively (COMPOSE_PARALLEL_LIMIT=$COMPOSE_PARALLEL_LIMIT)"
-docker compose --profile recovery build app automation-worker activity-worker backup-worker migrate recovery-tools
+docker compose --profile recovery build \
+  --build-arg CAPTAINFIN_BUILD_SHA="$CAPTAINFIN_BUILD_SHA" \
+  --build-arg CAPTAINFIN_BUILD_TIME="$CAPTAINFIN_BUILD_TIME" \
+  app automation-worker activity-worker backup-worker migrate recovery-tools
 
 if [[ "$existing_database" == 1 ]]; then
   mkdir -p backups/predeploy
@@ -126,5 +132,5 @@ docker compose exec -T app npm run verify:deployment
 
 log 'Deployment complete'
 docker compose ps
-printf '\nCAPTaINFiN is running from commit %s.\n' "$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+printf '\nCAPTAiNFiN is running from commit %s.\n' "${CAPTAINFIN_BUILD_SHA:0:8}"
 printf 'Deployment log: %s\n' "${CAPTAINFIN_DEPLOY_LOG:-unknown}"
