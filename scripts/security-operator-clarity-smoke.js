@@ -69,7 +69,7 @@ assert(navModel.hiddenPages['admin-2fa-policy']?.page?.[2]==='/admin/settings/ad
 const operationsGroup=navModel.groups.find(group=>group.key==='automation');
 assert(Boolean(operationsGroup),'Operations navigation group must exist.');
 assert(operationsGroup.pages.some(page=>page[1]==='Backups'&&page[2]==='/admin/backups'),'Backup controls must be discoverable as Operations → Backups.');
-assert(navModel.hiddenPages['fleet-operations']?.groupKey==='automation'&&navModel.hiddenPages['fleet-operations']?.page?.[2]==='/admin/servers/operations','Fleet drain/placement controls must remain an Operations workflow.');
+assert(navModel.hiddenPages['fleet-operations']?.groupKey==='jellyfin'&&navModel.hiddenPages['fleet-operations']?.parentKey==='fleet-operations'&&navModel.hiddenPages['fleet-operations']?.page?.[2]==='/admin/servers/operations','Fleet drain/placement controls must remain owned by the Jellyfin server workflow.');
 const jellyfinGroup=navModel.groups.find(group=>group.key==='jellyfin');
 assert(Boolean(jellyfinGroup),'Jellyfin navigation group must exist.');
 assert(jellyfinGroup.pages.some(page=>page[1]==='Servers'&&page[2]==='/admin/servers'),'Managed Jellyfin servers must be discoverable under Jellyfin.');
