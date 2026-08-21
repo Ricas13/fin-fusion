@@ -222,10 +222,11 @@ jobs:
             exit 1
           fi
           cat /tmp/clean-start.log
-          grep -q 'Steam Fusion running' /tmp/clean-start.log
+          grep -q 'CAPTAiNFiN running' /tmp/clean-start.log
           grep -q 'Jellyfin: not configured' /tmp/clean-start.log
           grep -q 'FIRST-RUN SETUP CODE:' /tmp/clean-start.log
-          grep -q 'Claim this installation' /tmp/claim.html
+          grep -q 'Verify this installation' /tmp/claim.html
+          grep -q 'Why this is required' /tmp/claim.html
 
           curl -fsS -D /tmp/login-before.headers -o /dev/null http://127.0.0.1:3031/login
           grep -qi '^location: /setup' /tmp/login-before.headers
@@ -242,6 +243,8 @@ jobs:
 
           curl -fsS -b /tmp/cookies.txt -c /tmp/cookies.txt http://127.0.0.1:3031/setup -o /tmp/setup.html
           grep -q 'Create the first administrator' /tmp/setup.html
+          grep -q 'What happens next?' /tmp/setup.html
+          grep -q 'Create administrator & continue setup' /tmp/setup.html
           csrf2=$(sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' /tmp/setup.html | head -1)
           test -n "$csrf2"
 
@@ -253,16 +256,16 @@ jobs:
             --data-urlencode "password=Browser-First-Run-Password-2026!" \
             --data-urlencode "passwordConfirm=Browser-First-Run-Password-2026!" \
             -D /tmp/setup-post.headers -o /tmp/setup-post.html http://127.0.0.1:3031/setup/complete
-          grep -qi '^location: /admin' /tmp/setup-post.headers
+          grep -qi '^location: /admin/setup' /tmp/setup-post.headers
 
-          curl -fsS -b /tmp/cookies.txt http://127.0.0.1:3031/admin -o /tmp/admin.html
-          grep -q 'Admin Dashboard' /tmp/admin.html
-          grep -q 'Browser Test Streams' /tmp/admin.html
-          grep -q 'Platform setup' /tmp/admin.html
-          grep -q '0 / 9 configured' /tmp/admin.html
+          curl -fsS -b /tmp/cookies.txt http://127.0.0.1:3031/admin/setup -o /tmp/admin-setup.html
+          grep -q 'Browser Test Streams' /tmp/admin-setup.html
+          grep -q 'Configure CAPTAiNFiN at your own pace' /tmp/admin-setup.html
+          grep -q '0 of 9 optional capabilities are configured' /tmp/admin-setup.html
+          grep -q 'Suggested next optional step' /tmp/admin-setup.html
 
           curl -fsS -b /tmp/cookies.txt -D /tmp/setup-locked.headers -o /dev/null http://127.0.0.1:3031/setup
-          grep -qi '^location: /admin' /tmp/setup-locked.headers
+          grep -qi '^location: /admin/setup' /tmp/setup-locked.headers
 
           node <<'NODE'
           const { query, getPool } = require('./src/db');
