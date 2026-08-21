@@ -27,6 +27,7 @@ const stremioDashboard=read('views/customer/stremio-dashboard.ejs');
 const migration=read('db/migrations/022_retire_stremio_stream_admission.sql');
 const familyMigration=read('db/migrations/024_network_lease_families.sql');
 const jobs=read('src/automation/jobs.js');
+const householdModule=require('../src/stremio/household-access');
 
 assert(!runtime.includes("require('./source-admission')"),'runtime must not depend on retired commercial source admission');
 assert(!runtime.includes('managed-session-reconciler'),'runtime must not start the retired Stremio session-limit reconciler');
@@ -44,6 +45,11 @@ assert(runtime.includes('CAPTAiNFiN never receives media bytes'),'runtime contra
 assert(householdAccess.includes("scope: 'stremio'")&&householdAccess.includes('return entitlement?.subscription_id || entitlement?.id'),'Stremio household lease must belong to the subscription, not an individual playback');
 assert(householdAccess.includes("'household_network'"),'Stremio network denials must be distinguishable from protocol rate limiting');
 assert(householdAccess.includes('Maximum household connections reached')&&householdAccess.includes('deniedStream')&&householdAccess.includes('externalUrl')&&householdAccess.includes('releaseSubject'),'Stremio household denials must produce a visible account-link result and support explicit lease resets');
+const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{externalUrl:'https://example.invalid/account/stremio'});
+assert.match(denied.name,/household connections reached/i,'Stremio denial stream name must make the household limit visible in result lists');
+assert.match(`${denied.title} ${denied.description}`,/Maximum household connections reached.*Reset your household IP lease/is,'Stremio denial stream must explain the reset action');
+assert.strictEqual(denied.externalUrl,'https://example.invalid/account/stremio','Stremio denial stream must be an external-link result to account reset');
+assert(!denied.behaviorHints?.notWebReady,'external-link denial streams must not carry URL-only web-readiness hints');
 assert(networkIdentity.includes('networkDescriptor')&&networkIdentity.includes("family: canonical.startsWith('ipv4:') ? 'ipv4' : 'ipv6'"),'network identity must expose the normalized IP family without storing raw addresses');
 assert(networkLeases.includes('network_family')&&networkLeases.includes('activeSameFamily')&&networkLeases.includes('function preview'),'household leases must enforce limits per IPv4/IPv6 family and expose a read-only preview');
 assert(familyMigration.includes('network_family')&&familyMigration.includes('access_network_leases_subject_family_idx'),'network family migration must add the persistence and lookup shape required by dual-stack household limits');
