@@ -19,28 +19,86 @@ async function planForEntitlement(entitlement) {
   return result.rows[0];
 }
 
-async function claim(entitlement, req, options = {}) {
+function subjectKey(entitlement) {
+  return entitlement?.subscription_id || entitlement?.id;
+}
+
+async function configForEntitlement(entitlement) {
   modules.assertEnabled('stremio');
   const plan = await planForEntitlement(entitlement);
   const component = planComponents.componentForPlan(plan, 'stremio');
   if (!component || component.driver !== 'household_network') throw new Error('Stremio household access is not configured for this plan.');
-  const address = networkIdentity.requestAddress(req);
-  return leases.claim({
+  return { plan, component };
+}
+
+function leaseOptions(entitlement, component, address, options = {}) {
+  return {
     scope: 'stremio',
-    subjectKey: entitlement.subscription_id || entitlement.id,
+    subjectKey: subjectKey(entitlement),
     customerId: entitlement.customer_id,
     address,
     networkLimit: component.config.networkLimit,
     leaseMinutes: component.config.leaseMinutes,
     metadata: { kind: String(options.kind || 'playback').slice(0, 80) }
-  });
+  };
+}
+
+async function claim(entitlement, req, options = {}) {
+  const { component } = await configForEntitlement(entitlement);
+  const address = networkIdentity.requestAddress(req);
+  return leases.claim(leaseOptions(entitlement, component, address, options));
+}
+
+async function preview(entitlement, req, options = {}) {
+  const address = networkIdentity.requestAddress(req);
+  if (!networkIdentity.networkDescriptor(address)) return { allowed: true, decision: 'unknown_network' };
+  const { component } = await configForEntitlement(entitlement);
+  return leases.preview(leaseOptions(entitlement, component, address, options));
+}
+
+function familyLabel(decision) {
+  if (decision?.networkFamily === 'ipv4') return 'IPv4';
+  if (decision?.networkFamily === 'ipv6') return 'IPv6';
+  return 'network';
+}
+
+function deniedTitle() {
+  return 'Maximum household connections reached';
+}
+
+function deniedMessage(decision) {
+  const limit = Math.max(1, Number(decision?.networkLimit || 1));
+  const allowed = limit === 1 ? '1 household connection' : `${limit} household connections`;
+  return `This plan allows ${allowed} per IP family. Your ${familyLabel(decision)} household limit is already in use. Reset your household IP lease from your account or ask an admin to reset it, then try playback again.`;
+}
+
+function deniedStream(decision, options = {}) {
+  const stream = {
+    name: 'CAPTAiNFiN',
+    title: deniedTitle(),
+    description: deniedMessage(decision),
+    behaviorHints: { notWebReady: true }
+  };
+  if (options.externalUrl) stream.externalUrl = String(options.externalUrl);
+  return stream;
 }
 
 function applyDeniedResponse(res, decision) {
   const retry = Math.max(1, Number(decision?.retryAfterSeconds || 60));
   res.setHeader('Retry-After', String(retry));
   res.setHeader('X-CAPTAiNFiN-429-Reason', 'household_network');
-  return res.status(429).json({ error: 'This Stremio household is currently active on another network.' });
+  return res.status(429).json({ error: deniedTitle(), message: deniedMessage(decision) });
 }
 
-module.exports = { planForEntitlement, claim, applyDeniedResponse };
+async function release(entitlement, { actorUserId = null, reason = 'manual_reset' } = {}) {
+  await configForEntitlement(entitlement);
+  const released = await leases.releaseSubject({ scope: 'stremio', subjectKey: subjectKey(entitlement) });
+  await query(
+    `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+     VALUES($1,'stremio.household_lease.reset','stremio_entitlement',$2,$3::jsonb)`,
+    [actorUserId, entitlement.id, JSON.stringify({ subscriptionId: entitlement.subscription_id || null, released, reason: String(reason || 'manual_reset').slice(0, 80) })]
+  );
+  return released;
+}
+
+module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, deniedStream, applyDeniedResponse, release };

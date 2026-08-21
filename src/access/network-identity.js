@@ -52,6 +52,15 @@ function canonicalNetwork(value) {
   return null;
 }
 
+function networkDescriptor(value) {
+  const canonical = canonicalNetwork(value);
+  if (!canonical) return null;
+  return {
+    canonical,
+    family: canonical.startsWith('ipv4:') ? 'ipv4' : 'ipv6'
+  };
+}
+
 function hashSecret() {
   const explicit = String(process.env.HOUSEHOLD_NETWORK_HASH_KEY || '').trim();
   if (explicit) {
@@ -64,14 +73,14 @@ function hashSecret() {
 }
 
 function hashNetwork(value, options = {}) {
-  const canonical = canonicalNetwork(value);
-  if (!canonical) return null;
+  const descriptor = networkDescriptor(value);
+  if (!descriptor) return null;
   const secret = String(options.secret || hashSecret());
-  return crypto.createHmac('sha256', secret).update(canonical).digest('hex');
+  return crypto.createHmac('sha256', secret).update(descriptor.canonical).digest('hex');
 }
 
 function requestAddress(req) {
   return stripPort(req?.ip || req?.socket?.remoteAddress || '');
 }
 
-module.exports = { stripPort, expandIpv6, canonicalNetwork, hashSecret, hashNetwork, requestAddress };
+module.exports = { stripPort, expandIpv6, canonicalNetwork, networkDescriptor, hashSecret, hashNetwork, requestAddress };
