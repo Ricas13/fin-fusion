@@ -12,6 +12,8 @@ const prepareScript = path.join(root, 'scripts', 'prepare-production-env.js');
 const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
 const verifyDeployment = fs.readFileSync(path.join(root, 'scripts', 'verify-deployment.js'), 'utf8');
 const backupWorker = fs.readFileSync(path.join(root, 'scripts', 'backup-worker.js'), 'utf8');
+const application = fs.readFileSync(path.join(root, 'src', 'application.js'), 'utf8');
+const customerRateLimit = fs.readFileSync(path.join(root, 'src', 'security', 'customer-rate-limit.js'), 'utf8');
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
@@ -52,6 +54,23 @@ assert(verifyDeployment.includes("add('backup worker', backupHealthy"), 'deploym
 assert(verifyDeployment.includes('backupWorker.last_error'), 'deployment verification must fail on an active backup error');
 assert(backupWorker.includes('SELECT last_success_at,next_run_at,last_error FROM backup_worker_state'), 'backup due logic must inspect persisted failure state');
 assert(backupWorker.includes('if(row.last_error)return true;'), 'a worker restart must immediately retry a previously failed backup');
+
+// Reverse-proxy identity is a security boundary for sessions, abuse limits and
+// household enforcement. Never regress to trusting a hop count or raw
+// forwarded-host header merely because the default Compose file is loopback-only.
+assert(application.includes("const DEFAULT_TRUST_PROXY = 'loopback, linklocal, uniquelocal'"), 'application must default to explicit local/private proxy networks');
+assert(application.includes("app.set('trust proxy', trustProxySetting())"), 'application must use the bounded trust-proxy policy');
+assert(!application.includes("app.set('trust proxy', 1)"), 'application must not trust a blind proxy hop count');
+assert(!application.includes('proxy: true'), 'session middleware must not independently trust every forwarded HTTPS header');
+assert(!application.includes("req.get('x-forwarded-host')"), 'origin checks must not directly trust X-Forwarded-Host');
+assert(application.includes("/^(true|\\d+)$/i.test(raw)"), 'unsafe blanket/hop-count TRUST_PROXY overrides must fail closed');
+
+// Persistent rate-limit identities must remain pseudonymous; raw client IPs
+// belong only in request memory and must never be stored in login_rate_limits.
+assert(customerRateLimit.includes("crypto.createHmac('sha256'"), 'customer rate-limit bucket storage must use keyed hashing');
+assert(customerRateLimit.includes('captainfin:customer-rate-limit:v1'), 'rate-limit hashing must remain domain separated');
+assert(customerRateLimit.includes('const storageKey = bucketStorageKey(bucketKey)'), 'database writes must use the hashed rate-limit storage key');
+assert(!customerRateLimit.includes('[String(bucketKey).slice(0,300), seconds]'), 'raw rate-limit bucket keys must not be persisted');
 
 const order = [
   deployScript.indexOf('prepare-production-env.js --write'),
