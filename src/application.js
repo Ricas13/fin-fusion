@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const path = require('path');
+const net = require('net');
 const { randomUUID } = require('crypto');
 const express = require('express');
 const session = require('express-session');
@@ -18,6 +19,7 @@ const adminNav = require('./platform/admin-nav');
 const { mountAdminRoutes } = require('./platform/admin-route-composition');
 const { consumeLoginAttempt, pruneLoginRateLimits } = require('./security/login-rate-limit');
 const customerRateLimit = require('./security/customer-rate-limit');
+const routeRateLimit = require('./security/route-rate-limit');
 const { requestMaintenanceGuard } = require('./security/maintenance-lock');
 
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
@@ -28,7 +30,38 @@ function fail(message) {
   throw new Error(`Startup configuration error: ${message}`);
 }
 
+function proxyTrustSetting(raw = process.env.TRUST_PROXY) {
+  const value = String(raw || '').trim();
+  if (!value) return false;
+  const lower = value.toLowerCase();
+  if (['0', 'false', 'off', 'no', 'none'].includes(lower)) return false;
+  if (['true', 'all', '*'].includes(lower)) {
+    fail('TRUST_PROXY must be a hop count or trusted proxy subnet, not a trust-all value.');
+  }
+  if (/^\d+$/.test(value)) {
+    const hops = Number(value);
+    if (hops < 1 || hops > 10) fail('TRUST_PROXY hop count must be between 1 and 10.');
+    return hops;
+  }
+  const entries = value.split(',').map(item => item.trim()).filter(Boolean);
+  const validName = new Set(['loopback', 'linklocal', 'uniquelocal']);
+  const valid = entries.length > 0 && entries.every(item => {
+    if (validName.has(item.toLowerCase())) return true;
+    const slash = item.lastIndexOf('/');
+    const address = slash >= 0 ? item.slice(0, slash) : item;
+    const version = net.isIP(address);
+    if (!version) return false;
+    if (slash < 0) return true;
+    const prefix = Number(item.slice(slash + 1));
+    const max = version === 4 ? 32 : 128;
+    return Number.isInteger(prefix) && prefix >= 0 && prefix <= max;
+  });
+  if (!valid) fail('TRUST_PROXY must contain only proxy names, IP addresses or CIDR ranges.');
+  return entries.join(',');
+}
+
 function validateEnvironment() {
+  proxyTrustSetting();
   if (IS_PRODUCTION && !process.env.DATABASE_URL) {
     fail('DATABASE_URL is required in production.');
   }
@@ -69,7 +102,8 @@ function securityHeaders(req, res, next) {
       return res.status(403).send('Cross-site request blocked');
     }
     const origin = req.get('origin');
-    const host = req.get('x-forwarded-host') || req.get('host');
+    const trustProxy = Boolean(req.app?.get?.('trust proxy'));
+    const host = trustProxy ? (req.get('x-forwarded-host') || req.get('host')) : req.get('host');
     if (origin && host) {
       try {
         if (new URL(origin).host !== host) {
@@ -83,11 +117,11 @@ function securityHeaders(req, res, next) {
   return next();
 }
 
-function sessionMiddleware() {
+function sessionMiddleware({ trustProxy = proxyTrustSetting() } = {}) {
   const options = {
     secret: SESSION_SECRET,
     name: process.env.SESSION_COOKIE_NAME || 'steamfusion.sid',
-    proxy: true,
+    proxy: trustProxy !== false,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -106,6 +140,16 @@ function sessionMiddleware() {
     });
   }
   return session(options);
+}
+
+const adminMutationLimit = routeRateLimit.middleware({ scope: 'admin-mutation', max: 300, windowSeconds: 60, reason: 'admin_mutation' });
+
+function adminMutationRateLimit(req, res, next) {
+  if (req.method !== 'POST') return next();
+  const requestPath = req.path || '';
+  if (requestPath !== '/admin' && !requestPath.startsWith('/admin/')) return next();
+  if (!(req.session?.authUserId && req.session?.authRole === 'admin')) return next();
+  return adminMutationLimit(req, res, next);
 }
 
 async function staffLoginRateLimit(req, res, next) {
@@ -187,7 +231,7 @@ async function loginSetupGate(req, res, next) {
   }
 }
 
-function mountPlatform(app) {
+function mountPlatform(app, { trustProxy = proxyTrustSetting() } = {}) {
   const { createHealthRouter } = require('./platform/health');
   const { createWebhookRouter } = require('./platform/webhooks');
   const { createStremioRuntimeRouter } = require('./stremio/runtime');
@@ -209,11 +253,12 @@ function mountPlatform(app) {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: IS_PRODUCTION ? '1h' : 0 }));
   app.use(requestMaintenanceGuard);
-  app.use(sessionMiddleware());
+  app.use(sessionMiddleware({ trustProxy }));
   app.use(guardSession);
   app.use(staffLoginRateLimit);
   app.use(customerAuthRateLimit);
   app.use(publicMutationRateLimit);
+  app.use(adminMutationRateLimit);
 
   app.use(createFirstRunRouter());
   app.get('/login', loginSetupGate, controller.loginPage);
@@ -251,7 +296,8 @@ function mountPlatform(app) {
 function createApplication() {
   validateEnvironment();
   const app = express();
-  app.set('trust proxy', 1);
+  const trustProxy = proxyTrustSetting();
+  app.set('trust proxy', trustProxy);
   app.disable('x-powered-by');
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, '..', 'views'));
@@ -261,7 +307,7 @@ function createApplication() {
   app.locals.adminNavSidebarKey = adminNav.sidebarKey;
   app.use(requestContext);
   app.use(securityHeaders);
-  mountPlatform(app);
+  mountPlatform(app, { trustProxy });
   app.use((req, res) => res.status(404).send('Not found'));
   app.use((error, req, res, _next) => {
     const routeTemplate = req.route?.path ? `${req.baseUrl || ''}${req.route.path}` : null;
@@ -309,4 +355,4 @@ function start() {
 
 if (require.main === module) start();
 
-module.exports = { createApplication, start, securityHeaders, validateEnvironment, startupSummary };
+module.exports = { createApplication, start, securityHeaders, validateEnvironment, startupSummary, proxyTrustSetting, adminMutationRateLimit };

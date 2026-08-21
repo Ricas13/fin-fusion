@@ -15,6 +15,7 @@ Before startup, configure:
 - `ADMIN_USERNAME`
 - an `ADMIN_PASSWORD` of at least 12 characters for initial bootstrap
 - `COOKIE_SECURE=true` when served through HTTPS
+- `TRUST_PROXY=1` when exactly one controlled reverse proxy sits in front of Node.js
 
 The secure bootstrap refuses known placeholder secrets and the legacy `admin/admin123` account.
 
@@ -24,9 +25,9 @@ Jellyfin client passwords are one-time credentials. They may be returned immedia
 
 If upgrading an existing installation, users whose historic plaintext password is removed will need a password reset if the credential must be shared again.
 
-## Reverse proxy
+## Reverse Proxy
 
-The application trusts one reverse proxy hop. Deploy it behind a controlled reverse proxy such as Traefik and do not expose the Node.js listener directly to the public internet.
+The application ignores `X-Forwarded-*` headers by default. When deployed behind a controlled reverse proxy such as Traefik or nginx, set `TRUST_PROXY=1` or an explicit trusted proxy subnet. Do not use trust-all values such as `TRUST_PROXY=true`, and do not expose the Node.js listener directly to the public internet.
 
 ## Transitional limitations
 

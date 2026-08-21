@@ -19,7 +19,7 @@ async function main(){
 
     console.log(`assembled route ownership OK: ${owners.size} unique method/path routes; affiliate runtime mounted; retired-product runtime absent`);
   } finally {
-    await getPool().end().catch(()=>{});
+    try{await getPool().end().catch(()=>{});}catch(_){}
   }
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

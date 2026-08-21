@@ -3,6 +3,7 @@
 const fs=require('fs');
 const path=require('path');
 const stepUp=require('../src/auth/admin-step-up');
+const application=require('../src/application');
 const stremio=require('../src/stremio/foundation');
 const root=path.join(__dirname,'..');
 function text(file){return fs.readFileSync(path.join(root,file),'utf8');}
@@ -56,6 +57,7 @@ assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP st
 const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
 assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
 const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),adminShell=text('src/platform/admin-html-core-base.js');
+const stremioRuntime=text('src/stremio/runtime.js'),applicationSource=text('src/application.js');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
@@ -70,6 +72,7 @@ const operationsGroup=navModel.groups.find(group=>group.key==='automation');
 assert(Boolean(operationsGroup),'Operations navigation group must exist.');
 assert(operationsGroup.pages.some(page=>page[1]==='Backups'&&page[2]==='/admin/backups'),'Backup controls must be discoverable as Operations → Backups.');
 assert(navModel.hiddenPages['fleet-operations']?.groupKey==='jellyfin'&&navModel.hiddenPages['fleet-operations']?.parentKey==='fleet-operations'&&navModel.hiddenPages['fleet-operations']?.page?.[2]==='/admin/servers/operations','Fleet drain/placement controls must remain owned by the Jellyfin server workflow.');
+assert(/current\.group\.pages/.test(adminShell),'Admin shell must render the active hidden workflow page in its owning sidebar group.');
 const jellyfinGroup=navModel.groups.find(group=>group.key==='jellyfin');
 assert(Boolean(jellyfinGroup),'Jellyfin navigation group must exist.');
 assert(jellyfinGroup.pages.some(page=>page[1]==='Servers'&&page[2]==='/admin/servers'),'Managed Jellyfin servers must be discoverable under Jellyfin.');
@@ -79,6 +82,14 @@ assert(stremioGroup.pages.some(page=>page[1]==='Sources'&&page[2]==='/admin/serv
 assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
 assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');
 assert(/Placement health policy/.test(fleet)&&/Placement dry run/.test(fleet)&&/placement-mode/.test(fleet),'Fleet operations must own placement-health, drain/maintenance and simulation controls.');
+assert(application.proxyTrustSetting('')===false&&application.proxyTrustSetting('1')===1,'Forwarded proxy headers must be ignored unless TRUST_PROXY explicitly scopes trusted hops.');
+let trustAllRejected=false;try{application.proxyTrustSetting('true');}catch(error){trustAllRejected=/TRUST_PROXY/.test(error.message)}
+assert(trustAllRejected,'TRUST_PROXY must reject trust-all forwarded-header settings.');
+let proxyHostnameRejected=false;try{application.proxyTrustSetting('proxy.example.com');}catch(error){proxyHostnameRejected=/TRUST_PROXY/.test(error.message)}
+assert(proxyHostnameRejected&&application.proxyTrustSetting('10.0.0.0/8,loopback')==='10.0.0.0/8,loopback','TRUST_PROXY must accept only scoped IP/CIDR entries or known local proxy names.');
+assert(/adminMutationRateLimit/.test(applicationSource)&&/admin-mutation/.test(applicationSource),'Authenticated admin POST routes must pass through a persistent mutation rate limiter.');
+const publicOriginBlock=stremioRuntime.match(/async function publicOrigin[\s\S]*?\n}/)?.[0]||'';
+assert(/operations\.absoluteUrl\(req, '\/'\)/.test(publicOriginBlock)&&!/x-forwarded-host|x-forwarded-proto/.test(publicOriginBlock),'Stremio public origin must use the canonical public URL helper, not forwarded host headers.');
 assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verification/.test(settings),'Security settings must expose staged-registration state.');
 
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;

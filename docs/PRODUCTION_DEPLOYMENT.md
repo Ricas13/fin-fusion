@@ -109,6 +109,8 @@ docker compose exec -T app npm run verify:deployment
 
 The app should remain bound to `127.0.0.1:3030`; the public HTTPS endpoint should continue to be provided by the existing reverse proxy.
 
+Set `TRUST_PROXY=1` for the supported single reverse-proxy deployment so secure cookies, client IP addresses and generated absolute URLs use the controlled proxy hop. Leave it unset only for direct Node.js testing. Never use trust-all values such as `TRUST_PROXY=true`.
+
 ## Pre-deploy backups
 
 Upgrade backups are written to the existing mounted backup directory under:
