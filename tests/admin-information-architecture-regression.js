@@ -94,16 +94,19 @@ async function main(){
     assert.equal(afterSecurity.placementHealthMode,beforeSecurity.placementHealthMode,'Saving Security reset Fleet placement policy');
     await screenshot(page,'settings-security');
 
-    // Stremio is a Servers/Delivery workflow, not a Settings workflow.
+    // Stremio source management lives under the Stremio workflow, not Settings.
+    // The current source model intentionally supports both portal-managed Jellyfin
+    // servers and independent external Jellyfin sources in one control centre.
     await pool.query(`DELETE FROM platform_settings WHERE setting_key='stremio_runtime_v1'`);
     await gotoAdmin(page,'/admin/settings/stremio');
-    assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Servers → Stremio');
+    assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Stremio → Sources');
     let stremioText=await page.locator('body').innerText();
-    assert(/Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText)&&/independent from Servers → Servers/.test(stremioText),'Stremio page is missing the manual-source workflow');
-    assert(!/Managed Jellyfin sources/.test(stremioText)&&!/Use for Stremio/.test(stremioText),'Stremio must not expose the normal managed Jellyfin fleet');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio'],'Servers sidebar does not own the Stremio workflow');
+    assert(/Managed Jellyfin sources/.test(stremioText)&&/External Jellyfin sources/.test(stremioText),'Stremio Sources must expose both managed and external source classes');
+    assert(/Add external Jellyfin source/.test(stremioText),'Stremio Sources is missing the independent external-source workflow');
+    assert(/control plane, not a video proxy/.test(stremioText)&&/media bytes never pass through the portal/.test(stremioText),'Stremio Sources must preserve the no-media-proxy contract');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Sources'],'Stremio sidebar does not own the Sources workflow');
     const addSource=page.locator('form[action="/admin/servers/stremio"]');
-    assert.equal(await addSource.count(),1,'Manual Jellyfin source form is missing');
+    assert.equal(await addSource.count(),1,'External Jellyfin source form is missing');
     for(const field of ['name','baseUrl','username','password'])assert.equal(await addSource.locator(`[name="${field}"]`).count(),1,`Source form is missing ${field}`);
     assert.equal(await addSource.locator('[name="accessToken"]').count(),0,'Source form exposes raw access-token entry');
     let runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
