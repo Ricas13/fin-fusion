@@ -31,14 +31,28 @@ async function legacyPolicyMetrics() {
     return result.rows[0] || {};
 }
 
+function attentionSnapshot(items) {
+    const sources = Array.isArray(items) ? items : [];
+    let updatedAt = null;
+    let latest = 0;
+    for (const source of sources) {
+        const ms = source.createdAt ? new Date(source.createdAt).getTime() : 0;
+        if (Number.isFinite(ms) && ms > latest) {
+            latest = ms;
+            updatedAt = source.createdAt;
+        }
+    }
+    return { count: sources.length, updatedAt, items: sources.slice(0, 5) };
+}
+
 async function dashboardData(range = null, reporting = null) {
     const selectedRange = range || dashboardRange({ range: '30d' });
-    const [analytics, setup, options, policy, attentionSummary, effectivePrimary] = await Promise.all([
+    const [analytics, setup, options, policy, attentionItems, effectivePrimary] = await Promise.all([
         analyticsData(selectedRange),
         setupReadiness(),
         dashboardOptions(),
         legacyPolicyMetrics(),
-        attention.openSummary().catch(() => ({ count: 0, updatedAt: null })),
+        attention.list().catch(() => []),
         subscriptionAnalytics.effectivePrimarySummary(new Date())
     ]);
     analytics.current.activeCustomers = Number(effectivePrimary.activeCustomers || 0);
@@ -63,7 +77,7 @@ async function dashboardData(range = null, reporting = null) {
     return {
         ...analytics,
         setup,
-        attention: attentionSummary,
+        attention: attentionSnapshot(attentionItems),
         options,
         customers: Number(analytics.current.customers || 0),
         activeSubscriptions: Number(analytics.current.activeSubscriptions || 0),
@@ -77,4 +91,4 @@ async function dashboardData(range = null, reporting = null) {
     };
 }
 
-module.exports = { dashboardData, dashboardOptions, legacyPolicyMetrics };
+module.exports = { dashboardData, dashboardOptions, legacyPolicyMetrics, attentionSnapshot };
