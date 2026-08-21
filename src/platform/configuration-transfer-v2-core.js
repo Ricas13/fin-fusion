@@ -9,6 +9,8 @@ const VERSION = 2;
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
 const EXTRA_SETTINGS = ['trial_free_policy', 'commerce_policy'];
 const V1_SETTINGS = new Set(['platform', 'storefront', 'storefront_features', 'admin_defaults', 'referral_program']);
+const SERVICE_TYPES = new Set(['jellyfin', 'stremio', 'bundle']);
+const JELLYFIN_ACCESS_MODELS = new Set(['concurrent_streams', 'household_network']);
 
 function object(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -22,6 +24,17 @@ function integer(value, min, max, nullable = true, path = '') {
     }
     return parsed;
 }
+function enumValue(value, allowed, fallback, path) {
+    if (value === null || value === undefined || value === '') return fallback;
+    const normalized = String(value).trim().toLowerCase();
+    if (!allowed.has(normalized)) throw new v1.ConfigurationValidationError(`Unsupported value: ${String(value)}`, path);
+    return normalized;
+}
+function boolean(value, fallback, path) {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value !== 'boolean') throw new v1.ConfigurationValidationError('Expected true or false.', path);
+    return value;
+}
 function digestDocument(document) {
     return crypto.createHash('sha256').update(JSON.stringify(document), 'utf8').digest('hex');
 }
@@ -34,10 +47,55 @@ function asV1(document) {
         version: 1,
         configuration: {
             settings: v1Settings(document.configuration?.settings),
-            plans: document.configuration?.plans || [],
+            // V1 requires streams to be an integer. Household-network plans use
+            // NULL because concurrent streams are not their enforcement model,
+            // so feed the legacy validator a harmless compatibility sentinel.
+            plans: (document.configuration?.plans || []).map(plan => ({
+                ...plan,
+                streams: plan?.streams == null ? 1 : plan.streams
+            })),
             notifications: document.configuration?.notifications || []
         },
         excluded: document.excluded || []
+    };
+}
+
+function normalizeV2Plan(basePlan, source) {
+    const code = String(basePlan.code || 'plan');
+    const serviceType = enumValue(source.service_type, SERVICE_TYPES, 'jellyfin', `${code}.service_type`);
+    const jellyfinAccessModel = enumValue(source.jellyfin_access_model, JELLYFIN_ACCESS_MODELS, 'concurrent_streams', `${code}.jellyfin_access_model`);
+    const hasJellyfin = serviceType === 'jellyfin' || serviceType === 'bundle';
+    const householdJellyfin = hasJellyfin && jellyfinAccessModel === 'household_network';
+    const streams = serviceType === 'stremio'
+        ? 1
+        : householdJellyfin
+            ? null
+            : integer(source.streams == null ? basePlan.streams : source.streams, 1, 50, false, `${code}.streams`);
+    const isAddon = boolean(source.is_addon, false, `${code}.is_addon`);
+    if (isAddon && serviceType !== 'stremio') {
+        throw new v1.ConfigurationValidationError('Independent add-ons must be Stremio-only.', `${code}.is_addon`);
+    }
+
+    return {
+        ...basePlan,
+        service_type: serviceType,
+        capacity_limit: integer(source.capacity_limit, 0, 1000000, true, `${code}.capacity_limit`) ?? 0,
+        is_addon: isAddon,
+        jellyfin_access_model: hasJellyfin ? jellyfinAccessModel : 'concurrent_streams',
+        jellyfin_household_network_limit: householdJellyfin
+            ? (integer(source.jellyfin_household_network_limit, 1, 10, true, `${code}.jellyfin_household_network_limit`) ?? 1)
+            : 1,
+        jellyfin_household_lease_minutes: householdJellyfin
+            ? (integer(source.jellyfin_household_lease_minutes, 15, 1440, true, `${code}.jellyfin_household_lease_minutes`) ?? 240)
+            : 240,
+        stremio_household_lease_minutes: serviceType === 'stremio' || serviceType === 'bundle'
+            ? (integer(source.stremio_household_lease_minutes, 15, 1440, true, `${code}.stremio_household_lease_minutes`) ?? 240)
+            : 240,
+        streams,
+        request_movie_quota_limit: integer(source.request_movie_quota_limit, 0, 100000, true, `${code}.request_movie_quota_limit`),
+        request_movie_quota_days: integer(source.request_movie_quota_days, 1, 3650, true, `${code}.request_movie_quota_days`),
+        request_tv_quota_limit: integer(source.request_tv_quota_limit, 0, 100000, true, `${code}.request_tv_quota_limit`),
+        request_tv_quota_days: integer(source.request_tv_quota_days, 1, 3650, true, `${code}.request_tv_quota_days`)
     };
 }
 
@@ -86,16 +144,10 @@ function parseDocument(input) {
     const base = v1.parseDocument(asV1(parsed));
     const inputPlans = Array.isArray(parsed.configuration.plans) ? parsed.configuration.plans : [];
     const inputPlanByCode = new Map(inputPlans.map(plan => [String(plan?.code || '').toLowerCase(), plan]));
-    const plans = base.configuration.plans.map(plan => {
-        const extra = inputPlanByCode.get(String(plan.code).toLowerCase()) || {};
-        return {
-            ...plan,
-            request_movie_quota_limit: integer(extra.request_movie_quota_limit, 0, 100000, true, `${plan.code}.request_movie_quota_limit`),
-            request_movie_quota_days: integer(extra.request_movie_quota_days, 1, 3650, true, `${plan.code}.request_movie_quota_days`),
-            request_tv_quota_limit: integer(extra.request_tv_quota_limit, 0, 100000, true, `${plan.code}.request_tv_quota_limit`),
-            request_tv_quota_days: integer(extra.request_tv_quota_days, 1, 3650, true, `${plan.code}.request_tv_quota_days`)
-        };
-    });
+    const plans = base.configuration.plans.map(plan => normalizeV2Plan(
+        plan,
+        inputPlanByCode.get(String(plan.code).toLowerCase()) || {}
+    ));
 
     const settings = { ...base.configuration.settings };
     for (const key of EXTRA_SETTINGS) {
@@ -118,15 +170,14 @@ function parseDocument(input) {
 
 async function exportPortableConfiguration() {
     const base = await v1.exportPortableConfiguration();
-    const [quotaRows, extraSettings, directMappings, automation] = await Promise.all([
-        query(`SELECT code,request_movie_quota_limit,request_movie_quota_days,request_tv_quota_limit,request_tv_quota_days FROM plans ORDER BY code`),
+    const [planExtras, extraSettings, directMappings, automation] = await Promise.all([
+        query(`SELECT code,service_type,capacity_limit,is_addon,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,stremio_household_lease_minutes,request_movie_quota_limit,request_movie_quota_days,request_tv_quota_limit,request_tv_quota_days FROM plans ORDER BY code`),
         query(`SELECT setting_key,setting_value FROM platform_settings WHERE setting_key=ANY($1::text[]) ORDER BY setting_key`, [EXTRA_SETTINGS]),
         query(`SELECT p.code plan_code,pp.provider,pp.checkout_mode,pp.external_id,pp.active,pp.metadata FROM plan_provider_prices pp JOIN plans p ON p.id=pp.plan_id ORDER BY p.code,pp.provider,pp.checkout_mode`),
         query(`SELECT job_key,enabled,interval_seconds FROM automation_job_state ORDER BY job_key`)
     ]);
 
-    const quotas = new Map(quotaRows.rows.map(row => [String(row.code), row]));
-
+    const extrasByCode = new Map(planExtras.rows.map(row => [String(row.code), row]));
     const settings = { ...base.configuration.settings };
     for (const row of extraSettings.rows) settings[row.setting_key] = row.setting_value;
 
@@ -136,7 +187,7 @@ async function exportPortableConfiguration() {
         exportedAt: new Date().toISOString(),
         configuration: {
             settings,
-            plans: base.configuration.plans.map(plan => ({ ...plan, ...(quotas.get(plan.code) || {}) })),
+            plans: base.configuration.plans.map(plan => ({ ...plan, ...(extrasByCode.get(plan.code) || {}) })),
             notifications: base.configuration.notifications,
             directPaymentMappings: directMappings.rows.map(mapping => ({
                 planCode: mapping.plan_code,
@@ -195,5 +246,6 @@ module.exports = {
     parseDocument,
     digestDocument,
     exportPortableConfiguration,
-    previewImport
+    previewImport,
+    normalizeV2Plan
 };
