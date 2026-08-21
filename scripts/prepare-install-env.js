@@ -22,9 +22,9 @@ const RUNTIME_URLS = [
 ];
 
 function parseArgs(argv) {
-  const options = { envFile: '.env', template: '.env.example' };
+  const options = { output: '.env', template: '.env.example' };
   for (const arg of argv) {
-    if (arg.startsWith('--env-file=')) options.envFile = arg.slice('--env-file='.length);
+    if (arg.startsWith('--output=')) options.output = arg.slice('--output='.length);
     else if (arg.startsWith('--template=')) options.template = arg.slice('--template='.length);
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -61,7 +61,7 @@ function backupIdentity() {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const envFile = path.resolve(options.envFile);
+  const envFile = path.resolve(options.output);
   const templateFile = path.resolve(options.template);
 
   if (fs.existsSync(envFile)) {
