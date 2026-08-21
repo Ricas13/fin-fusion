@@ -14,6 +14,8 @@ assert(shell.includes('aria-current="page"'),'active admin navigation must expos
 assert(shell.includes('aria-live="polite"'),'operator status updates must be announced politely');
 assert(shell.includes('for="adminQuickFindInput"'),'quick find must have a real label association');
 assert(shell.includes('Help & docs'),'help action should use a plain-language label');
+const progressiveShell=read('src/platform/admin-html-core.js');
+assert(progressiveShell.includes('/js/admin-safety-confirmations.js'),'admin shell must load shared safety confirmations');
 
 const capability=read('public/css/admin-capability.css');
 assert(capability.includes("@import url('/css/admin-accessibility-mobile.css')"),'admin shell must load accessibility/mobile layer');
@@ -29,5 +31,14 @@ for(const semantic of ['for="customerFilterProduct"','for="customerFilterSync"',
 // The UX rename must not create parallel state or break backwards-compatible
 // query values used by existing links, exports and backend filters.
 for(const internal of ['name="reconciliationStatus"','name="hasOverride"','portal_disabled','filters.reconciliationStatus','filters.hasOverride'])assert(customers.includes(internal),`customer filter contract changed unexpectedly: ${internal}`);
+
+const controls=read('src/platform/admin-setting-controls.js');
+assert(controls.includes('data-confirm-when-checked'),'setting controls must expose shared destructive-choice confirmation metadata');
+const safetyScript=read('public/js/admin-safety-confirmations.js');
+assert(safetyScript.includes('[data-confirm-when-checked]:checked'),'shared safety script must only confirm a destructive choice when selected');
+assert(safetyScript.includes('window.confirm(message)'),'shared safety script must require explicit confirmation');
+const abuse=read('src/platform/admin-abuse-protection.js');
+assert(abuse.includes("confirmWhenChecked:'Clear the stored Cloudflare Turnstile secret?"),'secret clearing must opt into the shared confirmation contract');
+assert(abuse.includes('for="turnstileSiteKey"')&&abuse.includes('for="turnstileSecret"'),'Turnstile credentials must have associated labels');
 
 console.log('admin accessibility/mobile terminology smoke: ok');
