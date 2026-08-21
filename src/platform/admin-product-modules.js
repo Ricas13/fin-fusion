@@ -90,9 +90,9 @@ async function stremioPlaybackPage(){
 }
 
 const resellerSections={
-  '/admin/resellers':{active:'reseller-overview',title:'Resellers',subtitle:'Reserved product module',lead:'The reseller module is intentionally structural for now. Monthly-fee and credit-based reseller models will share this one product area.'},
+  '/admin/resellers':{active:'reseller-overview',title:'Resellers',subtitle:'Reserved product module',lead:'The reseller module is intentionally structural for now. The commercial model is a monthly fee tied to a configurable Jellyfin user allowance.'},
   '/admin/resellers/resellers':{active:'reseller-accounts',title:'Resellers',subtitle:'Reseller accounts',lead:'Future reseller organisations and account status will live here.'},
-  '/admin/resellers/plans':{active:'reseller-plans',title:'Reseller plans',subtitle:'Commercial model',lead:'Future reseller plans can choose a monthly seat allowance or a credit balance without creating separate portal modules.'},
+  '/admin/resellers/plans':{active:'reseller-plans',title:'Reseller plans',subtitle:'Commercial model',lead:'Future reseller plans will define a monthly Jellyfin user allowance plus the Jellyfin policy applied to users created under that plan.'},
   '/admin/resellers/users':{active:'reseller-users',title:'Reseller users',subtitle:'Allocations',lead:'Future reseller-created Jellyfin users and allocation limits will live here.'},
   '/admin/resellers/servers':{active:'reseller-servers',title:'Reseller servers',subtitle:'Delivery scope',lead:'Future reseller server eligibility and placement rules will live here.'},
   '/admin/resellers/activity':{active:'reseller-activity',title:'Reseller activity',subtitle:'Operational history',lead:'Future reseller provisioning and usage events will live here.'}
