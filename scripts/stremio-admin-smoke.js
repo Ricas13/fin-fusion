@@ -43,7 +43,8 @@ for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jelly
 assert(sources.includes('capabilitySummary')&&sources.includes('capabilityTable')&&sources.includes('capabilitySourceDisclosure'),'Stremio must use the shared compact capability-page pattern');
 assert(htmlCore.includes('/css/admin-capability.css'),'shared capability-page stylesheet must be loaded globally');
 assert(capabilityCss.includes('grid-template-columns:repeat(5,minmax(0,1fr))'),'library choices must use the dense wide-screen grid');
-assert(sources.indexOf('Managed Jellyfin sources')<sources.indexOf('External Jellyfin sources')&&sources.indexOf('External Jellyfin sources')<sources.indexOf('Managed Stremio activity'),'page hierarchy must be summary → managed → external → activity');
+const renderedBody=sources.slice(sources.indexOf('const body=`<div class="capabilityPage">'));
+assert(renderedBody.indexOf('<h2>Managed Jellyfin sources</h2>')<renderedBody.indexOf('<h2>External Jellyfin sources</h2>')&&renderedBody.indexOf('<h2>External Jellyfin sources</h2>')<renderedBody.indexOf('${activitySection(d.activity)}'),'page hierarchy must be summary → managed → external → activity');
 assert(!sources.includes('Recent connection attempts')&&!sources.includes('sourceInlineManage'),'Stremio must not retain the old multi-panel/connection-attempt page shape');
 assert(sources.includes("r.get('/admin/servers/stremio/:id',(_req,res)=>res.redirect(302,'/admin/servers/stremio'))"),'external source detail URLs must collapse back into the single control centre');
 assert(sources.includes('Stremio is a control plane, not a video proxy.')&&sources.includes('Media bytes never pass through the portal'),'operator UI must preserve the no-byte-proxy boundary');
