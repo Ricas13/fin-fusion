@@ -73,11 +73,12 @@ function deniedMessage(decision) {
 }
 
 function deniedStream(decision, options = {}) {
+  const title = deniedTitle();
+  const description = deniedMessage(decision);
   const stream = {
-    name: 'CAPTAiNFiN',
-    title: deniedTitle(),
-    description: deniedMessage(decision),
-    behaviorHints: { notWebReady: true }
+    name: `CAPTAiNFiN - ${title}`,
+    title,
+    description
   };
   if (options.externalUrl) stream.externalUrl = String(options.externalUrl);
   return stream;
