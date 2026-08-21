@@ -33,7 +33,7 @@ assert(jobs.includes('customerInactivity.run()'), 'scheduled inactivity job must
 assert(storefront.includes("serviceType(p)==='stremio'&&!p.is_addon") && storefront.includes('Standalone Stremio access.'), 'storefront must hide add-ons and render standalone Stremio sections');
 assert(operatorBusiness.indexOf('markCurrentAreaRead(data).then(()=>apply(data))') > -1, 'business unread badges must mark the current area before painting counts');
 assert(!adminShell.includes('<summary class="navSectionLabel"><a class="navSectionHome"'), 'sidebar summary must not contain a nested link');
-assert(nav.includes("'Household leases','/admin/stremio/playback'"), 'Stremio playback workspace must be renamed to household leases');
+assert(nav.includes("['stremio-playback','IP access','/admin/stremio/playback']"), 'Stremio household controls must remain available through the plain-language IP access workspace');
 assert(productModules.includes('Current household IP leases') && productModules.includes('/stremio-household/reset') && productModules.includes('Reset lease'), 'Stremio household lease view must expose admin reset controls');
 assert(!productModules.includes('se.plan_id') && productModules.includes('LEFT JOIN subscriptions sub ON sub.id=se.subscription_id'), 'Stremio household lease plan labels must resolve through subscriptions');
 assert(stremioRuntime.includes('STREAM_RESULT_CACHE_TTL_MS') && stremioRuntime.includes('cachedStreams(entitlement.id, type, videoId, origin)'), 'Stremio stream discovery must cache allowed search results briefly');
