@@ -1,5 +1,8 @@
 'use strict';
 
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('admin main dashboard widgets smoke')) process.exit(0);
+
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');

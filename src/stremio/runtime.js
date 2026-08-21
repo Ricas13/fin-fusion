@@ -20,9 +20,47 @@ function stremioRateIdentity(req) {
 const manifestLimit = routeRateLimit.middleware({ scope: 'stremio-manifest', max: 60, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
 const streamLimit = routeRateLimit.middleware({ scope: 'stremio-stream', max: 240, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
 const playbackLimit = routeRateLimit.middleware({ scope: 'stremio-playback-control', max: 1200, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
+const STREAM_RESULT_CACHE_TTL_MS = 15000;
+const STREAM_RESULT_CACHE_MAX = 250;
+const streamResultCache = new Map();
 
 function safeLogText(value, max = 500) {
   return String(value ?? '').replace(/[\r\n\u2028\u2029]/g, ' ').slice(0, max);
+}
+
+function streamCacheKey(entitlementId, type, videoId, origin) {
+  return [entitlementId, type, videoId, origin].map(value => encodeURIComponent(String(value || ''))).join('|');
+}
+
+function copyStreams(streams) {
+  return Array.isArray(streams) ? streams.map(stream => ({ ...stream })) : [];
+}
+
+function cachedStreams(entitlementId, type, videoId, origin) {
+  const key = streamCacheKey(entitlementId, type, videoId, origin);
+  const hit = streamResultCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    streamResultCache.delete(key);
+    return null;
+  }
+  streamResultCache.delete(key);
+  streamResultCache.set(key, hit);
+  return copyStreams(hit.streams);
+}
+
+function rememberStreams(entitlementId, type, videoId, origin, streams) {
+  const key = streamCacheKey(entitlementId, type, videoId, origin);
+  streamResultCache.set(key, { expiresAt: Date.now() + STREAM_RESULT_CACHE_TTL_MS, streams: copyStreams(streams) });
+  while (streamResultCache.size > STREAM_RESULT_CACHE_MAX) {
+    const oldest = streamResultCache.keys().next().value;
+    if (oldest === undefined) break;
+    streamResultCache.delete(oldest);
+  }
+}
+
+function clearStreamResultCache() {
+  streamResultCache.clear();
 }
 
 function enabled() {
@@ -146,6 +184,11 @@ function createStremioRuntimeRouter() {
         return res.json({ streams: [householdAccess.deniedStream(household, { externalUrl: `${origin}/account/stremio` })] });
       }
       const origin = await publicOrigin(req);
+      const cached = cachedStreams(entitlement.id, type, videoId, origin);
+      if (cached) {
+        await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
+        return res.json({ streams: cached });
+      }
       const delivery = { portalBase: origin, installToken: req.params.token };
       const [managedResult, externalResult] = await Promise.allSettled([
         managedRuntime.streamsFor(entitlement, type, videoId, delivery),
@@ -153,8 +196,10 @@ function createStremioRuntimeRouter() {
       ]);
       const managed = settledStreams(managedResult, 'managed');
       const external = settledStreams(externalResult, 'external');
+      const streams = [...managed, ...external];
+      rememberStreams(entitlement.id, type, videoId, origin, streams);
       await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
-      return res.json({ streams: [...managed, ...external] });
+      return res.json({ streams });
     } catch (error) {
       console.error('Stremio stream request failed before source resolution:', safeLogText(error?.message || error));
       return res.json({ streams: [] });
@@ -241,5 +286,11 @@ module.exports = {
   settledStreams,
   stremioRateIdentity,
   claimHouseholdOrReject,
+  STREAM_RESULT_CACHE_TTL_MS,
+  STREAM_RESULT_CACHE_MAX,
+  streamCacheKey,
+  cachedStreams,
+  rememberStreams,
+  clearStreamResultCache,
   createStremioRuntimeRouter
 };

@@ -17,7 +17,24 @@ const customerRateLimit = fs.readFileSync(path.join(root, 'src', 'security', 'cu
 const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 const dockerignore = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8');
 
-const syntax = spawnSync('bash', ['-n', path.join(root, 'scripts', 'deploy-production.sh')], { encoding: 'utf8' });
+function bashPath() {
+  const candidates = [
+    process.env.BASH_PATH,
+    'bash',
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files\\Git\\usr\\bin\\bash.exe'
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (candidate === 'bash') {
+      if (process.platform !== 'win32') return candidate;
+      continue;
+    }
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return 'bash';
+}
+
+const syntax = spawnSync(bashPath(), ['-n', path.join(root, 'scripts', 'deploy-production.sh')], { encoding: 'utf8' });
 assert.strictEqual(syntax.status, 0, syntax.stderr || 'deploy-production.sh must pass bash -n');
 
 for (const token of [
@@ -94,7 +111,9 @@ try {
 
   const backups = fs.readdirSync(tempDir).filter(name => name.startsWith('.env.pre-runtime-roles-') && name.endsWith('.bak'));
   assert.strictEqual(backups.length, 1, 'environment preparation must create exactly one safety copy when it mutates .env');
-  assert.strictEqual(fs.statSync(path.join(tempDir, backups[0])).mode & 0o777, 0o600, 'environment safety copy must be owner-readable/writable only');
+  if (process.platform !== 'win32') {
+    assert.strictEqual(fs.statSync(path.join(tempDir, backups[0])).mode & 0o777, 0o600, 'environment safety copy must be owner-readable/writable only');
+  }
 
   const content = fs.readFileSync(envFile, 'utf8');
   const specs = [

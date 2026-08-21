@@ -2,6 +2,7 @@
 
 const express=require('express');
 const {query}=require('../db');
+const csrf=require('../auth/csrf');
 const {esc,layout}=require('./admin-html');
 const runtimeSettings=require('./runtime-settings');
 const stremioRuntime=require('../stremio/runtime-settings');
@@ -12,12 +13,14 @@ function number(value){return Number(value||0).toLocaleString('en-GB');}
 function date(value){if(!value)return'Never';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB');}
 function metric(label,value,meta='',href=''){const body=`<div class="metricLabel">${esc(label)}</div><div class="metricValue">${esc(number(value))}</div>${meta?`<div class="subText">${esc(meta)}</div>`:''}`;return href?`<a class="metric" href="${esc(href)}" style="text-decoration:none">${body}</a>`:`<div class="metric">${body}</div>`;}
 function actions(items){return `<div class="quick-actions">${items.map(item=>`<a class="quick-action" href="${esc(item.href)}"><strong>${esc(item.title)}</strong><span>${esc(item.text)}</span></a>`).join('')}</div>`;}
+function csrfInput(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
+function leaseResetAction(row,token){if(!row.customer_id)return'<span class="muted">No customer link</span>';return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(row.customer_id)}/stremio-household/reset">${csrfInput(token)}<button class="button secondary btn-sm" type="submit">Reset lease</button></form>`;}
 
 async function jellyfinData(){
   const result=await query(`SELECT
     (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE) enabled_servers,
     (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE AND health_status='offline') offline_servers,
-    (SELECT COUNT(*)::int FROM plans WHERE archived_at IS NULL AND active=TRUE AND COALESCE(service_type,'jellyfin') IN ('jellyfin','bundle')) plans,
+    (SELECT COUNT(*)::int FROM plans WHERE archived_at IS NULL AND active=TRUE AND COALESCE(service_type,'jellyfin')='jellyfin') plans,
     (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.superseded_by IS NULL AND s.current_period_end>NOW() AND s.status IN('active','trialing','past_due','paused') AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')) customers,
     (SELECT COUNT(*)::int FROM active_playback_sessions) active_streams,
     (SELECT COUNT(*)::int FROM customer_provisioning_state WHERE status IN ('blocked','failed')) provisioning_attention`);
@@ -31,7 +34,7 @@ async function stremioData(){
     query(`SELECT
       (SELECT COUNT(*)::int FROM jellyfin_servers WHERE enabled=TRUE AND stremio_enabled=TRUE) managed_sources,
       (SELECT COUNT(*)::int FROM stremio_sources WHERE enabled=TRUE AND auth_state='connected') external_sources,
-      (SELECT COUNT(*)::int FROM plans WHERE archived_at IS NULL AND active=TRUE AND COALESCE(service_type,'jellyfin') IN ('stremio','bundle')) plans,
+      (SELECT COUNT(*)::int FROM plans WHERE archived_at IS NULL AND active=TRUE AND COALESCE(service_type,'jellyfin')='stremio' AND COALESCE(is_addon,FALSE)=FALSE) plans,
       (SELECT COUNT(*)::int FROM stremio_entitlements WHERE status='active') active_entitlements,
       (SELECT COUNT(*)::int FROM stremio_entitlements WHERE last_stream_request_at>=NOW()-INTERVAL '24 hours') active_24h`)
   ]);
@@ -39,7 +42,7 @@ async function stremioData(){
 }
 
 async function stremioPlaybackData(){
-  const [summary,recent]=await Promise.all([
+  const [summary,recent,leases]=await Promise.all([
     query(`SELECT
       COUNT(*)::int managed_accounts,
       COUNT(*) FILTER(WHERE status='active')::int active_accounts,
@@ -54,14 +57,24 @@ async function stremioPlaybackData(){
       LEFT JOIN app_users u ON u.id=c.user_id
       JOIN jellyfin_servers js ON js.id=sma.server_id
       JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id
-      ORDER BY COALESCE(sma.last_playback_info_at,sma.updated_at) DESC LIMIT 50`)
+      ORDER BY COALESCE(sma.last_playback_info_at,sma.updated_at) DESC LIMIT 50`),
+    query(`SELECT l.subject_key,l.network_hash,l.network_family,l.first_seen_at,l.last_seen_at,l.expires_at,
+      se.id entitlement_id,se.customer_id,COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.email customer_email,
+      p.name plan_name,p.code plan_code
+      FROM access_network_leases l
+      LEFT JOIN stremio_entitlements se ON l.subject_key IN (se.id::text,se.subscription_id::text)
+      LEFT JOIN customers c ON c.id=se.customer_id
+      LEFT JOIN app_users u ON u.id=c.user_id
+      LEFT JOIN plans p ON p.id=se.plan_id
+      WHERE l.scope='stremio' AND l.expires_at>NOW()
+      ORDER BY l.last_seen_at DESC,l.expires_at DESC LIMIT 100`)
   ]);
-  return{summary:summary.rows[0]||{},recent:recent.rows};
+  return{summary:summary.rows[0]||{},recent:recent.rows,leases:leases.rows};
 }
 
 async function jellyfinPage(){
   await runtimeSettings.ensureLoaded();const d=await jellyfinData(),attention=Number(d.offline_servers||0)+Number(d.provisioning_attention||0);
-  const body=`<div class="metrics">${metric('Active customers',d.customers,'Jellyfin or bundle access','/admin/users?service=jellyfin')}${metric('Servers',d.enabled_servers,`${number(d.offline_servers)} offline`,'/admin/servers')}${metric('Plans',d.plans,'Jellyfin and bundle products','/admin/plans?type=jellyfin')}${metric('Playing now',d.active_streams,'Jellyfin sessions','/admin/activity')}</div>${attention?`<div class="notice warning"><strong>${number(attention)} Jellyfin item${attention===1?'':'s'} need attention.</strong> Review offline servers and provisioning problems before changing commercial settings.</div>`:''}${actions([
+  const body=`<div class="metrics">${metric('Active customers',d.customers,'Jellyfin access','/admin/users?service=jellyfin')}${metric('Servers',d.enabled_servers,`${number(d.offline_servers)} offline`,'/admin/servers')}${metric('Plans',d.plans,'Standalone Jellyfin products','/admin/plans?type=jellyfin')}${metric('Playing now',d.active_streams,'Jellyfin sessions','/admin/activity')}</div>${attention?`<div class="notice warning"><strong>${number(attention)} Jellyfin item${attention===1?'':'s'} need attention.</strong> Review offline servers and provisioning problems before changing commercial settings.</div>`:''}${actions([
     {title:'Servers',text:'Fleet health, credentials, capacity and libraries',href:'/admin/servers'},
     {title:'Plans',text:'Jellyfin product rules, pricing and availability',href:'/admin/plans?type=jellyfin'},
     {title:'Customers',text:'Open the shared customer system filtered to Jellyfin',href:'/admin/users?service=jellyfin'},
@@ -73,20 +86,21 @@ async function jellyfinPage(){
 async function stremioPage(){
   await runtimeSettings.ensureLoaded();const d=await stremioData();
   const sourceCount=Number(d.managed_sources||0)+Number(d.external_sources||0);
-  const body=`<div class="metrics">${metric('Runtime',d.runtime_enabled?1:0,d.runtime_enabled?'Active':'Paused','/admin/servers/stremio')}${metric('Sources',sourceCount,`${number(d.managed_sources)} managed · ${number(d.external_sources)} external`,'/admin/servers/stremio')}${metric('Plans',d.plans,'Stremio and bundle products','/admin/plans?type=stremio')}${metric('Active customers',d.active_entitlements,`${number(d.active_24h)} searched in 24h`,'/admin/users?service=stremio')}</div><div class="securityNote standalone"><strong>${esc(d.ready_indexes)} ready index${Number(d.ready_indexes)===1?'':'es'} across ${esc(d.eligible_sources)} eligible source${Number(d.eligible_sources)===1?'':'s'}</strong><div class="subText">Managed sources remain primary; external Jellyfin sources complement results independently.</div></div>${actions([
+  const body=`<div class="metrics">${metric('Runtime',d.runtime_enabled?1:0,d.runtime_enabled?'Active':'Paused','/admin/servers/stremio')}${metric('Sources',sourceCount,`${number(d.managed_sources)} managed · ${number(d.external_sources)} external`,'/admin/servers/stremio')}${metric('Plans',d.plans,'Standalone Stremio products','/admin/plans?type=stremio')}${metric('Active customers',d.active_entitlements,`${number(d.active_24h)} searched in 24h`,'/admin/users?service=stremio')}</div><div class="securityNote standalone"><strong>${esc(d.ready_indexes)} ready index${Number(d.ready_indexes)===1?'':'es'} across ${esc(d.eligible_sources)} eligible source${Number(d.eligible_sources)===1?'':'s'}</strong><div class="subText">Managed sources remain primary; external Jellyfin sources complement results independently.</div></div>${actions([
     {title:'Sources',text:'Managed Jellyfin and external fallback sources',href:'/admin/servers/stremio'},
-    {title:'Plans',text:'Stremio products, bundles and source assignment',href:'/admin/plans?type=stremio'},
+    {title:'Plans',text:'Standalone Stremio products and source assignment',href:'/admin/plans?type=stremio'},
     {title:'Customers',text:'Open the shared customer system filtered to Stremio',href:'/admin/users?service=stremio'},
-    {title:'Playback',text:'Managed Stremio account and playback activity',href:'/admin/stremio/playback'}
+    {title:'Household leases',text:'Current user and IPv4/IPv6 household lease windows',href:'/admin/stremio/playback'}
   ])}`;
   return layout({siteName:runtimeSettings.siteName(),active:'stremio-overview',title:'Stremio',subtitle:'Runtime, sources, products and managed activity in one product workspace',body});
 }
 
-async function stremioPlaybackPage(){
-  await runtimeSettings.ensureLoaded();const d=await stremioPlaybackData(),s=d.summary;
+async function stremioPlaybackPage(req){
+  await runtimeSettings.ensureLoaded();const d=await stremioPlaybackData(),s=d.summary,resetToken=csrf.token(req);
   const rows=d.recent.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Hidden user</th><th>Server</th><th>State</th><th>Last managed playback</th></tr></thead><tbody>${d.recent.map(row=>`<tr><td><a href="/admin/users/${esc(row.customer_id)}"><strong>${esc(row.customer_name)}</strong></a><div class="subText">${esc(row.customer_email||'')}</div></td><td>${esc(row.hidden_username||'—')}</td><td>${esc(row.server_name)}</td><td><span class="pill ${row.status==='active'&&!row.last_error?'good':row.status==='error'?'bad':'warn'}">${esc(row.status)}</span>${row.last_error?`<div class="subText">${esc(row.last_error)}</div>`:''}</td><td>${esc(date(row.last_playback_info_at||row.updated_at))}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No managed Stremio accounts have been created yet.</div>';
-  const body=`<div class="metrics">${metric('Managed accounts',s.managed_accounts,'Hidden Jellyfin identities')}${metric('Active',s.active_accounts,'Ready managed mappings')}${metric('Used in 24h',s.playback_24h,'Managed PlaybackInfo activity')}${metric('Needs attention',s.attention,'Mappings with an error','/admin/servers/stremio')}</div><div class="securityNote standalone"><strong>External playback is intentionally not tracked here.</strong><div class="subText">External Stremio results go directly from the customer to the external Jellyfin server, so CAPTAiNFiN never sees or proxies those media bytes.</div></div><section class="section"><div class="sectionHead"><h2>Recent managed playback</h2><a class="button secondary btn-sm" href="/admin/servers/stremio#activity">Open source activity</a></div>${rows}</section>`;
-  return layout({siteName:runtimeSettings.siteName(),active:'stremio-playback',title:'Stremio playback',subtitle:'Managed account activity and playback health',body});
+  const leaseRows=d.leases.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Plan</th><th>IP family</th><th>Network fingerprint</th><th>Leased</th><th>Expires</th><th>Actions</th></tr></thead><tbody>${d.leases.map(row=>`<tr><td>${row.customer_id?`<a href="/admin/users/${esc(row.customer_id)}"><strong>${esc(row.customer_name)}</strong></a>`:`<strong>${esc(row.customer_name||'Unknown entitlement')}</strong>`}<div class="subText">${esc(row.customer_email||row.subject_key||'')}</div></td><td>${esc(row.plan_name||'Unknown plan')}<div class="subText">${esc(row.plan_code||'')}</div></td><td><span class="pill accent">${esc(String(row.network_family||'unknown').toUpperCase())}</span></td><td><code>${esc(String(row.network_hash||'').slice(0,12))}...</code><div class="subText">Plain IP addresses are not stored.</div></td><td>${esc(date(row.last_seen_at||row.first_seen_at))}</td><td>${esc(date(row.expires_at))}</td><td>${leaseResetAction(row,resetToken)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No active Stremio household IP leases right now.</div>';
+  const body=`<div class="metrics">${metric('Active IP leases',d.leases.length,'Current IPv4/IPv6 household windows')}${metric('Managed accounts',s.managed_accounts,'Hidden Jellyfin identities')}${metric('Active',s.active_accounts,'Ready managed mappings')}${metric('Used in 24h',s.playback_24h,'Managed PlaybackInfo activity')}${metric('Needs attention',s.attention,'Mappings with an error','/admin/servers/stremio')}</div><div class="securityNote standalone"><strong>External playback is intentionally not tracked here.</strong><div class="subText">External Stremio results go directly from the customer to the external Jellyfin server, so CAPTAiNFiN never sees or proxies those media bytes. Household lease timing is tracked without plaintext IP storage.</div></div><section class="section"><div class="sectionHead"><h2>Current household IP leases</h2><a class="button secondary btn-sm" href="/admin/users?service=stremio">Open Stremio customers</a></div>${leaseRows}</section><section class="section"><div class="sectionHead"><h2>Recent managed playback</h2><a class="button secondary btn-sm" href="/admin/servers/stremio#activity">Open source activity</a></div>${rows}</section>`;
+  return layout({siteName:runtimeSettings.siteName(),active:'stremio-playback',title:'Stremio household leases',subtitle:'Current user/IP lease windows and managed playback health',body});
 }
 
 const resellerSections={
@@ -108,7 +122,7 @@ function createAdminProductModulesRouter(){
   const router=express.Router();router.use('/admin',gate,noStore);
   router.get('/admin/jellyfin',async(_req,res,next)=>{try{return res.send(await jellyfinPage());}catch(error){return next(error);}});
   router.get('/admin/stremio',async(_req,res,next)=>{try{return res.send(await stremioPage());}catch(error){return next(error);}});
-  router.get('/admin/stremio/playback',async(_req,res,next)=>{try{return res.send(await stremioPlaybackPage());}catch(error){return next(error);}});
+  router.get('/admin/stremio/playback',async(req,res,next)=>{try{return res.send(await stremioPlaybackPage(req));}catch(error){return next(error);}});
   for(const path of Object.keys(resellerSections))router.get(path,async(_req,res,next)=>{try{await runtimeSettings.ensureLoaded();return res.send(resellerPage(path));}catch(error){return next(error);}});
   return router;
 }

@@ -1,6 +1,9 @@
 'use strict';
 
 require('dotenv').config();
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('PayPal return/webhook race smoke')) process.exit(0);
+
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const intents = require('../src/payments/checkout-intents');

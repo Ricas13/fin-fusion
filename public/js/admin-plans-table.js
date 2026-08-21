@@ -3,11 +3,10 @@
 (() => {
     if (typeof document === 'undefined') return;
 
-    const table = document.querySelector('[data-plan-table]');
-    if (!table) return;
+    const tables = Array.from(document.querySelectorAll('[data-plan-table]'));
+    if (!tables.length) return;
 
-    const tbody = table.querySelector('tbody');
-    const rows = Array.from(tbody.querySelectorAll('[data-plan-row]')).map((row, index) => ({ row, index }));
+    const rows = tables.flatMap(table => Array.from(table.querySelectorAll('tbody [data-plan-row]')).map(row => ({ row, table, tbody: table.querySelector('tbody') }))).map((item, index) => ({ ...item, index }));
     const search = document.querySelector('[data-plan-search]');
     const status = document.querySelector('[data-plan-status]');
     const delivery = document.querySelector('[data-plan-delivery]');
@@ -17,7 +16,7 @@
     const reset = document.querySelector('[data-plan-reset]');
     const resultCount = document.querySelector('[data-plan-result-count]');
     const filteredEmpty = document.querySelector('[data-plan-filtered-empty]');
-    const wrap = document.querySelector('[data-plan-table-wrap]');
+    const sections = Array.from(document.querySelectorAll('[data-plan-table-section]'));
     const sortButtons = Array.from(document.querySelectorAll('[data-plan-sort]'));
     let sortKey = null;
     let sortDirection = 'asc';
@@ -60,11 +59,21 @@
             const show = matches(item);
             item.row.hidden = !show;
             if (show) visible += 1;
-            tbody.appendChild(item.row);
+            item.tbody.appendChild(item.row);
+        }
+        for (const section of sections) {
+            const sectionRows = Array.from(section.querySelectorAll('[data-plan-row]'));
+            const shown = sectionRows.filter(row => !row.hidden).length;
+            const wrap = section.querySelector('[data-plan-table-wrap]');
+            const empty = section.querySelector('.emptyAction');
+            const count = section.querySelector('[data-plan-section-count]');
+            if (count) count.textContent = `${shown} plan${shown === 1 ? '' : 's'}`;
+            if (wrap) wrap.hidden = shown === 0;
+            if (empty) empty.hidden = sectionRows.length > 0 && shown > 0;
+            section.hidden = sectionRows.length > 0 && shown === 0;
         }
         if (resultCount) resultCount.textContent = `${visible} of ${rows.length} plans`;
         if (filteredEmpty) filteredEmpty.classList.toggle('visible', visible === 0);
-        if (wrap) wrap.hidden = visible === 0;
     }
 
     function updateSortIndicators(activeButton) {

@@ -36,6 +36,7 @@ assert((runtime.match(/reason: 'protocol_rate_limit'/g)||[]).length>=3,'install-
 assert(runtime.includes('managedPlayback.startManager({ intervalMs: 5000 })'),'managed playback cleanup manager must remain active');
 assert(runtime.includes("householdAccess.claim(entitlement, req"),'playback-start routes must claim the Stremio household network');
 assert(runtime.includes('householdAccess.preview(entitlement, req')&&runtime.includes('householdAccess.deniedStream(household,'),'stream result discovery must return a visible household-limit result before source resolution when the IP family is already full');
+assert(runtime.includes('cachedStreams(entitlement.id, type, videoId, origin)')&&runtime.includes('rememberStreams(entitlement.id, type, videoId, origin, streams)'),'allowed Stremio searches must use a short-lived result cache after household preview');
 assert(runtime.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'"),'external results must have a household-aware playback-start control route');
 assert(runtime.includes('return res.redirect(307, target.url)'),'managed playback must end in a Jellyfin redirect');
 assert(runtime.includes('return res.redirect(307, target)'),'external playback must end in a direct external Jellyfin redirect');

@@ -47,7 +47,7 @@ async function accounts(){
       ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1
     ) sub ON TRUE
     LEFT JOIN jellyfin_account_lifecycle lc ON lc.account_id=ja.id AND lc.deleted_at IS NULL AND lc.restored_at IS NULL
-    WHERE ja.account_purpose='primary'
+    WHERE ja.account_purpose='jellyfin'
     ORDER BY ja.customer_id,js.priority,ja.created_at
   `);
   return r.rows;

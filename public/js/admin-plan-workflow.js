@@ -64,10 +64,10 @@
   // normal Jellyfin identity is part of the product. Only then expose its tools.
   if(page==='delivery'){
     const selected=document.querySelector('input[name="serviceType"]:checked')?.value;
-    if(selected==='jellyfin'||selected==='bundle')top.insertAdjacentElement('afterend',jellyfinTools());
+    if(selected==='jellyfin')top.insertAdjacentElement('afterend',jellyfinTools());
     document.querySelectorAll('input[name="serviceType"]').forEach(input=>input.addEventListener('change',()=>{
       document.querySelector('.planDeliveryTools')?.remove();
-      if(input.checked&&(input.value==='jellyfin'||input.value==='bundle'))top.insertAdjacentElement('afterend',jellyfinTools());
+      if(input.checked&&input.value==='jellyfin')top.insertAdjacentElement('afterend',jellyfinTools());
     }));
   }
 })();

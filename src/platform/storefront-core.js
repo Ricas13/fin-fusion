@@ -9,7 +9,7 @@ const planComponents = require('../access/plan-components');
 
 const DEFAULT_FEATURES = [
     'A huge movie and TV library',
-    'Flexible Jellyfin access and private Stremio household access',
+    'Flexible Jellyfin access and standalone Stremio household access',
     'Downloads available on supported plans',
     'Watch on TVs, phones, tablets and browsers',
     'One simple self-service customer account',
@@ -200,12 +200,13 @@ function disabledPage(site) {
 
 function renderStorefront({ site, plans, store, registrationOpen, logged }) {
     const context = { logged, registrationOpen };
+    plans = plans.filter(plan => !plan.is_addon && planService(plan) !== 'bundle');
     const paidPlans = plans.filter(plan => Number(plan.price_minor || 0) > 0);
-    const jellyfinPlans=plans.filter(plan=>['jellyfin','bundle'].includes(planService(plan)));
+    const jellyfinPlans=plans.filter(plan=>planService(plan)==='jellyfin');
     const streamPlans=jellyfinPlans.filter(plan=>planComponents.componentForPlan(plan,'jellyfin')?.driver==='concurrent_streams');
     const maxStreams=streamPlans.length?Math.max(...streamPlans.map(plan=>planComponents.componentForPlan(plan,'jellyfin').config.streamLimit)):null;
     const hasJellyfinHousehold=jellyfinPlans.some(plan=>planComponents.componentForPlan(plan,'jellyfin')?.driver==='household_network');
-    const hasStremio=plans.some(plan=>['stremio','bundle'].includes(planService(plan)));
+    const hasStremio=plans.some(plan=>planService(plan)==='stremio');
     const hasTrial = plans.some(plan => plan.billing_interval === 'trial');
     const featuredCode = bestValueCode(plans);
     const planMarkup = plans.length

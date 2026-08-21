@@ -28,9 +28,13 @@
 
 /* Avoid six-field horizontal walls on wide screens. */
 .formGrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.compactFilterForm>.formGrid{grid-template-columns:repeat(6,minmax(118px,1fr));gap:8px}
+.compactFilterForm .formGroup{min-width:0;margin:0}
+.compactFilterForm .formGroup label{font-size:11px}
+.compactFilterForm .buttonRow{margin-top:10px}
 
 /* Plans: filter like a toolbar, not a second page. */
-.planListToolbar{display:grid;grid-template-columns:minmax(260px,2fr) repeat(4,minmax(130px,1fr)) auto;gap:10px;align-items:end;padding:14px 16px;border-bottom:1px solid var(--border-soft);background:#0f151c}
+.planListToolbar{display:grid;grid-template-columns:minmax(220px,1.6fr) repeat(5,minmax(112px,1fr)) auto;gap:9px;align-items:end;padding:14px 16px;border-bottom:1px solid var(--border-soft);background:#0f151c}
 .planListToolbar label{display:grid;gap:5px;min-width:0;color:#8996a6;font-size:11px;font-weight:650}
 .planListToolbar .input{min-width:0}
 .planListToolbar .button{align-self:end;white-space:nowrap}
@@ -53,6 +57,7 @@
   .settings-grid{grid-template-columns:1fr}
   .settings-grid>.settings-card:nth-child(3):last-child{grid-column:auto}
   .formGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .compactFilterForm>.formGrid{grid-template-columns:repeat(4,minmax(130px,1fr))}
   .planListToolbar{grid-template-columns:minmax(240px,2fr) repeat(2,minmax(150px,1fr));align-items:end}
   .planListToolbar .button{justify-self:start}
 }
@@ -75,6 +80,7 @@
 
 @media(max-width:760px){
   .formGrid{grid-template-columns:1fr}
+  .compactFilterForm>.formGrid{grid-template-columns:1fr}
   .planListToolbar{grid-template-columns:1fr}
   .planListToolbar .button{width:100%}
 }

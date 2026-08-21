@@ -36,7 +36,7 @@ const plans = [
         allow_downloads: true, allow_video_transcoding: false,capacity:{limit:20,used:1,remaining:19,soldOut:false}
     },
     {
-        id:'stremio',code:'stremio',name:'Stremio Add-on',description:'Stremio access.',service_type:'stremio',is_addon:true,
+        id:'stremio',code:'stremio',name:'Stremio Plan',description:'Stremio access.',service_type:'stremio',is_addon:false,
         billing_interval:'month',duration_days:30,price_minor:400,currency:'USD',streams:2,capacity:{limit:25,used:3,remaining:22,soldOut:false}
     }
 ];
@@ -74,7 +74,7 @@ const store = {
 const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,support:{supportEmail:'support@example.test'} });
 for (const expected of [
     'heroSection','freeTierPanel','pricingGrid','finalCta','Your entertainment. One simple subscription.',
-    'Free access','Still here — currently full.','Choose the access that fits you.','Stremio add-ons &amp; plans.',
+    'Free access','Still here — currently full.','Choose the Jellyfin server access that fits you.','Stremio plans',
     '0 spots available · Sold out','support@example.test'
 ]) assert.ok(page.includes(expected), `rendered storefront should include ${expected}`);
 assert.ok(page.indexOf('heroSection') < page.indexOf('id="free-access"'), 'hero should appear before free access');
