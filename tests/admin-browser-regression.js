@@ -17,7 +17,7 @@ const forced=[
   '/admin/servers','/admin/libraries','/admin/servers/operations',
   '/admin/commerce','/admin/plans','/admin/plans/new?type=stremio','/admin/payments','/admin/discounts','/admin/referrals',
   '/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/provisioning/migrations','/admin/provisioning/drift','/admin/automation',
-  '/admin/settings?section=general','/admin/profile','/admin/profile/notifications','/admin/security',
+  '/admin/settings?section=general','/admin/settings/currency','/admin/profile','/admin/profile/notifications','/admin/security',
   '/admin/notifications/preferences','/admin/notifications/email','/admin/notifications',
   '/admin/settings/branding','/admin/settings?section=integrations','/admin/settings?section=security',
   '/admin/backups','/admin/configuration'
@@ -143,12 +143,22 @@ async function safeMutationAudit(page){
   await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),emailForm.getByRole('button',{name:'Save email'}).click()]);
   assert(!((await page.locator('body').innerText()).includes('Not found')),'Saving My Profile email routed to Not found');
   assert((await page.locator('input[name="email"]').inputValue())===email,'Saved administrator email did not round-trip');
+  assert.equal(await page.locator('form[action="/admin/profile/currency"]').count(),0,'Portal currency must not be duplicated on My Profile');
 
-  const currencyForm=page.locator('form[action="/admin/profile/currency"]');
-  assert.equal(await currencyForm.count(),1,'My Profile reporting currency form is missing');
-  await currencyForm.locator('select[name="currency"]').selectOption('EUR');
-  await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),currencyForm.getByRole('button',{name:'Save currency'}).click()]);
-  assert.equal(await page.locator('form[action="/admin/profile/currency"] select[name="currency"]').inputValue(),'EUR','Saved reporting currency did not round-trip');
+  await page.goto(`${BASE}/admin/settings/currency`,{waitUntil:'networkidle'});
+  let currencyForm=page.locator('form[action="/admin/settings/currency"]');
+  assert.equal(await currencyForm.count(),1,'Canonical portal currency form is missing');
+  const currencySelect=currencyForm.locator('select[name="currency"]');
+  const originalCurrency=await currencySelect.inputValue();
+  const testCurrency=originalCurrency==='EUR'?'GBP':'EUR';
+  await currencySelect.selectOption(testCurrency);
+  await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),currencyForm.getByRole('button',{name:'Save portal currency'}).click()]);
+  assert.equal(await page.locator('form[action="/admin/settings/currency"] select[name="currency"]').inputValue(),testCurrency,'Saved portal currency did not round-trip');
+
+  currencyForm=page.locator('form[action="/admin/settings/currency"]');
+  await currencyForm.locator('select[name="currency"]').selectOption(originalCurrency);
+  await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),currencyForm.getByRole('button',{name:'Save portal currency'}).click()]);
+  assert.equal(await page.locator('form[action="/admin/settings/currency"] select[name="currency"]').inputValue(),originalCurrency,'Portal currency was not restored after the mutation audit');
 }
 
 async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio Addon'}={}){
@@ -159,7 +169,8 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   // The plan creation form is direct-customer-only; there is no audience selector.
   assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose an audience selector');
   await form.locator('input[name="price"]').fill('6');
-  await form.locator('select[name="currency"]').selectOption('USD');
+  assert.equal(await form.locator('select[name="currency"]').count(),0,'Plan creation must use the portal-wide currency rather than expose a per-plan selector');
+  assert(/Portal-wide setting/.test(await form.innerText()),'Plan creation must explain that currency is controlled portal-wide');
   await form.locator('input[name="capacityLimit"]').fill('20');
   await form.locator('select[name="billingInterval"]').selectOption('month');
   await form.locator('input[name="streams"]').fill('1');
@@ -196,9 +207,9 @@ async function personalNotificationsAudit(page){
   const accountLabel=String(await page.locator('.headerActionLabel').textContent()).trim();
   assert.equal(accountLabel,'My account','Personal workflow is not owned by the My account area');
   const accountLinks=await page.locator('.headerActions a.headerButton[href^="/admin/"]').evaluateAll(nodes=>nodes.map(a=>({text:a.textContent.trim(),href:a.getAttribute('href')})));
-  assert(accountLinks.some(x=>x.text==='Profile'&&x.href==='/admin/profile'),'My account is missing Profile');
-  assert(accountLinks.some(x=>x.text==='Notifications'&&x.href==='/admin/profile/notifications'),'My account is missing Notifications');
-  assert(accountLinks.some(x=>x.text==='Security'&&x.href==='/admin/security'),'My account is missing Security');
+  assert(accountLinks.some(x=>x.text==='My profile'&&x.href==='/admin/profile'),'My account is missing My profile');
+  assert(accountLinks.some(x=>x.text==='My notifications'&&x.href==='/admin/profile/notifications'),'My account is missing My notifications');
+  assert(accountLinks.some(x=>x.text==='My security'&&x.href==='/admin/security'),'My account is missing My security');
   const breadcrumbGroup=String(await page.locator('.topBreadcrumb span').textContent()).trim();
   assert.equal(breadcrumbGroup,'My account','Personal notification breadcrumb must be owned by My account');
   const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
