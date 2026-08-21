@@ -157,51 +157,56 @@ async function safeMutationAudit(page){
   await currencySelect.selectOption(testCurrency);
   await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),currencyForm.getByRole('button',{name:'Save portal currency'}).click()]);
   assert.equal(await page.locator('form[action="/admin/settings/currency"] select[name="currency"]').inputValue(),testCurrency,'Saved portal currency did not round-trip');
-
   currencyForm=page.locator('form[action="/admin/settings/currency"]');
   await currencyForm.locator('select[name="currency"]').selectOption(originalCurrency);
   await Promise.all([page.waitForNavigation({waitUntil:'networkidle',timeout:15000}),currencyForm.getByRole('button',{name:'Save portal currency'}).click()]);
   assert.equal(await page.locator('form[action="/admin/settings/currency"] select[name="currency"]').inputValue(),originalCurrency,'Portal currency was not restored after the mutation audit');
 }
 
-async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio Addon'}={}){
-  await form.locator('select[name="serviceType"]').selectOption('stremio');
+async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio Addon',households='2'}={}){
+  assert.equal(await form.locator('input[name="serviceType"][value="stremio"]').count(),1,'Stremio plan creation must stay explicitly scoped to the Stremio product');
   await form.locator('input[name="code"]').fill(code);
   await form.locator('input[name="name"]').fill(name);
-  await form.locator('textarea[name="description"]').fill('Access to a stremio addon');
-  // The plan creation form is direct-customer-only; there is no audience selector.
-  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose an audience selector');
+  await form.locator('textarea[name="description"]').fill('Unlimited Stremio access for a household');
   await form.locator('input[name="price"]').fill('6');
-  assert.equal(await form.locator('select[name="currency"]').count(),0,'Plan creation must use the portal-wide currency rather than expose a per-plan selector');
-  assert(/Portal-wide setting/.test(await form.innerText()),'Plan creation must explain that currency is controlled portal-wide');
   await form.locator('input[name="capacityLimit"]').fill('20');
   await form.locator('select[name="billingInterval"]').selectOption('month');
-  const streams=form.locator('input[name="streams"]');
-  assert.equal(await streams.isVisible(),false,'Stremio-only plan creation must hide the Jellyfin concurrent-stream field');
+  await form.locator('input[name="householdLimit"]').fill(households);
+  assert.equal(await form.locator('input[name="streams"]').count(),0,'Stremio creation must not expose simultaneous stream limits');
+  assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose an audience selector');
+  assert.equal(await form.locator('select[name="currency"]').count(),0,'Plan creation must use the portal-wide currency rather than expose a per-plan selector');
+  const text=await form.innerText();
+  assert(/Unlimited streams/i.test(text)&&/Unlimited devices/i.test(text),'Stremio creation must make unlimited streams and devices explicit');
+  assert(/Household IPs/i.test(text),'Stremio creation must make household access the configurable limit');
 }
 
 async function planCreationAudit(page){
   await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
-  let form=page.locator('form[data-plan-create-v2]');
-  assert.equal(await form.count(),1,'Canonical V2 plan creation form is not owning /admin/plans/new');
+  let form=page.locator('form[action="/admin/plans"]');
+  assert.equal(await form.count(),1,'Household-first Stremio plan creation form is not owning the Stremio create context');
+  assert.equal(await page.locator('.presetCard').count(),4,'Stremio creation must offer 1/2/3 household presets plus custom');
+  assert(!/Delivery service/i.test(await page.locator('body').innerText()),'Stremio creation must hide internal delivery-service terminology');
   await fillStremioPlan(form);
   await Promise.all([
-    page.waitForURL(url=>/\/admin\/plans\/[^/]+\/delivery$/.test(url.pathname),{timeout:15000}),
-    form.getByRole('button',{name:'Create plan'}).click()
+    page.waitForURL(url=>/\/admin\/plans\/[^/]+\/edit$/.test(url.pathname),{timeout:15000}),
+    form.getByRole('button',{name:'Create Stremio plan'}).click()
   ]);
   const createdUrl=new URL(page.url());
-  assert(/\/admin\/plans\/[^/]+\/delivery$/.test(createdUrl.pathname),'Valid Stremio creation did not continue to Delivery');
-  assert(!/Request failed/i.test(await page.locator('body').innerText()),'Valid Stremio creation surfaced a generic request failure');
+  assert(/\/admin\/plans\/[^/]+\/edit$/.test(createdUrl.pathname),'Valid Stremio creation did not continue to the compact editor');
+  const editorText=await page.locator('body').innerText();
+  assert(/Unlimited streams/i.test(editorText)&&/Unlimited devices/i.test(editorText),'Compact Stremio editor lost the unlimited playback model');
+  assert(/2 household IPs/i.test(editorText),'Compact Stremio editor did not preserve the selected household allowance');
+  assert(!/Delivery service/i.test(editorText),'Compact Stremio editor exposed internal delivery-service terminology');
 
   await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
-  form=page.locator('form[data-plan-create-v2]');
+  form=page.locator('form[action="/admin/plans"]');
   await fillStremioPlan(form,{name:'Duplicate Stremio Addon'});
-  await form.getByRole('button',{name:'Create plan'}).click();
-  const error=page.locator('.formSubmitError,[data-form-error]').first();
-  await error.waitFor({state:'visible',timeout:10000});
-  const message=(await error.textContent()||'').trim();
-  assert(/already exists/i.test(message),`Duplicate plan did not surface an actionable error: ${message}`);
-  assert(!/Request failed\s*\(400\)/i.test(message),'Duplicate plan error was masked as Request failed (400)');
+  await form.getByRole('button',{name:'Create Stremio plan'}).click();
+  const duplicate=page.getByText(/already exists/i).first();
+  await duplicate.waitFor({state:'visible',timeout:10000});
+  const body=await page.locator('body').innerText();
+  assert(/already exists/i.test(body),'Duplicate Stremio plan did not surface an actionable error');
+  assert(!/Request failed\s*\(400\)/i.test(body),'Duplicate Stremio plan error was masked as Request failed (400)');
 }
 
 async function personalNotificationsAudit(page){
