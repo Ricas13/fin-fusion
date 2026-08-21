@@ -51,7 +51,8 @@ async function main(){
     assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),['Overview'],'Legacy Stremio Delivery redirect must land on the canonical editor');
     assert.equal(await page.locator('.planDeliveryTools').count(),0,'Canonical Stremio editor exposed Jellyfin-only delivery tools');
     const canonicalEditorText=await page.locator('body').innerText();
-    assert(/Stremio sources/.test(canonicalEditorText)&&!/Delivery service/.test(canonicalEditorText),'Canonical Stremio editor must own source selection without exposing the retired Delivery screen');
+    assert(/Plan delivery/.test(canonicalEditorText)&&!/Delivery service/.test(canonicalEditorText),'Canonical Stremio editor must own source selection without exposing the retired Delivery screen');
+    assert.deepStrictEqual(await labels(page.locator('.stremioJourneyStep.active strong')),['Plan delivery'],'Stremio plan editor must show the Plan delivery journey step');
     await screenshot(page,'plan-delivery-redirect');
 
     await gotoAdmin(page,'/admin/operations');
@@ -101,15 +102,16 @@ async function main(){
     await screenshot(page,'settings-security');
 
     // Stremio source management lives under the Stremio workflow, not Settings.
-    // The current source model intentionally supports both portal-managed Jellyfin
-    // servers and independent external Jellyfin sources in one control centre.
+    // Managed CAPTAiNFiN servers and optional external fallbacks stay in one
+    // control centre, but technical cache/credential detail is progressive.
     await pool.query(`DELETE FROM platform_settings WHERE setting_key='stremio_runtime_v1'`);
     await gotoAdmin(page,'/admin/settings/stremio');
     assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Stremio → Sources');
     let stremioText=await page.locator('body').innerText();
-    assert(/Managed Jellyfin sources/.test(stremioText)&&/External Jellyfin sources/.test(stremioText),'Stremio Sources must expose both managed and external source classes');
+    assert(/CAPTAiNFiN Jellyfin servers/.test(stremioText)&&/External Jellyfin fallbacks/.test(stremioText),'Stremio Sources must expose managed servers and external fallbacks');
     assert(/Add external Jellyfin source/.test(stremioText),'Stremio Sources is missing the independent external-source workflow');
-    assert(/control plane, not a video proxy/.test(stremioText)&&/media bytes never pass through the portal/.test(stremioText),'Stremio Sources must preserve the no-media-proxy contract');
+    assert(/Choose where Stremio can find your library/.test(stremioText),'Stremio Sources must explain its normal operator task in plain language');
+    assert.deepStrictEqual(await labels(page.locator('.stremioJourneyStep.active strong')),['Sources'],'Stremio Sources must show the Sources journey step');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Sources'],'Stremio sidebar does not own the Sources workflow');
     const addSource=page.locator('form[action="/admin/servers/stremio"]');
     assert.equal(await addSource.count(),1,'External Jellyfin source form is missing');
@@ -129,29 +131,33 @@ async function main(){
     const externalRow=page.locator(`#external-${seeded.id}`);
     assert.equal(await externalRow.count(),1,'Seeded external Jellyfin source is missing from the consolidated source list');
     const disclosure=externalRow.locator('details.capabilitySourceDisclosure');
-    assert.equal(await disclosure.count(),1,'External source library and index controls are missing');
+    assert.equal(await disclosure.count(),1,'External source library and advanced controls are missing');
     await disclosure.evaluate(element=>{element.open=true;});
     const externalText=await externalRow.innerText();
     assert(/Browser External Jellyfin/.test(externalText)&&/Movies/.test(externalText)&&/TV Shows/.test(externalText),'External source row does not show discovered libraries');
     assert(await externalRow.locator('input[name="libraryId"][value="movies-lib"]').isChecked(),'Selected library state did not round-trip');
     assert(!(await externalRow.locator('input[name="libraryId"][value="tv-lib"]').isChecked()),'Unselected library was incorrectly enabled');
-    assert(/every 3 hours/i.test(externalText)&&/twice weekly/i.test(externalText),'External source row does not explain automatic index cadence');
+    assert(/every 3 hours/i.test(externalText)&&/twice weekly/i.test(externalText),'External source row does not explain automatic refresh cadence');
+    assert(/dedicated playback account/i.test(externalText),'External source row must hide token-rotation detail from the normal summary');
     await screenshot(page,'stremio-source-libraries');
 
     await gotoAdmin(page,`/admin/plans/${id}/edit`);
     let planText=await page.locator('body').innerText();
-    assert(/Stremio sources/.test(planText)&&/Managed CAPTAiNFiN sources are automatic/.test(planText)&&/Browser External Jellyfin/.test(planText),'Canonical Stremio editor does not expose plan-specific source selection');
+    assert(/Plan delivery/.test(planText)&&/external fallbacks/i.test(planText)&&/Browser External Jellyfin/.test(planText),'Canonical Stremio editor does not expose the simplified plan-delivery source selection');
+    assert(/Household connections/.test(planText)&&!/Household IPs/.test(planText),'Normal Stremio plan controls must use household-connection language');
     const sourceForm=page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"]`);
     assert.equal(await sourceForm.count(),1,'Canonical Stremio editor is missing its source-selection form');
     await sourceForm.locator(`input[name="sourceId"][value="${seeded.id}"]`).check();
+    const orderDetails=sourceForm.locator('.stremioOrderDetails').filter({has:sourceForm.locator(`input[name="priority_${seeded.id}"]`)}).first();
+    await orderDetails.evaluate(element=>{element.open=true;});
     await sourceForm.locator(`input[name="priority_${seeded.id}"]`).fill('10');
-    await submitAction(page,sourceForm,'Save sources',`/admin/plans/${plan.id}/stremio-sources`);
+    await submitAction(page,sourceForm,'Save delivery sources',`/admin/plans/${plan.id}/stremio-sources`);
     const mapping=(await pool.query('SELECT enabled,priority FROM plan_stremio_sources WHERE plan_id=$1 AND source_id=$2',[plan.id,seeded.id])).rows[0];
     assert.equal(mapping?.enabled,true,'Plan source mapping was not persisted');
     assert.equal(Number(mapping?.priority),10,'Plan source priority was not persisted');
-    await page.waitForFunction(()=>/1\/1 selected source ready/.test(document.body.innerText),null,{timeout:15000});
+    await page.waitForFunction(()=>/1\/1 external fallback ready/.test(document.body.innerText),null,{timeout:15000});
     planText=await page.locator('body').innerText();
-    assert(/1\/1 selected source ready/.test(planText),'Canonical Stremio editor does not surface selected-source readiness');
+    assert(/1\/1 external fallback ready/.test(planText),'Canonical Stremio editor does not surface fallback readiness');
     assert(/External Stremio source selection saved/.test(planText),'Source-save feedback was lost while resolving the legacy Delivery redirect');
     assert(await page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"] input[name="sourceId"][value="${seeded.id}"]`).isChecked(),'Saved source selection did not round-trip in the canonical editor');
     await screenshot(page,'plan-editor-stremio-source');
