@@ -30,10 +30,7 @@ function token(req) {
   return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
 }
 function statusNotice(status) {
-  if (status.state === 'update_available') {
-    const compare = status.compareUrl ? ` <a href="${esc(status.compareUrl)}" target="_blank" rel="noopener noreferrer">Review changes on GitHub</a>.` : '';
-    return ui.notice('warn', `A newer commit is available on main.${compare}`, { title: 'Update available' });
-  }
+  if (status.state === 'update_available') return ui.notice('warn', 'A newer commit is available on main. Review the changes below before updating the production host.', { title: 'Update available' });
   if (status.state === 'current') return ui.notice('success', 'This deployed build matches the latest commit on main.', { title: 'Up to date' });
   if (status.state === 'custom_build') return ui.notice('warn', 'This build does not sit behind the current main branch. It may be newer, pinned, or from a custom branch; review the source checkout before updating.', { title: 'Custom build detected' });
   if (status.state === 'unknown_build') return ui.notice('warn', 'The application version is known, but this image does not contain an exact build commit. Deploy through bash install.sh or bash update.sh to embed build metadata.', { title: 'Exact build unknown' });
@@ -43,6 +40,9 @@ function statusNotice(status) {
 
 function page(req, status) {
   const version = `v${status.version}`;
+  const compareAction = status.compareUrl
+    ? `<a class="button secondary" href="${esc(status.compareUrl)}" target="_blank" rel="noopener noreferrer">Review changes</a>`
+    : '';
   const body = `${ui.noticesFromRequest(req)}
     <section class="systemReleaseHero card">
       <div class="systemReleaseLead"><div><span class="uiEyebrow">Running release</span><h2>${esc(version)}</h2><p class="muted">Exact build and upstream status for this CAPTAiNFiN instance.</p></div>${ui.statusBadge(status.label, kindFor(status.state))}</div>
@@ -55,7 +55,7 @@ function page(req, status) {
       <div class="card systemReleaseMetric"><span>Last checked</span><strong>${esc(dt(status.checkedAt))}</strong><small>Checks are cached to avoid unnecessary GitHub requests</small></div>
     </section>
     <section class="card systemReleaseActions">
-      ${ui.sectionHeader({title:'Updates',description:'Updates remain a host operation so the web process never pulls source code or executes deployment commands.',actionsHtml:`<form method="post" action="/admin/system/check">${token(req)}<button class="button secondary" type="submit">Check again</button></form>`})}
+      ${ui.sectionHeader({title:'Updates',description:'Updates remain a host operation so the web process never pulls source code or executes deployment commands.',actionsHtml:`${compareAction}<form method="post" action="/admin/system/check">${token(req)}<button class="button secondary" type="submit">Check again</button></form>`})}
       <div class="systemUpdateCommand"><div><strong>Supported update command</strong><small>Run this from the production checkout on the host.</small></div><code>bash update.sh</code></div>
       <div class="systemSafetyNote"><strong>Why there is no “Update now” web button</strong><p>CAPTAiNFiN deliberately keeps source updates, encrypted pre-deploy backups, migrations and container replacement inside the SSH-safe deployment path. The admin UI reports status; it does not gain host command execution privileges.</p></div>
     </section>
