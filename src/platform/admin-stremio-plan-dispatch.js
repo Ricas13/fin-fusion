@@ -65,7 +65,13 @@ async function legacyGet(req,res,next,planId){
   const data=await editor.loadData(planId);
   if(!data)return next();
   if(String(data.plan.service_type)!=='stremio')return next();
-  return res.redirect(302,`/admin/plans/${encodeURIComponent(planId)}/edit`);
+  const params=new URLSearchParams();
+  for(const key of ['message','error']){
+    const value=Array.isArray(req.query?.[key])?req.query[key][0]:req.query?.[key];
+    if(value)params.set(key,String(value).slice(0,1000));
+  }
+  const queryString=params.toString();
+  return res.redirect(302,`/admin/plans/${encodeURIComponent(planId)}/edit${queryString?`?${queryString}`:''}`);
 }
 
 async function editPost(req,res,next,planId){
