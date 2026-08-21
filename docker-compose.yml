@@ -24,6 +24,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${PORT:-3030}
+      TRUST_PROXY: ${TRUST_PROXY:-loopback, linklocal, uniquelocal}
       SITE_NAME: ${SITE_NAME:-}
       STOREFRONT_ENABLED: ${STOREFRONT_ENABLED:-false}
       PUBLIC_REGISTRATION: ${PUBLIC_REGISTRATION:-false}
