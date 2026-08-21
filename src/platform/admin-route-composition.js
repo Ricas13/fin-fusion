@@ -28,9 +28,8 @@ const { createAdminPaymentSettingsRouter } = require('./admin-payment-settings')
 const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings');
 const { createAdminBillingRouter } = require('./admin-billing');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
-const { createAdminStremioPlanCreateRouter } = require('./admin-stremio-plan-create');
+const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-dispatch');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
-const { createAdminStremioPlanEditorRouter } = require('./admin-stremio-plan-editor');
 const { createAdminPlanAccessRouter } = require('./admin-plan-access');
 const { createAdminPlanLifecycleRouter } = require('./admin-plan-lifecycle');
 const { createAdminPlanInventoryRouter } = require('./admin-plan-inventory');
@@ -91,14 +90,11 @@ function mountAdminRoutes(app) {
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
   app.use(createAdminCustomerCreateRouter());
-  // Stremio has a dedicated household-first creation flow. It only handles
-  // Stremio requests and falls through to the generic creator for Jellyfin.
-  app.use(createAdminStremioPlanCreateRouter());
+  // Stremio creation/editing is dispatched as middleware rather than owning
+  // duplicate GET/POST route definitions. The existing generic plan routers
+  // remain the sole canonical route owners and handle Jellyfin/non-Stremio.
+  app.use(createAdminStremioPlanDispatchRouter());
   app.use(createAdminPlanCreateV2Router());
-  // Stremio plan editing has one canonical, product-specific page. Mount it
-  // before the legacy multi-page plan controllers so old deep links can
-  // redirect into the compact editor without changing Jellyfin behaviour.
-  app.use(createAdminStremioPlanEditorRouter());
   // Mount the access-driver editor before the legacy Plans controller so the
   // established /admin/plans/:id/jellyfin URL gains household-aware semantics
   // without duplicating or weakening the older plan-management routes.
