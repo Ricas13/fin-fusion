@@ -70,10 +70,11 @@ async function applyPlans(client, plans, version = 1) {
     const serverMap = new Map(serverRows.rows.map(row => [lower(row.slug), row]));
     let poolsApplied = 0, poolsSkipped = 0;
     for (const plan of plans || []) {
-        // Legacy files intentionally do not own modern modular columns. This
-        // prevents an old backup from silently turning Stremio/bundle or
-        // household plans back into default Jellyfin stream plans on update.
-        const saved = version === 2 ? await saveV2Plan(client, plan) : await saveLegacyPlan(client, plan);
+        // Legacy V1 and pre-modular V2 files intentionally do not own modern
+        // modular columns. This prevents an old backup from silently turning
+        // Stremio/bundle or household plans back into default Jellyfin plans.
+        const ownsModularContract = version === 2 && plan._modular_plan_contract !== false;
+        const saved = ownsModularContract ? await saveV2Plan(client, plan) : await saveLegacyPlan(client, plan);
         const planId = saved.rows[0].id;
         if (Object.prototype.hasOwnProperty.call(plan, 'request_movie_quota_limit')) await client.query(`UPDATE plans SET request_movie_quota_limit=$2,request_movie_quota_days=$3,request_tv_quota_limit=$4,request_tv_quota_days=$5,updated_at=NOW() WHERE id=$1`, [planId,plan.request_movie_quota_limit,plan.request_movie_quota_days,plan.request_tv_quota_limit,plan.request_tv_quota_days]);
         const pool = Array.isArray(plan.serverPool) ? plan.serverPool : [], missing = pool.some(entry => !serverMap.has(lower(entry.serverSlug)));
