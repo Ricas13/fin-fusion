@@ -15,8 +15,9 @@ fs.mkdirSync(OUT,{recursive:true});
 async function signIn(page){await page.goto(`${BASE}/login`,{waitUntil:'domcontentloaded'});await page.locator('#username').fill(USER);await page.locator('#password').fill(PASSWORD);await Promise.all([page.waitForURL(url=>url.pathname.startsWith('/admin'),{timeout:15000}),page.getByRole('button',{name:'Sign in'}).click()]);}
 async function labels(locator){return(await locator.allTextContents()).map(x=>x.trim()).filter(Boolean);}
 async function screenshot(page,name){await page.screenshot({path:path.join(OUT,`ia-${name}.png`),fullPage:true});}
-async function submit(form,button){await Promise.all([form.page().waitForNavigation({waitUntil:'networkidle',timeout:15000}),form.getByRole('button',{name:button}).click()]);}
-async function submitAction(page,form,button,pathname){const response=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===pathname,{timeout:15000});await form.getByRole('button',{name:button}).click();await response;await page.waitForLoadState('networkidle');}
+async function gotoAdmin(page,url){const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});assert(response&&response.status()<400,`${url} returned ${response?.status()}`);await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});return response;}
+async function submit(form,button){await Promise.all([form.page().waitForNavigation({waitUntil:'domcontentloaded',timeout:15000}),form.getByRole('button',{name:button}).click()]);await form.page().waitForLoadState('load',{timeout:10000}).catch(()=>{});}
+async function submitAction(page,form,button,pathname){const response=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===pathname,{timeout:15000});await form.getByRole('button',{name:button}).click();await response;}
 async function operationsValue(pool){return(await pool.query(`SELECT setting_value FROM platform_settings WHERE setting_key='operations_v1'`)).rows[0]?.setting_value||{};}
 
 async function main(){
@@ -28,7 +29,7 @@ async function main(){
   try{
     const page=await browser.newPage({viewport:{width:1440,height:1000}});await signIn(page);
 
-    await page.goto(`${BASE}/admin/plans?type=stremio`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,'/admin/plans?type=stremio');
     const row=page.locator('.planListRow').filter({hasText:'browser-stremio-addon'}).first();
     assert.equal(await row.count(),1,'Stremio regression plan is missing from the catalogue');
     assert.equal(await row.locator('a[href$="/delivery"]').count(),0,'Plan list still exposes an arbitrary Delivery shortcut');
@@ -37,7 +38,7 @@ async function main(){
 
     const expected=['Overview','Delivery','Availability','Commerce'];
     for(const [suffix,active] of [['edit','Overview'],['delivery','Delivery'],['inventory','Availability'],['commerce','Commerce']]){
-      await page.goto(`${BASE}/admin/plans/${id}/${suffix}`,{waitUntil:'networkidle'});
+      await gotoAdmin(page,`/admin/plans/${id}/${suffix}`);
       const workflow=page.locator('.planWorkflowTabs a');
       assert.deepStrictEqual(await labels(workflow),expected,`${suffix} has inconsistent plan workflow navigation`);
       assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),[active],`${suffix} highlights the wrong plan workflow step`);
@@ -47,7 +48,7 @@ async function main(){
       await screenshot(page,`plan-${suffix}`);
     }
 
-    await page.goto(`${BASE}/admin/operations`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,'/admin/operations');
     assert.equal(new URL(page.url()).pathname,'/admin/servers/operations','Legacy Operations page did not redirect to Fleet operations');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Fleet operations'],'Fleet operations is not owned by Servers in the sidebar');
     const fleetText=await page.locator('body').innerText();
@@ -60,7 +61,7 @@ async function main(){
     await screenshot(page,'fleet-operations');
 
     const beforeGeneral=await operationsValue(pool);
-    await page.goto(`${BASE}/admin/settings?section=general`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,'/admin/settings?section=general');
     let general=await page.locator('body').innerText();
     assert(/Public URL & regional format/.test(general)&&/Public base URL/.test(general)&&/Timezone/.test(general),'General does not own public URL/locale/timezone');
     assert(!/Default customer plan/.test(general)&&!/Default server priority/.test(general),'Dead workflow defaults returned to General');
@@ -77,7 +78,7 @@ async function main(){
     await screenshot(page,'settings-general');
 
     const beforeSecurity=await operationsValue(pool);
-    await page.goto(`${BASE}/admin/settings?section=security`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,'/admin/settings?section=security');
     let security=await page.locator('body').innerText();
     assert(/Session & registration limits/.test(security)&&/Staff session lifetime/.test(security),'Security does not own session limits');
     assert(/Trusted outbound hostnames/.test(security)&&/Trusted private CIDRs/.test(security),'Security does not own private integration trust');
@@ -95,7 +96,7 @@ async function main(){
 
     // Stremio is a Servers/Delivery workflow, not a Settings workflow.
     await pool.query(`DELETE FROM platform_settings WHERE setting_key='stremio_runtime_v1'`);
-    await page.goto(`${BASE}/admin/settings/stremio`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,'/admin/settings/stremio');
     assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy Stremio settings URL did not redirect to Servers → Stremio');
     let stremioText=await page.locator('body').innerText();
     assert(/Jellyfin sources/.test(stremioText)&&/Add Jellyfin source/.test(stremioText)&&/independent from Servers → Servers/.test(stremioText),'Stremio page is missing the manual-source workflow');
@@ -114,7 +115,7 @@ async function main(){
     await pool.query(`INSERT INTO stremio_source_libraries(source_id,library_id,name,collection_type,selected,available) VALUES($1,'movies-lib','Movies','movies',TRUE,TRUE),($1,'tv-lib','TV Shows','tvshows',FALSE,TRUE)`,[seeded.id]);
     await pool.query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_completed_at,last_full_completed_at,next_incremental_at,force_full,item_count) VALUES($1,'ready','full',NOW(),NOW(),NOW(),NOW()+INTERVAL '6 hours',FALSE,42)`,[seeded.id]);
 
-    await page.goto(`${BASE}/admin/servers/stremio/${encodeURIComponent(seeded.id)}`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,`/admin/servers/stremio/${encodeURIComponent(seeded.id)}`);
     stremioText=await page.locator('body').innerText();
     assert(/Libraries to index/.test(stremioText)&&/Movies/.test(stremioText)&&/TV Shows/.test(stremioText),'Source detail does not show discovered libraries');
     assert(await page.locator('input[name="libraryId"][value="movies-lib"]').isChecked(),'Selected library state did not round-trip');
@@ -122,7 +123,7 @@ async function main(){
     assert(/every 6 hours/i.test(stremioText)&&/every 7 days/i.test(stremioText),'Source detail does not explain automatic index cadence');
     await screenshot(page,'stremio-source-libraries');
 
-    await page.goto(`${BASE}/admin/plans/${id}/delivery`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,`/admin/plans/${id}/delivery`);
     let deliveryText=await page.locator('body').innerText();
     assert(/Stremio sources/.test(deliveryText)&&/Browser External Jellyfin/.test(deliveryText),'Plan Delivery does not expose Stremio source selection');
     const sourceForm=page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"]`);
@@ -137,7 +138,7 @@ async function main(){
     assert(/1\/1 selected source ready/.test(deliveryText),'Plan Delivery does not surface mapped-source readiness');
     await screenshot(page,'plan-delivery-stremio-source');
 
-    await page.goto(`${BASE}/admin/servers/stremio`,{waitUntil:'networkidle'});
+    await gotoAdmin(page,'/admin/servers/stremio');
     runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
     assert(!(await runtimeForm.getByRole('button',{name:'Enable runtime'}).isDisabled()),'Ready external source did not unlock runtime enablement');
     await submitAction(page,runtimeForm,'Enable runtime','/admin/servers/stremio/runtime');
