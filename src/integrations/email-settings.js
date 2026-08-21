@@ -30,6 +30,11 @@ function secureMode(value) {
     if (!['tls','starttls','plain'].includes(mode)) throw new Error('Invalid SMTP security mode.');
     return mode;
 }
+function assertSafeAuthentication(mode, username, password) {
+    if (mode === 'plain' && (String(username || '').trim() || password)) {
+        throw new Error('SMTP authentication requires STARTTLS or TLS. Plain SMTP may only be used without credentials.');
+    }
+}
 
 function environmentConfig() {
     const raw = String(process.env.SMTP_URL || '').trim();
@@ -51,6 +56,7 @@ function environmentConfig() {
             fromEmail,
             replyTo: email(process.env.EMAIL_REPLY_TO || '', false)
         };
+        assertSafeAuthentication(cfg.secureMode, cfg.username, cfg.password);
         cfg.configured = Boolean(cfg.host && cfg.port && cfg.fromEmail && (!cfg.username || cfg.password));
         return cfg;
     } catch (error) {
@@ -85,7 +91,13 @@ async function load() {
         replyTo: row.reply_to || '',
         updatedAt: row.updated_at
     };
-    cfg.configured = cfg.enabled && Boolean(cfg.host && cfg.port && cfg.fromEmail && (!cfg.username || cfg.password));
+    try {
+        assertSafeAuthentication(cfg.secureMode, cfg.username, cfg.password);
+        cfg.configured = cfg.enabled && Boolean(cfg.host && cfg.port && cfg.fromEmail && (!cfg.username || cfg.password));
+    } catch (error) {
+        cfg.configured = false;
+        cfg.error = error.message;
+    }
     return cfg;
 }
 
@@ -125,6 +137,7 @@ async function save(input, actorUserId = null) {
     else if (String(input.password || '')) encryptedPassword = encryptWithEnv(String(input.password), SECRET_ENV, SECRET_PREFIX);
     const passwordPresent = Boolean(encryptedPassword);
     if (username && !passwordPresent) throw new Error('SMTP password is required when a username is configured.');
+    assertSafeAuthentication(mode, username, passwordPresent);
     const fromEmail = email(input.fromEmail, true);
     const replyTo = email(input.replyTo, false) || null;
     const fromName = String(input.fromName || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 120) || 'CAPTAiNFiN';
@@ -152,6 +165,7 @@ async function useEnvironment(actorUserId = null) {
 
 function transportConfig(cfg) {
     if (!cfg?.enabled || !cfg?.configured) throw new Error('Email delivery is disabled or not fully configured.');
+    assertSafeAuthentication(cfg.secureMode, cfg.username, cfg.password);
     return {
         host: cfg.host,
         port: Number(cfg.port),
@@ -181,4 +195,4 @@ async function send(message) {
     });
 }
 
-module.exports = { get, reload, status, save, useEnvironment, testConnection, send, transportConfig, environmentConfig };
+module.exports = { get, reload, status, save, useEnvironment, testConnection, send, transportConfig, environmentConfig, assertSafeAuthentication };
