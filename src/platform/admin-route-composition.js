@@ -23,6 +23,7 @@ const { createAdminRequestRedirectRouter } = require('./admin-request-redirect')
 const { createAdminProvisioningRouter } = require('./admin-provisioning');
 const { createAdminDriftRouter } = require('./admin-drift');
 const { createAdminEmailRouter } = require('./admin-email');
+const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPaymentSettingsRouter } = require('./admin-payment-settings');
 const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings');
 const { createAdminBillingRouter } = require('./admin-billing');
@@ -79,6 +80,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminProvisioningRouter());
   app.use(createAdminDriftRouter());
   app.use(createAdminEmailRouter());
+  app.use(createAdminNotificationPreferencesRouter());
   app.use(createAdminPaymentSettingsRouter());
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
