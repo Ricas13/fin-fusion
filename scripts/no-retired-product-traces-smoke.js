@@ -39,8 +39,8 @@ function walk(dir){
 walk(root);
 if(hits.length){
   const files=[...new Set(hits.map(hit=>hit.replace(/:\d+$/,'')))].sort();
-  console.error(`Retired reseller-credit traces remain in ${files.length} files (${hits.length} occurrences):`);
+  console.error(`Retired commercial-credit traces remain in ${files.length} files (${hits.length} occurrences):`);
   for(const file of files) console.error(`  ${file}`);
 }
-assert.deepStrictEqual(hits,[],'Retired reseller-credit commercial model must have no source, route, UI, documentation, test, configuration, or migration traces');
-console.log('retired reseller-credit model trace audit: ok');
+assert.deepStrictEqual(hits,[],'Retired commercial credit model must have no source, route, UI, documentation, test, configuration, or migration traces');
+console.log('retired commercial credit-model trace audit: ok');
