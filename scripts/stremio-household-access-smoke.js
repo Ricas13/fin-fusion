@@ -89,7 +89,7 @@ assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&pol
 
 // Admin/customer UX must describe the product in customer terms, not delivery
 // architecture or IPv6 implementation details.
-assert(stremioPlanCreate.includes('1 Household')&&stremioPlanCreate.includes('2 Household')&&stremioPlanCreate.includes('3 Household'),'Stremio creation must expose household presets');
+assert(stremioPlanCreate.includes('const cards=[1,2,3]')&&stremioPlanCreate.includes('Household${n===1?')&&stremioPlanCreate.includes('Create custom'),'Stremio creation must expose generated 1/2/3-household presets plus custom');
 assert(stremioPlanCreate.includes('Unlimited streams')&&stremioPlanCreate.includes('Unlimited devices'),'Stremio creation must make unlimited playback explicit');
 assert(stremioPlanEditor.includes('New purchases only')&&stremioPlanEditor.includes('Existing customers too'),'restrictive access changes must have scoped impact choices without typed confirmation');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
