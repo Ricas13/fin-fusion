@@ -65,7 +65,8 @@ async function stremioPlaybackData(){
       LEFT JOIN stremio_entitlements se ON l.subject_key IN (se.id::text,se.subscription_id::text)
       LEFT JOIN customers c ON c.id=se.customer_id
       LEFT JOIN app_users u ON u.id=c.user_id
-      LEFT JOIN plans p ON p.id=se.plan_id
+      LEFT JOIN subscriptions sub ON sub.id=se.subscription_id
+      LEFT JOIN plans p ON p.id=sub.plan_id
       WHERE l.scope='stremio' AND l.expires_at>NOW()
       ORDER BY l.last_seen_at DESC,l.expires_at DESC LIMIT 100`)
   ]);

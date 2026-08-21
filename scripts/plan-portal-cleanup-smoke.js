@@ -35,6 +35,7 @@ assert(operatorBusiness.indexOf('markCurrentAreaRead(data).then(()=>apply(data))
 assert(!adminShell.includes('<summary class="navSectionLabel"><a class="navSectionHome"'), 'sidebar summary must not contain a nested link');
 assert(nav.includes("'Household leases','/admin/stremio/playback'"), 'Stremio playback workspace must be renamed to household leases');
 assert(productModules.includes('Current household IP leases') && productModules.includes('/stremio-household/reset') && productModules.includes('Reset lease'), 'Stremio household lease view must expose admin reset controls');
+assert(!productModules.includes('se.plan_id') && productModules.includes('LEFT JOIN subscriptions sub ON sub.id=se.subscription_id'), 'Stremio household lease plan labels must resolve through subscriptions');
 assert(stremioRuntime.includes('STREAM_RESULT_CACHE_TTL_MS') && stremioRuntime.includes('cachedStreams(entitlement.id, type, videoId, origin)'), 'Stremio stream discovery must cache allowed search results briefly');
 assert(migration.includes("service_type='bundle'") && migration.includes("widget_key IN ('mrr','grossRevenue','netRevenue','payingCustomersArpu')"), 'cleanup migration must hide retired catalogue rows and repair Commerce KPI layout');
 
