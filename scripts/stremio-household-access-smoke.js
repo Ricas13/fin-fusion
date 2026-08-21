@@ -62,7 +62,7 @@ assert(planCreate.includes('1 Stremio household per subscription'),'plan creatio
 assert(plansList.includes("planComponents.accessLabel(plan)"),'admin plan list must use the shared component access label');
 assert(storefront.includes("planComponents.accessLabel(plan)"),'storefront must use the shared component access label');
 assert(customerStremio.includes("accessModel:'1 Stremio household'")&&!customerStremio.includes('streamLimit:Number('),'Stremio setup model must expose household access rather than a stream allowance');
-assert(stremioSetup.includes('1 Stremio household')&&stremioSetup.includes('No CAPTAiNFiN concurrent-stream counter'),'Stremio setup page must explain household access and lack of a stream counter');
+assert(stremioSetup.includes('<%= accessModel %>')&&stremioSetup.includes('No CAPTAiNFiN concurrent-stream counter'),'Stremio setup page must render the household access model and explain the lack of a stream counter');
 assert(stremioDashboard.includes('Stremio household'),'Stremio customer dashboard must show household access');
 
 assert(!sourcePool.includes("const http=require('http')")&&!sourcePool.includes('openPlayback('),'external source pool must not contain the retired byte relay');
