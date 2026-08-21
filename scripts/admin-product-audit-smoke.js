@@ -12,7 +12,7 @@ const commerce=read('src/platform/admin-commerce.js');
 const backupTabs=read('src/platform/backup-workflow-tabs.js');
 const settings=read('src/platform/admin-original-settings.js');
 const customer360View=read('src/platform/customer-360-view.js');
-const securityCore=read('src/platform/admin-security-core.js');
+const securityRoutes=read('src/platform/admin-security-routes.js');
 const adminHtml=read('src/platform/admin-html.js');
 const discountUi=read('public/js/admin-discounts.js');
 const adminSettingsGuide=read('docs/guide/admin-settings.md');
@@ -64,8 +64,8 @@ for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin
 assert(exists('public/js/admin-plan-create-v2.js'),'canonical plan creation browser controller must remain available');
 
 assert(customer360View.includes('/admin/customer-jellyfin-password?customerId='),'Customer 360 Access must expose the existing administrator Jellyfin password-support workflow');
-assert(securityCore.includes("const { layout, esc } = require('./admin-html')")&&securityCore.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
-assert(!securityCore.includes("res.render('admin/security-policy'"),'Administrator 2FA policy must not fall back to the retired EJS shell');
+assert(securityRoutes.includes("const { layout, esc } = require('./admin-html')")&&securityRoutes.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
+assert(!securityRoutes.includes("res.render('admin/security-policy'"),'Administrator 2FA policy must not fall back to the retired EJS shell');
 assert(!exists('views/admin/security-policy.ejs'),'retired standalone 2FA policy shell must remain absent');
 assert(adminHtml.includes("discountScriptFor(options={})")&&adminHtml.includes('/js/admin-discounts.js'),'Discounts page must load its dedicated browser controller');
 assert(discountUi.includes("type.value === 'fixed'")&&discountUi.includes('percent.disabled')&&discountUi.includes('fixed.required'),'Discount type selection must hide and disable the irrelevant amount controls');
