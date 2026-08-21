@@ -34,12 +34,14 @@ assert.deepStrictEqual(householdComponent.config,{networkLimit:1,leaseMinutes:18
 assert.strictEqual(components.accessLabel(householdPlan),'1 Jellyfin household network');
 assert.deepStrictEqual(policy.effectiveTechnicalPolicy(householdPlan,{streams:9}).streams,{plan:null,override:null,effective:null},'stream overrides must not reactivate concurrent limits on a household plan');
 
-const bundle={service_type:'bundle',jellyfin_access_model:'household_network',jellyfin_household_network_limit:2,jellyfin_household_lease_minutes:120,stremio_household_lease_minutes:300};
+const bundle={service_type:'bundle',jellyfin_access_model:'household_network',jellyfin_household_network_limit:2,jellyfin_household_lease_minutes:120,stremio_household_network_limit:3,stremio_household_lease_minutes:300};
 const bundleComponents=components.componentsForPlan(bundle);
 assert.strictEqual(bundleComponents.length,2);
 assert.deepStrictEqual(bundleComponents.find(c=>c.module==='jellyfin').config,{networkLimit:2,leaseMinutes:120});
-assert.deepStrictEqual(bundleComponents.find(c=>c.module==='stremio').config,{networkLimit:1,leaseMinutes:300},'Stremio must remain exactly one household and keep an independent lease duration');
-assert.strictEqual(components.accessLabel({service_type:'stremio'}),'1 Stremio household (IPv4 + IPv6)');
+const bundleStremio=bundleComponents.find(c=>c.module==='stremio').config;
+assert.strictEqual(bundleStremio.networkLimit,3,'Stremio household allowance must remain independently configurable on historical composite plans');
+assert.strictEqual(bundleStremio.leaseMinutes,300,'Stremio must keep an independent lease duration');
+assert.strictEqual(components.accessLabel({service_type:'stremio'}),'Unlimited streams · Unlimited devices · 1 household IP');
 
 assert.strictEqual(identity.canonicalNetwork('203.0.113.44:8096'),'ipv4:203.0.113.44');
 assert.strictEqual(identity.canonicalNetwork('::ffff:203.0.113.44'),'ipv4:203.0.113.44');
