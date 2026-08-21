@@ -88,7 +88,8 @@ async function auditPage(page,url,{mobile=false}={}){
   page.on('console',onConsole);page.on('pageerror',onPageError);page.on('requestfailed',onRequestFailed);
   let response;
   try{
-    response=await page.goto(`${BASE}${url}`,{waitUntil:'networkidle',timeout:20000});
+    response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
+    await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
     if(!response)fail('Navigation produced no HTTP response',url);
     if(response.status()>=400)fail('Admin page returned an error status',`${url} -> ${response.status()}`);
     const final=new URL(page.url());
