@@ -220,32 +220,22 @@ function mountPlatform(app) {
   app.use(createHealthRouter());
   app.use(createWebhookRouter());
   app.use(createStremioRuntimeRouter());
-  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
-  app.use(express.json({ limit: '1mb' }));
-  app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: IS_PRODUCTION ? '1h' : 0 }));
-  app.use(requestMaintenanceGuard);
-  app.use(sessionMiddleware());
-  app.use(guardSession);
-  app.use(staffLoginRateLimit);
-  app.use(customerAuthRateLimit);
-  app.use(publicMutationRateLimit);
-
   app.use(createFirstRunRouter());
-  app.get('/login', loginSetupGate, controller.loginPage);
-  app.post('/login', loginSetupGate, controller.loginSubmit);
-  app.get('/logout', controller.logout);
-  app.use(controller.createAuthRouter());
   app.use(createAdminSecurityRouter());
-
+  app.get('/login', loginSetupGate, controller.showLogin);
+  app.post('/login', loginSetupGate, staffLoginRateLimit, controller.login);
+  app.post('/logout', controller.logout);
+  app.use(guardSession);
+  app.use(requestMaintenanceGuard);
   app.get('/', async (req, res, next) => {
     try {
-      if (await firstRun.isSetupRequired()) return res.redirect('/setup');
-      return storefrontPage(req, res, next);
+      await runtimeSettings.ensureLoaded().catch(() => {});
+      if (req.session?.authRole === 'admin') return res.redirect('/admin');
+      return res.send(await storefrontPage(req));
     } catch (error) {
       return next(error);
     }
   });
-
   app.use(createBrandingRouter());
   app.use(createCustomerClaimRouter());
   app.use(createCustomerPasswordSyncRouter());
@@ -309,7 +299,7 @@ async function startupSummary() {
 function start() {
   const app = createApplication();
   const server = app.listen(PORT, () => {
-    console.log('Steam Fusion running');
+    console.log('CAPTAiNFiN running');
     console.log(`CAPTAiNFiN web application listening on http://127.0.0.1:${PORT}`);
     startupSummary().catch(() => {});
   });
