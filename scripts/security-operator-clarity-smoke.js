@@ -69,9 +69,11 @@ assert(navModel.hiddenPages['admin-2fa-policy']?.page?.[2]==='/admin/settings/ad
 const operationsGroup=navModel.groups.find(group=>group.key==='automation');
 assert(Boolean(operationsGroup),'Operations navigation group must exist.');
 assert(operationsGroup.pages.some(page=>page[1]==='Backups'&&page[2]==='/admin/backups'),'Backup controls must be discoverable as Operations → Backups.');
-assert(navModel.hiddenPages['fleet-operations']?.groupKey==='jellyfin'&&navModel.hiddenPages['fleet-operations']?.parentKey==='fleet-operations'&&navModel.hiddenPages['fleet-operations']?.page?.[2]==='/admin/servers/operations','Fleet drain/placement controls must remain owned by the Jellyfin server workflow.');
 const jellyfinGroup=navModel.groups.find(group=>group.key==='jellyfin');
 assert(Boolean(jellyfinGroup),'Jellyfin navigation group must exist.');
+assert(jellyfinGroup.pages.some(page=>page[0]==='fleet-operations'&&page[1]==='Fleet operations'&&page[2]==='/admin/servers/operations'),'Fleet drain/placement controls must be visibly owned by the Jellyfin server workflow.');
+assert(navModel.aliases.operations==='fleet-operations','Legacy Operations links must resolve to the Jellyfin Fleet operations destination.');
+assert(!navModel.hiddenPages['fleet-operations'],'Fleet operations must not regress to a hidden page that cannot become active in the sidebar.');
 assert(jellyfinGroup.pages.some(page=>page[1]==='Servers'&&page[2]==='/admin/servers'),'Managed Jellyfin servers must be discoverable under Jellyfin.');
 const stremioGroup=navModel.groups.find(group=>group.key==='stremio');
 assert(Boolean(stremioGroup),'Stremio navigation group must exist.');
