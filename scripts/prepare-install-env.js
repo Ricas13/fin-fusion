@@ -78,7 +78,7 @@ function main() {
   // Keep these blank here so it creates independent passwords for each role.
   for (const key of RUNTIME_URLS) content = setValue(content, key, '');
 
-  const generated = new Set();
+  const generated = new Set([ownerPassword]);
   for (const key of CORE_KEYS) {
     const value = randomHex(32);
     if (generated.has(value)) throw new Error('Random secret collision while preparing installation');
