@@ -11,7 +11,8 @@ async function planForEntitlement(entitlement) {
   const result = await query(
     `SELECT id,service_type,streams,jellyfin_access_model,
             jellyfin_household_network_limit,jellyfin_household_lease_minutes,
-            stremio_household_lease_minutes
+            stremio_household_network_limit,stremio_household_lease_minutes,
+            stremio_ip_replacement_policy,stremio_ip_replacement_cooldown_minutes
      FROM plans WHERE id=$1`,
     [entitlement.plan_id]
   );
@@ -70,7 +71,7 @@ function deniedMessage(decision) {
   const family = familyLabel(decision);
   const homeNetwork = family === 'network' ? 'registered household network' : `registered household ${family} network`;
   const currentNetwork = family === 'network' ? 'network' : `${family} network`;
-  return `This Stremio plan is already linked to a ${homeNetwork}. Your current ${currentNetwork} is different, so playback is blocked. Connect from the registered household network, wait for the lease to expire, or reset your household IP lease from your account.`;
+  return `This Stremio plan is already linked to a ${homeNetwork}. Your current ${currentNetwork} is different, so playback is blocked. Connect from the registered household network, wait for the lease to expire, or replace your household IP from your account when eligible.`;
 }
 
 function deniedStream(decision, options = {}) {
@@ -97,15 +98,42 @@ function applyDeniedResponse(res, decision) {
   return res.status(429).json({ error: deniedTitle(), message: deniedMessage(decision) });
 }
 
-async function release(entitlement, { actorUserId = null, reason = 'manual_reset' } = {}) {
-  await configForEntitlement(entitlement);
+async function replacementState(entitlement) {
+  const { component } = await configForEntitlement(entitlement);
+  const policy = component.config.replacementPolicy || 'auto_inactive';
+  const cooldownMinutes = Number(component.config.cooldownMinutes || 1440);
+  if (policy !== 'customer_cooldown') return { allowed: true, policy, cooldownMinutes, retryAfterSeconds: 0, nextAllowedAt: null };
+  const active = await leases.activeForSubject({ scope: 'stremio', subjectKey: subjectKey(entitlement) });
+  if (!active.length) return { allowed: true, policy, cooldownMinutes, retryAfterSeconds: 0, nextAllowedAt: null };
+  const newestClaimAt = active.reduce((latest, row) => {
+    const value = new Date(row.first_seen_at).getTime();
+    return Number.isFinite(value) ? Math.max(latest, value) : latest;
+  }, 0);
+  if (!newestClaimAt) return { allowed: true, policy, cooldownMinutes, retryAfterSeconds: 0, nextAllowedAt: null };
+  const nextAllowedAt = new Date(newestClaimAt + cooldownMinutes * 60_000);
+  const retryAfterSeconds = Math.max(0, Math.ceil((nextAllowedAt.getTime() - Date.now()) / 1000));
+  return { allowed: retryAfterSeconds === 0, policy, cooldownMinutes, retryAfterSeconds, nextAllowedAt };
+}
+
+function cooldownMessage(state) {
+  const minutes = Math.max(1, Math.ceil(Number(state?.retryAfterSeconds || 60) / 60));
+  if (minutes >= 60) {
+    const hours = Math.ceil(minutes / 60);
+    return `This household IP can be replaced in about ${hours} hour${hours === 1 ? '' : 's'}.`;
+  }
+  return `This household IP can be replaced in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+}
+
+async function release(entitlement, { actorUserId = null, reason = 'manual_reset', customerInitiated = false } = {}) {
+  const state = await replacementState(entitlement);
+  if (customerInitiated && !state.allowed) throw new Error(cooldownMessage(state));
   const released = await leases.releaseSubject({ scope: 'stremio', subjectKey: subjectKey(entitlement) });
   await query(
     `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
      VALUES($1,'stremio.household_lease.reset','stremio_entitlement',$2,$3::jsonb)`,
-    [actorUserId, entitlement.id, JSON.stringify({ subscriptionId: entitlement.subscription_id || null, released, reason: String(reason || 'manual_reset').slice(0, 80) })]
+    [actorUserId, entitlement.id, JSON.stringify({ subscriptionId: entitlement.subscription_id || null, released, reason: String(reason || 'manual_reset').slice(0, 80), customerInitiated: Boolean(customerInitiated), replacementPolicy: state.policy })]
   );
   return released;
 }
 
-module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, deniedStream, applyDeniedResponse, release };
+module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, deniedStream, applyDeniedResponse, replacementState, cooldownMessage, release };
