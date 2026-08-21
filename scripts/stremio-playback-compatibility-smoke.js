@@ -67,7 +67,7 @@ assert(managedSource.includes('`${item.id}:${source.Id}:${filename}`'),'separate
 assert(/managedRuntime\.playbackInfo\(mapping,\s*req\.params\.itemId,\s*req\.params\.mediaSourceId\)/.test(runtimeSource),'playback control must refresh the selected media-source negotiation');
 assert(!runtimeSource.includes('stream_limit'),'managed playback control must not enforce a Stremio concurrent-stream quota');
 assert(/managedPlayback\.startManager\(\{\s*intervalMs\s*:\s*5000\s*\}\)/.test(runtimeSource),'managed playback cleanup must run every five seconds');
-assert(/res\.redirect\(307,\s*target\.url\)/.test(runtimeSource),'managed playback must remain no-byte direct delivery while preserving request semantics across the Jellyfin redirect');
+assert(runtimeSource.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&/res\.redirect\(PLAYBACK_REDIRECT_STATUS,\s*target\.url\)/.test(runtimeSource),'managed playback must remain no-byte direct delivery through a plain temporary Jellyfin redirect');
 assert(/playMethod\s*:\s*target\.playMethod/.test(runtimeSource),'managed redirect audit must record the actual delivery method');
 assert(lifecycleSource.includes("playMethod:row.play_method||'DirectPlay'"),'managed stop reporting must reuse the negotiated play method');
 assert(lifecycleSource.includes('failedServerIds')&&lifecycleSource.includes("snapshot.failedServerIds.has(String(row.server_id))"),'managed cleanup must fail closed when Jellyfin session snapshots fail');

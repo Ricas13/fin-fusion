@@ -63,13 +63,14 @@ function familyLabel(decision) {
 }
 
 function deniedTitle() {
-  return 'Maximum household connections reached';
+  return 'Different home IP detected';
 }
 
 function deniedMessage(decision) {
-  const limit = Math.max(1, Number(decision?.networkLimit || 1));
-  const allowed = limit === 1 ? '1 household connection' : `${limit} household connections`;
-  return `This plan allows ${allowed} per IP family. Your ${familyLabel(decision)} household limit is already in use. Reset your household IP lease from your account or ask an admin to reset it, then try playback again.`;
+  const family = familyLabel(decision);
+  const homeNetwork = family === 'network' ? 'home network' : `home ${family} network`;
+  const currentNetwork = family === 'network' ? 'network' : `${family} network`;
+  return `This Stremio plan is already linked to the ${homeNetwork} used by this subscription. Your current ${currentNetwork} is different, so playback is blocked. Connect from the home network, wait for the lease to expire, or reset your household IP lease from your account.`;
 }
 
 function deniedStream(decision, options = {}) {

@@ -77,8 +77,8 @@ assert(stremioEntitlements.includes('persistEntitlementRecord')&&stremioEntitlem
 assert(managedEntitlements.includes('MaxActiveSessions:0'),'hidden managed Jellyfin users must remain unlimited at Jellyfin session-policy level');
 assert(!fs.existsSync(path.join(root,'src/stremio/source-admission.js')),'retired Stremio commercial admission module must remain absent');
 assert(!stremioRuntime.includes('stream_limit')&&!stremioRuntime.includes("require('./source-admission')"),'Stremio protocol runtime must not enforce a commercial concurrent-stream quota');
-assert(stremioRuntime.includes('return res.redirect(307, target.url)'),'managed Stremio playback must leave the portal through a Jellyfin redirect');
-assert(stremioRuntime.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'")&&stremioRuntime.includes('return res.redirect(307, target)'),'external Stremio playback must leave the portal through its household-aware Jellyfin redirect');
+assert(stremioRuntime.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&stremioRuntime.includes('return res.redirect(PLAYBACK_REDIRECT_STATUS, target.url)'),'managed Stremio playback must leave the portal through a plain temporary Jellyfin redirect');
+assert(stremioRuntime.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'")&&stremioRuntime.includes('return res.redirect(PLAYBACK_REDIRECT_STATUS, target)'),'external Stremio playback must leave the portal through its household-aware temporary Jellyfin redirect');
 assert(stremioRuntime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', playbackLimit, retiredPlayback)"),'legacy external proxy URLs must remain retired');
 assert((jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length>=2,'ordinary Jellyfin concurrency monitoring must exclude hidden Stremio identities');
 
