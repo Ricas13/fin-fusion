@@ -37,16 +37,22 @@ async function main(){
     await screenshot(page,'plans-list-stremio');
 
     const expected=['Overview','Delivery','Availability','Commerce'];
-    for(const [suffix,active] of [['edit','Overview'],['delivery','Delivery'],['inventory','Availability'],['commerce','Commerce']]){
+    for(const [suffix,active] of [['edit','Overview'],['inventory','Availability'],['commerce','Commerce']]){
       await gotoAdmin(page,`/admin/plans/${id}/${suffix}`);
       const workflow=page.locator('.planWorkflowTabs a');
       assert.deepStrictEqual(await labels(workflow),expected,`${suffix} has inconsistent plan workflow navigation`);
       assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),[active],`${suffix} highlights the wrong plan workflow step`);
       const allTabs=await labels(page.locator('.operatorTabs a'));
       assert(!allTabs.includes('All plans')&&!allTabs.includes('Bundles'),`${suffix} still mixes catalogue filters into a specific plan`);
-      if(suffix==='delivery')assert.equal(await page.locator('.planDeliveryTools').count(),0,'Stremio-only delivery exposed Jellyfin-only tools');
       await screenshot(page,`plan-${suffix}`);
     }
+    await gotoAdmin(page,`/admin/plans/${id}/delivery`);
+    assert.equal(new URL(page.url()).pathname,`/admin/plans/${plan.id}/edit`,'Legacy Stremio Delivery URL must resolve to the canonical editor');
+    assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),['Overview'],'Legacy Stremio Delivery redirect must land on the canonical editor');
+    assert.equal(await page.locator('.planDeliveryTools').count(),0,'Canonical Stremio editor exposed Jellyfin-only delivery tools');
+    const canonicalEditorText=await page.locator('body').innerText();
+    assert(/Stremio sources/.test(canonicalEditorText)&&!/Delivery service/.test(canonicalEditorText),'Canonical Stremio editor must own source selection without exposing the retired Delivery screen');
+    await screenshot(page,'plan-delivery-redirect');
 
     await gotoAdmin(page,'/admin/operations');
     assert.equal(new URL(page.url()).pathname,'/admin/servers/operations','Legacy Operations page did not redirect to Fleet operations');
@@ -132,20 +138,23 @@ async function main(){
     assert(/every 3 hours/i.test(externalText)&&/twice weekly/i.test(externalText),'External source row does not explain automatic index cadence');
     await screenshot(page,'stremio-source-libraries');
 
-    await gotoAdmin(page,`/admin/plans/${id}/delivery`);
-    let deliveryText=await page.locator('body').innerText();
-    assert(/Stremio source composition/.test(deliveryText)&&/Optional external sources/.test(deliveryText)&&/Browser External Jellyfin/.test(deliveryText),'Plan Delivery does not expose Stremio external source composition');
+    await gotoAdmin(page,`/admin/plans/${id}/edit`);
+    let planText=await page.locator('body').innerText();
+    assert(/Stremio sources/.test(planText)&&/Managed CAPTAiNFiN sources are automatic/.test(planText)&&/Browser External Jellyfin/.test(planText),'Canonical Stremio editor does not expose plan-specific source selection');
     const sourceForm=page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"]`);
+    assert.equal(await sourceForm.count(),1,'Canonical Stremio editor is missing its source-selection form');
     await sourceForm.locator(`input[name="sourceId"][value="${seeded.id}"]`).check();
     await sourceForm.locator(`input[name="priority_${seeded.id}"]`).fill('10');
-    await submitAction(page,sourceForm,'Save external sources',`/admin/plans/${plan.id}/stremio-sources`);
+    await submitAction(page,sourceForm,'Save sources',`/admin/plans/${plan.id}/stremio-sources`);
     const mapping=(await pool.query('SELECT enabled,priority FROM plan_stremio_sources WHERE plan_id=$1 AND source_id=$2',[plan.id,seeded.id])).rows[0];
     assert.equal(mapping?.enabled,true,'Plan source mapping was not persisted');
     assert.equal(Number(mapping?.priority),10,'Plan source priority was not persisted');
-    await page.waitForFunction(()=>/1\/1 selected external source ready/.test(document.body.innerText),null,{timeout:15000});
-    deliveryText=await page.locator('body').innerText();
-    assert(/1\/1 selected external source ready/.test(deliveryText),'Plan Delivery does not surface selected external-source readiness');
-    await screenshot(page,'plan-delivery-stremio-source');
+    await page.waitForFunction(()=>/1\/1 selected source ready/.test(document.body.innerText),null,{timeout:15000});
+    planText=await page.locator('body').innerText();
+    assert(/1\/1 selected source ready/.test(planText),'Canonical Stremio editor does not surface selected-source readiness');
+    assert(/External Stremio source selection saved/.test(planText),'Source-save feedback was lost while resolving the legacy Delivery redirect');
+    assert(await page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"] input[name="sourceId"][value="${seeded.id}"]`).isChecked(),'Saved source selection did not round-trip in the canonical editor');
+    await screenshot(page,'plan-editor-stremio-source');
 
     await gotoAdmin(page,'/admin/servers/stremio');
     runtimeForm=page.locator('form[action="/admin/servers/stremio/runtime"]');
