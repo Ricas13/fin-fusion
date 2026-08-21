@@ -29,7 +29,7 @@ const hiddenPages=Object.freeze({
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
   'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Policy drift','/admin/provisioning/drift'])}),
   'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'notification-settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
-  'fleet-operations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['fleet-operations','Fleet operations','/admin/servers/operations'])}),
+  'fleet-operations':Object.freeze({groupKey:'jellyfin',parentKey:'fleet-operations',page:Object.freeze(['fleet-operations','Fleet operations','/admin/servers/operations'])}),
   'configuration-transfer':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 const aliases=Object.freeze({
