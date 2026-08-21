@@ -23,12 +23,58 @@ async function applyNotifications(client, items, actorUserId) {
     }
     return count;
 }
-async function applyPlans(client, plans) {
+
+async function saveLegacyPlan(client, plan) {
+    return client.query(`INSERT INTO plans(code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,library_access_mode,library_names,placement_strategy,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::text[],$24,NOW(),NOW()) ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,audience=EXCLUDED.audience,billing_interval=EXCLUDED.billing_interval,duration_days=EXCLUDED.duration_days,price_minor=EXCLUDED.price_minor,currency=EXCLUDED.currency,streams=EXCLUDED.streams,allow_downloads=EXCLUDED.allow_downloads,allow_video_transcoding=EXCLUDED.allow_video_transcoding,allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,allow_live_tv=EXCLUDED.allow_live_tv,allow_live_tv_management=EXCLUDED.allow_live_tv_management,allow_4k=EXCLUDED.allow_4k,allow_remuxing=EXCLUDED.allow_remuxing,allow_remote_access=EXCLUDED.allow_remote_access,server_class=EXCLUDED.server_class,active=EXCLUDED.active,visible=EXCLUDED.visible,sort_order=EXCLUDED.sort_order,library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,placement_strategy=EXCLUDED.placement_strategy,updated_at=NOW() RETURNING id`, [plan.code,plan.name,plan.description,plan.audience,plan.billing_interval,plan.duration_days,plan.price_minor,plan.currency,plan.streams,plan.allow_downloads,plan.allow_video_transcoding,plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,plan.allow_4k,plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,plan.sort_order,plan.library_access_mode,plan.library_names,plan.placement_strategy]);
+}
+
+async function saveV2Plan(client, plan) {
+    return client.query(`
+        INSERT INTO plans(
+            code,name,description,service_type,audience,billing_interval,duration_days,price_minor,currency,
+            capacity_limit,is_addon,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,
+            allow_live_tv,allow_live_tv_management,allow_4k,allow_remuxing,allow_remote_access,server_class,
+            active,visible,sort_order,library_access_mode,library_names,placement_strategy,
+            jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,
+            stremio_household_lease_minutes,created_at,updated_at
+        ) VALUES(
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::text[],$27,$28,$29,$30,$31,NOW(),NOW()
+        )
+        ON CONFLICT(code) DO UPDATE SET
+            name=EXCLUDED.name,description=EXCLUDED.description,service_type=EXCLUDED.service_type,
+            audience=EXCLUDED.audience,billing_interval=EXCLUDED.billing_interval,duration_days=EXCLUDED.duration_days,
+            price_minor=EXCLUDED.price_minor,currency=EXCLUDED.currency,capacity_limit=EXCLUDED.capacity_limit,
+            is_addon=EXCLUDED.is_addon,streams=EXCLUDED.streams,allow_downloads=EXCLUDED.allow_downloads,
+            allow_video_transcoding=EXCLUDED.allow_video_transcoding,allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,
+            allow_live_tv=EXCLUDED.allow_live_tv,allow_live_tv_management=EXCLUDED.allow_live_tv_management,
+            allow_4k=EXCLUDED.allow_4k,allow_remuxing=EXCLUDED.allow_remuxing,allow_remote_access=EXCLUDED.allow_remote_access,
+            server_class=EXCLUDED.server_class,active=EXCLUDED.active,visible=EXCLUDED.visible,sort_order=EXCLUDED.sort_order,
+            library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,
+            placement_strategy=EXCLUDED.placement_strategy,jellyfin_access_model=EXCLUDED.jellyfin_access_model,
+            jellyfin_household_network_limit=EXCLUDED.jellyfin_household_network_limit,
+            jellyfin_household_lease_minutes=EXCLUDED.jellyfin_household_lease_minutes,
+            stremio_household_lease_minutes=EXCLUDED.stremio_household_lease_minutes,updated_at=NOW()
+        RETURNING id
+    `, [
+        plan.code,plan.name,plan.description,plan.service_type,plan.audience,plan.billing_interval,plan.duration_days,
+        plan.price_minor,plan.currency,plan.capacity_limit,plan.is_addon,plan.streams,plan.allow_downloads,
+        plan.allow_video_transcoding,plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,
+        plan.allow_4k,plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,
+        plan.sort_order,plan.library_access_mode,plan.library_names,plan.placement_strategy,plan.jellyfin_access_model,
+        plan.jellyfin_household_network_limit,plan.jellyfin_household_lease_minutes,plan.stremio_household_lease_minutes
+    ]);
+}
+
+async function applyPlans(client, plans, version = 1) {
     const serverRows = await client.query('SELECT id,slug FROM jellyfin_servers');
     const serverMap = new Map(serverRows.rows.map(row => [lower(row.slug), row]));
     let poolsApplied = 0, poolsSkipped = 0;
     for (const plan of plans || []) {
-        const saved = await client.query(`INSERT INTO plans(code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,allow_4k,allow_remuxing,allow_remote_access,server_class,active,visible,sort_order,library_access_mode,library_names,placement_strategy,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::text[],$24,NOW(),NOW()) ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,audience=EXCLUDED.audience,billing_interval=EXCLUDED.billing_interval,duration_days=EXCLUDED.duration_days,price_minor=EXCLUDED.price_minor,currency=EXCLUDED.currency,streams=EXCLUDED.streams,allow_downloads=EXCLUDED.allow_downloads,allow_video_transcoding=EXCLUDED.allow_video_transcoding,allow_audio_transcoding=EXCLUDED.allow_audio_transcoding,allow_live_tv=EXCLUDED.allow_live_tv,allow_live_tv_management=EXCLUDED.allow_live_tv_management,allow_4k=EXCLUDED.allow_4k,allow_remuxing=EXCLUDED.allow_remuxing,allow_remote_access=EXCLUDED.allow_remote_access,server_class=EXCLUDED.server_class,active=EXCLUDED.active,visible=EXCLUDED.visible,sort_order=EXCLUDED.sort_order,library_access_mode=EXCLUDED.library_access_mode,library_names=EXCLUDED.library_names,placement_strategy=EXCLUDED.placement_strategy,updated_at=NOW() RETURNING id`, [plan.code,plan.name,plan.description,plan.audience,plan.billing_interval,plan.duration_days,plan.price_minor,plan.currency,plan.streams,plan.allow_downloads,plan.allow_video_transcoding,plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,plan.allow_4k,plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,plan.sort_order,plan.library_access_mode,plan.library_names,plan.placement_strategy]);
+        // Legacy V1 and pre-modular V2 files intentionally do not own modern
+        // modular columns. This prevents an old backup from silently turning
+        // Stremio/bundle or household plans back into default Jellyfin plans.
+        const ownsModularContract = version === 2 && plan._modular_plan_contract !== false;
+        const saved = ownsModularContract ? await saveV2Plan(client, plan) : await saveLegacyPlan(client, plan);
         const planId = saved.rows[0].id;
         if (Object.prototype.hasOwnProperty.call(plan, 'request_movie_quota_limit')) await client.query(`UPDATE plans SET request_movie_quota_limit=$2,request_movie_quota_days=$3,request_tv_quota_limit=$4,request_tv_quota_days=$5,updated_at=NOW() WHERE id=$1`, [planId,plan.request_movie_quota_limit,plan.request_movie_quota_days,plan.request_tv_quota_limit,plan.request_tv_quota_days]);
         const pool = Array.isArray(plan.serverPool) ? plan.serverPool : [], missing = pool.some(entry => !serverMap.has(lower(entry.serverSlug)));
@@ -49,10 +95,10 @@ async function applyV2Extras(client, configuration) {
 async function applyImport(document,{actorUserId=null,digest=null,previewSummary={}}={}) {
     if (!document || !document.configuration) throw new Error('Normalized configuration document is required.');
     return transaction(async client => {
-        const settingsApplied=await applySettings(client,document.configuration.settings,actorUserId),notificationsApplied=await applyNotifications(client,document.configuration.notifications,actorUserId),plansResult=await applyPlans(client,document.configuration.plans),extras=document.version===2?await applyV2Extras(client,document.configuration):{tierMappingsApplied:0,tierPricesApplied:0,tierRulesApplied:0,directMappingsApplied:0,automationApplied:0,skippedReferences:0,mappingsPendingVerification:0};
+        const settingsApplied=await applySettings(client,document.configuration.settings,actorUserId),notificationsApplied=await applyNotifications(client,document.configuration.notifications,actorUserId),plansResult=await applyPlans(client,document.configuration.plans,document.version),extras=document.version===2?await applyV2Extras(client,document.configuration):{tierMappingsApplied:0,tierPricesApplied:0,tierRulesApplied:0,directMappingsApplied:0,automationApplied:0,skippedReferences:0,mappingsPendingVerification:0};
         const summary={...previewSummary,settingsApplied,notificationsApplied,...plansResult,...extras,atomic:true,version:document.version};
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.configuration.import.atomic','configuration',$2,$3::jsonb)`,[actorUserId||null,digest||'unknown',JSON.stringify(summary)]);
         return summary;
     });
 }
-module.exports={applyImport,applySettings,applyNotifications,applyPlans,applyV2Extras};
+module.exports={applyImport,applySettings,applyNotifications,applyPlans,applyV2Extras,saveLegacyPlan,saveV2Plan};

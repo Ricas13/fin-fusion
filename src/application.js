@@ -23,6 +23,7 @@ const { requestMaintenanceGuard } = require('./security/maintenance-lock');
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 const PORT = Number(process.env.PORT || 3030);
 const SESSION_SECRET = String(process.env.SESSION_SECRET || '');
+const DEFAULT_TRUST_PROXY = 'loopback, linklocal, uniquelocal';
 
 function fail(message) {
   throw new Error(`Startup configuration error: ${message}`);
@@ -41,6 +42,18 @@ function validateEnvironment() {
   if (String(process.env.ADMIN_PASSWORD || '') === 'admin123') {
     fail('The legacy admin123 password is not permitted.');
   }
+}
+
+function trustProxySetting(value = process.env.TRUST_PROXY) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return DEFAULT_TRUST_PROXY;
+  if (/^(false|0|none|off)$/i.test(raw)) return false;
+  // Hop counts and blanket trust are unsafe when an application can be reached
+  // through more than one path. Require explicit proxy networks instead.
+  if (/^(true|\d+)$/i.test(raw)) {
+    fail('TRUST_PROXY must list trusted proxy addresses/ranges (for example loopback, linklocal, uniquelocal), not true or a hop count.');
+  }
+  return raw;
 }
 
 function requestContext(req, res, next) {
@@ -69,7 +82,10 @@ function securityHeaders(req, res, next) {
       return res.status(403).send('Cross-site request blocked');
     }
     const origin = req.get('origin');
-    const host = req.get('x-forwarded-host') || req.get('host');
+    // Host is the actual HTTP Host presented by the trusted reverse proxy.
+    // Do not read X-Forwarded-Host directly because a direct client could
+    // otherwise make this origin check trust an unverified header.
+    const host = req.get('host');
     if (origin && host) {
       try {
         if (new URL(origin).host !== host) {
@@ -87,7 +103,6 @@ function sessionMiddleware() {
   const options = {
     secret: SESSION_SECRET,
     name: process.env.SESSION_COOKIE_NAME || 'steamfusion.sid',
-    proxy: true,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -251,7 +266,7 @@ function mountPlatform(app) {
 function createApplication() {
   validateEnvironment();
   const app = express();
-  app.set('trust proxy', 1);
+  app.set('trust proxy', trustProxySetting());
   app.disable('x-powered-by');
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, '..', 'views'));
@@ -309,4 +324,4 @@ function start() {
 
 if (require.main === module) start();
 
-module.exports = { createApplication, start, securityHeaders, validateEnvironment, startupSummary };
+module.exports = { createApplication, start, securityHeaders, validateEnvironment, startupSummary, trustProxySetting, DEFAULT_TRUST_PROXY };

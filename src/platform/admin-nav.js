@@ -2,7 +2,7 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'jellyfin',label:'Jellyfin',pages:[['jellyfin-overview','Overview','/admin/jellyfin'],['servers','Servers','/admin/servers'],['jellyfin-plans','Plans','/admin/plans?type=jellyfin'],['jellyfin-customers','Customers','/admin/users?service=jellyfin'],['activity','Playback','/admin/activity']]},
+  {key:'jellyfin',label:'Jellyfin',pages:[['jellyfin-overview','Overview','/admin/jellyfin'],['servers','Servers','/admin/servers'],['fleet-operations','Fleet operations','/admin/servers/operations'],['jellyfin-plans','Plans','/admin/plans?type=jellyfin'],['jellyfin-customers','Customers','/admin/users?service=jellyfin'],['activity','Playback','/admin/activity']]},
   {key:'stremio',label:'Stremio',pages:[['stremio-overview','Overview','/admin/stremio'],['stremio-sources','Sources','/admin/servers/stremio'],['stremio-plans','Plans','/admin/plans?type=stremio'],['stremio-customers','Customers','/admin/users?service=stremio'],['stremio-playback','Playback','/admin/stremio/playback']]},
   {key:'resellers',label:'Resellers',pages:[['reseller-overview','Overview','/admin/resellers'],['reseller-accounts','Resellers','/admin/resellers/resellers'],['reseller-plans','Plans','/admin/resellers/plans'],['reseller-users','Users','/admin/resellers/users'],['reseller-servers','Servers','/admin/resellers/servers'],['reseller-activity','Activity','/admin/resellers/activity']]},
   {key:'people',label:'Customers',pages:[['users-dashboard','Overview','/admin/users/dashboard'],['users','Customers','/admin/users'],['tickets','Tickets','/admin/tickets']]},
@@ -29,7 +29,6 @@ const hiddenPages=Object.freeze({
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Server migrations','/admin/provisioning/migrations'])}),
   'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Policy drift','/admin/provisioning/drift'])}),
   'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'notification-settings',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
-  'fleet-operations':Object.freeze({groupKey:'jellyfin',parentKey:'fleet-operations',page:Object.freeze(['fleet-operations','Fleet operations','/admin/servers/operations'])}),
   'configuration-transfer':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 const aliases=Object.freeze({
