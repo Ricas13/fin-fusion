@@ -47,7 +47,7 @@ assert(catalog.includes('sort_order,streams,allow_remuxing'),'Legacy plan input 
 assert(catalog.includes('streams:plan.streams'),'Legacy plan creation audit metadata must record the selected stream limit');
 assert(planCreateV2.includes("'concurrent_streams', 'household_network'")&&planCreateV2.includes('Only used by the concurrent-stream driver.'),'Jellyfin plan creation must expose stream-count and household-network enforcement without applying stream counts to household plans');
 assert(planCreateV2.includes('1 Stremio household per subscription')&&planCreateV2.includes('one IPv4 address and one IPv6 /64 prefix'),'Stremio plan creation must describe dual-stack household-network enforcement instead of concurrent-stream limits');
-assert(catalog.includes('Prepare included services immediately')&&catalog.includes('Jellyfin + Stremio')&&catalog.includes("p.service_type==='stremio'?'Stremio'"),'Admin customer creation must label plan delivery type and avoid Jellyfin-only onboarding copy');
+assert(catalog.includes('Prepare included services immediately')&&catalog.includes('Historical bundles and add-ons are not assignable here')&&catalog.includes("p.service_type==='stremio'?'Stremio'"),'Admin customer creation must label standalone plan delivery type and avoid assigning retired bundles/add-ons');
 assert(baseCss.includes('--sidebar-w:248px'),'Desktop admin shell should use the wider visual-hierarchy sidebar');
 assert(componentCss.includes('.fieldHelp'),'Admin controls must have a consistent helper-description style');
 assert(componentCss.includes('min-height:40px'),'Admin controls must use the larger readable control size');

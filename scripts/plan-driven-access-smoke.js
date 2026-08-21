@@ -56,7 +56,7 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 
 // Storefront remains plan-first and sold-out products stay visible.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
-assert(storefront.includes('Stremio add-ons & plans.')&&storefront.includes('Straightforward access'),'Storefront must retain explicit service sections');
+assert(storefront.includes('Stremio plans')&&storefront.includes('Paid server plans')&&storefront.includes('Standalone Stremio access.'),'Storefront must retain explicit standalone service sections');
 assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
 assert(plansList.includes('capacityMeter')&&plansList.includes('Manage inventory'),'Unified Plans must expose customer inventory state and its management entry point');
 

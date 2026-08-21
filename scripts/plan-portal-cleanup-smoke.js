@@ -1,0 +1,42 @@
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const root = path.join(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+
+const plansList = read('src/platform/admin-plans-list.js');
+const createPlan = read('src/platform/admin-plan-create-v2.js');
+const delivery = read('src/platform/admin-plan-delivery.js');
+const lifecycle = read('src/platform/admin-plan-lifecycle.js');
+const jobs = read('src/automation/jobs.js');
+const storefront = read('src/platform/storefront.js');
+const operatorExperience = read('public/js/operator-experience.js');
+const operatorBusiness = read('public/js/operator-business-indicators.js');
+const adminShell = read('src/platform/admin-html-core-base.js');
+const nav = read('src/platform/admin-nav.js');
+const productModules = read('src/platform/admin-product-modules.js');
+const stremioRuntime = read('src/stremio/runtime.js');
+const migration = read('db/migrations/025_plan_portal_cleanup.sql');
+
+for (const label of ['Free Server Plans', 'Paid Plans', 'Stremio Plans', 'Reseller Plans']) {
+  assert(plansList.includes(label), `Plans page must render ${label}`);
+}
+assert(plansList.includes('Historical Bundles / Add-ons'), 'historical bundle/add-on rows must be isolated from current plan families');
+assert(!operatorExperience.includes("['Bundles','/admin/plans?type=bundle']"), 'client-side bundle plan tabs must not be reintroduced');
+assert(createPlan.includes("const SERVICE_TYPES = ['jellyfin', 'stremio']"), 'new plan creation must only offer Jellyfin and Stremio');
+assert(createPlan.includes('Add-ons are retired') && createPlan.includes('Choose Jellyfin or Stremio'), 'retired add-on/bundle submissions must fail clearly');
+assert(delivery.includes('Bundle delivery is retired for new setup') && !delivery.includes("option('bundle'"), 'delivery editor must not offer bundle delivery');
+assert(lifecycle.includes('minimumPlaybackMinutes') && lifecycle.includes('playbackWindowDays') && lifecycle.includes('Minimum observation'), 'free-plan lifecycle editor must expose all usage-rule fields');
+assert(jobs.includes('customerInactivity.run()'), 'scheduled inactivity job must use the plan-aware worker');
+assert(storefront.includes("serviceType(p)==='stremio'&&!p.is_addon") && storefront.includes('Standalone Stremio access.'), 'storefront must hide add-ons and render standalone Stremio sections');
+assert(operatorBusiness.indexOf('markCurrentAreaRead(data).then(()=>apply(data))') > -1, 'business unread badges must mark the current area before painting counts');
+assert(!adminShell.includes('<summary class="navSectionLabel"><a class="navSectionHome"'), 'sidebar summary must not contain a nested link');
+assert(nav.includes("'Household leases','/admin/stremio/playback'"), 'Stremio playback workspace must be renamed to household leases');
+assert(productModules.includes('Current household IP leases') && productModules.includes('/stremio-household/reset') && productModules.includes('Reset lease'), 'Stremio household lease view must expose admin reset controls');
+assert(!productModules.includes('se.plan_id') && productModules.includes('LEFT JOIN subscriptions sub ON sub.id=se.subscription_id'), 'Stremio household lease plan labels must resolve through subscriptions');
+assert(stremioRuntime.includes('STREAM_RESULT_CACHE_TTL_MS') && stremioRuntime.includes('cachedStreams(entitlement.id, type, videoId, origin)'), 'Stremio stream discovery must cache allowed search results briefly');
+assert(migration.includes("service_type='bundle'") && migration.includes("widget_key IN ('mrr','grossRevenue','netRevenue','payingCustomersArpu')"), 'cleanup migration must hide retired catalogue rows and repair Commerce KPI layout');
+
+console.log('plan portal cleanup smoke: ok');

@@ -1,5 +1,8 @@
 'use strict';
 
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('admin commerce dashboard smoke')) process.exit(0);
+
 const assert = require('assert');
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');

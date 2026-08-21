@@ -88,37 +88,8 @@
       }).catch(()=>{});
   }
 
-  // The common customer search fields stay visible; less frequently used fields
-  // remain inside the same GET form under an explicit disclosure.
-  if(path==='/admin/users'){
-    const form=document.querySelector('form.filterForm');
-    const grid=form?.querySelector('.formGrid');
-    if(form&&grid&&grid.children.length>6){
-      const groups=[...grid.children];
-      const basicLabels=new Set(['Search','Server','Plan','Subscription status','Account status','Last active to']);
-      const extended=groups.filter(group=>!basicLabels.has((group.querySelector('label')?.textContent||'').trim()));
-      if(extended.length){
-        const details=document.createElement('details');details.className='operatorDisclosure';
-        const summary=document.createElement('summary');summary.textContent='Extended filters';
-        const body=document.createElement('div');body.className='operatorDisclosureBody formGrid';
-        extended.forEach(el=>body.appendChild(el));details.append(summary,body);
-        grid.insertAdjacentElement('afterend',details);
-      }
-    }
-  }
-
-  // Catalogue filters belong only to direct customer plan browsing / creation.
-  const planCataloguePage=path==='/admin/plans' || path==='/admin/plans/new';
-  if(planCataloguePage){
-    const type=new URLSearchParams(location.search).get('type')||'';
-    const active=type?`/admin/plans?type=${encodeURIComponent(type)}`:'/admin/plans';
-    insertAfterHeader(tabs([
-      ['All plans','/admin/plans'],
-      ['Jellyfin','/admin/plans?type=jellyfin'],
-      ['Stremio','/admin/plans?type=stremio'],
-      ['Bundles','/admin/plans?type=bundle']
-    ],active));
-  }
+  // Customer and plan pages render their own compact filters server-side.
+  // Do not add client-side product tabs or move fields after page load.
 
   // Payments, Notifications, Provisioning and Backups/Transfer render their
   // workflow navigation server-side. Do not add a second client-side tab row.

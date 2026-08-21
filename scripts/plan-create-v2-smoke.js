@@ -3,7 +3,7 @@
 const {query,getPool}=require('../src/db');
 const planCreate=require('../src/platform/admin-plan-create-v2');
 
-const CODES=['smoke-v2-stremio','smoke-v2-bundle','smoke-v2-jellyfin'];
+const CODES=['smoke-v2-stremio','smoke-v2-jellyfin'];
 function assert(value,message){if(!value)throw new Error(message);}
 async function cleanup(){await query('DELETE FROM plans WHERE code=ANY($1::text[])',[CODES]);}
 
@@ -17,7 +17,7 @@ async function main(){
   await cleanup();
   try{
     // Exact contract represented by the production Stremio creation form.
-    const stremio=planCreate.parse(common('smoke-v2-stremio','Stremio Addon','stremio'));
+    const stremio=planCreate.parse(common('smoke-v2-stremio','Stremio Plan','stremio'));
     assert(stremio.serviceType==='stremio','Canonical parser changed Stremio delivery type');
     assert(stremio.inactivityPolicy.enabled===false,'Stremio unexpectedly received an active Jellyfin lifecycle policy');
     const createdStremio=await planCreate.create(stremio,null);
@@ -27,9 +27,9 @@ async function main(){
     assert(Number(storedStremio.streams)===1,'Canonical V2 create did not store stream limit');
     assert(storedStremio.inactivity_policy?.enabled===false,'Stored Stremio lifecycle policy is not inert');
 
-    const bundle=planCreate.parse({...common('smoke-v2-bundle','Bundle','bundle'),serverClass:'premium',allowAudioTranscoding:'on',allowRemoteAccess:'on'});
-    assert(bundle.serviceType==='bundle','Bundle parsing failed');
-    await planCreate.create(bundle,null);
+    let badBundle=null;
+    try{planCreate.parse({...common('unused-bundle','Bundle','bundle'),serverClass:'premium',allowAudioTranscoding:'on',allowRemoteAccess:'on'});}catch(error){badBundle=error;}
+    assert(/Choose Jellyfin or Stremio/.test(String(badBundle?.message||'')),'Bundle creation must be rejected by the canonical plan form');
 
     const jellyfin=planCreate.parse({...common('smoke-v2-jellyfin','Jellyfin','jellyfin'),serverClass:'premium',allowAudioTranscoding:'on',allowRemoteAccess:'on'});
     assert(jellyfin.serviceType==='jellyfin','Jellyfin parsing failed');

@@ -23,7 +23,7 @@
   <div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration">
     <% navGroups.forEach(function(group){ const isActive=currentGroup&&currentGroup.key===group.key; %>
       <details class="navSection <%= isActive?'active':'' %>" data-nav-section="<%= group.key %>" <%= isActive?'open':'' %>>
-        <summary class="navSectionLabel"><a class="navSectionHome" href="<%= group.pages[0][2] %>"><span class="navIcon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><%- iconPaths[group.key]||iconPaths.dashboard %></svg></span><span><%= group.label %></span></a><span class="navChevron" aria-hidden="true">⌄</span></summary>
+        <summary class="navSectionLabel"><span class="navSectionHome"><span class="navIcon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><%- iconPaths[group.key]||iconPaths.dashboard %></svg></span><span><%= group.label %></span></span><span class="navChevron" aria-hidden="true">⌄</span></summary>
         <div class="navSectionPages"><% group.pages.forEach(function(child){ %><a class="adminTab <%= currentSidebarKey===child[0]?'active':'' %>" href="<%= child[2] %>" title="Open <%= child[1] %>"><%= child[1] %></a><% }); %></div>
       </details>
     <% }); %>

@@ -66,7 +66,7 @@ async function filterOptions(){
 function optionList(items,current){return items.map(x=>`<option value="${esc(x.id)}" ${String(x.id)===String(current)?'selected':''}>${esc(x.name)}</option>`).join('')}
 function clearHref(filters){return filters.service?`/admin/users?service=${encodeURIComponent(filters.service)}`:'/admin/users'}
 function filterForm(filters,options){
-    return `<form class="formPanel filterForm" method="get" action="/admin/users"><div class="formGrid">
+    return `<form class="formPanel filterForm compactFilterForm" method="get" action="/admin/users"><div class="formGrid">
         <div class="formGroup"><label>Product</label><select class="input" name="service"><option value="">All products</option><option value="jellyfin" ${filters.service==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${filters.service==='stremio'?'selected':''}>Stremio</option></select></div>
         <div class="formGroup"><label>Search</label><input class="input" name="q" value="${esc(filters.q||'')}" placeholder="Name, email, username"></div>
         <div class="formGroup"><label>Server</label><select class="input" name="server"><option value="">Any</option>${optionList(options.servers,filters.serverId)}</select></div>

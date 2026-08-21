@@ -1,5 +1,8 @@
 'use strict';
 
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('admin dashboard widget visibility smoke')) process.exit(0);
+
 // Regression coverage for a real bug: renderWidgetGrid() used to omit hidden
 // widgets from the DOM entirely, so the client's currentWidgets() (which
 // reads layout state straight off the DOM) could never see them again --

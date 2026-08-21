@@ -1,5 +1,8 @@
 'use strict';
 
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('admin dashboard layout API smoke')) process.exit(0);
+
 // Exercises the real admin-dashboard-layout JSON API end to end over HTTP
 // (auth gating, dashboard-key validation, CSRF, response schema, no leaked
 // secret fields) using a minimal self-contained Express harness: real

@@ -11,7 +11,7 @@ const planPolicy = require('../entitlements/plan-lifecycle-policy');
 const { esc, layout } = require('./admin-html');
 
 const BILLING = { trial: { label: 'Trial', days: 1 }, month: { label: 'Monthly', days: 30 }, '6_months': { label: '6 months', days: 183 }, year: { label: 'Yearly', days: 365 }, custom: { label: 'Custom duration', days: null } };
-const SERVICE_TYPES = ['jellyfin', 'stremio', 'bundle'];
+const SERVICE_TYPES = ['jellyfin', 'stremio'];
 const JELLYFIN_ACCESS_MODELS = ['concurrent_streams', 'household_network'];
 const CURRENCIES = reportingCurrency.CURRENCIES;
 const planCreateWriteLimit = routeRateLimit.middleware({ scope: 'admin-plan-create', max: 20, windowSeconds: 60, reason: 'admin_plan_create' });
@@ -32,7 +32,9 @@ function parse(body = {}, forcedCurrency = null) {
   const code = text(body.code, 50).toLowerCase(), name = text(body.name, 80), description = text(body.description, 500);
   if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code)) throw new Error('Code must be 2–50 characters using lowercase letters, numbers and hyphens.');
   if (!name) throw new Error('Enter a plan name.');
-  const serviceType = SERVICE_TYPES.includes(body.serviceType) ? body.serviceType : 'jellyfin';
+  const rawServiceType = String(body.serviceType || 'jellyfin');
+  if (!SERVICE_TYPES.includes(rawServiceType)) throw new Error('Choose Jellyfin or Stremio as the plan type.');
+  const serviceType = rawServiceType;
   const audience = 'direct';
   const billing = Object.prototype.hasOwnProperty.call(BILLING, body.billingInterval) ? body.billingInterval : 'month';
   const priceMinor = money(body.price);
@@ -40,10 +42,10 @@ function parse(body = {}, forcedCurrency = null) {
   if (!CURRENCIES.includes(currency)) throw new Error('Currency must be GBP, USD or EUR.');
   const duration = BILLING[billing].days ?? int(body.durationDays, 1, 3650, 'Duration');
   const capacityLimit = int(body.capacityLimit, 0, 1000000, 'Available slots');
-  const isAddon = b(body.isAddon);
-  if (isAddon && serviceType !== 'stremio') throw new Error('Independent add-ons must be Stremio-only. Use a bundle for Jellyfin + Stremio.');
-  const jellyfin = ['jellyfin', 'bundle'].includes(serviceType);
-  const stremio = ['stremio', 'bundle'].includes(serviceType);
+  if (b(body.isAddon)) throw new Error('Add-ons are retired. Create a standalone Stremio plan instead.');
+  const isAddon = false;
+  const jellyfin = serviceType === 'jellyfin';
+  const stremio = serviceType === 'stremio';
   const jellyfinAccessModel = jellyfin && JELLYFIN_ACCESS_MODELS.includes(body.jellyfinAccessModel) ? body.jellyfinAccessModel : 'concurrent_streams';
   const streams = serviceType === 'stremio' ? 1 : (jellyfinAccessModel === 'household_network' ? null : int(body.streams, 1, 50, 'Jellyfin concurrent streams'));
   const jellyfinHouseholdNetworkLimit = jellyfinAccessModel === 'household_network' ? int(body.jellyfinHouseholdNetworkLimit ?? '1', 1, 10, 'Jellyfin household networks') : 1;
@@ -118,12 +120,12 @@ function values(req, input = {}, currency = 'GBP') {
 
 function form(req, input = {}, error = '', currency = 'GBP') {
   const v = values(req, input, currency);
-  const jellyfin = ['jellyfin', 'bundle'].includes(v.serviceType);
-  const stremio = ['stremio', 'bundle'].includes(v.serviceType);
+  const jellyfin = v.serviceType === 'jellyfin';
+  const stremio = v.serviceType === 'stremio';
   const householdJellyfin = jellyfin && v.jellyfinAccessModel === 'household_network';
   const freeNonTrial = Number(v.price || 0) === 0 && v.billingInterval !== 'trial' && jellyfin;
-  return `${notice(req)}${error ? `<div class="notice error">${esc(error)}</div>` : ''}<section class="section"><div class="sectionHead"><div><h2>New customer plan</h2><div class="muted">One familiar flow for every direct product: product → pricing → availability → delivery → playback → policy → libraries.</div></div></div><form class="formPanel" method="post" action="/admin/plans" data-plan-create-v2><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="__submitted" value="1">
-  <h3>Product</h3><div class="formGrid"><div class="formGroup"><label>Plan type</label><select class="input" name="serviceType" data-plan-service>${[['jellyfin','Jellyfin access'],['stremio','Stremio only'],['bundle','Jellyfin + Stremio bundle']].map(([x,l])=>`<option value="${x}" ${selected(x,v.serviceType)}>${l}</option>`).join('')}</select></div><div class="formGroup"><label>Customer audience</label><div class="securityNote standalone"><strong>Direct customers</strong><div class="subText">Plans created here are sold directly by CAPTAiNFiN to customer accounts.</div></div></div><div class="formGroup"><label>Optional add-on</label><label class="toggleRow"><input type="checkbox" name="isAddon" ${checked(b(v.isAddon))}><span>Offer as an independent add-on <small class="muted">Stremio-only; use Bundle when Jellyfin is included.</small></span></label></div></div>
+  return `${notice(req)}${error ? `<div class="notice error">${esc(error)}</div>` : ''}<section class="section"><div class="sectionHead"><div><h2>New customer plan</h2><div class="muted">Create a standalone server plan or standalone Stremio plan. Bundles and add-ons are retired from new setup.</div></div></div><form class="formPanel" method="post" action="/admin/plans" data-plan-create-v2><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="__submitted" value="1">
+  <h3>Product</h3><div class="formGrid"><div class="formGroup"><label>Plan type</label><select class="input" name="serviceType" data-plan-service>${[['jellyfin','Jellyfin server plan'],['stremio','Stremio plan']].map(([x,l])=>`<option value="${x}" ${selected(x,v.serviceType)}>${l}</option>`).join('')}</select></div><div class="formGroup"><label>Customer audience</label><div class="securityNote standalone"><strong>Direct customers</strong><div class="subText">Plans created here are sold directly by CAPTAiNFiN to customer accounts.</div></div></div><div class="formGroup"><label>Plan grouping</label><div class="securityNote standalone"><strong>Standalone product</strong><div class="subText">Free Server Plans, Paid Plans and Stremio Plans stay in separate storefront sections.</div></div></div></div>
   <div class="formGrid"><div class="formGroup"><label>Code</label><input class="input" name="code" required pattern="[a-z0-9][a-z0-9-]{1,49}" maxlength="50" placeholder="monthly-access" value="${esc(v.code||'')}"></div><div class="formGroup"><label>Name</label><input class="input" name="name" required maxlength="80" placeholder="Monthly Access" value="${esc(v.name||'')}"></div></div><div class="formGroup"><label>Description</label><textarea class="input" name="description" maxlength="500">${esc(v.description||'')}</textarea></div>
   <h3>Commercial terms & availability</h3><div class="formGrid"><div class="formGroup"><label>Price</label><input class="input" type="number" step="0.01" min="0" max="100000" name="price" required value="${esc(v.price)}" data-plan-price><div class="inlineHelp">All plans use the portal currency configured under Settings → Portal currency.</div></div><div class="formGroup"><label>Currency</label><div class="securityNote standalone"><strong>${esc(v.currency)}</strong><div class="subText">Portal-wide setting · not configurable per plan.</div></div></div><div class="formGroup"><label>Available slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" required value="${esc(v.capacityLimit)}"><div class="inlineHelp">New plans start at 0 so you can finish setup before opening sales. Increase this from Availability when you are ready to accept customers.</div></div></div><div class="operatorCallout statusInfo"><strong>Storefront position:</strong> new plans are added after the existing cards automatically. Reorder them later from Plans → Storefront order; there is no second numeric order control here.</div>
   <div class="formGrid"><div class="formGroup"><label>Billing / access frequency</label><select class="input" name="billingInterval" data-plan-frequency>${Object.entries(BILLING).map(([x,d])=>`<option value="${x}" data-days="${d.days??''}" ${selected(x,v.billingInterval)}>${esc(d.label)}</option>`).join('')}</select></div><div class="formGroup"><label>Duration (days)</label><input class="input" type="number" name="durationDays" min="1" max="3650" required value="${esc(v.durationDays)}" data-plan-duration></div><div class="formGroup" data-jellyfin-only><label>Server class</label><select class="input" name="serverClass">${['premium','free','custom'].map(x=>`<option value="${x}" ${selected(x,v.serverClass)}>${x}</option>`).join('')}</select><div class="inlineHelp">Premium plans target Premium servers, Free plans target Free servers, and Custom uses explicit placement rules.</div></div></div>
@@ -152,7 +154,7 @@ function createAdminPlanCreateV2Router() {
       currency = (await reportingCurrency.get()).currency;
       const input = parse(req.body, currency);
       const created = await create(input, req.session.authUserId);
-      const nextPath = ['jellyfin', 'bundle'].includes(input.serviceType) ? `/admin/plans/${created.id}/edit` : `/admin/plans/${created.id}/delivery`;
+      const nextPath = input.serviceType === 'jellyfin' ? `/admin/plans/${created.id}/edit` : `/admin/plans/${created.id}/delivery`;
       return res.redirect(`${nextPath}?message=${encodeURIComponent(`Plan created in ${currency}. Availability remains closed until you open plan slots.`)}`);
     } catch (error) {
       if (error?.code === '23505') error = new Error('That plan code already exists.');

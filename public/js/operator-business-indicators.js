@@ -72,6 +72,6 @@
 
   setTimeout(()=>fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin'})
     .then(r=>r.ok?r.json():null)
-    .then(data=>{if(!data)return;apply(data);return markCurrentAreaRead(data);})
+    .then(data=>{if(!data)return;return markCurrentAreaRead(data).then(()=>apply(data));})
     .catch(()=>{}),80);
 })();

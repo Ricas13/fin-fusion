@@ -12,7 +12,7 @@ const billingControl=require('../payments/billing-control');
 const customerPlanChange=require('../payments/customer-plan-change');
 const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
-const jellyfinLifecycle=require('./jellyfin-lifecycle');
+const customerInactivity=require('./customer-inactivity');
 const pendingRegistrations=require('../security/pending-registration');
 const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
@@ -25,7 +25,7 @@ const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const expired=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements();return{...active,expired,processed:Number(expired||0)+Number(active.total||0)}},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
- async customer_inactivity(){return jellyfinLifecycle.run()},
+ async customer_inactivity(){return customerInactivity.run()},
  async bulk_jobs(){return bulkWorker.processBatch()},
  async stale_reclaim(){const reclaimed=await bulkWorker.reclaimStaleRunningItems();return{processed:Number(reclaimed||0),reclaimed:Number(reclaimed||0)}},
  async email_outbox(){const status=await emailSettings.status();if(!status.configured)return{processed:0,skipped:'email_not_configured'};return emailOutbox.deliverDue({limit:50})},
