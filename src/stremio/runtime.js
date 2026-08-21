@@ -20,6 +20,7 @@ function stremioRateIdentity(req) {
 const manifestLimit = routeRateLimit.middleware({ scope: 'stremio-manifest', max: 60, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
 const streamLimit = routeRateLimit.middleware({ scope: 'stremio-stream', max: 240, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
 const playbackLimit = routeRateLimit.middleware({ scope: 'stremio-playback-control', max: 1200, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
+const PLAYBACK_REDIRECT_STATUS = 302;
 const STREAM_RESULT_CACHE_TTL_MS = 15000;
 const STREAM_RESULT_CACHE_MAX = 250;
 const streamResultCache = new Map();
@@ -208,7 +209,8 @@ function createStremioRuntimeRouter() {
 
   // Managed playback remains a control-plane hop. PlaybackInfo is refreshed,
   // the household network lease is claimed/refreshed, a short-lived Jellyfin
-  // credential is prepared for lifecycle cleanup, then CAPTAiNFiN exits via 307.
+  // credential is prepared for lifecycle cleanup, then CAPTAiNFiN exits through
+  // a plain temporary redirect.
   router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId', playbackLimit, async (req, res) => {
     if (!enabled()) return res.status(404).end();
     const playbackKey = String(req.query.playbackKey || '');
@@ -237,7 +239,7 @@ function createStremioRuntimeRouter() {
          VALUES(NULL,'stremio.managed_playback.redirected','stremio_entitlement',$1,$2::jsonb)`,
         [entitlement.id, JSON.stringify({ serverId: mapping.server_id, jellyfinSessionId: started.jellyfinSessionId || null, playMethod: target.playMethod, householdDecision: household.decision })]
       ).catch(() => {});
-      return res.redirect(307, target.url);
+      return res.redirect(PLAYBACK_REDIRECT_STATUS, target.url);
     } catch (error) {
       console.error('Managed Stremio playback control failed:', safeLogText(error?.message || error, 300));
       return res.status(502).end();
@@ -246,7 +248,7 @@ function createStremioRuntimeRouter() {
 
   // External sources also take one control-plane hop so a real playback start,
   // rather than a catalogue lookup, owns the household lease. The response is
-  // still a 307 directly to Jellyfin; CAPTAiNFiN never receives media bytes.
+  // still a temporary redirect directly to Jellyfin; CAPTAiNFiN never receives media bytes.
   router.get('/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId', playbackLimit, async (req, res) => {
     if (!enabled()) return res.status(404).end();
     try {
@@ -261,7 +263,7 @@ function createStremioRuntimeRouter() {
          VALUES(NULL,'stremio.external_playback.redirected','stremio_entitlement',$1,$2::jsonb)`,
         [entitlement.id, JSON.stringify({ sourceId: req.params.sourceId, householdDecision: household.decision })]
       ).catch(() => {});
-      return res.redirect(307, target);
+      return res.redirect(PLAYBACK_REDIRECT_STATUS, target);
     } catch (error) {
       console.error('External Stremio playback control failed:', safeLogText(error?.message || error, 300));
       return res.status(502).end();
@@ -286,6 +288,7 @@ module.exports = {
   settledStreams,
   stremioRateIdentity,
   claimHouseholdOrReject,
+  PLAYBACK_REDIRECT_STATUS,
   STREAM_RESULT_CACHE_TTL_MS,
   STREAM_RESULT_CACHE_MAX,
   streamCacheKey,

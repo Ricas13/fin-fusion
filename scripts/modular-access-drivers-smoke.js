@@ -74,7 +74,7 @@ assert(!leases.includes('remote_endpoint'),'generic lease persistence must not s
 
 assert(stremio.includes('claimHouseholdOrReject'),'Stremio playback starts must pass household admission');
 assert(stremio.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'"),'external Stremio must use a playback-start control hop');
-assert(stremio.includes('res.redirect(307, target)')&&stremio.includes('res.redirect(307, target.url)'),'both Stremio source classes must exit through 307 redirects');
+assert(stremio.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&stremio.includes('res.redirect(PLAYBACK_REDIRECT_STATUS, target)')&&stremio.includes('res.redirect(PLAYBACK_REDIRECT_STATUS, target.url)'),'both Stremio source classes must exit through plain temporary redirects');
 assert(!stremio.includes('pipe(res)')&&!external.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
 assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external control hop must resolve to direct Jellyfin delivery');
 
