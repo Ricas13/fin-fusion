@@ -21,6 +21,10 @@ const manifestLimit = routeRateLimit.middleware({ scope: 'stremio-manifest', max
 const streamLimit = routeRateLimit.middleware({ scope: 'stremio-stream', max: 240, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
 const playbackLimit = routeRateLimit.middleware({ scope: 'stremio-playback-control', max: 1200, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
 
+function safeLogText(value, max = 500) {
+  return String(value ?? '').replace(/[\r\n\u2028\u2029]/g, ' ').slice(0, max);
+}
+
 function enabled() {
   return runtimeSettings.enabled() && modules.isEnabled('stremio');
 }
@@ -40,7 +44,7 @@ async function loadRuntimeSetting(_req, res, next) {
     await runtimeSettings.ensureLoaded();
     return next();
   } catch (error) {
-    console.error('Stremio runtime setting unavailable:', error.message);
+    console.error('Stremio runtime setting unavailable:', safeLogText(error?.message || error, 300));
     return res.status(503).json({ error: 'Temporarily unavailable' });
   }
 }
@@ -92,7 +96,7 @@ async function managedMapping(entitlementId, mappingId) {
 
 function settledStreams(result, label) {
   if (result.status === 'fulfilled') return Array.isArray(result.value) ? result.value : [];
-  console.error(`Stremio ${label} source resolution failed:`, String(result.reason?.message || result.reason).slice(0, 500));
+  console.error(`Stremio ${label} source resolution failed:`, safeLogText(result.reason?.message || result.reason));
   return [];
 }
 
@@ -143,10 +147,10 @@ function createStremioRuntimeRouter() {
       ]);
       const managed = settledStreams(managedResult, 'managed');
       const external = settledStreams(externalResult, 'external');
-      await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', error.message));
+      await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
       return res.json({ streams: [...managed, ...external] });
     } catch (error) {
-      console.error('Stremio stream request failed before source resolution:', String(error?.message || error).slice(0, 500));
+      console.error('Stremio stream request failed before source resolution:', safeLogText(error?.message || error));
       return res.json({ streams: [] });
     }
   });
@@ -184,7 +188,7 @@ function createStremioRuntimeRouter() {
       ).catch(() => {});
       return res.redirect(307, target.url);
     } catch (error) {
-      console.error('Managed Stremio playback control failed:', String(error?.message || error).slice(0, 300));
+      console.error('Managed Stremio playback control failed:', safeLogText(error?.message || error, 300));
       return res.status(502).end();
     }
   });
@@ -208,7 +212,7 @@ function createStremioRuntimeRouter() {
       ).catch(() => {});
       return res.redirect(307, target);
     } catch (error) {
-      console.error('External Stremio playback control failed:', String(error?.message || error).slice(0, 300));
+      console.error('External Stremio playback control failed:', safeLogText(error?.message || error, 300));
       return res.status(502).end();
     }
   });
