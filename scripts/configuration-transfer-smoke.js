@@ -76,18 +76,23 @@ async function main(){
   assert.strictEqual(Number(preview.summary.affiliateProgram||0),1,'preview must recognize affiliate settings');
   assert.strictEqual(Number(preview.summary.driftPolicy||0),1,'preview must recognize drift policy settings');
 
-  // Old V2 documents did not carry modular fields. They must remain accepted
-  // with safe legacy defaults rather than becoming un-importable after this fix.
+  // V2 existed before modular fields were exported. Such a backup must still
+  // import, but it must not guess and overwrite a destination plan's modern
+  // service/access contract.
   const legacyV2=JSON.parse(JSON.stringify(exported));
-  const legacyPlan=legacyV2.configuration.plans.find(plan=>plan.code==='audit-transfer-jellyfin-streams');
+  const protectedPlan=regressionPlans.find(plan=>plan.code==='audit-transfer-jellyfin-household');
+  const legacyPlan=legacyV2.configuration.plans.find(plan=>plan.code===protectedPlan.code);
   for(const key of ['service_type','capacity_limit','is_addon','jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes'])delete legacyPlan[key];
   const parsedLegacy=transfer.parseDocument(legacyV2);
   const parsedLegacyPlan=parsedLegacy.configuration.plans.find(plan=>plan.code===legacyPlan.code);
-  assert.strictEqual(parsedLegacyPlan.service_type,'jellyfin','old V2 plan should default safely to Jellyfin');
-  assert.strictEqual(parsedLegacyPlan.jellyfin_access_model,'concurrent_streams','old V2 plan should default safely to concurrent streams');
+  assert.strictEqual(parsedLegacyPlan._modular_plan_contract,false,'old V2 plan must be marked as a legacy contract');
+  assert.strictEqual(parsedLegacyPlan.streams,null,'old V2 household stream sentinel must remain NULL');
+  await transfer.applyImport(legacyV2,null);
+  const afterLegacy=(await query(`SELECT ${PLAN_COLUMNS} FROM plans WHERE code=$1`,[protectedPlan.code])).rows[0];
+  assert.deepStrictEqual(expectedShape(afterLegacy),expectedShape(protectedPlan),'old V2 import overwrote modern household plan semantics');
 
-  // Damage local values so applyImport proves settings and plan semantics are
-  // actually restored rather than merely serialized in the export.
+  // Damage local values so a current V2 apply proves settings and plan
+  // semantics are restored rather than merely serialized in the export.
   await query(`UPDATE platform_settings SET setting_value=$2::jsonb WHERE setting_key=$1`,['affiliate_program',JSON.stringify({enabled:false,rewardPercent:1,qualificationDelayDays:0,refundWindowDays:0})]);
   await query(`UPDATE platform_settings SET setting_value='{}'::jsonb WHERE setting_key='jellyfin_drift_policy'`);
   await query(`
