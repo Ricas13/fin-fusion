@@ -37,8 +37,9 @@ for (const token of [
 
 for (const token of [
   'git diff --quiet',
-  "branch == 'main'",
+  `[[ "$branch" == 'main' ]]`,
   'git fetch origin main',
+  'git rev-list --count origin/main..HEAD',
   'git merge --ff-only origin/main',
   'scripts/deploy-production.sh'
 ]) assert(updateScript.includes(token), `update.sh must contain ${token}`);
