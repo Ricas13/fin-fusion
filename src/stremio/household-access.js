@@ -63,14 +63,14 @@ function familyLabel(decision) {
 }
 
 function deniedTitle() {
-  return 'Different home IP detected';
+  return 'Outside registered household IP';
 }
 
 function deniedMessage(decision) {
   const family = familyLabel(decision);
-  const homeNetwork = family === 'network' ? 'home network' : `home ${family} network`;
+  const homeNetwork = family === 'network' ? 'registered household network' : `registered household ${family} network`;
   const currentNetwork = family === 'network' ? 'network' : `${family} network`;
-  return `This Stremio plan is already linked to the ${homeNetwork} used by this subscription. Your current ${currentNetwork} is different, so playback is blocked. Connect from the home network, wait for the lease to expire, or reset your household IP lease from your account.`;
+  return `This Stremio plan is already linked to a ${homeNetwork}. Your current ${currentNetwork} is different, so playback is blocked. Connect from the registered household network, wait for the lease to expire, or reset your household IP lease from your account.`;
 }
 
 function deniedStream(decision, options = {}) {
@@ -81,7 +81,12 @@ function deniedStream(decision, options = {}) {
     title,
     description
   };
-  if (options.externalUrl) stream.externalUrl = String(options.externalUrl);
+  if (options.externalUrl) {
+    const externalUrl = String(options.externalUrl);
+    stream.externalUrl = externalUrl;
+    stream.url = String(options.url || externalUrl);
+    stream.behaviorHints = { notWebReady: true };
+  }
   return stream;
 }
 

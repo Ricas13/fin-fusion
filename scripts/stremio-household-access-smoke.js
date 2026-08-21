@@ -45,12 +45,13 @@ assert(runtime.includes('return res.redirect(PLAYBACK_REDIRECT_STATUS, target)')
 assert(runtime.includes('CAPTAiNFiN never receives media bytes'),'runtime contract must explicitly remain control-plane only');
 assert(householdAccess.includes("scope: 'stremio'")&&householdAccess.includes('return entitlement?.subscription_id || entitlement?.id'),'Stremio household lease must belong to the subscription, not an individual playback');
 assert(householdAccess.includes("'household_network'"),'Stremio network denials must be distinguishable from protocol rate limiting');
-assert(householdAccess.includes('Different home IP detected')&&householdAccess.includes('deniedStream')&&householdAccess.includes('externalUrl')&&householdAccess.includes('releaseSubject'),'Stremio household denials must produce a visible account-link result and support explicit lease resets');
+assert(householdAccess.includes('Outside registered household IP')&&householdAccess.includes('deniedStream')&&householdAccess.includes('externalUrl')&&householdAccess.includes('notWebReady')&&householdAccess.includes('releaseSubject'),'Stremio household denials must produce a visible account-link result and support explicit lease resets');
 const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{externalUrl:'https://example.invalid/account/stremio'});
-assert.match(denied.name,/Different home IP detected/i,'Stremio denial stream name must make the different-home-IP block visible in result lists');
-assert.match(`${denied.title} ${denied.description}`,/Different home IP detected.*current IPv4 network is different.*reset your household IP lease/is,'Stremio denial stream must explain the different-IP block and reset action');
+assert.match(denied.name,/Outside registered household IP/i,'Stremio denial stream name must make the registered-household-IP block visible in result lists');
+assert.match(`${denied.title} ${denied.description}`,/Outside registered household IP.*current IPv4 network is different.*reset your household IP lease/is,'Stremio denial stream must explain the different-IP block and reset action');
 assert.strictEqual(denied.externalUrl,'https://example.invalid/account/stremio','Stremio denial stream must be an external-link result to account reset');
-assert(!denied.behaviorHints?.notWebReady,'external-link denial streams must not carry URL-only web-readiness hints');
+assert.strictEqual(denied.url,'https://example.invalid/account/stremio','Stremio denial stream must carry a URL fallback for clients that hide external-link-only streams');
+assert.strictEqual(denied.behaviorHints?.notWebReady,true,'account-page fallback URLs must be marked as not web-ready media');
 assert(networkIdentity.includes('networkDescriptor')&&networkIdentity.includes("family: canonical.startsWith('ipv4:') ? 'ipv4' : 'ipv6'"),'network identity must expose the normalized IP family without storing raw addresses');
 assert(networkLeases.includes('network_family')&&networkLeases.includes('activeSameFamily')&&networkLeases.includes('function preview'),'household leases must enforce limits per IPv4/IPv6 family and expose a read-only preview');
 assert(familyMigration.includes('network_family')&&familyMigration.includes('access_network_leases_subject_family_idx'),'network family migration must add the persistence and lookup shape required by dual-stack household limits');
