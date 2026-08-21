@@ -134,17 +134,17 @@ async function main(){
 
     await gotoAdmin(page,`/admin/plans/${id}/delivery`);
     let deliveryText=await page.locator('body').innerText();
-    assert(/Stremio sources/.test(deliveryText)&&/Browser External Jellyfin/.test(deliveryText),'Plan Delivery does not expose Stremio source selection');
+    assert(/Stremio source composition/.test(deliveryText)&&/Optional external sources/.test(deliveryText)&&/Browser External Jellyfin/.test(deliveryText),'Plan Delivery does not expose Stremio external source composition');
     const sourceForm=page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"]`);
     await sourceForm.locator(`input[name="sourceId"][value="${seeded.id}"]`).check();
     await sourceForm.locator(`input[name="priority_${seeded.id}"]`).fill('10');
-    await submitAction(page,sourceForm,'Save Stremio sources',`/admin/plans/${plan.id}/stremio-sources`);
+    await submitAction(page,sourceForm,'Save external sources',`/admin/plans/${plan.id}/stremio-sources`);
     const mapping=(await pool.query('SELECT enabled,priority FROM plan_stremio_sources WHERE plan_id=$1 AND source_id=$2',[plan.id,seeded.id])).rows[0];
     assert.equal(mapping?.enabled,true,'Plan source mapping was not persisted');
     assert.equal(Number(mapping?.priority),10,'Plan source priority was not persisted');
-    await page.waitForFunction(()=>/1\/1 selected source ready/.test(document.body.innerText),null,{timeout:15000});
+    await page.waitForFunction(()=>/1\/1 selected external source ready/.test(document.body.innerText),null,{timeout:15000});
     deliveryText=await page.locator('body').innerText();
-    assert(/1\/1 selected source ready/.test(deliveryText),'Plan Delivery does not surface mapped-source readiness');
+    assert(/1\/1 selected external source ready/.test(deliveryText),'Plan Delivery does not surface selected external-source readiness');
     await screenshot(page,'plan-delivery-stremio-source');
 
     await gotoAdmin(page,'/admin/servers/stremio');
