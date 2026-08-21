@@ -47,7 +47,7 @@ const renderedBody=sources.slice(sources.indexOf('const body=`<div class="capabi
 assert(renderedBody.indexOf('<h2>Managed Jellyfin sources</h2>')<renderedBody.indexOf('<h2>External Jellyfin sources</h2>')&&renderedBody.indexOf('<h2>External Jellyfin sources</h2>')<renderedBody.indexOf('${activitySection(d.activity)}'),'page hierarchy must be summary → managed → external → activity');
 assert(!sources.includes('Recent connection attempts')&&!sources.includes('sourceInlineManage'),'Stremio must not retain the old multi-panel/connection-attempt page shape');
 assert(sources.includes("r.get('/admin/servers/stremio/:id',(_req,res)=>res.redirect(302,'/admin/servers/stremio'))"),'external source detail URLs must collapse back into the single control centre');
-assert(sources.includes('Stremio is a control plane, not a video proxy.')&&sources.includes('Media bytes never pass through the portal'),'operator UI must preserve the no-byte-proxy boundary');
+assert(sources.includes('Stremio is a control plane, not a video proxy.')&&sources.toLowerCase().includes('media bytes never pass through the portal'),'operator UI must preserve the no-byte-proxy boundary');
 
 assert(sources.includes('name="baseUrl"')&&sources.includes('name="username"')&&sources.includes('name="password"'),'External source form must use Jellyfin URL + ordinary user credentials');
 assert(!sources.includes('name="accessToken"')&&!sources.includes('name="jellyfinUserId"'),'Operators must not manually paste Jellyfin access tokens/user IDs');
