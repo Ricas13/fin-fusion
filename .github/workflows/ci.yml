@@ -62,7 +62,7 @@ jobs:
         run: node scripts/compose-migration-smoke.js
 
       - name: Syntax checks
-        run: npm run check
+        run: npm run syntax
 
       - name: Apply database migrations
         run: npm run db:migrate
@@ -101,6 +101,9 @@ jobs:
             for (const [name, value] of Object.entries(tables.rows[0])) if (!value) throw new Error(`Required table missing: ${name}`);
           })().finally(() => getPool().end());
           NODE
+
+      - name: Fast checks
+        run: npm run check
 
       - name: Purpose-key encryption smoke test
         run: |
