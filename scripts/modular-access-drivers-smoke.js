@@ -41,7 +41,7 @@ assert.deepStrictEqual(bundleComponents.find(c=>c.module==='jellyfin').config,{n
 const bundleStremio=bundleComponents.find(c=>c.module==='stremio').config;
 assert.strictEqual(bundleStremio.networkLimit,3,'Stremio household allowance must remain independently configurable on historical composite plans');
 assert.strictEqual(bundleStremio.leaseMinutes,300,'Stremio must keep an independent lease duration');
-assert.strictEqual(components.accessLabel({service_type:'stremio'}),'Unlimited streams · Unlimited devices · 1 household IP');
+assert.strictEqual(components.accessLabel({service_type:'stremio'}),'Unlimited streams · Unlimited devices · 1 household connection');
 
 assert.strictEqual(identity.canonicalNetwork('203.0.113.44:8096'),'ipv4:203.0.113.44');
 assert.strictEqual(identity.canonicalNetwork('::ffff:203.0.113.44'),'ipv4:203.0.113.44');

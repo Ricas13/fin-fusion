@@ -74,7 +74,7 @@ function accessLabel(plan) {
   const parts = componentsForPlan(plan).map(component => {
     if (component.module === 'stremio') {
       const households = component.config.networkLimit;
-      return `Unlimited streams · Unlimited devices · ${households} household IP${households === 1 ? '' : 's'}`;
+      return `Unlimited streams · Unlimited devices · ${households} household connection${households === 1 ? '' : 's'}`;
     }
     if (component.driver === 'household_network') return `${component.config.networkLimit} Jellyfin household network${component.config.networkLimit === 1 ? '' : 's'}`;
     return `${component.config.streamLimit} Jellyfin stream${component.config.streamLimit === 1 ? '' : 's'}`;

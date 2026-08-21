@@ -68,14 +68,11 @@ function familyLabel(decision) {
 }
 
 function deniedTitle() {
-  return 'Outside registered household IP';
+  return 'Outside household connection';
 }
 
-function deniedMessage(decision) {
-  const family = familyLabel(decision);
-  const homeNetwork = family === 'network' ? 'registered household network' : `registered household ${family} network`;
-  const currentNetwork = family === 'network' ? 'network' : `${family} network`;
-  return `This Stremio plan is already linked to a ${homeNetwork}. Your current ${currentNetwork} is different, so playback is blocked. Connect from the registered household network, wait for the lease to expire, or replace your household IP from your account when eligible.`;
+function deniedMessage(_decision) {
+  return 'This Stremio plan is already linked to another household internet connection. The connection you are using now is different, so playback is blocked. Connect from the registered household connection, wait until it can be replaced automatically, or change your household connection from your account when eligible.';
 }
 
 function deniedStream(decision, options = {}) {
@@ -90,7 +87,7 @@ function deniedStream(decision, options = {}) {
     stream.url = String(options.url);
     stream.behaviorHints = {
       bingeGroup: 'captainfin-household-ip-block',
-      filename: 'CAPTAiNFiN household IP blocked.mp4'
+      filename: 'CAPTAiNFiN household connection blocked.mp4'
     };
     if (Number(options.videoSize) > 0) stream.behaviorHints.videoSize = Number(options.videoSize);
   }
@@ -133,9 +130,9 @@ function cooldownMessage(state) {
   const minutes = Math.max(1, Math.ceil(Number(state?.retryAfterSeconds || 60) / 60));
   if (minutes >= 60) {
     const hours = Math.ceil(minutes / 60);
-    return `This household IP can be replaced in about ${hours} hour${hours === 1 ? '' : 's'}.`;
+    return `This household connection can be changed in about ${hours} hour${hours === 1 ? '' : 's'}.`;
   }
-  return `This household IP can be replaced in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  return `This household connection can be changed in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
 }
 
 async function release(entitlement, { actorUserId = null, reason = 'manual_reset', customerInitiated = false } = {}) {

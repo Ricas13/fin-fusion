@@ -1,0 +1,45 @@
+'use strict';
+
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const root=path.resolve(__dirname,'..');
+const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+
+const customer=read('src/platform/customer-stremio.js');
+const customerView=read('views/customer/stremio.ejs');
+const components=read('src/access/plan-components.js');
+const household=read('src/stremio/household-access.js');
+const adminJourney=read('public/js/admin-stremio-journey.js');
+const adminCss=read('public/css/admin-stremio-journey.css');
+const capabilityCss=read('public/css/admin-capability.css');
+const adminShell=read('src/platform/admin-html-core.js');
+
+// Customer language describes the commercial model without exposing IP-family,
+// token/credential, lease, or addon implementation terms.
+assert(customer.includes('household connection')&&!customer.includes('household IP'),'customer Stremio status must use household-connection language');
+assert(customer.includes('new Stremio installation link is ready')&&!customer.includes('installation credential has been rotated'),'customer link rotation must be explained as a normal replacement');
+for(const copy of ['Set up Stremio','Your Stremio link','Use a different household connection','More installation options','Three steps to watch'])assert(customerView.includes(copy),`customer Stremio page missing task-focused copy: ${copy}`);
+for(const jargon of ['Replace household IP','installation credential','addon URL','/64'])assert(!customerView.includes(jargon),`customer Stremio page exposes implementation wording: ${jargon}`);
+assert(customerView.includes('action="/account/stremio/install"')&&customerView.includes('action="/account/stremio/reset-household"')&&customerView.includes('action="/account/stremio/revoke"'),'customer Stremio actions must keep their existing server routes');
+
+// Shared labels and blocked-playback guidance use the same plain-language model
+// while all persisted compatibility field names stay unchanged.
+assert(components.includes('household connection${households === 1 ?')&&!components.includes('household IP${households === 1 ?'),'shared Stremio plan labels must use household connections');
+assert(household.includes("return 'Outside household connection';")&&household.includes('another household internet connection'),'blocked playback must explain the connection mismatch plainly');
+assert(household.includes('stremio_ip_replacement_policy_snapshot')&&household.includes('stremio_ip_replacement_cooldown_minutes_snapshot'),'persisted Stremio replacement contracts must remain unchanged');
+assert(household.includes("'X-CAPTAiNFiN-429-Reason', 'household_network'"),'runtime household-network response contract must remain unchanged');
+
+// Admin UX is a presentation layer over the existing canonical source, plan and
+// customer routes; it must not introduce a second Stremio state or API surface.
+for(const route of ['/admin/servers/stremio','/admin/plans?type=stremio','/admin/users?service=stremio'])assert(adminJourney.includes(route),`Stremio journey missing canonical route ${route}`);
+for(const step of ['Sources','Plan delivery','Customer install'])assert(adminJourney.includes(`'${step}'`),`Stremio journey missing step ${step}`);
+assert(adminJourney.includes('Manage Stremio sources')&&adminJourney.includes('Save delivery sources'),'plan delivery must use operator-friendly source actions');
+assert(adminJourney.includes('Advanced order')&&adminJourney.includes('Advanced maintenance')&&adminJourney.includes('Technical diagnostics'),'technical source ordering, maintenance and diagnostics must use progressive disclosure');
+assert(adminJourney.includes('textContent')&&!adminJourney.includes('fetch('),'journey polish must change presentation only and must not own server state');
+
+assert(capabilityCss.includes("@import url('/css/admin-stremio-journey.css')"),'admin capability bundle must load Stremio journey styles');
+assert(adminShell.includes('/js/admin-stremio-journey.js'),'admin shell must load Stremio journey behavior');
+for(const contract of ['.stremioJourney','.stremioFlowOverview','.stremioAdvancedMaintenance','.stremioOrderDetails','@media(max-width:800px)'])assert(adminCss.includes(contract),`Stremio journey CSS missing ${contract}`);
+
+console.log('stremio journey polish smoke: ok');
