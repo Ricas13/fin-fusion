@@ -45,6 +45,7 @@ assert.strictEqual(identity.canonicalNetwork('::ffff:203.0.113.44'),'ipv4:203.0.
 assert.strictEqual(identity.canonicalNetwork('[2001:db8:abcd:12::1]:443'),'ipv6:2001:0db8:abcd:0012::/64');
 assert.strictEqual(identity.canonicalNetwork('2001:db8:abcd:12:ffff::99'),'ipv6:2001:0db8:abcd:0012::/64','IPv6 privacy addresses inside one /64 must share a household identity');
 assert.notStrictEqual(identity.canonicalNetwork('2001:db8:abcd:13::1'),identity.canonicalNetwork('2001:db8:abcd:12::1'));
+assert.strictEqual(identity.hashNetwork('203.0.113.44',{secret:'x'.repeat(32)}),identity.hashNetwork('203.0.113.44:8096',{secret:'x'.repeat(32)}),'canonical network hashing must ignore transport ports');
 assert.strictEqual(drivers.householdConfig({household_network_limit:99,household_lease_minutes:1}).networkLimit,1,'invalid household limits must fail back to safe defaults');
 
 const migration=read('db/migrations/023_modular_access_drivers.sql');
@@ -53,6 +54,7 @@ const stremio=read('src/stremio/runtime.js');
 const external=read('src/stremio/external-direct-runtime.js');
 const jellyfin=read('src/jellyfin/household-network-policy.js');
 const worker=read('scripts/activity-worker.js');
+const roleScript=read('scripts/configure-runtime-db-roles.js');
 const planCreate=read('src/platform/admin-plan-create-v2.js');
 const planAccess=read('src/platform/admin-plan-access.js');
 const composition=read('src/platform/admin-route-composition.js');
@@ -73,10 +75,13 @@ assert(!stremio.includes('pipe(res)')&&!external.includes('pipe(res)'),'CAPTAiNF
 assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external control hop must resolve to direct Jellyfin delivery');
 
 assert(jellyfin.includes("scope: 'jellyfin'"),'Jellyfin household access must use the shared lease engine');
-assert(jellyfin.includes('effectiveSubscription(customerId)'),'Jellyfin household enforcement must use the effective subscription contract');
+assert(jellyfin.includes('SELECT s.id AS subscription_id'),'Jellyfin household enforcement must use a narrow least-privilege entitlement projection');
+assert(!jellyfin.includes('effectiveSubscription(customerId)'),'activity-worker household enforcement must not use the broad customer entitlement projection');
 assert(jellyfin.includes("cfg.effectiveMode !== 'enforce'"),'Jellyfin household stopping must retain the existing observe/enforce safety gate');
 assert(jellyfin.includes('freshSession(candidate'),'Jellyfin household enforcement must revalidate the session before stopping playback');
 assert(worker.includes('householdNetworkPolicy.runHouseholdNetworkCycle'),'the activity worker must execute the Jellyfin household driver');
+assert(roleScript.includes('access_network_leases')&&roleScript.includes('access_network_events'),'activity role bootstrap must grant only the household lease tables it needs');
+assert(roleScript.includes('jellyfin_household_network_limit')&&roleScript.includes('jellyfin_household_lease_minutes'),'activity role must be able to read the new Jellyfin plan driver settings');
 
 for(const token of ['jellyfinAccessModel','jellyfinHouseholdNetworkLimit','jellyfinHouseholdLeaseMinutes','stremioHouseholdLeaseMinutes'])assert(planCreate.includes(token),`plan creation is missing ${token}`);
 assert(planAccess.includes("queuePlanReconciliation(plan.id"),'existing plan access changes must use the established reconciliation job fanout');
