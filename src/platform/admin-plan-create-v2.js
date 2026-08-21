@@ -3,6 +3,7 @@
 const express = require('express');
 const { transaction } = require('../db');
 const csrf = require('../auth/csrf');
+const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const reportingCurrency = require('./reporting-currency');
 const planPricing = require('../payments/plan-pricing');
@@ -13,6 +14,7 @@ const BILLING = { trial: { label: 'Trial', days: 1 }, month: { label: 'Monthly',
 const SERVICE_TYPES = ['jellyfin', 'stremio', 'bundle'];
 const JELLYFIN_ACCESS_MODELS = ['concurrent_streams', 'household_network'];
 const CURRENCIES = reportingCurrency.CURRENCIES;
+const planCreateWriteLimit = routeRateLimit.middleware({ scope: 'admin-plan-create', max: 20, windowSeconds: 60, reason: 'admin_plan_create' });
 
 function gate(req, res, next) { return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req, res, next) { res.setHeader('Cache-Control', 'no-store, private, max-age=0'); res.setHeader('Pragma', 'no-cache'); next(); }
@@ -143,7 +145,7 @@ function createAdminPlanCreateV2Router() {
       return res.send(layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: 'New customer plan', subtitle: `Product, pricing (${currency}), availability, delivery, policy and libraries`, body: form(req, {}, '', currency), action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }));
     } catch (error) { next(error); }
   });
-  router.post('/admin/plans', async (req, res, next) => {
+  router.post('/admin/plans', planCreateWriteLimit, async (req, res, next) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     let currency = 'GBP';
     try {
