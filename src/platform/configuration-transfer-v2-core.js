@@ -60,8 +60,33 @@ function asV1(document) {
     };
 }
 
+function quotaFields(source, code) {
+    return {
+        request_movie_quota_limit: integer(source.request_movie_quota_limit, 0, 100000, true, `${code}.request_movie_quota_limit`),
+        request_movie_quota_days: integer(source.request_movie_quota_days, 1, 3650, true, `${code}.request_movie_quota_days`),
+        request_tv_quota_limit: integer(source.request_tv_quota_limit, 0, 100000, true, `${code}.request_tv_quota_limit`),
+        request_tv_quota_days: integer(source.request_tv_quota_days, 1, 3650, true, `${code}.request_tv_quota_days`)
+    };
+}
+
 function normalizeV2Plan(basePlan, source) {
     const code = String(basePlan.code || 'plan');
+    const hasModularContract = Object.prototype.hasOwnProperty.call(source, 'service_type')
+        || Object.prototype.hasOwnProperty.call(source, 'jellyfin_access_model');
+
+    // V2 existed before modular plan fields were added. Those older documents
+    // must not acquire guessed service/access values and overwrite a modern
+    // destination plan. Keep their original stream value (including NULL) and
+    // mark them so the atomic importer updates legacy columns only.
+    if (!hasModularContract) {
+        return {
+            ...basePlan,
+            streams: Object.prototype.hasOwnProperty.call(source, 'streams') ? source.streams : basePlan.streams,
+            ...quotaFields(source, code),
+            _modular_plan_contract: false
+        };
+    }
+
     const serviceType = enumValue(source.service_type, SERVICE_TYPES, 'jellyfin', `${code}.service_type`);
     const jellyfinAccessModel = enumValue(source.jellyfin_access_model, JELLYFIN_ACCESS_MODELS, 'concurrent_streams', `${code}.jellyfin_access_model`);
     const hasJellyfin = serviceType === 'jellyfin' || serviceType === 'bundle';
@@ -92,10 +117,8 @@ function normalizeV2Plan(basePlan, source) {
             ? (integer(source.stremio_household_lease_minutes, 15, 1440, true, `${code}.stremio_household_lease_minutes`) ?? 240)
             : 240,
         streams,
-        request_movie_quota_limit: integer(source.request_movie_quota_limit, 0, 100000, true, `${code}.request_movie_quota_limit`),
-        request_movie_quota_days: integer(source.request_movie_quota_days, 1, 3650, true, `${code}.request_movie_quota_days`),
-        request_tv_quota_limit: integer(source.request_tv_quota_limit, 0, 100000, true, `${code}.request_tv_quota_limit`),
-        request_tv_quota_days: integer(source.request_tv_quota_days, 1, 3650, true, `${code}.request_tv_quota_days`)
+        ...quotaFields(source, code),
+        _modular_plan_contract: true
     };
 }
 
