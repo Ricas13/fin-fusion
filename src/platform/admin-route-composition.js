@@ -29,6 +29,7 @@ const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings
 const { createAdminBillingRouter } = require('./admin-billing');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
+const { createAdminStremioPlanEditorRouter } = require('./admin-stremio-plan-editor');
 const { createAdminPlanAccessRouter } = require('./admin-plan-access');
 const { createAdminPlanLifecycleRouter } = require('./admin-plan-lifecycle');
 const { createAdminPlanInventoryRouter } = require('./admin-plan-inventory');
@@ -90,6 +91,10 @@ function mountAdminRoutes(app) {
   app.use(createAdminBillingRouter());
   app.use(createAdminCustomerCreateRouter());
   app.use(createAdminPlanCreateV2Router());
+  // Stremio plan editing has one canonical, product-specific page. Mount it
+  // before the legacy multi-page plan controllers so old deep links can
+  // redirect into the compact editor without changing Jellyfin behaviour.
+  app.use(createAdminStremioPlanEditorRouter());
   // Mount the access-driver editor before the legacy Plans controller so the
   // established /admin/plans/:id/jellyfin URL gains household-aware semantics
   // without duplicating or weakening the older plan-management routes.
