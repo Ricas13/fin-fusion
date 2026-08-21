@@ -26,15 +26,21 @@ async function ensureMigrationLedger(pool) {
     await pool.query('ALTER TABLE public.schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT');
 }
 
-async function detectFreshDatabase(pool) {
+async function databaseShape(pool) {
     const result = await pool.query(`
-        SELECT COUNT(*)::int AS count
+        SELECT table_name
         FROM information_schema.tables
         WHERE table_schema='public'
           AND table_type='BASE TABLE'
           AND table_name <> 'schema_migrations'
     `);
-    return Number(result.rows[0]?.count || 0) === 0;
+    const names = new Set(result.rows.map(row => String(row.table_name)));
+    const anchors = ['app_users','customers','plans','jellyfin_servers','subscriptions'];
+    return {
+        empty: names.size === 0,
+        recognizableInstall: anchors.filter(name => names.has(name)).length >= 2,
+        tables: names
+    };
 }
 
 async function verifyOrBaselineAppliedMigration(pool, filename, checksum) {
@@ -108,8 +114,12 @@ async function main() {
 
     try {
         await ensureMigrationLedger(pool);
-        const freshInstall = await detectFreshDatabase(pool);
-        if (freshInstall) console.log('fresh database detected: applying clean-install baseline');
+        const shape = await databaseShape(pool);
+        const freshInstall = shape.empty || !shape.recognizableInstall;
+        const adoptExistingBaseline = !shape.empty && shape.recognizableInstall;
+        if (shape.empty) console.log('fresh database detected: applying clean-install baseline');
+        else if (adoptExistingBaseline) console.log('recognizable CAPTAiNFiN schema detected: adopting baseline before incremental migrations');
+        else console.log('non-CAPTAiNFiN public tables detected: applying baseline alongside existing data');
 
         for (const filename of files) {
             const sql = fs.readFileSync(path.join(dir, filename), 'utf8');
@@ -120,7 +130,7 @@ async function main() {
                 continue;
             }
 
-            if (filename === '000_database_baseline.sql' && !freshInstall) {
+            if (filename === '000_database_baseline.sql' && adoptExistingBaseline) {
                 await adoptBaseline(pool, filename, checksum);
                 continue;
             }
