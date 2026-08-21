@@ -177,7 +177,8 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   assert.equal(await form.locator('select[name="currency"]').count(),0,'Plan creation must use the portal-wide currency rather than expose a per-plan selector');
   const text=await form.innerText();
   assert(/Unlimited streams/i.test(text)&&/Unlimited devices/i.test(text),'Stremio creation must make unlimited streams and devices explicit');
-  assert(/Household IPs/i.test(text),'Stremio creation must make household access the configurable limit');
+  assert(/Household connections/i.test(text),'Stremio creation must make household access the configurable limit');
+  assert(!/Household IPs/i.test(text),'Stremio creation must not expose network-implementation terminology');
 }
 
 async function planCreationAudit(page){
@@ -195,7 +196,8 @@ async function planCreationAudit(page){
   assert(/\/admin\/plans\/[^/]+\/edit$/.test(createdUrl.pathname),'Valid Stremio creation did not continue to the compact editor');
   const editorText=await page.locator('body').innerText();
   assert(/Unlimited streams/i.test(editorText)&&/Unlimited devices/i.test(editorText),'Compact Stremio editor lost the unlimited playback model');
-  assert(/2 household IPs/i.test(editorText),'Compact Stremio editor did not preserve the selected household allowance');
+  assert(/2 household connections/i.test(editorText),'Compact Stremio editor did not preserve the selected household allowance');
+  assert(!/Household IPs/i.test(editorText),'Compact Stremio editor exposed network-implementation terminology');
   assert(!/Delivery service/i.test(editorText),'Compact Stremio editor exposed internal delivery-service terminology');
 
   await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
