@@ -148,9 +148,11 @@ async function main(){
     const sourceForm=page.locator(`form[action="/admin/plans/${plan.id}/stremio-sources"]`);
     assert.equal(await sourceForm.count(),1,'Canonical Stremio editor is missing its source-selection form');
     await sourceForm.locator(`input[name="sourceId"][value="${seeded.id}"]`).check();
-    const orderDetails=sourceForm.locator('.stremioOrderDetails').filter({has:sourceForm.locator(`input[name="priority_${seeded.id}"]`)}).first();
+    const priorityInput=sourceForm.locator(`input[name="priority_${seeded.id}"]`);
+    const orderDetails=priorityInput.locator('xpath=ancestor::details[contains(@class,"stremioOrderDetails")][1]');
+    assert.equal(await orderDetails.count(),1,'External source priority must remain available under Advanced order');
     await orderDetails.evaluate(element=>{element.open=true;});
-    await sourceForm.locator(`input[name="priority_${seeded.id}"]`).fill('10');
+    await priorityInput.fill('10');
     await submitAction(page,sourceForm,'Save delivery sources',`/admin/plans/${plan.id}/stremio-sources`);
     const mapping=(await pool.query('SELECT enabled,priority FROM plan_stremio_sources WHERE plan_id=$1 AND source_id=$2',[plan.id,seeded.id])).rows[0];
     assert.equal(mapping?.enabled,true,'Plan source mapping was not persisted');
