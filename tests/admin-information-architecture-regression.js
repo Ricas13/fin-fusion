@@ -122,6 +122,9 @@ async function main(){
     assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy source-detail URL did not redirect to the consolidated Stremio Sources page');
     const externalRow=page.locator(`#external-${seeded.id}`);
     assert.equal(await externalRow.count(),1,'Seeded external Jellyfin source is missing from the consolidated source list');
+    const disclosure=externalRow.locator('details.capabilitySourceDisclosure');
+    assert.equal(await disclosure.count(),1,'External source library and index controls are missing');
+    await disclosure.evaluate(element=>{element.open=true;});
     const externalText=await externalRow.innerText();
     assert(/Browser External Jellyfin/.test(externalText)&&/Movies/.test(externalText)&&/TV Shows/.test(externalText),'External source row does not show discovered libraries');
     assert(await externalRow.locator('input[name="libraryId"][value="movies-lib"]').isChecked(),'Selected library state did not round-trip');
