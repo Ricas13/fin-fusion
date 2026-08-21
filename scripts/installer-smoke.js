@@ -28,6 +28,7 @@ for (const file of ['install.sh', 'update.sh']) {
 
 for (const token of [
   'prepare-install-env.js',
+  '--output=.env',
   'Existing .env detected; preserving all installation secrets',
   'bash scripts/deploy-production.sh',
   'docker compose exec -T app npm run setup:claim',
@@ -51,7 +52,7 @@ assert(!installScript.includes('DATA_ENCRYPTION_KEY='), 'installer shell must ne
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'captainfin-install-'));
 try {
   const envFile = path.join(tempDir, '.env');
-  const generated = spawnSync(process.execPath, [prepareInstall, `--env-file=${envFile}`, `--template=${template}`], { encoding: 'utf8' });
+  const generated = spawnSync(process.execPath, [prepareInstall, `--output=${envFile}`, `--template=${template}`], { encoding: 'utf8' });
   assert.strictEqual(generated.status, 0, generated.stderr || 'fresh-install environment generation must succeed');
   assert(fs.existsSync(envFile), 'fresh installer must create .env');
   if (process.platform !== 'win32') assert.strictEqual(fs.statSync(envFile).mode & 0o777, 0o600, 'generated .env must be owner-only');
@@ -99,7 +100,7 @@ try {
     assert(decodeURIComponent(url.password).length >= 24, `${key} must have a strong generated password`);
   }
 
-  const second = spawnSync(process.execPath, [prepareInstall, `--env-file=${envFile}`, `--template=${template}`], { encoding: 'utf8' });
+  const second = spawnSync(process.execPath, [prepareInstall, `--output=${envFile}`, `--template=${template}`], { encoding: 'utf8' });
   assert.notStrictEqual(second.status, 0, 'fresh-install generator must refuse to overwrite an existing .env');
   assert(/Refusing to replace installation secrets/.test(second.stderr), 'existing-secret refusal must be explicit');
 
