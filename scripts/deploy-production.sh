@@ -132,5 +132,5 @@ docker compose exec -T app npm run verify:deployment
 
 log 'Deployment complete'
 docker compose ps
-printf '\nCAPTAINFiN is running from commit %s.\n' "${CAPTAINFIN_BUILD_SHA:0:8}"
+printf '\nCAPTAiNFiN is running from commit %s.\n' "${CAPTAINFIN_BUILD_SHA:0:8}"
 printf 'Deployment log: %s\n' "${CAPTAINFIN_DEPLOY_LOG:-unknown}"
