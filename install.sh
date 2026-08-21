@@ -33,7 +33,7 @@ printf 'This installer keeps the application private on 127.0.0.1:3030 and uses 
 
 if [[ ! -f .env ]]; then
   log 'Creating secure installation configuration'
-  run_node scripts/prepare-install-env.js --env-file=.env --template=.env.example
+  run_node scripts/prepare-install-env.js --output=.env --template=.env.example
 else
   log 'Existing .env detected; preserving all installation secrets'
   printf 'No keys or credentials will be regenerated. The deployment preflight will validate the existing configuration.\n'
@@ -66,7 +66,7 @@ admin_username="$(env_value ADMIN_USERNAME)"
 admin_password="$(env_value ADMIN_PASSWORD)"
 if [[ -z "$admin_username" && -z "$admin_password" ]]; then
   printf '\nCreate your first administrator\n'
-  printf '-------------------------------\n'
+  printf '%s\n' '-------------------------------'
   printf 'Open your HTTPS CAPTAiNFiN address. /login will send you to the secure first-run setup.\n'
   printf 'Use this one-time installation claim code:\n\n'
   if ! docker compose exec -T app npm run setup:claim; then
