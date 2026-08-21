@@ -3,6 +3,7 @@
 const branding=require('./branding');
 const nav=require('./admin-nav');
 const paymentWorkflow=require('./payment-workflow-tabs');
+const packageInfo=require('../../package.json');
 
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 
@@ -29,12 +30,13 @@ function activePage(active){
 
 function header(active,site){
   const current=activePage(active);
+  const version=String(packageInfo.version||'unknown');
   const sections=nav.groups.map(group=>{
     const activeGroup=group.key===current.group.key;
     const pages=group.pages.map(([key,label,url])=>{const selected=current.sidebarKey===key;return `<a class="adminTab ${selected?'active':''}" href="${esc(url)}" title="Open ${esc(label)}" ${selected?'aria-current="page"':''}>${esc(label)}</a>`}).join('');
     return `<details class="navSection ${activeGroup?'active':''}" data-nav-section="${esc(group.key)}" ${activeGroup?'open':''}><summary class="navSectionLabel"><span class="navSectionHome">${icon(group.key)}<span>${esc(group.label)}</span></span><span class="navChevron" aria-hidden="true">⌄</span></summary><div class="navSectionPages">${pages}</div></details>`;
   }).join('');
-  return `<header class="adminHeader"><div class="headerMain"><a class="brandBlock" href="/admin" aria-label="${esc(site)} admin dashboard"><img class="brandLogo" src="${esc(branding.assetUrl('logo'))}" alt=""><div><div class="brandText">${esc(site)}</div><div class="brandSub">Control centre</div></div></a></div><div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration">${sections}</nav></div><div class="headerActions"><div class="headerActionLabel">My account</div><a class="headerButton" href="/admin/profile">My profile</a><a class="headerButton" href="/admin/profile/notifications">My notifications</a><a class="headerButton" href="/admin/security">My security</a><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a><a class="headerButton danger" href="/logout">Sign out</a></div></header>`;
+  return `<header class="adminHeader"><div class="headerMain"><a class="brandBlock" href="/admin" aria-label="${esc(site)} admin dashboard"><img class="brandLogo" src="${esc(branding.assetUrl('logo'))}" alt=""><div><div class="brandText">${esc(site)}</div><div class="brandSub">Control centre</div></div></a><a class="adminReleaseLink" href="/admin/system" data-release-status data-release-version="${esc(version)}" aria-label="CAPTAiNFiN v${esc(version)} system information">v${esc(version)}</a></div><div class="adminTabsWrap"><nav class="adminTabs" aria-label="Administration">${sections}</nav></div><div class="headerActions"><div class="headerActionLabel">My account</div><a class="headerButton" href="/admin/profile">My profile</a><a class="headerButton" href="/admin/profile/notifications">My notifications</a><a class="headerButton" href="/admin/security">My security</a><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a><a class="headerButton danger" href="/logout">Sign out</a></div></header>`;
 }
 
 function paymentTabsFor(options){
