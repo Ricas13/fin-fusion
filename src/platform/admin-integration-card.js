@@ -1,9 +1,10 @@
 'use strict';
 
 const { esc } = require('./admin-html');
+const ui = require('./admin-ui');
 
 function safeKind(value) {
-    return ['good','warn','bad','accent'].includes(value) ? value : '';
+    return ui.safeKind(value);
 }
 function date(value) {
     if (!value) return 'Not yet observed';
@@ -32,7 +33,7 @@ function renderIntegrationCard({
     if (configured != null) facts.push(fact('Configured', configured ? 'Yes' : 'No', configured ? 'good' : 'warn'));
     facts.push(fact('Current state', workingLabel, workingKind));
     facts.push(fact(lastVerifiedLabel, date(lastVerifiedAt)));
-    return `<article class="integrationCard"><div class="integrationCardHead"><div><h3>${esc(name)}</h3>${summary ? `<p>${esc(summary)}</p>` : ''}</div><span class="pill ${safeKind(statusKind)}">${esc(statusLabel)}</span></div><div class="integrationFacts">${facts.join('')}</div>${fixHint ? `<div class="integrationFix"><strong>If this is not working</strong><span>${esc(fixHint)}</span></div>` : ''}${actionsHtml ? `<div class="integrationActions">${actionsHtml}</div>` : ''}</article>`;
+    return `<article class="integrationCard"><div class="integrationCardHead"><div><h3>${esc(name)}</h3>${summary ? `<p>${esc(summary)}</p>` : ''}</div>${ui.statusBadge(statusLabel, statusKind)}</div><div class="integrationFacts">${facts.join('')}</div>${fixHint ? `<div class="integrationFix"><strong>If this is not working</strong><span>${esc(fixHint)}</span></div>` : ''}${actionsHtml ? `<div class="integrationActions">${actionsHtml}</div>` : ''}</article>`;
 }
 function styles() {
     return '<link rel="stylesheet" href="/css/admin-integration-cards.css">';
