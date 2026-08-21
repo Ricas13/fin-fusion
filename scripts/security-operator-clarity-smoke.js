@@ -55,7 +55,7 @@ assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP st
 
 const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
 assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
-const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),adminShell=text('src/platform/admin-html-core.js');
+const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),adminShell=text('src/platform/admin-html-core-base.js');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
