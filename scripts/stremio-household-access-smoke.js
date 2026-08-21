@@ -54,12 +54,12 @@ assert(familyMigration.includes('access_network_leases_subject_family_idx'),'dua
 assert(networkLeases.includes("decision === 'denied'")&&networkLeases.includes("INTERVAL '5 minutes'"),'repeated denied polling must remain audit-throttled');
 
 // Latest-main blocked-media behavior is intentionally preserved while the
-// customer-facing wording changes from lease internals to household IPs.
+// customer-facing wording describes household connections rather than network internals.
 assert(householdAccess.includes('bingeGroup')&&householdAccess.includes('videoSize'),'denied results must retain blocked-media playback hints');
 const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{url:'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4',videoSize:blockedMedia.MEDIA_SIZE});
-assert.match(`${denied.title} ${denied.description}`,/Outside registered household IP.*current IPv4 network is different.*replace your household IP/is,'denial copy must explain the household IP replacement action');
+assert.match(`${denied.title} ${denied.description}`,/Outside household connection.*another household internet connection.*change your household connection/is,'denial copy must explain the household-connection replacement action');
 assert.strictEqual(denied.url,'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4','denied result must point at the local MP4 endpoint');
-assert.strictEqual(denied.behaviorHints?.filename,'CAPTAiNFiN household IP blocked.mp4','blocked result must keep its readable media filename');
+assert.strictEqual(denied.behaviorHints?.filename,'CAPTAiNFiN household connection blocked.mp4','blocked result must keep its readable media filename');
 assert.strictEqual(denied.behaviorHints?.videoSize,blockedMedia.MEDIA_SIZE,'blocked result must expose the local MP4 size');
 assert(blockedMediaSource.includes('Accept-Ranges')&&blockedMediaSource.includes('Content-Range')&&blockedMediaSource.includes('video/mp4'),'block-media endpoint must continue to support byte ranges');
 assert(blockedMedia.MEDIA_SIZE>10000,'block-media asset must remain present');
@@ -80,7 +80,7 @@ assert.strictEqual(threeHouseholds.networkLimit,3,'Stremio household allowance m
 assert.strictEqual(threeHouseholds.leaseMinutes,1440,'customer cooldown must prevent automatic replacement before the cooldown');
 const legacy=planComponents.stremioHouseholdConfig({stremio_household_network_limit:1,stremio_household_lease_minutes:240,stremio_ip_replacement_policy:'auto_inactive',stremio_ip_replacement_cooldown_minutes:1440});
 assert.strictEqual(legacy.leaseMinutes,240,'upgraded plans must preserve prior inactive-IP replacement behavior');
-assert.match(planComponents.accessLabel({service_type:'stremio',stremio_household_network_limit:2,stremio_ip_replacement_policy:'customer_cooldown',stremio_ip_replacement_cooldown_minutes:1440}),/Unlimited streams · Unlimited devices · 2 household IPs/,'shared Stremio labels must sell unlimited streaming with limited households');
+assert.match(planComponents.accessLabel({service_type:'stremio',stremio_household_network_limit:2,stremio_ip_replacement_policy:'customer_cooldown',stremio_ip_replacement_cooldown_minutes:1440}),/Unlimited streams · Unlimited devices · 2 household connections/,'shared Stremio labels must sell unlimited streaming with limited household connections');
 assert(planComponentsSource.includes('stremio_household_network_limit'),'plan components must read the persisted household limit');
 assert(householdAccess.includes('stremio_household_network_limit_snapshot')&&householdAccess.includes('stremio_ip_replacement_policy_snapshot'),'runtime must prefer subscription policy snapshots');
 assert(householdAccess.includes('replacementState')&&householdAccess.includes('customerInitiated'),'replacement cooldown must be enforced server-side');
@@ -95,7 +95,7 @@ assert(stremioPlanEditor.includes('New purchases only')&&stremioPlanEditor.inclu
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
 assert(customerStremio.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'customer portal must show unlimited playback and use server-enforced replacement');
-assert(stremioSetup.includes('<%= accessModel %>')&&!stremioSetup.includes('/64')&&stremioSetup.includes('Replace household IP'),'normal customer UI must hide IPv6 implementation detail');
+assert(stremioSetup.includes('<%= accessModel %>')&&!stremioSetup.includes('/64')&&stremioSetup.includes('Use a different household connection'),'normal customer UI must hide network implementation detail');
 assert(adminCustomer.includes("'/admin/users/:customerId/stremio-household/reset'"),'admin household reset support must remain available');
 
 assert(!sourcePool.includes("const http=require('http')")&&!sourcePool.includes('openPlayback('),'retired source byte relay must stay removed');
