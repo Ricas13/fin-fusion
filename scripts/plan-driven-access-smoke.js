@@ -27,7 +27,7 @@ assert(nav.includes("['jellyfin-import','Import Jellyfin users'"),'Jellyfin impo
 assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to People navigation');
 assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
 assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback'"),'Customers and playback health must remain visible in the simplified navigation');
-assert(nav.includes("referrals:Object.freeze")&&nav.includes("['referrals','Affiliates','/admin/referrals']"),'Affiliate administration must remain routable without occupying primary navigation');
+assert(nav.includes("['referrals','Affiliates','/admin/referrals']")&&!nav.includes("referrals:Object.freeze"),'Affiliate administration must remain visible in Commerce navigation');
 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.
 for(const token of ['capacityLimit','streams','allowDownloads','allowVideoTranscoding','allowAudioTranscoding','allowRemuxing','allowLiveTv','allowLiveTvManagement','allowRemoteAccess','libraryAccessMode','libraryNames'])assert(createPlan.includes(token),`New plan is missing ${token}`);

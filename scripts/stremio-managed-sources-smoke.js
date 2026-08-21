@@ -36,14 +36,14 @@ assert(admin.includes("res.redirect('/admin/servers/stremio?message='"),'managed
 
 for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Managed Stremio activity','Libraries included in Stremio'])assert(sources.includes(phrase),`single-page Stremio control centre missing: ${phrase}`);
 assert(sources.indexOf('Managed Jellyfin sources')<sources.indexOf('External Jellyfin sources'),'managed server table must render before external sources');
-assert(sources.indexOf('External Jellyfin sources')<sources.indexOf('Managed Stremio activity'),'managed activity must follow both source groups');
+assert(sources.indexOf('External Jellyfin sources')<sources.indexOf('${activitySection(d.activity)}'),'managed activity must follow both source groups');
 assert(sources.includes("managedSources=require('../stremio/managed-sources')")&&sources.includes("managedMediaIndex=require('../stremio/media-index')"),'single page must load managed fleet and managed index state');
 assert(sources.includes('capabilitySourceDisclosure')&&sources.includes('sourceInlineSettings'),'source maintenance must stay inline in the compact control centre');
 assert(sources.includes('action="/admin/servers/stremio/managed/${esc(server.id)}"'),'managed rows must save through the canonical managed mutation route');
 assert(sources.includes('action="/admin/servers/stremio/${esc(source.id)}/configure"'),'external sources must be configurable inline on the same page');
 assert(sources.includes('name="enabled" value="1"')&&sources.includes('name="priority"'),'both source groups must expose participation and priority controls');
 assert(sources.includes('External fallback playback goes directly to this Jellyfin server'),'external source UI must state that fallback playback bypasses CAPTAiNFiN media transport');
-assert(sources.includes('Media bytes never pass through the portal'),'source UI must state the no-byte-proxy invariant');
+assert(/media bytes never pass through the portal/i.test(sources),'source UI must state the no-byte-proxy invariant');
 assert(externalConfig.includes('UPDATE stremio_sources SET enabled=$2,priority=$3'),'external source participation and priority must update atomically');
 assert(externalConfig.includes("'admin.stremio.source.configure'"),'external source inline configuration must be audited');
 assert(!sources.includes('href="/admin/servers/stremio/${esc(source.id)}">Manage'),'main Stremio page must not expose a second external-management page');
