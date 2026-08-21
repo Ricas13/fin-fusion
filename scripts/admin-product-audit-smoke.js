@@ -47,7 +47,8 @@ assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('
 
 assert(routeComposition.includes('createAdminProductModulesRouter'),'Product module routes must be mounted in the canonical admin composition');
 assert(productModules.includes("'/admin/jellyfin'")&&productModules.includes("'/admin/stremio'")&&productModules.includes("'/admin/stremio/playback'"),'Jellyfin and Stremio must have dedicated product workspaces');
-assert(productModules.includes('Reserved for later development.')&&productModules.includes('monthly seat allowance')&&productModules.includes('credit balance'),'Resellers must remain a structural shell rather than premature billing logic');
+assert(productModules.includes('Reserved for later development.')&&productModules.includes('monthly fee tied to a configurable Jellyfin user allowance')&&productModules.includes('monthly Jellyfin user allowance'),'Resellers must remain a structural shell aligned to the monthly user-allowance model');
+assert(!productModules.toLowerCase().includes(['cred','it-based'].join(''))&&!productModules.toLowerCase().includes(['cred','it balance'].join('')),'retired reseller credit commercial language must not return');
 assert(customerFilters.includes("SERVICE_VALUES = ['jellyfin', 'stremio']")&&customerFilters.includes('service_type_snapshot'),'Shared Customers must support product context without duplicating customer data');
 assert(customerList.includes("active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users'"),'Contextual customer links must keep the relevant product module active');
 assert(plansList.includes("type==='jellyfin'?'jellyfin-plans':type==='stremio'?'stremio-plans':'plans'"),'Plan filtering must keep product module navigation context');
