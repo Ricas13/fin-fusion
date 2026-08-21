@@ -18,13 +18,13 @@ assert(helper.includes('function pick(payload,season,episode)'),'targeted respon
 
 assert(managed.includes('episodeResolution.userItemsPath'),'managed TV lookup must attempt the targeted Items query first');
 assert(managed.includes("fields:'Path'"),'managed targeted lookup should request only the path before PlaybackInfo');
-assert(managed.includes('return jellyfin.resolveItem(runtime,args)'),'managed runtime must retain compatibility fallback after a targeted miss');
-assert(managed.indexOf('episodeResolution.userItemsPath')<managed.indexOf('return jellyfin.resolveItem(runtime,args)'),'managed fallback must occur only after the targeted lookup');
+assert(managed.includes('jellyfin.resolveItem(runtime,args)'),'managed runtime must retain compatibility fallback after a targeted miss');
+assert(managed.indexOf('episodeResolution.userItemsPath')<managed.indexOf('jellyfin.resolveItem(runtime,args)'),'managed fallback must occur only after the targeted lookup');
 
 assert(external.includes('episodeResolution.userItemsPath'),'external TV lookup must attempt the targeted Items query first');
-assert(external.includes("fields:'Path,MediaSources,MediaStreams'"),'external targeted lookup must return ordinary item media metadata without PlaybackInfo');
-assert(external.includes("Limit:'500'"),'external runtime must retain a compatibility fallback for servers that ignore exact filters');
-assert(external.indexOf('episodeResolution.userItemsPath')<external.indexOf("Limit:'500'"),'external legacy episode listing must only be fallback');
+assert(/fields:\s*'Path,MediaSources,MediaStreams'/.test(external),'external targeted lookup must return ordinary item media metadata without PlaybackInfo');
+assert(/Limit:\s*'500'/.test(external),'external runtime must retain a compatibility fallback for servers that ignore exact filters');
+assert(external.indexOf('episodeResolution.userItemsPath')<external.search(/Limit:\s*'500'/),'external legacy episode listing must only be fallback');
 assert(!external.includes('/PlaybackInfo'),'external episode optimization must remain unmanaged and PlaybackInfo-free');
 
 console.log('stremio targeted episode resolution smoke: ok');

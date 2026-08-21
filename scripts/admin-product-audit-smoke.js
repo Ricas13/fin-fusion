@@ -27,7 +27,7 @@ const exists=file=>fs.existsSync(path.join(root,file));
 
 const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.map(page=>page[0])]));
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard should contain current-state/action destinations only');
-assert.deepStrictEqual(pageKeys.jellyfin,['jellyfin-overview','servers','jellyfin-plans','jellyfin-customers','activity'],'Jellyfin must own overview, fleet, product plans, contextual customers and playback');
+assert.deepStrictEqual(pageKeys.jellyfin,['jellyfin-overview','servers','fleet-operations','jellyfin-plans','jellyfin-customers','activity'],'Jellyfin must own overview, fleet, product plans, contextual customers and playback');
 assert.deepStrictEqual(pageKeys.stremio,['stremio-overview','stremio-sources','stremio-plans','stremio-customers','stremio-playback'],'Stremio must own overview, sources, product plans, contextual customers and playback');
 assert.deepStrictEqual(pageKeys.resellers,['reseller-overview','reseller-accounts','reseller-plans','reseller-users','reseller-servers','reseller-activity'],'Resellers must reserve one shared module for future commercial models');
 assert.deepStrictEqual(pageKeys.people,['users-dashboard','users','tickets'],'Customers must remain one authoritative shared system');

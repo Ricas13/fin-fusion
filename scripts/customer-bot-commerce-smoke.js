@@ -6,7 +6,7 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
 const plans=read('src/platform/admin-plans-list.js');
-const shell=read('src/platform/admin-html-core.js');
+const shell=read('src/platform/admin-html-core-base.js');
 const settings=read('src/integrations/notification-settings.js');
 const dispatch=read('src/integrations/notification-dispatch.js');
 const outbox=read('src/integrations/notification-outbox.js');

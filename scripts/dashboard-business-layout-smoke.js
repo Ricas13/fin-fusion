@@ -33,7 +33,7 @@ assert(main.includes("title: 'Revenue future'"),'Revenue Future must remain on t
 assert(main.includes('ctx.data.forecastDays'),'Revenue Future must describe the selected range-derived forecast horizon');
 assert(money.includes('Date.now()+range.days*86400000'),'Revenue Future data must use the dashboard range rather than a fixed 12-week horizon');
 assert(money.includes('reportingCurrency.convertMinor'),'Dashboard money must be normalized for presentation');
-assert(reporting.includes('getForUser(userId)'),'Reporting currency must support a signed-in user preference');
-assert(reporting.includes("preferred_currency"),'Per-user reporting currency must be persisted separately from raw transaction currency');
+assert(reporting.includes('async function getForUser(_userId)')&&reporting.includes('masterCurrency:true'),'Dashboard reporting currency must resolve to the platform master currency');
+assert(reporting.includes('Currency is controlled platform-wide in Settings → Portal currency')&&!reporting.includes('UPDATE app_users SET preferred_currency'),'Per-user reporting currency preference must remain retired');
 
 console.log('dashboard business layout smoke: ok');

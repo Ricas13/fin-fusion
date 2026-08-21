@@ -3,7 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const provision = fs.readFileSync('src/jellyfin/provisioning-core.js', 'utf8');
+const provision = fs.readFileSync('src/jellyfin/provisioning-engine.js', 'utf8');
 const dash = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
 const view = fs.readFileSync('views/customer/dashboard.ejs', 'utf8');
 const nav = fs.readFileSync('views/customer/_nav.ejs', 'utf8');

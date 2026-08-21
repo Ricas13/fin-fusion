@@ -9,8 +9,8 @@ const create=read('src/platform/admin-plan-create-v2.js');
 const inventory=read('src/platform/admin-plan-inventory.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
-assert(create.includes("capacityLimit=int(body.capacityLimit,0,1000000,'Available slots')"),'new-plan backend must accept zero available slots');
-assert(create.includes("capacityLimit:input.capacityLimit??'0'"),'new plans must default to zero availability');
+assert(/capacityLimit\s*=\s*int\(body\.capacityLimit,\s*0,\s*1000000,\s*'Available slots'\)/.test(create),'new-plan backend must accept zero available slots');
+assert(/capacityLimit:\s*input\.capacityLimit\s*\?\?\s*'0'/.test(create),'new plans must default to zero availability');
 assert(create.includes('name="capacityLimit" required')&&create.includes('min="0" max="1000000"'),'new-plan browser control must allow zero slots');
 assert(inventory.includes('name="capacityLimit" min="0" max="1000000"'),'Availability editor must allow zero slots');
 assert(inventory.includes('n<0||n>1000000'),'Availability backend must accept zero and reject negative limits');

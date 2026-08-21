@@ -6,6 +6,7 @@ const { query, getPool } = require('../src/db');
 const registry = require('../src/platform/admin-dashboard-registry');
 const { buildContext, refundFromEvent } = require('../src/platform/admin-commerce-dashboard');
 const { dashboardRange } = require('../src/platform/admin-dashboard-analytics');
+const reportingCurrency = require('../src/platform/reporting-currency');
 
 function fakeReq(adminId, queryParams = {}) {
     return { session: { authUserId: adminId, authRole: 'admin', adminId }, query: queryParams };
@@ -69,9 +70,11 @@ async function main() {
         assert(typeof html === 'string' && html.length > 0, `widget ${spec.key} must render non-empty HTML`);
     }
 
-    // Gross/net revenue must reflect the seeded payment and refund, not fabricated figures.
-    assert(ctx.data.revenue.grossMinor >= 1500, 'gross revenue must include the seeded payment');
-    assert(ctx.data.revenue.refundMinor >= 500, 'refund total must include the seeded refund event');
+    // Gross/net revenue must reflect the seeded payment and refund after dashboard currency normalization.
+    const expectedGrossMinor = reportingCurrency.convertMinor(1500, 'USD', ctx.data.revenue.primaryCurrency, ctx.reporting);
+    const expectedRefundMinor = reportingCurrency.convertMinor(500, 'USD', ctx.data.revenue.primaryCurrency, ctx.reporting);
+    assert(ctx.data.revenue.grossMinor >= expectedGrossMinor, 'gross revenue must include the seeded payment');
+    assert(ctx.data.revenue.refundMinor >= expectedRefundMinor, 'refund total must include the seeded refund event');
     assert.strictEqual(ctx.data.revenue.netMinor, ctx.data.revenue.grossMinor - ctx.data.revenue.refundMinor, 'net revenue must equal gross minus refunds');
     assert(ctx.data.revenue.payingCustomers >= 1, 'paying-customer count must include the seeded payer email');
 
