@@ -32,18 +32,23 @@ CREATE OR REPLACE FUNCTION snapshot_subscription_stremio_household_policy() RETU
 LANGUAGE plpgsql AS $$
 DECLARE p plans%ROWTYPE;
 BEGIN
-  IF TG_OP='INSERT' OR NEW.plan_id IS DISTINCT FROM OLD.plan_id THEN
+  IF TG_OP='INSERT' THEN
     SELECT * INTO p FROM plans WHERE id=NEW.plan_id;
     IF FOUND AND p.service_type IN ('stremio','bundle') THEN
-      IF TG_OP='INSERT' THEN
-        NEW.stremio_household_network_limit_snapshot := COALESCE(NEW.stremio_household_network_limit_snapshot,p.stremio_household_network_limit);
-        NEW.stremio_ip_replacement_policy_snapshot := COALESCE(NEW.stremio_ip_replacement_policy_snapshot,p.stremio_ip_replacement_policy);
-        NEW.stremio_ip_replacement_cooldown_minutes_snapshot := COALESCE(NEW.stremio_ip_replacement_cooldown_minutes_snapshot,p.stremio_ip_replacement_cooldown_minutes);
-      ELSE
-        NEW.stremio_household_network_limit_snapshot := p.stremio_household_network_limit;
-        NEW.stremio_ip_replacement_policy_snapshot := p.stremio_ip_replacement_policy;
-        NEW.stremio_ip_replacement_cooldown_minutes_snapshot := p.stremio_ip_replacement_cooldown_minutes;
-      END IF;
+      NEW.stremio_household_network_limit_snapshot := COALESCE(NEW.stremio_household_network_limit_snapshot,p.stremio_household_network_limit);
+      NEW.stremio_ip_replacement_policy_snapshot := COALESCE(NEW.stremio_ip_replacement_policy_snapshot,p.stremio_ip_replacement_policy);
+      NEW.stremio_ip_replacement_cooldown_minutes_snapshot := COALESCE(NEW.stremio_ip_replacement_cooldown_minutes_snapshot,p.stremio_ip_replacement_cooldown_minutes);
+    END IF;
+  ELSIF NEW.plan_id IS DISTINCT FROM OLD.plan_id THEN
+    SELECT * INTO p FROM plans WHERE id=NEW.plan_id;
+    IF FOUND AND p.service_type IN ('stremio','bundle') THEN
+      NEW.stremio_household_network_limit_snapshot := p.stremio_household_network_limit;
+      NEW.stremio_ip_replacement_policy_snapshot := p.stremio_ip_replacement_policy;
+      NEW.stremio_ip_replacement_cooldown_minutes_snapshot := p.stremio_ip_replacement_cooldown_minutes;
+    ELSE
+      NEW.stremio_household_network_limit_snapshot := NULL;
+      NEW.stremio_ip_replacement_policy_snapshot := NULL;
+      NEW.stremio_ip_replacement_cooldown_minutes_snapshot := NULL;
     END IF;
   END IF;
   RETURN NEW;
