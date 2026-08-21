@@ -130,7 +130,7 @@ async function assertWorkflow(page,url,expected,activeExpected=null){
     assert.deepStrictEqual(active,[activeExpected],`${url} active workflow tab changed: ${JSON.stringify(active)}`);
     const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
     assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not match its workflow page`);
-    const siblingLinks=(await page.locator('.topBarActions a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
+    const siblingLinks=(await page.locator('.topBarActions > a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
     assert.deepStrictEqual(siblingLinks,[],`${url} mixes sibling-page navigation into the top-right action area: ${JSON.stringify(siblingLinks)}`);
   }
 }
