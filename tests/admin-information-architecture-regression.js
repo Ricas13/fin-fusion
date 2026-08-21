@@ -119,11 +119,14 @@ async function main(){
     await pool.query(`INSERT INTO stremio_source_index_state(source_id,status,last_mode,last_started_at,last_completed_at,last_full_completed_at,next_incremental_at,force_full,item_count) VALUES($1,'ready','full',NOW(),NOW(),NOW(),NOW()+INTERVAL '6 hours',FALSE,42)`,[seeded.id]);
 
     await gotoAdmin(page,`/admin/servers/stremio/${encodeURIComponent(seeded.id)}`);
-    stremioText=await page.locator('body').innerText();
-    assert(/Libraries to index/.test(stremioText)&&/Movies/.test(stremioText)&&/TV Shows/.test(stremioText),'Source detail does not show discovered libraries');
-    assert(await page.locator('input[name="libraryId"][value="movies-lib"]').isChecked(),'Selected library state did not round-trip');
-    assert(!(await page.locator('input[name="libraryId"][value="tv-lib"]').isChecked()),'Unselected library was incorrectly enabled');
-    assert(/every 6 hours/i.test(stremioText)&&/every 7 days/i.test(stremioText),'Source detail does not explain automatic index cadence');
+    assert.equal(new URL(page.url()).pathname,'/admin/servers/stremio','Legacy source-detail URL did not redirect to the consolidated Stremio Sources page');
+    const externalRow=page.locator(`#external-${seeded.id}`);
+    assert.equal(await externalRow.count(),1,'Seeded external Jellyfin source is missing from the consolidated source list');
+    const externalText=await externalRow.innerText();
+    assert(/Browser External Jellyfin/.test(externalText)&&/Movies/.test(externalText)&&/TV Shows/.test(externalText),'External source row does not show discovered libraries');
+    assert(await externalRow.locator('input[name="libraryId"][value="movies-lib"]').isChecked(),'Selected library state did not round-trip');
+    assert(!(await externalRow.locator('input[name="libraryId"][value="tv-lib"]').isChecked()),'Unselected library was incorrectly enabled');
+    assert(/every 3 hours/i.test(externalText)&&/twice weekly/i.test(externalText),'External source row does not explain automatic index cadence');
     await screenshot(page,'stremio-source-libraries');
 
     await gotoAdmin(page,`/admin/plans/${id}/delivery`);
