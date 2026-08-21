@@ -3,11 +3,13 @@
 const express = require('express');
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
+const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const { queuePlanReconciliation } = require('./bulk-jobs');
 const { esc, layout } = require('./admin-html');
 
 const ACCESS_MODELS = ['concurrent_streams', 'household_network'];
+const accessPolicyWriteLimit = routeRateLimit.middleware({ scope: 'admin-plan-access-write', max: 30, windowSeconds: 60, reason: 'admin_plan_access_write' });
 
 function gate(req, res, next) {
   return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired');
@@ -170,7 +172,7 @@ function createAdminPlanAccessRouter() {
       return res.send(layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: plan.name, subtitle: 'Access & playback policy', body: await page(plan, req), action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' }));
     } catch (error) { next(error); }
   });
-  router.post(paths, async (req, res, next) => {
+  router.post(paths, accessPolicyWriteLimit, async (req, res, next) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
       const plan = await loadPlan(req.params.id);
