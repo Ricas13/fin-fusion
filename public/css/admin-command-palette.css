@@ -1,0 +1,88 @@
+/* Keyboard-first command palette. The palette is intentionally a shell-level
+   navigation/search aid; it does not own routes or business state. */
+
+.adminQuickFindLauncher{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  width:100%;
+  height:34px;
+  padding:0 8px 0 12px;
+  border:1px solid var(--border-soft,var(--border));
+  border-radius:8px;
+  background:var(--panel);
+  color:var(--muted);
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+}
+.adminQuickFindLauncher:hover{border-color:#3e566c;color:#cbd7e2;background:#131c25}
+.adminQuickFindLauncher:focus-visible{border-color:var(--accent)}
+.adminQuickFindPrompt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.adminCommandShortcut{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;color:#748394;font-size:10px}
+.adminCommandShortcut kbd,.adminCommandPaletteFooter kbd{
+  min-width:20px;
+  padding:2px 5px;
+  border:1px solid #354454;
+  border-bottom-color:#273441;
+  border-radius:5px;
+  background:#0c1219;
+  color:#a9b5c1;
+  font:700 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  text-align:center;
+  box-shadow:0 1px 0 rgba(255,255,255,.04);
+}
+
+.adminCommandBackdrop{
+  position:fixed;
+  inset:0;
+  z-index:9000;
+  display:grid;
+  place-items:start center;
+  padding:clamp(72px,12vh,130px) 18px 24px;
+  background:rgba(3,7,11,.68);
+  backdrop-filter:blur(5px);
+}
+.adminCommandBackdrop[hidden]{display:none!important}
+.adminCommandPalette{
+  width:min(680px,100%);
+  overflow:hidden;
+  border:1px solid #38495a;
+  border-radius:14px;
+  background:#111922;
+  box-shadow:0 28px 90px rgba(0,0,0,.58);
+}
+.adminCommandPaletteHeader{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid #2a3745}
+.adminCommandSearchIcon{color:#738293;font-size:18px;line-height:1}
+.adminCommandInput{width:100%;min-width:0;border:0;outline:0;background:transparent;color:#f1f6fa;font:600 16px/1.4 inherit}
+.adminCommandInput::placeholder{color:#6f7e8e}
+.adminCommandClose{display:grid;place-items:center;min-width:34px;min-height:32px;padding:4px 8px;border:1px solid #334150;border-radius:7px;background:#0d141c;color:#94a2b1;cursor:pointer}
+.adminCommandClose:hover{color:#fff;border-color:#465b70}
+.adminCommandResults{max-height:min(460px,60vh);overflow-y:auto;padding:7px}
+.adminCommandOption{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;min-height:52px;padding:9px 10px;border:1px solid transparent;border-radius:9px;background:transparent;color:#dbe4eb;text-align:left;cursor:pointer}
+.adminCommandOption:hover,.adminCommandOption[aria-selected="true"]{border-color:rgba(76,201,240,.24);background:rgba(76,201,240,.08)}
+.adminCommandOptionCopy{display:grid;gap:2px;min-width:0}
+.adminCommandOptionLabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:760;color:#edf3f7}
+.adminCommandOptionMeta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8090a0;font-size:11px}
+.adminCommandOptionHint{color:#6f8192;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.adminCommandEmpty{padding:28px 18px;text-align:center;color:#8190a0;font-size:12px;line-height:1.5}
+.adminCommandPaletteFooter{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border-top:1px solid #283543;background:#0e151d;color:#738293;font-size:10px}
+.adminCommandKeys{display:flex;gap:10px;flex-wrap:wrap}.adminCommandKeys span{display:inline-flex;align-items:center;gap:5px}
+
+@media(max-width:860px){
+  .adminQuickFindLauncher{height:44px;min-height:44px}
+  .adminCommandBackdrop{padding:58px 10px 10px;place-items:start center}
+  .adminCommandPalette{border-radius:12px}
+  .adminCommandPaletteHeader{padding:10px}
+  .adminCommandInput{font-size:16px}
+  .adminCommandClose{min-height:44px;min-width:44px}
+  .adminCommandOption{min-height:56px}
+}
+@media(max-width:520px){
+  .adminCommandBackdrop{padding:8px}
+  .adminCommandPalette{width:100%;max-height:calc(100vh - 16px);border-radius:10px}
+  .adminCommandResults{max-height:calc(100vh - 150px)}
+  .adminCommandPaletteFooter{align-items:flex-start;flex-direction:column}
+}
+@media(prefers-reduced-motion:reduce){.adminCommandBackdrop{backdrop-filter:none}}
