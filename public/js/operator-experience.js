@@ -54,12 +54,13 @@
     insertAfterHeader(tabs([['Import Jellyfin users','/admin/jellyfin-import'],['Portal claims','/admin/customer-claims']],path));
   }
 
-  // Customer 360 is an overview. The management workspace owns identity,
-  // onboarding, validation and service recovery. Single-customer bulk preview
-  // forms must submit natively because their successful response is a full
-  // confirmation page, not an inline form-feedback fragment.
-  const customerMatch=path.match(/^\/admin\/users\/([^/]+)$/);
-  if(customerMatch && customerMatch[1]!=='new'){
+  // Customer 360 is an overview. Only UUID-shaped /admin/users/:id routes are
+  // customer records; reserved pages such as /admin/users/dashboard must never
+  // trigger customer-management requests with a page name as the customer ID.
+  // Single-customer bulk preview forms must submit natively because their
+  // successful response is a full confirmation page, not an inline fragment.
+  const customerMatch=path.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if(customerMatch){
     const customerId=decodeURIComponent(customerMatch[1]);
     const base=`/admin/users/${encodeURIComponent(customerId)}`;
     appendTopAction('Manage customer',`${base}/manage`,'data-customer-management');
