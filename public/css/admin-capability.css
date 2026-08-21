@@ -2,6 +2,7 @@
 @import url('/css/admin-setting-controls.css');
 @import url('/css/admin-provider-controls.css');
 @import url('/css/admin-ui-primitives.css');
+@import url('/css/admin-accessibility-mobile.css');
 
 /* Contract reference: wide library grids originate in the base layer as
    grid-template-columns:repeat(5,minmax(0,1fr)) and then collapse responsively. */
