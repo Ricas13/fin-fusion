@@ -15,18 +15,7 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
             to_regclass('public.legacy_marker') AS legacy_marker
     `);
     const hasAppSchema = Boolean(schema.rows[0].app_users && schema.rows[0].platform_settings && schema.rows[0].plans);
-
-    if (!hasAppSchema) {
-        assert.strictEqual(cleanExpected, false, 'fresh install migration did not create application tables');
-        assert(schema.rows[0].legacy_marker, 'skeletal upgrade simulation must retain its legacy marker table');
-        const ledger = await query(`SELECT filename FROM public.schema_migrations ORDER BY filename`);
-        const applied = new Set(ledger.rows.map(row => row.filename));
-        for (const filename of ['000_database_baseline.sql', '001_remove_retired_product.sql', '002_add_runtime_session_store.sql']) {
-            assert(applied.has(filename), `skeletal upgrade simulation must record ${filename}`);
-        }
-        console.log('skeletal upgrade adoption smoke: ok');
-        return;
-    }
+    assert(hasAppSchema, 'database migration must leave a complete CAPTAiNFiN application schema');
 
     const settings = await query(`SELECT setting_key, setting_value FROM platform_settings`);
     const map = Object.fromEntries(settings.rows.map(row => [row.setting_key, row.setting_value]));
@@ -74,6 +63,16 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
         assert(readiness.checklist.find(item => item.key === 'email' && !item.configured));
         assert(readiness.checklist.find(item => item.key === 'automation' && !item.configured));
         console.log(`clean install smoke: ok (admins=${expectedAdmins})`);
+    } else if (schema.rows[0].legacy_marker) {
+        const marker = await query(`SELECT to_regclass('public.legacy_marker') AS legacy_marker`);
+        assert(marker.rows[0].legacy_marker, 'non-CAPTAiNFiN pre-existing tables must be preserved when installing the baseline');
+        const ledger = await query(`SELECT filename FROM public.schema_migrations ORDER BY filename`);
+        const applied = new Set(ledger.rows.map(row => row.filename));
+        for (const filename of ['000_database_baseline.sql', '001_remove_retired_product.sql', '002_add_runtime_session_store.sql', '023_modular_access_drivers.sql']) {
+            assert(applied.has(filename), `coexistence migration must record ${filename}`);
+        }
+        assert.strictEqual(map.installation, undefined, 'a database with unrelated pre-existing tables must not be marked as a clean install');
+        console.log('non-CAPTAiNFiN coexistence migration smoke: ok');
     } else {
         const legacyPlans = await query(`
             SELECT COUNT(*)::int AS count FROM plans
