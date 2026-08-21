@@ -192,27 +192,44 @@ function parseDocument(input) {
 }
 
 async function exportPortableConfiguration() {
-    const base = await v1.exportPortableConfiguration();
-    const [planExtras, extraSettings, directMappings, automation] = await Promise.all([
-        query(`SELECT code,service_type,capacity_limit,is_addon,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,stremio_household_lease_minutes,request_movie_quota_limit,request_movie_quota_days,request_tv_quota_limit,request_tv_quota_days FROM plans ORDER BY code`),
-        query(`SELECT setting_key,setting_value FROM platform_settings WHERE setting_key=ANY($1::text[]) ORDER BY setting_key`, [EXTRA_SETTINGS]),
+    // Do not call the V1 exporter here: it validates streams before V2 can
+    // represent household plans, and household plans intentionally store NULL.
+    // Read the shared legacy fields directly, validate those through V1 with a
+    // compatibility sentinel, then restore/validate the modular V2 contract.
+    const settingKeys = [...V1_SETTINGS, ...EXTRA_SETTINGS];
+    const [settingsResult, plansResult, notificationsResult, directMappingsResult, automationResult] = await Promise.all([
+        query(`SELECT setting_key,setting_value FROM platform_settings WHERE setting_key=ANY($1::text[]) ORDER BY setting_key`, [settingKeys]),
+        query(`
+            SELECT p.code,p.name,p.description,p.audience,p.billing_interval,p.duration_days,p.price_minor,p.currency,
+                   p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,
+                   p.allow_live_tv_management,p.allow_4k,p.allow_remuxing,p.allow_remote_access,p.server_class,p.active,
+                   p.visible,p.sort_order,p.library_access_mode,p.library_names,p.placement_strategy,
+                   p.service_type,p.capacity_limit,p.is_addon,p.jellyfin_access_model,
+                   p.jellyfin_household_network_limit,p.jellyfin_household_lease_minutes,p.stremio_household_lease_minutes,
+                   p.request_movie_quota_limit,p.request_movie_quota_days,p.request_tv_quota_limit,p.request_tv_quota_days,
+                   COALESCE((
+                       SELECT jsonb_agg(jsonb_build_object('serverSlug',js.slug,'weight',pse.weight) ORDER BY js.slug)
+                       FROM plan_server_eligibility pse JOIN jellyfin_servers js ON js.id=pse.server_id
+                       WHERE pse.plan_id=p.id
+                   ),'[]'::jsonb) AS server_pool
+            FROM plans p ORDER BY p.sort_order,p.price_minor,p.name
+        `),
+        query(`SELECT event_type,telegram_enabled,email_enabled FROM notification_preferences ORDER BY event_type`),
         query(`SELECT p.code plan_code,pp.provider,pp.checkout_mode,pp.external_id,pp.active,pp.metadata FROM plan_provider_prices pp JOIN plans p ON p.id=pp.plan_id ORDER BY p.code,pp.provider,pp.checkout_mode`),
         query(`SELECT job_key,enabled,interval_seconds FROM automation_job_state ORDER BY job_key`)
     ]);
 
-    const extrasByCode = new Map(planExtras.rows.map(row => [String(row.code), row]));
-    const settings = { ...base.configuration.settings };
-    for (const row of extraSettings.rows) settings[row.setting_key] = row.setting_value;
-
-    return {
+    const rawSettings = {};
+    for (const row of settingsResult.rows) rawSettings[row.setting_key] = row.setting_value;
+    const rawPlans = plansResult.rows.map(row => ({ ...row, serverPool: row.server_pool || [] }));
+    const rawDocument = {
         format: FORMAT,
         version: VERSION,
-        exportedAt: new Date().toISOString(),
         configuration: {
-            settings,
-            plans: base.configuration.plans.map(plan => ({ ...plan, ...(extrasByCode.get(plan.code) || {}) })),
-            notifications: base.configuration.notifications,
-            directPaymentMappings: directMappings.rows.map(mapping => ({
+            settings: rawSettings,
+            plans: rawPlans,
+            notifications: notificationsResult.rows,
+            directPaymentMappings: directMappingsResult.rows.map(mapping => ({
                 planCode: mapping.plan_code,
                 provider: mapping.provider,
                 checkoutMode: mapping.checkout_mode,
@@ -220,11 +237,37 @@ async function exportPortableConfiguration() {
                 active: mapping.active,
                 metadata: mapping.metadata || {}
             })),
-            automation: automation.rows.map(job => ({
+            automation: automationResult.rows.map(job => ({
                 jobKey: job.job_key,
                 enabled: job.enabled,
                 intervalSeconds: Number(job.interval_seconds)
             }))
+        },
+        excluded: []
+    };
+
+    const legacyValidated = v1.parseDocument(asV1(rawDocument));
+    const legacyByCode = new Map(legacyValidated.configuration.plans.map(plan => [String(plan.code).toLowerCase(), plan]));
+    const plans = rawPlans.map(source => {
+        const normalized = normalizeV2Plan(legacyByCode.get(String(source.code).toLowerCase()), source);
+        const { _modular_plan_contract, ...portable } = normalized;
+        return portable;
+    });
+    const settings = { ...legacyValidated.configuration.settings };
+    for (const key of EXTRA_SETTINGS) {
+        if (Object.prototype.hasOwnProperty.call(rawSettings, key)) settings[key] = object(rawSettings[key]);
+    }
+
+    return {
+        format: FORMAT,
+        version: VERSION,
+        exportedAt: new Date().toISOString(),
+        configuration: {
+            settings,
+            plans,
+            notifications: legacyValidated.configuration.notifications,
+            directPaymentMappings: normalizeDirectMappings(rawDocument.configuration.directPaymentMappings),
+            automation: normalizeAutomation(rawDocument.configuration.automation)
         },
         excluded: [
             'payment provider credentials and webhook secrets',
