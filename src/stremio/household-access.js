@@ -9,12 +9,16 @@ const networkIdentity = require('../access/network-identity');
 async function planForEntitlement(entitlement) {
   if (!entitlement?.plan_id) throw new Error('Stremio entitlement has no plan.');
   const result = await query(
-    `SELECT id,service_type,streams,jellyfin_access_model,
-            jellyfin_household_network_limit,jellyfin_household_lease_minutes,
-            stremio_household_network_limit,stremio_household_lease_minutes,
-            stremio_ip_replacement_policy,stremio_ip_replacement_cooldown_minutes
-     FROM plans WHERE id=$1`,
-    [entitlement.plan_id]
+    `SELECT p.id,p.service_type,p.streams,p.jellyfin_access_model,
+            p.jellyfin_household_network_limit,p.jellyfin_household_lease_minutes,
+            COALESCE(s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit) stremio_household_network_limit,
+            p.stremio_household_lease_minutes,
+            COALESCE(s.stremio_ip_replacement_policy_snapshot,p.stremio_ip_replacement_policy) stremio_ip_replacement_policy,
+            COALESCE(s.stremio_ip_replacement_cooldown_minutes_snapshot,p.stremio_ip_replacement_cooldown_minutes) stremio_ip_replacement_cooldown_minutes
+     FROM plans p
+     LEFT JOIN subscriptions s ON s.id=$2
+     WHERE p.id=$1`,
+    [entitlement.plan_id, entitlement.subscription_id || null]
   );
   if (!result.rowCount) throw new Error('Stremio plan no longer exists.');
   return result.rows[0];
