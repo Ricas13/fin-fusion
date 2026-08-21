@@ -59,6 +59,10 @@ function decodedPassword(url) {
   return decodeURIComponent(url.password || '');
 }
 
+function isExamplePlaceholder(value) {
+  return /^replace-with-unique-[a-z0-9-]+-secret$/i.test(String(value || '').trim());
+}
+
 function endpointKey(url) {
   return `${url.hostname.toLowerCase()}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}`;
 }
@@ -68,6 +72,7 @@ function validateRuntimeUrl(raw, envName, expectedRole, ownerUrl) {
   const username = decodeURIComponent(url.username || '');
   const password = decodedPassword(url);
   if (username !== expectedRole) throw new Error(`${envName} must authenticate as ${expectedRole}`);
+  if (isExamplePlaceholder(password)) throw new Error(`${envName} still contains an .env.example placeholder; run bash install.sh for a fresh installation or replace it with a unique secret`);
   if (password.length < 24) throw new Error(`${envName} password must be at least 24 characters`);
   if (endpointKey(url) !== endpointKey(ownerUrl)) {
     throw new Error(`${envName} must point to the same PostgreSQL host/database as DATABASE_URL for the Compose deployment`);
@@ -114,6 +119,9 @@ function main() {
   if (!ownerRaw) throw new Error('DATABASE_URL is required before runtime database URLs can be prepared');
   const ownerUrl = parsePgUrl(ownerRaw, 'DATABASE_URL');
   const ownerPassword = decodedPassword(ownerUrl);
+  if (isExamplePlaceholder(ownerPassword) || isExamplePlaceholder(getValue(content, 'POSTGRES_PASSWORD'))) {
+    throw new Error('PostgreSQL owner credentials still contain .env.example placeholders; run bash install.sh for a fresh installation or replace them with unique secrets');
+  }
   const seenPasswords = new Map();
   const updates = [];
 
