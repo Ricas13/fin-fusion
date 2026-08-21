@@ -158,7 +158,7 @@
       const summary=sources.querySelector('.stremioSourceSummary');
       if(summary){
         const strong=summary.querySelector('strong'),muted=summary.querySelector('.muted');
-        if(strong)strong.textContent=strong.textContent.replace(/selected sources? ready/,'external fallbacks ready').replace('No additional sources selected','No external fallbacks selected');
+        if(strong)strong.textContent=strong.textContent.replace('selected source ready','external fallback ready').replace('selected sources ready','external fallbacks ready').replace('No additional sources selected','No external fallbacks selected');
         if(muted)muted.textContent='External fallbacks are optional. Your included CAPTAiNFiN Jellyfin servers remain available automatically.';
       }
       replaceText(sources,[['indexed titles','titles ready'],['Index not ready','Library preparing']]);
