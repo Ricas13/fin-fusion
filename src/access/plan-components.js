@@ -15,12 +15,23 @@ function jellyfinHouseholdConfig(plan) {
   });
 }
 
+function stremioReplacementPolicy(plan) {
+  return String(plan?.stremio_ip_replacement_policy || 'auto_inactive') === 'customer_cooldown' ? 'customer_cooldown' : 'auto_inactive';
+}
+
 function stremioHouseholdConfig(plan) {
   const config = drivers.householdConfig({
-    household_network_limit: 1,
+    household_network_limit: plan?.stremio_household_network_limit,
     household_lease_minutes: plan?.stremio_household_lease_minutes
   });
-  return { ...config, networkLimit: 1 };
+  const replacementPolicy = stremioReplacementPolicy(plan);
+  const cooldownMinutes = drivers.boundedInt(plan?.stremio_ip_replacement_cooldown_minutes, 15, 1440, 1440);
+  return {
+    ...config,
+    leaseMinutes: replacementPolicy === 'customer_cooldown' ? Math.max(config.leaseMinutes, cooldownMinutes) : config.leaseMinutes,
+    replacementPolicy,
+    cooldownMinutes
+  };
 }
 
 function componentsForPlan(plan) {
@@ -61,11 +72,14 @@ function assertComponentsLicensed(plan, options = {}) {
 
 function accessLabel(plan) {
   const parts = componentsForPlan(plan).map(component => {
-    if (component.module === 'stremio') return '1 Stremio household (IPv4 + IPv6)';
+    if (component.module === 'stremio') {
+      const households = component.config.networkLimit;
+      return `Unlimited streams · Unlimited devices · ${households} household IP${households === 1 ? '' : 's'}`;
+    }
     if (component.driver === 'household_network') return `${component.config.networkLimit} Jellyfin household network${component.config.networkLimit === 1 ? '' : 's'}`;
     return `${component.config.streamLimit} Jellyfin stream${component.config.streamLimit === 1 ? '' : 's'}`;
   });
   return parts.join(' · ');
 }
 
-module.exports = { serviceType, jellyfinHouseholdConfig, stremioHouseholdConfig, componentsForPlan, componentForPlan, assertComponentsLicensed, accessLabel };
+module.exports = { serviceType, jellyfinHouseholdConfig, stremioReplacementPolicy, stremioHouseholdConfig, componentsForPlan, componentForPlan, assertComponentsLicensed, accessLabel };
