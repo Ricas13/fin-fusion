@@ -173,7 +173,8 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
   assert(/Portal-wide setting/.test(await form.innerText()),'Plan creation must explain that currency is controlled portal-wide');
   await form.locator('input[name="capacityLimit"]').fill('20');
   await form.locator('select[name="billingInterval"]').selectOption('month');
-  await form.locator('input[name="streams"]').fill('1');
+  const streams=form.locator('input[name="streams"]');
+  assert.equal(await streams.isVisible(),false,'Stremio-only plan creation must hide the Jellyfin concurrent-stream field');
 }
 
 async function planCreationAudit(page){
