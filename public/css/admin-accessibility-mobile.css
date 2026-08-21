@@ -1,0 +1,93 @@
+/* Accessibility and mobile interaction layer.
+   This file deliberately sits on top of the existing admin design system so
+   accessibility improvements can be shared without rewriting page-specific CSS. */
+
+.skipLink{
+  position:fixed;
+  left:14px;
+  top:10px;
+  z-index:10000;
+  padding:9px 12px;
+  border:2px solid var(--accent);
+  border-radius:8px;
+  background:#101820;
+  color:#fff;
+  font-weight:800;
+  text-decoration:none;
+  transform:translateY(-180%);
+  transition:transform .12s ease;
+}
+.skipLink:focus{transform:translateY(0)}
+
+/* A consistent keyboard focus ring is more useful than each legacy surface
+   inventing its own treatment. Mouse/touch interaction is unaffected. */
+:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{
+  outline:2px solid #4cc9f0;
+  outline-offset:2px;
+}
+:where(.button,.btn,.adminTab,.operatorTab,.topHelpLink,.topStatusLink):focus-visible{
+  box-shadow:0 0 0 3px rgba(76,201,240,.14);
+}
+.adminTab[aria-current="page"]{color:#fff}
+
+button:disabled,.button[aria-disabled="true"],.btn[aria-disabled="true"],input:disabled,select:disabled,textarea:disabled{
+  cursor:not-allowed;
+  opacity:.58;
+}
+
+/* Make horizontal data regions visibly scrollable and stable when content is
+   wider than the viewport. */
+.tableWrap,.table-container,.capabilityTableWrap{
+  max-width:100%;
+  scrollbar-gutter:stable;
+  overscroll-behavior-inline:contain;
+}
+
+/* Customer 360 predates the current typography scale and used 9px metadata.
+   Keep the compact layout, but bring supporting text back to a readable size. */
+.profileMeta,.summaryLabel,.summarySub,.kvLabel,.timelineTime,.timelineDetail,.profileNote,.miniLabel{
+  font-size:11px!important;
+  line-height:1.4;
+}
+.detailTab{font-size:11px}
+.profileCardHead h2{font-size:12px}
+.controlCentreSummary span{font-size:10px}
+
+@media(max-width:860px){
+  /* 44px is a reliable touch target without changing desktop density. */
+  .button,.btn,.adminTab,.headerButton,.operatorTab,.detailTab,.topHelpLink,.topStatusLink,.modal-close,.navSectionLabel{
+    min-height:44px;
+  }
+  .btn-sm{min-height:44px;padding:8px 11px}
+  .adminQuickFindInput,
+  .input,input[type=text],input[type=email],input[type=password],input[type=number],input[type=url],input[type=date],input[type=datetime-local],select,textarea{
+    min-height:44px;
+  }
+  .adminQuickFindInput{height:44px}
+  .topBarActions{gap:7px}
+  .topHelpLink,.topStatusLink{padding-left:12px;padding-right:12px}
+  .operatorTabs,.detailTabs{scroll-snap-type:x proximity}
+  .operatorTab,.detailTab{scroll-snap-align:start}
+
+  /* Responsive tables already become stacked cards. Do not reserve an empty
+     label column for checkbox/action cells that intentionally have no label. */
+  .responsiveTable td[data-label=""]{
+    grid-template-columns:1fr!important;
+    justify-items:start;
+  }
+  .responsiveTable td[data-label=""]::before{display:none!important;content:none!important}
+  .responsiveTable input[type=checkbox]:not([role="switch"]){min-width:22px;min-height:22px}
+}
+
+@media(max-width:600px){
+  .topBarActions{width:100%;justify-content:flex-start;margin-left:0}
+  .topBarActions>.button,.topBarActions>.btn{flex:1 1 auto}
+  .uiSectionActions,.uiConfirmActions,.uiDangerActions{display:grid;grid-template-columns:1fr}
+  .uiSectionActions>.button,.uiConfirmActions>.button,.uiDangerActions>.button,
+  .uiSectionActions>form,.uiConfirmActions>form,.uiDangerActions>form{width:100%}
+  .uiSectionActions form .button,.uiConfirmActions form .button,.uiDangerActions form .button{width:100%}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .skipLink{transition:none}
+}
