@@ -53,9 +53,14 @@ function canonicalNetwork(value) {
 }
 
 function hashSecret() {
-  const secret = String(process.env.HOUSEHOLD_NETWORK_HASH_KEY || process.env.SESSION_SECRET || '').trim();
-  if (secret.length < 32) throw new Error('HOUSEHOLD_NETWORK_HASH_KEY or SESSION_SECRET must provide at least 32 characters for household network hashing.');
-  return secret;
+  const explicit = String(process.env.HOUSEHOLD_NETWORK_HASH_KEY || '').trim();
+  if (explicit) {
+    if (explicit.length < 32) throw new Error('HOUSEHOLD_NETWORK_HASH_KEY must provide at least 32 characters.');
+    return explicit;
+  }
+  const sharedRoot = String(process.env.JELLYFIN_ENCRYPTION_KEY || process.env.SESSION_SECRET || '').trim();
+  if (sharedRoot.length < 32) throw new Error('JELLYFIN_ENCRYPTION_KEY, SESSION_SECRET, or HOUSEHOLD_NETWORK_HASH_KEY must provide at least 32 characters for household network hashing.');
+  return crypto.createHmac('sha256', sharedRoot).update('captainfin:household-network:v1').digest('hex');
 }
 
 function hashNetwork(value, options = {}) {
@@ -69,4 +74,4 @@ function requestAddress(req) {
   return stripPort(req?.ip || req?.socket?.remoteAddress || '');
 }
 
-module.exports = { stripPort, expandIpv6, canonicalNetwork, hashNetwork, requestAddress };
+module.exports = { stripPort, expandIpv6, canonicalNetwork, hashSecret, hashNetwork, requestAddress };
