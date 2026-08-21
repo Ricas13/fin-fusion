@@ -22,6 +22,8 @@ branch="$(git branch --show-current)"
 
 log 'Fetching the latest CAPTAiNFiN release from main'
 git fetch origin main
+local_ahead="$(git rev-list --count origin/main..HEAD)"
+[[ "$local_ahead" == '0' ]] || fail "Local main contains ${local_ahead} commit(s) not present on origin/main. Push/reconcile them before using the production updater."
 git merge --ff-only origin/main
 
 log 'Deploying the updated release'
