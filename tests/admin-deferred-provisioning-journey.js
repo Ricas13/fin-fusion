@@ -17,10 +17,13 @@ const PLAN='browser-jellyfin-deferred';
 const OUT=path.join(process.cwd(),'test-results','admin-browser');
 fs.mkdirSync(OUT,{recursive:true});
 
+async function settle(page){await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});}
+async function gotoPage(page,url){const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page);return response;}
 async function signInAdmin(page){
-  await page.goto(`${BASE}/login`,{waitUntil:'domcontentloaded'});
+  await gotoPage(page,`${BASE}/login`);
   await page.locator('#username').fill(USER);await page.locator('#password').fill(PASSWORD);
   await Promise.all([page.waitForURL(url=>url.pathname.startsWith('/admin'),{timeout:15000}),page.getByRole('button',{name:'Sign in'}).click()]);
+  await settle(page);
 }
 async function shot(page,name){await page.screenshot({path:path.join(OUT,`journey-${name}.png`),fullPage:true});}
 
@@ -35,14 +38,16 @@ async function main(){
     await planCreate.create(parsed,null);
 
     const adminContext=await browser.newContext({viewport:{width:1440,height:1000}}),admin=await adminContext.newPage();await signInAdmin(admin);
-    await admin.goto(`${BASE}/admin/users/new`,{waitUntil:'networkidle'});
+    await gotoPage(admin,`${BASE}/admin/users/new`);
     const form=admin.locator('form[action="/admin/users/new"]');
+    assert.equal(await form.count(),1,'Add customer form is missing');
     await form.locator('input[name="username"]').fill(CUSTOMER);
     await form.locator('input[name="email"]').fill(EMAIL);
     await form.locator('input[name="displayName"]').fill('Browser Deferred Customer');
     await form.locator('select[name="planCode"]').selectOption(PLAN);
     await form.locator('select[name="provisioningMode"]').selectOption('after_activation');
-    await Promise.all([admin.waitForNavigation({waitUntil:'networkidle',timeout:15000}),form.getByRole('button',{name:'Create customer'}).click()]);
+    await Promise.all([admin.waitForNavigation({waitUntil:'domcontentloaded',timeout:15000}),form.getByRole('button',{name:'Create customer'}).click()]);
+    await settle(admin);
     const resultText=await admin.locator('body').innerText();
     assert(/Customer created/.test(resultText),'Deferred customer creation did not reach its result page');
     assert(/will be provisioned when activation completes/i.test(resultText),'Deferred provisioning status is not explained on creation');
@@ -57,10 +62,12 @@ async function main(){
     assert.equal(Number(before.jellyfin_accounts),0,'Deferred customer was provisioned before account activation');
 
     const customerContext=await browser.newContext({viewport:{width:1280,height:900}}),customer=await customerContext.newPage();
-    await customer.goto(activationLink,{waitUntil:'networkidle'});
+    const activationResponse=await gotoPage(customer,activationLink);
+    assert(activationResponse&&activationResponse.status()===200,'Deferred activation link was not accepted');
     await customer.locator('input[name="password"]').fill(CUSTOMER_PASSWORD);
     await customer.locator('input[name="confirmPassword"]').fill(CUSTOMER_PASSWORD);
-    await Promise.all([customer.waitForNavigation({waitUntil:'networkidle',timeout:15000}),customer.getByRole('button',{name:'Activate account'}).click()]);
+    await Promise.all([customer.waitForNavigation({waitUntil:'domcontentloaded',timeout:15000}),customer.getByRole('button',{name:'Activate account'}).click()]);
+    await settle(customer);
     assert(/Account activated/.test(await customer.locator('body').innerText()),'Jellyfin unavailability blocked portal account activation');
     await shot(customer,'deferred-activated-without-server');
 
@@ -74,13 +81,14 @@ async function main(){
     const audit=(await query(`SELECT COUNT(*)::int count FROM audit_log WHERE action='customer.activation.provisioning_failed' AND entity_id=$1`,[before.id])).rows[0]?.count;
     assert(Number(audit)===1,'Activation did not audit the deferred provisioning failure');
 
-    await customer.getByRole('link',{name:'Continue to sign in'}).click();await customer.waitForLoadState('networkidle');
+    await customer.getByRole('link',{name:'Continue to sign in'}).click();await customer.waitForLoadState('domcontentloaded');await settle(customer);
     await customer.locator('input[name="identity"]').fill(CUSTOMER);await customer.locator('input[name="password"]').fill(CUSTOMER_PASSWORD);
     await Promise.all([customer.waitForURL(url=>url.pathname==='/account',{timeout:15000}),customer.getByRole('button',{name:'Sign in'}).click()]);
+    await settle(customer);
     assert.equal(new URL(customer.url()).pathname,'/account','Customer with pending Jellyfin provisioning cannot use the portal');
     await shot(customer,'deferred-customer-portal');
 
-    await admin.goto(`${BASE}/admin/provisioning`,{waitUntil:'networkidle'});
+    await gotoPage(admin,`${BASE}/admin/provisioning`);
     const provisioningText=await admin.locator('body').innerText();
     assert(provisioningText.includes('Browser Deferred Customer'),'Failed deferred provisioning is not discoverable in Automation → Provisioning');
     assert(/No eligible Jellyfin server/.test(provisioningText),'Provisioning UI hides the reason deferred access could not be created');
