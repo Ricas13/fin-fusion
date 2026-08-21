@@ -55,7 +55,7 @@
 }
 .adminCommandPaletteHeader{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid #2a3745}
 .adminCommandSearchIcon{color:#738293;font-size:18px;line-height:1}
-.adminCommandInput{width:100%;min-width:0;border:0;outline:0;background:transparent;color:#f1f6fa;font:600 16px/1.4 inherit}
+.adminCommandInput{width:100%;min-width:0;border:0;outline:0;background:transparent;color:#f1f6fa;font:inherit;font-size:16px;font-weight:600;line-height:1.4}
 .adminCommandInput::placeholder{color:#6f7e8e}
 .adminCommandClose{display:grid;place-items:center;min-width:34px;min-height:32px;padding:4px 8px;border:1px solid #334150;border-radius:7px;background:#0d141c;color:#94a2b1;cursor:pointer}
 .adminCommandClose:hover{color:#fff;border-color:#465b70}
