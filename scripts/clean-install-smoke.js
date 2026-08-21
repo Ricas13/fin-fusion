@@ -71,7 +71,7 @@ const { setupReadiness } = require('../src/platform/setup-readiness');
         for (const filename of ['000_database_baseline.sql', '001_remove_retired_product.sql', '002_add_runtime_session_store.sql', '023_modular_access_drivers.sql']) {
             assert(applied.has(filename), `coexistence migration must record ${filename}`);
         }
-        assert.strictEqual(map.installation, undefined, 'a database with unrelated pre-existing tables must not be marked as a clean install');
+        assert.strictEqual(map.installation?.cleanInstall, true, 'installing CAPTAiNFiN alongside unrelated tables is still a fresh CAPTAiNFiN installation');
         console.log('non-CAPTAiNFiN coexistence migration smoke: ok');
     } else {
         const legacyPlans = await query(`
