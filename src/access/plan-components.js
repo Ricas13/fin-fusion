@@ -61,7 +61,7 @@ function assertComponentsLicensed(plan, options = {}) {
 
 function accessLabel(plan) {
   const parts = componentsForPlan(plan).map(component => {
-    if (component.module === 'stremio') return '1 Stremio household';
+    if (component.module === 'stremio') return '1 Stremio household (IPv4 + IPv6)';
     if (component.driver === 'household_network') return `${component.config.networkLimit} Jellyfin household network${component.config.networkLimit === 1 ? '' : 's'}`;
     return `${component.config.streamLimit} Jellyfin stream${component.config.streamLimit === 1 ? '' : 's'}`;
   });

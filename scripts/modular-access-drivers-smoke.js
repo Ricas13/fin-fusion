@@ -39,6 +39,7 @@ const bundleComponents=components.componentsForPlan(bundle);
 assert.strictEqual(bundleComponents.length,2);
 assert.deepStrictEqual(bundleComponents.find(c=>c.module==='jellyfin').config,{networkLimit:2,leaseMinutes:120});
 assert.deepStrictEqual(bundleComponents.find(c=>c.module==='stremio').config,{networkLimit:1,leaseMinutes:300},'Stremio must remain exactly one household and keep an independent lease duration');
+assert.strictEqual(components.accessLabel({service_type:'stremio'}),'1 Stremio household (IPv4 + IPv6)');
 
 assert.strictEqual(identity.canonicalNetwork('203.0.113.44:8096'),'ipv4:203.0.113.44');
 assert.strictEqual(identity.canonicalNetwork('::ffff:203.0.113.44'),'ipv4:203.0.113.44');
@@ -49,6 +50,7 @@ assert.strictEqual(identity.hashNetwork('203.0.113.44',{secret:'x'.repeat(32)}),
 assert.strictEqual(drivers.householdConfig({household_network_limit:99,household_lease_minutes:1}).networkLimit,1,'invalid household limits must fail back to safe defaults');
 
 const migration=read('db/migrations/023_modular_access_drivers.sql');
+const familyMigration=read('db/migrations/024_network_lease_families.sql');
 const leases=read('src/access/network-leases.js');
 const stremio=read('src/stremio/runtime.js');
 const external=read('src/stremio/external-direct-runtime.js');
@@ -63,8 +65,10 @@ const catalogVersioning=read('src/platform/catalog-versioning.js');
 
 for(const token of ['jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes','access_network_leases','access_network_events'])assert(migration.includes(token),`migration is missing ${token}`);
 assert(migration.includes('ALTER COLUMN streams DROP NOT NULL'),'household Jellyfin plans must be able to represent a non-applicable stream count as NULL');
+assert(familyMigration.includes('network_family')&&familyMigration.includes('access_network_leases_subject_family_idx'),'dual-stack household enforcement must persist the normalized IP family');
 assert(leases.includes('pg_advisory_xact_lock'),'household lease claims must serialize per subject');
 assert(leases.includes("decision === 'denied'")&&leases.includes("INTERVAL '5 minutes'"),'repeated denials must be audit-throttled');
+assert(leases.includes('activeSameFamily')&&leases.includes('function preview'),'lease claims must enforce household limits per IP family and expose read-only availability checks');
 assert(leases.includes('expires_at=NOW()+($6::int*INTERVAL'),'same-network playback must refresh a time-limited lease');
 assert(!leases.includes('remote_endpoint'),'generic lease persistence must not store plaintext network endpoints');
 

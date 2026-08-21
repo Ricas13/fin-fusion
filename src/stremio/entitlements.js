@@ -77,7 +77,7 @@ async function reconcileForCustomer(customerId,entitlement=null,_options={}){
   const shared=await reconcileSharedForCustomer(customerId,sub);if(shared)return shared;
   return persistEntitlementRecord(customerId,sub,{sharedSources:false});
 }
-async function current(customerId){const r=await query(`SELECT e.*,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code,p.is_addon FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id WHERE e.customer_id=$1 ORDER BY e.created_at DESC LIMIT 1`,[customerId]);return r.rows[0]||null;}
+async function current(customerId){const r=await query(`SELECT e.*,s.plan_id,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code,p.is_addon FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id WHERE e.customer_id=$1 ORDER BY e.created_at DESC LIMIT 1`,[customerId]);return r.rows[0]||null;}
 async function suspend(customerId,reason='No active Stremio entitlement'){
   const rows=await query(`SELECT e.id,e.jellyfin_account_id,e.jellyfin_access_token_encrypted,js.id server_id,js.name server_name,js.base_url FROM stremio_entitlements e LEFT JOIN jellyfin_servers js ON js.id=e.server_id WHERE e.customer_id=$1`,[customerId]);
   await query(`UPDATE stremio_entitlements SET status=CASE WHEN status='revoked' THEN status ELSE 'suspended' END,server_id=NULL,jellyfin_account_id=NULL,jellyfin_access_token_encrypted=NULL,jellyfin_token_issued_at=NULL,last_error=$2,updated_at=NOW() WHERE customer_id=$1`,[customerId,String(reason).slice(0,1000)]);

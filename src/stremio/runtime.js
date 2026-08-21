@@ -139,6 +139,12 @@ function createStremioRuntimeRouter() {
       if (!entitlement) return res.json({ streams: [] });
       const type = String(req.params.type || '');
       const videoId = String(req.params.videoId || '');
+      const household = await householdAccess.preview(entitlement, req, { kind: 'stream_results' });
+      if (household && household.allowed === false) {
+        await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
+        const origin = await publicOrigin(req);
+        return res.json({ streams: [householdAccess.deniedStream(household, { externalUrl: `${origin}/account/stremio` })] });
+      }
       const origin = await publicOrigin(req);
       const delivery = { portalBase: origin, installToken: req.params.token };
       const [managedResult, externalResult] = await Promise.allSettled([
