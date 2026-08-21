@@ -121,7 +121,9 @@ async function auditPage(page,url,{mobile=false}={}){
 }
 
 async function assertWorkflow(page,url,expected,activeExpected=null){
-  await page.goto(`${BASE}${url}`,{waitUntil:'networkidle'});
+  const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
+  assert(response&&response.status()<400,`${url} workflow page returned ${response?.status()}`);
+  await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
   const tabs=await page.locator('.operatorTabs a').allTextContents();
   const clean=tabs.map(x=>x.trim()).filter(Boolean);
   assert.deepStrictEqual(clean,expected,`${url} workflow tabs changed: ${JSON.stringify(clean)}`);
