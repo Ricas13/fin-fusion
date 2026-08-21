@@ -56,7 +56,7 @@ PostgreSQL is authoritative. The original JSON database and single-server script
 
 ## Requirements
 
-- Docker Engine + Docker Compose is the recommended deployment path.
+- Docker Engine + Docker Compose v2 is the recommended deployment path.
 - PostgreSQL 17 is included in the Compose stack.
 - A reverse proxy terminating HTTPS is recommended for public deployments.
 - At least one Jellyfin server is required before Jellyfin accounts can be provisioned, but a clean installation can start with zero servers, customers or payment providers.
@@ -64,19 +64,32 @@ PostgreSQL is authoritative. The original JSON database and single-server script
 ## Quick start
 
 ```bash
-git clone https://github.com/Ricas13/steam-fusion.git captainfin
+git clone https://github.com/Ricas13/fin-fusion.git captainfin
 cd captainfin
-cp .env.example .env
-docker compose up -d --build
+bash install.sh
 ```
 
-Generate independent high-entropy values for every encryption/session key in `.env` and configure the PostgreSQL credentials/URLs before starting production services.
+`install.sh` is the supported fresh-install entry point. It:
 
-The `migrate` service applies schema migrations and bootstraps an unattended administrator only when both `ADMIN_USERNAME` and `ADMIN_PASSWORD` are supplied. Otherwise use the one-time browser setup flow.
+1. Verifies Docker Engine and Docker Compose v2.
+2. Creates `.env` only when it is missing and never overwrites existing installation secrets.
+3. Generates independent high-entropy PostgreSQL, encryption, backup, Stremio-token and session secrets without printing them.
+4. Delegates isolated runtime database credentials to the production runtime-role generator.
+5. Prepares the encrypted-backup bind mount with a non-root container identity.
+6. Runs the same migration, health, backup and deployment verification path used for production upgrades.
+7. Prints a fresh one-time first-run claim code after a successful interactive installation.
 
-The web application listens on `127.0.0.1:3030` by default. Put an HTTPS reverse proxy in front of it rather than exposing the container directly.
+The web application remains bound to `127.0.0.1:3030`. Put an HTTPS reverse proxy in front of it rather than exposing the container directly.
 
-For an existing production installation use the supported deployment command:
+The installer is safe to rerun after an interrupted first deployment: an existing `.env` is preserved and validated rather than regenerated.
+
+For future updates from a normal `main` production checkout:
+
+```bash
+bash update.sh
+```
+
+`update.sh` refuses tracked local changes, fast-forwards from `origin/main`, then hands off to the SSH-safe production deployment script. The lower-level supported deployment command remains:
 
 ```bash
 bash scripts/deploy-production.sh
@@ -99,7 +112,7 @@ A blank database starts safely with customer-facing features off. A sensible adm
 9. **Automation** — confirm dedicated workers are healthy.
 10. **Storefront / Registration** — enable public-facing acquisition when ready.
 
-If the one-time setup code is not visible in the browser, retrieve a fresh claim code directly from the running application container:
+`install.sh` prints a fresh claim code when `ADMIN_USERNAME` and `ADMIN_PASSWORD` are intentionally left blank. You can rotate/retrieve another claim code directly from the running application container before the first administrator is created:
 
 ```bash
 docker compose exec app npm run setup:claim
@@ -110,6 +123,8 @@ If the application container is not running yet:
 ```bash
 docker compose run --rm app npm run setup:claim
 ```
+
+After the first administrator exists, the claim command fails closed and the installer is locked.
 
 ## Services
 
@@ -152,7 +167,7 @@ Migrations are checksum-tracked. Do not edit an already-applied migration. Add a
 
 Invitation onboarding is retired. Customer acquisition uses public registration when enabled, administrator-created customer accounts, Jellyfin import/claim workflows and one-time activation links.
 
-Never reuse `DATA_ENCRYPTION_KEY`, `JELLYFIN_ENCRYPTION_KEY`, `AUTH_ENCRYPTION_KEY`, `ACTIVITY_ENCRYPTION_KEY` or `BACKUP_ENCRYPTION_KEY`.
+Never reuse `DATA_ENCRYPTION_KEY`, `JELLYFIN_ENCRYPTION_KEY`, `AUTH_ENCRYPTION_KEY`, `ACTIVITY_ENCRYPTION_KEY` or `BACKUP_ENCRYPTION_KEY`. The installer generates them independently on a fresh install.
 
 ## Customer commerce
 
