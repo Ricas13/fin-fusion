@@ -10,6 +10,7 @@ const managedRuntime = require('./managed-runtime');
 const managedPlayback = require('./managed-playback-lifecycle');
 const externalRuntime = require('./external-direct-runtime');
 const householdAccess = require('./household-access');
+const blockedMedia = require('./blocked-media');
 const runtimeSettings = require('./runtime-settings');
 
 function stremioRateIdentity(req) {
@@ -72,7 +73,7 @@ function cors(_req, res, next) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Range');
-  res.setHeader('Access-Control-Expose-Headers', 'Retry-After,X-CAPTAiNFiN-429-Reason');
+  res.setHeader('Access-Control-Expose-Headers', 'Retry-After,X-CAPTAiNFiN-429-Reason,Accept-Ranges,Content-Length,Content-Range');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Cache-Control', 'no-store');
   next();
@@ -148,6 +149,19 @@ async function claimHouseholdOrReject(entitlement, req, res, kind) {
   return decision;
 }
 
+async function sendHouseholdBlockedMedia(req, res) {
+  if (!enabled()) return res.status(404).end();
+  try {
+    const entitlement = await entitlements.findByInstallToken(req.params.token);
+    if (!entitlement) return res.status(404).end();
+    await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
+    return blockedMedia.send(req, res);
+  } catch (error) {
+    console.error('Stremio household block media failed:', safeLogText(error?.message || error, 300));
+    return res.status(502).end();
+  }
+}
+
 function createStremioRuntimeRouter() {
   const router = express.Router();
   router.use('/stremio', cors, loadRuntimeSetting);
@@ -182,7 +196,19 @@ function createStremioRuntimeRouter() {
       if (household && household.allowed === false) {
         await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
         const origin = await publicOrigin(req);
-        return res.json({ streams: [householdAccess.deniedStream(household, { externalUrl: `${origin}/account/stremio` })] });
+        return res.json({
+          streams: [
+            householdAccess.deniedStream(household, {
+              url: blockedMedia.playbackUrl({
+                origin,
+                installToken: req.params.token,
+                type,
+                videoId
+              }),
+              videoSize: blockedMedia.MEDIA_SIZE
+            })
+          ]
+        });
       }
       const origin = await publicOrigin(req);
       const cached = cachedStreams(entitlement.id, type, videoId, origin);
@@ -206,6 +232,9 @@ function createStremioRuntimeRouter() {
       return res.json({ streams: [] });
     }
   });
+
+  router.get('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
+  router.head('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
 
   // Managed playback remains a control-plane hop. PlaybackInfo is refreshed,
   // the household network lease is claimed/refreshed, a short-lived Jellyfin
