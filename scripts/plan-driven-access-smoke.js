@@ -21,12 +21,12 @@ const serverForm=read('views/admin/server-form.ejs');
 const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
 const plansList=read('src/platform/admin-plans-list.js');
 
-// People owns customer records and Jellyfin import/claim discovery. Invitation
+// Customers owns customer records and Jellyfin import/claim discovery. Invitation
 // onboarding is retired; imported-user claims remain a subordinate import flow.
 assert(nav.includes("['jellyfin-import','Import Jellyfin users'"),'Jellyfin import must remain discoverable under Customers with an explicit label');
-assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to People navigation');
+assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to Customers navigation');
 assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
-assert(nav.includes("['users','Customers'")&&nav.includes("['activity','Playback'"),'Customers and playback health must remain visible in the simplified navigation');
+assert(nav.includes("['users','All customers','/admin/users']")&&nav.includes("['activity','Playback','/admin/activity']"),'All customers and Jellyfin playback must remain visible in the simplified navigation');
 assert(nav.includes("['referrals','Affiliates','/admin/referrals']")&&!nav.includes("referrals:Object.freeze"),'Affiliate administration must remain visible in Commerce navigation');
 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.
@@ -47,7 +47,7 @@ assert(cleanupReturn.includes('hold_type=$2')&&cleanupReturn.includes("CLEANUP_H
 assert(provisioning.includes('releaseObsoleteForCustomer(customerId)'),'Every Jellyfin reconcile must discard obsolete free-plan inactivity holds');
 assert(lifecycle.includes('await inactivityHolds.releaseObsoleteForCustomer(input.customerId)'),'Paid activation must release an obsolete free-plan hold immediately after commit');
 
-// Server-scoped user import owns execution even though People exposes the entry point.
+// Server-scoped user import owns execution even though Customers exposes the entry point.
 assert(serverForm.includes('Users / Import')&&serverForm.includes('/users'),'Each Jellyfin server must expose Users / Import in its local tabs');
 assert(serverUsers.includes("'/admin/servers/:serverId/users'")&&serverUsers.includes('importer.discover({serverId:s.id})'),'Import must be scoped to exactly one Jellyfin server');
 assert(serverUsers.includes("'/admin/jellyfin-import'")&&serverUsers.includes('res.send(await importLanding(req))'),'Global Jellyfin Import must render the server-picker landing page');

@@ -32,7 +32,7 @@ assert(admin.includes('t.customer_username||t.customer_email'),'admin ticket det
 assert(admin.includes('email:current.ticket.customer_email'),'staff-reply notification must use the canonical resolved customer email');
 assert(!admin.includes('.login_email')&&!admin.includes('.login_username'),'admin support UI must not depend on retired/nonexistent customer login fields');
 assert(admin.includes("catch(error){console.warn('Support reply notification could not be queued:'"),'notification failure must not invalidate a committed staff reply');
-assert(nav.includes("['tickets','Tickets','/admin/tickets']"),'Tickets must be visible in admin navigation');
+assert(nav.includes("['tickets','Support','/admin/tickets']"),'Support tickets must remain visible under the canonical Customers navigation');
 assert(nav.includes("['orders','Orders','/admin/orders']"),'Orders must be visible in admin navigation');
 assert(composition.includes('createAdminSupportTicketsRouter')&&composition.includes('createAdminOrdersRouter'),'admin support/orders must use canonical route composition');
 assert(router.includes('createCustomerSupportRouter'),'customer support must be mounted in the customer runtime');

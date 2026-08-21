@@ -14,27 +14,37 @@ const settings=read('src/platform/admin-original-settings.js');
 const customer360View=read('src/platform/customer-360-view.js');
 const securityRoutes=read('src/platform/admin-security-routes.js');
 const adminHtml=read('src/platform/admin-html.js');
+const adminHtmlCore=read('src/platform/admin-html-core.js');
 const discountUi=read('public/js/admin-discounts.js');
+const customerFilterUi=read('public/js/admin-customer-filters.js');
 const adminSettingsGuide=read('docs/guide/admin-settings.md');
 const gettingStartedGuide=read('docs/guide/getting-started.md');
 const productModules=read('src/platform/admin-product-modules.js');
-const customerList=read('src/platform/admin-customers-list.js');
 const customerFilters=read('src/platform/customer-filters.js');
 const plansList=read('src/platform/admin-plans-list.js');
 const routeComposition=read('src/platform/admin-route-composition.js');
+const stremioDispatch=read('src/platform/admin-stremio-plan-dispatch.js');
+const stremioEditor=read('src/platform/admin-stremio-plan-editor.js');
+const stremioCreate=read('src/platform/admin-stremio-plan-create.js');
+const householdMigration=read('db/migrations/026_stremio_household_plan_policy.sql');
 const architecture=read('docs/architecture/admin-information-architecture.md');
 const exists=file=>fs.existsSync(path.join(root,file));
 
 const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.map(page=>page[0])]));
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard should contain current-state/action destinations only');
-assert.deepStrictEqual(pageKeys.jellyfin,['jellyfin-overview','servers','fleet-operations','jellyfin-plans','jellyfin-customers','activity'],'Jellyfin must own overview, fleet, product plans, contextual customers and playback');
-assert.deepStrictEqual(pageKeys.stremio,['stremio-overview','stremio-sources','stremio-plans','stremio-customers','stremio-playback'],'Stremio must own overview, sources, product plans, contextual customers and playback');
-assert.deepStrictEqual(pageKeys.resellers,['reseller-overview','reseller-accounts','reseller-plans','reseller-users','reseller-servers','reseller-activity'],'Resellers must reserve one shared module for future commercial models');
-assert.deepStrictEqual(pageKeys.people,['users-dashboard','users','tickets'],'Customers must remain one authoritative shared system');
-assert.deepStrictEqual(pageKeys.commerce,['commerce-overview','orders','payments','discounts','referrals'],'Commerce must own shared orders, payments, discounts and affiliates');
+assert.deepStrictEqual(pageKeys.jellyfin,['jellyfin-overview','servers','fleet-operations','activity'],'Jellyfin must contain product operations only; shared Plans and Customers belong elsewhere');
+assert.deepStrictEqual(pageKeys.stremio,['stremio-overview','stremio-sources','stremio-playback'],'Stremio must contain overview, sources and IP access only');
+assert.deepStrictEqual(pageKeys.resellers,['reseller-overview','reseller-accounts'],'Resellers must not duplicate Plans or Customers');
+assert.deepStrictEqual(pageKeys.people,['users','tickets','users-dashboard'],'Customers must expose one All customers location plus support and activity');
+assert.deepStrictEqual(pageKeys.commerce,['commerce-overview','plans','orders','payments','discounts','referrals','storefront-order'],'Commerce must own the one canonical Plans location and the shared commercial workflows');
 assert.deepStrictEqual(pageKeys.automation,['provisioning','automation-jobs','events','backups'],'Operations should expose provisioning, background jobs, audit history and backups');
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a sidebar destination');
-assert(nav.hiddenPages.plans?.groupKey==='commerce','The unfiltered all-plans workflow must remain reachable under shared Commerce');
+assert(!nav.hiddenPages.plans,'Plans must be a visible canonical Commerce destination, not a hidden fallback');
+assert.strictEqual(nav.activeKey('jellyfin-plans'),'plans','legacy Jellyfin Plans context must resolve to canonical Commerce → Plans');
+assert.strictEqual(nav.activeKey('stremio-plans'),'plans','legacy Stremio Plans context must resolve to canonical Commerce → Plans');
+assert.strictEqual(nav.activeKey('reseller-plans'),'plans','legacy reseller Plans context must resolve to canonical Commerce → Plans');
+assert.strictEqual(nav.activeKey('jellyfin-customers'),'users','legacy Jellyfin Customers context must resolve to canonical Customers → All customers');
+assert.strictEqual(nav.activeKey('stremio-customers'),'users','legacy Stremio Customers context must resolve to canonical Customers → All customers');
 assert(!pageKeys.settings.includes('settings-commerce'),'Commerce must not be duplicated under Settings');
 assert(!pageKeys.settings.includes('settings-advanced'),'A vague Advanced link hub must not consume a Settings sidebar slot');
 assert(!pageKeys.settings.includes('backups'),'Backups belong in Operations, not general Settings');
@@ -46,13 +56,30 @@ assert(settings.includes("requested==='commerce')return res.redirect('/admin/com
 assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('Expiring-soon window'),'Retired dashboard settings must not remain visible controls');
 
 assert(routeComposition.includes('createAdminProductModulesRouter'),'Product module routes must be mounted in the canonical admin composition');
+assert(routeComposition.includes('createAdminStremioPlanDispatchRouter'),'Stremio plan UX must be mounted through one dispatch owner');
+assert(routeComposition.indexOf('createAdminStremioPlanDispatchRouter()')<routeComposition.indexOf('createAdminPlanCreateV2Router()'),'Stremio dispatch must get first refusal before the generic plan creator');
+assert(stremioDispatch.includes("req.method==='GET'&&pathname==='/admin/plans/new'")&&stremioDispatch.includes("req.method==='POST'&&pathname==='/admin/plans'"),'Stremio create dispatch must preserve the shared canonical create route without duplicate route ownership');
+assert(stremioDispatch.includes('/stremio-editor')&&stremioDispatch.includes('(?:access|delivery|stremio)'),'Stremio edit dispatch must own the compact editor and legacy deep-link redirects without duplicate route definitions');
 assert(productModules.includes("'/admin/jellyfin'")&&productModules.includes("'/admin/stremio'")&&productModules.includes("'/admin/stremio/playback'"),'Jellyfin and Stremio must have dedicated product workspaces');
+assert(productModules.includes("href:'/admin/plans?type=jellyfin'")&&productModules.includes("href:'/admin/plans?type=stremio'"),'Product dashboards should deep-link into the shared Plans implementation');
+assert(productModules.includes("href:'/admin/users?service=jellyfin'")&&productModules.includes("href:'/admin/users?service=stremio'"),'Product dashboards should deep-link into the shared Customers implementation');
 assert(productModules.includes('Reserved for later development.')&&productModules.includes('monthly fee tied to a configurable Jellyfin user allowance')&&productModules.includes('monthly Jellyfin user allowance'),'Resellers must remain a structural shell aligned to the monthly user-allowance model');
 assert(!productModules.toLowerCase().includes(['cred','it-based'].join(''))&&!productModules.toLowerCase().includes(['cred','it balance'].join('')),'retired commercial balance language must not return');
 assert(customerFilters.includes("SERVICE_VALUES = ['jellyfin', 'stremio']")&&customerFilters.includes('service_type_snapshot'),'Shared Customers must support product context without duplicating customer data');
-assert(customerList.includes("active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users'"),'Contextual customer links must keep the relevant product module active');
-assert(plansList.includes("type==='jellyfin'?'jellyfin-plans':type==='stremio'?'stremio-plans':'plans'"),'Plan filtering must keep product module navigation context');
+assert(plansList.includes("planComponents.accessLabel(plan)"),'Plan list must use shared component access labels');
 assert(architecture.includes('Do not create duplicate customer, order, payment, discount or notification systems'),'Architecture guide must protect shared business ownership');
+
+assert(adminHtmlCore.includes('/js/admin-customer-filters.js'),'canonical admin layout must load the progressive customer-filter controller');
+for(const term of ['customerFilterToolbar','More filters','customerFilterChips','Expiry: Next 30 days'])assert(customerFilterUi.includes(term),`compact customer filters must include ${term}`);
+assert(customerFilterUi.includes("['q', 'service', 'status', 'plan', 'server']"),'the default customer filter toolbar must keep only high-frequency filters visible');
+assert(customerFilterUi.includes("['accountStatus', 'paymentProvider', 'reconciliationStatus', 'hasOverride', 'library'"),'less-frequent filters must live in the advanced section');
+
+for(const term of ['Unlimited streams','Unlimited devices','Household IPs','IP replacement','New purchases only','Existing customers too'])assert(stremioEditor.includes(term),`Stremio editor must expose household-first UX: ${term}`);
+assert(!stremioEditor.includes('Delivery service'),'ordinary Stremio plan editing must not expose internal delivery-service terminology');
+assert(!stremioEditor.includes('server_class')&&!stremioEditor.includes('allow_video_transcoding'),'ordinary Stremio plan editing must not expose Jellyfin placement or transcoding controls');
+assert(stremioCreate.includes('const cards=[1,2,3]')&&stremioCreate.includes('Create custom'),'Stremio plan creation must offer fast 1/2/3-household presets plus custom');
+assert(householdMigration.includes('stremio_household_network_limit')&&householdMigration.includes('stremio_ip_replacement_policy'),'migration must persist the configurable household allowance and replacement policy');
+assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&householdMigration.includes('snapshot_subscription_stremio_household_policy'),'subscription policy snapshots must make new-purchases-only changes real');
 
 const mainWidgets=registry.listWidgets('main');
 assert(mainWidgets.length>=10,'Main dashboard must register a meaningful set of widgets, not a stub');
@@ -61,7 +88,7 @@ assert(mainWidgets.every(w=>[3,4,6,8,9,12].includes(w.defaultSpan)),'every Main 
 assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Payments, and Operations'),'Existing Settings directory guidance must remain available until its copy is refreshed separately');
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
 for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
-assert(exists('public/js/admin-plan-create-v2.js'),'canonical plan creation browser controller must remain available');
+assert(exists('public/js/admin-plan-create-v2.js'),'canonical Jellyfin/general plan creation browser controller must remain available');
 
 assert(customer360View.includes('/admin/customer-jellyfin-password?customerId='),'Customer 360 Access must expose the existing administrator Jellyfin password-support workflow');
 assert(securityRoutes.includes("const { layout, esc } = require('./admin-html')")&&securityRoutes.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
