@@ -18,6 +18,7 @@ function date(v){return v?new Date(v).toLocaleDateString():'—'}
 function dt(v){return v?new Date(v).toLocaleString():'—'}
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`}
 function serviceLabel(value){return value==='stremio'?'Stremio':value==='jellyfin'?'Jellyfin':''}
+function syncStatusLabel(value){return ({successful:'In sync',failed:'Needs attention',pending:'Pending',running:'Syncing'})[String(value||'')]||String(value||'')}
 
 function parseFilters(q){
     const f={};
@@ -67,38 +68,39 @@ function optionList(items,current){return items.map(x=>`<option value="${esc(x.i
 function clearHref(filters){return filters.service?`/admin/users?service=${encodeURIComponent(filters.service)}`:'/admin/users'}
 function filterForm(filters,options){
     return `<form class="formPanel filterForm compactFilterForm" method="get" action="/admin/users"><div class="formGrid">
-        <div class="formGroup"><label>Product</label><select class="input" name="service"><option value="">All products</option><option value="jellyfin" ${filters.service==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${filters.service==='stremio'?'selected':''}>Stremio</option></select></div>
-        <div class="formGroup"><label>Search</label><input class="input" name="q" value="${esc(filters.q||'')}" placeholder="Name, email, username"></div>
-        <div class="formGroup"><label>Server</label><select class="input" name="server"><option value="">Any</option>${optionList(options.servers,filters.serverId)}</select></div>
-        <div class="formGroup"><label>Plan</label><select class="input" name="plan"><option value="">Any</option>${optionList(options.plans,filters.planId)}</select></div>
-        <div class="formGroup"><label>Subscription status</label><select class="input" name="status"><option value="">Any</option><option value="none" ${filters.status==='none'?'selected':''}>No subscription</option>${customerFilters.STATUS_VALUES.map(s=>`<option value="${esc(s)}" ${filters.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
-        <div class="formGroup"><label>Account status</label><select class="input" name="accountStatus"><option value="">Any</option><option value="enabled" ${filters.accountStatus==='enabled'?'selected':''}>Jellyfin enabled</option><option value="disabled" ${filters.accountStatus==='disabled'?'selected':''}>Jellyfin disabled</option><option value="portal_disabled" ${filters.accountStatus==='portal_disabled'?'selected':''}>Portal disabled</option></select></div>
-        <div class="formGroup"><label>Payment provider</label><select class="input" name="paymentProvider"><option value="">Any</option><option value="none" ${filters.paymentProvider==='none'?'selected':''}>None</option>${customerFilters.PAYMENT_PROVIDERS.map(pr=>`<option value="${esc(pr)}" ${filters.paymentProvider===pr?'selected':''}>${esc(pr)}</option>`).join('')}</select></div>
-        <div class="formGroup"><label>Reconciliation status</label><select class="input" name="reconciliationStatus"><option value="">Any</option><option value="none" ${filters.reconciliationStatus==='none'?'selected':''}>No accounts</option>${customerFilters.RECON_VALUES.map(s=>`<option value="${esc(s)}" ${filters.reconciliationStatus===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
-        <div class="formGroup"><label>Admin override</label><select class="input" name="hasOverride"><option value="">Any</option><option value="1" ${filters.hasOverride===true?'selected':''}>Has override</option><option value="0" ${filters.hasOverride===false?'selected':''}>No override</option></select></div>
-        <div class="formGroup"><label>Library</label><input class="input" name="library" value="${esc(filters.library||'')}" placeholder="Library name"></div>
-        <div class="formGroup"><label>Expiry from</label><input class="input" type="date" name="expiryFrom" value="${esc(filters.expiryFrom||'')}"></div>
-        <div class="formGroup"><label>Expiry to</label><input class="input" type="date" name="expiryTo" value="${esc(filters.expiryTo||'')}"></div>
-        <div class="formGroup"><label>Last active from</label><input class="input" type="date" name="lastActiveFrom" value="${esc(filters.lastActiveFrom||'')}"></div>
-        <div class="formGroup"><label>Last active to</label><input class="input" type="date" name="lastActiveTo" value="${esc(filters.lastActiveTo||'')}"></div>
-        <div class="formGroup"><label>Registered from</label><input class="input" type="date" name="registeredFrom" value="${esc(filters.registeredFrom||'')}"></div>
-        <div class="formGroup"><label>Registered to</label><input class="input" type="date" name="registeredTo" value="${esc(filters.registeredTo||'')}"></div>
+        <div class="formGroup"><label for="customerFilterProduct">Product</label><select class="input" id="customerFilterProduct" name="service"><option value="">All products</option><option value="jellyfin" ${filters.service==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${filters.service==='stremio'?'selected':''}>Stremio</option></select></div>
+        <div class="formGroup"><label for="customerFilterSearch">Search</label><input class="input" id="customerFilterSearch" name="q" value="${esc(filters.q||'')}" placeholder="Name, email, username"></div>
+        <div class="formGroup"><label for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server"><option value="">Any</option>${optionList(options.servers,filters.serverId)}</select></div>
+        <div class="formGroup"><label for="customerFilterPlan">Plan</label><select class="input" id="customerFilterPlan" name="plan"><option value="">Any</option>${optionList(options.plans,filters.planId)}</select></div>
+        <div class="formGroup"><label for="customerFilterSubscription">Subscription status</label><select class="input" id="customerFilterSubscription" name="status"><option value="">Any</option><option value="none" ${filters.status==='none'?'selected':''}>No subscription</option>${customerFilters.STATUS_VALUES.map(s=>`<option value="${esc(s)}" ${filters.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+        <div class="formGroup"><label for="customerFilterAccount">Account status</label><select class="input" id="customerFilterAccount" name="accountStatus"><option value="">Any</option><option value="enabled" ${filters.accountStatus==='enabled'?'selected':''}>Jellyfin enabled</option><option value="disabled" ${filters.accountStatus==='disabled'?'selected':''}>Jellyfin disabled</option><option value="portal_disabled" ${filters.accountStatus==='portal_disabled'?'selected':''}>Customer sign-in disabled</option></select></div>
+        <div class="formGroup"><label for="customerFilterPayment">Payment provider</label><select class="input" id="customerFilterPayment" name="paymentProvider"><option value="">Any</option><option value="none" ${filters.paymentProvider==='none'?'selected':''}>None</option>${customerFilters.PAYMENT_PROVIDERS.map(pr=>`<option value="${esc(pr)}" ${filters.paymentProvider===pr?'selected':''}>${esc(pr)}</option>`).join('')}</select></div>
+        <div class="formGroup"><label for="customerFilterSync">Access sync</label><select class="input" id="customerFilterSync" name="reconciliationStatus"><option value="">Any</option><option value="none" ${filters.reconciliationStatus==='none'?'selected':''}>No Jellyfin account</option>${customerFilters.RECON_VALUES.map(s=>`<option value="${esc(s)}" ${filters.reconciliationStatus===s?'selected':''}>${esc(syncStatusLabel(s))}</option>`).join('')}</select></div>
+        <div class="formGroup"><label for="customerFilterCustomAccess">Custom access</label><select class="input" id="customerFilterCustomAccess" name="hasOverride"><option value="">Any</option><option value="1" ${filters.hasOverride===true?'selected':''}>Custom settings</option><option value="0" ${filters.hasOverride===false?'selected':''}>Standard settings</option></select></div>
+        <div class="formGroup"><label for="customerFilterLibrary">Library</label><input class="input" id="customerFilterLibrary" name="library" value="${esc(filters.library||'')}" placeholder="Library name"></div>
+        <div class="formGroup"><label for="customerFilterExpiryFrom">Expiry from</label><input class="input" id="customerFilterExpiryFrom" type="date" name="expiryFrom" value="${esc(filters.expiryFrom||'')}"></div>
+        <div class="formGroup"><label for="customerFilterExpiryTo">Expiry to</label><input class="input" id="customerFilterExpiryTo" type="date" name="expiryTo" value="${esc(filters.expiryTo||'')}"></div>
+        <div class="formGroup"><label for="customerFilterActiveFrom">Last active from</label><input class="input" id="customerFilterActiveFrom" type="date" name="lastActiveFrom" value="${esc(filters.lastActiveFrom||'')}"></div>
+        <div class="formGroup"><label for="customerFilterActiveTo">Last active to</label><input class="input" id="customerFilterActiveTo" type="date" name="lastActiveTo" value="${esc(filters.lastActiveTo||'')}"></div>
+        <div class="formGroup"><label for="customerFilterRegisteredFrom">Registered from</label><input class="input" id="customerFilterRegisteredFrom" type="date" name="registeredFrom" value="${esc(filters.registeredFrom||'')}"></div>
+        <div class="formGroup"><label for="customerFilterRegisteredTo">Registered to</label><input class="input" id="customerFilterRegisteredTo" type="date" name="registeredTo" value="${esc(filters.registeredTo||'')}"></div>
         </div><div class="buttonRow"><button class="button">Apply filters</button><a class="button secondary" href="${esc(clearHref(filters))}">Clear filters</a></div></form>`;
 }
 
 function row(x){
     const statusKind=x.subscription_status==='active'||x.subscription_status==='trialing'?'good':x.subscription_status?'warn':'';
-    const reconLabel=x.recon_rank?{1:'failed',2:'pending',3:'running',4:'successful'}[x.recon_rank]:null;
+    const syncState=x.recon_rank?{1:'failed',2:'pending',3:'running',4:'successful'}[x.recon_rank]:null;
+    const customerName=x.display_name||x.login_username||'Customer';
     return `<tr>
-        <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}"></td>
-        <td data-label="Customer"><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(x.display_name||x.login_username||'Customer')}</a><div class="subText">${esc(x.email||x.login_username||'')}</div></td>
+        <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
+        <td data-label="Customer"><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a><div class="subText">${esc(x.email||x.login_username||'')}</div></td>
         <td data-label="Plan">${esc(x.plan_name||'No plan')}</td>
         <td data-label="Status">${pill(x.subscription_status||'none',statusKind)}</td>
         <td data-label="Expires">${esc(date(x.current_period_end))}</td>
         <td data-label="Jellyfin">${esc(x.account_count||0)}${x.has_enabled_account===false&&x.account_count?' (disabled)':''}</td>
         <td data-label="Server">${x.server_names?esc(x.server_names):'—'}</td>
-        <td data-label="Reconciliation">${reconLabel?pill(reconLabel,reconLabel==='failed'?'bad':reconLabel==='successful'?'good':'warn'):'—'}</td>
-        <td data-label="Override">${x.has_override?pill('Yes','accent'):'—'}</td>
+        <td data-label="Access sync">${syncState?pill(syncStatusLabel(syncState),syncState==='failed'?'bad':syncState==='successful'?'good':'warn'):'—'}</td>
+        <td data-label="Custom access">${x.has_override?pill('Custom','accent'):'—'}</td>
         <td data-label="Last active">${esc(dt(x.last_activity_at))}</td>
     </tr>`;
 }
@@ -110,7 +112,7 @@ function pagination(filters,page,pageSize,total){
     if(page>1)links.push(`<a class="button secondary btn-sm" href="/admin/users?${queryStringFor(filters,{page:page-1})}">Previous</a>`);
     links.push(`<span class="muted">Page ${page} of ${pages}</span>`);
     if(page<pages)links.push(`<a class="button secondary btn-sm" href="/admin/users?${queryStringFor(filters,{page:page+1})}">Next</a>`);
-    return `<div class="buttonRow">${links.join('')}</div>`;
+    return `<nav class="buttonRow" aria-label="Customer pages">${links.join('')}</nav>`;
 }
 
 function bulkBar(req,filters,total){
@@ -119,7 +121,7 @@ function bulkBar(req,filters,total){
         <input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
         ${filterHiddenFields(filters)}
         <div class="formGrid">
-            <div class="formGroup"><label>Action</label><select class="input" name="action" required><option value="">Choose an action</option>${BULK_ACTIONS.map(([key,label])=>`<option value="${esc(key)}">${esc(label)}</option>`).join('')}</select></div>
+            <div class="formGroup"><label for="customerBulkAction">Action</label><select class="input" id="customerBulkAction" name="action" required><option value="">Choose an action</option>${BULK_ACTIONS.map(([key,label])=>`<option value="${esc(key)}">${esc(label)}</option>`).join('')}</select></div>
             <div class="formGroup"><label><input type="checkbox" name="selectAllMatching" value="1"> Select all ${total} matching results (not just this page)</label></div>
         </div>
         <div class="muted" style="margin:6px 0 10px">Or check individual rows in the table above, then choose an action.</div>
@@ -150,25 +152,25 @@ async function customerOverview(){
 }
 function customerOverviewHtml(data){
     const s=data.summary,total=Number(s.total||0),ready=Number(s.jellyfin_ready||0),active=Number(s.active_access||0),attention=Number(s.provisioning_attention||0)+Number(s.disabled_accounts||0)+Number(s.past_due||0);
-    return `${graphics.hero({title:'People health',subtitle:'Customer growth, active entitlement, Jellyfin readiness and support pressure in one view.',tone:attention?'warn':'good',stats:[
+    return `${graphics.hero({title:'Customer health',subtitle:'Customer growth, active access, Jellyfin readiness and support needs in one view.',tone:attention?'warn':'good',stats:[
         graphics.stat({label:'Customers',value:graphics.number(total),meta:`${graphics.number(s.new_30d)} joined in 30 days`,tone:'blue',href:'/admin/users?sort=recent'}),
-        graphics.stat({label:'Active access',value:graphics.number(active),meta:`${graphics.number(s.portal_enabled)} portal logins enabled`,tone:'good'}),
+        graphics.stat({label:'Active access',value:graphics.number(active),meta:`${graphics.number(s.portal_enabled)} customer sign-ins enabled`,tone:'good'}),
         graphics.stat({label:'Recently active',value:graphics.number(s.active_30d),meta:'played in the last 30 days',tone:'violet'}),
-        graphics.stat({label:'Needs attention',value:graphics.number(attention),meta:'past due, disabled or provisioning blocked',tone:attention?'warn':'good',href:'/admin/attention'})
+        graphics.stat({label:'Needs attention',value:graphics.number(attention),meta:'past due, disabled or access setup blocked',tone:attention?'warn':'good',href:'/admin/attention'})
     ],meters:[graphics.meter({label:'Jellyfin readiness',value:ready,max:Math.max(total,ready),tone:ready>=total?'good':'blue',meta:`${graphics.number(ready)} customer(s) have enabled Jellyfin access`})],actions:'<a class="button secondary" href="/admin/users/new">Add customer</a><a class="button secondary" href="/admin/jellyfin-import">Import Jellyfin users</a>'})}${graphics.insightGrid([
         {title:'Plan mix',subtitle:'Current active and trialing customers',value:graphics.number(active),body:graphics.bars(data.plans),tone:'blue',href:'/admin/plans',linkLabel:'Open plans'},
-        {title:'Activation',subtitle:'Accounts that still need portal verification',value:graphics.number(s.unverified),body:graphics.meter({label:'Verified or ready',value:Math.max(0,total-Number(s.unverified||0)),max:Math.max(total,1),tone:Number(s.unverified||0)?'warn':'good'}),tone:Number(s.unverified||0)?'warn':'good'},
-        {title:'Support pressure',subtitle:'Operational people items',value:graphics.number(attention),body:graphics.bars([{name:'Past due',count:s.past_due||0},{name:'Disabled Jellyfin',count:s.disabled_accounts||0},{name:'Provisioning blocked',count:s.provisioning_attention||0}]),tone:attention?'warn':'good',href:'/admin/attention',linkLabel:'Review attention'}
+        {title:'Activation',subtitle:'Customers who still need to verify their account',value:graphics.number(s.unverified),body:graphics.meter({label:'Verified or ready',value:Math.max(0,total-Number(s.unverified||0)),max:Math.max(total,1),tone:Number(s.unverified||0)?'warn':'good'}),tone:Number(s.unverified||0)?'warn':'good'},
+        {title:'Support pressure',subtitle:'Customer issues needing review',value:graphics.number(attention),body:graphics.bars([{name:'Past due',count:s.past_due||0},{name:'Disabled Jellyfin',count:s.disabled_accounts||0},{name:'Access setup blocked',count:s.provisioning_attention||0}]),tone:attention?'warn':'good',href:'/admin/attention',linkLabel:'Review attention'}
     ])}`;
 }
-function productContext(filters){if(!filters.service)return'';const label=serviceLabel(filters.service);return `<div class="securityNote standalone"><strong>${esc(label)} customer context</strong><div class="subText">This is the shared customer system filtered to customers with ${esc(label)} or bundle history. Change Product below to switch context.</div></div>`;}
+function productContext(filters){if(!filters.service)return'';const label=serviceLabel(filters.service);return `<div class="securityNote standalone"><strong>${esc(label)} customer context</strong><div class="subText">This is the shared customer system filtered to customers with ${esc(label)} or bundle history. Change the Product filter below to switch context.</div></div>`;}
 async function listPage(req){
     const filters=parseFilters(req.query);
     const page=Math.max(parseInt(req.query.page,10)||1,1);
     const sort=['expiring','name','recent'].includes(req.query.sort)?req.query.sort:'recent';
     const [options,result,overview]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize:25,sort}),filters.service?Promise.resolve(null):customerOverview()]);
     const rows=result.rows,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users';
-    const body=`${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>${context?`${esc(context)} customers`:'Customers'}</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><thead><tr><th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Server</th><th>Reconciliation</th><th>Override</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customers-bulk.js" defer></script>`;
+    const body=`${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>${context?`${esc(context)} customers`:'Customers'}</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr><th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Server</th><th>Access sync</th><th>Custom access</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customers-bulk.js" defer></script>`;
     const common='<a class="button" href="/admin/users/new">Add customer</a>',jellyfinAction=filters.service==='stremio'?'':` <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a>`;
     return layout({siteName:site(),active,title:context?`${context} customers`:'Customers',subtitle:context?`Shared customer records in ${context} context`:'Managed customers, subscriptions and service access',body,action:`${common}${jellyfinAction} <a class="button secondary" href="/admin/users/export?${queryStringFor(filters)}">Export CSV</a>`});
 }
