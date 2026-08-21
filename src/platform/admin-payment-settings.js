@@ -6,6 +6,7 @@ const csrf = require('../auth/csrf');
 const providerSettings = require('../payments/provider-settings');
 const operations=require('./operations-settings');
 const runtimeSettings=require('./runtime-settings');
+const integrationCard=require('./admin-integration-card');
 const { esc, layout } = require('./admin-html');
 
 function gate(req, res, next) {
@@ -56,13 +57,6 @@ async function paymentsData(req) {
     };
 }
 
-function providerMetric(status, label) {
-    const value = !status.enabled ? 'Disabled' : status.configured && status.webhookConfigured ? 'Ready' : status.configured ? 'Checkout only' : 'Not configured';
-    const source = status.source === 'database' ? 'Browser-managed' : 'Environment fallback';
-    const kind=value==='Ready'?'statusGood':value==='Checkout only'?'statusWarn':'statusInfo';
-    return `<div class="metric"><div class="metricLabel">${esc(label)}</div><div class="metricValue small ${kind}">${esc(value)}</div><div class="subText">${esc(source)}</div></div>`;
-}
-
 function workflowIntro(d) {
     const failedEvents = d.events.filter(event => event.failed).length;
     const subscriptionStates = d.subscriptions.reduce((sum, row) => sum + Number(row.count || 0), 0);
@@ -80,6 +74,42 @@ function copyField(value){return `<div class="copyField"><input class="input" va
 function setupSteps(provider,url){
     if(provider==='stripe')return `<div class="operatorDisclosureBody"><ol class="setupSteps"><li>Open Stripe Dashboard → Developers → Webhooks.</li><li>Add an endpoint using this exact URL:${copyField(url)}</li><li>Subscribe to checkout/session, invoice, customer subscription, refund and dispute events used by CAPTAiNFiN.</li><li>Copy the endpoint <strong>Signing secret</strong> (<code>whsec_…</code>) into “Webhook signing secret” below.</li><li>Save here, then use <strong>Test connection</strong>. Incoming events will appear in Recent provider events.</li></ol><div class="operatorCallout warn">Checkout credentials alone are not enough for recurring access. Without the webhook signing secret, renewals, cancellations and failed-payment state cannot be trusted.</div></div>`;
     return `<div class="operatorDisclosureBody"><ol class="setupSteps"><li>Open the PayPal Developer dashboard and select the REST app used for CAPTAiNFiN.</li><li>Add a webhook using this exact URL:${copyField(url)}</li><li>Subscribe to billing-subscription, completed payment/sale, refund and dispute lifecycle events.</li><li>Save the webhook in PayPal, then copy its <strong>Webhook ID</strong> into the field below. This is the ID, not the webhook URL.</li><li>Keep Sandbox selected while testing; switch to Live only when using the production REST app.</li></ol><div class="operatorCallout warn">Recurring PayPal access depends on verified webhook delivery. A Client ID/secret can start checkout but cannot safely keep subscription state synchronised on its own.</div></div>`;
+}
+
+function providerHealthCard(req, provider, status, events) {
+    const label=provider==='stripe'?'Stripe':'PayPal';
+    const providerEvents=(events||[]).filter(event=>event.provider===provider);
+    const latest=providerEvents[0]||null;
+    const latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)||null;
+    let statusLabel='Disabled',statusKind='',workingLabel='Disabled',workingKind='',fixHint=`Enable ${label} and save valid credentials.`;
+    if(status.enabled&&!status.credentialsConfigured){
+        statusLabel='Not configured';statusKind='warn';workingLabel='Credentials missing';workingKind='warn';fixHint=`Add ${label} API credentials below, save them, then test the connection.`;
+    }else if(status.configured&&!status.webhookConfigured){
+        statusLabel='Checkout only';statusKind='warn';workingLabel='Webhook not configured';workingKind='warn';fixHint=`Configure the ${label} webhook below so renewals, cancellations and failures can be trusted.`;
+    }else if(status.configured&&status.webhookConfigured&&latest?.failed){
+        statusLabel='Needs attention';statusKind='warn';workingLabel='Latest webhook failed';workingKind='warn';fixHint='Review Recent provider events and Payment incidents, then test the saved API credential.';
+    }else if(status.configured&&status.webhookConfigured&&latestSuccessful){
+        statusLabel='Connected';statusKind='good';workingLabel='Webhook delivery observed';workingKind='good';fixHint='If events stop arriving, test the API credential and confirm the provider webhook still targets this portal.';
+    }else if(status.configured&&status.webhookConfigured){
+        statusLabel='Configured';statusKind='good';workingLabel='Waiting for first webhook event';workingKind='';fixHint='Use Test connection, then send a provider test or checkout event to verify public webhook delivery.';
+    }
+    const manageTarget=provider==='stripe'?'#stripe-provider':'#paypal-provider';
+    const actions=`${testForm(req,provider,!status.credentialsConfigured)}<a class="button secondary btn-sm" href="${manageTarget}">Manage</a>`;
+    const summary=status.source==='database'?'Browser-managed credentials and verified event delivery.':'Environment credentials and verified event delivery.';
+    return integrationCard.renderIntegrationCard({
+        name:label,
+        statusLabel,
+        statusKind,
+        summary,
+        enabled:status.enabled,
+        configured:status.configured&&status.webhookConfigured,
+        workingLabel,
+        workingKind,
+        lastVerifiedAt:latestSuccessful?.processed_at||latestSuccessful?.created_at||null,
+        lastVerifiedLabel:'Last successful provider event',
+        fixHint,
+        actionsHtml:actions
+    });
 }
 
 function stripeForm(req, status,url) {
@@ -121,10 +151,10 @@ async function page(req) {
     await Promise.all([providerSettings.ensureLoaded(),runtimeSettings.ensureLoaded()]);
     const d = await paymentsData(req);
     const stored = d.paymentCustomers.reduce((n, row) => n + Number(row.count || 0), 0);
-    const metrics = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider setup</h2><div class="muted">Gateway readiness, saved credentials and webhook delivery. These controls affect checkout availability.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="metrics">${providerMetric(d.stripeStatus, 'Stripe')}${providerMetric(d.paypalStatus, 'PayPal')}<div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
+    const providers = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider setup</h2><div class="muted">Enabled, configured, observed working state and recovery actions use the same layout for every payment provider.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="integrationCardGrid">${providerHealthCard(req,'stripe',d.stripeStatus,d.events)}${providerHealthCard(req,'paypal',d.paypalStatus,d.events)}</div><div class="metrics" style="margin-top:12px"><div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
     const state = `<section class="section" id="payment-operations"><div class="sectionHead"><div><h2>Operational payment state</h2><div class="muted">Read-only subscription counts from local records. Customer-impacting exceptions are handled in Commerce incidents.</div></div><a class="button secondary btn-sm" href="/admin/commerce#payment-incidents">Open incidents</a></div>${d.subscriptions.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Source</th><th>Status</th><th>Count</th></tr></thead><tbody>${d.subscriptions.map(x => `<tr><td>${esc(x.source)}</td><td>${pill(x.status)}</td><td>${esc(x.count)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No subscriptions yet.</div>'}</section>`;
     const events = `<section class="section"><div class="sectionHead"><h2>Recent provider events</h2><span class="muted">Use this to confirm your public webhook is actually receiving and processing events.</span></div>${d.events.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${d.events.map(x => `<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill(x.failed ? 'error' : 'ok', x.failed ? 'bad' : 'good')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="emptyAction"><div><strong>No webhook events received yet.</strong><div>Finish one of the setup guides above and send a provider test/checkout event.</div></div></div>'}</section>`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider setup is separated from operational payment monitoring and customer incidents', body: `${notice(req)}${workflowIntro(d)}${metrics}${stripeForm(req, d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req, d.paypalStatus,d.webhookUrls.paypal)}${state}${events}` });
+    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider setup is separated from operational payment monitoring and customer incidents', body: `${integrationCard.styles()}${notice(req)}${workflowIntro(d)}${providers}${stripeForm(req, d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req, d.paypalStatus,d.webhookUrls.paypal)}${state}${events}` });
 }
 
 function createAdminPaymentSettingsRouter() {
@@ -184,4 +214,4 @@ function createAdminPaymentSettingsRouter() {
     return router;
 }
 
-module.exports = { createAdminPaymentSettingsRouter, paymentsData,webhookUrls };
+module.exports = { createAdminPaymentSettingsRouter, paymentsData, webhookUrls, providerHealthCard };

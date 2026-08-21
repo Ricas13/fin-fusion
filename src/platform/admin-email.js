@@ -5,6 +5,7 @@ const csrf = require('../auth/csrf');
 const emailSettings = require('../integrations/email-settings');
 const outbox = require('../integrations/email-outbox');
 const runtimeSettings = require('./runtime-settings');
+const integrationCard = require('./admin-integration-card');
 const { esc, layout } = require('./admin-html');
 
 function gate(req, res, next) {
@@ -32,6 +33,39 @@ function deliveryPill(status) {
     if (status === 'sending') return pill('Sending', 'accent');
     return pill('Pending');
 }
+function emailHealthCard(req, settings, recent, counts) {
+    const failed = Number(counts.failed || 0);
+    const latestSent = (recent || []).find(row => row.status === 'sent');
+    let statusLabel = 'Disabled', statusKind = '', workingLabel = 'Disabled', workingKind = '', fixHint = 'Enable the email gateway and complete the SMTP fields below.';
+    if (settings.enabled && !settings.configured) {
+        statusLabel = 'Incomplete'; statusKind = 'warn'; workingLabel = 'Setup incomplete'; workingKind = 'warn';
+        fixHint = settings.error || 'Complete the SMTP host, sender and authentication settings, then test the connection.';
+    } else if (settings.configured && failed > 0) {
+        statusLabel = 'Needs attention'; statusKind = 'warn'; workingLabel = `${failed} failed message${failed === 1 ? '' : 's'}`; workingKind = 'warn';
+        fixHint = 'Review the failed delivery rows below, test SMTP, then retry the affected messages.';
+    } else if (settings.configured && latestSent) {
+        statusLabel = 'Connected'; statusKind = 'good'; workingLabel = 'Delivery observed'; workingKind = 'good';
+        fixHint = 'If delivery stops, test the SMTP connection and review failed queue items below.';
+    } else if (settings.configured) {
+        statusLabel = 'Configured'; statusKind = 'good'; workingLabel = 'Ready; no delivery observed yet'; workingKind = '';
+        fixHint = 'Use Test connection or Send test email to verify the configured SMTP gateway.';
+    }
+    const actions = `<form method="post" action="/admin/notifications/email/test">${csrfInput(req)}<button class="button secondary btn-sm" type="submit" ${settings.configured ? '' : 'disabled'}>Test connection</button></form><a class="button secondary btn-sm" href="#email-gateway">Manage</a>`;
+    return integrationCard.renderIntegrationCard({
+        name: 'Email',
+        statusLabel,
+        statusKind,
+        summary: settings.source === 'browser' ? 'Browser-managed transactional SMTP gateway.' : 'Transactional SMTP using environment configuration.',
+        enabled: settings.enabled,
+        configured: settings.configured,
+        workingLabel,
+        workingKind,
+        lastVerifiedAt: latestSent?.sent_at || latestSent?.last_attempt_at || null,
+        lastVerifiedLabel: 'Last successful delivery',
+        fixHint,
+        actionsHtml: actions
+    });
+}
 
 async function page(req) {
     await runtimeSettings.ensureLoaded();
@@ -39,9 +73,10 @@ async function page(req) {
     const state = settings.configured ? pill('Ready', 'good') : settings.enabled ? pill('Incomplete', 'warn') : pill('Disabled');
     const source = settings.source === 'browser' ? 'Browser settings' : 'Environment fallback';
     const defaultPort = settings.port || (settings.secureMode === 'tls' ? 465 : 587);
-    const body = `${notice(req)}
-        <div class="metrics"><div class="metric"><div class="metricLabel">Gateway</div><div class="metricValue statusMetric">${state}</div></div><div class="metric"><div class="metricLabel">Pending</div><div class="metricValue smallish">${Number(counts.pending || 0)}</div></div><div class="metric"><div class="metricLabel">Failed</div><div class="metricValue smallish">${Number(counts.failed || 0)}</div></div><div class="metric"><div class="metricLabel">Sent</div><div class="metricValue smallish">${Number(counts.sent || 0)}</div></div></div>
-        <section class="section"><div class="sectionHead"><div><h2>Email gateway</h2><div class="muted">Transactional customer email with an encrypted browser-managed SMTP password and environment fallback.</div></div><div>${state} <span class="muted">${esc(source)}</span></div></div>
+    const body = `${integrationCard.styles()}${notice(req)}
+        <section class="section"><div class="sectionHead"><div><h2>Integration status</h2><div class="muted">Configuration, observed delivery and the quickest recovery action in one place.</div></div></div><div class="integrationCardGrid">${emailHealthCard(req, settings, recent, counts)}</div></section>
+        <div class="metrics"><div class="metric"><div class="metricLabel">Pending</div><div class="metricValue smallish">${Number(counts.pending || 0)}</div></div><div class="metric"><div class="metricLabel">Failed</div><div class="metricValue smallish">${Number(counts.failed || 0)}</div></div><div class="metric"><div class="metricLabel">Sent</div><div class="metricValue smallish">${Number(counts.sent || 0)}</div></div></div>
+        <section class="section" id="email-gateway"><div class="sectionHead"><div><h2>Email gateway</h2><div class="muted">Transactional customer email with an encrypted browser-managed SMTP password and environment fallback.</div></div><div>${state} <span class="muted">${esc(source)}</span></div></div>
             <form class="formPanel emailSettings" method="post" action="/admin/notifications/email/settings" data-native-submit="true">${csrfInput(req)}
                 <label class="toggleRow full"><input type="checkbox" name="enabled" ${settings.enabled ? 'checked' : ''}><span><strong>Enable transactional email</strong><small>Email verification, password reset and other queued customer messages can be delivered.</small></span></label>
                 <label><span>SMTP host</span><input class="input" name="host" maxlength="255" required value="${esc(settings.host || '')}" placeholder="smtp.example.com"></label>
@@ -58,7 +93,7 @@ async function page(req) {
             <div class="gatewayActions"><form method="post" action="/admin/notifications/email/test">${csrfInput(req)}<button class="button secondary" type="submit" ${settings.configured ? '' : 'disabled'}>Test connection</button></form><form method="post" action="/admin/notifications/email/send-test" class="testMail">${csrfInput(req)}<input class="input" type="email" name="to" required placeholder="Send test email to…"><button class="button secondary" ${settings.configured ? '' : 'disabled'}>Send test email</button></form><form method="post" action="/admin/notifications/email/deliver">${csrfInput(req)}<button class="button secondary" type="submit" ${settings.configured ? '' : 'disabled'}>Deliver pending now</button></form></div>
         </section>
         <section class="section"><div class="sectionHead"><div><h2>Transactional delivery</h2><div class="muted">Queued messages use bounded retry instead of being lost when the SMTP server is temporarily unavailable.</div></div><span class="muted">${recent.length} recent</span></div>${recent.length ? `<div class="tableWrap"><table class="dataTable emailLog"><thead><tr><th>Status</th><th>Type</th><th>Recipient</th><th>Attempts</th><th>Created</th><th>Last attempt</th><th>Error</th><th></th></tr></thead><tbody>${recent.map(row => `<tr><td>${deliveryPill(row.status)}</td><td>${esc(row.message_type)}</td><td>${esc(row.recipient_email)}</td><td>${Number(row.attempts || 0)}</td><td>${esc(date(row.created_at))}</td><td>${esc(date(row.last_attempt_at || row.sent_at))}</td><td>${row.last_error ? `<span class="errorText">${esc(row.last_error)}</span>` : '—'}</td><td>${row.status === 'failed' ? `<form method="post" action="/admin/notifications/email/${esc(row.id)}/retry">${csrfInput(req)}<button class="button secondary btn-sm">Retry</button></form>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No transactional emails have been queued yet.</div>'}</section>
-        <style>.emailSettings{display:grid;grid-template-columns:2fr .7fr 1.3fr;gap:12px}.emailSettings label{display:grid;gap:5px}.emailSettings label>span{font-size:11px;font-weight:700;color:#9aa6b5}.emailSettings small{color:#748294;font-size:10px}.emailSettings .full{grid-column:1/-1}.gatewayActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.gatewayActions form{margin:0}.testMail{display:flex;gap:7px;min-width:min(520px,100%)}.emailLog{min-width:1100px}.errorText{color:#ef9298;max-width:320px;display:inline-block}.metricValue.smallish{font-size:22px}.statusMetric{font-size:14px;padding-top:5px}@media(max-width:850px){.emailSettings{grid-template-columns:1fr}.emailSettings .full{grid-column:auto}.testMail{min-width:100%}}</style>`;
+        <style>.emailSettings{display:grid;grid-template-columns:2fr .7fr 1.3fr;gap:12px}.emailSettings label{display:grid;gap:5px}.emailSettings label>span{font-size:11px;font-weight:700;color:#9aa6b5}.emailSettings small{color:#748294;font-size:10px}.emailSettings .full{grid-column:1/-1}.gatewayActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.gatewayActions form{margin:0}.testMail{display:flex;gap:7px;min-width:min(520px,100%)}.emailLog{min-width:1100px}.errorText{color:#ef9298;max-width:320px;display:inline-block}.metricValue.smallish{font-size:22px}@media(max-width:850px){.emailSettings{grid-template-columns:1fr}.emailSettings .full{grid-column:auto}.testMail{min-width:100%}}</style>`;
     return layout({ siteName: runtimeSettings.siteName(), active: 'notifications', title: 'Notifications', subtitle: 'Transactional email gateway, delivery queue and retry health', body });
 }
 
@@ -133,4 +168,4 @@ function createAdminEmailRouter() {
     return router;
 }
 
-module.exports = { createAdminEmailRouter, page };
+module.exports = { createAdminEmailRouter, page, emailHealthCard };
