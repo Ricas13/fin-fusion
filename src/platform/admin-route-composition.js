@@ -59,6 +59,10 @@ function mountAdminRoutes(app) {
   app.get('/admin', dashboard.dashboardPage);
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
+  // Literal customer overview routes must be mounted before any /admin/users/:id
+  // owner so reserved page names such as "dashboard" can never be interpreted
+  // as customer UUIDs by Customer 360 or legacy customer-management routes.
+  app.use(createAdminUsersDashboardRouter());
   app.use(createAdminSupportTicketsRouter());
   app.use(createAdminOrdersRouter());
   app.use(createAdminSetupRouter());
@@ -108,7 +112,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminServersRouter());
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
-  app.use(createAdminUsersDashboardRouter());
   app.use(createAdminCustomerManagementRouter());
   app.use(createAdminCustomer360Router());
   app.use(createAdminUsersRouter());
