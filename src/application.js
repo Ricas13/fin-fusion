@@ -309,7 +309,7 @@ async function startupSummary() {
 function start() {
   const app = createApplication();
   const server = app.listen(PORT, () => {
-    console.log('Steam Fusion running');
+    console.log('CAPTAiNFiN running');
     console.log(`CAPTAiNFiN web application listening on http://127.0.0.1:${PORT}`);
     startupSummary().catch(() => {});
   });

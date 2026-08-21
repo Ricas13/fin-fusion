@@ -35,7 +35,7 @@ async function currentSiteName() {
 
 async function renderClaim(req, res, { error = null, status = 200 } = {}) {
     const claim = await firstRun.ensureClaimCode();
-    if (!claim.required) return res.redirect(req.session?.authRole === 'admin' ? '/admin' : '/login');
+    if (!claim.required) return res.redirect(req.session?.authRole === 'admin' ? '/admin/setup' : '/login');
     if (claim.created && claim.code) {
         console.log('');
         console.log('==============================================================');
@@ -62,7 +62,7 @@ async function renderSetup(req, res, { error = null, field = null, values = {}, 
         field,
         csrfToken: csrf.token(req),
         values: {
-            siteName: String(values.siteName || runtimeSettings.siteName() || 'Steam Fusion'),
+            siteName: String(values.siteName || runtimeSettings.siteName() || 'CAPTAiNFiN'),
             username: String(values.username || ''),
             email: String(values.email || '')
         }
@@ -76,7 +76,7 @@ function createFirstRunRouter() {
     router.get('/setup', async (req, res, next) => {
         try {
             if (!(await firstRun.isSetupRequired())) {
-                return res.redirect(req.session?.authRole === 'admin' ? '/admin' : '/login');
+                return res.redirect(req.session?.authRole === 'admin' ? '/admin/setup' : '/login');
             }
             if (setupSession(req)) return renderSetup(req, res);
             return renderClaim(req, res);
@@ -140,7 +140,7 @@ function createFirstRunRouter() {
             });
             await runtimeSettings.reload();
             await staffController.establishAuthenticatedSession(req, user);
-            return res.redirect('/admin');
+            return res.redirect('/admin/setup');
         } catch (error) {
             if (error.code === 'SETUP_ALREADY_COMPLETED') return res.redirect('/login');
             if (error.code === 'SETUP_CLAIM_INVALID') {

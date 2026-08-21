@@ -6,34 +6,53 @@
   <meta name="color-scheme" content="dark">
   <title>Create administrator · <%= siteName %></title>
   <link rel="stylesheet" href="/css/platform-shell.css">
-  <style>.setupSteps{display:flex;gap:8px;margin:14px 0 22px;flex-wrap:wrap}.setupStep{font-size:12px;padding:6px 9px;border:1px solid #334155;border-radius:999px;color:#94a3b8}.setupStep.active{color:#fff;border-color:#64748b}.fieldError{color:#fca5a5;font-size:12px;margin-top:6px}.setupGrid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}@media(max-width:620px){.setupGrid{grid-template-columns:1fr}}.helper{font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.45}</style>
+  <style>
+    .installerCard{width:min(660px,calc(100% - 32px))}
+    .installerEyebrow{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px}
+    .setupSteps{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:18px 0 22px}
+    .setupStep{display:grid;gap:2px;padding:10px 12px;border:1px solid #334155;border-radius:10px;color:#94a3b8;background:#0f172a}
+    .setupStep strong{font-size:13px;color:#cbd5e1}.setupStep span{font-size:11px}
+    .setupStep.complete{border-color:#2f5f53}.setupStep.complete strong{color:#a7f3d0}
+    .setupStep.active{border-color:#64748b;background:#172033}.setupStep.active strong{color:#fff}
+    .fieldError{color:#fca5a5;font-size:12px;margin-top:6px}.setupGrid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+    .helper{font-size:12px;color:#94a3b8;margin-top:6px;line-height:1.45}
+    .whatNext{display:grid;gap:4px;margin:16px 0;padding:12px;border:1px solid #334155;border-radius:10px;background:#0f172a}.whatNext strong{color:#fff}.whatNext span{font-size:12px;color:#94a3b8;line-height:1.5}
+    .installerFooter{margin-top:18px;padding-top:14px;border-top:1px solid #263244;color:#94a3b8;font-size:12px;line-height:1.5}
+    @media(max-width:620px){.setupGrid,.setupSteps{grid-template-columns:1fr}}
+  </style>
 </head>
 <body>
 <main class="authShell">
-  <section class="authCard" style="width:min(620px,calc(100% - 32px))">
+  <section class="authCard installerCard">
     <div class="authBrand"><%= siteName %></div>
-    <div class="muted">Secure first-run installer</div>
-    <div class="setupSteps"><span class="setupStep">1 · Claimed</span><span class="setupStep active">2 · Create admin</span><span class="setupStep">3 · Dashboard</span></div>
+    <div class="installerEyebrow">Secure first-run setup</div>
+    <div class="setupSteps" aria-label="Setup progress">
+      <div class="setupStep complete"><strong>✓ Installation verified</strong><span>This browser is authorised to finish setup</span></div>
+      <div class="setupStep active"><strong>2 · Create administrator</strong><span>Create the first local admin account</span></div>
+    </div>
     <h1 class="authTitle">Create the first administrator</h1>
-    <p class="muted">These settings establish the local platform identity and the first native administrator. Jellyfin, plans, payments and customer-facing features remain optional after this step.</p>
+    <p class="muted">This is the only required account setup. Jellyfin, Stremio, plans, payments, email and storefront features can all be configured afterwards.</p>
+    <div class="whatNext"><strong>What happens next?</strong><span>After this account is created, CAPTAiNFiN opens the guided Setup page. It suggests the next useful step, but every service remains optional.</span></div>
     <% if (error) { %><div class="notice error"><%= error %></div><% } %>
     <form method="post" action="/setup/complete" autocomplete="on">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="formGroup">
-        <label for="siteName">Site name</label>
+        <label for="siteName">Portal name</label>
         <input class="input" id="siteName" name="siteName" minlength="2" maxlength="80" value="<%= values.siteName %>" required <%= field === 'siteName' ? 'aria-invalid="true"' : '' %>>
-        <div class="helper">Shown in the administration interface, storefront and sign-in screens.</div>
+        <div class="helper">Shown in the admin interface, storefront and sign-in screens. You can change this later.</div>
         <% if (field === 'siteName') { %><div class="fieldError"><%= error %></div><% } %>
       </div>
       <div class="setupGrid">
         <div class="formGroup">
           <label for="username">Administrator username</label>
           <input class="input" id="username" name="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" value="<%= values.username %>" autocomplete="username" required <%= field === 'username' ? 'aria-invalid="true"' : '' %>>
+          <div class="helper">Used to sign in to the admin portal.</div>
           <% if (field === 'username') { %><div class="fieldError"><%= error %></div><% } %>
         </div>
         <div class="formGroup">
           <label for="email">Administrator email <span class="muted">(optional)</span></label>
           <input class="input" id="email" name="email" type="email" maxlength="254" value="<%= values.email %>" autocomplete="email" <%= field === 'email' ? 'aria-invalid="true"' : '' %>>
+          <div class="helper">Useful for account records and future admin notifications.</div>
           <% if (field === 'email') { %><div class="fieldError"><%= error %></div><% } %>
         </div>
       </div>
@@ -41,7 +60,7 @@
         <div class="formGroup">
           <label for="password">Password</label>
           <input class="input" id="password" name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" required <%= field === 'password' ? 'aria-invalid="true"' : '' %>>
-          <div class="helper">Minimum 12 characters.</div>
+          <div class="helper">Use at least 12 characters. This password is only for the CAPTAiNFiN admin account.</div>
           <% if (field === 'password') { %><div class="fieldError"><%= error %></div><% } %>
         </div>
         <div class="formGroup">
@@ -50,9 +69,9 @@
           <% if (field === 'passwordConfirm') { %><div class="fieldError"><%= error %></div><% } %>
         </div>
       </div>
-      <div class="buttonRow"><button class="button" type="submit">Create administrator & finish</button></div>
+      <div class="buttonRow"><button class="button" type="submit">Create administrator & continue setup</button></div>
     </form>
-    <p class="securityNote">Two-factor authentication is optional by default and can be enabled immediately afterwards under Settings → Security.</p>
+    <div class="installerFooter">After this step the public first-run installer locks permanently. Two-factor authentication can be enabled from Settings → Security.</div>
   </section>
 </main>
 </body>
