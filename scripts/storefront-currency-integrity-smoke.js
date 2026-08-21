@@ -30,9 +30,9 @@ assert(storefront.includes('function currencySwitcher(_currency,_currencies){ret
 assert(checkout.includes('async function requestedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Checkout must ignore client/session currency overrides');
 assert(currencySettings.includes('changes the denomination of the current catalogue'),'Admin currency UI must explain switch semantics');
 
-assert(planCreate.includes("const reportingCurrency=require('./reporting-currency')"),'Plan creation must load the portal currency server-side');
-assert(planCreate.includes('const input=parse(req.body,currency)'),'Plan creation must override any posted currency with the master currency');
-assert(planCreate.includes('await planPricing.setPrice(client,r.rows[0].id'),'New plans must create their active master-currency price row');
+assert(/const\s+reportingCurrency\s*=\s*require\(['"]\.\/reporting-currency['"]\)/.test(planCreate),'Plan creation must load the portal currency server-side');
+assert(/currency\s*=\s*\(await\s+reportingCurrency\.get\(\)\)\.currency/.test(planCreate)&&/parse\(req\.body,\s*currency\)/.test(planCreate),'Plan creation must override any posted currency with the master currency');
+assert(/await\s+planPricing\.setPrice\(client,\s*result\.rows\[0\]\.id,/.test(planCreate),'New plans must create their active master-currency price row');
 assert(!planCreate.includes('<select class="input" name="currency">'),'Plan creation must not expose a per-plan currency selector');
 assert(planCreate.includes('not configurable per plan'),'Plan creation must explain that currency is portal-wide');
 

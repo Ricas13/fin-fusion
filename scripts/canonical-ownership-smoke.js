@@ -63,19 +63,23 @@ assert(/createTableIfMissing:\s*false/.test(application),'web session store must
 assert(!/createTableIfMissing:\s*true/.test(application),'web runtime must never regain session-table DDL fallback');
 
 // Stremio ownership: household access is a control-plane contract, not a
-// commercial per-stream admission system or a media relay.
+// commercial per-stream admission system or a media relay. External stream
+// cards now take one household-aware playback-start hop before resolving to the
+// dedicated Jellyfin user's direct URL.
 const external=read('src/stremio/external-direct-runtime.js');
 const stremioEntitlements=read('src/stremio/entitlements.js');
 const managedEntitlements=read('src/stremio/managed-entitlements.js');
 const stremioRuntime=read('src/stremio/runtime.js');
 const jellyfinActivity=read('src/jellyfin/activity.js');
-assert(external.includes('directPlaybackUrl(')&&external.includes("url.searchParams.set('api_key',client.sourceToken(source))"),'external fallback results must point directly at their dedicated Jellyfin user');
+assert(external.includes('/external-play/')&&external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl(')&&external.includes("url.searchParams.set('api_key', client.sourceToken(source))"),'external playback must take one household control hop then resolve to its dedicated Jellyfin user');
+assert(!external.includes('pipe(res)')&&!stremioRuntime.includes('pipe(res)'),'Stremio media bytes must never be relayed through CAPTAiNFiN');
 assert(stremioEntitlements.includes('persistEntitlementRecord')&&stremioEntitlements.includes('managedAccountOwned'),'install-link reconciliation must not own or reset the managed hidden-user identity');
 assert(managedEntitlements.includes('MaxActiveSessions:0'),'hidden managed Jellyfin users must remain unlimited at Jellyfin session-policy level');
 assert(!fs.existsSync(path.join(root,'src/stremio/source-admission.js')),'retired Stremio commercial admission module must remain absent');
 assert(!stremioRuntime.includes('stream_limit')&&!stremioRuntime.includes("require('./source-admission')"),'Stremio protocol runtime must not enforce a commercial concurrent-stream quota');
-assert(stremioRuntime.includes('res.redirect(307,target.url)'),'managed Stremio playback must leave the portal through a Jellyfin redirect');
-assert(stremioRuntime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId',playbackLimit,retiredPlayback)"),'legacy external proxy URLs must remain retired');
+assert(stremioRuntime.includes('return res.redirect(307, target.url)'),'managed Stremio playback must leave the portal through a Jellyfin redirect');
+assert(stremioRuntime.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'")&&stremioRuntime.includes('return res.redirect(307, target)'),'external Stremio playback must leave the portal through its household-aware Jellyfin redirect');
+assert(stremioRuntime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', playbackLimit, retiredPlayback)"),'legacy external proxy URLs must remain retired');
 assert((jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length>=2,'ordinary Jellyfin concurrency monitoring must exclude hidden Stremio identities');
 
 console.log('canonical ownership smoke: ok');

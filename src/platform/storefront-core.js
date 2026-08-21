@@ -5,10 +5,11 @@ const customers = require('../customers');
 const { esc } = require('./admin-html');
 const runtimeSettings = require('./runtime-settings');
 const branding = require('./branding');
+const planComponents = require('../access/plan-components');
 
 const DEFAULT_FEATURES = [
     'A huge movie and TV library',
-    'Jellyfin stream allowances and private Stremio household access',
+    'Flexible Jellyfin access and private Stremio household access',
     'Downloads available on supported plans',
     'Watch on TVs, phones, tablets and browsers',
     'One simple self-service customer account',
@@ -97,7 +98,7 @@ function bestValueCode(plans) {
 }
 
 function planService(plan){const value=String(plan?.service_type||plan?.service_type_snapshot||'jellyfin').toLowerCase();return['jellyfin','stremio','bundle'].includes(value)?value:'jellyfin';}
-function accessModel(plan){const type=planService(plan),streams=Math.max(1,Number(plan?.streams||1));if(type==='stremio')return'1 Stremio household';if(type==='bundle')return `${streams} Jellyfin stream${streams===1?'':'s'} + 1 Stremio household`;return `${streams} Jellyfin stream${streams===1?'':'s'}`;}
+function accessModel(plan){return planComponents.accessLabel(plan)||'Streaming access';}
 
 function targetForPlan(plan, { logged, registrationOpen }) {
     if (logged) return '/account#plans';
@@ -201,10 +202,11 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
     const context = { logged, registrationOpen };
     const paidPlans = plans.filter(plan => Number(plan.price_minor || 0) > 0);
     const jellyfinPlans=plans.filter(plan=>['jellyfin','bundle'].includes(planService(plan)));
-    const maxStreams = jellyfinPlans.length?Math.max(1,...jellyfinPlans.map(plan=>Number(plan.streams||1))):null;
+    const streamPlans=jellyfinPlans.filter(plan=>planComponents.componentForPlan(plan,'jellyfin')?.driver==='concurrent_streams');
+    const maxStreams=streamPlans.length?Math.max(...streamPlans.map(plan=>planComponents.componentForPlan(plan,'jellyfin').config.streamLimit)):null;
+    const hasJellyfinHousehold=jellyfinPlans.some(plan=>planComponents.componentForPlan(plan,'jellyfin')?.driver==='household_network');
     const hasStremio=plans.some(plan=>['stremio','bundle'].includes(planService(plan)));
     const hasTrial = plans.some(plan => plan.billing_interval === 'trial');
-    const hasDownloads = plans.some(plan => plan.allow_downloads);
     const featuredCode = bestValueCode(plans);
     const planMarkup = plans.length
         ? plans.map(plan => planCard(plan, plans, context, featuredCode)).join('')
@@ -219,6 +221,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
         const bm = monthlyEquivalent(b) || Number(b.price_minor || 0);
         return am - bm;
     })[0] || null;
+    const jellyfinProof=maxStreams?{value:maxStreams,label:'max Jellyfin streams'}:hasJellyfinHousehold?{value:'Home',label:'Jellyfin household option'}:{value:'—',label:'Jellyfin optional'};
 
     return `<!doctype html>
 <html lang="en">
@@ -250,7 +253,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
                 <p class="heroLead">${esc(store.copy.heroSubtitle || 'Stream movies and TV with flexible access and a simple customer account.')}</p>
                 <div class="heroActions"><a class="storeBtn primary large" href="${esc(primaryTarget)}">${esc(primaryLabel)} <span aria-hidden="true">→</span></a><a class="storeBtn secondary large" href="#plans">Compare plans</a></div>
                 <div class="heroProof">
-                    <div><strong>${maxStreams||'—'}</strong><span>${maxStreams?'max Jellyfin streams':'Jellyfin optional'}</span></div>
+                    <div><strong>${esc(jellyfinProof.value)}</strong><span>${esc(jellyfinProof.label)}</span></div>
                     <div><strong>${hasStremio?'Yes':'—'}</strong><span>Stremio household options</span></div>
                     <div><strong>${hasTrial ? '24h' : `${plans.length}`}</strong><span>${hasTrial ? 'trial available' : 'plans available'}</span></div>
                 </div>
@@ -289,7 +292,7 @@ function renderStorefront({ site, plans, store, registrationOpen, logged }) {
             <div class="sectionIntro"><div class="sectionKicker">Three simple steps</div><h2>From account to watching in minutes.</h2></div>
             <div class="stepsGrid">
                 <article class="stepCard"><span>01</span><h3>${registrationOpen ? 'Create your account' : 'Sign in with your portal account'}</h3><p>${registrationOpen ? 'Set up your customer account and choose how you want to access the service.' : 'Existing customers can sign in. New customers are added or imported by the service administrator.'}</p></article>
-                <article class="stepCard"><span>02</span><h3>Choose your plan</h3><p>Compare Jellyfin stream allowances, Stremio household access, downloads and plan duration, then choose the option that works for you.</p></article>
+                <article class="stepCard"><span>02</span><h3>Choose your plan</h3><p>Compare Jellyfin stream or household access, Stremio household access, downloads and plan duration, then choose the option that works for you.</p></article>
                 <article class="stepCard"><span>03</span><h3>Set up and watch</h3><p>Your streaming access is managed from one customer portal, including account settings and content requests.</p></article>
             </div>
         </div>

@@ -37,8 +37,7 @@ const migrationSql=fs.readdirSync(migrationDir)
   .join('\n');
 const automationStatements=migrationSql.split(';').filter(statement=>/automation_job_state/i.test(statement));
 const registered=[...new Set(automationStatements.flatMap(statement=>[
-  ...[...statement.matchAll(/(?:INSERT\s+INTO\s+(?:public\.)?automation_job_state(?:\s*\([^)]*\))?\s+VALUES\s*\(|VALUES\s*\()\s*'([^']+)'/gi)].map(match=>match[1]),
-  ...[...statement.matchAll(/job_key\s*=\s*'([^']+)'/gi)].map(match=>match[1])
+  ...[...statement.matchAll(/(?:INSERT\s+INTO\s+(?:public\.)?automation_job_state(?:\s*\([^)]*\))?\s+VALUES\s*\(|VALUES\s*\()\s*'([^']+)'/gi)].map(match=>match[1])
 ]))];
 const coded=automation.names();
 const missingSeedCode=registered.filter(name=>!coded.includes(name));

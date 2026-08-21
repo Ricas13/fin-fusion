@@ -23,11 +23,13 @@ const { createAdminRequestRedirectRouter } = require('./admin-request-redirect')
 const { createAdminProvisioningRouter } = require('./admin-provisioning');
 const { createAdminDriftRouter } = require('./admin-drift');
 const { createAdminEmailRouter } = require('./admin-email');
+const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPaymentSettingsRouter } = require('./admin-payment-settings');
 const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings');
 const { createAdminBillingRouter } = require('./admin-billing');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
+const { createAdminPlanAccessRouter } = require('./admin-plan-access');
 const { createAdminPlanLifecycleRouter } = require('./admin-plan-lifecycle');
 const { createAdminPlanInventoryRouter } = require('./admin-plan-inventory');
 const { createAdminPlansListRouter } = require('./admin-plans-list');
@@ -57,6 +59,10 @@ function mountAdminRoutes(app) {
   app.get('/admin', dashboard.dashboardPage);
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
+  // Literal customer overview routes must be mounted before any /admin/users/:id
+  // owner so reserved page names such as "dashboard" can never be interpreted
+  // as customer UUIDs by Customer 360 or legacy customer-management routes.
+  app.use(createAdminUsersDashboardRouter());
   app.use(createAdminSupportTicketsRouter());
   app.use(createAdminOrdersRouter());
   app.use(createAdminSetupRouter());
@@ -78,11 +84,16 @@ function mountAdminRoutes(app) {
   app.use(createAdminProvisioningRouter());
   app.use(createAdminDriftRouter());
   app.use(createAdminEmailRouter());
+  app.use(createAdminNotificationPreferencesRouter());
   app.use(createAdminPaymentSettingsRouter());
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
   app.use(createAdminCustomerCreateRouter());
   app.use(createAdminPlanCreateV2Router());
+  // Mount the access-driver editor before the legacy Plans controller so the
+  // established /admin/plans/:id/jellyfin URL gains household-aware semantics
+  // without duplicating or weakening the older plan-management routes.
+  app.use(createAdminPlanAccessRouter());
   app.use(createAdminPlanLifecycleRouter());
   app.use(createAdminPlanInventoryRouter());
   app.use(createAdminPlansListRouter());
@@ -101,7 +112,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminServersRouter());
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
-  app.use(createAdminUsersDashboardRouter());
   app.use(createAdminCustomerManagementRouter());
   app.use(createAdminCustomer360Router());
   app.use(createAdminUsersRouter());

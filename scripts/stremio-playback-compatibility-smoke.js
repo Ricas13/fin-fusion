@@ -64,11 +64,11 @@ assert(managedSource.includes('source.TranscodingUrl'),'managed playback must ho
 assert(mediaIndexSource.includes('async function lookupAll')&&!mediaIndexSource.includes('item_type=$3 ORDER BY updated_at DESC LIMIT 1'),'managed IMDb lookup must preserve separate Jellyfin items such as 1080p and 4K copies');
 assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'managed result resolution must fan out across every indexed item with the same IMDb id');
 assert(managedSource.includes('`${item.id}:${source.Id}:${filename}`'),'separate Jellyfin items/media sources must keep distinct Stremio binge groups');
-assert(runtimeSource.includes('managedRuntime.playbackInfo(mapping,req.params.itemId,req.params.mediaSourceId)'),'playback control must refresh the selected media-source negotiation');
+assert(/managedRuntime\.playbackInfo\(mapping,\s*req\.params\.itemId,\s*req\.params\.mediaSourceId\)/.test(runtimeSource),'playback control must refresh the selected media-source negotiation');
 assert(!runtimeSource.includes('stream_limit'),'managed playback control must not enforce a Stremio concurrent-stream quota');
-assert(runtimeSource.includes("managedPlayback.startManager({intervalMs:5000})"),'managed playback cleanup must run every five seconds');
-assert(runtimeSource.includes('res.redirect(307,target.url)'),'managed playback must remain no-byte direct delivery while preserving request semantics across the Jellyfin redirect');
-assert(runtimeSource.includes('playMethod:target.playMethod'),'managed redirect audit must record the actual delivery method');
+assert(/managedPlayback\.startManager\(\{\s*intervalMs\s*:\s*5000\s*\}\)/.test(runtimeSource),'managed playback cleanup must run every five seconds');
+assert(/res\.redirect\(307,\s*target\.url\)/.test(runtimeSource),'managed playback must remain no-byte direct delivery while preserving request semantics across the Jellyfin redirect');
+assert(/playMethod\s*:\s*target\.playMethod/.test(runtimeSource),'managed redirect audit must record the actual delivery method');
 assert(lifecycleSource.includes("playMethod:row.play_method||'DirectPlay'"),'managed stop reporting must reuse the negotiated play method');
 assert(lifecycleSource.includes('failedServerIds')&&lifecycleSource.includes("snapshot.failedServerIds.has(String(row.server_id))"),'managed cleanup must fail closed when Jellyfin session snapshots fail');
 assert(lifecycleSource.includes("if(!session&&started&&now-started<START_GRACE_SECONDS*1000)continue"),'startup grace must protect a playback until its Jellyfin session becomes visible');

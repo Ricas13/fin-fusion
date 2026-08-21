@@ -82,7 +82,6 @@ function createAdminPlansRouter(){
   const r=express.Router();r.use('/admin/plans',gate,noStore);
   r.get('/admin/plans/export',async(req,res,next)=>{try{const rows=await listData();return sendCsv(res,'plans.csv',[{key:'code',label:'Code'},{key:'name',label:'Name'},{key:'service_type',label:'Service type'},{key:'billing_interval',label:'Billing'},{key:'duration_days',label:'Duration days'},{label:'Price',value:p=>(Number(p.price_minor)/100).toFixed(2)},{key:'currency',label:'Currency'},{key:'streams',label:'Streams'},{key:'capacity_limit',label:'Capacity'},{key:'active',label:'Active'},{key:'visible',label:'Visible'},{key:'is_free_tier',label:'Permanent free tier'},{key:'archived_at',label:'Archived at'},{key:'subscription_count',label:'Subscriptions'}],rows)}catch(error){next(error)}});
   r.get('/admin/plans/:id/edit',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const plan=await planById(req.params.id);if(!plan)return res.status(404).send('Plan not found');return res.send(await overviewPage(req,plan))}catch(error){next(error)}});
-  r.get('/admin/plans/:id/jellyfin',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const plan=await planById(req.params.id);if(!plan)return res.status(404).send('Plan not found');if(serviceKind(plan.service_type)==='stremio')return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?error=${encodeURIComponent('This is a Stremio-only plan. Use its Stremio tab; Jellyfin settings do not apply.')}`);return res.send(await jellyfinPage(req,plan))}catch(error){next(error)}});
   r.get('/admin/plans/:id/archive-confirm',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const plan=await planById(req.params.id);if(!plan)return res.status(404).send('Plan not found');return res.send(await archiveConfirmPage(req,plan))}catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message)}`)}});
 
   r.post('/admin/plans/:id',async(req,res)=>{
@@ -98,18 +97,6 @@ function createAdminPlansRouter(){
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.update','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify({...p,permanentFreeTier:Boolean(plan.is_free_tier),impact,classChanged})]);
       });
       return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?message=${encodeURIComponent(plan.is_free_tier?'Free Access overview saved. The plan remains permanently active and visible.':'Overview saved. Existing subscription contracts are unaffected by catalogue availability.')}`);
-    }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message)}`)}
-  });
-
-  r.post('/admin/plans/:id/jellyfin',async(req,res)=>{
-    if(!csrf.verify(req))return res.status(403).send('Invalid security token');
-    try{
-      const plan=await planById(req.params.id);if(!plan)throw new Error('Plan not found.');assertJellyfinPlan(plan);
-      const impact=await planImpact(plan.id);requireImpact(plan,impact.live,req.body.impactConfirmation);const p=jellyfinInput(req.body);
-      await query(`UPDATE plans SET streams=$2,allow_downloads=$3,allow_video_transcoding=$4,allow_audio_transcoding=$5,allow_remuxing=$6,allow_live_tv=$7,allow_live_tv_management=$8,allow_remote_access=$9,allow_4k=$10,updated_at=NOW() WHERE id=$1`,[plan.id,p.streams,p.downloads,p.video,p.audio,p.remux,p.live,p.liveManagement,p.remoteAccess,p.fourk]);
-      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.jellyfin_policy','plan',$2,$3::jsonb)`,[req.session.authUserId,plan.id,JSON.stringify({...p,impact})]);
-      const{queuePlanReconciliation}=require('./bulk-jobs'),job=await queuePlanReconciliation(plan.id,req.session.authUserId);
-      return res.redirect(job?`/admin/jobs/${encodeURIComponent(job.id)}?message=${encodeURIComponent('Policy saved; affected customers were queued for update.')}`:`/admin/plans/${encodeURIComponent(plan.id)}/jellyfin?message=${encodeURIComponent('Policy saved.')}`);
     }catch(error){return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message)}`)}
   });
 

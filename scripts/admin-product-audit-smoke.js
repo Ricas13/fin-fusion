@@ -12,7 +12,7 @@ const commerce=read('src/platform/admin-commerce.js');
 const backupTabs=read('src/platform/backup-workflow-tabs.js');
 const settings=read('src/platform/admin-original-settings.js');
 const customer360View=read('src/platform/customer-360-view.js');
-const securityCore=read('src/platform/admin-security-core.js');
+const securityRoutes=read('src/platform/admin-security-routes.js');
 const adminHtml=read('src/platform/admin-html.js');
 const discountUi=read('public/js/admin-discounts.js');
 const adminSettingsGuide=read('docs/guide/admin-settings.md');
@@ -47,7 +47,8 @@ assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('
 
 assert(routeComposition.includes('createAdminProductModulesRouter'),'Product module routes must be mounted in the canonical admin composition');
 assert(productModules.includes("'/admin/jellyfin'")&&productModules.includes("'/admin/stremio'")&&productModules.includes("'/admin/stremio/playback'"),'Jellyfin and Stremio must have dedicated product workspaces');
-assert(productModules.includes('Reserved for later development.')&&productModules.includes('monthly seat allowance')&&productModules.includes('credit balance'),'Resellers must remain a structural shell rather than premature billing logic');
+assert(productModules.includes('Reserved for later development.')&&productModules.includes('monthly fee tied to a configurable Jellyfin user allowance')&&productModules.includes('monthly Jellyfin user allowance'),'Resellers must remain a structural shell aligned to the monthly user-allowance model');
+assert(!productModules.toLowerCase().includes(['cred','it-based'].join(''))&&!productModules.toLowerCase().includes(['cred','it balance'].join('')),'retired commercial balance language must not return');
 assert(customerFilters.includes("SERVICE_VALUES = ['jellyfin', 'stremio']")&&customerFilters.includes('service_type_snapshot'),'Shared Customers must support product context without duplicating customer data');
 assert(customerList.includes("active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users'"),'Contextual customer links must keep the relevant product module active');
 assert(plansList.includes("type==='jellyfin'?'jellyfin-plans':type==='stremio'?'stremio-plans':'plans'"),'Plan filtering must keep product module navigation context');
@@ -63,8 +64,8 @@ for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin
 assert(exists('public/js/admin-plan-create-v2.js'),'canonical plan creation browser controller must remain available');
 
 assert(customer360View.includes('/admin/customer-jellyfin-password?customerId='),'Customer 360 Access must expose the existing administrator Jellyfin password-support workflow');
-assert(securityCore.includes("const { layout, esc } = require('./admin-html')")&&securityCore.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
-assert(!securityCore.includes("res.render('admin/security-policy'"),'Administrator 2FA policy must not fall back to the retired EJS shell');
+assert(securityRoutes.includes("const { layout, esc } = require('./admin-html')")&&securityRoutes.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
+assert(!securityRoutes.includes("res.render('admin/security-policy'"),'Administrator 2FA policy must not fall back to the retired EJS shell');
 assert(!exists('views/admin/security-policy.ejs'),'retired standalone 2FA policy shell must remain absent');
 assert(adminHtml.includes("discountScriptFor(options={})")&&adminHtml.includes('/js/admin-discounts.js'),'Discounts page must load its dedicated browser controller');
 assert(discountUi.includes("type.value === 'fixed'")&&discountUi.includes('percent.disabled')&&discountUi.includes('fixed.required'),'Discount type selection must hide and disable the irrelevant amount controls');

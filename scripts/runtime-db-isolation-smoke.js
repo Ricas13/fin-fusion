@@ -60,7 +60,7 @@ assert(/REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM \$\{role\}/.test(r
 assert(/'schema_migrations','user_sessions'/.test(roleScript), 'automation role must not receive migration/session-store access');
 assert(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO \$\{role\}/.test(roleScript), 'backup role must be read-capable for complete pg_dump snapshots');
 assert(/GRANT INSERT,UPDATE ON \$\{table\} TO \$\{role\}/.test(roleScript), 'backup role must write only its bookkeeping tables');
-assert(/createdb:\s*true/.test(roleScript) && /No schema\/table grants are intentional/.test(roleScript), 'restore verifier must use a CREATEDB-only identity with no production table grants');
+assert(/backupVerify:\s*\{[^}]*createdb:\s*true/.test(roleScript) && /async function grantBackupVerify[\s\S]*?REVOKE ALL ON SCHEMA public FROM \$\{role\}[\s\S]*?REVOKE ALL ON ALL TABLES IN SCHEMA public FROM \$\{role\}[\s\S]*?REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM \$\{role\}/.test(roleScript), 'restore verifier must use a CREATEDB-only identity with no production schema/table/sequence grants');
 assert(/auth_totp_enrollments/.test(roleScript) && /auth_sessions/.test(roleScript), 'automation role must explicitly exclude authentication secrets');
 
 assert(/CREATE TABLE IF NOT EXISTS user_sessions/.test(sessionMigration), 'runtime session table must be migration-owned');
