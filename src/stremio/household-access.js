@@ -86,11 +86,21 @@ function deniedStream(decision, options = {}) {
     title,
     description
   };
+  if (options.url) {
+    stream.url = String(options.url);
+    stream.behaviorHints = {
+      bingeGroup: 'captainfin-household-ip-block',
+      filename: 'CAPTAiNFiN household IP blocked.mp4'
+    };
+    if (Number(options.videoSize) > 0) stream.behaviorHints.videoSize = Number(options.videoSize);
+  }
   if (options.externalUrl) {
     const externalUrl = String(options.externalUrl);
     stream.externalUrl = externalUrl;
-    stream.url = String(options.url || externalUrl);
-    stream.behaviorHints = { notWebReady: true };
+    if (!stream.url) {
+      stream.url = externalUrl;
+      stream.behaviorHints = { notWebReady: true };
+    }
   }
   return stream;
 }
