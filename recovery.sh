@@ -28,8 +28,13 @@ Backup paths may be relative to ./backups, for example:
 
 check   Authenticates/decrypts the backup and asks pg_restore to parse its archive.
 drill   Performs check plus a full restore into a temporary verification database.
-restore Stops CAPTAiNFiN writers, restores production, reapplies migrations/runtime
-        roles, restarts services and runs deployment verification.
+restore Stops CAPTAiNFiN writers, creates an encrypted pre-restore safety backup,
+        restores production, reapplies migrations/runtime roles, restarts services
+        and runs deployment verification.
+
+If the current database is too damaged to create the safety snapshot, an emergency
+operator may additionally set CAPTAINFIN_RECOVERY_SKIP_SAFETY_BACKUP=1. That flag
+is deliberately separate from the required destructive RESTORE_CONFIRM phrase.
 EOF
 }
 
@@ -105,6 +110,20 @@ full_drill() {
   printf '\nRecovery drill passed. The production database was not modified.\n'
 }
 
+create_pre_restore_safety_backup() {
+  if [[ "${CAPTAINFIN_RECOVERY_SKIP_SAFETY_BACKUP:-0}" == '1' ]]; then
+    log 'Emergency override: skipping pre-restore safety backup'
+    printf 'WARNING: the current production database will not be preserved before replacement.\n' >&2
+    return 0
+  fi
+  log 'Creating encrypted pre-restore safety backup of the current database'
+  mkdir -p "$BACKUP_ROOT/pre-restore"
+  docker compose --profile recovery run --rm --no-deps \
+    -e BACKUP_DIR=/backups/pre-restore \
+    recovery-tools node scripts/backup-db.js
+  printf 'Current database preserved under backups/pre-restore/.\n'
+}
+
 wait_service_health() {
   local container="$1" ready=0 health
   for _ in $(seq 1 90); do
@@ -129,6 +148,8 @@ restore_production() {
   log 'Stopping CAPTAiNFiN application and worker writers'
   docker compose stop app automation-worker activity-worker backup-worker
   SERVICES_STOPPED=1
+
+  create_pre_restore_safety_backup
 
   log 'Restoring the selected encrypted backup into production'
   docker compose --profile recovery run --rm --no-deps \
