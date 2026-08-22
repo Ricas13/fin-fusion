@@ -46,10 +46,15 @@ for (const name of workflowFiles) {
       fail(`${relativePath}:${index + 1} workflow service image must be digest pinned: ${image[1]}`);
     }
 
-    const postgresRefs = line.match(/\bpostgres:[A-Za-z0-9._-]+(?:@sha256:[0-9a-f]{64})?/gi) || [];
-    for (const reference of postgresRefs) {
-      if (!/@sha256:[0-9a-f]{64}$/i.test(reference)) {
-        fail(`${relativePath}:${index + 1} PostgreSQL image reference must be digest pinned: ${reference}`);
+    // Only inspect explicit `docker run` image arguments here. PostgreSQL
+    // connection strings such as postgres://user:password@host are credentials,
+    // not image references, and must never be mistaken for floating images.
+    if (/\bdocker\s+run\b/.test(line)) {
+      const dockerImages = line.match(/\b(?:postgres|node):[A-Za-z0-9._-]+(?:@sha256:[0-9a-f]{64})?/gi) || [];
+      for (const reference of dockerImages) {
+        if (!/@sha256:[0-9a-f]{64}$/i.test(reference)) {
+          fail(`${relativePath}:${index + 1} docker run image reference must be digest pinned: ${reference}`);
+        }
       }
     }
   });
