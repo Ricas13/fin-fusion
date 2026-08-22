@@ -26,7 +26,7 @@ const plansList=read('src/platform/admin-plans-list.js');
 assert(nav.includes("['jellyfin-import','Import Jellyfin users'"),'Jellyfin import must remain discoverable under Customers with an explicit label');
 assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to Customers navigation');
 assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
-assert(nav.includes("['users','All customers','/admin/users']")&&nav.includes("['activity','Playback','/admin/activity']"),'All customers and Jellyfin playback must remain visible in the simplified navigation');
+assert(nav.includes("['users','All customers','/admin/users']")&&nav.includes("['activity','Playback operations','/admin/activity']"),'All customers and Jellyfin playback operations must remain visible in the simplified navigation');
 assert(nav.includes("['referrals','Affiliates','/admin/referrals']")&&!nav.includes("referrals:Object.freeze"),'Affiliate administration must remain visible in Commerce navigation');
 
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.

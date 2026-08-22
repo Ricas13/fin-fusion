@@ -2,7 +2,7 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'jellyfin',label:'Jellyfin',pages:[['jellyfin-overview','Overview','/admin/jellyfin'],['servers','Servers','/admin/servers'],['fleet-operations','Fleet operations','/admin/servers/operations'],['activity','Playback','/admin/activity']]},
+  {key:'jellyfin',label:'Jellyfin',pages:[['jellyfin-overview','Overview','/admin/jellyfin'],['servers','Servers','/admin/servers'],['fleet-operations','Fleet operations','/admin/servers/operations'],['activity','Playback operations','/admin/activity']]},
   {key:'stremio',label:'Stremio',pages:[['stremio-overview','Overview','/admin/stremio'],['stremio-sources','Sources','/admin/servers/stremio'],['stremio-playback','IP access','/admin/stremio/playback']]},
   {key:'resellers',label:'Resellers',pages:[['reseller-overview','Overview','/admin/resellers'],['reseller-accounts','Resellers','/admin/resellers/resellers']]},
   {key:'people',label:'Customers',pages:[['users','All customers','/admin/users'],['tickets','Support','/admin/tickets'],['users-dashboard','Activity','/admin/users/dashboard']]},

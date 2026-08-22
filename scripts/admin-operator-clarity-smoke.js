@@ -26,6 +26,9 @@ const billing = read('src/platform/admin-billing.js');
 const support = read('src/platform/admin-support-tickets.js');
 const events = read('src/platform/admin-events.js');
 const integrations = read('src/platform/admin-integrations-overview.js');
+const playback = read('src/platform/admin-activity.js');
+const playbackEvents = read('src/jellyfin/activity-policy-events.js');
+const playbackView = read('views/admin/activity.ejs');
 const nav = read('src/platform/admin-nav.js');
 const routes = read('src/platform/admin-route-composition.js');
 
@@ -116,5 +119,20 @@ assert(integrations.includes('enabled&&!configured'), 'Integration issue state m
 assert(integrations.includes('providerSettings.status') && integrations.includes('emailSettings.status') && integrations.includes('notificationSettings.status'), 'Integration overview must reuse canonical status providers');
 assert(nav.includes("['settings-integrations','Integrations','/admin/settings/integrations']"), 'Settings navigation must open the integration health overview');
 assert(routes.includes('createAdminIntegrationsOverviewRouter()') && routes.indexOf('createAdminIntegrationsOverviewRouter()') < routes.indexOf('createAdminOriginalSettingsRouter()'), 'Integration overview must mount before the legacy settings owner without replacing its canonical mutation routes');
+
+assert(playback.includes('Playback control room') && playback.includes('playbackHero(data,policy,state)'), 'Playback must lead with live operator state and a recommended next action');
+assert(playback.includes('customer_stream_count') && playback.includes('overLimitCustomers'), 'Playback exceptions must derive from the canonical live-session counts and stream limits');
+assert(playback.includes("decision==='stop_failed'") && playback.includes('policyEvents.safetyAttention'), 'Playback must distinguish failed enforcement from safety-blocked actions');
+for (const reason of ['incomplete_server_snapshot', 'revalidation_failed', 'client_does_not_report_media_control_support']) {
+  assert(playbackEvents.includes(`'${reason}'`), `shared playback policy taxonomy must include ${reason}`);
+}
+assert(playback.includes("require('../jellyfin/activity-policy-events')"), 'Playback operator UI must reuse the shared Jellyfin policy-event taxonomy');
+assert(playbackEvents.includes('function reasonLabel') && playbackEvents.includes('function decisionLabel'), 'shared playback taxonomy must own operator-facing event labels');
+assert(playbackView.includes('Fix these playback issues first') && playbackView.includes('Recent policy decisions &amp; safety checks'), 'Playback must surface current exceptions and significant decisions before routine detail');
+assert(playbackView.indexOf('<%- heroHtml %>') < playbackView.indexOf('Stream policy &amp; enforcement settings'), 'Playback state must render before policy configuration');
+assert(playbackView.includes('<details class="operatorDetails" id="playback-policy">'), 'Playback policy configuration must be progressively disclosed');
+assert(playbackView.includes('Fleet context') && playbackView.includes('Full policy event history') && playbackView.includes('Routine playback history'), 'Fleet context and routine playback history must remain available behind deliberate disclosure');
+assert(playbackView.includes('I_UNDERSTAND_THIS_STOPS_PLAYBACK'), 'Playback enforcement must preserve the explicit destructive-action acknowledgement');
+assert(!playbackView.includes('remote_endpoint') && !playbackView.includes('jellyfin_session_id'), 'Playback UI must not expose raw network endpoints or Jellyfin session identifiers');
 
 console.log('admin operator clarity smoke: ok');
