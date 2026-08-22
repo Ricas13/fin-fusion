@@ -6,7 +6,7 @@ const sourceIndex = require('./source-index');
 const planExternalSources = require('./plan-external-sources');
 const episodeResolution = require('./episode-resolution');
 const foundation = require('./foundation');
-const { neutralGroup } = require('./managed-runtime');
+const { neutralGroup, containerExtension, pathExtension } = require('./managed-runtime');
 
 function parseVideoId(type, videoId) {
   if (type === 'movie') {
@@ -56,21 +56,16 @@ function description(display, media) {
   return foundation.richStreamDescription(display, media);
 }
 
-function directPlaybackUrl({ source, itemId, mediaSourceId }) {
+function directPlaybackUrl({ source, itemId, mediaSourceId = '', container = '', filename: file = '' }) {
   const item = String(itemId || '').trim();
   const media = String(mediaSourceId || '').trim();
-  if (!source?.base_url || !item || !media) throw new Error('External Jellyfin direct playback URL is unavailable.');
-  const url = client.sourceUrl(source.base_url, `/Videos/${encodeURIComponent(item)}/stream`);
+  if (!source?.base_url || !item) throw new Error('External Jellyfin raw-file URL is unavailable.');
+  const extension = containerExtension(container) || pathExtension(file);
+  const url = client.sourceUrl(source.base_url, `/Videos/${encodeURIComponent(item)}/stream${extension ? `.${extension}` : ''}`);
   url.searchParams.set('Static', 'true');
-  url.searchParams.set('MediaSourceId', media);
+  if (media) url.searchParams.set('MediaSourceId', media);
   url.searchParams.set('api_key', client.sourceToken(source));
   return url.toString();
-}
-
-function controlPlaybackUrl({ delivery, sourceId, itemId, mediaSourceId }) {
-  if (!delivery?.portalBase || !delivery?.installToken) return null;
-  const base = String(delivery.portalBase).replace(/\/$/, '');
-  return `${base}/stremio/${encodeURIComponent(delivery.installToken)}/external-play/${encodeURIComponent(sourceId)}/${encodeURIComponent(itemId)}/${encodeURIComponent(mediaSourceId)}`;
 }
 
 async function roots(source, args) {
@@ -108,10 +103,12 @@ async function items(source, args) {
 }
 
 function mediaSources(item) {
-  return (Array.isArray(item?.MediaSources) ? item.MediaSources : []).filter(media => media?.Id && media?.SupportsDirectPlay !== false);
+  const sources = (Array.isArray(item?.MediaSources) ? item.MediaSources : []).filter(media => media?.Id);
+  if (sources.length) return sources;
+  return [{ Id: '', Path: item?.Path || item?.path || '', Container: pathExtension(item?.Path || item?.path || ''), MediaStreams: [], Size: null, Bitrate: null }];
 }
 
-async function streamsFrom(source, args, type, videoId, delivery = null) {
+async function streamsFrom(source, args, type, videoId) {
   const found = await items(source, args);
   const out = [];
   for (const item of found) {
@@ -119,13 +116,12 @@ async function streamsFrom(source, args, type, videoId, delivery = null) {
       const file = filename(item, media);
       const display = foundation.streamDisplayFromFilename(file);
       const q = quality(media, display);
-      const controlled = controlPlaybackUrl({ delivery, sourceId: source.id, itemId: item.Id, mediaSourceId: media.Id });
       out.push({
         rank: q.rank,
         stream: {
           name: display.name,
           description: description(display, media),
-          url: controlled || directPlaybackUrl({ source, itemId: item.Id, mediaSourceId: media.Id }),
+          url: directPlaybackUrl({ source, itemId: item.Id, mediaSourceId: media.Id, container: media.Container, filename: file }),
           behaviorHints: {
             notWebReady: true,
             bingeGroup: neutralGroup(type, videoId, file),
@@ -139,12 +135,12 @@ async function streamsFrom(source, args, type, videoId, delivery = null) {
   return out.sort((a, b) => b.rank - a.rank).map(row => row.stream);
 }
 
-async function streamsFor(entitlement, type, videoId, delivery = null) {
+async function streamsFor(entitlement, type, videoId) {
   const args = parseVideoId(type, videoId);
   if (!args) return [];
   const sources = await planExternalSources.forEntitlement(entitlement);
   if (!sources.length) return [];
-  const settled = await Promise.allSettled(sources.map(source => streamsFrom(source, args, type, videoId, delivery)));
+  const settled = await Promise.allSettled(sources.map(source => streamsFrom(source, args, type, videoId)));
   const output = [];
   for (let i = 0; i < settled.length; i += 1) {
     const result = settled[i];
@@ -175,7 +171,6 @@ module.exports = {
   quality,
   description,
   directPlaybackUrl,
-  controlPlaybackUrl,
   roots,
   itemDetails,
   exactEpisode,
