@@ -42,6 +42,8 @@ function parse(body = {}, forcedCurrency = null) {
   const code = text(body.code, 50).toLowerCase(), name = text(body.name, 80), description = text(body.description, 500);
   if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(code)) throw new Error('Code must be 2–50 characters using lowercase letters, numbers and hyphens.');
   if (!name) throw new Error('Enter a plan name.');
+  const legacyServiceType = text(body.serviceType, 20).toLowerCase();
+  if (!body.planKind && legacyServiceType && !SERVICE_TYPES.includes(legacyServiceType)) throw new Error('Choose Jellyfin or Stremio as the plan type.');
   const planKind = kindFromLegacy(body);
   if (!PLAN_KINDS.includes(planKind)) throw new Error('Choose Free Jellyfin, Paid Jellyfin or Stremio as the plan type.');
   const serviceType = serviceForKind(planKind);
@@ -81,7 +83,7 @@ function parse(body = {}, forcedCurrency = null) {
   };
   plan.inactivityPolicy = planPolicy.validateForPlan(
     { price_minor: priceMinor, billing_interval: billing, service_type: serviceType },
-    { enabled: freeJellyfin && b(body.inactivityEnabled), dryRun: b(body.inactivityDryRun), noPlaybackDays: body.noPlaybackDays, minimumPlaybackMinutes: body.minimumPlaybackMinutes, playbackWindowDays: body.playbackWindowDays, minimumObservationHours: body.minimumObservationHours }
+    { enabled: b(body.inactivityEnabled), dryRun: b(body.inactivityDryRun), noPlaybackDays: body.noPlaybackDays, minimumPlaybackMinutes: body.minimumPlaybackMinutes, playbackWindowDays: body.playbackWindowDays, minimumObservationHours: body.minimumObservationHours }
   );
   return plan;
 }
