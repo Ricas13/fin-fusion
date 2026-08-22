@@ -1,6 +1,6 @@
 # Backup and recovery
 
-CAPTaINFiN database recovery uses authenticated encrypted PostgreSQL custom-format dumps. The normal backup worker can prove a backup by restoring it into a temporary database and checking that the expected CAPTaINFiN schema exists.
+CAPTAiNFiN database recovery uses authenticated encrypted PostgreSQL custom-format dumps. The normal backup worker can prove a backup by restoring it into a temporary database and checking that the expected CAPTAiNFiN schema exists.
 
 The browser is intentionally a **status and verification control plane**, not a destructive restore console. Production restore remains a host operation.
 
@@ -26,7 +26,7 @@ Off-host copying is optional and disabled by default. It extends the existing ba
 The sequence is deliberately fail-safe:
 
 1. `pg_dump` produces the database stream.
-2. CAPTaINFiN encrypts it locally using the existing authenticated `BACKUP_ENCRYPTION_KEY` format.
+2. CAPTAiNFiN encrypts it locally using the existing authenticated `BACKUP_ENCRYPTION_KEY` format.
 3. The completed `.pgdump.enc` file is atomically placed in `BACKUP_DIR` and recorded as a successful local recovery point.
 4. Only that already-encrypted file is uploaded to the S3-compatible destination.
 5. Remote-copy success or failure is stored separately in the existing backup run metadata.
@@ -92,7 +92,7 @@ The off-host file is useful only if you also retain the matching `BACKUP_ENCRYPT
 
 On a replacement host:
 
-1. install/clone the same CAPTaINFiN release;
+1. install/clone the same CAPTAiNFiN release;
 2. restore the required production secrets, including `BACKUP_ENCRYPTION_KEY` and off-site S3 configuration, into the protected `.env`;
 3. create the local `backups/` directory with the normal production ownership;
 4. list the remote recovery points;
@@ -143,7 +143,7 @@ This is non-destructive and does **not** require a working production database. 
 - authenticates and decrypts the selected AES-GCM backup using `BACKUP_ENCRYPTION_KEY`;
 - writes plaintext only to protected temporary storage inside the recovery container;
 - asks `pg_restore --list` to parse the archive;
-- checks that the archive contains the expected CAPTaINFiN structure;
+- checks that the archive contains the expected CAPTAiNFiN structure;
 - deletes the temporary plaintext before exiting.
 
 Use this first when the live database is unhealthy or unavailable.
@@ -158,7 +158,7 @@ The drill runs the offline check and then uses the existing least-privileged bac
 
 1. create a temporary PostgreSQL database;
 2. restore the complete selected backup into it;
-3. confirm the expected CAPTaINFiN schema and migration table are present;
+3. confirm the expected CAPTAiNFiN schema and migration table are present;
 4. record the verification result against the managed backup when applicable;
 5. delete the temporary database.
 
@@ -168,7 +168,7 @@ Run a drill after meaningful database/configuration changes and before relying o
 
 ## Destructive production restore
 
-Only use this when you intentionally want the selected recovery point to replace the live CAPTaINFiN database.
+Only use this when you intentionally want the selected recovery point to replace the live CAPTAiNFiN database.
 
 ```bash
 RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE \
@@ -203,7 +203,7 @@ If recovery fails after application writers are stopped, the helper deliberately
 
 ## Encryption-key warning
 
-`BACKUP_ENCRYPTION_KEY` is required to authenticate/decrypt every CAPTaINFiN encrypted database backup. A backup file without the matching key is intentionally unrecoverable.
+`BACKUP_ENCRYPTION_KEY` is required to authenticate/decrypt every CAPTAiNFiN encrypted database backup. A backup file without the matching key is intentionally unrecoverable.
 
 Back up the production `.env`/secret material separately using an appropriately protected secrets process. Do not store the encryption key beside an exported backup in an unprotected location, and do not store it in the same S3 bucket as the encrypted database copies.
 
