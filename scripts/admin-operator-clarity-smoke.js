@@ -29,6 +29,11 @@ const integrations = read('src/platform/admin-integrations-overview.js');
 const playback = read('src/platform/admin-activity.js');
 const playbackEvents = read('src/jellyfin/activity-policy-events.js');
 const playbackView = read('views/admin/activity.ejs');
+const provisioning = read('src/platform/admin-provisioning.js');
+const drift = read('src/platform/admin-drift.js');
+const migrations = read('src/platform/admin-server-migrations.js');
+const fleetOperations = read('src/platform/admin-fleet-operations.js');
+const provisioningTabs = read('src/platform/provisioning-workflow-tabs.js');
 const nav = read('src/platform/admin-nav.js');
 const routes = read('src/platform/admin-route-composition.js');
 
@@ -134,5 +139,29 @@ assert(playbackView.includes('<details class="operatorDetails" id="playback-poli
 assert(playbackView.includes('Fleet context') && playbackView.includes('Full policy event history') && playbackView.includes('Routine playback history'), 'Fleet context and routine playback history must remain available behind deliberate disclosure');
 assert(playbackView.includes('I_UNDERSTAND_THIS_STOPS_PLAYBACK'), 'Playback enforcement must preserve the explicit destructive-action acknowledgement');
 assert(!playbackView.includes('remote_endpoint') && !playbackView.includes('jellyfin_session_id'), 'Playback UI must not expose raw network endpoints or Jellyfin session identifiers');
+
+assert(provisioning.includes('Provisioning control room') && provisioning.includes('Fix these customer access problems first'), 'Provisioning must lead with failed/blocked customer access before routine state');
+assert(provisioning.includes('Repair access now') && provisioning.includes("ui.detailDisclosure({title:'All customer access state'"), 'Provisioning must provide an explicit repair action and progressively disclose routine state');
+assert(provisioning.includes("row.username||row.email||'CAPTAiNFiN customer'"), 'Provisioning must not fall back to rendering a raw customer UUID');
+assert(provisioning.includes('Recheck all active customers') && !provisioning.includes('Queue all effective'), 'Provisioning maintenance controls must use task language rather than reconciliation jargon');
+
+assert(drift.includes("title:'Access consistency'") && drift.includes('Checking is read-only'), 'Policy drift must be presented as understandable Jellyfin access consistency with read-only check semantics');
+assert(drift.includes('Reapply expected access…') && drift.includes('placeholder="RECONCILE"'), 'Reapplying expected Jellyfin access must require deliberate typed confirmation');
+assert(!drift.includes('type="hidden" name="confirmation" value="RECONCILE"'), 'Access consistency must not hide the reconciliation confirmation in a one-click form');
+assert(drift.includes("ui.detailDisclosure({title:'Automatic check cadence'"), 'Low-level access-consistency cadence must remain advanced detail');
+
+assert(migrations.includes('Customer move control room') && migrations.includes('Move check passed'), 'Customer moves must lead with current move health and an explicit safe preflight');
+assert(migrations.includes('placeholder="ROLLBACK"') && migrations.includes('Rollback to original server'), 'Migration rollback must require typed ROLLBACK confirmation');
+assert(!migrations.includes('type="hidden" name="confirmation" value="ROLLBACK"'), 'Migration rollback must not remain a one-click hidden-confirmation action');
+assert(migrations.includes("ui.detailDisclosure({title:'Customer move history'"), 'Routine customer move history must be progressively disclosed');
+
+assert(fleetOperations.includes('Placement control room') && fleetOperations.includes('fleetState(d)'), 'Fleet operations must lead with canonical current placement readiness');
+assert(fleetOperations.includes('Eligible now') && fleetOperations.includes('Fix placement blockers first'), 'Fleet operations must show eligible capacity and blockers before configuration');
+assert(fleetOperations.includes('Save mode') && !fleetOperations.includes('Set ${esc(modeLabel(x.placement_mode))}'), 'Server placement mode actions must describe the action being saved, not the old selected state');
+assert(fleetOperations.includes("ui.detailDisclosure({title:'Placement health policy'"), 'Placement policy must stay secondary to current fleet readiness');
+
+for (const label of ['Customer moves','Access consistency']) {
+  assert(nav.includes(`'${label}'`) && provisioningTabs.includes(`'${label}'`), `Provisioning navigation must use task language: ${label}`);
+}
 
 console.log('admin operator clarity smoke: ok');
