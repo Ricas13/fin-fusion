@@ -5,6 +5,7 @@ const { query, getPool } = require('../db');
 const platformHealth = require('./health');
 const configurationHealth = require('./admin-configuration-health');
 const releaseStatus = require('./release-status');
+const runtimeSettings = require('./runtime-settings');
 const { deriveRecoveryReadiness } = require('./backup-recovery-readiness');
 
 const SECRET_ENV_KEYS = [
@@ -45,6 +46,31 @@ function groupStatus({ key, label, href, critical = 0, warning = 0, detail = '' 
   return { key, label, href, kind, critical, warning, detail };
 }
 
+function workerFreshnessSeconds(row) {
+  const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const key = String(row?.worker_key || '');
+  if (key === 'activity') {
+    return Math.max(120, Math.min(1800, safeNumber(metadata.pollSeconds || 30) * 4));
+  }
+  if (key === 'automation') {
+    const pollSeconds = Math.ceil(safeNumber(metadata.pollMs || 15000) / 1000);
+    return Math.max(90, Math.min(900, pollSeconds * 4));
+  }
+  return 90;
+}
+
+function operationalWorkerState(row) {
+  if (!row) return 'missing';
+  if (row.draining_at) return 'draining';
+  const age = safeNumber(row.heartbeat_age_seconds);
+  if (age > workerFreshnessSeconds(row)) return 'stale';
+  const outcome = String(row.metadata?.lastCycleOutcome || '').toLowerCase();
+  if (outcome === 'failed') return 'failed';
+  if (outcome === 'degraded') return 'degraded';
+  if (outcome === 'maintenance') return 'maintenance';
+  return 'healthy';
+}
+
 async function backupSnapshot() {
   const [policyResult, workerResult, runsResult, requestResult] = await Promise.all([
     query(`SELECT setting_value FROM platform_settings WHERE setting_key='backup_policy_v1'`),
@@ -72,15 +98,24 @@ async function backupSnapshot() {
 
 async function collectSystemDiagnostics() {
   const generatedAt = new Date().toISOString();
-  const [readyResult, configurationResult, releaseResult, dbResult, workersResult, fleetResult, notificationResult, backupResult] = await Promise.allSettled([
+  const [readyResult, configurationResult, releaseResult, dbResult, workersResult, fleetResult, notificationResult, backupResult, runtimeResult] = await Promise.allSettled([
     platformHealth.readiness(),
     configurationHealth.health(),
     releaseStatus.checkForUpdate(),
     query(`SELECT current_setting('server_version') AS version,(SELECT COUNT(*)::int FROM schema_migrations) AS migration_count,(SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1) AS latest_migration`),
-    query(`SELECT worker_key,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state ORDER BY worker_key`),
+    query(`SELECT worker_key,metadata,draining_at,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state ORDER BY worker_key`),
     query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE health_status='offline')::int offline,COUNT(*) FILTER(WHERE COALESCE(placement_mode,'active')<>'active')::int non_active FROM jellyfin_servers WHERE enabled=TRUE`),
-    query(`SELECT COUNT(*) FILTER(WHERE status='pending')::int pending,COUNT(*) FILTER(WHERE status='dead')::int dead FROM notification_outbox`),
-    backupSnapshot()
+    query(`SELECT
+      COUNT(*) FILTER(WHERE status='pending')::int pending,
+      COUNT(*) FILTER(WHERE status='failed')::int retrying,
+      COUNT(*) FILTER(WHERE status='sending')::int sending,
+      COUNT(*) FILTER(WHERE status='dead')::int dead,
+      COALESCE(EXTRACT(EPOCH FROM(NOW()-MIN(created_at) FILTER(WHERE status IN('pending','failed','sending'))))::int,0) oldest_queued_age_seconds,
+      COUNT(*) FILTER(WHERE status='sent' AND sent_at>=NOW()-INTERVAL '24 hours')::int sent_24h,
+      COUNT(*) FILTER(WHERE status IN('failed','dead') AND updated_at>=NOW()-INTERVAL '24 hours')::int failed_24h
+      FROM notification_outbox`),
+    backupSnapshot(),
+    runtimeSettings.ensureLoaded()
   ]);
 
   const readiness = readyResult.status === 'fulfilled' ? readyResult.value : { ok: false, degraded: false, checks: {} };
@@ -96,6 +131,13 @@ async function collectSystemDiagnostics() {
   const fleet = fleetResult.status === 'fulfilled' ? fleetResult.value.rows[0] || {} : {};
   const notifications = notificationResult.status === 'fulfilled' ? notificationResult.value.rows[0] || {} : {};
   const backup = backupResult.status === 'fulfilled' ? backupResult.value : null;
+  const canonicalRuntimeLoaded = runtimeResult.status === 'fulfilled';
+  const securityPosture = {
+    production: String(process.env.NODE_ENV || '').toLowerCase() === 'production',
+    secureCookies: String(process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false',
+    admin2faRequired: canonicalRuntimeLoaded ? runtimeSettings.requireAdminTwoFactor() : boolEnv(process.env.REQUIRE_ADMIN_2FA),
+    publicRegistration: canonicalRuntimeLoaded ? runtimeSettings.publicRegistrationOpen() : boolEnv(process.env.PUBLIC_REGISTRATION)
+  };
   const pool = (() => { try { const value = getPool(); return { total: value.totalCount, idle: value.idleCount, waiting: value.waitingCount }; } catch { return { total: 0, idle: 0, waiting: 0 }; } })();
 
   const countsFor = areas => areas.reduce((acc, area) => {
@@ -112,17 +154,24 @@ async function collectSystemDiagnostics() {
   const databaseKind = readiness.checks?.database && readiness.checks?.migrations ? 'good' : 'bad';
   const applicationKind = readiness.ok ? (readiness.degraded ? 'warn' : 'good') : 'bad';
   const backupKind = backup?.overall?.kind || 'bad';
-  const staleWorkers = workerRows.filter(row => safeNumber(row.heartbeat_age_seconds) > 90).length;
+  const workerStates = workerRows.map(row => ({ row, state: operationalWorkerState(row) }));
+  const hardWorkerProblems = workerStates.filter(item => ['stale','failed'].includes(item.state)).length;
+  const softWorkerProblems = workerStates.filter(item => ['degraded','draining','maintenance'].includes(item.state)).length;
+  const expectedWorkers = new Set(['automation','activity']);
+  for (const row of workerRows) expectedWorkers.delete(String(row.worker_key || ''));
+  const missingWorkers = expectedWorkers.size;
+  const queuedAge = safeNumber(notifications.oldest_queued_age_seconds);
+  const notificationStuck = queuedAge > 15 * 60;
 
   const groups = [
     { key: 'application', label: 'Application', href: '/admin/system', kind: applicationKind, detail: readiness.ok ? (readiness.degraded ? 'Running with a capability warning.' : 'Process readiness checks passed.') : 'One or more process readiness checks failed.' },
     { key: 'database', label: 'Database', href: '/admin/system', kind: databaseKind, detail: databaseKind === 'good' ? 'Database connectivity and migrations are current.' : 'Database connectivity or migration state needs attention.' },
     groupStatus({ key: 'catalogue', label: 'Catalogue & plans', href: '/admin/plans', critical: planCounts.critical, warning: planCounts.warning, detail: planCounts.critical || planCounts.warning ? 'One or more active plan readiness checks need review.' : 'No active plan readiness issues detected.' }),
-    groupStatus({ key: 'automation', label: 'Automation', href: '/admin/automation', critical: automationCounts.critical + staleWorkers, warning: automationCounts.warning, detail: staleWorkers ? `${staleWorkers} worker heartbeat condition(s) detected.` : 'Worker heartbeats and automation job state checked.' }),
+    groupStatus({ key: 'automation', label: 'Background workers', href: '/admin/automation', critical: automationCounts.critical + hardWorkerProblems, warning: automationCounts.warning + softWorkerProblems + missingWorkers, detail: hardWorkerProblems ? `${hardWorkerProblems} worker heartbeat/outcome problem(s) detected.` : softWorkerProblems || missingWorkers ? `${softWorkerProblems} degraded/draining and ${missingWorkers} missing expected worker state(s).` : 'Automation and Activity worker heartbeats are within their own expected cadence.' }),
     { key: 'backups', label: 'Backups & recovery', href: '/admin/backups', kind: backupKind, critical: backupKind === 'bad' ? 1 : 0, warning: backupKind === 'warn' ? 1 : 0, detail: backup?.overall?.detail || 'Backup readiness could not be determined.' },
     groupStatus({ key: 'fleet', label: 'Jellyfin fleet', href: '/admin/servers', critical: fleetCounts.critical, warning: fleetCounts.warning + safeNumber(fleet.offline), detail: `${safeNumber(fleet.total)} enabled server(s); ${safeNumber(fleet.offline)} offline; ${safeNumber(fleet.non_active)} not accepting normal placement.` }),
     groupStatus({ key: 'integrations', label: 'Payments & integrations', href: '/admin/payments', critical: integrationCounts.critical, warning: integrationCounts.warning, detail: integrationCounts.critical || integrationCounts.warning ? 'Configuration health found integration items requiring review.' : 'No payment/request configuration issues detected.' }),
-    groupStatus({ key: 'notifications', label: 'Notifications', href: '/admin/notifications/preferences', critical: notificationCounts.critical, warning: notificationCounts.warning + (safeNumber(notifications.dead) ? 1 : 0), detail: `${safeNumber(notifications.pending)} pending; ${safeNumber(notifications.dead)} dead-letter notification(s).` })
+    groupStatus({ key: 'notifications', label: 'Notifications', href: '/admin/notifications/preferences', critical: notificationCounts.critical, warning: notificationCounts.warning + (safeNumber(notifications.dead) ? 1 : 0) + (notificationStuck ? 1 : 0), detail: notificationStuck ? `Oldest queued notification is ${Math.ceil(queuedAge / 60)} minutes old; ${safeNumber(notifications.dead)} dead-letter item(s).` : `${safeNumber(notifications.pending)} pending, ${safeNumber(notifications.retrying)} retrying; ${safeNumber(notifications.dead)} dead-letter notification(s).` })
   ];
   let overallKind = groups.reduce((kind, group) => worse(kind, group.kind), 'good');
   if (issueSummary.critical) overallKind = 'bad';
@@ -147,10 +196,27 @@ async function collectSystemDiagnostics() {
       latestMigration: db.latest_migration ? String(db.latest_migration).slice(0, 120) : null,
       pool
     },
-    workers: workerRows.map(row => ({ key: String(row.worker_key || '').slice(0, 80), heartbeatAgeSeconds: safeNumber(row.heartbeat_age_seconds), hasError: false })),
+    workers: workerRows.map(row => ({
+      key: String(row.worker_key || '').slice(0, 80),
+      heartbeatAgeSeconds: safeNumber(row.heartbeat_age_seconds),
+      freshnessSeconds: workerFreshnessSeconds(row),
+      state: operationalWorkerState(row),
+      lastCycleOutcome: String(row.metadata?.lastCycleOutcome || '').slice(0, 24) || null,
+      serverFailures: safeNumber(row.metadata?.serverFailures)
+    })),
     backups: backup,
     fleet: { total: safeNumber(fleet.total), offline: safeNumber(fleet.offline), nonActive: safeNumber(fleet.non_active) },
-    notifications: { pending: safeNumber(notifications.pending), dead: safeNumber(notifications.dead) }
+    notifications: {
+      pending: safeNumber(notifications.pending),
+      retrying: safeNumber(notifications.retrying),
+      sending: safeNumber(notifications.sending),
+      dead: safeNumber(notifications.dead),
+      oldestQueuedAgeSeconds: queuedAge,
+      sent24h: safeNumber(notifications.sent_24h),
+      failed24h: safeNumber(notifications.failed_24h),
+      stuck: notificationStuck
+    },
+    securityPosture
   };
 }
 
@@ -199,11 +265,11 @@ function supportReportFromDiagnostics(diagnostics) {
     } : { scheduled: false, workerFresh: false, protectionState: 'unknown', recoveryState: 'unknown', offsiteState: 'unknown', latestAgeHours: null, latestFresh: false },
     fleet: diagnostics.fleet,
     notifications: diagnostics.notifications,
-    securityPosture: {
+    securityPosture: diagnostics.securityPosture || {
       production: String(process.env.NODE_ENV || '').toLowerCase() === 'production',
       secureCookies: String(process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false',
-      admin2faRequired: String(process.env.REQUIRE_ADMIN_2FA || 'false').toLowerCase() === 'true',
-      publicRegistration: String(process.env.PUBLIC_REGISTRATION || 'false').toLowerCase() === 'true'
+      admin2faRequired: boolEnv(process.env.REQUIRE_ADMIN_2FA),
+      publicRegistration: boolEnv(process.env.PUBLIC_REGISTRATION)
     }
   };
   assertSanitizedReport(report);
@@ -235,4 +301,13 @@ function assertSanitizedReport(report, env = process.env) {
   return true;
 }
 
-module.exports = { collectSystemDiagnostics, supportReportFromDiagnostics, assertSanitizedReport, aggregateIssues, groupStatus, SECRET_ENV_KEYS };
+module.exports = {
+  collectSystemDiagnostics,
+  supportReportFromDiagnostics,
+  assertSanitizedReport,
+  aggregateIssues,
+  groupStatus,
+  workerFreshnessSeconds,
+  operationalWorkerState,
+  SECRET_ENV_KEYS
+};

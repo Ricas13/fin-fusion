@@ -99,8 +99,9 @@ async function grantActivity(client) {
         to_regclass('public.stream_policy_events') AS events,
         to_regclass('public.jellyfin_server_metrics') AS metrics,
         to_regclass('public.access_network_leases') AS network_leases,
-        to_regclass('public.access_network_events') AS network_events`);
-    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].network_leases || !required.rows[0].network_events) {
+        to_regclass('public.access_network_events') AS network_events,
+        to_regprocedure('public.record_activity_worker_heartbeat(text,text,text,boolean,jsonb)') AS heartbeat_function`);
+    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].heartbeat_function) {
         throw new Error('Run database migrations before configuring the activity role');
     }
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
@@ -120,6 +121,7 @@ async function grantActivity(client) {
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE stream_policy_events_id_seq TO ${role}`);
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE access_network_leases_id_seq TO ${role}`);
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE access_network_events_id_seq TO ${role}`);
+    await client.query(`GRANT EXECUTE ON FUNCTION public.record_activity_worker_heartbeat(text,text,text,boolean,jsonb) TO ${role}`);
 }
 
 async function grantBackup(client) {
