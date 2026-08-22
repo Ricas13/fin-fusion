@@ -35,6 +35,9 @@ function bytes(value) {
   }
   return `${current.toFixed(unit ? 1 : 0)} ${units[unit]}`;
 }
+function boolEnv(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
 function token(req) {
   return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;
 }
@@ -58,6 +61,13 @@ function verificationBadge(run) {
   if (lastOk === false) return `${ui.statusBadge('Failed', 'bad')}<div class="subText">${esc(run.verification_note || 'Restore verification failed.')}</div>`;
   return ui.statusBadge('Not verified', 'warn');
 }
+function offsiteBadge(run) {
+  const copy = run?.metadata?.offsite || {};
+  if (copy.state === 'succeeded') return `${ui.statusBadge('Copied off-host', 'good')}<div class="subText">${esc(dt(copy.copiedAt))}</div>`;
+  if (copy.state === 'failed') return `${ui.statusBadge('Copy failed', 'bad')}<div class="subText">${esc(copy.error || 'Encrypted off-host copy failed.')}</div>`;
+  if (copy.state === 'copying') return ui.statusBadge('Copying', 'warn');
+  return ui.statusBadge('Local only', 'warn');
+}
 
 async function data() {
   const [policyResult, workerResult, runsResult, requestsResult] = await Promise.all([
@@ -80,7 +90,9 @@ async function data() {
     },
     worker: workerResult.rows[0] || null,
     runs: runsResult.rows,
-    verificationRequests: requestsResult.rows
+    verificationRequests: requestsResult.rows,
+    offsiteEnabled: boolEnv(process.env.BACKUP_OFFSITE_ENABLED),
+    offsiteProvider: String(process.env.BACKUP_OFFSITE_PROVIDER || 's3').slice(0, 20)
   };
 }
 
@@ -101,6 +113,7 @@ function recoveryRunbook(readiness) {
   const restoreCommand = path
     ? `RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE bash recovery.sh restore ${shellQuote(path)}`
     : 'bash recovery.sh list';
+  const fetchCommand = 'docker compose --profile recovery run --rm recovery-tools node scripts/offsite-backup.js list';
   return `<details class="card recoveryRunbook operatorDetails">
     <summary><span>Host recovery procedure</span><small>Advanced · command-line recovery only</small></summary>
     <div class="recoveryRunbookBody operatorDetailsBody">
@@ -108,9 +121,10 @@ function recoveryRunbook(readiness) {
         tone: 'info',
         title: 'Practice recovery before an emergency',
         body: 'The non-destructive drill restores the selected encrypted backup into a temporary database and proves the expected CAPTAiNFiN schema is present.',
-        items: ['Run the offline check first.', 'Run a full recovery drill after meaningful configuration or database changes.', 'Use production restore only when you intentionally want to replace the live database.']
+        items: ['Keep BACKUP_ENCRYPTION_KEY in a separate protected secrets system.', 'Run a full recovery drill after meaningful configuration or database changes.', 'Use production restore only when you intentionally want to replace the live database.']
       })}
       <ol class="recoverySteps">
+        <li><div><strong>Recover an off-host copy after host loss</strong><span>List the encrypted remote recovery points, download the chosen object into ./backups, then continue with the same offline check and restore flow.</span></div><code>${esc(fetchCommand)}</code></li>
         <li><div><strong>Inspect the encrypted recovery point</strong><span>Authenticates the backup, decrypts it to protected temporary storage and asks pg_restore to parse the archive. PostgreSQL is not modified.</span></div><code>${esc(checkCommand)}</code></li>
         <li><div><strong>Prove it with a full recovery drill</strong><span>Uses the dedicated verifier role to restore into a temporary database, validates the CAPTAiNFiN schema, then deletes the temporary database.</span></div><code>${esc(drillCommand)}</code></li>
         <li class="recoveryDanger"><div><strong>Restore production only when required</strong><span>This stops CAPTAiNFiN application/workers, replaces the live database, reapplies migrations/runtime roles, restarts services and verifies the deployment. A failed recovery leaves application writers stopped.</span></div><code>${esc(restoreCommand)}</code></li>
@@ -122,13 +136,14 @@ function recoveryRunbook(readiness) {
 
 function historyTable(runs) {
   if (!runs.length) return '';
-  return `<div class="tableWrap"><table class="dataTable responsiveTable"><caption class="srOnly">Database backup and recovery verification history</caption><thead><tr><th>Created</th><th>Backup</th><th>Size</th><th>Recovery proof</th><th>Checksum</th><th>Issue</th></tr></thead><tbody>${runs.map(run => `<tr id="backup-${esc(run.id)}">
+  return `<div class="tableWrap"><table class="dataTable responsiveTable"><caption class="srOnly">Database backup and recovery verification history</caption><thead><tr><th>Created</th><th>Backup</th><th>Size</th><th>Recovery proof</th><th>Off-host</th><th>Checksum</th><th>Issue</th></tr></thead><tbody>${runs.map(run => `<tr id="backup-${esc(run.id)}">
       <td data-label="Created">${esc(dt(run.completed_at || run.started_at))}</td>
       <td data-label="Backup"><div class="recoveryHistoryName"><strong>${esc(run.file_name || '—')}</strong>${ui.statusBadge(String(run.status || 'unknown').replaceAll('_', ' '), runKind(run.status))}</div></td>
       <td data-label="Size">${esc(bytes(run.size_bytes))}</td>
       <td data-label="Recovery proof">${verificationBadge(run)}</td>
+      <td data-label="Off-host">${offsiteBadge(run)}</td>
       <td data-label="Checksum"><code>${esc((run.checksum_sha256 || '').slice(0, 16) || '—')}</code></td>
-      <td data-label="Issue">${esc(run.error || (run.metadata?.lastVerificationOk === false ? run.verification_note : '') || '—')}</td>
+      <td data-label="Issue">${esc(run.error || run.metadata?.offsite?.error || (run.metadata?.lastVerificationOk === false ? run.verification_note : '') || '—')}</td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -155,7 +170,7 @@ function selectedResolution(req, d, readiness) {
   const inFlight = d.verificationRequests.some(request => String(request.backup_run_id) === String(run.id) && ['queued', 'running'].includes(request.status));
   return ui.resolutionCard({
     tone: 'warn', badge: 'You came here to fix this', title: 'Prove this recovery point before relying on it',
-    body: `${run.file_name || 'The selected backup'} exists, but CAPTAiNFiN has not yet proven that it can be restored successfully.`,
+    body: `${run.file_name || 'The selected backup'} exists, but CAPTaINFiN has not yet proven that it can be restored successfully.`,
     reason: 'Backup creation and recovery verification are separate safety signals.',
     actionHtml: verifyForm(req, run, { label: 'Verify this backup now', primary: true, disabled: inFlight }),
     secondaryHtml: '<a class="button secondary" href="/admin/backups">Dismiss context</a>'
@@ -173,10 +188,23 @@ async function page(req) {
   const latestDetail = latest ? `${latest.file_name || 'Encrypted backup'} · ${bytes(latest.size_bytes)}` : 'Run a backup to create the first recovery point.';
   const drillValue = latestVerified ? dt(latestVerified.verified_at) : 'No drill yet';
   const drillDetail = latestVerified ? `${latestVerified.file_name || 'Recovery point'} passed a full temporary restore.` : 'Verify a backup before relying on it for recovery.';
+  const offsiteValue = readiness.offsite?.state === 'copied'
+    ? dt(latest?.metadata?.offsite?.copiedAt)
+    : readiness.offsite?.state === 'off'
+      ? 'Not configured'
+      : readiness.offsite?.label || 'Unknown';
   const latestInFlight = latest && d.verificationRequests.some(request => String(request.backup_run_id) === String(latest.id) && ['queued', 'running'].includes(request.status));
   const runBackup = `<form method="post" action="/admin/backups/run">${token(req)}<button class="button secondary" type="submit">Create backup now</button></form>`;
   const verifyLatest = latest ? verifyForm(req, latest, { label: 'Verify latest backup', primary: readiness.overall.kind !== 'good', disabled: latestInFlight }) : '';
-  const nextAction = !latest ? 'Create the first encrypted backup.' : !latest.verified_at ? 'Verify the latest recovery point with a full temporary restore.' : readiness.overall.kind === 'good' ? 'No action required. Scheduled protection is operating normally.' : readiness.overall.detail;
+  const nextAction = !latest
+    ? 'Create the first encrypted backup.'
+    : !latest.verified_at
+      ? 'Verify the latest recovery point with a full temporary restore.'
+      : readiness.offsite?.kind !== 'good'
+        ? readiness.offsite?.detail || 'Configure encrypted off-host copies for host-loss recovery.'
+        : readiness.overall.kind === 'good'
+          ? 'No action required. Local and host-loss recovery protection are healthy.'
+          : readiness.overall.detail;
   const heroTone = readiness.overall.kind === 'good' ? 'good' : readiness.overall.kind === 'bad' ? 'bad' : 'warn';
   const recentRuns = d.runs.slice(0, 8);
   const recentHistory = recentRuns.length ? historyTable(recentRuns) : ui.emptyState({ title: 'No recovery points yet', body: 'Create a backup now or leave scheduling enabled; the worker will create the first encrypted recovery point.', tone: 'warn' });
@@ -207,7 +235,8 @@ async function page(req) {
       facts: [
         { label: 'Next scheduled backup', value: nextRun, detail: readiness.protection.label },
         { label: 'Latest recovery point', value: latestValue, detail: latestDetail },
-        { label: 'Last proven restore', value: drillValue, detail: drillDetail }
+        { label: 'Last proven restore', value: drillValue, detail: drillDetail },
+        { label: 'Latest off-host copy', value: offsiteValue, detail: readiness.offsite?.label || 'Off-host status unavailable' }
       ],
       actionsHtml: `${verifyLatest}${runBackup}`
     })}
@@ -216,12 +245,13 @@ async function page(req) {
       ${metricCard('Scheduled protection', ui.statusBadge(readiness.protection.label, readiness.protection.kind), nextRun, readiness.protection.detail)}
       ${metricCard('Latest recovery point', ui.statusBadge(readiness.recovery.label, readiness.recovery.kind), latestValue, latestDetail)}
       ${metricCard('Recovery proof', ui.statusBadge(latest?.verified_at ? 'Proven' : 'Not proven', latest?.verified_at ? 'good' : 'warn'), latest?.verified_at ? dt(latest.verified_at) : 'Verification needed', latest?.verified_at ? 'The latest recovery point passed a full temporary restore.' : 'Use Verify latest backup to prove it safely.')}
+      ${metricCard('Host-loss copy', ui.statusBadge(readiness.offsite?.label || 'Unknown', readiness.offsite?.kind || 'warn'), offsiteValue, readiness.offsite?.detail || 'Configure encrypted off-host protection on the production host.')}
     </section>
 
     ${ui.detailDisclosure({ title: 'Protection schedule & retention', summary: 'Routine settings · normally leave these alone', bodyHtml: policyForm })}
 
     <section class="card recoveryHistory">
-      ${ui.sectionHeader({ title: 'Recent recovery points', description: 'The newest eight are shown here so failures and unverified backups are easy to spot.' })}
+      ${ui.sectionHeader({ title: 'Recent recovery points', description: 'The newest eight are shown here so local failures, verification gaps and off-host copy failures are easy to spot.' })}
       ${recentHistory}
       ${d.runs.length > 8 ? ui.detailDisclosure({ title: `Full backup history (${d.runs.length})`, summary: 'Detailed audit history', bodyHtml: historyTable(d.runs) }) : ''}
     </section>
@@ -232,7 +262,7 @@ async function page(req) {
     siteName: runtimeSettings.siteName(),
     active: 'backups',
     title: 'Backups & recovery',
-    subtitle: 'See whether recovery is safe, what needs doing next, and only open detailed history when you need it',
+    subtitle: 'See whether local and host-loss recovery are safe, what needs doing next, and only open detailed history when you need it',
     body
   });
 }
@@ -300,4 +330,4 @@ function createAdminBackupsRouter() {
   return router;
 }
 
-module.exports = { createAdminBackupsRouter, data, page, recoveryPath, shellQuote, verifyForm, historyTable, selectedResolution };
+module.exports = { createAdminBackupsRouter, data, page, recoveryPath, shellQuote, verifyForm, historyTable, selectedResolution, offsiteBadge };
