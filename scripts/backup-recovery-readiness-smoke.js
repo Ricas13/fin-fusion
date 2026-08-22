@@ -80,7 +80,7 @@ const adminSource = fs.readFileSync(path.join(root, 'src/platform/admin-backups.
 assert(adminSource.includes('deriveRecoveryReadiness'), 'admin backups must use the shared readiness model');
 assert(adminSource.includes('backup_verification_requests'), 'admin backups must read verification request state');
 assert(adminSource.includes('Latest recovery point'), 'admin must distinguish the latest recovery point');
-assert(adminSource.includes('Last recovery drill'), 'admin must distinguish historical recovery proof');
+assert(adminSource.includes('Last proven restore'), 'admin must distinguish historical recovery proof from the latest recovery point');
 assert(adminSource.includes('Host recovery procedure'), 'admin must provide recovery onboarding');
 assert(adminSource.includes('bash recovery.sh drill'), 'admin must point to the guarded host recovery helper');
 assert(!adminSource.includes("router.post('/admin/backups/restore'"), 'browser must not own a destructive restore endpoint');
