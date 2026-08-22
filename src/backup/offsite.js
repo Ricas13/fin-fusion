@@ -21,7 +21,12 @@ function awsEncode(value) {
 
 function canonicalPath(value) {
   const raw = String(value || '/');
-  return raw.split('/').map((segment, index) => index === 0 ? '' : awsEncode(segment)).join('/') || '/';
+  return raw.split('/').map((segment, index) => {
+    if (index === 0) return '';
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch (_) {}
+    return awsEncode(decoded);
+  }).join('/') || '/';
 }
 
 function normalizePrefix(value) {
@@ -251,8 +256,8 @@ function createS3Destination(config = configFromEnv()) {
     provider: 's3',
     objectName: fileName => objectName(config, fileName),
     async put(localPath, name, checksumSha256) {
-      const stat = fs.statSync(localPath);
-      if (!stat.isFile()) throw new Error('Off-site backup source must be a regular file');
+      const stat = fs.lstatSync(localPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Off-site backup source must be a regular non-symlink file');
       const key = name || objectName(config, path.basename(localPath));
       const payloadHash = String(checksumSha256 || '').trim().toLowerCase();
       if (!/^[0-9a-f]{64}$/.test(payloadHash)) throw new Error('A SHA-256 checksum is required before off-site upload');
