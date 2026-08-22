@@ -70,10 +70,12 @@ assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')
 assert(!settingsKeys.includes('settings-commerce'),'Unused Settings Commerce navigation must remain removed');
 assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 
-assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Global notification workflow must link back to global settings');
-assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Global notification workflow must expose the canonical email infrastructure route');
-assert(notificationTabs.includes("['profile','Profile','/admin/profile']"),'My Profile workflow must expose personal account settings');
-assert(notificationTabs.includes("['personal','Notifications','/admin/profile/notifications']"),'My Profile workflow must expose personal notification routing');
+// Workflow cards carry a fourth description field, so lock the stable key,
+// title and route contract without depending on the presentation copy.
+assert(notificationTabs.includes("'global','Global notifications','/admin/notifications/preferences'"),'Global notification workflow must link back to global settings');
+assert(notificationTabs.includes("'email','Email infrastructure','/admin/notifications/email'"),'Global notification workflow must expose the canonical email infrastructure route');
+assert(notificationTabs.includes("'profile','Profile','/admin/profile'"),'My Profile workflow must expose personal account settings');
+assert(notificationTabs.includes("'personal','Notifications','/admin/profile/notifications'"),'My Profile workflow must expose personal notification routing');
 assert(adminHtml.includes("notificationWorkflow.globalTabs"),'Global notification layouts must keep a stable global workflow tab set');
 assert(adminHtml.includes("notificationWorkflow.profileTabs('profile')")&&adminHtml.includes("notificationWorkflow.profileTabs('personal')"),'My Profile and My Notifications must share a stable personal workflow tab set');
 assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
