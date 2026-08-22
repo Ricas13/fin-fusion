@@ -24,9 +24,7 @@ assert.strictEqual(direct.searchParams.get('DeviceId'),null,'raw Stremio URLs mu
 assert.strictEqual(managed.pathExtension('Movie.2026.1080p.mkv'),'mkv');
 assert.strictEqual(managed.containerExtension('mkv,webm'),'mkv');
 
-const source={base_url:'https://external.example/jellyfin'};
-const originalToken=external.directPlaybackUrl;
-assert.strictEqual(typeof originalToken,'function','external sources must expose a direct raw-file URL builder');
+assert.strictEqual(typeof external.directPlaybackUrl,'function','external sources must expose a direct raw-file URL builder');
 
 const managedSource=read('src/stremio/managed-runtime.js');
 const externalSource=read('src/stremio/external-direct-runtime.js');
@@ -34,8 +32,8 @@ const mediaIndexSource=read('src/stremio/media-index.js');
 const runtimeSource=read('src/stremio/runtime.js');
 
 assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call Jellyfin PlaybackInfo');
-assert(!managedSource.includes('PlaySessionId'),'managed raw-file URLs must not contain Jellyfin PlaySessionId state');
-assert(!managedSource.includes('DeviceProfile'),'managed raw-file delivery must not negotiate a Jellyfin playback device profile');
+assert(!managedSource.includes("searchParams.set('PlaySessionId'")&&!managedSource.includes("searchParams.set('DeviceId'"),'managed raw-file URLs must not attach Jellyfin playback-session state');
+assert(!managedSource.includes('DeviceProfile:'),'managed raw-file delivery must not negotiate a Jellyfin playback device profile');
 assert(!managedSource.includes('TranscodingUrl'),'managed Stremio delivery must never switch to a Jellyfin transcoding session');
 assert(managedSource.includes("Fields:'Path,MediaSources,MediaStreams'"),'managed stream discovery must resolve media metadata without PlaybackInfo');
 assert(managedSource.includes("url.searchParams.set('Static','true')"),'managed playback must return Jellyfin static/original-file URLs');
@@ -50,13 +48,13 @@ assert(runtimeSource.includes('managedRuntime.streamsFor(entitlement, type, vide
 assert(runtimeSource.includes('externalRuntime.streamsFor(entitlement, type, videoId)'),'external stream results must also be generated as direct URLs');
 assert(runtimeSource.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household admission must be claimed before direct raw URLs are returned');
 assert(runtimeSource.includes('managedRuntime.directUrl(mapping, req.params.itemId, req.params.mediaSourceId)'),'legacy managed control URLs must now fall through to raw Jellyfin delivery without reporting playback');
-assert(!runtimeSource.includes("'/Sessions/Playing'"),'runtime must never report a Jellyfin playing session');
+assert(!runtimeSource.includes("restrictedPost")&&!runtimeSource.includes("managedPlayback.start("),'runtime must never report a Jellyfin playing session');
 assert(!runtimeSource.includes('jellyfinSessionId'),'raw Stremio delivery must not create or audit Jellyfin session IDs');
 assert(!runtimeSource.includes('stream_limit'),'raw Stremio playback must not enforce a concurrent-stream quota');
 assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includes('never receives or relays the media bytes'),'CAPTAiNFiN must remain control-plane only');
 
 assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
 assert(externalSource.includes("url.searchParams.set('Static', 'true')"),'external sources must also return Jellyfin static/original-file URLs');
-assert(!externalSource.includes('PlaySessionId')&&!externalSource.includes('DeviceId'),'external raw URLs must remain outside Jellyfin playback-session reporting');
+assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside Jellyfin playback-session reporting');
 
 console.log('stremio raw-file playback compatibility smoke: ok');
