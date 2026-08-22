@@ -27,6 +27,7 @@ const support = read('src/platform/admin-support-tickets.js');
 const events = read('src/platform/admin-events.js');
 const integrations = read('src/platform/admin-integrations-overview.js');
 const playback = read('src/platform/admin-activity.js');
+const playbackEvents = read('src/jellyfin/activity-policy-events.js');
 const playbackView = read('views/admin/activity.ejs');
 const nav = read('src/platform/admin-nav.js');
 const routes = read('src/platform/admin-route-composition.js');
@@ -121,8 +122,12 @@ assert(routes.includes('createAdminIntegrationsOverviewRouter()') && routes.inde
 
 assert(playback.includes('Playback control room') && playback.includes('playbackHero(data,policy,state)'), 'Playback must lead with live operator state and a recommended next action');
 assert(playback.includes('customer_stream_count') && playback.includes('overLimitCustomers'), 'Playback exceptions must derive from the canonical live-session counts and stream limits');
-assert(playback.includes("decision==='stop_failed'") && playback.includes('SAFETY_ISSUE_REASONS'), 'Playback must distinguish failed enforcement from safety-blocked actions');
-assert(playback.includes("'incomplete_server_snapshot'") && playback.includes("'revalidation_failed'") && playback.includes("'client_does_not_report_media_control_support'"), 'Playback safety issues must match the canonical activity-worker safety reasons');
+assert(playback.includes("decision==='stop_failed'") && playback.includes('policyEvents.safetyAttention'), 'Playback must distinguish failed enforcement from safety-blocked actions');
+for (const reason of ['incomplete_server_snapshot', 'revalidation_failed', 'client_does_not_report_media_control_support']) {
+  assert(playbackEvents.includes(`'${reason}'`), `shared playback policy taxonomy must include ${reason}`);
+}
+assert(playback.includes("require('../jellyfin/activity-policy-events')"), 'Playback operator UI must reuse the shared Jellyfin policy-event taxonomy');
+assert(playbackEvents.includes('function reasonLabel') && playbackEvents.includes('function decisionLabel'), 'shared playback taxonomy must own operator-facing event labels');
 assert(playbackView.includes('Fix these playback issues first') && playbackView.includes('Recent policy decisions &amp; safety checks'), 'Playback must surface current exceptions and significant decisions before routine detail');
 assert(playbackView.indexOf('<%- heroHtml %>') < playbackView.indexOf('Stream policy &amp; enforcement settings'), 'Playback state must render before policy configuration');
 assert(playbackView.includes('<details class="operatorDetails" id="playback-policy">'), 'Playback policy configuration must be progressively disclosed');
