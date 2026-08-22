@@ -164,15 +164,22 @@ async function safeMutationAudit(page){
 }
 
 async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio Addon',households='2'}={}){
-  assert.equal(await form.locator('input[name="serviceType"][value="stremio"]').count(),1,'Stremio plan creation must stay explicitly scoped to the Stremio product');
+  assert.equal(await form.locator('input[name="planKind"][value="stremio"]:checked').count(),1,'Stremio plan creation must stay explicitly scoped to the Stremio product');
+  assert.equal(await form.locator('input[name="serviceType"][value="stremio"]').count(),1,'Canonical form must preserve the internal Stremio service type');
   await form.locator('input[name="code"]').fill(code);
   await form.locator('input[name="name"]').fill(name);
   await form.locator('textarea[name="description"]').fill('Unlimited Stremio access for a household');
   await form.locator('input[name="price"]').fill('6');
   await form.locator('input[name="capacityLimit"]').fill('20');
   await form.locator('select[name="billingInterval"]').selectOption('month');
-  await form.locator('input[name="householdLimit"]').fill(households);
-  assert.equal(await form.locator('input[name="streams"]').count(),0,'Stremio creation must not expose simultaneous stream limits');
+  const household=form.locator('input[name="stremioHouseholdNetworkLimit"]');
+  assert.equal(await household.count(),1,'Stremio creation must expose its household connection allowance');
+  assert.equal(await household.getAttribute('min'),'1','Stremio household allowance must have a safe minimum');
+  assert.equal(await household.getAttribute('max'),'10','Stremio household allowance must use the supported 1–10 range');
+  await household.fill(households);
+  const jellyfinStreams=form.locator('input[name="streams"]');
+  assert.equal(await jellyfinStreams.count(),1,'Shared adaptive form must preserve the Jellyfin stream field in its Jellyfin section');
+  assert(await jellyfinStreams.isDisabled(),'Jellyfin stream controls must be disabled while creating a Stremio plan');
   assert.equal(await form.locator('select[name="audience"]').count(),0,'Customer plan creation must not expose an audience selector');
   assert.equal(await form.locator('select[name="currency"]').count(),0,'Plan creation must use the portal-wide currency rather than expose a per-plan selector');
   const text=await form.innerText();
@@ -184,13 +191,13 @@ async function fillStremioPlan(form,{code='browser-stremio-addon',name='Stremio 
 async function planCreationAudit(page){
   await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
   let form=page.locator('form[action="/admin/plans"]');
-  assert.equal(await form.count(),1,'Household-first Stremio plan creation form is not owning the Stremio create context');
-  assert.equal(await page.locator('.presetCard').count(),4,'Stremio creation must offer 1/2/3 household presets plus custom');
+  assert.equal(await form.count(),1,'Adaptive plan creation form is not owning the Stremio create context');
+  assert.equal(await form.locator('input[data-plan-kind]').count(),3,'Adaptive creation must offer Free Jellyfin, Paid Jellyfin and Stremio product choices');
   assert(!/Delivery service/i.test(await page.locator('body').innerText()),'Stremio creation must hide internal delivery-service terminology');
   await fillStremioPlan(form);
   await Promise.all([
     page.waitForURL(url=>/\/admin\/plans\/[^/]+\/edit$/.test(url.pathname),{timeout:15000}),
-    form.getByRole('button',{name:'Create Stremio plan'}).click()
+    form.getByRole('button',{name:'Create plan'}).click()
   ]);
   const createdUrl=new URL(page.url());
   assert(/\/admin\/plans\/[^/]+\/edit$/.test(createdUrl.pathname),'Valid Stremio creation did not continue to the compact editor');
@@ -203,7 +210,7 @@ async function planCreationAudit(page){
   await page.goto(`${BASE}/admin/plans/new?type=stremio`,{waitUntil:'networkidle'});
   form=page.locator('form[action="/admin/plans"]');
   await fillStremioPlan(form,{name:'Duplicate Stremio Addon'});
-  await form.getByRole('button',{name:'Create Stremio plan'}).click();
+  await form.getByRole('button',{name:'Create plan'}).click();
   const duplicate=page.getByText(/already exists/i).first();
   await duplicate.waitFor({state:'visible',timeout:10000});
   const body=await page.locator('body').innerText();
