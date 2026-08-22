@@ -7,7 +7,6 @@ const streamPolicy=require('../jellyfin/stream-policy-settings');
 const runtimeSettings=require('./runtime-settings');
 const csrf=require('../auth/csrf');
 const ui=require('./admin-ui');
-const {esc}=require('./admin-html');
 
 const SAFETY_ISSUE_REASONS=new Set([
   'incomplete_server_snapshot',
@@ -82,7 +81,7 @@ function playbackHero(data,policy,state){
   else if(state.stopFailures.length){tone='bad';title=`${state.stopFailures.length} playback stop ${state.stopFailures.length===1?'attempt failed':'attempts failed'} in the last 24 hours`;next='Review server health and the failed policy decision before relying on automatic enforcement.';primary='<a class="button" href="#policy-decisions">Review failed actions</a><a class="button secondary" href="/admin/servers/dashboard">Server health</a>';}
   else if(state.overLimitCustomers.length){tone='warn';title=`${state.overLimitCustomers.length} ${state.overLimitCustomers.length===1?'customer is':'customers are'} currently above the stream limit`;next=`Review ${state.overLimitCustomers[0].customerName}'s active sessions first. Enforcement still waits for the configured grace period, confirmations and safety revalidation.`;primary='<a class="button" href="#playback-issues">Review affected customers</a><a class="button secondary" href="#active-streams">Active streams</a>';}
   else if(state.safetyIssues.length){tone='warn';title=`${state.safetyIssues.length} enforcement safety ${state.safetyIssues.length===1?'issue needs':'issues need'} review`;next='Review the safety-skip reasons before changing enforcement settings; CAPTAiNFiN deliberately refused an unsafe stop.';primary='<a class="button" href="#policy-decisions">Review safety checks</a><a class="button secondary" href="/admin/servers/dashboard">Server health</a>';}
-  else if(state.violations.length){tone='warn';title=`${state.violations.length} stream-limit ${state.violations.length===1?'event was':'events were'} recorded in the last 24 hours`;next='Review recent policy decisions to confirm who exceeded limits and whether the configured mode matches your intent.';primary='<a class="button" href="#policy-decisions">Review policy decisions</a><a class="button secondary" href="#playback-policy">Stream policy</a>';}
+  else if(state.violations.length){tone='warn';title=`${state.violations.length} stream-limit ${state.violations.length===1?'event was':'events were'} recorded in the last 24 hours`;next='Review recent policy decisions to confirm who exceeded limits and whether the configured mode matches your intent.';primary='<a class="button" href="#policy-decisions">Review policy decisions</a>';}
   return ui.operatorHero({tone,eyebrow:'Playback control room',title,body:'Live managed playback and concurrency exceptions are shown before policy configuration, fleet detail and historical records.',statusLabel:modeLabel,next,facts:[
     {label:'Active streams',value:String(summary.active_streams||0),detail:`${summary.transcodes||0} transcoding`},
     {label:'Over limit now',value:String(state.overLimitCustomers.length),detail:'customers above current entitlement'},
@@ -109,7 +108,7 @@ function createAdminActivityRouter(){
     await runtimeSettings.ensureLoaded();
     const policy=await streamPolicy.get(),cfg={...activity.config(),countPaused:policy.countPaused},data=await dashboardData(cfg),state=playbackState(data);
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.activity.view','admin_dashboard','activity',$2::jsonb)`,[req.session.authUserId,JSON.stringify({mode:policy.mode})]);
-    return res.render('admin/activity',{siteName:runtimeSettings.siteName(),cfg,policy,csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null,heroHtml:playbackHero(data,policy,state),issueHtml:issueCards(state),state,significantEvents:data.significantEvents.map(decorateEvent),recentDecisions:state.recentDecisions.map(decorateEvent),events:data.events.map(decorateEvent),summary:data.summary,streams:data.streams,servers:data.servers,history:data.history});
+    return res.render('admin/activity',{siteName:runtimeSettings.siteName(),cfg,policy,csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null,heroHtml:playbackHero(data,policy,state),issueHtml:issueCards(state),state,recentDecisions:state.recentDecisions.map(decorateEvent),events:data.events.map(decorateEvent),summary:data.summary,streams:data.streams,servers:data.servers,history:data.history});
   }catch(error){return next(error);}});
   router.post('/admin/activity/policy',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await streamPolicy.save(req.body,req.session.authUserId);return res.redirect('/admin/activity?message='+encodeURIComponent('Stream policy saved. The activity worker will pick it up automatically.'));}catch(error){return res.redirect('/admin/activity?error='+encodeURIComponent(error.message));}});
   return router;
