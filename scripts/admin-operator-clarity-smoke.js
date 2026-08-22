@@ -23,6 +23,11 @@ const plans = read('src/platform/admin-plans-list.js');
 const customer360 = read('src/platform/customer-360-view.js');
 const orders = read('src/platform/admin-orders.js');
 const billing = read('src/platform/admin-billing.js');
+const support = read('src/platform/admin-support-tickets.js');
+const events = read('src/platform/admin-events.js');
+const integrations = read('src/platform/admin-integrations-overview.js');
+const nav = read('src/platform/admin-nav.js');
+const routes = read('src/platform/admin-route-composition.js');
 
 for (const primitive of ['operatorHero', 'resolutionCard', 'detailDisclosure']) {
   assert(ui.includes(`function ${primitive}`), `shared admin UI must expose ${primitive}`);
@@ -94,5 +99,22 @@ assert(billing.includes('Billing operations') && billing.includes('Fix these sub
 assert(billing.includes("row.status==='past_due'||Boolean(row.last_error)"), 'Billing problems must derive from canonical subscription/provider-sync state');
 assert(billing.includes("ui.detailDisclosure({title:`All recurring subscriptions"), 'Routine recurring-subscription state must be progressively disclosed');
 assert(!billing.includes('<th>Provider ID</th>'), 'Billing default tables must not make raw provider identifiers an operator-facing column');
+
+assert(support.includes('Support desk') && support.includes('Reply these first'), 'Support must lead with customer conversations waiting on staff');
+assert(support.includes("['open','awaiting_staff'].includes(row.status)"), 'Support priority must reuse canonical ticket lifecycle state');
+assert(support.includes("ui.detailDisclosure({title:'Ticket routing & status'"), 'Ticket routing/status controls must stay secondary to the conversation and reply action');
+assert(support.includes('Internal note (staff only)'), 'Support clarity must preserve the internal-note privacy boundary');
+
+assert(events.includes('Audit & incident trail') && events.includes('Needs investigation'), 'Audit log must surface operational failures before routine history');
+assert(events.includes("row.kind==='incident')return !d.resolvedAt"), 'Audit incident severity must use canonical resolved state');
+assert(events.includes("ui.detailDisclosure({title:`Full audit history"), 'Routine audit history must be progressively disclosed');
+assert(!events.includes("recipient_email,'attempts'"), 'Audit queries must not pull notification recipient addresses into the combined operator trail');
+assert(!events.includes("row.subject_id?' · '"), 'Audit default rendering must not print raw subject/provider identifiers');
+
+assert(integrations.includes('Integration control room') && integrations.includes('Fix enabled integrations first'), 'Integrations must lead with enabled-but-incomplete services');
+assert(integrations.includes('enabled&&!configured'), 'Integration issue state must distinguish incomplete enabled services from intentionally disabled ones');
+assert(integrations.includes('providerSettings.status') && integrations.includes('emailSettings.status') && integrations.includes('notificationSettings.status'), 'Integration overview must reuse canonical status providers');
+assert(nav.includes("['settings-integrations','Integrations','/admin/settings/integrations']"), 'Settings navigation must open the integration health overview');
+assert(routes.includes('createAdminIntegrationsOverviewRouter()') && routes.indexOf('createAdminIntegrationsOverviewRouter()') < routes.indexOf('createAdminOriginalSettingsRouter()'), 'Integration overview must mount before the legacy settings owner without replacing its canonical mutation routes');
 
 console.log('admin operator clarity smoke: ok');
