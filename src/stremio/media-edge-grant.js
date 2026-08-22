@@ -104,7 +104,7 @@ function protectUrl(rawUrl, req, { entitlementId = null, nowMs = Date.now() } = 
   if (!enabled()) return String(rawUrl || '');
   const url = new URL(String(rawUrl || ''));
   const token = String(url.searchParams.get('api_key') || '');
-  if (!token) throw new Error('Protected Stremio media requires an internal Jellyfin token before sealing.');
+  if (!token) return url.toString();
   url.searchParams.delete('api_key');
   url.searchParams.delete(GRANT_PARAM);
 
@@ -127,7 +127,7 @@ function protectStreams(streams, req, entitlement) {
   if (!enabled()) return Array.isArray(streams) ? streams.map(stream => ({ ...stream })) : [];
   return (Array.isArray(streams) ? streams : []).map(stream => ({
     ...stream,
-    url: protectUrl(stream.url, req, { entitlementId: entitlement?.id || null })
+    url: stream?.url ? protectUrl(stream.url, req, { entitlementId: entitlement?.id || null }) : stream?.url
   }));
 }
 
@@ -196,6 +196,38 @@ function authorizeHandler(req, res) {
   return res.status(204).end();
 }
 
+function runtimeProtectionMiddleware(req, res, next) {
+  if (!enabled()) return next();
+  const requestPath = String(req.path || '');
+  if (/^\/stremio\/[^/]+\/stream\/[^/]+\/[^/]+\.json$/.test(requestPath)) {
+    const sendJson = res.json.bind(res);
+    res.json = body => {
+      if (!body || !Array.isArray(body.streams) || !body.streams.length) return sendJson(body);
+      try {
+        return sendJson({ ...body, streams: protectStreams(body.streams, req, null) });
+      } catch (error) {
+        console.error('Stremio edge grant issuance failed:', String(error?.message || error).slice(0, 300));
+        return sendJson({ streams: [] });
+      }
+    };
+  }
+  if (/^\/stremio\/[^/]+\/(?:play|external-play)\//.test(requestPath)) {
+    const redirect = res.redirect.bind(res);
+    res.redirect = (statusOrUrl, maybeUrl) => {
+      const hasStatus = typeof statusOrUrl === 'number';
+      const target = hasStatus ? maybeUrl : statusOrUrl;
+      try {
+        const protectedTarget = protectUrl(target, req);
+        return hasStatus ? redirect(statusOrUrl, protectedTarget) : redirect(protectedTarget);
+      } catch (error) {
+        console.error('Stremio edge compatibility grant issuance failed:', String(error?.message || error).slice(0, 300));
+        return res.status(502).end();
+      }
+    };
+  }
+  return next();
+}
+
 module.exports = {
   GRANT_PARAM,
   GRANT_PREFIX,
@@ -217,5 +249,6 @@ module.exports = {
   verifyGrant,
   edgeSecretMatches,
   authorize,
-  authorizeHandler
+  authorizeHandler,
+  runtimeProtectionMiddleware
 };
