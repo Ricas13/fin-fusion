@@ -4,6 +4,7 @@ const path=require('path');
 const assert=require('assert');
 const { chromium }=require('playwright');
 const { Pool }=require('pg');
+const { encryptWithEnv }=require('../src/security/purpose-crypto');
 const BASE=process.env.BROWSER_BASE_URL||'http://127.0.0.1:3030';
 const USER=process.env.BROWSER_ADMIN_USERNAME||'admin';
 const PASSWORD=process.env.BROWSER_ADMIN_PASSWORD||'';
@@ -115,11 +116,12 @@ async function main(){
     const page=await context.newPage();
     await login(page);
 
-    // Seed representative records so the crawl reaches detail routes and real
-    // operator forms rather than auditing only empty-state pages.
-    const server=await pool.query(`INSERT INTO jellyfin_servers(name,base_url,api_key,enabled,weight,priority) VALUES('Browser Jellyfin','http://127.0.0.1:8096','browser-api-key',TRUE,100,50) ON CONFLICT DO NOTHING RETURNING id`);
+    // Seed representative records using the same encrypted credential contract
+    // as the live server registry so the browser harness cannot regress to the
+    // retired plaintext api_key schema.
+    const encryptedApiKey=encryptWithEnv('browser-api-key-2026','JELLYFIN_ENCRYPTION_KEY','jf1');
+    const server=await pool.query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check) VALUES('Browser Jellyfin','browser-jellyfin','premium','http://127.0.0.1:8096',NULL,$1,TRUE,50,100,NULL,TRUE,TRUE,TRUE,'offline',NOW()) ON CONFLICT DO NOTHING RETURNING id`,[encryptedApiKey]);
     const serverId=server.rows[0]?.id||(await pool.query(`SELECT id FROM jellyfin_servers WHERE name='Browser Jellyfin' LIMIT 1`)).rows[0]?.id;
-    if(serverId)await pool.query(`INSERT INTO jellyfin_server_status(server_id,online,last_checked_at,last_error) VALUES($1,FALSE,NOW(),'browser fixture offline') ON CONFLICT(server_id) DO UPDATE SET online=FALSE,last_checked_at=NOW(),last_error='browser fixture offline'`,[serverId]);
     let customer=(await pool.query(`SELECT id FROM customers ORDER BY created_at LIMIT 1`)).rows[0];
     if(!customer)customer=(await pool.query(`INSERT INTO customers(email,display_name,status) VALUES('browser-customer@example.invalid','Browser Customer','active') RETURNING id`)).rows[0];
 
