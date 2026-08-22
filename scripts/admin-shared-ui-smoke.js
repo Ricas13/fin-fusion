@@ -37,8 +37,16 @@ assert(danger.includes('uiDangerZone')&&danger.includes('btn-danger'),'danger zo
 
 const capability=read('public/css/admin-capability.css');
 const css=read('public/css/admin-ui-primitives.css');
+const visual=read('public/css/admin-visual-refinement.css');
+const legacyHead=read('views/admin/_head.ejs');
 assert(capability.includes("@import url('/css/admin-ui-primitives.css')"),'shared UI styles must load globally through the admin capability layer');
 for(const token of ['.uiSectionHeader','.uiEmptyState','.uiConfirmPanel','.uiDangerZone','@media(max-width:700px)'])assert(css.includes(token),`shared UI CSS missing ${token}`);
+assert(visual.includes('.workflowCardGrid{position:sticky;top:66px')&&visual.includes('display:flex!important'),'workflow navigation must remain compact and sticky below the admin header');
+assert(visual.includes('.workflowCard>span:not(.workflowCardEyebrow),.workflowCard>small{display:none}'),'compact workflow navigation must not expand into descriptive content cards');
+assert(visual.includes('.pageHeader + .operatorTabs{position:sticky;top:66px'),'top-level page tabs must remain available while scrolling');
+assert(legacyHead.includes('--sidebar-w:248px'),'legacy EJS pages must use the same desktop sidebar width as the canonical admin shell');
+assert(legacyHead.includes('/css/admin-visual-refinement.css')&&legacyHead.includes('/css/admin-capability.css'),'legacy EJS pages must load shared refinement and operator-hero capability styles');
+assert(legacyHead.includes('.mainPane,.adminMain')&&legacyHead.includes('.content,.pageContent'),'legacy and canonical shell containers must share the same geometry rules');
 
 const integration=read('src/platform/admin-integration-card.js');
 const attention=read('src/platform/admin-attention.js');

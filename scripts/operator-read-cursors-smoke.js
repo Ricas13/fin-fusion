@@ -30,6 +30,9 @@ assert(client.includes("'X-CSRF-Token':data.csrfToken"),'browser read acknowledg
 assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before acknowledging unread state');
 assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
 assert(client.includes("path==='/admin/orders'")&&client.includes("path==='/admin/tickets'"),'orders and tickets must still clear only from their own inbox pages');
+assert(client.includes('if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`)'),'browser must not pretend a failed acknowledgement cleared an unread business alert');
+assert(client.includes('.then(()=>fetchSnapshot())')&&client.includes('.then(fresh=>apply(fresh||data))'),'browser must refresh unread state from the server after a successful acknowledgement');
+assert(!client.includes('if(areaForCurrentPage)data.counts[areaForCurrentPage]=0'),'browser must not locally falsify the current area unread count');
 assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(client),'business unread state must not depend on local browser storage');
 assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(experience),'legacy operator experience must not maintain a second local unread cursor');
 assert(!experience.includes("fetch('/admin/api/operator-state/unread'"),'legacy operator experience must not independently fetch unread counts');

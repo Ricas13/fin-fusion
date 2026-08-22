@@ -35,7 +35,6 @@
 
   function apply(data){
     if(!data?.counts)return;
-    if(areaForCurrentPage)data.counts[areaForCurrentPage]=0;
     Object.keys(hrefByKey).forEach(key=>addSidebarBadge(key,Number(data.counts[key]||0)));
     const operationalRows=Object.entries(operationalLabels)
       .map(([key,[label,meta,href]])=>({key,label,meta,href,count:Number(data.counts[key]||0)}))
@@ -58,8 +57,13 @@
     if(menu)menu.innerHTML=rows.length?rows.map(row=>`<a class="topStatusItem" href="${row.href}"><span><strong>${row.label}</strong><br>${row.meta}</span><em>${row.count>99?'99+':row.count}</em></a>`).join(''):'<div class="topStatusEmpty">No visible alerts right now.</div>';
   }
 
+  function fetchSnapshot(){
+    return fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin'})
+      .then(response=>response.ok?response.json():null);
+  }
+
   function markCurrentAreaRead(data){
-    if(!areaForCurrentPage||!data?.csrfToken)return Promise.resolve();
+    if(!areaForCurrentPage||!data?.csrfToken)return Promise.resolve(null);
     const body=new URLSearchParams({area:areaForCurrentPage});
     return fetch('/admin/api/operator-state/read',{
       method:'POST',
@@ -67,11 +71,20 @@
       headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-CSRF-Token':data.csrfToken,Accept:'application/json'},
       body:body.toString(),
       keepalive:true
-    }).then(()=>{}).catch(()=>{});
+    }).then(response=>{
+      if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`);
+      return response.json();
+    });
   }
 
-  setTimeout(()=>fetch('/admin/api/operator-state/unread',{headers:{Accept:'application/json'},credentials:'same-origin'})
-    .then(r=>r.ok?r.json():null)
-    .then(data=>{if(!data)return;return markCurrentAreaRead(data).then(()=>apply(data));})
+  setTimeout(()=>fetchSnapshot()
+    .then(data=>{
+      if(!data)return;
+      if(!areaForCurrentPage){apply(data);return;}
+      return markCurrentAreaRead(data)
+        .then(()=>fetchSnapshot())
+        .then(fresh=>apply(fresh||data))
+        .catch(()=>apply(data));
+    })
     .catch(()=>{}),80);
 })();
