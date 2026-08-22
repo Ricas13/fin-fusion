@@ -25,7 +25,7 @@ const plansList=read('src/platform/admin-plans-list.js');
 const routeComposition=read('src/platform/admin-route-composition.js');
 const stremioDispatch=read('src/platform/admin-stremio-plan-dispatch.js');
 const stremioEditor=read('src/platform/admin-stremio-plan-editor.js');
-const stremioCreate=read('src/platform/admin-stremio-plan-create.js');
+const planCreateV2=read('src/platform/admin-plan-create-v2.js');
 const householdMigration=read('db/migrations/026_stremio_household_plan_policy.sql');
 const architecture=read('docs/architecture/admin-information-architecture.md');
 const exists=file=>fs.existsSync(path.join(root,file));
@@ -57,8 +57,9 @@ assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('
 
 assert(routeComposition.includes('createAdminProductModulesRouter'),'Product module routes must be mounted in the canonical admin composition');
 assert(routeComposition.includes('createAdminStremioPlanDispatchRouter'),'Stremio plan UX must be mounted through one dispatch owner');
-assert(routeComposition.indexOf('createAdminStremioPlanDispatchRouter()')<routeComposition.indexOf('createAdminPlanCreateV2Router()'),'Stremio dispatch must get first refusal before the generic plan creator');
-assert(stremioDispatch.includes("req.method==='GET'&&pathname==='/admin/plans/new'")&&stremioDispatch.includes("req.method==='POST'&&pathname==='/admin/plans'"),'Stremio create dispatch must preserve the shared canonical create route without duplicate route ownership');
+assert(routeComposition.indexOf('createAdminStremioPlanDispatchRouter()')<routeComposition.indexOf('createAdminPlanCreateV2Router()'),'Stremio edit dispatch must remain ahead of the canonical plan router for edit compatibility');
+assert(!stremioDispatch.includes("pathname==='/admin/plans/new'")&&!stremioDispatch.includes("req.method==='POST'&&pathname==='/admin/plans'"),'Stremio dispatch must not intercept plan creation; canonical Plans owns both create GET and POST');
+assert(stremioDispatch.includes('Creation deliberately falls through to admin-plan-create-v2'),'Stremio dispatch must document the canonical creation ownership boundary');
 assert(stremioDispatch.includes('/stremio-editor')&&stremioDispatch.includes('(?:access|delivery|stremio)'),'Stremio edit dispatch must own the compact editor and legacy deep-link redirects without duplicate route definitions');
 assert(productModules.includes("'/admin/jellyfin'")&&productModules.includes("'/admin/stremio'")&&productModules.includes("'/admin/stremio/playback'"),'Jellyfin and Stremio must have dedicated product workspaces');
 assert(productModules.includes("href:'/admin/plans?type=jellyfin'")&&productModules.includes("href:'/admin/plans?type=stremio'"),'Product dashboards should deep-link into the shared Plans implementation');
@@ -77,7 +78,7 @@ assert(customerFilterUi.includes("['accountStatus', 'paymentProvider', 'reconcil
 for(const term of ['Unlimited streams','Unlimited devices','Household IPs','IP replacement','New purchases only','Existing customers too'])assert(stremioEditor.includes(term),`Stremio editor must expose household-first UX: ${term}`);
 assert(!stremioEditor.includes('Delivery service'),'ordinary Stremio plan editing must not expose internal delivery-service terminology');
 assert(!stremioEditor.includes('server_class')&&!stremioEditor.includes('allow_video_transcoding'),'ordinary Stremio plan editing must not expose Jellyfin placement or transcoding controls');
-assert(stremioCreate.includes('const cards=[1,2,3]')&&stremioCreate.includes('Create custom'),'Stremio plan creation must offer fast 1/2/3-household presets plus custom');
+assert(planCreateV2.includes("['free_jellyfin', 'Free Jellyfin'")&&planCreateV2.includes("['paid_jellyfin', 'Paid Jellyfin'")&&planCreateV2.includes("['stremio', 'Stremio'")&&planCreateV2.includes('name="stremioHouseholdNetworkLimit"'),'Canonical plan creation must adapt across Free Jellyfin, Paid Jellyfin and Stremio and expose configurable Stremio household connections');
 assert(householdMigration.includes('stremio_household_network_limit')&&householdMigration.includes('stremio_ip_replacement_policy'),'migration must persist the configurable household allowance and replacement policy');
 assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&householdMigration.includes('snapshot_subscription_stremio_household_policy'),'subscription policy snapshots must make new-purchases-only changes real');
 
