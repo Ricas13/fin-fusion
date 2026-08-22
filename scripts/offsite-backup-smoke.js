@@ -105,8 +105,10 @@ assert(backupSource.indexOf("status: 'succeeded'") < backupSource.indexOf('await
 assert(backupSource.includes('local encrypted backup remains valid'), 'remote failures must be explicitly separated from local backup validity');
 
 const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
-const secretOccurrences = (compose.match(/BACKUP_S3_SECRET_ACCESS_KEY:/g) || []).length;
-assert.strictEqual(secretOccurrences, 2, 'S3 secret must be available only to backup-worker and explicit recovery-tools');
+const secretMappings = compose.match(/^\s+BACKUP_S3_SECRET_ACCESS_KEY:\s+/gm) || [];
+const accessKeyMappings = compose.match(/^\s+BACKUP_S3_ACCESS_KEY_ID:\s+/gm) || [];
+assert.strictEqual(secretMappings.length, 2, 'S3 secret must be mapped only into backup-worker and explicit recovery-tools');
+assert.strictEqual(accessKeyMappings.length, 2, 'S3 access key must be mapped only into backup-worker and explicit recovery-tools');
 const appBlock = compose.slice(compose.indexOf('  app:'), compose.indexOf('  automation-worker:'));
 assert(appBlock.includes('BACKUP_OFFSITE_ENABLED'));
 assert(!appBlock.includes('BACKUP_S3_SECRET_ACCESS_KEY'));
