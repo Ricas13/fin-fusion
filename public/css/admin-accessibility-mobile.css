@@ -66,6 +66,51 @@ button:disabled,.button[aria-disabled="true"],.btn[aria-disabled="true"],input:d
 .controlCentreSummary span{font-size:10px}
 
 @media(max-width:860px){
+  /* The desktop sidebar becomes a true off-canvas navigation drawer. Keeping
+     the same grouped hierarchy means every admin section remains reachable on
+     a phone instead of being flattened into an unbrowseable horizontal strip. */
+  body.adminNavOpen{overflow:hidden!important}
+  .adminHeader{
+    position:fixed!important;
+    inset:0 auto 0 0!important;
+    width:min(86vw,320px)!important;
+    height:100dvh!important;
+    z-index:130!important;
+    display:flex!important;
+    flex-direction:column!important;
+    overflow:hidden!important;
+    border-right:1px solid var(--border-soft,var(--border))!important;
+    border-bottom:0!important;
+    transform:translateX(-105%);
+    visibility:hidden;
+    box-shadow:16px 0 45px rgba(0,0,0,.42);
+    transition:transform .18s ease,visibility 0s linear .18s;
+  }
+  .adminHeader.isMobileOpen,body.adminNavOpen .adminHeader{
+    transform:translateX(0);
+    visibility:visible;
+    transition:transform .18s ease,visibility 0s;
+  }
+  .headerMain{position:relative!important;display:block!important;min-height:72px;padding:16px 58px 12px 15px!important}
+  .adminTabsWrap{flex:1!important;padding:6px 10px 168px!important;overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain}
+  .adminTabs{display:grid!important;min-width:0!important;gap:2px!important}
+  .navSection{display:block!important;min-width:0!important}
+  .navSectionLabel{display:flex!important;min-height:44px!important}
+  .navSectionPages,.navSection[open] .navSectionPages{display:none!important;gap:2px!important;padding:2px 0!important}
+  .navSection[open] .navSectionPages{display:grid!important}
+  .adminTab{min-height:44px!important;padding:9px 10px 9px 31px!important}
+  .adminTab:before{display:block!important}
+  .headerActions{display:grid!important}
+  .headerButton{min-height:40px;align-items:center}
+  .adminMobileNavButton,.adminMobileNavClose{display:grid!important;place-items:center}
+  .adminMobileNavButton{flex:0 0 44px;width:44px;height:44px;min-height:44px;padding:0;border:1px solid var(--border-soft,var(--border));border-radius:10px;background:#111820;color:#dfe6ed;font-size:20px;cursor:pointer}
+  .adminMobileNavClose{position:absolute;right:10px;top:10px;width:44px;height:44px;min-height:44px;padding:0;border:0;border-radius:10px;background:transparent;color:#aab5c2;font-size:25px;cursor:pointer}
+  .adminMobileNavButton:hover,.adminMobileNavClose:hover{background:#16202a;color:#fff}
+  .adminNavBackdrop{position:fixed!important;inset:0!important;display:block!important;z-index:120!important;border:0!important;background:rgba(0,0,0,.58)!important;cursor:pointer}
+  .adminNavBackdrop[hidden]{display:none!important}
+  .mainPane{margin-left:0!important;width:100%!important;max-width:100%!important;overflow-x:clip!important}
+  .content{max-width:100%!important;overflow-x:hidden}
+
   /* 44px is a reliable touch target without changing desktop density. */
   .button,.btn,.adminTab,.headerButton,.operatorTab,.detailTab,.topHelpLink,.topStatusLink,.modal-close,.navSectionLabel{
     min-height:44px;
@@ -101,5 +146,5 @@ button:disabled,.button[aria-disabled="true"],.btn[aria-disabled="true"],input:d
 }
 
 @media(prefers-reduced-motion:reduce){
-  .skipLink{transition:none}
+  .skipLink,.adminHeader{transition:none!important}
 }
