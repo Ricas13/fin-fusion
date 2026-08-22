@@ -21,7 +21,12 @@
   const saveSummary=form.querySelector('[data-plan-save-summary]');
 
   function selectedKind(){return kinds.find(input=>input.checked)?.value||'paid_jellyfin';}
-  function toggleAll(nodes,visible){nodes.forEach(el=>{el.hidden=!visible;});}
+  function setVisible(el,visible){
+    if(!el)return;
+    el.hidden=!visible;
+    el.querySelectorAll('input,select,textarea').forEach(control=>{control.disabled=!visible;});
+  }
+  function toggleAll(nodes,visible){nodes.forEach(el=>setVisible(el,visible));}
   function syncDuration(){
     if(!frequency||!duration)return;
     const option=frequency.selectedOptions?.[0],days=option?.dataset?.days;
@@ -33,14 +38,14 @@
     const free=kind==='free_jellyfin',paid=kind==='paid_jellyfin',stremio=kind==='stremio',jellyfin=!stremio;
     const household=jellyfin&&accessModel?.value==='household_network';
     if(service)service.value=stremio?'stremio':'jellyfin';
-    if(commercial)commercial.hidden=free;
-    if(paidJellyfin)paidJellyfin.hidden=!paid;
+    setVisible(commercial,!free);
+    setVisible(paidJellyfin,paid);
     toggleAll(jellyfinBlocks,jellyfin);
     toggleAll(stremioBlocks,stremio);
     toggleAll(streamFields,jellyfin&&!household);
     toggleAll(householdFields,household);
-    if(lifecycle)lifecycle.hidden=!free;
-    if(replacementCooldown)replacementCooldown.hidden=!(stremio&&replacement?.value==='customer_cooldown');
+    setVisible(lifecycle,free);
+    setVisible(replacementCooldown,stremio&&replacement?.value==='customer_cooldown');
     const label=free?'FREE JELLYFIN':paid?'PAID JELLYFIN':'STREMIO';
     if(kindLabel)kindLabel.textContent=label;
     if(saveSummary)saveSummary.textContent=free?'Free Jellyfin plan':paid?'Paid Jellyfin plan':'Stremio plan';
