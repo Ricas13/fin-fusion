@@ -21,7 +21,76 @@ function newest(rows, predicate) {
   return (Array.isArray(rows) ? rows : []).find(predicate) || null;
 }
 
-function deriveRecoveryReadiness({ policy = {}, worker = null, runs = [], verificationRequests = [], now = new Date() } = {}) {
+function offsiteReadiness(latestSuccessful, { enabled, provider = 's3' } = {}) {
+  if (enabled == null) return null;
+  if (!enabled) {
+    return {
+      kind: 'warn',
+      state: 'off',
+      label: 'Off-host copies off',
+      detail: 'Local recovery points exist only on this host. Configure encrypted off-site copies for host-loss recovery.'
+    };
+  }
+  if (!latestSuccessful) {
+    return {
+      kind: 'warn',
+      state: 'waiting_for_backup',
+      label: 'Waiting for first off-site copy',
+      detail: 'Off-site protection is enabled; the first successful local backup will be copied after encryption completes.'
+    };
+  }
+
+  const copy = latestSuccessful.metadata?.offsite || {};
+  if (copy.state === 'succeeded') {
+    const checksumMatches = !copy.checksumSha256 || !latestSuccessful.checksum_sha256 || copy.checksumSha256 === latestSuccessful.checksum_sha256;
+    if (!checksumMatches) {
+      return {
+        kind: 'bad',
+        state: 'checksum_mismatch',
+        label: 'Off-site copy checksum mismatch',
+        detail: 'The recorded off-site copy does not match the latest local recovery point checksum.'
+      };
+    }
+    return {
+      kind: 'good',
+      state: 'copied',
+      label: 'Latest backup copied off-host',
+      detail: `The latest encrypted recovery point has a completed ${String(copy.provider || provider).toUpperCase()} off-site copy.`
+    };
+  }
+  if (copy.state === 'failed') {
+    return {
+      kind: 'bad',
+      state: 'copy_failed',
+      label: 'Off-site copy failed',
+      detail: String(copy.error || 'The local backup succeeded, but its encrypted off-host copy failed.').slice(0, 300)
+    };
+  }
+  if (copy.state === 'copying') {
+    return {
+      kind: 'warn',
+      state: 'copying',
+      label: 'Off-site copy in progress',
+      detail: 'The local encrypted recovery point is complete and its off-host copy is still in progress.'
+    };
+  }
+  return {
+    kind: 'warn',
+    state: 'not_copied',
+    label: 'Latest backup not copied off-host',
+    detail: 'The latest local recovery point does not yet have a recorded encrypted off-host copy.'
+  };
+}
+
+function deriveRecoveryReadiness({
+  policy = {},
+  worker = null,
+  runs = [],
+  verificationRequests = [],
+  offsiteEnabled = null,
+  offsiteProvider = 's3',
+  now = new Date()
+} = {}) {
   const intervalHours = Math.max(1, Number(policy.intervalHours) || 24);
   const scheduleEnabled = policy.enabled !== false;
   const workerAgeSeconds = worker?.heartbeat_age_seconds == null ? null : Number(worker.heartbeat_age_seconds);
@@ -87,12 +156,14 @@ function deriveRecoveryReadiness({ policy = {}, worker = null, runs = [], verifi
     };
   }
 
-  const overallKind = statusRank(protection.kind) >= statusRank(recovery.kind) ? protection.kind : recovery.kind;
+  const offsite = offsiteReadiness(latestSuccessful, { enabled: offsiteEnabled, provider: offsiteProvider });
+  const states = [protection, recovery, offsite].filter(Boolean);
+  const overallKind = states.reduce((kind, state) => statusRank(state.kind) > statusRank(kind) ? state.kind : kind, 'good');
   const overall = overallKind === 'good'
-    ? { kind: 'good', label: 'Recovery ready', detail: 'Scheduled protection is healthy and the latest recovery point has been proven by a full temporary restore.' }
+    ? { kind: 'good', label: 'Recovery ready', detail: offsite ? 'Scheduled protection is healthy, the latest recovery point is proven, and an encrypted off-host copy exists.' : 'Scheduled protection is healthy and the latest recovery point has been proven by a full temporary restore.' }
     : overallKind === 'bad'
-      ? { kind: 'bad', label: 'Recovery needs attention', detail: 'At least one backup or recovery check is failing.' }
-      : { kind: 'warn', label: 'Recovery not fully proven', detail: 'Backups exist, but one or more protection or verification checks still need attention.' };
+      ? { kind: 'bad', label: 'Recovery needs attention', detail: 'At least one backup, recovery verification or off-host protection check is failing.' }
+      : { kind: 'warn', label: 'Recovery not fully proven', detail: offsite ? 'Local recovery may be available, but one or more protection, verification or host-loss checks still need attention.' : 'Backups exist, but one or more protection or verification checks still need attention.' };
 
   return {
     intervalHours,
@@ -107,8 +178,9 @@ function deriveRecoveryReadiness({ policy = {}, worker = null, runs = [], verifi
     verificationInFlight,
     protection,
     recovery,
+    offsite,
     overall
   };
 }
 
-module.exports = { asDate, ageHours, deriveRecoveryReadiness };
+module.exports = { asDate, ageHours, deriveRecoveryReadiness, offsiteReadiness };

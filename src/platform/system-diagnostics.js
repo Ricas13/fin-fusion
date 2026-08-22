@@ -10,13 +10,17 @@ const { deriveRecoveryReadiness } = require('./backup-recovery-readiness');
 const SECRET_ENV_KEYS = [
   'DATABASE_URL','APP_DATABASE_URL','AUTOMATION_DATABASE_URL','ACTIVITY_DATABASE_URL','BACKUP_DATABASE_URL','BACKUP_VERIFY_DATABASE_URL',
   'POSTGRES_PASSWORD','SESSION_SECRET','DATA_ENCRYPTION_KEY','JELLYFIN_ENCRYPTION_KEY','AUTH_ENCRYPTION_KEY','ACTIVITY_ENCRYPTION_KEY',
-  'BACKUP_ENCRYPTION_KEY','STREMIO_JELLYFIN_TOKEN_KEY','JELLYFIN_API_KEY','STRIPE_RESTRICTED_KEY','STRIPE_API_KEY','STRIPE_WEBHOOK_SECRET',
-  'PAYPAL_CLIENT_SECRET','PAYPAL_WEBHOOK_ID','TELEGRAM_BOT_TOKEN','SMTP_URL','SEERR_API_KEY','OVERSEERR_API_KEY'
+  'BACKUP_ENCRYPTION_KEY','BACKUP_S3_ACCESS_KEY_ID','BACKUP_S3_SECRET_ACCESS_KEY','BACKUP_S3_SESSION_TOKEN','STREMIO_JELLYFIN_TOKEN_KEY',
+  'JELLYFIN_API_KEY','STRIPE_RESTRICTED_KEY','STRIPE_API_KEY','STRIPE_WEBHOOK_SECRET','PAYPAL_CLIENT_SECRET','PAYPAL_WEBHOOK_ID',
+  'TELEGRAM_BOT_TOKEN','SMTP_URL','SEERR_API_KEY','OVERSEERR_API_KEY'
 ];
 
 function safeNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+function boolEnv(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 function roundMb(bytes) { return Math.round(safeNumber(bytes) / 1024 / 1024); }
 function worse(a, b) {
@@ -45,7 +49,7 @@ async function backupSnapshot() {
   const [policyResult, workerResult, runsResult, requestResult] = await Promise.all([
     query(`SELECT setting_value FROM platform_settings WHERE setting_key='backup_policy_v1'`),
     query(`SELECT *,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM backup_worker_state WHERE worker_key='database_backup'`),
-    query(`SELECT id,status,started_at,completed_at,verified_at FROM backup_runs ORDER BY started_at DESC LIMIT 25`),
+    query(`SELECT id,status,started_at,completed_at,verified_at,checksum_sha256,metadata FROM backup_runs ORDER BY started_at DESC LIMIT 25`),
     query(`SELECT backup_run_id,status,requested_at,error FROM backup_verification_requests ORDER BY requested_at DESC LIMIT 25`)
   ]);
   const value = policyResult.rows[0]?.setting_value || {};
@@ -56,7 +60,14 @@ async function backupSnapshot() {
     minimumCopies: Number(value.minimumCopies) || 7,
     verifyAfterBackup: value.verifyAfterBackup !== false
   };
-  return deriveRecoveryReadiness({ policy, worker: workerResult.rows[0] || null, runs: runsResult.rows, verificationRequests: requestResult.rows });
+  return deriveRecoveryReadiness({
+    policy,
+    worker: workerResult.rows[0] || null,
+    runs: runsResult.rows,
+    verificationRequests: requestResult.rows,
+    offsiteEnabled: boolEnv(process.env.BACKUP_OFFSITE_ENABLED),
+    offsiteProvider: String(process.env.BACKUP_OFFSITE_PROVIDER || 's3').slice(0, 20)
+  });
 }
 
 async function collectSystemDiagnostics() {
@@ -182,9 +193,10 @@ function supportReportFromDiagnostics(diagnostics) {
       workerFresh: diagnostics.backups.workerFresh,
       protectionState: diagnostics.backups.protection.state,
       recoveryState: diagnostics.backups.recovery.state,
+      offsiteState: diagnostics.backups.offsite?.state || 'unknown',
       latestAgeHours: diagnostics.backups.latestAgeHours == null ? null : Math.round(diagnostics.backups.latestAgeHours * 10) / 10,
       latestFresh: diagnostics.backups.latestFresh
-    } : { scheduled: false, workerFresh: false, protectionState: 'unknown', recoveryState: 'unknown', latestAgeHours: null, latestFresh: false },
+    } : { scheduled: false, workerFresh: false, protectionState: 'unknown', recoveryState: 'unknown', offsiteState: 'unknown', latestAgeHours: null, latestFresh: false },
     fleet: diagnostics.fleet,
     notifications: diagnostics.notifications,
     securityPosture: {
