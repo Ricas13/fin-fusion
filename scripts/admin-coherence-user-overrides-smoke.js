@@ -50,7 +50,7 @@ assert(nav.hiddenPages['request-plan-limits']?.groupKey==='commerce'&&nav.hidden
 assert(!pageKeys('commerce').includes('referrals')&&nav.hiddenPages.referrals?.parentKey==='orders','Affiliates must remain discoverable contextually from Orders & Growth without consuming a sidebar slot');
 assert(!pageKeys('jellyfin').includes('fleet-operations')&&nav.hiddenPages['fleet-operations']?.parentKey==='servers','Fleet operations must remain addressable contextually from Servers without consuming a Jellyfin sidebar slot');
 assert(!/Request service|Plan limits/.test(provisioningTabs),'Provisioning tabs must not contain request-service configuration');
-assert(/Integrations/.test(integrationTabs)&&/Request service/.test(integrationTabs)&&!/Plan limits/.test(integrationTabs),'Connections workflow must own integration settings, not Commerce plan policy');
+assert(/Connections/.test(integrationTabs)&&/Request service/.test(integrationTabs)&&!/Plan limits/.test(integrationTabs),'Connections workflow must own integration settings, not Commerce plan policy');
 assert(/class=\"adminQuickFind\"/.test(adminShell)&&/action=\"\/admin\/search\"/.test(adminShell),'Admin shell must provide top-bar quick find');
 assert(/data-operator-alerts/.test(adminShell)&&/topStatusLink/.test(operatorExperience+adminShell),'Admin shell must expose top-right status and alerts');
 assert(!/Help & guides/.test(adminShell),'Admin shell must not duplicate Help & guides in sidebar and top bar');
