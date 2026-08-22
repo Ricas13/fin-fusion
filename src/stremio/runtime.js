@@ -7,7 +7,6 @@ const operations = require('../platform/operations-settings');
 const modules = require('../modules/registry');
 const entitlements = require('./entitlements');
 const managedRuntime = require('./managed-runtime');
-const managedPlayback = require('./managed-playback-lifecycle');
 const externalRuntime = require('./external-direct-runtime');
 const householdAccess = require('./household-access');
 const blockedMedia = require('./blocked-media');
@@ -149,6 +148,23 @@ async function claimHouseholdOrReject(entitlement, req, res, kind) {
   return decision;
 }
 
+async function deniedStreamResponse(entitlement, req, type, videoId, decision) {
+  await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
+  const origin = await publicOrigin(req);
+  return {
+    streams: [
+      householdAccess.deniedStream(decision, {
+        url: blockedMedia.playbackUrl({ origin, installToken: req.params.token, type, videoId }),
+        videoSize: blockedMedia.MEDIA_SIZE
+      })
+    ]
+  };
+}
+
+async function claimDirectStreamResult(entitlement, req) {
+  return householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' });
+}
+
 async function sendHouseholdBlockedMedia(req, res) {
   if (!enabled()) return res.status(404).end();
   try {
@@ -166,11 +182,6 @@ function createStremioRuntimeRouter() {
   const router = express.Router();
   router.use('/stremio', cors, loadRuntimeSetting);
   router.options('/stremio/*', (_req, res) => res.sendStatus(204));
-
-  // Managed playback tracking exists only to clean up per-playback Jellyfin
-  // credentials and lifecycle state. Household admission is network-based and
-  // independent of the number of simultaneous Stremio streams.
-  managedPlayback.startManager({ intervalMs: 5000 });
 
   router.get('/stremio/:token/manifest.json', manifestLimit, async (req, res) => {
     if (!enabled()) return res.status(404).json({ error: 'Not found' });
@@ -192,39 +203,36 @@ function createStremioRuntimeRouter() {
       if (!entitlement) return res.json({ streams: [] });
       const type = String(req.params.type || '');
       const videoId = String(req.params.videoId || '');
-      const household = await householdAccess.preview(entitlement, req, { kind: 'stream_results' });
-      if (household && household.allowed === false) {
-        await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
-        const origin = await publicOrigin(req);
-        return res.json({
-          streams: [
-            householdAccess.deniedStream(household, {
-              url: blockedMedia.playbackUrl({
-                origin,
-                installToken: req.params.token,
-                type,
-                videoId
-              }),
-              videoSize: blockedMedia.MEDIA_SIZE
-            })
-          ]
-        });
-      }
+
+      // Preview first so a disallowed household never causes source credentials
+      // to be resolved into a response. The actual claim happens immediately
+      // before raw Jellyfin URLs are handed to Stremio because there is no
+      // CAPTAiNFiN playback hop anymore.
+      const preview = await householdAccess.preview(entitlement, req, { kind: 'stream_results' });
+      if (preview && preview.allowed === false) return res.json(await deniedStreamResponse(entitlement, req, type, videoId, preview));
+
       const origin = await publicOrigin(req);
       const cached = cachedStreams(entitlement.id, type, videoId, origin);
       if (cached) {
+        const household = await claimDirectStreamResult(entitlement, req);
+        if (!household.allowed) return res.json(await deniedStreamResponse(entitlement, req, type, videoId, household));
         await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
         return res.json({ streams: cached });
       }
-      const delivery = { portalBase: origin, installToken: req.params.token };
+
       const [managedResult, externalResult] = await Promise.allSettled([
-        managedRuntime.streamsFor(entitlement, type, videoId, delivery),
-        externalRuntime.streamsFor(entitlement, type, videoId, delivery)
+        managedRuntime.streamsFor(entitlement, type, videoId),
+        externalRuntime.streamsFor(entitlement, type, videoId)
       ]);
       const managed = settledStreams(managedResult, 'managed');
       const external = settledStreams(externalResult, 'external');
       const streams = [...managed, ...external];
-      rememberStreams(entitlement.id, type, videoId, origin, streams);
+
+      if (streams.length) {
+        const household = await claimDirectStreamResult(entitlement, req);
+        if (!household.allowed) return res.json(await deniedStreamResponse(entitlement, req, type, videoId, household));
+        rememberStreams(entitlement.id, type, videoId, origin, streams);
+      }
       await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
       return res.json({ streams });
     } catch (error) {
@@ -236,48 +244,34 @@ function createStremioRuntimeRouter() {
   router.get('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
   router.head('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
 
-  // Managed playback remains a control-plane hop. PlaybackInfo is refreshed,
-  // the household network lease is claimed/refreshed, a short-lived Jellyfin
-  // credential is prepared for lifecycle cleanup, then CAPTAiNFiN exits through
-  // a plain temporary redirect.
+  // Compatibility only for stream results cached by clients before the raw-file
+  // rollout. This route no longer calls PlaybackInfo, authenticates a fresh
+  // Jellyfin device, or reports /Sessions/Playing. It simply re-checks household
+  // access and redirects to the same static/original-file URL new results carry.
   router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId', playbackLimit, async (req, res) => {
     if (!enabled()) return res.status(404).end();
-    const playbackKey = String(req.query.playbackKey || '');
     try {
       const entitlement = await entitlements.findByInstallToken(req.params.token);
-      if (!entitlement || !playbackKey) return res.status(404).end();
+      if (!entitlement) return res.status(404).end();
       const mapping = await managedMapping(entitlement.id, req.params.mappingId);
       if (!mapping) return res.status(404).end();
-      const playback = await managedRuntime.playbackInfo(mapping, req.params.itemId, req.params.mediaSourceId);
-      const source = managedRuntime.mediaSource(playback, req.params.mediaSourceId);
-      if (!source) return res.status(404).end();
-      const household = await claimHouseholdOrReject(entitlement, req, res, 'managed_playback');
+      const household = await claimHouseholdOrReject(entitlement, req, res, 'legacy_managed_playback');
       if (!household) return;
-      const playMethod = managedRuntime.playMethodFor(source);
-      const playSessionId = String(playback?.PlaySessionId || req.query.playSessionId || '');
-      if (!playMethod) return res.status(502).end();
-      const started = await managedPlayback.start(mapping, playbackKey, {
-        itemId: req.params.itemId,
-        mediaSourceId: req.params.mediaSourceId,
-        playSessionId,
-        playMethod
-      });
-      const target = managedRuntime.playbackUrl(mapping, req.params.itemId, source, playback, { accessToken: started.accessToken, deviceId: started.deviceId });
+      const target = managedRuntime.directUrl(mapping, req.params.itemId, req.params.mediaSourceId);
       await query(
         `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-         VALUES(NULL,'stremio.managed_playback.redirected','stremio_entitlement',$1,$2::jsonb)`,
-        [entitlement.id, JSON.stringify({ serverId: mapping.server_id, jellyfinSessionId: started.jellyfinSessionId || null, playMethod: target.playMethod, householdDecision: household.decision })]
+         VALUES(NULL,'stremio.managed_raw_file.redirected','stremio_entitlement',$1,$2::jsonb)`,
+        [entitlement.id, JSON.stringify({ serverId: mapping.server_id, householdDecision: household.decision, compatibilityRoute: true })]
       ).catch(() => {});
-      return res.redirect(PLAYBACK_REDIRECT_STATUS, target.url);
+      return res.redirect(PLAYBACK_REDIRECT_STATUS, target);
     } catch (error) {
-      console.error('Managed Stremio playback control failed:', safeLogText(error?.message || error, 300));
+      console.error('Legacy managed Stremio raw-file redirect failed:', safeLogText(error?.message || error, 300));
       return res.status(502).end();
     }
   });
 
-  // External sources also take one control-plane hop so a real playback start,
-  // rather than a catalogue lookup, owns the household lease. The response is
-  // still a temporary redirect directly to Jellyfin; CAPTAiNFiN never receives media bytes.
+  // Compatibility only for older external stream results. New Stremio results
+  // already contain the Jellyfin URL directly.
   router.get('/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId', playbackLimit, async (req, res) => {
     if (!enabled()) return res.status(404).end();
     try {
@@ -285,22 +279,22 @@ function createStremioRuntimeRouter() {
       if (!entitlement) return res.status(404).end();
       const target = await externalRuntime.playbackTargetFor(entitlement, req.params.sourceId, req.params.itemId, req.params.mediaSourceId);
       if (!target) return res.status(404).end();
-      const household = await claimHouseholdOrReject(entitlement, req, res, 'external_playback');
+      const household = await claimHouseholdOrReject(entitlement, req, res, 'legacy_external_playback');
       if (!household) return;
       await query(
         `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
          VALUES(NULL,'stremio.external_playback.redirected','stremio_entitlement',$1,$2::jsonb)`,
-        [entitlement.id, JSON.stringify({ sourceId: req.params.sourceId, householdDecision: household.decision })]
+        [entitlement.id, JSON.stringify({ sourceId: req.params.sourceId, householdDecision: household.decision, compatibilityRoute: true })]
       ).catch(() => {});
       return res.redirect(PLAYBACK_REDIRECT_STATUS, target);
     } catch (error) {
-      console.error('External Stremio playback control failed:', safeLogText(error?.message || error, 300));
+      console.error('External Stremio compatibility redirect failed:', safeLogText(error?.message || error, 300));
       return res.status(502).end();
     }
   });
 
-  // Historical byte-proxy paths remain retired. Current managed and external
-  // playback both use short control-plane redirects and no media relay.
+  // Historical byte-proxy paths remain retired. CAPTAiNFiN authorizes and
+  // resolves streams but never receives or relays the media bytes.
   const retiredPlayback = (_req, res) => res.status(410).end();
   router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId', playbackLimit, retiredPlayback);
   router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', playbackLimit, retiredPlayback);
@@ -317,6 +311,8 @@ module.exports = {
   settledStreams,
   stremioRateIdentity,
   claimHouseholdOrReject,
+  deniedStreamResponse,
+  claimDirectStreamResult,
   PLAYBACK_REDIRECT_STATUS,
   STREAM_RESULT_CACHE_TTL_MS,
   STREAM_RESULT_CACHE_MAX,
