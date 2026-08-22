@@ -16,6 +16,13 @@ assert(shell.includes('for="adminQuickFindInput"'),'quick find must have a real 
 assert(shell.includes('Help & docs'),'help action should use a plain-language label');
 const progressiveShell=read('src/platform/admin-html-core.js');
 assert(progressiveShell.includes('/js/admin-safety-confirmations.js'),'admin shell must load shared safety confirmations');
+assert(progressiveShell.includes('/js/admin-sidebar-nav.js'),'admin shell must load shared sidebar navigation behavior');
+
+const sidebar=read('public/js/admin-sidebar-nav.js');
+assert(sidebar.includes('closeOthers(section)')&&sidebar.includes('other.open=false'),'opening one admin navigation group must collapse the other groups');
+assert(sidebar.includes("section.querySelector('.navSectionPages .adminTab[href]')"),'parent navigation must resolve the first submenu destination');
+assert(sidebar.includes('event.preventDefault()')&&sidebar.includes('window.location.assign(first.href)'),'desktop parent clicks must expand the group and open its first submenu page');
+assert(sidebar.includes("window.matchMedia('(max-width:860px)').matches"),'sidebar accordion behavior must preserve the compact mobile navigation');
 
 const capability=read('public/css/admin-capability.css');
 assert(capability.includes("@import url('/css/admin-accessibility-mobile.css')"),'admin shell must load accessibility/mobile layer');
