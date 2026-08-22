@@ -46,7 +46,7 @@ function checked(value) { return value ? 'checked' : ''; }
 function token(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
 function values(value) { return [...new Set((Array.isArray(value) ? value : [value]).map(v => String(v || '').trim()).filter(Boolean))]; }
 function freePlan(plan) { return Boolean(plan?.is_free_tier) || (Number(plan?.price_minor || 0) === 0 && String(plan?.billing_interval || '') !== 'trial' && String(plan?.server_class || '') === 'free'); }
-function jellyfinPlan(plan) { return ['jellyfin', 'bundle'].includes(String(plan?.service_type || 'jellyfin')); }
+function jellyfinPlan(plan) { return String(plan?.service_type || 'jellyfin') === 'jellyfin'; }
 function editorUrl(planId, anchor = '') { return `/admin/plans/${encodeURIComponent(planId)}/edit${anchor ? `#${anchor}` : ''}`; }
 function redirectWith(res, planId, kind, message, anchor = '') {
   return res.redirect(`/admin/plans/${encodeURIComponent(planId)}/edit?${kind}=${encodeURIComponent(message)}${anchor ? `#${anchor}` : ''}`);
@@ -277,25 +277,46 @@ function post(handler, success, anchor) {
     }
   }];
 }
+function decodePlanId(value) {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
 
 function createAdminJellyfinPlanEditorRouter() {
   const router = express.Router();
   router.use('/admin/plans', gate, noStore);
-  router.get('/admin/plans/:id/edit', async (req, res, next) => {
-    try {
-      const plan = await loadPlan(req.params.id);
-      if (!plan) return res.status(404).send('Plan not found');
-      if (!jellyfinPlan(plan)) return next();
-      await runtimeSettings.ensureLoaded();
-      return res.send(page(await loadData(plan), req));
-    } catch (error) { return next(error); }
-  });
-  const legacy = [
-    ['/admin/plans/:id/access', 'access'], ['/admin/plans/:id/jellyfin', 'access'], ['/admin/plans/:id/inventory', 'availability'],
-    ['/admin/plans/:id/placement', 'delivery'], ['/admin/plans/:id/libraries', 'libraries'], ['/admin/plans/:id/commerce', 'commerce']
-  ];
-  for (const [path, anchor] of legacy) router.get(path, async (req, res, next) => {
-    try { const plan = await loadPlan(req.params.id); if (!plan || !jellyfinPlan(plan)) return next(); return res.redirect(302, editorUrl(plan.id, anchor)); } catch (error) { return next(error); }
+  // Match the existing Stremio dispatcher pattern: GET compatibility is
+  // middleware dispatch, not a second formal route owner. The legacy modules
+  // remain the assembled route owners if this dispatcher falls through.
+  router.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    const pathname = req.path;
+    let match = pathname.match(/^\/admin\/plans\/([^/]+)\/edit$/);
+    if (match) {
+      const planId = decodePlanId(match[1]);
+      return Promise.resolve().then(async () => {
+        const plan = await loadPlan(planId);
+        if (!plan || !jellyfinPlan(plan)) return next();
+        await runtimeSettings.ensureLoaded();
+        return res.send(page(await loadData(plan), req));
+      }).catch(next);
+    }
+    const legacy = [
+      [/^\/admin\/plans\/([^/]+)\/(?:access|jellyfin)$/, 'access'],
+      [/^\/admin\/plans\/([^/]+)\/inventory$/, 'availability'],
+      [/^\/admin\/plans\/([^/]+)\/placement$/, 'delivery'],
+      [/^\/admin\/plans\/([^/]+)\/libraries$/, 'libraries'],
+      [/^\/admin\/plans\/([^/]+)\/commerce$/, 'commerce']
+    ];
+    for (const [pattern, anchor] of legacy) {
+      match = pathname.match(pattern);
+      if (!match) continue;
+      const planId = decodePlanId(match[1]);
+      return Promise.resolve(loadPlan(planId)).then(plan => {
+        if (!plan || !jellyfinPlan(plan)) return next();
+        return res.redirect(302, editorUrl(plan.id, anchor));
+      }).catch(next);
+    }
+    return next();
   });
   router.post('/admin/plans/:id/editor-product', ...post(saveProduct, 'Product details saved.', 'product'));
   router.post('/admin/plans/:id/editor-access', ...post(saveAccess, 'Access policy saved.', 'access'));
