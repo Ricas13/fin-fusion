@@ -55,6 +55,7 @@ const migration=read('db/migrations/023_modular_access_drivers.sql');
 const familyMigration=read('db/migrations/024_network_lease_families.sql');
 const leases=read('src/access/network-leases.js');
 const stremio=read('src/stremio/runtime.js');
+const managed=read('src/stremio/managed-runtime.js');
 const external=read('src/stremio/external-direct-runtime.js');
 const jellyfin=read('src/jellyfin/household-network-policy.js');
 const worker=read('scripts/activity-worker.js');
@@ -74,11 +75,14 @@ assert(leases.includes('activeSameFamily')&&leases.includes('function preview'),
 assert(leases.includes('expires_at=NOW()+($6::int*INTERVAL'),'same-network playback must refresh a time-limited lease');
 assert(!leases.includes('remote_endpoint'),'generic lease persistence must not store plaintext network endpoints');
 
-assert(stremio.includes('claimHouseholdOrReject'),'Stremio playback starts must pass household admission');
-assert(stremio.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'"),'external Stremio must use a playback-start control hop');
-assert(stremio.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&stremio.includes('res.redirect(PLAYBACK_REDIRECT_STATUS, target)')&&stremio.includes('res.redirect(PLAYBACK_REDIRECT_STATUS, target.url)'),'both Stremio source classes must exit through plain temporary redirects');
+assert(stremio.includes('claimHouseholdOrReject')&&stremio.includes("kind: 'direct_stream_result'"),'Stremio raw-file results must preserve household admission and compatibility-route checks');
+assert(stremio.includes('managedRuntime.streamsFor(entitlement, type, videoId)')&&stremio.includes('externalRuntime.streamsFor(entitlement, type, videoId)'),'both Stremio source classes must return direct stream results from their source runtimes');
+assert(managed.includes("url.searchParams.set('Static','true')")&&external.includes("url.searchParams.set('Static', 'true')"),'both Stremio source classes must construct Jellyfin static/original-file URLs');
+assert(stremio.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'"),'legacy external Stremio playback-start links must remain compatible');
+assert(stremio.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&(stremio.match(/res\.redirect\(PLAYBACK_REDIRECT_STATUS, target\)/g)||[]).length>=2,'legacy managed and external control links must exit through plain temporary redirects');
 assert(!stremio.includes('pipe(res)')&&!external.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
-assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external control hop must resolve to direct Jellyfin delivery');
+assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external compatibility links must resolve to direct Jellyfin delivery');
+assert(!stremio.includes("require('./managed-playback-lifecycle')")&&!managed.includes('/PlaybackInfo'),'normal Stremio raw-file delivery must not create Jellyfin playback sessions');
 
 assert(jellyfin.includes("scope: 'jellyfin'"),'Jellyfin household access must use the shared lease engine');
 assert(jellyfin.includes('SELECT s.id AS subscription_id'),'Jellyfin household enforcement must use a narrow least-privilege entitlement projection');
