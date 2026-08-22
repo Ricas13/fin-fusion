@@ -57,6 +57,7 @@ const { createAdminUsersDashboardRouter } = require('./admin-users-dashboard');
 const { createAdminUsersRouter } = require('./admin-users');
 const { createAdminDiscountsRouter } = require('./admin-discounts');
 const { createAdminReferralsRouter } = require('./admin-referrals');
+const { createAdminMarketingRouter } = require('./admin-marketing');
 
 function mountAdminRoutes(app) {
   app.get('/admin', dashboard.dashboardPage);
@@ -126,6 +127,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminUsersRouter());
   app.use(createAdminDiscountsRouter());
   app.use(createAdminReferralsRouter());
+  app.use(createAdminMarketingRouter());
 }
 
 module.exports = { mountAdminRoutes };
