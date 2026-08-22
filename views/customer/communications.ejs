@@ -15,7 +15,10 @@
     .notifyEvents th,.notifyEvents td{padding:10px;border-bottom:1px solid var(--line);text-align:left}
     .notifyEvents th:not(:first-child),.notifyEvents td:not(:first-child){text-align:center}
     .notifyDisabled{opacity:.4}
-    @media(max-width:760px){.notifyGrid{grid-template-columns:1fr}}
+    .marketingPreference{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center}
+    .marketingPreference p{margin:.45rem 0 0;color:var(--muted)}
+    .marketingPreference form{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+    @media(max-width:760px){.notifyGrid{grid-template-columns:1fr}.marketingPreference{grid-template-columns:1fr}.marketingPreference form{justify-content:flex-start}}
   </style>
 </head>
 <body>
@@ -32,6 +35,14 @@
     <form method="post" action="/account/communications/currency">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="notifyRow"><select class="input" name="currency"><% enabledCurrencies.forEach(function(c){ %><option value="<%= c %>" <%= currency===c?'selected':'' %>><%= c %></option><% }) %></select><button class="button primary">Save currency</button></div>
+    </form>
+  </section>
+  <section class="panel sectionBlock marketingPreference">
+    <div><h2>Offers &amp; discounts by email</h2><span class="pill <%= prefs.marketing_email_opt_in?'good':'warn' %>"><%= prefs.marketing_email_opt_in?'Enabled':'Off' %></span><p>Optional promotions only. This is separate from important account, security and payment email, which is not controlled by this setting.</p></div>
+    <form method="post" action="/account/communications/marketing-email">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="libraryChoice"><input type="checkbox" name="enabled" value="1" <%= prefs.marketing_email_opt_in?'checked':'' %>><span>Send me offers and discounts</span></label>
+      <button class="button primary">Save marketing choice</button>
     </form>
   </section>
   <div class="notifyGrid sectionBlock">
