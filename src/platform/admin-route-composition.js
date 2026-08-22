@@ -60,10 +60,6 @@ const { createAdminReferralsRouter } = require('./admin-referrals');
 
 function mountAdminRoutes(app) {
   app.get('/admin', dashboard.dashboardPage);
-  // The old product overview pages duplicated the real control rooms. Preserve
-  // bookmarks while making Servers and Sources the canonical landing screens.
-  app.get('/admin/jellyfin', (_req, res) => res.redirect('/admin/servers'));
-  app.get('/admin/stremio', (_req, res) => res.redirect('/admin/servers/stremio'));
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
   // Literal customer overview routes must be mounted before any /admin/users/:id
