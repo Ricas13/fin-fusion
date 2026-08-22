@@ -39,7 +39,7 @@
 .planConfigBody .toggleGrid{gap:6px;margin:8px 0}
 .planConfigBody .toggleRow{padding:8px 9px}
 .planConfigBody .buttonRow{margin-top:9px}
-.planConfigFacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:9px}
+.planConfigFacts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:9px}
 .planConfigFact{padding:7px 8px;border:1px solid var(--border-soft);border-radius:8px;background:var(--panel2)}
 .planConfigFact span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.04em;font-weight:750}
 .planConfigFact strong{display:block;margin-top:2px;color:var(--text-strong);font-size:15px;line-height:1.2}
@@ -79,6 +79,7 @@
   .attentionActionGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   .attentionActionGrid .button{justify-self:start}
   .planConfigCard.span2{grid-column:1/-1}
+  .planConfigFacts{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media(max-width:700px){
   .attentionBulkBar,.attentionActionGrid{grid-template-columns:1fr!important}
