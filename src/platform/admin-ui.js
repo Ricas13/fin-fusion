@@ -32,7 +32,10 @@ function sectionHeader({ title, description = '', actionsHtml = '', eyebrow = ''
 function workflowCards(items, active = '', label = 'Related controls') {
     const rows = Array.isArray(items) ? items : [];
     if (!rows.length) return '';
-    return `<nav class="workflowCardGrid" aria-label="${esc(label)}">${rows.map(item => {
+    // operatorTabs is retained as a semantic/test compatibility hook while
+    // workflowCardGrid owns the visual layout. This lets older automation find
+    // one workflow navigation region without forcing the UI back to tab strips.
+    return `<nav class="workflowCardGrid operatorTabs" aria-label="${esc(label)}">${rows.map(item => {
         const values = Array.isArray(item) ? item : [item.key, item.title, item.href, item.description];
         const [key, title, href, description = 'Open this part of the workflow'] = values;
         const selected = String(key) === String(active);
