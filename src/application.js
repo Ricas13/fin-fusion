@@ -18,6 +18,7 @@ const adminNav = require('./platform/admin-nav');
 const { mountAdminRoutes } = require('./platform/admin-route-composition');
 const { consumeLoginAttempt, pruneLoginRateLimits } = require('./security/login-rate-limit');
 const customerRateLimit = require('./security/customer-rate-limit');
+const publicAbuseProtection = require('./security/public-abuse-protection');
 const { requestMaintenanceGuard } = require('./security/maintenance-lock');
 
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
@@ -231,8 +232,8 @@ function mountPlatform(app) {
   app.use(publicMutationRateLimit);
 
   app.use(createFirstRunRouter());
-  app.get('/login', loginSetupGate, controller.loginPage);
-  app.post('/login', loginSetupGate, controller.loginSubmit);
+  app.get('/login', publicAbuseProtection.middleware, loginSetupGate, controller.loginPage);
+  app.post('/login', publicAbuseProtection.middleware, loginSetupGate, controller.loginSubmit);
   app.get('/logout', controller.logout);
   app.use(controller.createAuthRouter());
   app.use(createAdminSecurityRouter());

@@ -37,6 +37,30 @@ assert(/'reversed'/.test(affiliateCredits)&&/already-delivered service was prese
 const maintenance=text('src/security/maintenance-lock.js');
 assert(/connectionTimeoutMillis/.test(maintenance),'Maintenance lock pool must have a connection acquisition timeout.');
 
+const abuseProtection=text('src/security/public-abuse-protection.js');
+const application=text('src/application.js');
+const customerLoginView=text('views/customer/login.ejs');
+const staffLoginView=text('views/auth/staff-login.ejs');
+const registrationView=text('views/customer/register.ejs');
+const passwordResetView=text('views/customer/forgot-password.ejs');
+const abuseAdmin=text('src/platform/admin-abuse-protection.js');
+for(const route of ["'/login'","'/account/login'","'/account/register'"]){
+    assert(abuseProtection.includes(route),'Turnstile core authentication coverage is missing '+route+'.');
+}
+assert(/CORE_AUTH_PATHS\.has\(path\)/.test(abuseProtection),'Core sign-in/sign-up Turnstile gates must be mandatory whenever Turnstile is enabled.');
+assert(/body\.action !== expectedAction/.test(abuseProtection),'Turnstile tokens must be bound to the intended authentication action.');
+assert(application.includes("app.get('/login', publicAbuseProtection.middleware")&&application.includes("app.post('/login', publicAbuseProtection.middleware"),'Staff sign-in must pass through Turnstile before the staff controller.');
+for(const [label,view,action] of [
+    ['customer login',customerLoginView,'customer_login'],
+    ['staff login',staffLoginView,'staff_login'],
+    ['registration',registrationView,'customer_registration'],
+    ['password reset',passwordResetView,'customer_password_reset']
+]){
+    assert(view.includes('cf-turnstile')&&view.includes('data-action="<%= turnstileAction %>"'),`${label} must render the server-selected Turnstile action.`);
+    assert(abuseProtection.includes(`'${action}'`),`${label} Turnstile action must have a server-side expected action.`);
+}
+assert(/Always protected while enabled/.test(abuseAdmin)&&!/name:'protectRegistration'/.test(abuseAdmin),'Admin settings must make sign-in/sign-up Turnstile coverage non-optional.');
+
 const pending=text('src/security/pending-registration.js');
 const publicAuth=text('src/platform/customer-public-auth.js');
 const jobs=text('src/automation/jobs.js');
