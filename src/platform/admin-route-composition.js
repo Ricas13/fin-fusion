@@ -1,5 +1,6 @@
 'use strict';
 
+const routeRateLimit = require('../security/route-rate-limit');
 const dashboard = require('./admin-dashboard');
 const { createAdminProductModulesRouter } = require('./admin-product-modules');
 const { createAdminAttentionRouter } = require('./admin-attention');
@@ -58,7 +59,21 @@ const { createAdminUsersRouter } = require('./admin-users');
 const { createAdminDiscountsRouter } = require('./admin-discounts');
 const { createAdminReferralsRouter } = require('./admin-referrals');
 
+const adminMutationLimit = routeRateLimit.middleware({
+  scope: 'admin-mutation',
+  max: 300,
+  windowSeconds: 60,
+  reason: 'admin_mutation'
+});
+
+function adminMutationRateLimit(req, res, next) {
+  if (req.method !== 'POST') return next();
+  if (!(req.session?.authUserId && req.session?.authRole === 'admin')) return next();
+  return adminMutationLimit(req, res, next);
+}
+
 function mountAdminRoutes(app) {
+  app.use('/admin', adminMutationRateLimit);
   app.get('/admin', dashboard.dashboardPage);
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
@@ -128,4 +143,4 @@ function mountAdminRoutes(app) {
   app.use(createAdminReferralsRouter());
 }
 
-module.exports = { mountAdminRoutes };
+module.exports = { mountAdminRoutes, adminMutationRateLimit };
