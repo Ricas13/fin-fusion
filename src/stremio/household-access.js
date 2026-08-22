@@ -81,23 +81,22 @@ function deniedStream(decision, options = {}) {
   const stream = {
     name: `CAPTAiNFiN - ${title}`,
     title,
-    description
-  };
-  if (options.url) {
-    stream.url = String(options.url);
-    stream.behaviorHints = {
+    description,
+    behaviorHints: {
+      // Match the shape used by normal raw Jellyfin results. In particular,
+      // notWebReady keeps Stremio clients from silently filtering the result
+      // merely because the local explanatory MP4 is not a browser-native URL.
+      notWebReady: true,
       bingeGroup: 'captainfin-household-ip-block',
       filename: 'CAPTAiNFiN household connection blocked.mp4'
-    };
-    if (Number(options.videoSize) > 0) stream.behaviorHints.videoSize = Number(options.videoSize);
-  }
+    }
+  };
+  if (Number(options.videoSize) > 0) stream.behaviorHints.videoSize = Number(options.videoSize);
+  if (options.url) stream.url = String(options.url);
   if (options.externalUrl) {
     const externalUrl = String(options.externalUrl);
     stream.externalUrl = externalUrl;
-    if (!stream.url) {
-      stream.url = externalUrl;
-      stream.behaviorHints = { notWebReady: true };
-    }
+    if (!stream.url) stream.url = externalUrl;
   }
   return stream;
 }
