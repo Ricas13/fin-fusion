@@ -6,6 +6,7 @@ const csrf = require('../auth/csrf');
 const jobHealth = require('../automation/job-health');
 const { layout, esc } = require('./admin-html');
 const runtimeSettings = require('./runtime-settings');
+const ui = require('./admin-ui');
 
 const LABELS = {
     health: ['Jellyfin health', 'Checks configured servers and updates health status.'],
@@ -38,38 +39,58 @@ function noStore(_req,res,next){ res.setHeader('Cache-Control','no-store, privat
 function dt(value){ return value ? new Date(value).toLocaleString('en-GB') : 'Never'; }
 function duration(value){ return value==null ? '—' : Number(value)<1000 ? `${value} ms` : `${(Number(value)/1000).toFixed(1)} s`; }
 function intervalLabel(seconds){ const n=Number(seconds||0); if(n%86400===0)return `${n/86400} day${n===86400?'':'s'}`; if(n%3600===0)return `${n/3600} hour${n===3600?'':'s'}`; if(n%60===0)return `${n/60} minute${n===60?'':'s'}`; return `${n} seconds`; }
-function notice(req){ return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`; }
 function token(req){ return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
 function statePill(state){const cls=state==='healthy'?'good':state==='failed'||state==='stale'||state==='missing'?'bad':state==='disabled'?'warn':'';return `<span class="pill ${cls}">${esc(String(state).replace('_',' '))}</span>`}
 function scheduleOptions(value){const current=Number(value||0),values=[...new Set([...PRESETS,current].filter(n=>n>=30&&n<=86400))].sort((a,b)=>a-b);return values.map(n=>`<option value="${n}" ${n===current?'selected':''}>Every ${esc(intervalLabel(n))}</option>`).join('')}
 function groupFor(jobKey){return GROUPS.find(([, ,keys])=>keys.has(jobKey))||['Other','Less common background work.',new Set()]}
 
 async function workerState(){const result=await query(`SELECT *,EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state WHERE worker_key='automation'`);return result.rows[0]||null}
-async function page(req) {
-    await runtimeSettings.ensureLoaded();
-    const [jobs,worker] = await Promise.all([jobHealth.list(),workerState()]);
-    const cards = jobs.map(job => {
-        const [name,description] = LABELS[job.job_key] || [job.job_key,'Background platform task'];
-        const state=jobHealth.healthState(job),core=CORE_JOBS.has(job.job_key);
-        return {group:groupFor(job.job_key)[0],html:`<article class="serverCard automationJobCard"><div class="serverTop"><div><strong>${esc(name)}</strong>${core?' <span class="pill warn">Core</span>':''}<div class="subText">${esc(description)}</div></div>${statePill(state)}</div>
-            <div class="serverStats"><div><span class="metricMini">${esc(intervalLabel(job.interval_seconds))}</span><span class="subText">schedule</span></div><div><span class="metricMini">${esc(job.last_processed_count==null?'—':job.last_processed_count)}</span><span class="subText">last processed</span></div><div><span class="metricMini">${esc(job.consecutive_failures||0)}</span><span class="subText">failures</span></div></div>
-            <div class="kvList"><div class="kvRow"><div class="kvLabel">Last start</div><div class="kvValue">${esc(dt(job.last_started_at))}</div></div><div class="kvRow"><div class="kvLabel">Last success</div><div class="kvValue">${esc(dt(job.last_success_at))}</div></div><div class="kvRow"><div class="kvLabel">Duration</div><div class="kvValue">${esc(duration(job.last_duration_ms))}</div></div><div class="kvRow"><div class="kvLabel">Next run</div><div class="kvValue">${esc(dt(job.next_run_at))}</div></div></div>
-            ${job.force_run_requested?'<div class="notice">Manual run requested; the worker will execute this once even if its recurring schedule is disabled.</div>':''}${job.last_error?`<div class="notice error"><strong>Last error:</strong> ${esc(job.last_error)}</div>`:''}${core?'<div class="securityNote standalone"><strong>Core service job:</strong> disabling this can interrupt access, billing or server-state maintenance. Prefer changing the schedule only when you understand the operational effect.</div>':''}
-            <form class="formPanel" method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="formGrid"><div class="formGroup"><label>Schedule</label><select class="input" name="intervalSeconds">${scheduleOptions(job.interval_seconds)}</select><div class="inlineHelp">Common schedules are shown in plain language. Existing custom values remain selectable.</div></div><label class="checkRow"><input type="checkbox" name="enabled" value="1" ${job.enabled?'checked':''}> Enabled</label></div>${core&&job.enabled?'<div class="formGroup"><label>Disable confirmation <span class="muted">(only required when turning this core job off)</span></label><input class="input" name="disableConfirmation" autocomplete="off" placeholder="Type DISABLE"></div>':''}<button class="button secondary btn-sm">Save schedule</button></form>
-            <form method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}/run">${token(req)}<button class="button btn-sm">Run now${job.enabled?'':' once'}</button></form></article>`};
-    });
-    const groupedSections=GROUPS.concat([['Other','Less common background work.',new Set()]]).map(([title,description])=>{
+
+function jobCard(req, job) {
+    const [name,description] = LABELS[job.job_key] || [job.job_key,'Background platform task'];
+    const state=jobHealth.healthState(job),core=CORE_JOBS.has(job.job_key);
+    return `<article class="serverCard automationJobCard"><div class="serverTop"><div><strong>${esc(name)}</strong>${core?' <span class="pill warn">Core</span>':''}<div class="subText">${esc(description)}</div></div>${statePill(state)}</div>
+        <div class="serverStats"><div><span class="metricMini">${esc(intervalLabel(job.interval_seconds))}</span><span class="subText">schedule</span></div><div><span class="metricMini">${esc(job.last_processed_count==null?'—':job.last_processed_count)}</span><span class="subText">last processed</span></div><div><span class="metricMini">${esc(job.consecutive_failures||0)}</span><span class="subText">failures</span></div></div>
+        <div class="kvList"><div class="kvRow"><div class="kvLabel">Last start</div><div class="kvValue">${esc(dt(job.last_started_at))}</div></div><div class="kvRow"><div class="kvLabel">Last success</div><div class="kvValue">${esc(dt(job.last_success_at))}</div></div><div class="kvRow"><div class="kvLabel">Duration</div><div class="kvValue">${esc(duration(job.last_duration_ms))}</div></div><div class="kvRow"><div class="kvLabel">Next run</div><div class="kvValue">${esc(dt(job.next_run_at))}</div></div></div>
+        ${job.force_run_requested?'<div class="notice">Manual run requested; the worker will execute this once even if its recurring schedule is disabled.</div>':''}${job.last_error?`<div class="notice error"><strong>Last error:</strong> ${esc(job.last_error)}</div>`:''}${core?'<div class="securityNote standalone"><strong>Core service job:</strong> disabling this can interrupt access, billing or server-state maintenance. Prefer changing the schedule only when you understand the operational effect.</div>':''}
+        <form class="formPanel" method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="formGrid"><div class="formGroup"><label>Schedule</label><select class="input" name="intervalSeconds">${scheduleOptions(job.interval_seconds)}</select><div class="inlineHelp">Common schedules are shown in plain language. Existing custom values remain selectable.</div></div><label class="checkRow"><input type="checkbox" name="enabled" value="1" ${job.enabled?'checked':''}> Enabled</label></div>${core&&job.enabled?'<div class="formGroup"><label>Disable confirmation <span class="muted">(only required when turning this core job off)</span></label><input class="input" name="disableConfirmation" autocomplete="off" placeholder="Type DISABLE"></div>':''}<button class="button secondary btn-sm">Save schedule</button></form>
+        <form method="post" action="/admin/automation/${encodeURIComponent(job.job_key)}/run">${token(req)}<button class="button btn-sm">Run now${job.enabled?'':' once'}</button></form></article>`;
+}
+
+function groupedJobs(req,jobs){
+    const cards=jobs.map(job=>({group:groupFor(job.job_key)[0],html:jobCard(req,job)}));
+    return GROUPS.concat([['Other','Less common background work.',new Set()]]).map(([title,description])=>{
         const rows=cards.filter(card=>card.group===title);
         if(!rows.length)return '';
         return `<section class="section automationGroup"><div class="sectionHead"><div><h2>${esc(title)}</h2><div class="muted">${esc(description)}</div></div><span class="pill">${rows.length} job${rows.length===1?'':'s'}</span></div><div class="serverGrid">${rows.map(row=>row.html).join('')}</div></section>`;
     }).join('');
+}
+
+function automationHero(jobs,worker,workerAlive){
     const states=jobs.map(job=>jobHealth.healthState(job));
-    const unhealthy=states.filter(state=>['failed','stale','missing'].includes(state)).length;
+    const unhealthyJobs=jobs.filter(job=>['failed','stale','missing'].includes(jobHealth.healthState(job)));
     const disabled=states.filter(state=>state==='disabled').length;
     const healthy=states.filter(state=>state==='healthy').length;
+    const first=unhealthyJobs[0];
+    const tone=!workerAlive?'bad':unhealthyJobs.length?'bad':disabled?'warn':'good';
+    const title=!workerAlive?'Automation worker is not healthy':unhealthyJobs.length?`${unhealthyJobs.length} automation ${unhealthyJobs.length===1?'job needs':'jobs need'} action`:disabled?`${disabled} automation ${disabled===1?'job is':'jobs are'} disabled`:'Automation is healthy';
+    const next=!workerAlive?'Restore the automation worker before changing individual schedules.':first?`Run or inspect ${LABELS[first.job_key]?.[0]||first.job_key} first.`:disabled?'Review whether the disabled jobs are intentional.':'No intervention is required; scheduled work is running normally.';
+    return ui.operatorHero({tone,eyebrow:'Automation control room',title,body:'Worker health and failed jobs are shown before routine schedules so background failures are hard to miss.',statusLabel:!workerAlive?'Worker problem':unhealthyJobs.length?'Action required':disabled?'Review disabled':'Operating normally',next,facts:[
+        {label:'Worker',value:workerAlive?'Alive':'Stale / missing',detail:worker?`heartbeat ${worker.heartbeat_age_seconds}s ago`:'no heartbeat registered'},
+        {label:'Healthy jobs',value:`${healthy} / ${jobs.length}`,detail:'based on canonical job-health state'},
+        {label:'Needs action',value:String(unhealthyJobs.length),detail:'failed, stale or missing'},
+        {label:'Disabled',value:String(disabled),detail:'recurring schedule off'}
+    ],actionsHtml:first?`<a class="button" href="#automation-problems">Fix failing jobs</a><a class="button secondary" href="#all-automation-jobs">All schedules</a>`:'<a class="button secondary" href="#all-automation-jobs">Review schedules</a>'});
+}
+
+async function page(req) {
+    await runtimeSettings.ensureLoaded();
+    const [jobs,worker] = await Promise.all([jobHealth.list(),workerState()]);
     const workerAlive=Boolean(worker&&Number(worker.heartbeat_age_seconds)<=Math.max(60,Math.ceil(Number(worker?.metadata?.pollMs||15000)/1000)*4));
-    const workerBanner=worker?`<div class="statusBanner"><strong>Automation worker:</strong> ${workerAlive?'<span class="pill good">alive</span>':'<span class="pill bad">stale</span>'} · instance ${esc(worker.instance_id)} · version ${esc(worker.version||'unknown')} · heartbeat ${esc(worker.heartbeat_age_seconds)}s ago${worker.draining_at?` · draining since ${esc(dt(worker.draining_at))}`:''}.</div>`:'<div class="notice error"><strong>Automation worker heartbeat missing.</strong> The job configuration exists, but no current worker has registered itself.</div>';
-    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'Schedules, singleton locks and live worker health',body:`${notice(req)}<div class="metrics"><div class="metric"><div class="metricLabel">Jobs</div><div class="metricValue">${jobs.length}</div></div><div class="metric"><div class="metricLabel">Healthy</div><div class="metricValue">${healthy}</div></div><div class="metric"><div class="metricLabel">Needs attention</div><div class="metricValue">${unhealthy}</div></div><div class="metric"><div class="metricLabel">Disabled</div><div class="metricValue">${disabled}</div></div></div>${workerBanner}<div class="operatorCallout"><strong>Manual controls are grouped by operational area.</strong> Use Run now for diagnosis or catch-up work; normal service should be driven by the schedule.</div>${groupedSections}`});
+    const problemJobs=jobs.filter(job=>['failed','stale','missing'].includes(jobHealth.healthState(job)));
+    const problems=problemJobs.length?`<section class="section" id="automation-problems">${ui.sectionHeader({title:'Fix these jobs first',description:'These jobs are currently failed, stale or missing. Run them for catch-up/diagnosis or correct the underlying worker/integration problem.'})}<div class="serverGrid">${problemJobs.map(job=>jobCard(req,job)).join('')}</div></section>`:'';
+    const routine=ui.detailDisclosure({title:`All automation schedules (${jobs.length})`,summary:'Routine controls · open only when changing schedules or running a job manually',bodyHtml:`<div id="all-automation-jobs">${groupedJobs(req,jobs)}</div>`});
+    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${problems}${routine}`});
 }
 
 function createAdminAutomationRouter(){
@@ -95,4 +116,4 @@ function createAdminAutomationRouter(){
     return router;
 }
 
-module.exports={createAdminAutomationRouter,page,LABELS,CORE_JOBS,workerState};
+module.exports={createAdminAutomationRouter,page,LABELS,CORE_JOBS,workerState,jobCard,groupedJobs,automationHero};
