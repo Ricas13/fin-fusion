@@ -6,6 +6,7 @@ const { layout, esc } = require('./admin-html');
 const ui = require('./admin-ui');
 const runtimeSettings = require('./runtime-settings');
 const releaseStatus = require('./release-status');
+const diagnostics = require('./system-diagnostics');
 
 function gate(req, res, next) {
   if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -37,13 +38,34 @@ function statusNotice(status) {
   if (status.state === 'disabled') return ui.notice('warn', 'Automatic update checking is disabled for this process. The running version remains available below.', { title: 'Update checks disabled' });
   return ui.notice('warn', `CAPTAiNFiN could not verify main right now${status.error ? `: ${status.error}` : '.'}`, { title: 'Update check unavailable' });
 }
+function systemHealthNotice(system) {
+  if (system.overall.kind === 'good') return ui.notice('success', system.overall.detail, { title: system.overall.label });
+  if (system.overall.kind === 'bad') return ui.notice('error', system.overall.detail, { title: system.overall.label });
+  return ui.notice('warn', system.overall.detail, { title: system.overall.label });
+}
+function healthCard(group) {
+  return `<a class="card systemHealthCard systemHealth-${esc(group.kind)}" href="${esc(group.href)}"><div class="systemHealthCardHead"><strong>${esc(group.label)}</strong>${ui.statusBadge(group.kind === 'good' ? 'Healthy' : group.kind === 'bad' ? 'Attention' : 'Review', group.kind)}</div><p>${esc(group.detail)}</p><span class="systemHealthOpen">Review →</span></a>`;
+}
 
-function page(req, status) {
+function page(req, system) {
+  const status = system.release;
   const version = `v${status.version}`;
   const compareAction = status.compareUrl
     ? `<a class="button secondary" href="${esc(status.compareUrl)}" target="_blank" rel="noopener noreferrer">Review changes</a>`
     : '';
   const body = `${ui.noticesFromRequest(req)}
+    <section class="systemHealthHero card">
+      <div class="systemReleaseLead"><div><span class="uiEyebrow">System health</span><h2>${esc(system.overall.label)}</h2><p class="muted">A read-only view of application readiness, workers, backups, fleet and operational configuration.</p></div>${ui.statusBadge(system.overall.label, system.overall.kind)}</div>
+      ${systemHealthNotice(system)}
+    </section>
+    <section class="systemHealthGrid" aria-label="System health checks">
+      ${system.groups.map(healthCard).join('')}
+    </section>
+    <section class="card systemReleaseActions systemSupportReport">
+      ${ui.sectionHeader({ title: 'Support report', description: 'Download an allowlisted diagnostic snapshot for troubleshooting. It contains health states, versions and counts—not environment dumps, credentials, customer data, server URLs or raw operational errors.', actionsHtml: '<a class="button secondary" href="/admin/system/support-report.json" download>Download support report</a>' })}
+      <div class="systemSafetyNote"><strong>Review before sharing</strong><p>The report is generated through a deny-on-leak sanitizer and is designed to be shareable with support. Still review any diagnostic file before sending it outside your organisation.</p></div>
+      <dl class="systemSupportContents"><div><dt>Included</dt><dd>Build/version, runtime platform, readiness states, worker heartbeat ages, backup readiness, fleet counts and notification counts.</dd></div><div><dt>Excluded</dt><dd>Secrets, tokens, database URLs, email/IP addresses, customer records, plan/server names, provider identifiers and raw logs.</dd></div></dl>
+    </section>
     <section class="systemReleaseHero card">
       <div class="systemReleaseLead"><div><span class="uiEyebrow">Running release</span><h2>${esc(version)}</h2><p class="muted">Exact build and upstream status for this CAPTAiNFiN instance.</p></div>${ui.statusBadge(status.label, kindFor(status.state))}</div>
       ${statusNotice(status)}
@@ -63,7 +85,11 @@ function page(req, status) {
       ${ui.sectionHeader({title:'Build identity',description:'Useful when checking logs, support reports or whether a deployment actually reached the expected revision.'})}
       <dl class="systemBuildDetails"><div><dt>Version</dt><dd>${esc(status.version)}</dd></div><div><dt>Build commit</dt><dd><code>${esc(status.buildSha || 'Unavailable')}</code></dd></div><div><dt>Build time</dt><dd>${esc(dt(status.builtAt))}</dd></div><div><dt>Upstream commit</dt><dd><code>${esc(status.upstreamSha || 'Unavailable')}</code></dd></div></dl>
     </section>`;
-  return layout({ siteName: runtimeSettings.siteName(), active: 'system', title: 'System', subtitle: 'Version, build identity and production update status', body });
+  return layout({ siteName: runtimeSettings.siteName(), active: 'system', title: 'System', subtitle: 'Health, diagnostics, build identity and production update status', body });
+}
+
+function supportFilename(now = new Date()) {
+  return `captainfin-support-${now.toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-')}.json`;
 }
 
 function createAdminSystemRouter() {
@@ -72,14 +98,24 @@ function createAdminSystemRouter() {
   router.get('/admin/system', async (req, res, next) => {
     try {
       await runtimeSettings.ensureLoaded();
-      const status = releaseStatus.publicStatus(await releaseStatus.checkForUpdate());
-      return res.send(page(req, status));
+      const system = await diagnostics.collectSystemDiagnostics();
+      return res.send(page(req, system));
     } catch (error) { return next(error); }
   });
   router.get('/admin/system/status.json', async (_req, res, next) => {
     try {
       const status = releaseStatus.publicStatus(await releaseStatus.checkForUpdate());
       return res.json(status);
+    } catch (error) { return next(error); }
+  });
+  router.get('/admin/system/support-report.json', async (_req, res, next) => {
+    try {
+      const system = await diagnostics.collectSystemDiagnostics();
+      const report = diagnostics.supportReportFromDiagnostics(system);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${supportFilename()}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.send(JSON.stringify(report, null, 2) + '\n');
     } catch (error) { return next(error); }
   });
   router.post('/admin/system/check', async (req, res) => {
@@ -95,4 +131,4 @@ function createAdminSystemRouter() {
   return router;
 }
 
-module.exports = { createAdminSystemRouter, page, kindFor };
+module.exports = { createAdminSystemRouter, page, kindFor, supportFilename };
