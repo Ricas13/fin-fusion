@@ -1,36 +1,10 @@
 name: Stremio
 
-# This workflow is part of the full pre-merge release gate. workflow_dispatch
-# remains available for changes outside the Stremio path filter when needed.
+# This workflow is part of the full pre-merge release gate and therefore runs
+# on every pull request. Keeping it unconditional makes exact-head validation
+# automatic instead of relying on a manual workflow_dispatch for unrelated PRs.
 on:
   pull_request:
-    paths:
-      - 'src/stremio/**'
-      - 'src/application.js'
-      - 'src/jellyfin/activity.js'
-      - 'src/jellyfin/resilient-provisioning.js'
-      - 'src/automation/jobs.js'
-      - 'src/platform/admin-stremio*.js'
-      - 'src/platform/admin-plan-create-v2.js'
-      - 'src/platform/admin-plan-delivery.js'
-      - 'src/platform/admin-plans-list.js'
-      - 'src/platform/admin-nav.js'
-      - 'src/platform/product-readiness.js'
-      - 'src/platform/customer-stremio.js'
-      - 'src/platform/customer-dashboard.js'
-      - 'src/platform/storefront-core.js'
-      - 'src/platform/router.js'
-      - 'public/js/admin-plan-create-v2.js'
-      - 'views/customer/stremio.ejs'
-      - 'views/customer/stremio-dashboard.ejs'
-      - 'views/customer/dashboard.ejs'
-      - 'db/migrations/**'
-      - 'scripts/stremio-*.js'
-      - 'tests/admin-information-architecture-regression.js'
-      - 'package.json'
-      - 'docker-compose.yml'
-      - '.env.example'
-      - '.github/workflows/stremio.yml'
   workflow_dispatch:
 
 concurrency:
