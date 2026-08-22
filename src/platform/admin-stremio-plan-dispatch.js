@@ -4,11 +4,8 @@ const express=require('express');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const runtimeSettings=require('./runtime-settings');
-const planPricing=require('../payments/plan-pricing');
-const createFlow=require('./admin-stremio-plan-create');
 const editor=require('./admin-stremio-plan-editor');
 
-const createWriteLimit=routeRateLimit.middleware({scope:'admin-stremio-plan-create',max:20,windowSeconds:60,reason:'admin_stremio_plan_create'});
 const editorWriteLimit=routeRateLimit.middleware({scope:'admin-stremio-plan-editor',max:30,windowSeconds:60,reason:'admin_stremio_plan_editor'});
 
 function gate(req,res,next){
@@ -29,28 +26,6 @@ function runLimited(limit,req,res,next,handler){
     if(error)return next(error);
     Promise.resolve().then(handler).catch(next);
   });
-}
-
-async function createGet(req,res,next){
-  if(String(req.query.type||req.query.product||'')!=='stremio')return next();
-  await runtimeSettings.ensureLoaded();
-  const currency=await planPricing.platformDefaultCurrency();
-  return res.send(createFlow.page(req,{currency}));
-}
-
-async function createPost(req,res,next){
-  if(String(req.body?.serviceType||'')!=='stremio')return next();
-  if(!csrf.verify(req))return res.status(403).send('Invalid security token');
-  let currency='GBP';
-  try{
-    currency=await planPricing.platformDefaultCurrency();
-    const input=createFlow.parse(req.body,currency);
-    const created=await createFlow.create(input,req.session.authUserId);
-    return res.redirect(`/admin/plans/${encodeURIComponent(created.id)}/edit?message=${encodeURIComponent('Stremio plan created. Review sources and open capacity when ready.')}`);
-  }catch(error){
-    if(error?.code==='23505')error=new Error('That plan code already exists.');
-    return res.status(400).send(createFlow.page(req,{input:req.body,error:error.message,currency}));
-  }
 }
 
 async function editGet(req,res,next,planId){
@@ -104,13 +79,9 @@ function createAdminStremioPlanDispatchRouter(){
   router.use('/admin/plans',gate,noStore);
   router.use((req,res,next)=>{
     const pathname=req.path;
-    if(req.method==='GET'&&pathname==='/admin/plans/new'){
-      return Promise.resolve(createGet(req,res,next)).catch(next);
-    }
-    if(req.method==='POST'&&pathname==='/admin/plans'){
-      if(String(req.body?.serviceType||'')!=='stremio')return next();
-      return runLimited(createWriteLimit,req,res,next,()=>createPost(req,res,next));
-    }
+    // Creation deliberately falls through to admin-plan-create-v2 so Jellyfin
+    // Free, Jellyfin Paid and Stremio share one canonical adaptive workflow.
+    // This dispatcher only owns Stremio-specific editing compatibility.
     let match=pathname.match(/^\/admin\/plans\/([^/]+)\/edit$/);
     if(req.method==='GET'&&match){
       return Promise.resolve(editGet(req,res,next,decodePlanId(match[1]))).catch(next);
