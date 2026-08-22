@@ -113,7 +113,7 @@ function recoveryRunbook(readiness) {
   const restoreCommand = path
     ? `RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE bash recovery.sh restore ${shellQuote(path)}`
     : 'bash recovery.sh list';
-  const fetchCommand = 'docker compose --profile recovery run --rm recovery-tools node scripts/offsite-backup.js list';
+  const fetchCommand = 'docker compose --profile recovery run --rm --no-deps recovery-tools node scripts/offsite-backup.js list';
   return `<details class="card recoveryRunbook operatorDetails">
     <summary><span>Host recovery procedure</span><small>Advanced · command-line recovery only</small></summary>
     <div class="recoveryRunbookBody operatorDetailsBody">
