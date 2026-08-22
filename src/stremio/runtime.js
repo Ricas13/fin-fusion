@@ -11,6 +11,7 @@ const externalRuntime = require('./external-direct-runtime');
 const householdAccess = require('./household-access');
 const blockedMedia = require('./blocked-media');
 const runtimeSettings = require('./runtime-settings');
+const mediaEdge = require('./media-edge-grant');
 
 function stremioRateIdentity(req) {
   const token = String(req.params?.token || '').trim();
@@ -180,6 +181,8 @@ async function sendHouseholdBlockedMedia(req, res) {
 
 function createStremioRuntimeRouter() {
   const router = express.Router();
+  router.all('/stremio-edge/authorize', mediaEdge.authorizeHandler);
+  router.use(mediaEdge.runtimeProtectionMiddleware);
   router.use('/stremio', cors, loadRuntimeSetting);
   router.options('/stremio/*', (_req, res) => res.sendStatus(204));
 
