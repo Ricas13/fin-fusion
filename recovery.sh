@@ -55,6 +55,7 @@ require_docker() {
   command -v docker >/dev/null 2>&1 || fail 'docker is required'
   docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is required'
   [[ -f .env ]] || fail '.env is missing; run this from the CAPTAiNFiN production checkout'
+  [[ -d "$BACKUP_ROOT" ]] || fail 'backups directory is missing; run the supported installer/deployment preparation first'
   docker compose config >/dev/null
 }
 
@@ -78,7 +79,6 @@ resolve_backup() {
     *) fail 'backup path resolved outside ./backups' ;;
   esac
   BACKUP_REL="$raw"
-  BACKUP_HOST="$host"
   BACKUP_CONTAINER="/backups/$raw"
 }
 
@@ -117,7 +117,9 @@ create_pre_restore_safety_backup() {
     return 0
   fi
   log 'Creating encrypted pre-restore safety backup of the current database'
-  mkdir -p "$BACKUP_ROOT/pre-restore"
+  # Do not mkdir this path on the host: recovery-tools runs as BACKUP_PUID/GID
+  # and should create the child directory itself so a root-run helper cannot
+  # accidentally leave a root-owned directory that the container cannot write.
   docker compose --profile recovery run --rm --no-deps \
     -e BACKUP_DIR=/backups/pre-restore \
     recovery-tools node scripts/backup-db.js
@@ -177,9 +179,12 @@ restore_production() {
 mode="${1:-}"
 case "$mode" in
   list)
-    mkdir -p "$BACKUP_ROOT"
     printf 'Available CAPTAiNFiN encrypted backups:\n'
-    find "$BACKUP_ROOT" -type f -name '*.pgdump.enc' -printf '%TY-%Tm-%Td %TH:%TM  %s bytes  %P\n' 2>/dev/null | sort -r || true
+    if [[ -d "$BACKUP_ROOT" ]]; then
+      find "$BACKUP_ROOT" -type f -name '*.pgdump.enc' -printf '%TY-%Tm-%Td %TH:%TM  %s bytes  %P\n' 2>/dev/null | sort -r || true
+    else
+      printf '(backup directory is not present)\n'
+    fi
     ;;
   check)
     require_docker
