@@ -1,16 +1,16 @@
 /* Visual refinement layer: keep the admin scannable before adding more features. */
 
 /* Sidebar accordion ------------------------------------------------------- */
-.adminTabs{gap:8px}
+.adminTabs{gap:2px}
 .navSection{display:block}
 .navSection>summary{list-style:none}
 .navSection>summary::-webkit-details-marker{display:none}
-.navSectionLabel{min-height:38px;padding:8px;border-radius:8px;cursor:pointer;user-select:none;transition:background .14s ease,color .14s ease}
+.navSectionLabel{min-height:34px;padding:5px 8px;border-radius:8px;cursor:pointer;user-select:none;transition:background .14s ease,color .14s ease}
 .navSectionLabel:hover{background:rgba(255,255,255,.035);color:#aeb9c6}
 .navSection.active .navSectionLabel{color:#9aa9ba}
 .navChevron{margin-left:auto;color:#526173;font-size:13px;line-height:1;transform:rotate(-90deg);transition:transform .14s ease,color .14s ease}
 .navSection[open] .navChevron{transform:rotate(0);color:#7d8d9f}
-.navSectionPages{display:none;gap:2px;padding:3px 0 4px}
+.navSectionPages{display:none;gap:2px;padding:2px 0}
 .navSection[open] .navSectionPages{display:grid}
 .navSection:not([open]){border-bottom:1px solid rgba(255,255,255,.015)}
 
