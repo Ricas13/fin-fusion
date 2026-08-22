@@ -78,11 +78,24 @@ The explicit confirmation phrase is mandatory. The helper then:
 1. performs the offline encrypted-backup check;
 2. ensures PostgreSQL is healthy enough to receive the restore;
 3. stops the web application and all long-running worker writers;
-4. runs the existing destructive restore tooling with the exclusive maintenance lock;
-5. reapplies migrations, isolated runtime database roles and administrator bootstrap;
-6. restarts the application and workers;
-7. waits for their health checks;
-8. runs `npm run verify:deployment` inside the live app container.
+4. creates a new encrypted snapshot of the current database under `backups/pre-restore/`;
+5. runs the existing destructive restore tooling with the exclusive maintenance lock;
+6. reapplies migrations, isolated runtime database roles and administrator bootstrap;
+7. restarts the application and workers;
+8. waits for their health checks;
+9. runs `npm run verify:deployment` inside the live app container.
+
+The pre-restore snapshot is intentionally created **after application writers are stopped**, so the state being replaced is preserved before the destructive restore begins.
+
+If the current database is too damaged for `pg_dump` to create that safety snapshot, recovery fails closed and leaves the application/workers stopped. An emergency operator who has already accepted the loss of the current database can make that second decision explicitly:
+
+```bash
+CAPTAINFIN_RECOVERY_SKIP_SAFETY_BACKUP=1 \
+RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE \
+  bash recovery.sh restore 'backups/captainfin-<timestamp>.pgdump.enc'
+```
+
+The emergency skip flag is separate from the destructive confirmation phrase so a normal restore cannot silently omit the safety snapshot.
 
 If recovery fails after application writers are stopped, the helper deliberately **leaves them stopped**. Do not restart traffic until the database state is understood and either the restore is completed or another known-good recovery point is selected.
 
@@ -92,14 +105,20 @@ If recovery fails after application writers are stopped, the helper deliberately
 
 Back up the production `.env`/secret material separately using an appropriately protected secrets process. Do not store the encryption key beside an exported backup in an unprotected location.
 
-## Pre-deploy recovery points
+## Pre-deploy and pre-restore recovery points
 
-Normal upgrades also create encrypted recovery points under:
+Normal upgrades create encrypted recovery points under:
 
 ```text
 backups/predeploy/
 ```
 
-They use the same encrypted format and can be passed to `recovery.sh check`, `drill`, or `restore` using their path under `backups/`.
+A destructive recovery normally preserves the replaced database under:
 
-Scheduled managed backups remain the primary protection mechanism; pre-deploy backups are an additional rollback/recovery point around upgrades.
+```text
+backups/pre-restore/
+```
+
+Both use the same authenticated encrypted format and can be passed to `recovery.sh check`, `drill`, or `restore` using their path under `backups/`.
+
+Scheduled managed backups remain the primary protection mechanism; pre-deploy and pre-restore backups are additional safety points around high-impact operations.
