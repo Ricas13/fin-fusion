@@ -70,5 +70,15 @@ function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
 function groupFor(active){const key=activeKey(active),hidden=hiddenPages[key];if(hidden){const base=groups.find(group=>group.key===hidden.groupKey)||groups[0],personal=['my-profile','my-notifications','my-security'].includes(key);return {...base,label:personal?'My account':base.label,pages:[hidden.page,...base.pages]};}return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];}
 function workflowParentPage(active){const key=activeKey(active),hidden=hiddenPages[key];if(!hidden)return null;const base=groups.find(group=>group.key===hidden.groupKey);return base?.pages.find(page=>page[0]===hidden.parentKey)||null;}
+function workflowPages(active){
+  const key=activeKey(active),parentKey=sidebarKey(key),hidden=hiddenPages[key];
+  if(parentKey.startsWith('my-'))return[];
+  const groupKey=hidden?.groupKey||groups.find(group=>group.pages.some(page=>page[0]===parentKey))?.key;
+  const group=groups.find(item=>item.key===groupKey);
+  const parent=group?.pages.find(page=>page[0]===parentKey);
+  if(!parent)return[];
+  const children=Object.values(hiddenPages).filter(item=>item.groupKey===groupKey&&item.parentKey===parentKey&&item.page[0]!=='search').map(item=>item.page);
+  return children.length?[parent,...children]:[];
+}
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
-module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,landingFor};
+module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,landingFor};
