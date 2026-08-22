@@ -10,6 +10,7 @@ const {layout,esc}=require('./admin-html');
 const {buildContext:commerceDashboardContext}=require('./admin-commerce-dashboard');
 const {renderWidgetGrid}=require('./admin-dashboard-page');
 const {rangeControls}=require('./admin-dashboard-view');
+const ui=require('./admin-ui');
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
@@ -33,14 +34,8 @@ async function commerceData(){
       WHERE s.superseded_by IS NULL AND s.current_period_end>NOW() AND s.current_period_end<=NOW()+INTERVAL '30 days'
         AND (s.cancel_at_period_end=TRUE OR s.status IN('trialing','past_due','paused') OR COALESCE(s.provider_subscription_id,'')='')
       ORDER BY s.current_period_end ASC LIMIT 25`),
-    query(`SELECT currency,
-      COALESCE(SUM(amount_minor) FILTER(WHERE state='available'),0)::bigint available_minor,
-      COALESCE(SUM(amount_minor) FILTER(WHERE state='pending'),0)::bigint pending_minor
-      FROM affiliate_credit_ledger GROUP BY currency ORDER BY currency`),
-    query(`SELECT currency,
-      COALESCE(SUM(amount_minor) FILTER(WHERE entry_type='referral_reward' AND created_at>=NOW()-INTERVAL '30 days'),0)::bigint earned_minor,
-      ABS(COALESCE(SUM(amount_minor) FILTER(WHERE entry_type='redeemed' AND created_at>=NOW()-INTERVAL '30 days'),0))::bigint redeemed_minor
-      FROM affiliate_credit_ledger GROUP BY currency ORDER BY currency`),
+    query(`SELECT currency, COALESCE(SUM(amount_minor) FILTER(WHERE state='available'),0)::bigint available_minor, COALESCE(SUM(amount_minor) FILTER(WHERE state='pending'),0)::bigint pending_minor FROM affiliate_credit_ledger GROUP BY currency ORDER BY currency`),
+    query(`SELECT currency, COALESCE(SUM(amount_minor) FILTER(WHERE entry_type='referral_reward' AND created_at>=NOW()-INTERVAL '30 days'),0)::bigint earned_minor, ABS(COALESCE(SUM(amount_minor) FILTER(WHERE entry_type='redeemed' AND created_at>=NOW()-INTERVAL '30 days'),0))::bigint redeemed_minor FROM affiliate_credit_ledger GROUP BY currency ORDER BY currency`),
     query(`SELECT COUNT(*)::int n FROM affiliate_profiles WHERE active=TRUE`),
     query(`SELECT setting_value FROM platform_settings WHERE setting_key='affiliate_program'`),
     incidents.recent(100),
@@ -58,11 +53,24 @@ function incidentTable(req,rows,admins){
 }
 
 function creditRows(rows,key){return rows.map(row=>({currency:row.currency,amount_minor:Number(row[key]||0)})).filter(row=>row.amount_minor!==0)}
-function paymentOperationsSplit(d){
-  const openIncidents=d.paymentIncidents.filter(row=>!row.resolved_at).length;
-  const failedEvents=Number(d.events?.failed_events||0);
-  return `<section class="section"><div class="sectionHead"><div><h2>Payment operations</h2><div class="muted">Commerce shows customer-impacting payment work. Provider setup stays on the Payments page.</div></div></div><div class="quick-actions"><a class="quick-action" href="/admin/payments#provider-setup"><strong>Provider setup</strong><span>Stripe, PayPal, webhooks, credentials and connection tests.</span></a><a class="quick-action" href="#payment-incidents"><strong>Operational payment problems</strong><span>${esc(openIncidents)} open incident${openIncidents===1?'':'s'} and ${esc(failedEvents)} failed provider event${failedEvents===1?'':'s'} in the last 30 days.</span></a><a class="quick-action" href="/admin/payments#payment-operations"><strong>Provider event monitor</strong><span>Recent webhook events and local subscription-state counts.</span></a></div></section>`;
+function commerceHero(d,dashboardCtx){
+  const open=d.paymentIncidents.filter(row=>!row.resolved_at);
+  const newIncidents=open.filter(row=>!row.acknowledged_at);
+  const failed=Number(d.events?.failed_events||0);
+  const expiries=(d.upcomingExpiries||[]).length;
+  const revenue=dashboardCtx.data?.revenue;
+  const mrr=dashboardCtx.data?.mrr;
+  const tone=newIncidents.length||failed?'bad':open.length||expiries?'warn':'commerce';
+  const title=newIncidents.length?`${newIncidents.length} new payment ${newIncidents.length===1?'incident needs':'incidents need'} action`:failed?`${failed} provider ${failed===1?'event failed':'events failed'} in the last 30 days`:open.length?`${open.length} acknowledged payment ${open.length===1?'incident remains':'incidents remain'} open`:'Commerce is clear';
+  const next=newIncidents.length?'Verify the first new incident with its provider, then resolve or assign it.':failed?'Inspect provider event health on Payments and confirm whether customers were affected.':open.length?'Finish the acknowledged payment incidents before routine reporting.':expiries?'Review upcoming expiries that could end customer access.':'No commercial intervention is required; review revenue analytics as needed.';
+  return ui.operatorHero({tone,eyebrow:'Commerce control room',title,body:'Customer-impacting payment work and upcoming access risk are shown before revenue charts and commercial policies.',statusLabel:newIncidents.length||failed?'Action required':open.length||expiries?'Review needed':'Money flow clear',next,facts:[
+    {label:'MRR',value:mrr?money(mrr.amountMinor,mrr.currency):'—',detail:'monthly-equivalent recurring revenue'},
+    {label:'Open incidents',value:String(open.length),detail:newIncidents.length?`${newIncidents.length} new`:'none new'},
+    {label:'Upcoming expiries',value:String(expiries),detail:'next 30 days needing review'},
+    {label:'30-day activations',value:String(d.activations?.activations||0),detail:`${d.activations?.churn||0} churned`}
+  ],actionsHtml:newIncidents.length?'<a class="button" href="#payment-incidents">Resolve payment incidents</a><a class="button secondary" href="/admin/payments">Provider health</a>':open.length?'<a class="button" href="#payment-incidents">Finish open incidents</a><a class="button secondary" href="/admin/payments">Provider health</a>':'<a class="button secondary" href="/admin/plans">Manage plans</a><a class="button secondary" href="/admin/payments">Payment providers</a>'});
 }
+
 async function page(req){
   await runtimeSettings.ensureLoaded();
   const d=await commerceData(),a=d.activations;
@@ -72,8 +80,12 @@ async function page(req){
   const expiryRows=(d.upcomingExpiries||[]).length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Plan</th><th>Status</th><th>Access ends</th></tr></thead><tbody>${d.upcomingExpiries.map(row=>`<tr><td><a href="/admin/users/${esc(row.customer_id)}?tab=billing">${esc(row.customer_name)}</a></td><td>${esc(row.plan_name)}</td><td><span class="pill ${row.cancel_at_period_end?'warn':''}">${esc(row.cancel_at_period_end?'renewal stopping':row.status)}</span><div class="subText">${esc(row.source)}</div></td><td>${esc(dt(row.current_period_end))}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No upcoming customer expiries in the next 30 days.</div>';
   const affiliateMetrics=d.affiliateEnabled?`<div class="metric"><div class="metricLabel">Affiliate credit earned</div><div class="metricValue">${esc(multi(earned30))}</div></div><div class="metric"><div class="metricLabel">Affiliate credit redeemed</div><div class="metricValue">${esc(multi(redeemed30))}</div></div>`:'';
   const affiliateBoundary=d.affiliateEnabled?' Affiliate service credit is shown separately because it is an account benefit, not cash revenue.':' Optional affiliate service credit is hidden until the affiliate programme is enabled.';
-  const body=`${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}<div class="statusBanner"><strong>Revenue boundary:</strong> CAPTAiNFiN revenue reporting covers direct customer subscriptions.${affiliateBoundary} Annual and six-month plans are normalized to monthly equivalents and currencies remain separate.</div>${rangeControls(dashboardCtx.range)}${widgetGrid}<section class="section"><div class="sectionHead"><h2>30-day lifecycle</h2></div><div class="metrics"><div class="metric"><div class="metricLabel">New subscribers</div><div class="metricValue">${esc(a.activations||0)}</div></div><div class="metric"><div class="metricLabel">Upcoming expiries</div><div class="metricValue">${esc((d.upcomingExpiries||[]).length)}</div></div><div class="metric"><div class="metricLabel">Customer churn</div><div class="metricValue">${esc(a.churn||0)}</div></div>${affiliateMetrics}</div></section><section class="section"><div class="sectionHead"><div><h2>Upcoming expiries</h2><div class="muted">Customers whose access may end in the next 30 days because renewal is stopping, payment is risky or the access is non-recurring.</div></div></div>${expiryRows}</section><section class="section"><div class="sectionHead"><div><h2>Commercial policies</h2><div class="muted">Configuration lives with the product area it controls rather than on this reporting overview.</div></div></div><div class="quick-actions"><a class="quick-action" href="/admin/plans/access-rules"><strong>Trial & free access rules</strong><span>Who may claim free/trial access and paid-to-free behaviour</span></a><a class="quick-action" href="/admin/payments/risk-policy"><strong>Payment risk policy</strong><span>Refund, dispute and chargeback access behaviour</span></a>${d.affiliateEnabled?'<a class="quick-action" href="/admin/referrals"><strong>Affiliate programme</strong><span>Referral attribution, service-credit balances and reward qualification</span></a>':''}</div></section>${paymentOperationsSplit(d)}<section class="section" id="payment-incidents"><div class="sectionHead"><h2>Payment incidents</h2><span class="muted">Provider verification, assignment and conservative access recovery</span></div>${incidentTable(req,d.paymentIncidents,d.admins)}</section><section class="section"><div class="sectionHead"><h2>Provider subscription states</h2></div>${d.states.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>${d.states.map(row=>`<tr><td>${esc(row.status)}</td><td>${esc(row.n)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No provider subscriptions.</div>'}</section>`;
-  return layout({siteName:runtimeSettings.siteName(),active:'commerce-overview',title:'Plans & Payments',subtitle:d.affiliateEnabled?'Revenue, lifecycle, affiliate service credit and payment incidents':'Revenue, subscriber movement, upcoming expiries and payment incidents',body});
+  const openIncidents=d.paymentIncidents.filter(row=>!row.resolved_at);
+  const incidentsFirst=openIncidents.length?`<section class="section" id="payment-incidents">${ui.sectionHeader({title:'Payment incidents to resolve',description:'Open customer-impacting payment work appears before analytics. Verify provider evidence before releasing any payment-risk hold.'})}${incidentTable(req,openIncidents,d.admins)}</section>`:'';
+  const lifecycleSection=`<section class="section"><div class="sectionHead"><h2>30-day lifecycle</h2></div><div class="metrics"><div class="metric"><div class="metricLabel">New subscribers</div><div class="metricValue">${esc(a.activations||0)}</div></div><div class="metric"><div class="metricLabel">Upcoming expiries</div><div class="metricValue">${esc((d.upcomingExpiries||[]).length)}</div></div><div class="metric"><div class="metricLabel">Customer churn</div><div class="metricValue">${esc(a.churn||0)}</div></div>${affiliateMetrics}</div></section>`;
+  const policies=`<section class="section"><div class="sectionHead"><div><h2>Commercial policies</h2><div class="muted">Configuration lives with the product area it controls rather than on this reporting overview.</div></div></div><div class="quick-actions"><a class="quick-action" href="/admin/plans/access-rules"><strong>Trial & free access rules</strong><span>Who may claim free/trial access and paid-to-free behaviour</span></a><a class="quick-action" href="/admin/payments/risk-policy"><strong>Payment risk policy</strong><span>Refund, dispute and chargeback access behaviour</span></a>${d.affiliateEnabled?'<a class="quick-action" href="/admin/referrals"><strong>Affiliate programme</strong><span>Referral attribution, service-credit balances and reward qualification</span></a>':''}</div></section>`;
+  const body=`${ui.noticesFromRequest(req)}${commerceHero(d,dashboardCtx)}${incidentsFirst}<div class="statusBanner"><strong>Revenue boundary:</strong> CAPTAiNFiN revenue reporting covers direct customer subscriptions.${affiliateBoundary} Annual and six-month plans are normalized to monthly equivalents and currencies remain separate.</div>${rangeControls(dashboardCtx.range)}${widgetGrid}${lifecycleSection}<section class="section"><div class="sectionHead"><div><h2>Upcoming expiries</h2><div class="muted">Customers whose access may end in the next 30 days because renewal is stopping, payment is risky or the access is non-recurring.</div></div></div>${expiryRows}</section>${ui.detailDisclosure({title:'Commercial policies & detailed payment state',summary:'Routine configuration and supporting subscription state',bodyHtml:`${policies}<section class="section"><div class="sectionHead"><h2>Provider subscription states</h2></div>${d.states.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>${d.states.map(row=>`<tr><td>${esc(row.status)}</td><td>${esc(row.n)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No provider subscriptions.</div>'}</section>${d.paymentIncidents.some(row=>row.resolved_at)?`<section class="section"><div class="sectionHead"><h2>Resolved payment history</h2></div>${incidentTable(req,d.paymentIncidents.filter(row=>row.resolved_at),d.admins)}</section>`:''}`})}`;
+  return layout({siteName:runtimeSettings.siteName(),active:'commerce-overview',title:'Plans & Payments',subtitle:d.affiliateEnabled?'Payment work first, then revenue, lifecycle and affiliate service credit':'Payment work first, then revenue, subscriber movement and upcoming expiries',body});
 }
 
 function createAdminCommerceRouter(){
@@ -88,4 +100,4 @@ function createAdminCommerceRouter(){
   return r;
 }
 
-module.exports={createAdminCommerceRouter,commerceData,incidentTable,page};
+module.exports={createAdminCommerceRouter,commerceData,incidentTable,page,commerceHero};
