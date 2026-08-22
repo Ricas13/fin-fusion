@@ -3,6 +3,25 @@
 (() => {
   const path = location.pathname;
 
+  const finalPolish=document.createElement('link');
+  finalPolish.rel='stylesheet';
+  finalPolish.href='/css/admin-final-polish.css';
+  if(!document.querySelector('link[href="/css/admin-final-polish.css"]'))document.head.appendChild(finalPolish);
+
+  const pageClass = path==='/admin' ? 'page-dashboard'
+    : path==='/admin/users/dashboard' ? 'page-users-dashboard'
+      : path==='/admin/commerce' ? 'page-commerce'
+        : path==='/admin/automation' ? 'page-automation'
+          : path==='/admin/activity' ? 'page-playback'
+            : '';
+  if(pageClass)document.body.classList.add(pageClass);
+
+  // The product-level Overview screens became redundant once Servers/Sources
+  // were redesigned as their real control rooms. Keep old bookmarks working,
+  // but take operators straight to the canonical destination.
+  if(path==='/admin/jellyfin'){location.replace('/admin/servers');return;}
+  if(path==='/admin/stremio'){location.replace('/admin/servers/stremio');return;}
+
   function tabs(items, activeHref) {
     const wrap=document.createElement('nav');
     wrap.className='operatorTabs';
@@ -46,6 +65,44 @@
       const tail=literal.slice(prefix.length).trim();value.replaceChildren(pill);
       if(tail)value.append(document.createTextNode(` ${tail}`));
     });
+  }
+
+  function paginateTable(container,{pageSize=25,label='items'}={}){
+    if(!container||container.querySelector(':scope > .operatorPager, .tableWrap + .operatorPager'))return;
+    const tbody=container.querySelector('table tbody');
+    if(!tbody)return;
+    const rows=[...tbody.children].filter(row=>row.tagName==='TR');
+    if(rows.length<=pageSize)return;
+    const pages=Math.ceil(rows.length/pageSize);
+    let page=0;
+    const pager=document.createElement('nav');pager.className='operatorPager';pager.setAttribute('aria-label',`${label} pages`);
+    const meta=document.createElement('span');meta.className='operatorPagerMeta';
+    const buttons=document.createElement('div');buttons.className='operatorPagerButtons';
+    pager.append(meta,buttons);
+    const wrap=container.querySelector('.tableWrap');
+    (wrap||tbody.closest('table')).insertAdjacentElement('afterend',pager);
+
+    function button(text,target,{active=false,disabled=false,aria=''}={}){
+      const el=document.createElement('button');el.type='button';el.className=`operatorPageButton${active?' active':''}`;el.textContent=text;el.disabled=disabled;
+      if(aria)el.setAttribute('aria-label',aria);if(active)el.setAttribute('aria-current','page');
+      el.addEventListener('click',()=>{page=target;render();});return el;
+    }
+    function render(){
+      const start=page*pageSize,end=Math.min(rows.length,start+pageSize);
+      rows.forEach((row,index)=>{row.hidden=index<start||index>=end;});
+      meta.textContent=`${start+1}–${end} of ${rows.length} ${label} · ${pageSize} per page`;
+      buttons.replaceChildren();
+      buttons.appendChild(button('‹',Math.max(0,page-1),{disabled:page===0,aria:'Previous page'}));
+      for(let i=0;i<pages;i+=1){
+        if(pages>9 && i>1 && i<pages-2 && Math.abs(i-page)>1){
+          if((i===2&&page>3)||(i===pages-3&&page<pages-4)){const gap=document.createElement('span');gap.className='operatorPagerMeta';gap.textContent='…';buttons.appendChild(gap);}
+          continue;
+        }
+        buttons.appendChild(button(String(i+1),i,{active:i===page,aria:`Page ${i+1}`}));
+      }
+      buttons.appendChild(button('›',Math.min(pages-1,page+1),{disabled:page===pages-1,aria:'Next page'}));
+    }
+    render();
   }
 
   // Portal claims are part of the Jellyfin import workflow, not a separate
@@ -112,6 +169,13 @@
     const banner=document.querySelector('.statusBanner');
     const info=callout('<strong>Where do the actual stream limits come from?</strong> Customer concurrency and delivery limits come from the customer’s <a href="/admin/plans">plan</a>. This page chooses what CAPTAiNFiN does when live Jellyfin activity exceeds those effective limits: Observe, Warn or Enforce. <a href="/admin/activity/inactivity-policy">Free-user inactivity rules are configured separately.</a>','');
     if(banner)banner.insertAdjacentElement('afterend',info);else insertAfterHeader(info);
+
+    paginateTable(document.querySelector('#active-streams'),{label:'active streams'});
+    const details=[...document.querySelectorAll('details.operatorDetails')];
+    const policyHistory=details.find(item=>(item.querySelector(':scope > summary')?.textContent||'').includes('Full policy event history'));
+    const playbackHistory=details.find(item=>(item.querySelector(':scope > summary')?.textContent||'').includes('Routine playback history'));
+    paginateTable(policyHistory,{label:'policy events'});
+    paginateTable(playbackHistory,{label:'playback records'});
   }
   if(path.startsWith('/admin/activity/inactivity-policy')){
     insertAfterHeader(tabs([['Live playback','/admin/activity'],['Inactivity rules','/admin/activity/inactivity-policy']],path));

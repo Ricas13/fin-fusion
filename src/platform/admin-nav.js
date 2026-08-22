@@ -2,8 +2,8 @@
 
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin'],['attention','Needs Attention','/admin/attention']]},
-  {key:'jellyfin',label:'Jellyfin',pages:[['jellyfin-overview','Overview','/admin/jellyfin'],['servers','Servers','/admin/servers'],['fleet-operations','Fleet operations','/admin/servers/operations'],['activity','Playback operations','/admin/activity']]},
-  {key:'stremio',label:'Stremio',pages:[['stremio-overview','Overview','/admin/stremio'],['stremio-sources','Sources','/admin/servers/stremio'],['stremio-playback','IP access','/admin/stremio/playback']]},
+  {key:'jellyfin',label:'Jellyfin',pages:[['servers','Servers','/admin/servers'],['fleet-operations','Fleet operations','/admin/servers/operations'],['activity','Playback operations','/admin/activity']]},
+  {key:'stremio',label:'Stremio',pages:[['stremio-sources','Sources','/admin/servers/stremio'],['stremio-playback','IP access','/admin/stremio/playback']]},
   {key:'resellers',label:'Resellers',pages:[['reseller-overview','Overview','/admin/resellers'],['reseller-accounts','Resellers','/admin/resellers/resellers']]},
   {key:'people',label:'Customers',pages:[['users','All customers','/admin/users'],['tickets','Support','/admin/tickets'],['users-dashboard','Activity','/admin/users/dashboard']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['orders','Orders','/admin/orders'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals'],['storefront-order','Storefront order','/admin/plans/order']]},
@@ -31,9 +31,10 @@ const hiddenPages=Object.freeze({
   'configuration-transfer':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 const aliases=Object.freeze({
+  'jellyfin-overview':'servers','stremio-overview':'stremio-sources',
   'jellyfin-plans':'plans','stremio-plans':'plans','reseller-plans':'plans',
   'jellyfin-customers':'users','stremio-customers':'users','reseller-users':'users',
-  'provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations','servers-dashboard':'jellyfin-overview'
+  'provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations','servers-dashboard':'servers'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}

@@ -115,14 +115,14 @@ const resellerSections={
 function resellerPage(path){const page=resellerSections[path]||resellerSections['/admin/resellers'];const body=`<div class="notice"><strong>Reserved for later development.</strong> ${esc(page.lead)}</div>${actions([
   {title:'Shared Customers',text:'Customer identity stays global rather than duplicated per module',href:'/admin/users'},
   {title:'Shared Commerce',text:'Orders and payments remain authoritative in one place',href:'/admin/commerce'},
-  {title:'Jellyfin',text:'Current managed-server product workspace',href:'/admin/jellyfin'},
-  {title:'Stremio',text:'Current stream-source product workspace',href:'/admin/stremio'}
+  {title:'Jellyfin',text:'Current managed-server product workspace',href:'/admin/servers'},
+  {title:'Stremio',text:'Current stream-source product workspace',href:'/admin/servers/stremio'}
 ])}`;return layout({siteName:runtimeSettings.siteName(),active:page.active,title:page.title,subtitle:page.subtitle,body});}
 
 function createAdminProductModulesRouter(){
   const router=express.Router();router.use('/admin',gate,noStore);
-  router.get('/admin/jellyfin',async(_req,res,next)=>{try{return res.send(await jellyfinPage());}catch(error){return next(error);}});
-  router.get('/admin/stremio',async(_req,res,next)=>{try{return res.send(await stremioPage());}catch(error){return next(error);}});
+  router.get('/admin/jellyfin',(_req,res)=>res.redirect('/admin/servers'));
+  router.get('/admin/stremio',(_req,res)=>res.redirect('/admin/servers/stremio'));
   router.get('/admin/stremio/playback',async(req,res,next)=>{try{return res.send(await stremioPlaybackPage(req));}catch(error){return next(error);}});
   for(const path of Object.keys(resellerSections))router.get(path,async(_req,res,next)=>{try{await runtimeSettings.ensureLoaded();return res.send(resellerPage(path));}catch(error){return next(error);}});
   return router;
