@@ -33,3 +33,4 @@ jobs:
           node scripts/stremio-admin-smoke.js
           node scripts/stremio-playback-compatibility-smoke.js
           node scripts/stremio-household-access-smoke.js
+          node scripts/stremio-edge-auth-smoke.js
