@@ -93,6 +93,9 @@ const diagnosticsSource = fs.readFileSync(path.join(root, 'src/platform/system-d
 assert(diagnosticsSource.includes('supportReportFromDiagnostics'));
 assert(diagnosticsSource.includes('assertSanitizedReport(report)'));
 assert(diagnosticsSource.includes('SECRET_ENV_KEYS'));
+assert(diagnosticsSource.includes("FROM operational_worker_state ORDER BY worker_key"), 'system diagnostics must read process liveness from the canonical worker heartbeat table');
+assert(!diagnosticsSource.includes('last_error IS NOT NULL AS has_error'), 'operational_worker_state has no last_error column; job failures belong to automation job state/configuration health');
+assert(diagnosticsSource.includes('hasError: false'), 'support report worker compatibility field must not invent a process error signal');
 assert(!diagnosticsSource.includes('Object.entries(process.env)'), 'support report must not enumerate the environment');
 assert(!diagnosticsSource.includes('customer_id'), 'support report collector must not query customer identities');
 assert(!diagnosticsSource.includes('email_address'), 'support report collector must not query customer emails');
