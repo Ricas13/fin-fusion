@@ -82,8 +82,9 @@ function eventRow(row) {
         : row.processing_error ? pill('Failed', 'bad') : pill('Pending');
     return `<tr><td>${esc(providerLabel(row.provider))}</td><td><code class="tinyCode">${esc(row.event_type)}</code></td><td>${state}</td><td>${esc(date(row.created_at))}</td><td>${row.processing_error ? `<span class="errorText">${esc(row.processing_error)}</span>` : '—'}</td></tr>`;
 }
+function recurringProblems(data){return data.subscriptions.filter(row=>row.recurring&&(row.status==='past_due'||Boolean(row.last_error)));}
 function billingHero(data,stripeStatus,paypalStatus){
-    const problems=data.subscriptions.filter(row=>row.status==='past_due'||Boolean(row.last_error)),pastDue=problems.filter(row=>row.status==='past_due').length,syncProblems=problems.filter(row=>row.last_error).length,providerProblem=(stripeStatus.enabled&&!stripeStatus.configured)||(paypalStatus.enabled&&!paypalStatus.configured);
+    const problems=recurringProblems(data),pastDue=problems.filter(row=>row.status==='past_due').length,syncProblems=problems.filter(row=>row.last_error).length,providerProblem=(stripeStatus.enabled&&!stripeStatus.configured)||(paypalStatus.enabled&&!paypalStatus.configured);
     const tone=problems.length?'bad':providerProblem?'warn':'commerce';
     const title=problems.length?`${problems.length} recurring ${problems.length===1?'subscription needs':'subscriptions need'} attention`:providerProblem?'A payment provider needs configuration':'Recurring billing is clear';
     const next=problems[0]?`Open ${problems[0].portal_username||problems[0].display_name||problems[0].email||'the first customer'} and synchronize the provider state before changing renewal.`:providerProblem?'Finish the enabled provider configuration in Payments.':'No billing intervention is required; use Sync due for routine reconciliation.';
@@ -97,12 +98,12 @@ async function page(req) {
         providerSettings.status('stripe'),
         providerSettings.status('paypal')
     ]);
-    const problems=data.subscriptions.filter(row=>row.status==='past_due'||Boolean(row.last_error));
+    const recurring=data.subscriptions.filter(row=>row.recurring),problems=recurringProblems(data);
     const failedEvents=data.events.filter(row=>row.processing_error&&!row.processed_at);
     const providerState = `${stripeStatus.configured ? pill('Stripe ready', 'good') : pill('Stripe not ready', stripeStatus.enabled ? 'warn' : '')} ${paypalStatus.configured ? pill('PayPal ready', 'good') : pill('PayPal not ready', paypalStatus.enabled ? 'warn' : '')}`;
     const problemSection=problems.length?`<section class="section" id="billing-problems">${ui.sectionHeader({title:'Fix these subscriptions first',description:'Past-due customers and provider-sync failures. Open the customer journey for context, or sync the subscription directly.'})}${subscriptionTable(req,problems)}</section>`:'';
     const reconciliation=`<section class="section" id="billing-reconcile"><div class="sectionHead"><div><h2>Provider reconciliation</h2><div class="muted">Verifies recurring subscriptions against Stripe and PayPal so webhooks are not the only source of truth.</div></div><div>${providerState}</div></div><div class="billingToolbar"><form method="post" action="/admin/billing/sync-due">${csrfInput(req)}<button class="button secondary" type="submit">Sync due subscriptions</button></form><form method="post" action="/admin/billing/sync-all" data-confirm="Sync every active recurring subscription against the payment providers now?">${csrfInput(req)}<button class="button" type="submit">Sync all now</button></form><a class="button secondary" href="/admin/payments">Gateway settings</a></div><div class="notice">Provider API/network failures never revoke customer access by themselves. Existing subscription state is preserved until authoritative provider state is obtained.</div></section>`;
-    const allSubscriptions=ui.detailDisclosure({title:`All recurring subscriptions (${data.subscriptions.length})`,summary:'Routine subscription state · open when tracing or changing a specific renewal',bodyHtml:subscriptionTable(req,data.subscriptions)});
+    const allSubscriptions=ui.detailDisclosure({title:`All recurring subscriptions (${recurring.length})`,summary:'Routine subscription state · open when tracing or changing a specific renewal',bodyHtml:subscriptionTable(req,recurring)});
     const eventSummary=failedEvents.length?`<div class="operatorCallout warn"><strong>${failedEvents.length} recent provider ${failedEvents.length===1?'event has':'events have'} a processing error.</strong><span> Resolve customer-facing effects in Commerce; use the event history below for provider diagnosis.</span></div>`:'';
     const events=ui.detailDisclosure({title:`Recent provider events (${data.events.length})`,summary:failedEvents.length?`${failedEvents.length} failed · diagnostic webhook history`:'Diagnostic webhook history',bodyHtml:data.events.length?`<div class="tableWrap"><table class="dataTable eventTable"><thead><tr><th>Provider</th><th>Event</th><th>Status</th><th>Received</th><th>Error</th></tr></thead><tbody>${data.events.map(eventRow).join('')}</tbody></table></div>`:'<div class="empty">No provider events yet.</div>'});
     const body = `${ui.noticesFromRequest(req)}${billingHero(data,stripeStatus,paypalStatus)}${problemSection}${reconciliation}${eventSummary}${allSubscriptions}${events}<style>.billingTable{min-width:1240px}.eventTable{min-width:850px}.billingToolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.billingToolbar form,.billingActions form{margin:0}.billingActions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}.tinyCode{font-size:10px;white-space:nowrap}.errorText{color:#ef9298;max-width:340px;display:inline-block}</style>`;
@@ -164,4 +165,4 @@ function createAdminBillingRouter() {
     return router;
 }
 
-module.exports = { createAdminBillingRouter, page, billingHero, subscriptionTable, subscriptionRow };
+module.exports = { createAdminBillingRouter, page, billingHero, recurringProblems, subscriptionTable, subscriptionRow };
