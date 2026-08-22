@@ -92,12 +92,16 @@ assert.strictEqual(shellCheck.status, 0, `recovery.sh syntax failed: ${shellChec
 assert(recoverySource.includes('bash recovery.sh check <backup-path>'));
 assert(recoverySource.includes('bash recovery.sh drill <backup-path>'));
 assert(recoverySource.includes('RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE'));
+assert(recoverySource.includes('CAPTAINFIN_RECOVERY_SKIP_SAFETY_BACKUP=1'), 'emergency safety-backup override must be explicit');
 assert(recoverySource.includes('backup path must stay inside ./backups'));
 assert(recoverySource.includes('backup file may not be a symbolic link'));
 assert(recoverySource.includes('recovery-tools node scripts/inspect-backup.js'));
 assert(recoverySource.includes('backup-worker node scripts/verify-backup.js'));
 assert(recoverySource.includes('docker compose stop app automation-worker activity-worker backup-worker'));
+assert(recoverySource.includes('inspect_backup\n  wait_postgres'), 'restore must start with offline inspection before touching production services');
 assert(recoverySource.indexOf('inspect_backup\n  wait_postgres') < recoverySource.indexOf("log 'Stopping CAPTAiNFiN application and worker writers'"), 'offline inspection must happen before production writers are stopped');
+assert(recoverySource.includes('BACKUP_DIR=/backups/pre-restore'), 'destructive restore should preserve the replaced database when possible');
+assert(recoverySource.indexOf('create_pre_restore_safety_backup') < recoverySource.indexOf("log 'Restoring the selected encrypted backup into production'"), 'safety snapshot must precede destructive restore');
 assert(recoverySource.includes('recovery-tools node scripts/restore-db.js'));
 assert(recoverySource.includes('docker compose run --rm --no-deps migrate'));
 assert(recoverySource.includes('docker compose exec -T app npm run verify:deployment'));
@@ -120,6 +124,8 @@ const docs = fs.readFileSync(path.join(root, 'docs/RECOVERY.md'), 'utf8');
 assert(docs.includes('Offline recovery-point check'));
 assert(docs.includes('Full recovery drill'));
 assert(docs.includes('Destructive production restore'));
+assert(docs.includes('backups/pre-restore/'));
+assert(docs.includes('CAPTAINFIN_RECOVERY_SKIP_SAFETY_BACKUP=1'));
 assert(docs.includes('BACKUP_ENCRYPTION_KEY'));
 
 console.log('backup recovery readiness smoke: ok');
