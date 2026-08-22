@@ -59,7 +59,7 @@ async function main(){
     assert.equal(new URL(page.url()).pathname,'/admin/servers/operations','Legacy Operations page did not redirect to Fleet operations');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Fleet operations'],'Fleet operations is not owned by Servers in the sidebar');
     const fleetText=await page.locator('body').innerText();
-    assert(/Placement health policy/.test(fleetText)&&/Placement dry run/.test(fleetText),'Fleet operations is missing placement controls');
+    assert(/Placement control room/.test(fleetText)&&/Eligible now/.test(fleetText)&&/Placement health policy/.test(fleetText)&&/Future capacity preview/.test(fleetText),'Fleet operations is missing operator-first placement readiness and controls');
     assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Fleet operations still contains unrelated platform/security settings');
     const fleetForm=page.locator('form[action="/admin/servers/operations/placement-policy"]');
     assert.equal(await fleetForm.count(),1,'Fleet placement policy form is missing');
