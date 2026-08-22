@@ -62,7 +62,7 @@ assert(storefront.includes('async function selectedCurrency(_req){return planPri
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 const settingsKeys=settingsGroup?.pages?.map(page=>page[0])||[];
-assert(settingsKeys.includes('notification-settings'),'Global Notifications must remain under Settings');
+assert(!settingsKeys.includes('notification-settings')&&navModel.hiddenPages?.['notification-settings']?.parentKey==='settings-integrations','Global Notifications must remain under Settings → Connections without consuming a duplicate sidebar slot');
 assert(!settingsKeys.includes('my-profile'),'Personal administrator profile must stay out of global Settings navigation');
 assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the global Settings sidebar');
 assert(navModel.hiddenPages?.['my-profile']&&navModel.hiddenPages?.['my-notifications']&&navModel.hiddenPages?.['my-security'],'Personal admin pages must keep explicit My account workflow metadata');
