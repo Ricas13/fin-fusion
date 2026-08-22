@@ -24,6 +24,16 @@ function emptyState({ title, body = '', actionHref = '', actionLabel = '', tone 
 function sectionHeader({ title, description = '', actionsHtml = '', eyebrow = '' }) {
     return `<div class="uiSectionHeader"><div>${eyebrow ? `<span class="uiEyebrow">${esc(eyebrow)}</span>` : ''}<h2>${esc(title)}</h2>${description ? `<p>${esc(description)}</p>` : ''}</div>${actionsHtml ? `<div class="uiSectionActions">${actionsHtml}</div>` : ''}</div>`;
 }
+function workflowCards(items, active = '', label = 'Related controls') {
+    const rows = Array.isArray(items) ? items : [];
+    if (!rows.length) return '';
+    return `<nav class="workflowCardGrid" aria-label="${esc(label)}">${rows.map(item => {
+        const values = Array.isArray(item) ? item : [item.key, item.title, item.href, item.description];
+        const [key, title, href, description = 'Open this part of the workflow'] = values;
+        const selected = String(key) === String(active);
+        return `<a class="workflowCard ${selected ? 'active' : ''}" href="${esc(href)}" ${selected ? 'aria-current="page"' : ''}><span class="workflowCardEyebrow">${selected ? 'Current' : 'Related'}</span><strong>${esc(title)}</strong><span>${esc(description)}</span><small>${selected ? 'You are here' : 'Open →'}</small></a>`;
+    }).join('')}</nav>`;
+}
 function confirmationPanel({ tone = 'warn', title, body = '', items = [], choicesHtml = '', actionsHtml = '' }) {
     const cleanTone = ['warn', 'danger', 'info'].includes(tone) ? tone : 'warn';
     const itemList = Array.isArray(items) && items.length ? `<ul>${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '';
@@ -48,4 +58,4 @@ function detailDisclosure({ title, summary = 'Advanced details', bodyHtml = '' }
     return `<details class="operatorDetails"><summary><span>${esc(title || summary)}</span><small>${esc(summary)}</small></summary><div class="operatorDetailsBody">${bodyHtml}</div></details>`;
 }
 
-module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };
+module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, workflowCards, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };
