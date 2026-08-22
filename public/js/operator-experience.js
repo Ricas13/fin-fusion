@@ -105,6 +105,95 @@
     render();
   }
 
+  function currentHrefMatches(href){
+    const target=new URL(href,location.origin);
+    if(target.pathname!==path)return false;
+    if(!target.search)return !location.search || !['/admin/settings'].includes(path);
+    return target.searchParams.get('section')===new URLSearchParams(location.search).get('section');
+  }
+  function controlRoomCards(items,label){
+    const nav=document.createElement('nav');
+    nav.className='workflowCardGrid';
+    nav.setAttribute('aria-label',label);
+    items.forEach(([title,href,description])=>{
+      const active=currentHrefMatches(href);
+      const link=document.createElement('a');
+      link.className=`workflowCard${active?' active':''}`;
+      link.href=href;
+      if(active)link.setAttribute('aria-current','page');
+      const eyebrow=document.createElement('span');eyebrow.className='workflowCardEyebrow';eyebrow.textContent=active?'Current':'Related';
+      const heading=document.createElement('strong');heading.textContent=title;
+      const text=document.createElement('span');text.textContent=description;
+      const action=document.createElement('small');action.textContent=active?'You are here':'Open →';
+      link.append(eyebrow,heading,text,action);nav.appendChild(link);
+    });
+    return nav;
+  }
+  function condensedWorkflow(){
+    if(document.querySelector('.workflowCardGrid'))return;
+    const search=new URLSearchParams(location.search);
+    const section=search.get('section');
+    const workflows=[
+      {match:()=>path==='/admin'||path==='/admin/attention',label:'Dashboard control room',items:[
+        ['Dashboard','/admin','Current state, business performance and highest-priority exceptions'],
+        ['Needs Attention','/admin/attention','Assignment, acknowledgement and bulk handling for live operational issues']
+      ]},
+      {match:()=>['/admin/servers','/admin/servers/operations','/admin/libraries'].includes(path),label:'Jellyfin server control room',items:[
+        ['Servers','/admin/servers','Fleet health, credentials, capacity and server inventory'],
+        ['Placement','/admin/servers/operations','Placement modes, health policy and future-capacity preview'],
+        ['Libraries','/admin/libraries','Fleet library discovery, availability and visibility']
+      ]},
+      {match:()=>['/admin/servers/stremio','/admin/stremio/playback'].includes(path),label:'Stremio control room',items:[
+        ['Sources & indexing','/admin/servers/stremio','Runtime readiness, sources, libraries, credentials and indexes'],
+        ['Household & IP access','/admin/stremio/playback','Current network leases and managed playback activity']
+      ]},
+      {match:()=>['/admin/resellers','/admin/resellers/resellers'].includes(path),label:'Reseller control room',items:[
+        ['Resellers','/admin/resellers','Programme state and future reseller commercial model'],
+        ['Accounts','/admin/resellers/resellers','Reserved reseller organisations and account state']
+      ]},
+      {match:()=>['/admin/users','/admin/users/dashboard'].includes(path),label:'Customer control room',items:[
+        ['Customers','/admin/users','Search, filter and manage customer access'],
+        ['Customer activity','/admin/users/dashboard','Lifecycle, growth, access and recent customer activity']
+      ]},
+      {match:()=>['/admin/plans','/admin/plans/order','/admin/request-plan-policy','/admin/plans/access-rules'].includes(path),label:'Plans and storefront control room',items:[
+        ['Plans','/admin/plans','Products, pricing, access policy and availability'],
+        ['Storefront order','/admin/plans/order','Control how purchasable plans are presented'],
+        ['Request limits','/admin/request-plan-policy','Movie and TV request-service quotas by plan'],
+        ['Access rules','/admin/plans/access-rules','Advanced plan access and delivery rules']
+      ]},
+      {match:()=>['/admin/orders','/admin/commerce','/admin/discounts','/admin/referrals'].includes(path),label:'Orders and growth control room',items:[
+        ['Orders','/admin/orders','Customer orders, completion state and fulfilment'],
+        ['Commerce analytics','/admin/commerce','Revenue, MRR, churn, checkout and plan performance'],
+        ['Discounts','/admin/discounts','Promotions, coupon rules and redemption state'],
+        ['Affiliates','/admin/referrals','Affiliate referrals and service-credit rewards']
+      ]},
+      {match:()=>['/admin/automation','/admin/events'].includes(path),label:'Automation control room',items:[
+        ['Automation','/admin/automation','Worker health, schedules, failures and manual runs'],
+        ['Audit log','/admin/events','Full operator and system action history']
+      ]},
+      {match:()=>path==='/admin/settings'&&section==='general'||['/admin/settings/branding','/admin/settings/support'].includes(path),label:'General settings control room',items:[
+        ['General','/admin/settings?section=general','Platform identity, URL, locale, timezone and workflow defaults'],
+        ['Branding','/admin/settings/branding','Shared logo and browser icon'],
+        ['Support & legal','/admin/settings/support','Support, docs, policies and business identity']
+      ]},
+      {match:()=>path==='/admin/settings'&&section==='security'||['/admin/settings/admin-2fa','/admin/settings/abuse-protection','/admin/security'].includes(path),label:'Security control room',items:[
+        ['Security','/admin/settings?section=security','Registration, sessions, trusted networks and authentication policy'],
+        ['Turnstile & abuse protection','/admin/settings/abuse-protection','Cloudflare checks for staff/customer sign-in and public registration'],
+        ['Administrator 2FA','/admin/settings/admin-2fa','Global staff two-factor policy']
+      ]},
+      {match:()=>path==='/admin/settings'&&section==='integrations'||['/admin/notifications/preferences','/admin/notifications/email','/admin/notifications','/admin/request-users'].includes(path),label:'Connections control room',items:[
+        ['Connections','/admin/settings?section=integrations','At-a-glance external service readiness and entry points'],
+        ['Notifications','/admin/notifications/preferences','Global notification channels and event permissions'],
+        ['Email','/admin/notifications/email','SMTP infrastructure and validation'],
+        ['Delivery health','/admin/notifications','Notification queue and delivery state'],
+        ['Request service','/admin/request-users','Request-service connection and account synchronisation']
+      ]}
+    ];
+    const workflow=workflows.find(item=>item.match());
+    if(workflow)insertAfterHeader(controlRoomCards(workflow.items,workflow.label));
+  }
+  condensedWorkflow();
+
   // Portal claims are part of the Jellyfin import workflow, not a separate
   // top-level People application.
   if(path.startsWith('/admin/customer-claims') || path==='/admin/jellyfin-import'){
@@ -149,7 +238,7 @@
   // Do not add client-side product tabs or move fields after page load.
 
   // Payments, Notifications, Provisioning and Backups/Transfer render their
-  // workflow navigation server-side. Do not add a second client-side tab row.
+  // workflow navigation server-side. Do not add a second client-side card row.
   if(path==='/admin/notifications/preferences'){
     document.querySelectorAll('.buttonRow a[href="/admin/email"],.buttonRow a[href="/admin/profile/notifications"]').forEach(link=>link.remove());
     document.querySelectorAll('form[action="/admin/notifications/preferences/delivery"] .formGroup').forEach(group=>{
