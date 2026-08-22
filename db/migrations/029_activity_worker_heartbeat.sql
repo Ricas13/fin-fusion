@@ -7,10 +7,10 @@ CREATE OR REPLACE FUNCTION public.record_activity_worker_heartbeat(
 ) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
-    INSERT INTO operational_worker_state(
+    INSERT INTO public.operational_worker_state(
         worker_key,instance_id,version,commit_sha,started_at,last_heartbeat_at,draining_at,metadata,updated_at
     ) VALUES(
         'activity',LEFT(COALESCE(NULLIF(p_instance_id,''),'activity-unknown'),200),NULLIF(LEFT(COALESCE(p_version,''),80),''),
@@ -22,7 +22,7 @@ BEGIN
         version=EXCLUDED.version,
         commit_sha=EXCLUDED.commit_sha,
         last_heartbeat_at=NOW(),
-        draining_at=CASE WHEN COALESCE(p_draining,FALSE) THEN COALESCE(operational_worker_state.draining_at,NOW()) ELSE NULL END,
+        draining_at=CASE WHEN COALESCE(p_draining,FALSE) THEN COALESCE(public.operational_worker_state.draining_at,NOW()) ELSE NULL END,
         metadata=EXCLUDED.metadata,
         updated_at=NOW();
 END;
