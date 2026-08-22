@@ -34,7 +34,7 @@
       <div class="channel"><strong>Telegram</strong><label class="check"><input type="checkbox" name="telegramOptIn" value="1"><span>I want Telegram bot notifications.</span></label><div class="hint">After your account is created, CAPTAiNFiN will give you a one-click bot link. Press Start in Telegram to securely bind your private chat.</div></div>
       <div class="channel"><strong>Discord</strong><label class="check"><input type="checkbox" name="discordOptIn" value="1"><span>I want Discord bot DMs.</span></label><div class="hint">After account creation, use Connect Discord to authorize your Discord identity.</div></div>
     </details>
-    <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-theme="dark"></div></div><% } %>
+    <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
     <button type="submit"><%= freeIntent ? (verificationRequired ? 'Reserve free place & verify email' : 'Create account & claim Free Access') : (verificationRequired ? 'Verify email & continue' : 'Create account & continue') %></button>
   </form>
   <% } %>
