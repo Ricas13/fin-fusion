@@ -28,8 +28,9 @@ assert(runtime.includes('managedRuntime.streamsFor')&&runtime.includes('external
 assert(/const streams\s*=\s*\[\s*\.\.\.managed\s*,\s*\.\.\.external\s*\]/.test(runtime),'managed Stremio results must be returned before external results');
 assert(runtime.includes('STREAM_RESULT_CACHE_TTL_MS')&&runtime.includes('rememberStreams(entitlement.id, type, videoId, origin, streams)'),'Stremio stream discovery should cache short-lived allowed result sets');
 assert(runtime.includes('Promise.allSettled(['),'managed and external result classes must resolve independently so one provider failure cannot hide healthy results');
-assert(managed.includes('/PlaybackInfo?'),'only managed Jellyfin delivery should negotiate PlaybackInfo');
-assert(!external.includes('/PlaybackInfo'),'external Jellyfin delivery must remain unmanaged and PlaybackInfo-free');
+assert(!managed.includes('/PlaybackInfo')&&!external.includes('/PlaybackInfo'),'managed and external Stremio delivery must both remain PlaybackInfo-free');
+assert(managed.includes("url.searchParams.set('Static','true')")&&external.includes("url.searchParams.set('Static', 'true')"),'both Stremio source classes must return Jellyfin static/original-file URLs');
+assert(!runtime.includes("require('./managed-playback-lifecycle')"),'normal Stremio delivery must not create or report Jellyfin playback sessions');
 assert(admin.includes('External fallback playback goes directly to this Jellyfin server')&&/media bytes never pass through the portal/i.test(admin),'operator UI must be transparent about direct upstream playback and the no-byte-proxy boundary');
 assert(admin.includes('The password is stored encrypted only when automatic token rotation is enabled.')&&admin.includes('Libraries included in Stremio'),'operator UI must explain external credential storage and indexing boundaries');
 assert(sourceMigration.includes('plan_stremio_sources')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support external source mappings without weakening managed identity integrity');
