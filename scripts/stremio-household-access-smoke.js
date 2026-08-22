@@ -45,6 +45,8 @@ assert(runtime.includes("require('./blocked-media')")&&runtime.includes('blocked
 assert(runtime.includes('never receives or relays the media bytes'),'runtime must remain control-plane only');
 assert(!externalRuntime.includes('pipe(res)')&&!runtime.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
 assert(!runtime.includes("require('./managed-playback-lifecycle')")&&!managedRuntime.includes('/PlaybackInfo'),'raw Stremio delivery must not create a Jellyfin playback-session lifecycle');
+assert(runtime.indexOf("householdAccess.preview(entitlement, req, { kind: 'stream_results' })")<runtime.indexOf('Promise.allSettled(['),'outside-household checks must happen before any source search/result resolution');
+assert(runtime.includes('if (preview && preview.allowed === false) return res.json(await deniedStreamResponse'),'a denied household search must return a Stremio result payload instead of an empty stream list');
 
 // Household identity is privacy-preserving and IPv6 temporary addresses are
 // normalized to the connection's /64 rather than counted independently.
@@ -61,6 +63,7 @@ assert(householdAccess.includes('bingeGroup')&&householdAccess.includes('videoSi
 const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{url:'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4',videoSize:blockedMedia.MEDIA_SIZE});
 assert.match(`${denied.title} ${denied.description}`,/Outside household connection.*another household internet connection.*change your household connection/is,'denial copy must explain the household-connection replacement action');
 assert.strictEqual(denied.url,'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4','denied result must point at the local MP4 endpoint');
+assert.strictEqual(denied.behaviorHints?.notWebReady,true,'blocked household result must use the same visible Stremio stream hint as raw Jellyfin results');
 assert.strictEqual(denied.behaviorHints?.filename,'CAPTAiNFiN household connection blocked.mp4','blocked result must keep its readable media filename');
 assert.strictEqual(denied.behaviorHints?.videoSize,blockedMedia.MEDIA_SIZE,'blocked result must expose the local MP4 size');
 assert(blockedMediaSource.includes('Accept-Ranges')&&blockedMediaSource.includes('Content-Range')&&blockedMediaSource.includes('video/mp4'),'block-media endpoint must continue to support byte ranges');
