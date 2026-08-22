@@ -20,11 +20,19 @@
 .adminQuickFindInput::placeholder{color:var(--muted)}
 .adminQuickFindInput:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(32,169,214,.12)}
 
-/* Settings are easier to scan as broad cards than four narrow columns. */
-.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+/* Control rooms lead with a small set of side-by-side responsibility cards. */
+.settings-grid{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
 .settings-card{min-width:0}
 .settings-card .card-body{min-width:0}
-.settings-grid>.settings-card:nth-child(3):last-child{grid-column:1/-1}
+.workflowCardGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.workflowCard{min-width:0;min-height:126px;display:flex;flex-direction:column;gap:7px;padding:16px;border:1px solid #293541;border-radius:11px;background:linear-gradient(180deg,rgba(22,31,40,.96),rgba(15,21,28,.96));color:var(--text);text-decoration:none;transition:border-color .14s ease,background .14s ease,transform .14s ease,box-shadow .14s ease}
+.workflowCard:hover{border-color:rgba(80,190,225,.46);background:linear-gradient(180deg,rgba(27,42,53,.98),rgba(17,27,35,.98));transform:translateY(-1px);box-shadow:0 10px 24px rgba(0,0,0,.12)}
+.workflowCard.active{border-color:rgba(32,169,214,.62);background:linear-gradient(180deg,rgba(32,169,214,.12),rgba(16,27,35,.98));box-shadow:inset 0 0 0 1px rgba(32,169,214,.08)}
+.workflowCardEyebrow{font-size:9px;font-weight:850;letter-spacing:.09em;text-transform:uppercase;color:#6f8193}
+.workflowCard.active .workflowCardEyebrow{color:#72cfe9}
+.workflowCard>strong{font-size:14px;color:#edf3f7}
+.workflowCard>span:not(.workflowCardEyebrow){font-size:11px;line-height:1.45;color:#8997a6}
+.workflowCard>small{margin-top:auto;color:#71cbe4;font-size:10px;font-weight:750}
 
 /* Avoid six-field horizontal walls on wide screens. */
 .formGrid{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -54,8 +62,7 @@
 .quick-action strong{display:flex;align-items:center;gap:6px}
 
 @media(max-width:1250px){
-  .settings-grid{grid-template-columns:1fr}
-  .settings-grid>.settings-card:nth-child(3):last-child{grid-column:auto}
+  .settings-grid,.workflowCardGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .formGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .compactFilterForm>.formGrid{grid-template-columns:repeat(4,minmax(130px,1fr))}
   .planListToolbar{grid-template-columns:minmax(240px,2fr) repeat(2,minmax(150px,1fr));align-items:end}
@@ -79,6 +86,7 @@
 }
 
 @media(max-width:760px){
+  .settings-grid,.workflowCardGrid{grid-template-columns:1fr}
   .formGrid{grid-template-columns:1fr}
   .compactFilterForm>.formGrid{grid-template-columns:1fr}
   .planListToolbar{grid-template-columns:1fr}
