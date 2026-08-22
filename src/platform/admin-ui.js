@@ -1,6 +1,11 @@
 'use strict';
 
-const { esc } = require('./admin-html');
+// Keep shared UI primitives independent from the page-shell renderer. The
+// shell itself consumes workflow-card helpers, so importing admin-html here
+// would create a circular dependency during application startup.
+function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
+}
 
 const KINDS = new Set(['good', 'warn', 'bad', 'accent']);
 function safeKind(value) { return KINDS.has(String(value || '')) ? String(value) : ''; }
