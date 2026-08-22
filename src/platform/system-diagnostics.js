@@ -19,11 +19,6 @@ function safeNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 function roundMb(bytes) { return Math.round(safeNumber(bytes) / 1024 / 1024); }
-function severityKind(severity) {
-  if (severity === 'critical') return 'bad';
-  if (severity === 'warning') return 'warn';
-  return 'good';
-}
 function worse(a, b) {
   const rank = { good: 0, warn: 1, bad: 2 };
   return (rank[b] || 0) > (rank[a] || 0) ? b : a;
@@ -80,9 +75,10 @@ async function collectSystemDiagnostics() {
   const readiness = readyResult.status === 'fulfilled' ? readyResult.value : { ok: false, degraded: false, checks: {} };
   const config = configurationResult.status === 'fulfilled' ? configurationResult.value : { issues: [], workers: [], jobs: [], servers: [] };
   const issueSummary = aggregateIssues(config.issues);
+  const build = releaseStatus.buildMetadata();
   const release = releaseResult.status === 'fulfilled' ? releaseStatus.publicStatus(releaseResult.value) : {
-    state: 'unavailable', label: 'Check unavailable', version: releaseStatus.buildMetadata().version,
-    buildSha: releaseStatus.buildMetadata().sha || null, buildShort: releaseStatus.buildMetadata().sha?.slice(0, 8) || null
+    state: 'unavailable', label: 'Check unavailable', version: build.version,
+    buildSha: build.sha || null, buildShort: build.sha ? build.sha.slice(0, 8) : null, builtAt: build.builtAt || null
   };
   const db = dbResult.status === 'fulfilled' ? dbResult.value.rows[0] || {} : {};
   const workerRows = workersResult.status === 'fulfilled' ? workersResult.value.rows : [];
@@ -91,16 +87,15 @@ async function collectSystemDiagnostics() {
   const backup = backupResult.status === 'fulfilled' ? backupResult.value : null;
   const pool = (() => { try { const value = getPool(); return { total: value.totalCount, idle: value.idleCount, waiting: value.waitingCount }; } catch { return { total: 0, idle: 0, waiting: 0 }; } })();
 
-  const automationAreas = ['Automation'];
-  const integrationAreas = ['Payments','Requests'];
   const countsFor = areas => areas.reduce((acc, area) => {
     const value = issueSummary.byArea[area] || {};
     acc.critical += value.critical || 0;
     acc.warning += value.warning || 0;
     return acc;
   }, { critical: 0, warning: 0 });
-  const automationCounts = countsFor(automationAreas);
-  const integrationCounts = countsFor(integrationAreas);
+  const planCounts = countsFor(['Plan']);
+  const automationCounts = countsFor(['Automation']);
+  const integrationCounts = countsFor(['Payments','Requests']);
   const fleetCounts = countsFor(['Fleet']);
   const notificationCounts = countsFor(['Notifications']);
   const databaseKind = readiness.checks?.database && readiness.checks?.migrations ? 'good' : 'bad';
@@ -111,6 +106,7 @@ async function collectSystemDiagnostics() {
   const groups = [
     { key: 'application', label: 'Application', href: '/admin/system', kind: applicationKind, detail: readiness.ok ? (readiness.degraded ? 'Running with a capability warning.' : 'Process readiness checks passed.') : 'One or more process readiness checks failed.' },
     { key: 'database', label: 'Database', href: '/admin/system', kind: databaseKind, detail: databaseKind === 'good' ? 'Database connectivity and migrations are current.' : 'Database connectivity or migration state needs attention.' },
+    groupStatus({ key: 'catalogue', label: 'Catalogue & plans', href: '/admin/plans', critical: planCounts.critical, warning: planCounts.warning, detail: planCounts.critical || planCounts.warning ? 'One or more active plan readiness checks need review.' : 'No active plan readiness issues detected.' }),
     groupStatus({ key: 'automation', label: 'Automation', href: '/admin/automation', critical: automationCounts.critical + workerFailures, warning: automationCounts.warning, detail: workerFailures ? `${workerFailures} worker heartbeat/error condition(s) detected.` : 'Worker health and automation configuration checked.' }),
     { key: 'backups', label: 'Backups & recovery', href: '/admin/backups', kind: backupKind, critical: backupKind === 'bad' ? 1 : 0, warning: backupKind === 'warn' ? 1 : 0, detail: backup?.overall?.detail || 'Backup readiness could not be determined.' },
     groupStatus({ key: 'fleet', label: 'Jellyfin fleet', href: '/admin/servers', critical: fleetCounts.critical, warning: fleetCounts.warning + safeNumber(fleet.offline), detail: `${safeNumber(fleet.total)} enabled server(s); ${safeNumber(fleet.offline)} offline; ${safeNumber(fleet.non_active)} not accepting normal placement.` }),
@@ -118,6 +114,8 @@ async function collectSystemDiagnostics() {
     groupStatus({ key: 'notifications', label: 'Notifications', href: '/admin/notifications/preferences', critical: notificationCounts.critical, warning: notificationCounts.warning + (safeNumber(notifications.dead) ? 1 : 0), detail: `${safeNumber(notifications.pending)} pending; ${safeNumber(notifications.dead)} dead-letter notification(s).` })
   ];
   let overallKind = groups.reduce((kind, group) => worse(kind, group.kind), 'good');
+  if (issueSummary.critical) overallKind = 'bad';
+  else if (issueSummary.warning) overallKind = worse(overallKind, 'warn');
 
   return {
     generatedAt,
@@ -147,6 +145,7 @@ async function collectSystemDiagnostics() {
 
 function supportReportFromDiagnostics(diagnostics) {
   const memory = process.memoryUsage();
+  const areaCounts = Object.entries(diagnostics.issueSummary.byArea).map(([area, counts]) => ({ area, critical: counts.critical, warning: counts.warning, info: counts.info, total: counts.total }));
   const report = {
     schemaVersion: 1,
     generatedAt: diagnostics.generatedAt,
@@ -173,7 +172,7 @@ function supportReportFromDiagnostics(diagnostics) {
         critical: diagnostics.issueSummary.critical,
         warning: diagnostics.issueSummary.warning,
         info: diagnostics.issueSummary.info,
-        byArea: diagnostics.issueSummary.byArea
+        areas: areaCounts
       }
     },
     database: diagnostics.database,
