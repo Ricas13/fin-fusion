@@ -54,7 +54,7 @@ require_docker() {
 }
 
 resolve_backup() {
-  local raw="${1:-}" rel host root_real file_real
+  local raw="${1:-}" host root_real file_real
   [[ -n "$raw" ]] || fail 'a backup path is required'
   raw="${raw#./}"
   raw="${raw#backups/}"
@@ -98,8 +98,10 @@ inspect_backup() {
 full_drill() {
   wait_postgres
   log 'Running full temporary-database restore drill'
-  docker compose --profile recovery run --rm --no-deps \
-    recovery-tools node scripts/verify-backup.js "$BACKUP_CONTAINER"
+  # Reuse the backup-worker service definition because it already owns the
+  # least-privileged backup metadata role plus the CREATEDB-only verifier role.
+  docker compose run --rm --no-deps \
+    backup-worker node scripts/verify-backup.js "$BACKUP_CONTAINER"
   printf '\nRecovery drill passed. The production database was not modified.\n'
 }
 
