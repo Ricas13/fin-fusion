@@ -19,12 +19,13 @@ for (const primitive of ['operatorHero', 'resolutionCard', 'detailDisclosure']) 
   assert(ui.includes(`function ${primitive}`), `shared admin UI must expose ${primitive}`);
   assert(ui.includes(primitive), `shared admin UI exports must include ${primitive}`);
 }
+assert(ui.includes('Do this next'), 'shared operator hero must label the recommended next action clearly');
 for (const tone of ['operatorHero-good', 'operatorHero-warn', 'operatorHero-bad', 'operatorHero-commerce', 'operatorHero-streaming']) {
   assert(css.includes(tone), `operator clarity CSS must define ${tone}`);
 }
 assert(capability.includes("@import url('/css/admin-operator-clarity.css')"), 'operator clarity CSS must load through canonical admin capability bundle');
 
-assert(dashboard.includes('Operator control room') && dashboard.includes('Do this next'), 'main dashboard must present operator-first state and next action');
+assert(dashboard.includes('Operator control room') && dashboard.includes('ui.operatorHero({') && dashboard.includes('next,'), 'main dashboard must use the shared operator hero and provide a recommended next action');
 for (const label of ['Fix backup', 'Fix server', 'Fix automation', 'Resolve payment', 'Fix notification', 'Fix provisioning']) {
   assert(dashboard.includes(label), `dashboard attention rows must use explicit action language: ${label}`);
 }
