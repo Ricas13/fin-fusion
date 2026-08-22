@@ -74,7 +74,7 @@ assert(navModel.hiddenPages?.['policy-drift'],'Access consistency must remain ad
 assert(navModel.hiddenPages?.['notification-gateway'],'Notification delivery health must remain addressable from Connections');
 assert(navSource.includes("'my-notifications':Object.freeze"),'Hidden personal notification workflow metadata must remain explicit');
 
-assert(tabs.includes("['global','Notification channels','/admin/notifications/preferences'") ,'Notification control room must expose global notification channels');
+assert(tabs.includes("['global','Global notifications','/admin/notifications/preferences'") ,'Notification control room must expose global notification channels');
 assert(tabs.includes("['email','Email infrastructure','/admin/notifications/email'") ,'Notification control room must expose Email infrastructure');
 assert(tabs.includes("['health','Delivery health','/admin/notifications'") ,'Notification control room must expose Delivery health contextually');
 assert(tabs.includes('ui.workflowCards'),'Notification workflow must use card navigation instead of a narrow upper-tab strip');
