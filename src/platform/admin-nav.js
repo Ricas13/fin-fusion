@@ -36,7 +36,7 @@ const aliases=Object.freeze({
   'provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations','servers-dashboard':'jellyfin-overview'
 });
 function activeKey(value){return aliases[value]||value||'dashboard';}
-function sidebarKey(value){const key=activeKey(active);return hiddenPages[key]?.parentKey||key;}
+function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
 function groupFor(active){const key=activeKey(active),hidden=hiddenPages[key];if(hidden){const base=groups.find(group=>group.key===hidden.groupKey)||groups[0],personal=['my-profile','my-notifications','my-security'].includes(key);return {...base,label:personal?'My account':base.label,pages:[hidden.page,...base.pages]};}return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];}
 function workflowParentPage(active){const key=sidebarKey(active),hidden=hiddenPages[key];return hidden?.page||null;}
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
