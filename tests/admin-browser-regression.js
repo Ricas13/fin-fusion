@@ -123,7 +123,7 @@ async function main(){
     const server=await pool.query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check) VALUES('Browser Jellyfin','browser-jellyfin','premium','http://127.0.0.1:8096',NULL,$1,TRUE,50,100,NULL,TRUE,TRUE,TRUE,'offline',NOW()) ON CONFLICT DO NOTHING RETURNING id`,[encryptedApiKey]);
     const serverId=server.rows[0]?.id||(await pool.query(`SELECT id FROM jellyfin_servers WHERE name='Browser Jellyfin' LIMIT 1`)).rows[0]?.id;
     let customer=(await pool.query(`SELECT id FROM customers ORDER BY created_at LIMIT 1`)).rows[0];
-    if(!customer)customer=(await pool.query(`INSERT INTO customers(email,display_name,status) VALUES('browser-customer@example.invalid','Browser Customer','active') RETURNING id`)).rows[0];
+    if(!customer)customer=(await pool.query(`INSERT INTO customers(email,display_name) VALUES('browser-customer@example.invalid','Browser Customer') RETURNING id`)).rows[0];
 
     const seedUrls=['/admin','/admin/users','/admin/plans','/admin/servers','/admin/activity','/admin/provisioning','/admin/automation','/admin/backups','/admin/settings?section=general'];
     const queue=[...seedUrls],visited=new Set();
