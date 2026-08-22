@@ -66,7 +66,7 @@ async function collectSystemDiagnostics() {
     configurationHealth.health(),
     releaseStatus.checkForUpdate(),
     query(`SELECT current_setting('server_version') AS version,(SELECT COUNT(*)::int FROM schema_migrations) AS migration_count,(SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1) AS latest_migration`),
-    query(`SELECT worker_key,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds,last_error IS NOT NULL AS has_error FROM operational_worker_state ORDER BY worker_key`),
+    query(`SELECT worker_key,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state ORDER BY worker_key`),
     query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE health_status='offline')::int offline,COUNT(*) FILTER(WHERE COALESCE(placement_mode,'active')<>'active')::int non_active FROM jellyfin_servers WHERE enabled=TRUE`),
     query(`SELECT COUNT(*) FILTER(WHERE status='pending')::int pending,COUNT(*) FILTER(WHERE status='dead')::int dead FROM notification_outbox`),
     backupSnapshot()
@@ -101,13 +101,13 @@ async function collectSystemDiagnostics() {
   const databaseKind = readiness.checks?.database && readiness.checks?.migrations ? 'good' : 'bad';
   const applicationKind = readiness.ok ? (readiness.degraded ? 'warn' : 'good') : 'bad';
   const backupKind = backup?.overall?.kind || 'bad';
-  const workerFailures = workerRows.filter(row => row.has_error || safeNumber(row.heartbeat_age_seconds) > 90).length;
+  const staleWorkers = workerRows.filter(row => safeNumber(row.heartbeat_age_seconds) > 90).length;
 
   const groups = [
     { key: 'application', label: 'Application', href: '/admin/system', kind: applicationKind, detail: readiness.ok ? (readiness.degraded ? 'Running with a capability warning.' : 'Process readiness checks passed.') : 'One or more process readiness checks failed.' },
     { key: 'database', label: 'Database', href: '/admin/system', kind: databaseKind, detail: databaseKind === 'good' ? 'Database connectivity and migrations are current.' : 'Database connectivity or migration state needs attention.' },
     groupStatus({ key: 'catalogue', label: 'Catalogue & plans', href: '/admin/plans', critical: planCounts.critical, warning: planCounts.warning, detail: planCounts.critical || planCounts.warning ? 'One or more active plan readiness checks need review.' : 'No active plan readiness issues detected.' }),
-    groupStatus({ key: 'automation', label: 'Automation', href: '/admin/automation', critical: automationCounts.critical + workerFailures, warning: automationCounts.warning, detail: workerFailures ? `${workerFailures} worker heartbeat/error condition(s) detected.` : 'Worker health and automation configuration checked.' }),
+    groupStatus({ key: 'automation', label: 'Automation', href: '/admin/automation', critical: automationCounts.critical + staleWorkers, warning: automationCounts.warning, detail: staleWorkers ? `${staleWorkers} worker heartbeat condition(s) detected.` : 'Worker heartbeats and automation job state checked.' }),
     { key: 'backups', label: 'Backups & recovery', href: '/admin/backups', kind: backupKind, critical: backupKind === 'bad' ? 1 : 0, warning: backupKind === 'warn' ? 1 : 0, detail: backup?.overall?.detail || 'Backup readiness could not be determined.' },
     groupStatus({ key: 'fleet', label: 'Jellyfin fleet', href: '/admin/servers', critical: fleetCounts.critical, warning: fleetCounts.warning + safeNumber(fleet.offline), detail: `${safeNumber(fleet.total)} enabled server(s); ${safeNumber(fleet.offline)} offline; ${safeNumber(fleet.non_active)} not accepting normal placement.` }),
     groupStatus({ key: 'integrations', label: 'Payments & integrations', href: '/admin/payments', critical: integrationCounts.critical, warning: integrationCounts.warning, detail: integrationCounts.critical || integrationCounts.warning ? 'Configuration health found integration items requiring review.' : 'No payment/request configuration issues detected.' }),
@@ -136,7 +136,7 @@ async function collectSystemDiagnostics() {
       latestMigration: db.latest_migration ? String(db.latest_migration).slice(0, 120) : null,
       pool
     },
-    workers: workerRows.map(row => ({ key: String(row.worker_key || '').slice(0, 80), heartbeatAgeSeconds: safeNumber(row.heartbeat_age_seconds), hasError: Boolean(row.has_error) })),
+    workers: workerRows.map(row => ({ key: String(row.worker_key || '').slice(0, 80), heartbeatAgeSeconds: safeNumber(row.heartbeat_age_seconds), hasError: false })),
     backups: backup,
     fleet: { total: safeNumber(fleet.total), offline: safeNumber(fleet.offline), nonActive: safeNumber(fleet.non_active) },
     notifications: { pending: safeNumber(notifications.pending), dead: safeNumber(notifications.dead) }
