@@ -32,6 +32,7 @@ const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings
 const { createAdminBillingRouter } = require('./admin-billing');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
 const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-dispatch');
+const { createAdminJellyfinPlanEditorRouter } = require('./admin-jellyfin-plan-editor');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
 const { createAdminPlanAccessRouter } = require('./admin-plan-access');
 const { createAdminPlanLifecycleRouter } = require('./admin-plan-lifecycle');
@@ -109,10 +110,11 @@ function mountAdminRoutes(app) {
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
   app.use(createAdminCustomerCreateRouter());
-  // Stremio creation/editing is dispatched as middleware rather than owning
-  // duplicate GET/POST route definitions. The existing generic plan routers
-  // remain the sole canonical route owners and handle Jellyfin/non-Stremio.
+  // Stremio keeps its dedicated adaptive editor. Jellyfin/free plans are then
+  // dispatched into the unified control room before legacy configuration
+  // routes, which remain available as compatibility/save backstops.
   app.use(createAdminStremioPlanDispatchRouter());
+  app.use(createAdminJellyfinPlanEditorRouter());
   app.use(createAdminPlanCreateV2Router());
   // Mount the access-driver editor before the legacy Plans controller so the
   // established /admin/plans/:id/jellyfin URL gains household-aware semantics
