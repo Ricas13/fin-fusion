@@ -63,8 +63,8 @@ jobs:
       - name: Previous-schema upgrade contract
         run: node scripts/lifecycle-upgrade-smoke.js
 
-      - name: Production readiness executes against current schema
-        run: node scripts/production-readiness.js --json || true
+      - name: Production readiness schema contract
+        run: node scripts/production-readiness.js --json --ci-schema
 
       - name: Rebuild clean schema for baseline audit
         run: |

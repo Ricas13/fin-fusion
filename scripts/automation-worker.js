@@ -12,7 +12,10 @@ const requestSettings = require('../src/integrations/request-service-settings');
 const emailSettings = require('../src/integrations/email-settings');
 
 const POLL_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_POLL_MS || 15000)));
-const MAX_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.AUTOMATION_WORKER_CONCURRENCY || 3)));
+const DB_POOL_SIZE = Math.max(1, Math.min(50, Number(process.env.DB_POOL_SIZE || 6)));
+const REQUESTED_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.AUTOMATION_WORKER_CONCURRENCY || 3)));
+const DB_CONTROL_HEADROOM = DB_POOL_SIZE >= 3 ? 2 : 0;
+const MAX_CONCURRENCY = Math.max(1, Math.min(REQUESTED_CONCURRENCY, DB_POOL_SIZE - DB_CONTROL_HEADROOM));
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS || 15000)));
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = String(process.env.COMMIT_SHA || process.env.GITHUB_SHA || '').slice(0, 80) || null;
@@ -37,7 +40,13 @@ async function heartbeat({ draining = false } = {}) {
         ON CONFLICT(worker_key) DO UPDATE SET instance_id=EXCLUDED.instance_id,version=EXCLUDED.version,
             commit_sha=EXCLUDED.commit_sha,last_heartbeat_at=NOW(),draining_at=CASE WHEN $4 THEN COALESCE(operational_worker_state.draining_at,NOW()) ELSE NULL END,
             metadata=EXCLUDED.metadata,updated_at=NOW()`,
-    [INSTANCE_ID, pkg.version || null, COMMIT_SHA, Boolean(draining), JSON.stringify({ pollMs: POLL_MS, concurrency: MAX_CONCURRENCY })]);
+    [INSTANCE_ID, pkg.version || null, COMMIT_SHA, Boolean(draining), JSON.stringify({
+        pollMs: POLL_MS,
+        concurrency: MAX_CONCURRENCY,
+        requestedConcurrency: REQUESTED_CONCURRENCY,
+        dbPoolSize: DB_POOL_SIZE,
+        dbControlHeadroom: DB_CONTROL_HEADROOM
+    })]);
 }
 
 async function dueJobs() {
@@ -58,11 +67,16 @@ async function runOne(row) {
         const result = guarded;
         if (result?.skipped) return;
         const value = result?.value || {};
-        const failed = Number(value.failed || 0);
+        const failed = Number(value.failed || value.failures || value.errors || 0);
         const processed = Number(value.processed ?? value.total ?? value.attempted ?? 0);
-        if (processed || failed) console.log(`automation ${jobKey}: processed=${processed} failed=${failed}`);
+        if (result?.degraded) {
+            console.warn(`automation ${jobKey}: outcome=degraded processed=${processed} failed=${failed} retrySeconds=${result.retrySeconds}`);
+        } else if (processed || failed) {
+            console.log(`automation ${jobKey}: outcome=success processed=${processed} failed=${failed}`);
+        }
     } catch (error) {
-        console.error(`automation ${jobKey} failed:`, error.message);
+        const retry = Number(error.automationRetrySeconds || 0);
+        console.error(`automation ${jobKey} failed${retry ? `; retry in ${retry}s` : ''}:`, error.message);
     }
 }
 
@@ -90,7 +104,7 @@ async function loop() {
     await heartbeat();
     heartbeatTimer = setInterval(() => heartbeat({ draining: stopping }).catch(error => console.error('Automation heartbeat failed:', error.message)), HEARTBEAT_MS);
     heartbeatTimer.unref?.();
-    console.log(`CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms concurrency=${MAX_CONCURRENCY}`);
+    console.log(`CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms concurrency=${MAX_CONCURRENCY}/${REQUESTED_CONCURRENCY} dbPool=${DB_POOL_SIZE}`);
     while (!stopping) {
         try {
             await heartbeat();
