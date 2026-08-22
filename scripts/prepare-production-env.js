@@ -43,6 +43,10 @@ function setValue(content, key, value) {
   return `${content.replace(/\s*$/, '')}\n${line}\n`;
 }
 
+function truthy(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || '').trim());
+}
+
 function parsePgUrl(raw, envName) {
   let url;
   try { url = new URL(raw); }
@@ -140,6 +144,24 @@ function main() {
       throw new Error(`${envName} must not reuse the password from ${seenPasswords.get(password)}`);
     }
     seenPasswords.set(password, envName);
+  }
+
+  if (truthy(getValue(content, 'STREMIO_EDGE_AUTH_ENABLED'))) {
+    let secret = getValue(content, 'STREMIO_EDGE_AUTH_SECRET');
+    if (!secret) {
+      if (!options.write) throw new Error('STREMIO_EDGE_AUTH_SECRET is required when STREMIO_EDGE_AUTH_ENABLED=true; run this command with --write to generate it safely');
+      secret = crypto.randomBytes(32).toString('hex');
+      content = setValue(content, 'STREMIO_EDGE_AUTH_SECRET', secret);
+      updates.push('STREMIO_EDGE_AUTH_SECRET');
+    }
+    if (secret.length < 32) throw new Error('STREMIO_EDGE_AUTH_SECRET must contain at least 32 characters');
+    const ttlRaw = getValue(content, 'STREMIO_EDGE_GRANT_TTL_SECONDS');
+    if (ttlRaw) {
+      const ttl = Number(ttlRaw);
+      if (!Number.isInteger(ttl) || ttl < 1800 || ttl > 43200) {
+        throw new Error('STREMIO_EDGE_GRANT_TTL_SECONDS must be an integer between 1800 and 43200');
+      }
+    }
   }
 
   let backupUid = numericId(getValue(content, 'BACKUP_PUID'), 'BACKUP_PUID');
