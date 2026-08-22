@@ -33,8 +33,71 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || fail 'another CAPTAiNFiN production deployment is already running'
 fi
 
+services_stopped=0
+services_recreated=0
+migration_started=0
+rollback_safe=0
+rollback_override=''
+previous_deploy_sha=''
+previous_app_image=''
+previous_automation_image=''
+previous_activity_image=''
+previous_backup_image=''
+
+cleanup() {
+  if [[ -n "$rollback_override" && -f "$rollback_override" ]]; then
+    rm -f "$rollback_override" || true
+  fi
+}
+
+rollback_runtime() {
+  local reason="${1:-deployment failure}"
+  local allowed=0
+
+  # Before migrations begin the old containers are always safe to resume. Once
+  # migrations have started, automatic runtime rollback is only allowed when the
+  # deployed-to-current source diff contains no migration changes. Database
+  # rollback remains a separate, explicit recovery operation.
+  if [[ "$migration_started" == 0 || "$rollback_safe" == 1 ]]; then
+    allowed=1
+  fi
+  if [[ "$allowed" != 1 ]]; then
+    printf '\nAutomatic runtime rollback suppressed: database migrations changed in this release.\n' >&2
+    printf 'Use the encrypted pre-deploy backup and recovery tooling if database rollback is required.\n' >&2
+    return 0
+  fi
+
+  if [[ -z "$previous_app_image" || -z "$previous_automation_image" || -z "$previous_activity_image" || -z "$previous_backup_image" ]]; then
+    printf '\nAutomatic runtime rollback unavailable: previous service image IDs were not captured.\n' >&2
+    return 0
+  fi
+
+  rollback_override="$(mktemp /tmp/captainfin-rollback.XXXXXX.yml)"
+  chmod 600 "$rollback_override"
+  cat >"$rollback_override" <<YAML
+services:
+  app:
+    image: "$previous_app_image"
+  automation-worker:
+    image: "$previous_automation_image"
+  activity-worker:
+    image: "$previous_activity_image"
+  backup-worker:
+    image: "$previous_backup_image"
+YAML
+
+  printf '\nAttempting runtime rollback after %s...\n' "$reason" >&2
+  docker compose -f docker-compose.yml -f "$rollback_override" up -d --no-deps --no-build --force-recreate \
+    app automation-worker activity-worker backup-worker
+  printf 'Previous runtime images restored. Database contents were not rolled back.\n' >&2
+}
+
 on_error() {
   local rc=$?
+  trap - ERR
+  if [[ "$services_stopped" == 1 || "$services_recreated" == 1 ]]; then
+    rollback_runtime "deployment exit $rc" || printf 'Automatic runtime rollback attempt failed; manual recovery is required.\n' >&2
+  fi
   printf '\nDeployment failed (exit %s). Current service state:\n' "$rc" >&2
   docker compose ps 2>/dev/null || true
   printf '\nRecent service logs:\n' >&2
@@ -43,6 +106,7 @@ on_error() {
   exit "$rc"
 }
 trap on_error ERR
+trap cleanup EXIT
 trap '' HUP
 
 command -v docker >/dev/null 2>&1 || fail 'docker is required'
@@ -89,6 +153,27 @@ for _ in $(seq 1 60); do
 done
 [[ "$(docker inspect -f '{{.State.Health.Status}}' steam-fusion-postgres 2>/dev/null || true)" == 'healthy' ]] || fail 'PostgreSQL did not become healthy'
 
+# Capture the currently running release before builds retag Compose images. These
+# immutable image IDs make application-only rollback possible without touching
+# the database when a release has no migration changes.
+if [[ "$existing_database" == 1 ]] && docker inspect steam-fusion >/dev/null 2>&1; then
+  previous_app_image="$(docker inspect -f '{{.Image}}' steam-fusion 2>/dev/null || true)"
+  previous_automation_image="$(docker inspect -f '{{.Image}}' steam-fusion-automation 2>/dev/null || true)"
+  previous_activity_image="$(docker inspect -f '{{.Image}}' steam-fusion-activity 2>/dev/null || true)"
+  previous_backup_image="$(docker inspect -f '{{.Image}}' steam-fusion-backup 2>/dev/null || true)"
+  previous_deploy_sha="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' steam-fusion 2>/dev/null | sed -n 's/^CAPTAINFIN_BUILD_SHA=//p' | head -1 || true)"
+
+  if command -v git >/dev/null 2>&1 \
+     && [[ "$previous_deploy_sha" =~ ^[0-9a-fA-F]{40}$ ]] \
+     && git cat-file -e "${previous_deploy_sha}^{commit}" 2>/dev/null \
+     && git diff --quiet "$previous_deploy_sha"..HEAD -- db/migrations; then
+    rollback_safe=1
+    log "Application-only rollback is available to deployed commit ${previous_deploy_sha:0:8} if verification fails"
+  elif [[ -n "$previous_deploy_sha" ]]; then
+    log 'Automatic application rollback disabled because migration changes are present or the previous deployed commit is unavailable locally'
+  fi
+fi
+
 # Compose/BuildKit may otherwise build identical service images concurrently.
 # Serialising those builds substantially lowers peak RAM/CPU on small VPS hosts.
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
@@ -103,13 +188,22 @@ if [[ "$existing_database" == 1 ]]; then
   [[ -w backups/predeploy ]] || fail 'backups/predeploy is not writable by the deployment user'
   log 'Creating encrypted pre-deploy PostgreSQL backup'
   docker compose --profile recovery run --rm --no-deps -e BACKUP_DIR=/backups/predeploy recovery-tools npm run db:backup
+
+  # Keep the existing containers intact but stopped until the new schema and
+  # runtime roles are ready. This removes the old-app/new-schema write race and
+  # preserves their image IDs for a safe application-only rollback.
+  log 'Draining runtime services before database migration'
+  docker compose stop --timeout 45 app automation-worker activity-worker backup-worker
+  services_stopped=1
 fi
 
 log 'Applying migrations, runtime DB roles and administrator bootstrap'
+migration_started=1
 docker compose run --rm --no-deps migrate
 
 log 'Recreating long-running services only after migration/role bootstrap succeeded'
 docker compose up -d --no-deps app automation-worker activity-worker backup-worker
+services_recreated=1
 
 log 'Waiting for application and worker health checks'
 services=(steam-fusion steam-fusion-automation steam-fusion-activity steam-fusion-backup)
@@ -130,6 +224,8 @@ done
 log 'Running application-level deployment verification'
 docker compose exec -T app npm run verify:deployment
 
+services_stopped=0
+services_recreated=0
 log 'Deployment complete'
 docker compose ps
 printf '\nCAPTAiNFiN is running from commit %s.\n' "${CAPTAINFIN_BUILD_SHA:0:8}"
