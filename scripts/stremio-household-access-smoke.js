@@ -40,9 +40,11 @@ assert(!runtime.includes("require('./source-admission')"),'retired Stremio strea
 assert(!runtime.includes('managed-session-reconciler')&&!runtime.includes('X-CAPTAiNFiN-Stream-Limit'),'runtime must not reintroduce commercial stream counting');
 assert((runtime.match(/reason: 'protocol_rate_limit'/g)||[]).length>=3,'protocol abuse rate limits must remain enabled');
 assert(runtime.includes("householdAccess.claim(entitlement, req")&&runtime.includes('householdAccess.preview(entitlement, req'),'Stremio playback must still claim and preview household access');
+assert(runtime.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household access must be claimed before direct authenticated Jellyfin URLs are returned');
 assert(runtime.includes("require('./blocked-media')")&&runtime.includes('blockedMedia.send(req, res)'),'household denial must retain the playable local block-media path added on main');
-assert(runtime.includes('CAPTAiNFiN never receives media bytes'),'runtime must remain control-plane only');
+assert(runtime.includes('never receives or relays the media bytes'),'runtime must remain control-plane only');
 assert(!externalRuntime.includes('pipe(res)')&&!runtime.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
+assert(!runtime.includes("require('./managed-playback-lifecycle')")&&!managedRuntime.includes('/PlaybackInfo'),'raw Stremio delivery must not create a Jellyfin playback-session lifecycle');
 
 // Household identity is privacy-preserving and IPv6 temporary addresses are
 // normalized to the connection's /64 rather than counted independently.
