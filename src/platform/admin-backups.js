@@ -56,7 +56,7 @@ function verificationBadge(run) {
   if (run.verified_at) return `${ui.statusBadge('Verified', 'good')}<div class="subText">${esc(dt(run.verified_at))}</div>`;
   const lastOk = run.metadata?.lastVerificationOk;
   if (lastOk === false) return `${ui.statusBadge('Failed', 'bad')}<div class="subText">${esc(run.verification_note || 'Restore verification failed.')}</div>`;
-  return ui.statusBadge('Not verified');
+  return ui.statusBadge('Not verified', 'warn');
 }
 
 async function data() {
@@ -84,18 +84,13 @@ async function data() {
   };
 }
 
-function readinessNotice(readiness) {
-  if (readiness.overall.kind === 'good') {
-    return ui.notice('success', readiness.overall.detail, { title: readiness.overall.label });
-  }
-  if (readiness.overall.kind === 'bad') {
-    return ui.notice('error', readiness.overall.detail, { title: readiness.overall.label });
-  }
-  return ui.notice('warn', readiness.overall.detail, { title: readiness.overall.label });
-}
-
 function metricCard(label, badge, value, detail) {
   return `<div class="card recoveryMetric"><span>${esc(label)}</span><div class="recoveryMetricHead">${badge}<strong>${esc(value)}</strong></div><small>${esc(detail)}</small></div>`;
+}
+
+function verifyForm(req, run, { label = 'Verify recovery point', primary = true, disabled = false } = {}) {
+  if (!run) return '';
+  return `<form method="post" action="/admin/backups/verify">${token(req)}<input type="hidden" name="runId" value="${esc(run.id)}"><button class="button ${primary ? '' : 'secondary'}" type="submit" ${disabled ? 'disabled' : ''}>${esc(disabled ? 'Verification queued' : label)}</button></form>`;
 }
 
 function recoveryRunbook(readiness) {
@@ -106,9 +101,9 @@ function recoveryRunbook(readiness) {
   const restoreCommand = path
     ? `RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE bash recovery.sh restore ${shellQuote(path)}`
     : 'bash recovery.sh list';
-  return `<details class="card recoveryRunbook">
-    <summary><span><strong>Host recovery procedure</strong><small>Offline inspection, full recovery drill and destructive restore commands</small></span>${ui.statusBadge('Advanced')}</summary>
-    <div class="recoveryRunbookBody">
+  return `<details class="card recoveryRunbook operatorDetails">
+    <summary><span>Host recovery procedure</span><small>Advanced · command-line recovery only</small></summary>
+    <div class="recoveryRunbookBody operatorDetailsBody">
       ${ui.confirmationPanel({
         tone: 'info',
         title: 'Practice recovery before an emergency',
@@ -125,6 +120,48 @@ function recoveryRunbook(readiness) {
   </details>`;
 }
 
+function historyTable(runs) {
+  if (!runs.length) return '';
+  return `<div class="tableWrap"><table class="dataTable responsiveTable"><caption class="srOnly">Database backup and recovery verification history</caption><thead><tr><th>Created</th><th>Backup</th><th>Size</th><th>Recovery proof</th><th>Checksum</th><th>Issue</th></tr></thead><tbody>${runs.map(run => `<tr id="backup-${esc(run.id)}">
+      <td data-label="Created">${esc(dt(run.completed_at || run.started_at))}</td>
+      <td data-label="Backup"><div class="recoveryHistoryName"><strong>${esc(run.file_name || '—')}</strong>${ui.statusBadge(String(run.status || 'unknown').replaceAll('_', ' '), runKind(run.status))}</div></td>
+      <td data-label="Size">${esc(bytes(run.size_bytes))}</td>
+      <td data-label="Recovery proof">${verificationBadge(run)}</td>
+      <td data-label="Checksum"><code>${esc((run.checksum_sha256 || '').slice(0, 16) || '—')}</code></td>
+      <td data-label="Issue">${esc(run.error || (run.metadata?.lastVerificationOk === false ? run.verification_note : '') || '—')}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+function selectedResolution(req, d, readiness) {
+  const requestedId = String(req.query.run || '').trim();
+  const run = requestedId ? d.runs.find(entry => String(entry.id) === requestedId) : null;
+  if (!run) return '';
+  if (run.status === 'failed') {
+    return ui.resolutionCard({
+      tone: 'bad', badge: 'You came here to fix this', title: 'This backup failed',
+      body: `${run.file_name || 'The selected backup'} did not create a usable recovery point.`,
+      reason: run.error || 'The backup worker reported a failure.',
+      actionHtml: `<form method="post" action="/admin/backups/run">${token(req)}<button class="button" type="submit">Create a new backup now</button></form>`,
+      secondaryHtml: '<a class="button secondary" href="/admin/backups">Dismiss context</a>'
+    });
+  }
+  if (run.verified_at) {
+    return ui.resolutionCard({
+      tone: 'good', badge: 'Already resolved', title: 'This recovery point is proven',
+      body: `${run.file_name || 'The selected backup'} passed a full temporary restore on ${dt(run.verified_at)}.`,
+      actionHtml: '<a class="button secondary" href="/admin/backups">Back to recovery overview</a>'
+    });
+  }
+  const inFlight = d.verificationRequests.some(request => String(request.backup_run_id) === String(run.id) && ['queued', 'running'].includes(request.status));
+  return ui.resolutionCard({
+    tone: 'warn', badge: 'You came here to fix this', title: 'Prove this recovery point before relying on it',
+    body: `${run.file_name || 'The selected backup'} exists, but CAPTAiNFiN has not yet proven that it can be restored successfully.`,
+    reason: 'Backup creation and recovery verification are separate safety signals.',
+    actionHtml: verifyForm(req, run, { label: 'Verify this backup now', primary: true, disabled: inFlight }),
+    secondaryHtml: '<a class="button secondary" href="/admin/backups">Dismiss context</a>'
+  });
+}
+
 async function page(req) {
   await runtimeSettings.ensureLoaded();
   const d = await data();
@@ -133,71 +170,69 @@ async function page(req) {
   const latestVerified = readiness.latestVerified;
   const nextRun = d.policy.enabled ? dt(d.worker?.next_run_at) : 'Scheduling disabled';
   const latestValue = latest ? dt(latest.completed_at || latest.started_at) : 'No backup yet';
-  const latestDetail = latest
-    ? `${latest.file_name || 'Encrypted backup'} · ${bytes(latest.size_bytes)}`
-    : 'Run a backup to create the first recovery point.';
+  const latestDetail = latest ? `${latest.file_name || 'Encrypted backup'} · ${bytes(latest.size_bytes)}` : 'Run a backup to create the first recovery point.';
   const drillValue = latestVerified ? dt(latestVerified.verified_at) : 'No drill yet';
-  const drillDetail = latestVerified
-    ? `${latestVerified.file_name || 'Recovery point'} passed a full temporary restore.`
-    : 'Verify a backup before relying on it for recovery.';
+  const drillDetail = latestVerified ? `${latestVerified.file_name || 'Recovery point'} passed a full temporary restore.` : 'Verify a backup before relying on it for recovery.';
+  const latestInFlight = latest && d.verificationRequests.some(request => String(request.backup_run_id) === String(latest.id) && ['queued', 'running'].includes(request.status));
+  const runBackup = `<form method="post" action="/admin/backups/run">${token(req)}<button class="button secondary" type="submit">Create backup now</button></form>`;
+  const verifyLatest = latest ? verifyForm(req, latest, { label: 'Verify latest backup', primary: readiness.overall.kind !== 'good', disabled: latestInFlight }) : '';
+  const nextAction = !latest ? 'Create the first encrypted backup.' : !latest.verified_at ? 'Verify the latest recovery point with a full temporary restore.' : readiness.overall.kind === 'good' ? 'No action required. Scheduled protection is operating normally.' : readiness.overall.detail;
+  const heroTone = readiness.overall.kind === 'good' ? 'good' : readiness.overall.kind === 'bad' ? 'bad' : 'warn';
+  const recentRuns = d.runs.slice(0, 8);
+  const recentHistory = recentRuns.length ? historyTable(recentRuns) : ui.emptyState({ title: 'No recovery points yet', body: 'Create a backup now or leave scheduling enabled; the worker will create the first encrypted recovery point.', tone: 'warn' });
 
-  const verifyAction = latest
-    ? `<form method="post" action="/admin/backups/verify">${token(req)}<button class="button secondary" type="submit" ${readiness.verificationInFlight ? 'disabled' : ''}>${readiness.verificationInFlight ? 'Verification queued' : 'Verify latest now'}</button></form>`
-    : '';
-  const backupActions = `<form method="post" action="/admin/backups/run">${token(req)}<button class="button secondary" type="submit">Run backup now</button></form>${verifyAction}`;
-
-  const history = d.runs.length
-    ? `<div class="tableWrap"><table class="dataTable responsiveTable"><caption class="srOnly">Database backup and recovery verification history</caption><thead><tr><th>Created</th><th>Backup</th><th>Size</th><th>Recovery proof</th><th>Checksum</th><th>Issue</th></tr></thead><tbody>${d.runs.map(run => `<tr>
-        <td data-label="Created">${esc(dt(run.completed_at || run.started_at))}</td>
-        <td data-label="Backup"><div class="recoveryHistoryName"><strong>${esc(run.file_name || '—')}</strong>${ui.statusBadge(String(run.status || 'unknown').replaceAll('_', ' '), runKind(run.status))}</div></td>
-        <td data-label="Size">${esc(bytes(run.size_bytes))}</td>
-        <td data-label="Recovery proof">${verificationBadge(run)}</td>
-        <td data-label="Checksum"><code>${esc((run.checksum_sha256 || '').slice(0, 16) || '—')}</code></td>
-        <td data-label="Issue">${esc(run.error || (run.metadata?.lastVerificationOk === false ? run.verification_note : '') || '—')}</td>
-      </tr>`).join('')}</tbody></table></div>`
-    : ui.emptyState({ title: 'No recovery points yet', body: 'Run a backup now or leave scheduling enabled; the backup worker will create the first encrypted recovery point.', tone: 'warn' });
+  const policyForm = `<form class="formPanel recoveryPolicyForm" method="post" action="/admin/backups/policy">
+      ${token(req)}
+      <div class="toggleGrid">
+        <label class="toggleRow"><input type="checkbox" name="enabled" value="1" ${d.policy.enabled ? 'checked' : ''}><span>Enable scheduled backups</span></label>
+        <label class="toggleRow"><input type="checkbox" name="verifyAfterBackup" value="1" ${d.policy.verifyAfterBackup ? 'checked' : ''}><span>Automatically verify each new backup</span></label>
+      </div>
+      <div class="formGrid">
+        <div class="formGroup"><label for="backupIntervalHours">Backup every</label><div class="inputUnit"><input class="input" id="backupIntervalHours" type="number" min="1" max="720" name="intervalHours" value="${esc(d.policy.intervalHours)}"><span>hours</span></div></div>
+        <div class="formGroup"><label for="backupRetentionDays">Keep backups for</label><div class="inputUnit"><input class="input" id="backupRetentionDays" type="number" min="1" max="3650" name="retentionDays" value="${esc(d.policy.retentionDays)}"><span>days</span></div></div>
+        <div class="formGroup"><label for="backupMinimumCopies">Always keep at least</label><div class="inputUnit"><input class="input" id="backupMinimumCopies" type="number" min="1" max="365" name="minimumCopies" value="${esc(d.policy.minimumCopies)}"><span>copies</span></div></div>
+      </div>
+      <div class="buttonRow"><button class="button" type="submit">Save protection schedule</button></div>
+    </form>`;
 
   const body = `${ui.noticesFromRequest(req)}
-    <section class="recoveryHero card">
-      <div class="recoveryHeroHead"><div><span class="uiEyebrow">Recovery readiness</span><h2>${esc(readiness.overall.label)}</h2><p>${esc(readiness.overall.detail)}</p></div>${ui.statusBadge(readiness.overall.label, readiness.overall.kind)}</div>
-      ${readinessNotice(readiness)}
-    </section>
+    ${selectedResolution(req, d, readiness)}
+    ${ui.operatorHero({
+      tone: heroTone,
+      eyebrow: 'Recovery protection',
+      title: readiness.overall.label,
+      body: readiness.overall.detail,
+      statusLabel: readiness.overall.kind === 'good' ? 'Protected' : readiness.overall.kind === 'bad' ? 'Action required' : 'Needs proof',
+      next: nextAction,
+      facts: [
+        { label: 'Next scheduled backup', value: nextRun, detail: readiness.protection.label },
+        { label: 'Latest recovery point', value: latestValue, detail: latestDetail },
+        { label: 'Last proven restore', value: drillValue, detail: drillDetail }
+      ],
+      actionsHtml: `${verifyLatest}${runBackup}`
+    })}
 
     <section class="recoveryMetrics" aria-label="Backup and recovery status">
       ${metricCard('Scheduled protection', ui.statusBadge(readiness.protection.label, readiness.protection.kind), nextRun, readiness.protection.detail)}
       ${metricCard('Latest recovery point', ui.statusBadge(readiness.recovery.label, readiness.recovery.kind), latestValue, latestDetail)}
-      ${metricCard('Last recovery drill', ui.statusBadge(latestVerified ? 'Proven' : 'Not proven', latestVerified ? 'good' : 'warn'), drillValue, drillDetail)}
+      ${metricCard('Recovery proof', ui.statusBadge(latest?.verified_at ? 'Proven' : 'Not proven', latest?.verified_at ? 'good' : 'warn'), latest?.verified_at ? dt(latest.verified_at) : 'Verification needed', latest?.verified_at ? 'The latest recovery point passed a full temporary restore.' : 'Use Verify latest backup to prove it safely.')}
     </section>
 
-    <section class="card recoveryActions">
-      ${ui.sectionHeader({ title: 'Protection policy', description: 'Create encrypted PostgreSQL recovery points automatically and prove them with full temporary restores.', actionsHtml: backupActions })}
-      <form class="formPanel recoveryPolicyForm" method="post" action="/admin/backups/policy">
-        ${token(req)}
-        <div class="toggleGrid">
-          <label class="toggleRow"><input type="checkbox" name="enabled" value="1" ${d.policy.enabled ? 'checked' : ''}><span>Enable scheduled backups</span></label>
-          <label class="toggleRow"><input type="checkbox" name="verifyAfterBackup" value="1" ${d.policy.verifyAfterBackup ? 'checked' : ''}><span>Prove each new backup with a full temporary restore</span></label>
-        </div>
-        <div class="formGrid">
-          <div class="formGroup"><label for="backupIntervalHours">Backup interval (hours)</label><input class="input" id="backupIntervalHours" type="number" min="1" max="720" name="intervalHours" value="${esc(d.policy.intervalHours)}"></div>
-          <div class="formGroup"><label for="backupRetentionDays">Retention (days)</label><input class="input" id="backupRetentionDays" type="number" min="1" max="3650" name="retentionDays" value="${esc(d.policy.retentionDays)}"></div>
-          <div class="formGroup"><label for="backupMinimumCopies">Minimum copies to retain</label><input class="input" id="backupMinimumCopies" type="number" min="1" max="365" name="minimumCopies" value="${esc(d.policy.minimumCopies)}"></div>
-        </div>
-        <div class="buttonRow"><button class="button" type="submit">Save protection policy</button></div>
-      </form>
-    </section>
-
-    ${recoveryRunbook(readiness)}
+    ${ui.detailDisclosure({ title: 'Protection schedule & retention', summary: 'Routine settings · normally leave these alone', bodyHtml: policyForm })}
 
     <section class="card recoveryHistory">
-      ${ui.sectionHeader({ title: 'Recovery-point history', description: 'Backup creation and full restore verification are separate signals. A green backup is strongest when its recovery proof is also green.' })}
-      ${history}
-    </section>`;
+      ${ui.sectionHeader({ title: 'Recent recovery points', description: 'The newest eight are shown here so failures and unverified backups are easy to spot.' })}
+      ${recentHistory}
+      ${d.runs.length > 8 ? ui.detailDisclosure({ title: `Full backup history (${d.runs.length})`, summary: 'Detailed audit history', bodyHtml: historyTable(d.runs) }) : ''}
+    </section>
+
+    ${recoveryRunbook(readiness)}`;
 
   return layout({
     siteName: runtimeSettings.siteName(),
     active: 'backups',
     title: 'Backups & recovery',
-    subtitle: 'Know whether your latest encrypted recovery point is fresh, proven and recoverable',
+    subtitle: 'See whether recovery is safe, what needs doing next, and only open detailed history when you need it',
     body
   });
 }
@@ -242,18 +277,22 @@ function createAdminBackupsRouter() {
   router.post('/admin/backups/verify', async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
-      const latest = (await query(`SELECT id,file_name FROM backup_runs WHERE status='succeeded' AND file_path IS NOT NULL ORDER BY started_at DESC LIMIT 1`)).rows[0];
-      if (!latest) throw new Error('No successful backup is available to verify.');
+      const requestedId = String(req.body.runId || '').trim();
+      const target = requestedId
+        ? (await query(`SELECT id,file_name FROM backup_runs WHERE id=$1 AND status='succeeded' AND file_path IS NOT NULL LIMIT 1`, [requestedId])).rows[0]
+        : (await query(`SELECT id,file_name FROM backup_runs WHERE status='succeeded' AND file_path IS NOT NULL ORDER BY started_at DESC LIMIT 1`)).rows[0];
+      if (!target) throw new Error(requestedId ? 'That recovery point is not available for verification.' : 'No successful backup is available to verify.');
       let queued = false;
       await transaction(async client => {
-        const inserted = await client.query(`INSERT INTO backup_verification_requests(backup_run_id,requested_by) SELECT $1,$2 WHERE NOT EXISTS(SELECT 1 FROM backup_verification_requests WHERE backup_run_id=$1 AND status IN ('queued','running')) RETURNING id`, [latest.id, req.session.authUserId]);
+        const inserted = await client.query(`INSERT INTO backup_verification_requests(backup_run_id,requested_by) SELECT $1,$2 WHERE NOT EXISTS(SELECT 1 FROM backup_verification_requests WHERE backup_run_id=$1 AND status IN ('queued','running')) RETURNING id`, [target.id, req.session.authUserId]);
         queued = inserted.rowCount > 0;
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.backup.verify_request','backup_run',$2,$3::jsonb)`, [req.session.authUserId, latest.id, JSON.stringify({ queued, fileName: latest.file_name || null })]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.backup.verify_request','backup_run',$2,$3::jsonb)`, [req.session.authUserId, target.id, JSON.stringify({ queued, fileName: target.file_name || null })]);
       });
       const message = queued
-        ? `Full restore verification queued for ${latest.file_name || latest.id}.`
-        : `Verification of ${latest.file_name || latest.id} is already queued or running.`;
-      return res.redirect('/admin/backups?message=' + encodeURIComponent(message));
+        ? `Full restore verification queued for ${target.file_name || target.id}.`
+        : `Verification of ${target.file_name || target.id} is already queued or running.`;
+      const context = requestedId ? `&run=${encodeURIComponent(target.id)}` : '';
+      return res.redirect('/admin/backups?message=' + encodeURIComponent(message) + context);
     } catch (error) {
       return res.redirect('/admin/backups?error=' + encodeURIComponent(error.message));
     }
@@ -261,4 +300,4 @@ function createAdminBackupsRouter() {
   return router;
 }
 
-module.exports = { createAdminBackupsRouter, data, page, recoveryPath, shellQuote };
+module.exports = { createAdminBackupsRouter, data, page, recoveryPath, shellQuote, verifyForm, historyTable, selectedResolution };
