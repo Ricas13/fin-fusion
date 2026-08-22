@@ -2,16 +2,6 @@ name: Integration
 
 on:
   pull_request:
-    paths:
-      - 'src/**'
-      - 'views/**'
-      - 'public/**'
-      - 'scripts/**'
-      - 'db/migrations/**'
-      - 'platform-preload.js'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/integration.yml'
   workflow_dispatch:
 
 concurrency:

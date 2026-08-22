@@ -2,17 +2,6 @@ name: Browser & Clean Install
 
 on:
   pull_request:
-    paths:
-      - 'src/**'
-      - 'views/**'
-      - 'public/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'db/migrations/**'
-      - 'docker-compose.yml'
-      - 'secure-start.js'
-      - 'staff-auth-preload.js'
-      - '.github/workflows/browser.yml'
   workflow_dispatch:
 
 concurrency:
