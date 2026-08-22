@@ -7,6 +7,7 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const attention=read('src/platform/attention.js');
 const admin=read('src/platform/admin-attention.js');
+const servers=read('src/platform/admin-servers-dashboard.js');
 const operator=read('src/platform/admin-operator-state.js');
 const baseline=read('db/migrations/000_database_baseline.sql');
 
@@ -18,9 +19,11 @@ assert(attention.includes('fingerprint=ANY($1::text[])'),'Attention state lookup
 assert(attention.includes("Attention workflow state unavailable:"),'Attention list must remain readable if workflow state is temporarily unavailable during a rolling upgrade');
 assert(attention.includes("return[];"),'Attention state failure must fall back to open live findings rather than fail the whole page');
 assert(attention.includes("acknowledged_at!=null?'acknowledged':'open'"),'Attention status must derive from acknowledgement state while the source remains authoritative');
-assert(attention.includes("href:`/admin/servers/${r.id}/edit`"),'Server health findings must deep-link to the real server edit route');
+assert(attention.includes("href:`/admin/servers/dashboard?server=${encodeURIComponent(r.id)}`"),'Server health findings must preserve the affected server when opening the fleet control room');
+assert(servers.includes('selectedServerResolution')&&servers.includes('/admin/servers/${esc(server.id)}/edit'),'Fleet control room must turn server issue context into an explicit corrective settings action');
 assert(attention.includes("href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`"),'Backup findings must deep-link to the matching backup run');
 assert(admin.includes('class="attentionActionGrid"'),'Attention operator controls must be compact side-by-side without depending on client-side detection');
+assert(admin.includes('Issue & fix')&&admin.includes('actionLabel'),'Attention UI must present corrective intent separately from acknowledgement workflow');
 assert(operator.includes('attention.openSummary()'),'Unread operator state must count live attention findings instead of querying a phantom state table');
 
 console.log('attention workflow smoke: ok');
