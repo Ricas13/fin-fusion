@@ -34,13 +34,14 @@ const fixture = {
   },
   issueSummary: issues,
   database: { connected: true, migrationsCurrent: true, serverVersion: '17.5', migrationCount: 20, latestMigration: '020_fixture.sql', pool: { total: 3, idle: 2, waiting: 0 } },
-  workers: [{ key: 'automation', heartbeatAgeSeconds: 10, hasError: false }],
+  workers: [{ key: 'automation', heartbeatAgeSeconds: 10, freshnessSeconds: 90, state: 'healthy', lastCycleOutcome: null, serverFailures: 0 }],
   backups: {
     scheduleEnabled: true, workerFresh: true, latestAgeHours: 1.5, latestFresh: true,
     protection: { state: 'healthy' }, recovery: { state: 'verified' }
   },
   fleet: { total: 3, offline: 0, nonActive: 1 },
-  notifications: { pending: 2, dead: 0 }
+  notifications: { pending: 2, retrying: 0, sending: 0, dead: 0, oldestQueuedAgeSeconds: 10, sent24h: 3, failed24h: 0, stuck: false },
+  securityPosture: { production: true, secureCookies: true, admin2faRequired: true, publicRegistration: false }
 };
 
 const previous = {
@@ -56,6 +57,8 @@ try {
   const json = JSON.stringify(report);
   assert.strictEqual(report.schemaVersion, 1);
   assert.strictEqual(report.health.issueCounts.critical, 1);
+  assert.strictEqual(report.securityPosture.admin2faRequired, true);
+  assert.strictEqual(report.securityPosture.publicRegistration, false);
   assert(!json.includes('super-secret-password'));
   assert(!json.includes('sk_live_fixture_secret_value'));
   assert(!json.includes('fixture-session-secret-value'));
@@ -94,8 +97,8 @@ assert(diagnosticsSource.includes('supportReportFromDiagnostics'));
 assert(diagnosticsSource.includes('assertSanitizedReport(report)'));
 assert(diagnosticsSource.includes('SECRET_ENV_KEYS'));
 assert(diagnosticsSource.includes("FROM operational_worker_state ORDER BY worker_key"), 'system diagnostics must read process liveness from the canonical worker heartbeat table');
-assert(!diagnosticsSource.includes('last_error IS NOT NULL AS has_error'), 'operational_worker_state has no last_error column; job failures belong to automation job state/configuration health');
-assert(diagnosticsSource.includes('hasError: false'), 'support report worker compatibility field must not invent a process error signal');
+assert(!diagnosticsSource.includes('last_error IS NOT NULL AS has_error'), 'operational_worker_state has no last_error column; process outcome belongs to sanitized heartbeat metadata');
+assert(diagnosticsSource.includes('operationalWorkerState(row)'), 'support report workers must expose cadence-aware process state');
 assert(!diagnosticsSource.includes('Object.entries(process.env)'), 'support report must not enumerate the environment');
 assert(!diagnosticsSource.includes('customer_id'), 'support report collector must not query customer identities');
 assert(!diagnosticsSource.includes('email_address'), 'support report collector must not query customer emails');
