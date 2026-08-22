@@ -48,7 +48,20 @@ async function auditPage(page,url,{mobile=false}={}){
   const onRequestFailed=req=>requestFailures.push(`${req.method()} ${req.url()} ${req.failure()?.errorText||''}`);
   page.on('console',onConsole);page.on('pageerror',onPageError);page.on('requestfailed',onRequestFailed);
   try{
-    const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
+    let response;
+    try{
+      response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
+    }catch(error){
+      if(!/Download is starting/i.test(String(error?.message||error)))throw error;
+      const downloadResponse=await page.context().request.get(`${BASE}${url}`,{timeout:20000,failOnStatusCode:false});
+      const headers=downloadResponse.headers();
+      const contentType=String(headers['content-type']||'');
+      const contentDisposition=String(headers['content-disposition']||'');
+      assert(downloadResponse.status()<400,`${url} download returned ${downloadResponse.status()}`);
+      assert(/attachment/i.test(contentDisposition),`${url} started a download without attachment content disposition`);
+      assert(!contentType.includes('text/html'),`${url} download unexpectedly returned HTML`);
+      return{url,finalUrl:url,status:downloadResponse.status(),nonHtml:true,download:true,contentType,contentDisposition};
+    }
     assert(response,`${url} did not return a response`);
     const contentType=String(response.headers()['content-type']||'');
     const final=new URL(page.url());
