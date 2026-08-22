@@ -105,8 +105,13 @@ function accessCard(data, req) {
 }
 
 function availabilityCard(data, req) {
-  const p = data.plan, used = Number(data.usage.used || 0), limit = data.usage.limit == null ? Number(p.capacity_limit || 0) : Number(data.usage.limit), remaining = Math.max(0, limit - used);
-  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${remaining ? 'good' : 'warn'}">${remaining ? `${esc(remaining)} open` : 'Closed'}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}<div class="planConfigFacts"><div class="planConfigFact"><span>Used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Limit</span><strong>${esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${esc(remaining)}</strong></div></div><div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(limit)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
+  const p = data.plan;
+  const used = Number(data.usage.used || 0), reserved = Number(data.usage.reserved || 0);
+  const limit = data.usage.limit == null ? null : Number(data.usage.limit);
+  const remaining = data.usage.remaining == null ? null : Number(data.usage.remaining);
+  const status = remaining == null ? 'No limit' : remaining > 0 ? `${remaining} open` : 'Closed';
+  const tone = remaining == null || remaining > 0 ? 'good' : 'warn';
+  return `<section class="planConfigCard" id="availability"><div class="planConfigHead"><div><h2>Availability</h2><p>How many new customers may acquire this plan.</p></div><span class="pill ${tone}">${esc(status)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-availability">${token(req)}<div class="planConfigFacts"><div class="planConfigFact"><span>Used</span><strong>${esc(used)}</strong></div><div class="planConfigFact"><span>Reserved</span><strong>${esc(reserved)}</strong></div><div class="planConfigFact"><span>Limit</span><strong>${limit == null ? '—' : esc(limit)}</strong></div><div class="planConfigFact"><span>Open</span><strong>${remaining == null ? '∞' : esc(remaining)}</strong></div></div><div class="formGroup"><label>Maximum plan slots</label><input class="input" type="number" min="0" max="1000000" name="capacityLimit" value="${esc(p.capacity_limit ?? 0)}" required><div class="inlineHelp">Set 0 to stop new acquisition. Existing customer access is preserved. In-progress Free registrations reserve a slot until completed or released.</div></div><button class="button" type="submit">Save availability</button></form></section>`;
 }
 
 function deliveryCard(data, req) {
@@ -155,8 +160,9 @@ function commerceCard(data, req) {
 
 function page(data, req) {
   const p = data.plan;
-  const open = Math.max(0, Number(data.usage.limit ?? p.capacity_limit ?? 0) - Number(data.usage.used || 0));
-  const header = `<div class="planControlHeader"><div class="planControlIdentity"><strong>${esc(p.name)}</strong><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free Jellyfin' : 'Paid Jellyfin'}</span><span class="muted">${esc(data.affected)} live entitlement${data.affected === 1 ? '' : 's'}</span></div><div class="planControlIdentity"><span class="pill ${open ? 'good' : 'warn'}">${esc(open)} slots open</span>${p.archived_at ? '<span class="pill warn">Archived</span>' : ''}</div></div>`;
+  const open = data.usage.remaining == null ? null : Number(data.usage.remaining);
+  const availabilityBadge = open == null ? 'No slot limit' : `${open} slots open`;
+  const header = `<div class="planControlHeader"><div class="planControlIdentity"><strong>${esc(p.name)}</strong><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free Jellyfin' : 'Paid Jellyfin'}</span><span class="muted">${esc(data.affected)} live entitlement${data.affected === 1 ? '' : 's'}</span></div><div class="planControlIdentity"><span class="pill ${open == null || open > 0 ? 'good' : 'warn'}">${esc(availabilityBadge)}</span>${p.archived_at ? '<span class="pill warn">Archived</span>' : ''}</div></div>`;
   const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition is controlled only by its own availability, access and delivery policy.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
   return layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: p.name, subtitle: data.free ? 'Free Access · independent product configuration' : 'Paid Jellyfin · unified product configuration', body, action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' });
 }
