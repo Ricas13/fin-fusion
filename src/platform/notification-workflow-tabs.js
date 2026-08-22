@@ -4,10 +4,11 @@ const ui=require('./admin-ui');
 
 function globalTabs(active='global'){
   return ui.workflowCards([
+    ['connections','Connections','/admin/settings/integrations','Overall readiness for payment, email, messaging and request-service integrations'],
     ['global','Notification channels','/admin/notifications/preferences','Global customer/admin events plus Telegram, Discord and WhatsApp'],
     ['email','Email infrastructure','/admin/notifications/email','SMTP delivery settings and connection validation'],
     ['health','Delivery health','/admin/notifications','Queue health, delivery failures and recent notification state']
-  ],active,'Notification control room');
+  ],active,'Connections and notifications control room');
 }
 
 function profileTabs(active='profile'){
