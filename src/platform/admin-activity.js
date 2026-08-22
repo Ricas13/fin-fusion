@@ -3,35 +3,16 @@
 const express=require('express');
 const {query}=require('../db');
 const activity=require('../jellyfin/activity');
+const policyEvents=require('../jellyfin/activity-policy-events');
 const streamPolicy=require('../jellyfin/stream-policy-settings');
 const runtimeSettings=require('./runtime-settings');
 const csrf=require('../auth/csrf');
 const ui=require('./admin-ui');
 
-const SAFETY_ISSUE_REASONS=new Set([
-  'incomplete_server_snapshot',
-  'revalidation_failed',
-  'client_does_not_report_media_control_support'
-]);
-
 function requireAdminSession(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private');res.setHeader('Pragma','no-cache');next();}
 function withinHours(value,hours=24){const at=new Date(value).getTime();return Number.isFinite(at)&&at>=Date.now()-(hours*60*60*1000);}
-function reasonLabel(value){const key=String(value||'');const labels={
-  grace_period:'Grace period still running',
-  confirmation_threshold:'Waiting for confirmation threshold',
-  incomplete_server_snapshot:'Server snapshot incomplete',
-  enforcement_ack_missing:'Enforcement acknowledgement missing',
-  observe_only:'Observe / warn mode only',
-  revalidation_failed:'Live session revalidation failed',
-  violation_cleared_before_action:'Limit violation cleared before action',
-  candidate_changed_before_action:'Playback changed before action',
-  client_does_not_report_media_control_support:'Client cannot confirm media-control support',
-  confirmed_concurrent_stream_limit:'Confirmed concurrent stream limit',
-  jellyfin_stop_failed:'Jellyfin stop request failed'
-};return labels[key]||key.replaceAll('_',' ')||'Policy decision';}
-function decisionLabel(value){const labels={would_stop:'Would stop',stopped:'Stopped playback',stop_failed:'Stop failed',skipped_safety:'Safety skip',pending:'Pending confirmation'};return labels[value]||String(value||'Policy event').replaceAll('_',' ');}
-function eventTone(event){if(event.decision==='stop_failed')return'bad';if(event.decision==='would_stop')return'warn';if(event.decision==='skipped_safety'&&SAFETY_ISSUE_REASONS.has(event.reason))return'warn';if(event.decision==='stopped')return'accent';return'good';}
+function eventTone(event){if(event.decision==='stop_failed')return'bad';if(event.decision==='would_stop')return'warn';if(event.decision==='skipped_safety'&&policyEvents.safetyAttention(event.reason))return'warn';if(event.decision==='stopped')return'accent';return'good';}
 
 async function dashboardData(cfg){
   const[summaryResult,streamsResult,serversResult,significantEventsResult,eventsResult,historyResult]=await Promise.all([
@@ -69,7 +50,7 @@ function playbackState(data){
   const offlineServers=data.servers.filter(server=>server.enabled&&server.health_status==='offline');
   const recentDecisions=data.significantEvents.filter(event=>withinHours(event.created_at,24));
   const stopFailures=recentDecisions.filter(event=>event.decision==='stop_failed');
-  const safetyIssues=recentDecisions.filter(event=>event.decision==='skipped_safety'&&SAFETY_ISSUE_REASONS.has(event.reason));
+  const safetyIssues=recentDecisions.filter(event=>event.decision==='skipped_safety'&&policyEvents.safetyAttention(event.reason));
   const violations=recentDecisions.filter(event=>['would_stop','stopped','stop_failed'].includes(event.decision));
   return{overLimitCustomers,offlineServers,recentDecisions,stopFailures,safetyIssues,violations,hasIssues:Boolean(offlineServers.length||stopFailures.length||overLimitCustomers.length||safetyIssues.length)};
 }
@@ -99,7 +80,7 @@ function issueCards(state){
   return cards.join('');
 }
 
-function decorateEvent(event){return{...event,decision_label:decisionLabel(event.decision),reason_label:reasonLabel(event.reason),tone:eventTone(event),safety_issue:event.decision==='skipped_safety'&&SAFETY_ISSUE_REASONS.has(event.reason)};}
+function decorateEvent(event){return{...event,decision_label:policyEvents.decisionLabel(event.decision),reason_label:policyEvents.reasonLabel(event.reason),tone:eventTone(event),safety_issue:event.decision==='skipped_safety'&&policyEvents.safetyAttention(event.reason)};}
 
 function createAdminActivityRouter(){
   const router=express.Router();
@@ -114,4 +95,4 @@ function createAdminActivityRouter(){
   return router;
 }
 
-module.exports={createAdminActivityRouter,requireAdminSession,dashboardData,playbackState,playbackHero,issueCards,reasonLabel,decisionLabel,eventTone,SAFETY_ISSUE_REASONS};
+module.exports={createAdminActivityRouter,requireAdminSession,dashboardData,playbackState,playbackHero,issueCards,eventTone};
