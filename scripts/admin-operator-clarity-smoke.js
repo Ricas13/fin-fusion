@@ -19,6 +19,10 @@ const automation = read('src/platform/admin-automation.js');
 const notifications = read('src/platform/admin-notification-preferences.js');
 const payments = read('src/platform/admin-payment-settings.js');
 const commerce = read('src/platform/admin-commerce.js');
+const plans = read('src/platform/admin-plans-list.js');
+const customer360 = read('src/platform/customer-360-view.js');
+const orders = read('src/platform/admin-orders.js');
+const billing = read('src/platform/admin-billing.js');
 
 for (const primitive of ['operatorHero', 'resolutionCard', 'detailDisclosure']) {
   assert(ui.includes(`function ${primitive}`), `shared admin UI must expose ${primitive}`);
@@ -73,5 +77,22 @@ assert(commerce.includes('Commerce control room') && commerce.includes('Payment 
 assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf('rangeControls(dashboardCtx.range)'), 'Commerce operator state must render before analytics controls');
 assert(commerce.includes("d.paymentIncidents.filter(row=>!row.resolved_at)"), 'Commerce clarity must reuse canonical payment incidents');
 assert(commerce.includes("ui.detailDisclosure({title:'Commercial policies & detailed payment state'"), 'Routine commercial policy/state detail must be progressively disclosed');
+
+assert(plans.includes('Product control room') && plans.includes('planReadinessHero(rows,ctx,create)'), 'Plans must lead with actual sale readiness rather than catalogue tables');
+assert(plans.includes('readiness.evaluate(plan,ctx)') && plans.includes('live_subscriber_count'), 'Plans readiness must reuse canonical product readiness and capacity state');
+assert(plans.includes("ui.detailDisclosure({title:'Plan policies & storefront tools'"), 'Routine plan policy/storefront tools must be progressively disclosed');
+
+assert(customer360.includes('Customer journey') && customer360.includes("['overview','1','Account'") && customer360.includes("['access','2','Access'") && customer360.includes("['billing','3','Billing'") && customer360.includes("['activity','4','Activity'"), 'Customer 360 must present the account → access → billing → activity journey');
+assert(customer360.includes('ui.operatorHero({') && customer360.includes('activeSubscription(detail)'), 'Customer 360 journey must reuse the canonical customer detail rather than a second status model');
+assert(customer360.includes("if(tab!=='access')return journeyHtml+html"), 'Customer journey must lead every Customer 360 tab');
+
+assert(orders.includes('Transaction desk') && orders.includes('Open customer billing →'), 'Orders must act as a transaction trail into customer billing rather than a raw record table');
+assert(orders.includes("ui.detailDisclosure({title:`Full purchase history"), 'Older order history must be progressively disclosed');
+assert(!orders.includes('provider_subscription_id'), 'Orders must not expose provider subscription identifiers in the normal transaction view');
+
+assert(billing.includes('Billing operations') && billing.includes('Fix these subscriptions first'), 'Billing must expose customer-impacting recurring problems before routine reconciliation');
+assert(billing.includes("row.status==='past_due'||Boolean(row.last_error)"), 'Billing problems must derive from canonical subscription/provider-sync state');
+assert(billing.includes("ui.detailDisclosure({title:`All recurring subscriptions"), 'Routine recurring-subscription state must be progressively disclosed');
+assert(!billing.includes('<th>Provider ID</th>'), 'Billing default tables must not make raw provider identifiers an operator-facing column');
 
 console.log('admin operator clarity smoke: ok');
