@@ -71,8 +71,13 @@
     drawer.classList.remove('isMobileOpen');
     if(backdrop)backdrop.hidden=true;
     openButton?.setAttribute('aria-expanded','false');
+    const active=document.activeElement;
+    if(mobileQuery.matches&&drawer.contains(active)){
+      if(restoreFocus&&returnFocus?.focus)returnFocus.focus();
+      else active?.blur?.();
+    }
     setDrawerAccessible(false);
-    if(restoreFocus&&mobileQuery.matches&&returnFocus?.focus)window.requestAnimationFrame(()=>returnFocus.focus());
+    if(restoreFocus&&mobileQuery.matches&&returnFocus?.focus&&document.activeElement!==returnFocus)returnFocus.focus();
     returnFocus=null;
   }
 
