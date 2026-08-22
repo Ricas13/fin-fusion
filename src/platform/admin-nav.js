@@ -7,6 +7,7 @@ const groups=Object.freeze([
   {key:'resellers',label:'Resellers',pages:[['reseller-overview','Overview','/admin/resellers'],['reseller-accounts','Resellers','/admin/resellers/resellers']]},
   {key:'people',label:'Customers',pages:[['users','All customers','/admin/users'],['tickets','Support','/admin/tickets'],['users-dashboard','Activity','/admin/users/dashboard']]},
   {key:'commerce',label:'Commerce',pages:[['commerce-overview','Overview','/admin/commerce'],['plans','Plans','/admin/plans'],['orders','Orders','/admin/orders'],['payments','Payments','/admin/payments'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals'],['storefront-order','Storefront order','/admin/plans/order']]},
+  {key:'marketing',label:'Marketing',pages:[['marketing-overview','Overview','/admin/marketing'],['marketing-campaigns','Campaigns','/admin/marketing/campaigns'],['marketing-segments','Segments','/admin/marketing/segments'],['marketing-templates','Templates','/admin/marketing/templates']]},
   {key:'automation',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Jobs','/admin/automation'],['events','Audit log','/admin/events'],['backups','Backups','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['system','System','/admin/system'],['branding','Branding','/admin/settings/branding'],['support-policy','Support & legal','/admin/settings/support'],['settings-security','Security','/admin/settings?section=security'],['notification-settings','Notifications','/admin/notifications/preferences'],['settings-integrations','Integrations','/admin/settings/integrations']]}
 ]);
@@ -31,7 +32,7 @@ const hiddenPages=Object.freeze({
   'configuration-transfer':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])})
 });
 const aliases=Object.freeze({
-  'jellyfin-overview':'servers','stremio-overview':'stremio-sources',
+  'jellyfin-overview':'servers','stremio-overview':'stremio-sources','marketing':'marketing-overview',
   'jellyfin-plans':'plans','stremio-plans':'plans','reseller-plans':'plans',
   'jellyfin-customers':'users','stremio-customers':'users','reseller-users':'users',
   'provider-mappings':'payments','notifications':'notification-settings','notification-events':'notification-settings','payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general','stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources','abuse-protection':'settings-security','security':'my-security','operations':'fleet-operations','servers-dashboard':'servers'
