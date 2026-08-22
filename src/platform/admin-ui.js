@@ -32,5 +32,20 @@ function confirmationPanel({ tone = 'warn', title, body = '', items = [], choice
 function dangerZone({ title = 'Danger zone', description = '', bodyHtml = '', actionsHtml = '' }) {
     return `<section class="uiDangerZone">${sectionHeader({ title, description })}${bodyHtml ? `<div class="uiDangerBody">${bodyHtml}</div>` : ''}${actionsHtml ? `<div class="uiDangerActions">${actionsHtml}</div>` : ''}</section>`;
 }
+function operatorHero({ tone = 'info', eyebrow = 'Current state', title, body = '', statusLabel = '', facts = [], actionsHtml = '', next = '' }) {
+    const cleanTone = ['good', 'warn', 'bad', 'info', 'commerce', 'streaming'].includes(tone) ? tone : 'info';
+    const factHtml = Array.isArray(facts) && facts.length
+        ? `<div class="operatorHeroFacts">${facts.map(fact => `<div class="operatorHeroFact"><span>${esc(fact.label || '')}</span><strong>${esc(fact.value ?? '—')}</strong>${fact.detail ? `<small>${esc(fact.detail)}</small>` : ''}</div>`).join('')}</div>`
+        : '';
+    const status = statusLabel ? `<span class="operatorHeroStatus">${esc(statusLabel)}</span>` : '';
+    return `<section class="operatorHero operatorHero-${cleanTone}"><div class="operatorHeroTop"><div><span class="uiEyebrow">${esc(eyebrow)}</span><h2>${esc(title)}</h2>${body ? `<p>${esc(body)}</p>` : ''}</div>${status}</div>${next ? `<div class="operatorNext"><span>Do this next</span><strong>${esc(next)}</strong></div>` : ''}${factHtml}${actionsHtml ? `<div class="operatorHeroActions">${actionsHtml}</div>` : ''}</section>`;
+}
+function resolutionCard({ tone = 'warn', title, body = '', reason = '', actionHtml = '', secondaryHtml = '', badge = 'Action needed' }) {
+    const cleanTone = ['warn', 'bad', 'info', 'good'].includes(tone) ? tone : 'warn';
+    return `<section class="operatorResolution operatorResolution-${cleanTone}" role="${cleanTone === 'bad' ? 'alert' : 'status'}"><div class="operatorResolutionIcon" aria-hidden="true">${cleanTone === 'good' ? '✓' : cleanTone === 'bad' ? '!' : cleanTone === 'warn' ? '!' : 'i'}</div><div class="operatorResolutionCopy"><span class="operatorResolutionBadge">${esc(badge)}</span><h3>${esc(title)}</h3>${body ? `<p>${esc(body)}</p>` : ''}${reason ? `<div class="operatorWhy"><strong>Why:</strong> ${esc(reason)}</div>` : ''}</div>${actionHtml || secondaryHtml ? `<div class="operatorResolutionActions">${actionHtml}${secondaryHtml}</div>` : ''}</section>`;
+}
+function detailDisclosure({ title, summary = 'Advanced details', bodyHtml = '' }) {
+    return `<details class="operatorDetails"><summary><span>${esc(title || summary)}</span><small>${esc(summary)}</small></summary><div class="operatorDetailsBody">${bodyHtml}</div></details>`;
+}
 
-module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, confirmationPanel, dangerZone };
+module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };
