@@ -50,7 +50,7 @@ assert(enhancer.includes('compactRequestService')&&enhancer.includes('request-se
 
 assert(settings.includes('class="toggleRow"'),'general/security settings must remain discoverable by the compatibility upgrader while migration is in progress');
 assert(plans.includes('class="toggleGrid"')&&plans.includes('class="toggleRow"'),'existing plan boolean policy must feed the canonical toggle grid');
-assert(planCreate.includes('class="toggleGrid"')&&planCreate.includes('class="toggleRow"'),'new-plan boolean policy must use the same canonical toggle grid');
+assert(/class="[^"]*\btoggleGrid\b[^"]*"/.test(planCreate)&&planCreate.includes('class="toggleRow"'),'new-plan boolean policy must use the same canonical toggle grid, with optional layout modifiers');
 assert(abuse.includes("require('./admin-setting-controls')")&&abuse.includes('settingControls.grid'),'Abuse Protection must be a direct consumer of the canonical server-rendered setting controls');
 assert(abuse.includes('clearTurnstileSecret')&&abuse.includes('Configured — leave blank to keep'),'configured Turnstile secrets must be eligible for global credential disclosure');
 assert(automation.includes('class="checkRow"')&&automation.includes('name="enabled"'),'automation enabled flags must feed the canonical boolean language');
