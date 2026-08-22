@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
         env:
           POSTGRES_USER: steamfusion
           POSTGRES_PASSWORD: steamfusion
@@ -41,12 +41,21 @@ jobs:
       SESSION_SECRET: 4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       NODE_ENV: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
+          node-version: '22.23.1'
           cache: npm
       - run: npm ci
+
+      - name: Supply-chain pinning policy
+        run: node scripts/supply-chain-integrity-smoke.js
+
+      - name: Generate release evidence
+        run: |
+          mkdir -p test-results/release-evidence
+          npm sbom --omit=dev --sbom-format=cyclonedx > test-results/release-evidence/captainfin-sbom.cdx.json
+          node scripts/release-evidence.js test-results/release-evidence
 
       - name: Workflow trigger and suite hygiene
         run: node scripts/workflow-trigger-hygiene-smoke.js
@@ -83,7 +92,7 @@ jobs:
       - name: Verify generated schema contains no retired product vocabulary
         shell: bash
         run: |
-          docker run --rm --network host postgres:17-alpine \
+          docker run --rm --network host postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 \
             pg_dump "$DATABASE_URL" --no-owner --no-privileges --inserts \
             --exclude-table=schema_migrations \
             --exclude-table=user_sessions \
@@ -93,3 +102,12 @@ jobs:
             echo "::error::Retired product vocabulary remains in generated database"
             exit 1
           fi
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-evidence
+          path: test-results/release-evidence
+          if-no-files-found: warn
+          retention-days: 30
