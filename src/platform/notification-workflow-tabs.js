@@ -1,23 +1,21 @@
 'use strict';
 
-function render(items,active,label){
-  return `<div class="operatorTabs" aria-label="${label}">${items.map(([key,text,url])=>`<a class="operatorTab ${active===key?'active':''}" href="${url}">${text}</a>`).join('')}</div>`;
-}
+const ui=require('./admin-ui');
 
 function globalTabs(active='global'){
-  return render([
-    ['global','Global notifications','/admin/notifications/preferences'],
-    ['email','Email infrastructure','/admin/notifications/email'],
-    ['health','Delivery health','/admin/notifications']
-  ],active,'Notification settings workflow');
+  return ui.workflowCards([
+    ['global','Notification channels','/admin/notifications/preferences','Global customer/admin events plus Telegram, Discord and WhatsApp'],
+    ['email','Email infrastructure','/admin/notifications/email','SMTP delivery settings and connection validation'],
+    ['health','Delivery health','/admin/notifications','Queue health, delivery failures and recent notification state']
+  ],active,'Notification control room');
 }
 
 function profileTabs(active='profile'){
-  return render([
-    ['profile','Profile','/admin/profile'],
-    ['personal','Notifications','/admin/profile/notifications'],
-    ['security','Security','/admin/security']
-  ],active,'My profile workflow');
+  return ui.workflowCards([
+    ['profile','Profile','/admin/profile','Your administrator profile and account details'],
+    ['personal','Notifications','/admin/profile/notifications','Your personal notification preferences'],
+    ['security','Security','/admin/security','Password, authenticator, recovery codes and sessions']
+  ],active,'My account');
 }
 
 function tabs(active='global'){
