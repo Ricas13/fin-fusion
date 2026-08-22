@@ -18,13 +18,14 @@ const cards=require('../src/platform/admin-integration-card');
 assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Dashboard must read the canonical Needs Attention list instead of recreating operational queries');
 assert(!dashboardDataSource.includes('attention.openSummary().catch'),'Dashboard must not query the same attention source once for summary and again for detail');
 assert(dashboardDataSource.includes('items: sources.slice(0, 5)'),'Dashboard must cap the fixed exception summary while preserving the total count');
-assert(dashboardSource.includes('${attentionOverview(stats)}${setupCompact(stats)}${rangeControls(ctx.range)}'),'Needs Attention must render before setup nudges and routine analytics controls');
+assert(dashboardSource.includes('${dashboardHero(ctx)}${attentionOverview(stats)}${setupCompact(stats)}${rangeControls(ctx.range)}'),'Operator control room and Needs Attention must render before setup nudges and routine analytics controls');
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
 
 const clear=dashboard.attentionOverview({attention:{count:0,items:[]}});
-assert(clear.includes('No operational issues need attention')&&clear.includes('View Needs Attention'),'Clear dashboard state must explain that no exceptions are open and retain the canonical workspace link');
-const problems=dashboard.attentionOverview({attention:{count:2,items:[{title:'Provisioning failed',detail:'Customer access was not created',area:'Customers',severity:'critical',href:'/admin/users/1'},{title:'Backup verification missing',detail:'Restore verification missing',area:'Backups',severity:'warning',href:'/admin/backups'}]}});
+assert(clear.includes('No operational issues need attention')&&clear.includes('/admin/attention')&&clear.includes('Open operational inbox'),'Clear dashboard state must explain that no exceptions are open and retain the canonical workspace link');
+const problems=dashboard.attentionOverview({attention:{count:2,items:[{key:'provisioning:1',title:'Provisioning failed',detail:'Customer access was not created',area:'Customers',severity:'critical',href:'/admin/users/1'},{key:'backup:2',title:'Backup verification missing',detail:'Restore verification missing',area:'Backups',severity:'warning',href:'/admin/backups'}]}});
 assert(problems.includes('2 things need attention')&&problems.includes('Provisioning failed')&&problems.includes('Backup verification missing'),'Dashboard must surface real canonical attention items rather than generic counters');
+assert(problems.includes('Fix provisioning')&&problems.includes('Fix backup'),'Dashboard must label exception links with the actual corrective intent');
 
 assert(cardSource.includes('Enabled')&&cardSource.includes('Configured')&&cardSource.includes('Current state')&&cardSource.includes('Last verified'),'Shared integration cards must answer the standard operator health questions');
 const rendered=cards.renderIntegrationCard({name:'Example',statusLabel:'Connected',statusKind:'good',enabled:true,configured:true,workingLabel:'Delivery observed',workingKind:'good',lastVerifiedAt:'2026-08-21T20:00:00Z',fixHint:'Retest the connection.',actionsHtml:'<a href="#manage">Manage</a>'});
