@@ -101,7 +101,7 @@ try {
   assert(runtime.includes('router.use(mediaEdge.runtimeProtectionMiddleware)'));
 
   const compose = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
-  assert.strictEqual((compose.match(/STREMIO_EDGE_AUTH_SECRET:/g) || []).length, 1, 'edge shared secret must only be passed to the web runtime');
+  assert.strictEqual((compose.match(/^\s+STREMIO_EDGE_AUTH_SECRET:/gm) || []).length, 1, 'edge shared secret must only be passed to the web runtime');
   assert(compose.includes('STREMIO_EDGE_AUTH_ENABLED: ${STREMIO_EDGE_AUTH_ENABLED:-false}'));
 
   const docs = fs.readFileSync(path.join(__dirname, '..', 'docs', 'STREMIO_EDGE_AUTH.md'), 'utf8');
