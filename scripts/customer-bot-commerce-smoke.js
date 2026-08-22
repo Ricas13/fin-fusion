@@ -46,7 +46,7 @@ assert(!/customer.*discordAdminUserId/i.test(dispatch),'Customer delivery must n
 assert(outbox.includes("settings.sendDiscord")&&outbox.includes("userId:row.destination"),'Outbox must pass each Discord destination to bot DM delivery');
 assert(registration.includes('name="whatsappOptIn"')&&registration.includes('name="telegramOptIn"')&&registration.includes('name="discordOptIn"'),'Registration must collect secondary-channel preferences');
 assert(registration.includes('+447700900123')&&registration.toLowerCase().includes('international format'),'Registration must explain the WhatsApp country-code destination format');
-assert(adminNotifications.includes('Global notification control centre.'),'Existing global Notifications page must remain the global control centre');
+assert(adminNotifications.includes('Notification control room')&&adminNotifications.includes('Global event catalogue'),'Global Notifications must remain the operator control centre for shared messaging infrastructure and event routing');
 assert(adminNotifications.includes('/admin/profile/notifications'),'Global Notifications must link to each admin profile notification matrix');
 assert(adminNotifications.includes('customer_opt_in_allowed'),'Global Notifications must control which customer events may be exposed');
 assert(adminLinks.includes('admin_channel_link_tokens')&&adminLinks.includes('admin_communication_preferences'),'Admin Telegram/Discord linking must use each admin identity, not a global destination');
