@@ -11,67 +11,52 @@ process.env.SESSION_SECRET=process.env.SESSION_SECRET||'stremio-playback-compati
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const managed=require('../src/stremio/managed-runtime');
-const lifecycle=require('../src/stremio/managed-playback-lifecycle');
-
-const profile=managed.stremioDeviceProfile();
-assert(profile.DirectPlayProfiles.some(row=>row.Type==='Video'&&row.VideoCodec==='h264'),'managed Stremio profile must direct-play broadly compatible H.264 video');
-assert(profile.TranscodingProfiles.some(row=>row.Type==='Video'&&row.Protocol==='hls'&&row.Container==='ts'&&row.VideoCodec==='h264'),'managed Stremio profile must offer HLS H.264 compatibility transcoding');
-assert.strictEqual(managed.playMethodFor({Id:'a',SupportsDirectPlay:true}),'DirectPlay');
-assert.strictEqual(managed.playMethodFor({Id:'a',SupportsDirectPlay:false,SupportsDirectStream:true,TranscodingUrl:'/videos/a/master.m3u8'}),'DirectStream');
-assert.strictEqual(managed.playMethodFor({Id:'a',SupportsDirectPlay:false,SupportsDirectStream:false,SupportsTranscoding:true,TranscodingUrl:'/videos/a/master.m3u8'}),'Transcode');
-assert.strictEqual(managed.playMethodFor({Id:'a',SupportsDirectPlay:false,SupportsDirectStream:false,SupportsTranscoding:false}),'DirectPlay','plans that forbid conversion must retain optimistic native-player direct fallback');
+const external=require('../src/stremio/external-direct-runtime');
 
 const mapping={public_url:'https://media.example/jellyfin',base_url:'http://jellyfin:8096/jellyfin',access_token_encrypted:null};
-const direct=new URL(managed.directUrl(mapping,'item','source','play','device','token','mkv'));
-assert.strictEqual(direct.pathname,'/jellyfin/Videos/item/stream.mkv','direct playback should preserve the original container extension for player detection');
-assert.strictEqual(direct.searchParams.get('Static'),'true');
+const direct=new URL(managed.directUrl(mapping,'item','source','token','mkv','Movie.2026.1080p.mkv'));
+assert.strictEqual(direct.pathname,'/jellyfin/Videos/item/stream.mkv','raw managed playback should preserve the original container extension for player detection');
+assert.strictEqual(direct.searchParams.get('Static'),'true','managed Stremio must request Jellyfin original/static media bytes');
+assert.strictEqual(direct.searchParams.get('MediaSourceId'),'source');
 assert.strictEqual(direct.searchParams.get('api_key'),'token');
-assert.strictEqual(direct.searchParams.get('PlaySessionId'),'play');
-assert.strictEqual(direct.searchParams.get('DeviceId'),'device');
+assert.strictEqual(direct.searchParams.get('PlaySessionId'),null,'raw Stremio URLs must not carry Jellyfin play-session identifiers');
+assert.strictEqual(direct.searchParams.get('DeviceId'),null,'raw Stremio URLs must not create Jellyfin playback devices');
+assert.strictEqual(managed.pathExtension('Movie.2026.1080p.mkv'),'mkv');
+assert.strictEqual(managed.containerExtension('mkv,webm'),'mkv');
 
-const transcoded=new URL(managed.publicTranscodingUrl(mapping,'/jellyfin/videos/item/master.m3u8?api_key=old&VideoCodec=h264',{accessToken:'fresh',playSessionId:'play2',deviceId:'device2'}));
-assert.strictEqual(transcoded.origin,'https://media.example');
-assert.strictEqual(transcoded.pathname,'/jellyfin/videos/item/master.m3u8');
-assert.strictEqual(transcoded.searchParams.get('api_key'),'fresh','persistent PlaybackInfo token must be replaced by the per-playback token');
-assert.strictEqual(transcoded.searchParams.get('PlaySessionId'),'play2');
-assert.strictEqual(transcoded.searchParams.get('DeviceId'),'device2');
-
-const control=new URL(managed.playbackControlUrl({portalBase:'https://portal.example',installToken:'install-token',mapping:{id:'mapping-id'},itemId:'item',mediaSourceId:'source',playSessionId:'play',playbackKey:'playback-key'}));
-assert.strictEqual(control.origin,'https://portal.example');
-assert.strictEqual(control.pathname,'/stremio/install-token/play/mapping-id/item/source');
-assert.strictEqual(control.searchParams.get('playbackKey'),'playback-key');
-assert.strictEqual(control.searchParams.get('playSessionId'),'play');
-
-assert.strictEqual(lifecycle.playbackBody({itemId:'i',mediaSourceId:'m',playSessionId:'p',playMethod:'Transcode'}).PlayMethod,'Transcode','Jellyfin lifecycle reporting must match the negotiated play method');
-assert.strictEqual(lifecycle.SESSION_ACTIVE_SECONDS,20,'background managed playback liveness must stay short');
-assert.strictEqual(lifecycle.TRACKING_SECONDS,20,'managed lifecycle tracking must expire promptly');
-assert.strictEqual(lifecycle.START_GRACE_SECONDS,10,'startup grace must not retain abandoned playback state for tens of seconds');
-const now=Date.now();
-assert(lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-4000).toISOString()},now,5),'recent managed playback must remain active');
-assert(!lifecycle.sessionFresh({NowPlayingItem:{Id:'i'},LastActivityDate:new Date(now-6000).toISOString()},now,5),'silent managed playback must become stale promptly');
-const key=lifecycle.issuePlaybackKey();
-assert(key.length>=24,'playback lifecycle key must have sufficient entropy');
-assert(/^[a-f0-9]{64}$/.test(lifecycle.hashPlaybackKey(key)),'playback lifecycle key must be stored by hash');
+const source={base_url:'https://external.example/jellyfin'};
+const originalToken=external.directPlaybackUrl;
+assert.strictEqual(typeof originalToken,'function','external sources must expose a direct raw-file URL builder');
 
 const managedSource=read('src/stremio/managed-runtime.js');
+const externalSource=read('src/stremio/external-direct-runtime.js');
 const mediaIndexSource=read('src/stremio/media-index.js');
 const runtimeSource=read('src/stremio/runtime.js');
-const lifecycleSource=read('src/stremio/managed-playback-lifecycle.js');
-const migration=read('db/migrations/019_stremio_managed_play_method.sql');
-assert(managedSource.includes("{method:'POST',body}"),'managed PlaybackInfo must send a device profile in a POST body');
-assert(managedSource.includes('DeviceProfile:stremioDeviceProfile()'),'managed PlaybackInfo must declare Stremio playback capabilities');
-assert(managedSource.includes('source.TranscodingUrl'),'managed playback must honor Jellyfin compatibility URLs instead of forcing Static direct play');
+
+assert(!managedSource.includes('/PlaybackInfo'),'managed stream discovery must not call Jellyfin PlaybackInfo');
+assert(!managedSource.includes('PlaySessionId'),'managed raw-file URLs must not contain Jellyfin PlaySessionId state');
+assert(!managedSource.includes('DeviceProfile'),'managed raw-file delivery must not negotiate a Jellyfin playback device profile');
+assert(!managedSource.includes('TranscodingUrl'),'managed Stremio delivery must never switch to a Jellyfin transcoding session');
+assert(managedSource.includes("Fields:'Path,MediaSources,MediaStreams'"),'managed stream discovery must resolve media metadata without PlaybackInfo');
+assert(managedSource.includes("url.searchParams.set('Static','true')"),'managed playback must return Jellyfin static/original-file URLs');
 assert(mediaIndexSource.includes('async function lookupAll')&&!mediaIndexSource.includes('item_type=$3 ORDER BY updated_at DESC LIMIT 1'),'managed IMDb lookup must preserve separate Jellyfin items such as 1080p and 4K copies');
 assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'managed result resolution must fan out across every indexed item with the same IMDb id');
-assert(managedSource.includes('`${item.id}:${source.Id}:${filename}`'),'separate Jellyfin items/media sources must keep distinct Stremio binge groups');
-assert(/managedRuntime\.playbackInfo\(mapping,\s*req\.params\.itemId,\s*req\.params\.mediaSourceId\)/.test(runtimeSource),'playback control must refresh the selected media-source negotiation');
-assert(!runtimeSource.includes('stream_limit'),'managed playback control must not enforce a Stremio concurrent-stream quota');
-assert(/managedPlayback\.startManager\(\{\s*intervalMs\s*:\s*5000\s*\}\)/.test(runtimeSource),'managed playback cleanup must run every five seconds');
-assert(runtimeSource.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&/res\.redirect\(PLAYBACK_REDIRECT_STATUS,\s*target\.url\)/.test(runtimeSource),'managed playback must remain no-byte direct delivery through a plain temporary Jellyfin redirect');
-assert(/playMethod\s*:\s*target\.playMethod/.test(runtimeSource),'managed redirect audit must record the actual delivery method');
-assert(lifecycleSource.includes("playMethod:row.play_method||'DirectPlay'"),'managed stop reporting must reuse the negotiated play method');
-assert(lifecycleSource.includes('failedServerIds')&&lifecycleSource.includes("snapshot.failedServerIds.has(String(row.server_id))"),'managed cleanup must fail closed when Jellyfin session snapshots fail');
-assert(lifecycleSource.includes("if(!session&&started&&now-started<START_GRACE_SECONDS*1000)continue"),'startup grace must protect a playback until its Jellyfin session becomes visible');
-assert(migration.includes('play_method')&&migration.includes("'DirectStream'")&&migration.includes("'Transcode'"),'managed playback migration must persist the negotiated Jellyfin play method');
+assert(managedSource.includes("`${item.id}:${source.Id||'file'}:${filename}`"),'separate Jellyfin items/media sources must keep distinct Stremio binge groups');
 
-console.log('stremio playback compatibility smoke: ok');
+assert(!runtimeSource.includes("require('./managed-playback-lifecycle')"),'Stremio runtime must be detached from Jellyfin playback lifecycle reporting');
+assert(!runtimeSource.includes('managedPlayback.start(')&&!runtimeSource.includes('managedPlayback.startManager'),'Stremio runtime must never start or maintain Jellyfin playback sessions');
+assert(!runtimeSource.includes('managedRuntime.playbackInfo'),'managed playback routes must not refresh PlaybackInfo');
+assert(runtimeSource.includes('managedRuntime.streamsFor(entitlement, type, videoId)'),'managed stream results must be generated as direct URLs');
+assert(runtimeSource.includes('externalRuntime.streamsFor(entitlement, type, videoId)'),'external stream results must also be generated as direct URLs');
+assert(runtimeSource.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household admission must be claimed before direct raw URLs are returned');
+assert(runtimeSource.includes('managedRuntime.directUrl(mapping, req.params.itemId, req.params.mediaSourceId)'),'legacy managed control URLs must now fall through to raw Jellyfin delivery without reporting playback');
+assert(!runtimeSource.includes("'/Sessions/Playing'"),'runtime must never report a Jellyfin playing session');
+assert(!runtimeSource.includes('jellyfinSessionId'),'raw Stremio delivery must not create or audit Jellyfin session IDs');
+assert(!runtimeSource.includes('stream_limit'),'raw Stremio playback must not enforce a concurrent-stream quota');
+assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includes('never receives or relays the media bytes'),'CAPTAiNFiN must remain control-plane only');
+
+assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
+assert(externalSource.includes("url.searchParams.set('Static', 'true')"),'external sources must also return Jellyfin static/original-file URLs');
+assert(!externalSource.includes('PlaySessionId')&&!externalSource.includes('DeviceId'),'external raw URLs must remain outside Jellyfin playback-session reporting');
+
+console.log('stremio raw-file playback compatibility smoke: ok');
