@@ -63,16 +63,17 @@
 }
 
 @media(max-width:860px){
-  /* Mobile keeps the existing horizontal navigation instead of hiding closed groups. */
-  .adminTabs{gap:12px}
-  .navSection{display:flex;align-items:center;border:0}
-  .navSectionLabel{display:none!important}
-  .navSectionPages,.navSection[open] .navSectionPages{display:flex!important;gap:4px;padding:0}
+  /* Mobile uses the same grouped navigation hierarchy inside an off-canvas drawer. */
+  .adminTabs{display:grid;min-width:0;gap:2px}
+  .navSection{display:block;border:0}
+  .navSectionLabel{display:flex!important}
+  .navSectionPages,.navSection[open] .navSectionPages{display:none!important;gap:2px;padding:2px 0}
+  .navSection[open] .navSectionPages{display:grid!important}
   .planListToolbar{grid-template-columns:1fr 1fr}
 
-  /* The top bar must grow when a page has multiple real actions. Keeping the
-     desktop fixed height here caused Help/action buttons to overlap vertically. */
-  .topBar{height:auto;min-height:50px;padding-top:8px;padding-bottom:8px;flex-wrap:wrap;row-gap:8px}
+  /* The top bar can wrap its real actions while the navigation itself lives in
+     the drawer rather than consuming a second horizontal row. */
+  .topBar{height:auto;min-height:54px;padding-top:5px;padding-bottom:5px;flex-wrap:wrap;row-gap:7px}
   .topBreadcrumb{flex:1 1 auto}
   .adminQuickFind{order:3;flex:1 1 100%;max-width:none;margin:0}
   .topBarActions{margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
