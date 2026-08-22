@@ -12,18 +12,20 @@ const css = read('public/css/admin-plan-control-room.css');
 const capability = read('public/css/admin-capability.css');
 const attention = read('src/platform/admin-attention.js');
 
-assert(routes.includes("createAdminJellyfinPlanEditorRouter"), 'route composition must mount the unified Jellyfin plan editor');
-assert(routes.indexOf('createAdminJellyfinPlanEditorRouter()') < routes.indexOf('createAdminPlanAccessRouter()'), 'unified plan editor must own canonical Jellyfin edit/config GETs before legacy plan routes');
-assert(editor.includes("router.get('/admin/plans/:id/edit'"), 'unified editor must own the canonical Jellyfin edit page');
+assert(routes.includes('createAdminJellyfinPlanEditorRouter'), 'route composition must mount the unified Jellyfin plan editor');
+assert(routes.indexOf('createAdminJellyfinPlanEditorRouter()') < routes.indexOf('createAdminPlanAccessRouter()'), 'unified Jellyfin dispatch must run before legacy plan GET owners');
+assert(editor.includes('const pathname = req.path') && editor.includes("pathname.match(/^\\/admin\\/plans\\/([^/]+)\\/edit$/)"), 'unified editor must dispatch the canonical Jellyfin edit page without registering a duplicate formal GET owner');
+assert(!editor.includes("router.get('/admin/plans/:id/edit'"), 'unified editor must not duplicate the assembled /edit route owner');
 for (const anchor of ['access', 'availability', 'delivery', 'libraries', 'commerce']) {
   assert(editor.includes(`'${anchor}'`), `unified editor must expose/redirect the ${anchor} configuration area`);
 }
+assert(editor.includes("String(plan?.service_type || 'jellyfin') === 'jellyfin'"), 'unified editor must target current Jellyfin products only, not retired historical bundle products');
 assert(editor.includes("if (data.free) return '';"), 'free plans must omit the commercial/payment card entirely');
 assert(editor.includes('No billing cycle or payment provider applies'), 'free plan UI must explain its independence from paid commerce');
 assert(editor.includes('Free plan independence:'), 'free plan editor must explicitly keep commerce outside free-plan configuration');
 assert(editor.includes('editor-product') && editor.includes('editor-access') && editor.includes('editor-availability') && editor.includes('editor-delivery') && editor.includes('editor-libraries'), 'single-page plan cards must have independent save handlers');
 assert(editor.includes('editor-commerce') && editor.includes('editor-payments'), 'paid Jellyfin plans must configure schedule and payment options from the unified page');
-assert(editor.includes("data-jellyfin-access-model"), 'Jellyfin access card must preserve streams-vs-household policy switching');
+assert(editor.includes('data-jellyfin-access-model'), 'Jellyfin access card must preserve streams-vs-household policy switching');
 assert(editor.includes('Maximum plan slots'), 'availability must be configurable directly in the unified editor');
 assert(editor.includes('Delivery & server placement'), 'server class and placement must be configured in the unified editor');
 assert(editor.includes('Library access'), 'library access must be configured in the unified editor');
