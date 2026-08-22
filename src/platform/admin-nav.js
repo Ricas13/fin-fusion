@@ -11,7 +11,7 @@ const groups=Object.freeze([
   {key:'people',label:'Customers',pages:[['users','Customers','/admin/users'],['tickets','Support','/admin/tickets']]},
   {key:'commerce',label:'Commerce',pages:[['plans','Plans & Storefront','/admin/plans'],['orders','Orders & Growth','/admin/orders'],['payments','Payments & Billing','/admin/payments']]},
   {key:'automation',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Automation','/admin/automation'],['backups','Backups & Recovery','/admin/backups']]},
-  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings?section=integrations'],['system','System','/admin/system']]}
+  {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings/integrations'],['system','System','/admin/system']]}
 ]);
 
 const hiddenPages=Object.freeze({
