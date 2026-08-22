@@ -170,7 +170,7 @@ function selectedResolution(req, d, readiness) {
   const inFlight = d.verificationRequests.some(request => String(request.backup_run_id) === String(run.id) && ['queued', 'running'].includes(request.status));
   return ui.resolutionCard({
     tone: 'warn', badge: 'You came here to fix this', title: 'Prove this recovery point before relying on it',
-    body: `${run.file_name || 'The selected backup'} exists, but CAPTaINFiN has not yet proven that it can be restored successfully.`,
+    body: `${run.file_name || 'The selected backup'} exists, but CAPTAiNFiN has not yet proven that it can be restored successfully.`,
     reason: 'Backup creation and recovery verification are separate safety signals.',
     actionHtml: verifyForm(req, run, { label: 'Verify this backup now', primary: true, disabled: inFlight }),
     secondaryHtml: '<a class="button secondary" href="/admin/backups">Dismiss context</a>'
