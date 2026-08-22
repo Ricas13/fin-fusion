@@ -22,7 +22,7 @@ async function main() {
     )
     VALUES(
       'browser-stremio-addon',
-      'Browser Stremio Add-on',
+      'Browser Stremio Plan',
       'direct',
       'month',
       30,
@@ -34,7 +34,7 @@ async function main() {
       'Browser information-architecture regression fixture',
       TRUE,
       'stremio',
-      TRUE
+      FALSE
     )
     ON CONFLICT(code) DO UPDATE SET
       name=EXCLUDED.name,
@@ -49,7 +49,7 @@ async function main() {
       description=EXCLUDED.description,
       visible=TRUE,
       service_type='stremio',
-      is_addon=TRUE,
+      is_addon=FALSE,
       archived_at=NULL,
       updated_at=NOW()
     RETURNING id
