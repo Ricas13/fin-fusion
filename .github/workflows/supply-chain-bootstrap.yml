@@ -3,6 +3,7 @@ name: Supply Chain Bootstrap
 on:
   push:
     branches: [hardening/supply-chain-reproducibility]
+  pull_request:
 
 permissions:
   contents: write
