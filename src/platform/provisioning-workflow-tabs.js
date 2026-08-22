@@ -3,8 +3,8 @@
 function tabs(active='provisioning'){
   const items=[
     ['provisioning','Provisioning','/admin/provisioning'],
-    ['migrations','Server migrations','/admin/provisioning/migrations'],
-    ['drift','Policy drift','/admin/provisioning/drift']
+    ['migrations','Customer moves','/admin/provisioning/migrations'],
+    ['drift','Access consistency','/admin/provisioning/drift']
   ];
   return `<div class="operatorTabs" aria-label="Provisioning workflow">${items.map(([key,label,url])=>`<a class="operatorTab ${active===key?'active':''}" href="${url}">${label}</a>`).join('')}</div>`;
 }
