@@ -7,6 +7,7 @@ const providerSettings = require('../payments/provider-settings');
 const operations=require('./operations-settings');
 const runtimeSettings=require('./runtime-settings');
 const integrationCard=require('./admin-integration-card');
+const ui=require('./admin-ui');
 const { esc, layout } = require('./admin-html');
 
 function gate(req, res, next) {
@@ -19,9 +20,6 @@ function noStore(_req, res, next) {
     next();
 }
 function csrfInput(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
-function notice(req) {
-    return `${req.query.message ? `<div class="notice success">${esc(req.query.message)}</div>` : ''}${req.query.error ? `<div class="notice error">${esc(req.query.error)}</div>` : ''}`;
-}
 function pill(label, kind = '') { return `<span class="pill ${kind}">${esc(label)}</span>`; }
 function date(value) {
     if (!value) return '—';
@@ -47,20 +45,7 @@ async function paymentsData(req) {
         providerSettings.status('paypal'),
         webhookUrls(req)
     ]);
-    return {
-        events: events.rows,
-        subscriptions: subs.rows,
-        paymentCustomers: customers.rows,
-        stripeStatus,
-        paypalStatus,
-        webhookUrls:urls
-    };
-}
-
-function workflowIntro(d) {
-    const failedEvents = d.events.filter(event => event.failed).length;
-    const subscriptionStates = d.subscriptions.reduce((sum, row) => sum + Number(row.count || 0), 0);
-    return `<section class="section paymentWorkflowIntro"><div class="sectionHead"><div><h2>Payment workflow</h2><div class="muted">Setup controls and live payment problems are separated so daily operations do not feel like provider configuration.</div></div></div><div class="quick-actions"><a class="quick-action" href="#provider-setup"><strong>Provider setup</strong><span>Configure Stripe, PayPal, credentials, webhooks and connection tests.</span></a><a class="quick-action" href="#payment-operations"><strong>Operational monitoring</strong><span>${esc(subscriptionStates)} tracked subscription state${subscriptionStates === 1 ? '' : 's'} and ${esc(failedEvents)} failed recent provider event${failedEvents === 1 ? '' : 's'}.</span></a><a class="quick-action" href="/admin/commerce#payment-incidents"><strong>Payment incidents</strong><span>Customer-impacting failures, assignment, acknowledgement and resolution live in Commerce.</span></a></div></section>`;
+    return { events: events.rows, subscriptions: subs.rows, paymentCustomers: customers.rows, stripeStatus, paypalStatus, webhookUrls:urls };
 }
 
 function secretField(name, label, help, configured = false) {
@@ -96,20 +81,7 @@ function providerHealthCard(req, provider, status, events) {
     const manageTarget=provider==='stripe'?'#stripe-provider':'#paypal-provider';
     const actions=`${testForm(req,provider,!status.credentialsConfigured)}<a class="button secondary btn-sm" href="${manageTarget}">Manage</a>`;
     const summary=status.source==='database'?'Browser-managed credentials and verified event delivery.':'Environment credentials and verified event delivery.';
-    return integrationCard.renderIntegrationCard({
-        name:label,
-        statusLabel,
-        statusKind,
-        summary,
-        enabled:status.enabled,
-        configured:status.configured&&status.webhookConfigured,
-        workingLabel,
-        workingKind,
-        lastVerifiedAt:latestSuccessful?.processed_at||latestSuccessful?.created_at||null,
-        lastVerifiedLabel:'Last successful provider event',
-        fixHint,
-        actionsHtml:actions
-    });
+    return integrationCard.renderIntegrationCard({ name:label, statusLabel, statusKind, summary, enabled:status.enabled, configured:status.configured&&status.webhookConfigured, workingLabel, workingKind, lastVerifiedAt:latestSuccessful?.processed_at||latestSuccessful?.created_at||null, lastVerifiedLabel:'Last successful provider event', fixHint, actionsHtml:actions });
 }
 
 function stripeForm(req, status,url) {
@@ -147,14 +119,40 @@ function paypalForm(req, status,url) {
     </section>`;
 }
 
+function providerReadiness(status){return Boolean(status.enabled&&status.credentialsConfigured&&status.webhookConfigured)}
+function paymentHero(d){
+    const failedEvents=d.events.filter(event=>event.failed);
+    const readyProviders=[d.stripeStatus,d.paypalStatus].filter(providerReadiness).length;
+    const enabledProviders=[d.stripeStatus,d.paypalStatus].filter(status=>status.enabled).length;
+    const stored=d.paymentCustomers.reduce((n,row)=>n+Number(row.count||0),0);
+    const tracked=d.subscriptions.reduce((n,row)=>n+Number(row.count||0),0);
+    const incomplete=[['Stripe',d.stripeStatus],['PayPal',d.paypalStatus]].filter(([,status])=>status.enabled&&!providerReadiness(status));
+    const tone=failedEvents.length?'bad':incomplete.length?'warn':readyProviders?'commerce':'warn';
+    const title=failedEvents.length?`${failedEvents.length} recent provider ${failedEvents.length===1?'event failed':'events failed'}`:incomplete.length?`${incomplete.length} enabled payment ${incomplete.length===1?'provider needs':'providers need'} setup`:readyProviders?'Payment providers are ready':'No payment provider is fully ready';
+    const next=failedEvents.length?'Open the failed provider events below, then resolve any customer-impacting incident in Commerce.':incomplete[0]?`Finish ${incomplete[0][0]} credentials/webhook setup and test the connection.`:readyProviders?'No payment infrastructure action is required.':'Enable and configure Stripe or PayPal before accepting direct payments.';
+    return ui.operatorHero({tone,eyebrow:'Payment control room',title,body:'Provider readiness and failed webhook processing are shown before credentials and raw event history.',statusLabel:failedEvents.length?'Action required':incomplete.length?'Setup incomplete':readyProviders?'Money flow ready':'Setup required',next,facts:[
+        {label:'Ready providers',value:`${readyProviders} / 2`,detail:`${enabledProviders} enabled`},
+        {label:'Recent failures',value:String(failedEvents.length),detail:'latest 100 provider events'},
+        {label:'Provider customers',value:String(stored),detail:'stored payment customer links'},
+        {label:'Subscription states',value:String(tracked),detail:'local tracked subscription records'}
+    ],actionsHtml:failedEvents.length?'<a class="button" href="#provider-failures">Inspect failed events</a><a class="button secondary" href="/admin/commerce#payment-incidents">Resolve payment incidents</a>':'<a class="button secondary" href="#provider-setup">Provider health</a><a class="button secondary" href="/admin/commerce">Commerce overview</a>'});
+}
+
+function eventTable(d){
+    return d.events.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${d.events.map(x => `<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill(x.failed ? 'error' : 'ok', x.failed ? 'bad' : 'good')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="emptyAction"><div><strong>No webhook events received yet.</strong><div>Finish provider setup and send a provider test/checkout event.</div></div></div>';
+}
+
 async function page(req) {
     await Promise.all([providerSettings.ensureLoaded(),runtimeSettings.ensureLoaded()]);
     const d = await paymentsData(req);
     const stored = d.paymentCustomers.reduce((n, row) => n + Number(row.count || 0), 0);
-    const providers = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider setup</h2><div class="muted">Enabled, configured, observed working state and recovery actions use the same layout for every payment provider.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="integrationCardGrid">${providerHealthCard(req,'stripe',d.stripeStatus,d.events)}${providerHealthCard(req,'paypal',d.paypalStatus,d.events)}</div><div class="metrics" style="margin-top:12px"><div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
+    const failed=d.events.filter(event=>event.failed);
+    const providers = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider health</h2><div class="muted">Enabled, configured, observed working state and recovery actions use the same layout for every payment provider.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="integrationCardGrid">${providerHealthCard(req,'stripe',d.stripeStatus,d.events)}${providerHealthCard(req,'paypal',d.paypalStatus,d.events)}</div><div class="metrics" style="margin-top:12px"><div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
     const state = `<section class="section" id="payment-operations"><div class="sectionHead"><div><h2>Operational payment state</h2><div class="muted">Read-only subscription counts from local records. Customer-impacting exceptions are handled in Commerce incidents.</div></div><a class="button secondary btn-sm" href="/admin/commerce#payment-incidents">Open incidents</a></div>${d.subscriptions.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Source</th><th>Status</th><th>Count</th></tr></thead><tbody>${d.subscriptions.map(x => `<tr><td>${esc(x.source)}</td><td>${pill(x.status)}</td><td>${esc(x.count)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No subscriptions yet.</div>'}</section>`;
-    const events = `<section class="section"><div class="sectionHead"><h2>Recent provider events</h2><span class="muted">Use this to confirm your public webhook is actually receiving and processing events.</span></div>${d.events.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${d.events.map(x => `<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill(x.failed ? 'error' : 'ok', x.failed ? 'bad' : 'good')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="emptyAction"><div><strong>No webhook events received yet.</strong><div>Finish one of the setup guides above and send a provider test/checkout event.</div></div></div>'}</section>`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider setup is separated from operational payment monitoring and customer incidents', body: `${integrationCard.styles()}${notice(req)}${workflowIntro(d)}${providers}${stripeForm(req, d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req, d.paypalStatus,d.webhookUrls.paypal)}${state}${events}` });
+    const failures=failed.length?`<section class="section" id="provider-failures">${ui.sectionHeader({title:'Failed provider events',description:'These recent webhooks failed processing. Customer-impacting resolution remains in Commerce incidents.'})}<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${failed.map(x=>`<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill('error','bad')}</td></tr>`).join('')}</tbody></table></div></section>`:'';
+    const providerSetup=ui.detailDisclosure({title:'Stripe & PayPal credentials',summary:'Configuration · open to add/change credentials or webhook details',bodyHtml:`${stripeForm(req,d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req,d.paypalStatus,d.webhookUrls.paypal)}`});
+    const events=`<section class="section">${ui.sectionHeader({title:'Recent provider events',description:'The latest 12 are shown by default; expand only when investigating provider delivery.'})}${d.events.length?`<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Result</th></tr></thead><tbody>${d.events.slice(0,12).map(x=>`<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${pill(x.failed?'error':'ok',x.failed?'bad':'good')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No provider events yet.</div>'}${d.events.length>12?ui.detailDisclosure({title:`Full provider event history (${d.events.length})`,summary:'Detailed webhook history',bodyHtml:eventTable(d)}):''}</section>`;
+    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider safety first; credentials and detailed event history stay out of the way until needed', body: `${integrationCard.styles()}${ui.noticesFromRequest(req)}${paymentHero(d)}${failures}${providers}${providerSetup}${state}${events}` });
 }
 
 function createAdminPaymentSettingsRouter() {
@@ -186,22 +184,11 @@ function createAdminPaymentSettingsRouter() {
                 return res.redirect('/admin/payments?message=' + encodeURIComponent(`${provider === 'stripe' ? 'Stripe' : 'PayPal'} now uses environment fallback settings.`));
             }
             const input = provider === 'stripe' ? {
-                enabled: checked(req.body.enabled),
-                restrictedKey: req.body.restrictedKey,
-                apiKey: req.body.apiKey,
-                webhookSecret: req.body.webhookSecret,
-                clearRestrictedKey: checked(req.body.clear_restrictedKey),
-                clearApiKey: checked(req.body.clear_apiKey),
-                clearWebhookSecret: checked(req.body.clear_webhookSecret)
+                enabled: checked(req.body.enabled), restrictedKey: req.body.restrictedKey, apiKey: req.body.apiKey, webhookSecret: req.body.webhookSecret,
+                clearRestrictedKey: checked(req.body.clear_restrictedKey), clearApiKey: checked(req.body.clear_apiKey), clearWebhookSecret: checked(req.body.clear_webhookSecret)
             } : {
-                enabled: checked(req.body.enabled),
-                environment: req.body.environment,
-                clientId: req.body.clientId,
-                clientSecret: req.body.clientSecret,
-                webhookId: req.body.webhookId,
-                clearClientId: checked(req.body.clear_clientId),
-                clearClientSecret: checked(req.body.clear_clientSecret),
-                clearWebhookId: checked(req.body.clear_webhookId)
+                enabled: checked(req.body.enabled), environment: req.body.environment, clientId: req.body.clientId, clientSecret: req.body.clientSecret, webhookId: req.body.webhookId,
+                clearClientId: checked(req.body.clear_clientId), clearClientSecret: checked(req.body.clear_clientSecret), clearWebhookId: checked(req.body.clear_webhookId)
             };
             const status = await providerSettings.save(provider, input, req.session.authUserId);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_credentials.update','payment_provider',$2,$3::jsonb)`, [req.session.authUserId, provider, JSON.stringify({ enabled: status.enabled, configured: status.configured, webhookConfigured: status.webhookConfigured, environment: status.environment })]);
@@ -214,4 +201,4 @@ function createAdminPaymentSettingsRouter() {
     return router;
 }
 
-module.exports = { createAdminPaymentSettingsRouter, paymentsData, webhookUrls, providerHealthCard };
+module.exports = { createAdminPaymentSettingsRouter, paymentsData, webhookUrls, providerHealthCard, paymentHero, eventTable };

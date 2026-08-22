@@ -11,6 +11,7 @@ const { renderWidgetGrid } = require('./admin-dashboard-page');
 const attention = require('./attention');
 const { rangeControls } = require('./admin-dashboard-view');
 const { number } = require('./admin-dashboard-format');
+const ui = require('./admin-ui');
 
 function gate(req, res, next) {
     return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired');
@@ -37,9 +38,6 @@ async function lifecycleActivity(range) {
         query(`SELECT date_trunc('${bucket}',created_at) bucket,COUNT(*)::int n FROM subscriptions WHERE created_at>=$1 AND created_at<$2 GROUP BY 1`, [range.start, range.end]),
         query(`SELECT date_trunc('${bucket}',updated_at) bucket,COUNT(*)::int n FROM subscriptions WHERE status='cancelled' AND updated_at>=$1 AND updated_at<$2 GROUP BY 1`, [range.start, range.end]),
         query(`SELECT date_trunc('${bucket}',updated_at) bucket,COUNT(*)::int n FROM subscriptions WHERE status='expired' AND updated_at>=$1 AND updated_at<$2 GROUP BY 1`, [range.start, range.end]),
-        // Heuristic: an active subscription whose row has been touched since it was
-        // created is treated as "renewed" -- there is no explicit renewal event log,
-        // so this over-counts any other in-place update to an active subscription.
         query(`SELECT date_trunc('${bucket}',updated_at) bucket,COUNT(*)::int n FROM subscriptions WHERE status='active' AND updated_at>created_at AND updated_at>=$1 AND updated_at<$2 GROUP BY 1`, [range.start, range.end])
     ]);
     const c = fillSeries(range, created.rows, ['n']);
@@ -117,49 +115,20 @@ async function customersRequiringAttention() {
 async function buildContext(req) {
     const range = dashboardRange(req.query || {});
     const [activeUsers, lifecycle, byService, expiry, funnel, utilization, usage, needsAttention, planMixRows] = await Promise.all([
-        activeUsersOverTime(range),
-        lifecycleActivity(range),
-        usersByService(),
-        expiryDistribution(),
-        lifecycleFunnel(),
-        streamLimitUtilization(),
-        usageDistribution(range),
-        customersRequiringAttention(),
+        activeUsersOverTime(range), lifecycleActivity(range), usersByService(), expiryDistribution(), lifecycleFunnel(), streamLimitUtilization(), usageDistribution(range), customersRequiringAttention(),
         query(`SELECT p.name,COUNT(*)::int count FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.status IN('active','trialing') AND s.current_period_end>NOW() GROUP BY p.id ORDER BY count DESC,p.name`)
     ]);
     return { range, data: { activeUsers, lifecycle, byService, expiry, funnel, utilization, usage, needsAttention, planMix: planMixRows.rows } };
 }
 registry.registerContextBuilder('users', buildContext);
 
-registry.register('users', 'activeUsersOverTime', {
-    title: 'Active users over time', defaultOrder: 1, defaultSpan: 8,
-    render: async ctx => widgets.areaChart(ctx.data.activeUsers, 'n')
-});
-registry.register('users', 'lifecycleActivity', {
-    title: 'Customer lifecycle activity', subtitle: '"Renewed" is approximate: any active subscription touched since it was created counts, since no explicit renewal event is logged.',
-    defaultOrder: 2, defaultSpan: 8,
-    render: async ctx => widgets.stackedAreaChart(ctx.data.lifecycle, ['newCount', 'renewedCount', 'expiredCount', 'cancelledCount'])
-});
-registry.register('users', 'lifecycleFunnel', {
-    title: 'Customer lifecycle funnel', subtitle: 'Only stages CAPTAiNFiN can compute reliably are shown.', defaultOrder: 3, defaultSpan: 4,
-    render: async ctx => widgets.funnelChart(ctx.data.funnel)
-});
-registry.register('users', 'usersByPlan', {
-    title: 'Users by plan', defaultOrder: 4, defaultSpan: 6,
-    render: async ctx => widgets.barChart(ctx.data.planMix.map(row => ({ label: row.name, count: row.count })), 'count', undefined, { orientation: 'horizontal' })
-});
-registry.register('users', 'usersByService', {
-    title: 'Users by service', defaultOrder: 5, defaultSpan: 6,
-    render: async ctx => widgets.donutChart(ctx.data.byService)
-});
-registry.register('users', 'expiryDistribution', {
-    title: 'Subscription expiry distribution', subtitle: 'Active/trialing subscriptions expiring in the next 90 days.', defaultOrder: 6, defaultSpan: 6,
-    render: async ctx => widgets.barChart(ctx.data.expiry, 'count')
-});
-registry.register('users', 'usageDistribution', {
-    title: 'Usage distribution', subtitle: 'Playback sessions per customer in the selected period.', defaultOrder: 7, defaultSpan: 6,
-    render: async ctx => widgets.donutChart(ctx.data.usage)
-});
+registry.register('users', 'activeUsersOverTime', { title: 'Active users over time', defaultOrder: 1, defaultSpan: 8, render: async ctx => widgets.areaChart(ctx.data.activeUsers, 'n') });
+registry.register('users', 'lifecycleActivity', { title: 'Customer lifecycle activity', subtitle: '"Renewed" is approximate: any active subscription touched since it was created counts, since no explicit renewal event is logged.', defaultOrder: 2, defaultSpan: 8, render: async ctx => widgets.stackedAreaChart(ctx.data.lifecycle, ['newCount', 'renewedCount', 'expiredCount', 'cancelledCount']) });
+registry.register('users', 'lifecycleFunnel', { title: 'Customer lifecycle funnel', subtitle: 'Only stages CAPTAiNFiN can compute reliably are shown.', defaultOrder: 3, defaultSpan: 4, render: async ctx => widgets.funnelChart(ctx.data.funnel) });
+registry.register('users', 'usersByPlan', { title: 'Users by plan', defaultOrder: 4, defaultSpan: 6, render: async ctx => widgets.barChart(ctx.data.planMix.map(row => ({ label: row.name, count: row.count })), 'count', undefined, { orientation: 'horizontal' }) });
+registry.register('users', 'usersByService', { title: 'Users by service', defaultOrder: 5, defaultSpan: 6, render: async ctx => widgets.donutChart(ctx.data.byService) });
+registry.register('users', 'expiryDistribution', { title: 'Subscription expiry distribution', subtitle: 'Active/trialing subscriptions expiring in the next 90 days.', defaultOrder: 6, defaultSpan: 6, render: async ctx => widgets.barChart(ctx.data.expiry, 'count') });
+registry.register('users', 'usageDistribution', { title: 'Usage distribution', subtitle: 'Playback sessions per customer in the selected period.', defaultOrder: 7, defaultSpan: 6, render: async ctx => widgets.donutChart(ctx.data.usage) });
 registry.register('users', 'streamLimitUtilization', {
     title: 'Stream-limit utilization', subtitle: 'Customers currently streaming, against their plan’s concurrent-stream limit.', defaultOrder: 8, defaultSpan: 6, lazy: true,
     render: async ctx => {
@@ -182,11 +151,39 @@ registry.register('users', 'customersRequiringAttention', {
     }
 });
 
+function customerHero(ctx) {
+    const funnel = Object.fromEntries((ctx.data.funnel || []).map(row => [row.label, Number(row.count || 0)]));
+    const issues = ctx.data.needsAttention || [];
+    const critical = issues.filter(item => item.severity === 'critical').length;
+    const active = funnel['Active now'] || 0;
+    const signedUp = funnel['Signed up'] || 0;
+    const activated = funnel['Activated a subscription'] || 0;
+    const tone = critical ? 'bad' : issues.length ? 'warn' : 'streaming';
+    const title = critical ? `${critical} customer ${critical === 1 ? 'issue needs' : 'issues need'} urgent action` : issues.length ? `${issues.length} customer ${issues.length === 1 ? 'issue needs' : 'issues need'} review` : 'Customer access is clear';
+    const next = issues[0] ? `Fix “${issues[0].title}” before reviewing customer analytics.` : signedUp && !activated ? 'Review customers who have signed up but not activated access.' : 'No customer intervention is required; use the analytics below for trends.';
+    const primary = issues[0] ? `<a class="button" href="${esc(issues[0].href)}">Fix first customer issue</a>` : '<a class="button secondary" href="/admin/users">Open customer list</a>';
+    return ui.operatorHero({
+        tone,
+        eyebrow: 'Customer control room',
+        title,
+        body: issues.length ? 'Customer-impacting exceptions are shown before charts so access problems do not get buried in reporting.' : 'No canonical customer exception is currently open.',
+        statusLabel: critical ? 'Action required' : issues.length ? 'Review needed' : 'Customers clear',
+        next,
+        facts: [
+            { label: 'Active now', value: number(active), detail: 'customers with current effective subscriptions' },
+            { label: 'Signed up', value: number(signedUp), detail: 'all customer accounts' },
+            { label: 'Activated', value: number(activated), detail: 'ever activated a subscription' },
+            { label: 'Open issues', value: number(issues.length), detail: critical ? `${critical} critical` : 'from canonical Needs Attention' }
+        ],
+        actionsHtml: `${primary}<a class="button secondary" href="/admin/attention">View all Needs Attention</a>`
+    });
+}
+
 async function renderPage(req) {
     const ctx = await buildContext(req);
     const widgetGrid = await renderWidgetGrid('users', req, ctx);
-    const body_html = `${rangeControls(ctx.range)}${widgetGrid}`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'users-dashboard', title: 'Users dashboard', subtitle: `Who your customers are and what is happening to them · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/users">Customer list</a>' });
+    const body_html = `${customerHero(ctx)}${rangeControls(ctx.range)}${widgetGrid}`;
+    return layout({ siteName: runtimeSettings.siteName(), active: 'users-dashboard', title: 'Users dashboard', subtitle: `Customer health first, then lifecycle and usage analytics · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/users">Customer list</a>' });
 }
 
 function createAdminUsersDashboardRouter() {
@@ -198,4 +195,4 @@ function createAdminUsersDashboardRouter() {
     return router;
 }
 
-module.exports = { createAdminUsersDashboardRouter, buildContext };
+module.exports = { createAdminUsersDashboardRouter, buildContext, customerHero };

@@ -69,8 +69,8 @@ assert(formFeedback.includes("'X-CSRF-Token': csrfToken"),'Enhanced admin POSTs 
 assert(formFeedback.includes('async function responseMessage(response)'),'Admin form errors must surface the server rejection reason instead of a generic HTTP status');
 assert(libraries.includes('Library controls')&&libraries.includes('Reset filters'),'Libraries page must expose labelled filtering controls');
 assert(libraries.includes('aria-label="Sort libraries by')&&libraryJs.includes('data-sort-state'),'Library sort buttons must have accessible labels and visible state text');
-assert(payments.includes('Provider setup')&&payments.includes('Operational payment state'),'Payments page must split provider setup from operational monitoring');
-assert(commerce.includes('Operational payment problems')&&commerce.includes('/admin/payments#provider-setup'),'Commerce must point incident work away from provider setup');
+assert(payments.includes('id="provider-setup"')&&payments.includes('id="payment-operations"')&&payments.includes('Payment control room'),'Payments page must keep provider setup separate from operational monitoring while leading with operator state');
+assert(commerce.includes('Payment incidents to resolve')&&commerce.includes('/admin/payments'),'Commerce must keep customer-impacting incident work separate from provider infrastructure setup');
 assert(typoMigration.includes('Stremio Montly Addon')&&typoMigration.includes('Stremio Monthly Addon'),'Plan typo migration must correct the live Stremio plan name');
 
 console.log('admin UX foundation smoke: ok');
