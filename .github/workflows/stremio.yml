@@ -1,5 +1,7 @@
 name: Stremio
 
+# This workflow is part of the full pre-merge release gate. workflow_dispatch
+# remains available for changes outside the Stremio path filter when needed.
 on:
   pull_request:
     paths:
