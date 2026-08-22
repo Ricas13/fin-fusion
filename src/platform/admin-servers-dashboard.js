@@ -12,6 +12,7 @@ const widgets = require('./admin-dashboard-widgets');
 const { renderWidgetGrid } = require('./admin-dashboard-page');
 const { rangeControls } = require('./admin-dashboard-view');
 const { number } = require('./admin-dashboard-format');
+const ui = require('./admin-ui');
 
 function gate(req, res, next) {
     return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired');
@@ -176,11 +177,67 @@ function formatDuration(startedAt) {
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function fleetSummary(rows) {
+    const total = rows.length;
+    const offline = rows.filter(row => row.health_status === 'offline').length;
+    const degraded = rows.filter(row => row.health_status === 'degraded').length;
+    const healthy = rows.filter(row => row.health_status === 'healthy').length;
+    const streams = rows.reduce((sum, row) => sum + fleetMetric(row, 'active_streams', row.active_streams), 0);
+    const managed = rows.reduce((sum, row) => sum + Number(row.assigned_users || 0), 0);
+    const capacity = rows.reduce((sum, row) => sum + Number(row.max_users || 0), 0);
+    const capacityPercent = capacity ? Math.round(managed / capacity * 100) : null;
+    return { total, offline, degraded, healthy, streams, managed, capacity, capacityPercent };
+}
+
+function selectedServerResolution(req, rows) {
+    const serverId = String(req.query.server || '').trim();
+    if (!serverId) return '';
+    const server = rows.find(row => String(row.id) === serverId);
+    if (!server) return ui.resolutionCard({ tone: 'info', badge: 'Server context', title: 'That server is no longer in the active fleet', body: 'It may have been disabled or removed since the issue was raised.', actionHtml: '<a class="button secondary" href="/admin/servers/dashboard">Back to fleet overview</a>' });
+    const healthy = server.health_status === 'healthy';
+    const tone = healthy ? 'good' : server.health_status === 'offline' ? 'bad' : 'warn';
+    return ui.resolutionCard({
+        tone,
+        badge: healthy ? 'Already resolved' : 'You came here to fix this',
+        title: healthy ? `${server.name} is healthy again` : `${server.name} is ${server.health_status || 'not healthy'}`,
+        body: healthy ? 'The latest fleet check reports this server as online.' : 'Open this server’s connection and placement settings to correct the cause, then return here to confirm health.',
+        reason: server.fleet_metrics?.last_error || `Last health check ${server.last_health_check ? new Date(server.last_health_check).toLocaleString('en-GB') : 'has not completed'}.`,
+        actionHtml: healthy ? '<a class="button secondary" href="/admin/servers/dashboard">Back to fleet overview</a>' : `<a class="button" href="/admin/servers/${esc(server.id)}/edit">Open ${esc(server.name)} settings</a>`,
+        secondaryHtml: healthy ? '' : '<a class="button secondary" href="/admin/servers">Server list</a>'
+    });
+}
+
+function fleetHero(rows) {
+    const s = fleetSummary(rows);
+    const firstProblem = rows.find(row => row.health_status === 'offline') || rows.find(row => row.health_status === 'degraded');
+    const tone = s.offline ? 'bad' : s.degraded ? 'warn' : s.total ? 'streaming' : 'info';
+    const title = !s.total ? 'No Jellyfin servers configured' : s.offline ? `${s.offline} ${s.offline === 1 ? 'server is' : 'servers are'} offline` : s.degraded ? `${s.degraded} ${s.degraded === 1 ? 'server needs' : 'servers need'} review` : 'Jellyfin fleet is healthy';
+    const next = !s.total ? 'Add the first Jellyfin server.' : firstProblem ? `Fix ${firstProblem.name} before routine fleet work.` : s.capacityPercent != null && s.capacityPercent >= 85 ? 'Fleet is healthy, but capacity is getting tight. Review server capacity.' : 'No server intervention is required.';
+    const actions = firstProblem
+        ? `<a class="button" href="/admin/servers/${esc(firstProblem.id)}/edit">Fix ${esc(firstProblem.name)}</a><a class="button secondary" href="/admin/servers">Server list</a>`
+        : !s.total ? '<a class="button" href="/admin/servers/new">Add Jellyfin server</a>' : '<a class="button secondary" href="/admin/servers">Manage servers</a>';
+    return ui.operatorHero({
+        tone,
+        eyebrow: 'Jellyfin fleet control room',
+        title,
+        body: s.total ? 'Health, live playback and capacity are summarized first. Detailed analytics are below.' : 'CAPTAiNFiN cannot provide or sell Jellyfin access until a server is configured.',
+        statusLabel: s.offline ? 'Action required' : s.degraded ? 'Review needed' : s.total ? 'Fleet online' : 'Setup required',
+        next,
+        facts: [
+            { label: 'Healthy servers', value: `${s.healthy} / ${s.total}`, detail: s.offline ? `${s.offline} offline` : s.degraded ? `${s.degraded} degraded` : 'all responding normally' },
+            { label: 'Live streams', value: number(s.streams), detail: 'current playback sessions' },
+            { label: 'Managed users', value: number(s.managed), detail: 'assigned across fleet' },
+            { label: 'Capacity', value: s.capacityPercent == null ? 'Not set' : `${s.capacityPercent}%`, detail: s.capacity ? `${number(s.managed)} / ${number(s.capacity)} users` : 'no explicit max-user capacity' }
+        ],
+        actionsHtml: actions
+    });
+}
+
 async function renderPage(req) {
     const ctx = await buildContext(req);
     const widgetGrid = await renderWidgetGrid('servers', req, ctx);
-    const body_html = `${rangeControls(ctx.range)}${widgetGrid}`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'servers-dashboard', title: 'Servers dashboard', subtitle: `Fleet load, playback and library health · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/servers">Server list</a>' });
+    const body_html = `${selectedServerResolution(req, ctx.data.rows)}${fleetHero(ctx.data.rows)}${rangeControls(ctx.range)}${widgetGrid}`;
+    return layout({ siteName: runtimeSettings.siteName(), active: 'servers-dashboard', title: 'Servers dashboard', subtitle: `Fleet health first, then playback and library analytics · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/servers">Server list</a>' });
 }
 
 function createAdminServersDashboardRouter() {
@@ -192,4 +249,4 @@ function createAdminServersDashboardRouter() {
     return router;
 }
 
-module.exports = { createAdminServersDashboardRouter, buildContext, libraryTotals, currentActiveStreams };
+module.exports = { createAdminServersDashboardRouter, buildContext, libraryTotals, currentActiveStreams, fleetSummary, fleetHero, selectedServerResolution };
