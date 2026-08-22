@@ -32,7 +32,7 @@ function fleetHero(d,state){
   else if(!state.eligible.length){tone='bad';title='No server is currently eligible for a new customer';statusLabel='Placement blocked';next='Restore server health or return at least one suitable server to Active with new placements allowed.';}
   else if(state.offline.length){tone='warn';title=`${state.offline.length} enabled ${state.offline.length===1?'server is':'servers are'} offline`;statusLabel='Reduced capacity';next='Restore the offline server or deliberately move it to Maintenance if it should remain unavailable.';}
   else if(state.degraded.length){tone='warn';title=`${state.degraded.length} ${state.degraded.length===1?'server is':'servers are'} degraded`;statusLabel='Review health';next='Check degraded server health before changing placement policy to make more hosts eligible.';}
-  return ui.operatorHero({tone,eyebrow:'Placement control room',title,body:'This page controls where future Jellyfin customers may be assigned. Existing customer access is not moved by these settings.',statusLabel,next,facts:[
+  return ui.operatorHero({tone,eyebrow:'Placement control room',title,body:'Placement control room for future assignments. Existing customer access is not moved by these settings.',statusLabel,next,facts:[
     {label:'Enabled servers',value:String(d.servers.length),detail:'Jellyfin servers in this fleet'},
     {label:'Eligible now',value:String(state.eligible.length),detail:'can receive a new customer'},
     {label:'Offline / degraded',value:`${state.offline.length} / ${state.degraded.length}`,detail:'health reducing placement options'},
