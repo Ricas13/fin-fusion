@@ -275,11 +275,11 @@ async function main(){
     for(const url of ['/admin/notifications/preferences','/admin/notifications/email','/admin/notifications']){
       await assertWorkflow(page,url,['Global notifications','Email infrastructure','Delivery health']);
     }
-    const provisioningTabs=['Provisioning','Server migrations','Policy drift'];
+    const provisioningTabs=['Provisioning','Customer moves','Access consistency'];
     for(const [url,active] of [
       ['/admin/provisioning','Provisioning'],
-      ['/admin/provisioning/migrations','Server migrations'],
-      ['/admin/provisioning/drift','Policy drift']
+      ['/admin/provisioning/migrations','Customer moves'],
+      ['/admin/provisioning/drift','Access consistency']
     ]) await assertWorkflow(page,url,provisioningTabs,active);
     const integrationTabs=['Integrations','Request service'];
     for(const [url,active] of [
