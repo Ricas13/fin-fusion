@@ -80,7 +80,7 @@ assert(Boolean(stremioGroup),'Stremio navigation group must exist.');
 assert(stremioGroup.pages.some(page=>page[1]==='Sources'&&page[2]==='/admin/servers/stremio'),'External Jellyfin sources must be discoverable as Stremio → Sources.');
 assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
 assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');
-assert(/Placement health policy/.test(fleet)&&/Placement dry run/.test(fleet)&&/placement-mode/.test(fleet),'Fleet operations must own placement-health, drain/maintenance and simulation controls.');
+assert(/Placement health policy/.test(fleet)&&/Future capacity preview/.test(fleet)&&/placement-mode/.test(fleet),'Fleet operations must own placement-health, drain/maintenance and simulation controls.');
 assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verification/.test(settings),'Security settings must expose staged-registration state.');
 
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;
@@ -97,7 +97,7 @@ const lifecycle=text('src/payments/lifecycle.js');
 assert(/stremio\.assertAcquirable/.test(lifecycle),'Canonical paid/free/trial lifecycle must enforce the Stremio runtime gate.');
 
 const driftAdmin=text('src/platform/admin-drift.js');
-assert(/Audit cadence/.test(driftAdmin)&&!/drift\/settings/.test(driftAdmin),'Policy Drift low-level tuning must stay out of the normal operator form.');
+assert(/Automatic check cadence/.test(driftAdmin)&&!/drift\/settings/.test(driftAdmin),'Access consistency low-level tuning must stay out of the normal operator form.');
 
 const migrations=fs.readdirSync(path.join(root,'db','migrations')).filter(name=>/^\d{3}.*\.sql$/.test(name));
 const groups=new Map();
