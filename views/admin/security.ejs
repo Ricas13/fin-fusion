@@ -8,7 +8,7 @@
     <header class="topBar"><div class="topBreadcrumb"><span>My account</span><strong>Security</strong></div><div class="topBarActions"><a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & guides</a></div></header>
     <div class="content">
       <div class="pageHeader"><div><h1>My security</h1><div class="pageSubtitle">Your administrator password, two-factor authentication, recovery and signed-in sessions</div></div></div>
-      <nav class="operatorTabs" aria-label="My profile workflow"><a class="operatorTab" href="/admin/profile">Profile</a><a class="operatorTab" href="/admin/profile/notifications">Notifications</a><a class="operatorTab active" href="/admin/security">Security</a></nav>
+      <nav class="workflowCardGrid operatorTabs" aria-label="My account"><a class="workflowCard" href="/admin/profile"><span class="workflowCardEyebrow">Related</span><strong>Profile</strong><span>Your administrator profile and account details</span><small>Open →</small></a><a class="workflowCard" href="/admin/profile/notifications"><span class="workflowCardEyebrow">Related</span><strong>Notifications</strong><span>Your personal notification preferences</span><small>Open →</small></a><a class="workflowCard active" href="/admin/security" aria-current="page"><span class="workflowCardEyebrow">Current</span><strong>Security</strong><span>Password, authenticator, recovery codes and sessions</span><small>You are here</small></a></nav>
 
       <% if (message) { %><div class="notice success"><%= message %></div><% } %>
       <% if (error) { %><div class="notice error"><%= error %></div><% } %>

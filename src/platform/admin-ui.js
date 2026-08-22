@@ -1,6 +1,11 @@
 'use strict';
 
-const { esc } = require('./admin-html');
+// Keep shared UI primitives independent from the page-shell renderer. The
+// shell itself consumes workflow-card helpers, so importing admin-html here
+// would create a circular dependency during application startup.
+function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
+}
 
 const KINDS = new Set(['good', 'warn', 'bad', 'accent']);
 function safeKind(value) { return KINDS.has(String(value || '')) ? String(value) : ''; }
@@ -23,6 +28,19 @@ function emptyState({ title, body = '', actionHref = '', actionLabel = '', tone 
 }
 function sectionHeader({ title, description = '', actionsHtml = '', eyebrow = '' }) {
     return `<div class="uiSectionHeader"><div>${eyebrow ? `<span class="uiEyebrow">${esc(eyebrow)}</span>` : ''}<h2>${esc(title)}</h2>${description ? `<p>${esc(description)}</p>` : ''}</div>${actionsHtml ? `<div class="uiSectionActions">${actionsHtml}</div>` : ''}</div>`;
+}
+function workflowCards(items, active = '', label = 'Related controls') {
+    const rows = Array.isArray(items) ? items : [];
+    if (!rows.length) return '';
+    // operatorTabs is retained as a semantic/test compatibility hook while
+    // workflowCardGrid owns the visual layout. This lets older automation find
+    // one workflow navigation region without forcing the UI back to tab strips.
+    return `<nav class="workflowCardGrid operatorTabs" aria-label="${esc(label)}">${rows.map(item => {
+        const values = Array.isArray(item) ? item : [item.key, item.title, item.href, item.description];
+        const [key, title, href, description = 'Open this part of the workflow'] = values;
+        const selected = String(key) === String(active);
+        return `<a class="workflowCard ${selected ? 'active' : ''}" href="${esc(href)}" ${selected ? 'aria-current="page"' : ''}><span class="workflowCardEyebrow">${selected ? 'Current' : 'Related'}</span><strong>${esc(title)}</strong><span>${esc(description)}</span><small>${selected ? 'You are here' : 'Open →'}</small></a>`;
+    }).join('')}</nav>`;
 }
 function confirmationPanel({ tone = 'warn', title, body = '', items = [], choicesHtml = '', actionsHtml = '' }) {
     const cleanTone = ['warn', 'danger', 'info'].includes(tone) ? tone : 'warn';
@@ -48,4 +66,4 @@ function detailDisclosure({ title, summary = 'Advanced details', bodyHtml = '' }
     return `<details class="operatorDetails"><summary><span>${esc(title || summary)}</span><small>${esc(summary)}</small></summary><div class="operatorDetailsBody">${bodyHtml}</div></details>`;
 }
 
-module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };
+module.exports = { safeKind, statusBadge, notice, noticesFromRequest, emptyState, sectionHeader, workflowCards, confirmationPanel, dangerZone, operatorHero, resolutionCard, detailDisclosure };

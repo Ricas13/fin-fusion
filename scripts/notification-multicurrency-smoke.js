@@ -62,7 +62,7 @@ assert(storefront.includes('async function selectedCurrency(_req){return planPri
 assert(communications.includes("customer_opt_in_allowed=TRUE AND event_scope IN ('customer','both')"),'Customer event catalogue must be server-filtered to globally permitted customer events');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 const settingsKeys=settingsGroup?.pages?.map(page=>page[0])||[];
-assert(settingsKeys.includes('notification-settings'),'Global Notifications must remain under Settings');
+assert(!settingsKeys.includes('notification-settings')&&navModel.hiddenPages?.['notification-settings']?.parentKey==='settings-integrations','Global Notifications must remain under Settings → Connections without consuming a duplicate sidebar slot');
 assert(!settingsKeys.includes('my-profile'),'Personal administrator profile must stay out of global Settings navigation');
 assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the global Settings sidebar');
 assert(navModel.hiddenPages?.['my-profile']&&navModel.hiddenPages?.['my-notifications']&&navModel.hiddenPages?.['my-security'],'Personal admin pages must keep explicit My account workflow metadata');
@@ -70,10 +70,12 @@ assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')
 assert(!settingsKeys.includes('settings-commerce'),'Unused Settings Commerce navigation must remain removed');
 assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 
-assert(notificationTabs.includes("['global','Global notifications','/admin/notifications/preferences']"),'Global notification workflow must link back to global settings');
-assert(notificationTabs.includes("['email','Email infrastructure','/admin/notifications/email']"),'Global notification workflow must expose the canonical email infrastructure route');
-assert(notificationTabs.includes("['profile','Profile','/admin/profile']"),'My Profile workflow must expose personal account settings');
-assert(notificationTabs.includes("['personal','Notifications','/admin/profile/notifications']"),'My Profile workflow must expose personal notification routing');
+// Workflow cards carry a fourth description field, so lock the stable key,
+// title and route contract without depending on the presentation copy.
+assert(notificationTabs.includes("'global','Global notifications','/admin/notifications/preferences'"),'Global notification workflow must link back to global settings');
+assert(notificationTabs.includes("'email','Email infrastructure','/admin/notifications/email'"),'Global notification workflow must expose the canonical email infrastructure route');
+assert(notificationTabs.includes("'profile','Profile','/admin/profile'"),'My Profile workflow must expose personal account settings');
+assert(notificationTabs.includes("'personal','Notifications','/admin/profile/notifications'"),'My Profile workflow must expose personal notification routing');
 assert(adminHtml.includes("notificationWorkflow.globalTabs"),'Global notification layouts must keep a stable global workflow tab set');
 assert(adminHtml.includes("notificationWorkflow.profileTabs('profile')")&&adminHtml.includes("notificationWorkflow.profileTabs('personal')"),'My Profile and My Notifications must share a stable personal workflow tab set');
 assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');

@@ -57,7 +57,7 @@ async function main(){
 
     await gotoAdmin(page,'/admin/operations');
     assert.equal(new URL(page.url()).pathname,'/admin/servers/operations','Legacy Operations page did not redirect to Fleet operations');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Fleet operations'],'Fleet operations is not owned by Servers in the sidebar');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Servers'],'Contextual Fleet operations must keep Servers as the permanent Jellyfin sidebar destination');
     const fleetText=await page.locator('body').innerText();
     assert(/Placement control room/.test(fleetText)&&/Eligible now/.test(fleetText),'Fleet operations is missing operator-first placement readiness');
     assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Fleet operations still contains unrelated platform/security settings');
@@ -117,7 +117,7 @@ async function main(){
     assert(/Add external Jellyfin source/.test(stremioText),'Stremio Sources is missing the independent external-source workflow');
     assert(/Choose where Stremio can find your library/.test(stremioText),'Stremio Sources must explain its normal operator task in plain language');
     assert.deepStrictEqual(await labels(page.locator('.stremioJourneyStep.active strong')),['Sources'],'Stremio Sources must show the Sources journey step');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Sources'],'Stremio sidebar does not own the Sources workflow');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio'],'The single permanent Stremio sidebar destination must remain active on source management');
     const addSource=page.locator('form[action="/admin/servers/stremio"]');
     assert.equal(await addSource.count(),1,'External Jellyfin source form is missing');
     for(const field of ['name','baseUrl','username','password'])assert.equal(await addSource.locator(`[name="${field}"]`).count(),1,`Source form is missing ${field}`);

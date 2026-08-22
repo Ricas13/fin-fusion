@@ -1,10 +1,11 @@
 'use strict';
 
+const ui=require('./admin-ui');
+
 function tabs(active='backups'){
-  const items=[
-    ['backups','Database backups','/admin/backups'],
-    ['transfer','Configuration transfer','/admin/configuration']
-  ];
-  return `<div class="operatorTabs" aria-label="Backup and transfer workflow">${items.map(([key,text,url])=>`<a class="operatorTab ${active===key?'active':''}" href="${url}">${text}</a>`).join('')}</div>`;
+  return ui.workflowCards([
+    ['backups','Database backups','/admin/backups','Backups & recovery readiness, verification, off-host copies and restore runbook'],
+    ['transfer','Configuration transfer','/admin/configuration','Export and import portable CAPTAiNFiN configuration']
+  ],active,'Backup and recovery control room');
 }
 module.exports={tabs};

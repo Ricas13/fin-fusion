@@ -110,15 +110,15 @@
             <form class="formPanel" method="post" action="/admin/activity/policy">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <div class="formGrid">
-                <div class="formGroup"><label>Mode</label><select class="input" name="mode"><option value="observe" <%= policy.mode==='observe'?'selected':'' %>>Observe only</option><option value="warn" <%= policy.mode==='warn'?'selected':'' %>>Warn / record violations</option><option value="enforce" <%= policy.mode==='enforce'?'selected':'' %>>Enforce after safety checks</option></select></div>
-                <div class="formGroup"><label>Active window (seconds)</label><input class="input" type="number" min="30" max="600" name="activeWindowSeconds" value="<%= policy.activeWindowSeconds %>"></div>
-                <div class="formGroup"><label>Grace period (seconds)</label><input class="input" type="number" min="10" max="900" name="graceSeconds" value="<%= policy.graceSeconds %>"></div>
-                <div class="formGroup"><label>Confirmations required</label><input class="input" type="number" min="2" max="10" name="confirmationsRequired" value="<%= policy.confirmationsRequired %>"></div>
-                <div class="formGroup"><label>Playback history retention (days)</label><input class="input" type="number" min="7" max="3650" name="historyRetentionDays" value="<%= policy.historyRetentionDays %>"></div>
-                <div class="formGroup"><label>Policy event retention (days)</label><input class="input" type="number" min="30" max="3650" name="eventRetentionDays" value="<%= policy.eventRetentionDays %>"></div>
+                <div class="formGroup"><label for="stream-policy-mode">Mode</label><select class="input" id="stream-policy-mode" name="mode"><option value="observe" <%= policy.mode==='observe'?'selected':'' %>>Observe only</option><option value="warn" <%= policy.mode==='warn'?'selected':'' %>>Warn / record violations</option><option value="enforce" <%= policy.mode==='enforce'?'selected':'' %>>Enforce after safety checks</option></select></div>
+                <div class="formGroup"><label for="stream-policy-active-window">Active window (seconds)</label><input class="input" id="stream-policy-active-window" type="number" min="30" max="600" name="activeWindowSeconds" value="<%= policy.activeWindowSeconds %>"></div>
+                <div class="formGroup"><label for="stream-policy-grace">Grace period (seconds)</label><input class="input" id="stream-policy-grace" type="number" min="10" max="900" name="graceSeconds" value="<%= policy.graceSeconds %>"></div>
+                <div class="formGroup"><label for="stream-policy-confirmations">Confirmations required</label><input class="input" id="stream-policy-confirmations" type="number" min="2" max="10" name="confirmationsRequired" value="<%= policy.confirmationsRequired %>"></div>
+                <div class="formGroup"><label for="stream-policy-history-retention">Playback history retention (days)</label><input class="input" id="stream-policy-history-retention" type="number" min="7" max="3650" name="historyRetentionDays" value="<%= policy.historyRetentionDays %>"></div>
+                <div class="formGroup"><label for="stream-policy-event-retention">Policy event retention (days)</label><input class="input" id="stream-policy-event-retention" type="number" min="30" max="3650" name="eventRetentionDays" value="<%= policy.eventRetentionDays %>"></div>
               </div>
               <label class="toggleRow"><input type="checkbox" name="countPaused" <%= policy.countPaused?'checked':'' %>><span>Count paused sessions against concurrency limit</span></label>
-              <div class="formGroup"><label>Enforcement acknowledgement</label><input class="input" name="enforcementAck" autocomplete="off" placeholder="Required only when selecting Enforce"><div class="inlineHelp">Type <code>I_UNDERSTAND_THIS_STOPS_PLAYBACK</code> when enabling enforcement.</div></div>
+              <div class="formGroup"><label for="stream-policy-enforcement-ack">Enforcement acknowledgement</label><input class="input" id="stream-policy-enforcement-ack" name="enforcementAck" autocomplete="off" placeholder="Required only when selecting Enforce"><div class="inlineHelp">Type <code>I_UNDERSTAND_THIS_STOPS_PLAYBACK</code> when enabling enforcement.</div></div>
               <button class="button">Save stream policy</button>
             </form>
           </section>

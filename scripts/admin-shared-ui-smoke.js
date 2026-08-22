@@ -23,6 +23,13 @@ assert(empty.includes('uiEmptyState-success')&&empty.includes('/admin/example?a=
 const header=ui.sectionHeader({title:'Section <one>',description:'Description',eyebrow:'Optional'});
 assert(header.includes('uiSectionHeader')&&header.includes('Section &lt;one&gt;')&&header.includes('uiEyebrow'),'section headings must share one semantic structure');
 
+const workflow=ui.workflowCards([
+  ['one','Card <one>','/admin/example?a=<x>','Description <unsafe>'],
+  ['two','Second','/admin/second','More']
+],'one','Example workflow');
+assert(workflow.includes('workflowCardGrid')&&workflow.includes('workflowCard active')&&workflow.includes('aria-current="page"'),'workflow cards must expose the active control-room destination semantically');
+assert(workflow.includes('Card &lt;one&gt;')&&workflow.includes('Description &lt;unsafe&gt;')&&workflow.includes('/admin/example?a=&lt;x&gt;'),'workflow cards must escape labels, descriptions and links');
+
 const confirm=ui.confirmationPanel({tone:'danger',title:'Confirm change',body:'Review this first.',items:['<one>','two']});
 assert(confirm.includes('uiConfirmPanel-danger')&&confirm.includes('&lt;one&gt;')&&!confirm.includes('<one>'),'confirmation panels must escape customer/operator data');
 const danger=ui.dangerZone({title:'Danger zone',description:'Permanent changes live here.',actionsHtml:'<button class="button btn-danger">Delete</button>'});

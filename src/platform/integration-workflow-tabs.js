@@ -1,11 +1,12 @@
 'use strict';
 
+const ui=require('./admin-ui');
+
 function tabs(active='integrations'){
   if(active==='limits')return'';
-  const items=[
-    ['integrations','Integrations','/admin/settings?section=integrations'],
-    ['requests','Request service','/admin/request-users']
-  ];
-  return `<div class="operatorTabs" aria-label="Integration workflow">${items.map(([key,label,url])=>`<a class="operatorTab ${active===key?'active':''}" href="${url}">${label}</a>`).join('')}</div>`;
+  return ui.workflowCards([
+    ['integrations','Connections','/admin/settings?section=integrations','Payment, email, notification and external-service configuration'],
+    ['requests','Request service','/admin/request-users','Request-service connection and customer synchronisation']
+  ],active,'Connections workflow');
 }
 module.exports={tabs};

@@ -119,11 +119,11 @@ assert(events.includes("ui.detailDisclosure({title:`Full audit history"), 'Routi
 assert(!events.includes("recipient_email,'attempts'"), 'Audit queries must not pull notification recipient addresses into the combined operator trail');
 assert(!events.includes("row.subject_id?' · '"), 'Audit default rendering must not print raw subject/provider identifiers');
 
-assert(integrations.includes('Integration control room') && integrations.includes('Fix enabled integrations first'), 'Integrations must lead with enabled-but-incomplete services');
+assert(integrations.includes('Integration control room') && integrations.includes('Fix enabled integrations first'), 'Connections must lead with enabled-but-incomplete services');
 assert(integrations.includes('enabled&&!configured'), 'Integration issue state must distinguish incomplete enabled services from intentionally disabled ones');
-assert(integrations.includes('providerSettings.status') && integrations.includes('emailSettings.status') && integrations.includes('notificationSettings.status'), 'Integration overview must reuse canonical status providers');
-assert(nav.includes("['settings-integrations','Integrations','/admin/settings/integrations']"), 'Settings navigation must open the integration health overview');
-assert(routes.includes('createAdminIntegrationsOverviewRouter()') && routes.indexOf('createAdminIntegrationsOverviewRouter()') < routes.indexOf('createAdminOriginalSettingsRouter()'), 'Integration overview must mount before the legacy settings owner without replacing its canonical mutation routes');
+assert(integrations.includes('providerSettings.status') && integrations.includes('emailSettings.status') && integrations.includes('notificationSettings.status'), 'Connections overview must reuse canonical status providers');
+assert(nav.includes("['settings-integrations','Connections','/admin/settings/integrations']"), 'Settings navigation must open the Connections integration-health control room');
+assert(routes.includes('createAdminIntegrationsOverviewRouter()') && routes.indexOf('createAdminIntegrationsOverviewRouter()') < routes.indexOf('createAdminOriginalSettingsRouter()'), 'Connections overview must mount before the legacy settings owner without replacing its canonical mutation routes');
 
 assert(playback.includes('Playback control room') && playback.includes('playbackHero(data,policy,state)'), 'Playback must lead with live operator state and a recommended next action');
 assert(playback.includes('customer_stream_count') && playback.includes('overLimitCustomers'), 'Playback exceptions must derive from the canonical live-session counts and stream limits');

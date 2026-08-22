@@ -1,11 +1,12 @@
 'use strict';
 
+const ui=require('./admin-ui');
+
 function tabs(active='provisioning'){
-  const items=[
-    ['provisioning','Provisioning','/admin/provisioning'],
-    ['migrations','Customer moves','/admin/provisioning/migrations'],
-    ['drift','Access consistency','/admin/provisioning/drift']
-  ];
-  return `<div class="operatorTabs" aria-label="Provisioning workflow">${items.map(([key,label,url])=>`<a class="operatorTab ${active===key?'active':''}" href="${url}">${label}</a>`).join('')}</div>`;
+  return ui.workflowCards([
+    ['provisioning','Provisioning','/admin/provisioning','Queue state, failures, retries and customer access creation'],
+    ['migrations','Customer moves','/admin/provisioning/migrations','Controlled customer moves between Jellyfin servers'],
+    ['drift','Access consistency','/admin/provisioning/drift','Detect and repair plan, account and access-policy drift']
+  ],active,'Provisioning control room');
 }
 module.exports={tabs};
