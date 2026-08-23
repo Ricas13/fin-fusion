@@ -15,10 +15,15 @@ function addCommandPalette(html){
   return withLauncher.includes('</body>')?withLauncher.replace('</body>',`${commandPaletteMarkup()}</body>`):`${withLauncher}${commandPaletteMarkup()}`;
 }
 
+function addFilterStyles(html){
+  const link='<link rel="stylesheet" href="/css/admin-filter-bars.css">';
+  return html.includes('</head>')?html.replace('</head>',`${link}</head>`):html;
+}
+
 function layout(options={}){
-  const html=addCommandPalette(base.layout(options));
-  const scripts='<script src="/js/admin-setting-controls.js" defer></script><script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-safety-confirmations.js" defer></script><script src="/js/admin-command-palette.js" defer></script><script src="/js/admin-sidebar-nav.js" defer></script><script src="/js/admin-stremio-journey.js" defer></script><script src="/js/admin-release-status.js" defer></script><script src="/js/admin-form-accessibility.js" defer></script>';
+  const html=addFilterStyles(addCommandPalette(base.layout(options)));
+  const scripts='<script src="/js/admin-setting-controls.js" defer></script><script src="/js/admin-filter-bars.js" defer></script><script src="/js/admin-safety-confirmations.js" defer></script><script src="/js/admin-command-palette.js" defer></script><script src="/js/admin-sidebar-nav.js" defer></script><script src="/js/admin-stremio-journey.js" defer></script><script src="/js/admin-release-status.js" defer></script><script src="/js/admin-form-accessibility.js" defer></script>';
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
 
-module.exports={...base,layout,commandPaletteMarkup,addCommandPalette};
+module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles};
