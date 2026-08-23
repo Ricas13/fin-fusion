@@ -14,7 +14,7 @@ const VIDEO_CONTAINERS=new Set(['ts','webm','asf','wmv','ogv','mp4','m4v','mkv',
 
 function neutralGroup(type,videoId,filename){return `cf-${crypto.createHash('sha1').update(`${type}:${videoId}:${filename}`,'utf8').digest('hex').slice(0,16)}`;}
 function containerExtension(value){const container=String(value||'').split(',')[0].trim().toLowerCase();return VIDEO_CONTAINERS.has(container)?container:'';}
-function pathExtension(value){const match=String(value||'').split(/[?#]/)[0].match(/\.([a-z0-9]{2,5})$/i);return match&&VIDEO_CONTAINERS.has(match[1].toLowerCase())?match[1].toLowerCase():'';}
+function pathExtension(value){const raw=String(value||'').split(/[?#]/)[0].replace(/\.strm$/i,''),match=raw.match(/\.([a-z0-9]{2,5})$/i);return match&&VIDEO_CONTAINERS.has(match[1].toLowerCase())?match[1].toLowerCase():'';}
 
 // Jellyfin's Static=true video endpoint returns the original media bytes rather
 // than creating a negotiated/transcoded playback. Deliberately omit
