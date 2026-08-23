@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/css/customer-portal.css">
 </head>
 <%
-  const providerName=({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio',coingate:'CoinGate'})[provider]||'Payment provider';
+  const providerName=({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio'})[provider]||'Payment provider';
   const quantity=Number(accessQuantity||1),quantityLabel=accessVariantKind==='households'?`${quantity} household${quantity===1?'':'s'}`:`${quantity} concurrent stream${quantity===1?'':'s'}`;
 %>
 <body>
