@@ -3,9 +3,12 @@
 const express = require('express');
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
+const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const policy = require('../integrations/request-plan-policy');
 const { layout, esc } = require('./admin-html');
+
+const writeLimit = routeRateLimit.middleware({ scope: 'admin-request-plan-policy-write', max: 60, windowSeconds: 60, reason: 'admin_request_plan_policy_write' });
 
 function gate(req, res, next) {
   if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -103,7 +106,7 @@ function createAdminRequestPlanPolicyRouter() {
   router.get('/admin/request-plan-policy', async (req, res, next) => {
     try { return res.send(await page(req)); } catch (error) { return next(error); }
   });
-  router.post('/admin/request-plan-policy/:planId', async (req, res) => {
+  router.post('/admin/request-plan-policy/:planId', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
       const movieLimit = optionalLimit(req.body.movieLimit), movieDays = days(req.body.movieDays);
