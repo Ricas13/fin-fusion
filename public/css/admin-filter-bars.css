@@ -1,0 +1,27 @@
+/* Shared admin filtering pattern.
+   Filter/search surfaces stay compact and immediately actionable while
+   configuration and mutation forms remain untouched. */
+.adminFilterShell{display:grid;gap:8px;margin:10px 0 14px}
+.adminFilterToolbar{display:flex;align-items:flex-end;gap:8px;flex-wrap:nowrap;min-width:0;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--panel);overflow-x:auto;scrollbar-width:thin}
+.adminFilterToolbar .formGroup,.adminFilterToolbar>label{margin:0;min-width:132px;flex:0 1 170px}
+.adminFilterToolbar .adminFilterSearch{min-width:220px;flex:1 1 320px}
+.adminFilterToolbar label,.adminFilterAdvanced label{font-size:10px;color:var(--muted);font-weight:700}
+.adminFilterToolbar .input,.adminFilterAdvanced .input{min-height:36px;height:36px;margin-top:4px}
+.adminFilterToolbar input[type=date],.adminFilterAdvanced input[type=date]{min-width:150px}
+.adminFilterActions{display:flex;align-items:center;gap:7px;flex:0 0 auto;min-height:36px;margin-left:auto;white-space:nowrap}
+.adminFilterActions .button{min-height:36px;display:inline-flex;align-items:center}
+.adminFilterAdvanced{padding:11px;border:1px solid var(--border);border-radius:10px;background:var(--panel2)}
+.adminFilterAdvanced[hidden]{display:none!important}
+.adminFilterAdvancedGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:9px}
+.adminFilterAdvancedGrid .formGroup{margin:0;min-width:0}
+.adminFilterChips{display:flex;gap:6px;flex-wrap:wrap}
+.adminFilterChip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--panel2);color:var(--text);font:inherit;font-size:11px;cursor:pointer}
+.adminFilterChip:hover,.adminFilterChip:focus-visible{border-color:var(--accent)}
+.adminFilterChip span{color:var(--muted)}
+.adminFilterForm{padding:0!important;border:0!important;background:transparent!important}
+.adminFilterForm>.formGrid,.adminFilterForm>.buttonRow{margin:0}
+.adminFilterLocal{margin:0}
+.adminFilterLocal .adminFilterAdvanced{margin-top:0}
+.adminFilterExpiryPreset{min-width:170px}
+@media(max-width:1000px){.adminFilterToolbar{flex-wrap:wrap;overflow-x:visible}.adminFilterToolbar .formGroup,.adminFilterToolbar>label{flex:1 1 180px}.adminFilterToolbar .adminFilterSearch{flex:2 1 260px}.adminFilterActions{margin-left:0}}
+@media(max-width:620px){.adminFilterToolbar{align-items:stretch}.adminFilterToolbar .formGroup,.adminFilterToolbar>label,.adminFilterToolbar .adminFilterSearch{min-width:100%;flex-basis:100%}.adminFilterActions{width:100%}.adminFilterActions .button{flex:1;justify-content:center}.adminFilterAdvancedGrid{grid-template-columns:1fr}}
