@@ -33,6 +33,7 @@ const provisioning = read('src/platform/admin-provisioning.js');
 const drift = read('src/platform/admin-drift.js');
 const migrations = read('src/platform/admin-server-migrations.js');
 const fleetOperations = read('src/platform/admin-fleet-operations.js');
+const serverControl = read('src/platform/admin-server-fleet-dashboard.js');
 const provisioningTabs = read('src/platform/provisioning-workflow-tabs.js');
 const nav = read('src/platform/admin-nav.js');
 const routes = read('src/platform/admin-route-composition.js');
@@ -155,10 +156,11 @@ assert(migrations.includes('placeholder="ROLLBACK"') && migrations.includes('Rol
 assert(!migrations.includes('type="hidden" name="confirmation" value="ROLLBACK"'), 'Migration rollback must not remain a one-click hidden-confirmation action');
 assert(migrations.includes("ui.detailDisclosure({title:'Customer move history'"), 'Routine customer move history must be progressively disclosed');
 
-assert(fleetOperations.includes('Placement control room') && fleetOperations.includes('fleetState(d)'), 'Fleet operations must lead with canonical current placement readiness');
-assert(fleetOperations.includes('Eligible now') && fleetOperations.includes('Fix placement blockers first'), 'Fleet operations must show eligible capacity and blockers before configuration');
-assert(fleetOperations.includes('Save mode') && !fleetOperations.includes('Set ${esc(modeLabel(x.placement_mode))}'), 'Server placement mode actions must describe the action being saved, not the old selected state');
-assert(fleetOperations.includes("ui.detailDisclosure({title:'Placement health policy'"), 'Placement policy must stay secondary to current fleet readiness');
+assert(serverControl.includes('Placement ready') && serverControl.includes('fleetSummary(data.rows, data.settings)'), 'Servers must lead with canonical current placement readiness');
+assert(serverControl.includes('placementReason(server, settings)') && serverControl.includes('Health, capacity, placement and library maintenance in one place.'), 'Servers must show placement eligibility/blockers alongside current fleet state');
+assert(serverControl.includes('placementForm(req, server)') && serverControl.includes('>Active</option>') && serverControl.includes('>Drain</option>') && serverControl.includes('>Maintenance</option>'), 'Server placement mode must be an inline compact setting rather than a separate workflow');
+assert(serverControl.includes('operatorDetails') && serverControl.includes('Placement health policy') && serverControl.includes('Future capacity preview'), 'Advanced placement policy and simulation must remain progressively disclosed under Servers');
+assert(fleetOperations.includes("res.redirect(302,forward(req,'placement'))") && fleetOperations.includes("r.post('/admin/servers/operations/server/:id/placement-mode'"), 'Legacy Fleet operations must remain a compatibility and mutation owner while its UI redirects to Servers');
 
 for (const label of ['Customer moves','Access consistency']) {
   assert(nav.includes(`'${label}'`) && provisioningTabs.includes(`'${label}'`), `Provisioning navigation must use task language: ${label}`);
