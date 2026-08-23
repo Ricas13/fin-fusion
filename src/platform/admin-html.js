@@ -125,7 +125,7 @@ function provisioningTabsFor(options={}){
 }
 function integrationTabsFor(options={}){
     const active=String(options.active||'');
-    const tab={'settings-integrations':'integrations','request-service':'requests','request-plan-limits':'limits'}[active];
+    const tab={'settings-integrations':'integrations','request-service':'requests'}[active];
     return tab?integrationWorkflow.tabs(tab):'';
 }
 function backupTabsFor(options={}){
@@ -133,6 +133,16 @@ function backupTabsFor(options={}){
     if(active==='backups')return backupWorkflow.tabs('backups');
     if(active==='configuration-transfer')return backupWorkflow.tabs('transfer');
     return'';
+}
+
+// Compatibility cleanup for retired admin destinations. Old source fragments or
+// extensions may still emit the former standalone request-policy URL; the
+// canonical owner is Commerce -> Plans, so never render the ghost workflow.
+function canonicalizeRetiredAdminDestinations(body){
+    let html=String(body||'');
+    html=html.replace(/href=(["'])\/admin\/request-plan-policy\1/g,(_match,quote)=>`href=${quote}/admin/plans${quote}`);
+    html=html.replace(/<strong>Request limits<\/strong><span>Movie and TV quotas for the request service<\/span>/g,'<strong>Plan request policies</strong><span>Quotas and Jellyseerr permissions are configured on each plan.</span>');
+    return html;
 }
 
 function notificationTestScriptFor(options={}){
@@ -148,9 +158,10 @@ function discountScriptFor(options={}){
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
     const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script>';
-    options={...options,body:workflow+String(options.body||'')+scripts};
+    const canonicalBody=canonicalizeRetiredAdminDestinations(options.body);
+    options={...options,body:workflow+canonicalBody+scripts};
     const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
-module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,notificationTestScriptFor,planWorkflowScriptFor,discountScriptFor,SETTING_HELP};
+module.exports={...core,layout,stripInlineScripts,decorateSettingHelp,notificationTabsFor,provisioningTabsFor,integrationTabsFor,backupTabsFor,canonicalizeRetiredAdminDestinations,notificationTestScriptFor,planWorkflowScriptFor,discountScriptFor,SETTING_HELP};

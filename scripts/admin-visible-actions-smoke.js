@@ -9,6 +9,7 @@ const platformDir=path.join(root,'src','platform');
 const publicFeedback=fs.readFileSync(path.join(root,'public','js','admin-form-feedback.js'),'utf8');
 const navSource=fs.readFileSync(path.join(platformDir,'admin-nav.js'),'utf8');
 const navModel=require('../src/platform/admin-nav');
+const htmlCore=require('../src/platform/admin-html-core');
 const tabs=fs.readFileSync(path.join(platformDir,'notification-workflow-tabs.js'),'utf8');
 const provisioningTabs=fs.readFileSync(path.join(platformDir,'provisioning-workflow-tabs.js'),'utf8');
 const html=fs.readFileSync(path.join(platformDir,'admin-html.js'),'utf8');
@@ -73,6 +74,7 @@ assert.equal(navModel.groupFor('my-notifications').label,'My account','Personal 
 assert(navModel.hiddenPages?.['policy-drift'],'Access consistency must remain addressable from Provisioning');
 assert(navModel.hiddenPages?.['notification-gateway'],'Notification delivery health must remain addressable from Connections');
 assert(navSource.includes("'my-notifications':Object.freeze"),'Hidden personal notification workflow metadata must remain explicit');
+assert.equal(navModel.hiddenPages?.['jellyfin-import']?.page?.[1],'Import from Jellyfin','Jellyfin import must use one canonical label in breadcrumbs and navigation');
 
 assert(tabs.includes("['global','Global notifications','/admin/notifications/preferences'") ,'Notification control room must expose global notification channels');
 assert(tabs.includes("['email','Email infrastructure','/admin/notifications/email'") ,'Notification control room must expose Email infrastructure');
@@ -85,5 +87,15 @@ assert(html.includes("notificationWorkflow.profileTabs('profile')"),'My Profile 
 assert(html.includes("notificationWorkflow.profileTabs('personal')"),'My Notifications must render the same personal workflow navigation');
 assert(html.includes("notificationWorkflow.globalTabs"),'Global notification pages must use one shared workflow renderer');
 assert(html.includes('provisioningTabsFor'),'Provisioning pages must use one shared workflow renderer');
+assert(!html.includes("'request-plan-limits':'limits'"),'Retired Request Limits must not remain a workflow-tab destination');
+assert(html.includes('canonicalizeRetiredAdminDestinations'),'Retired admin destinations must be canonicalized before rendering');
+
+const duplicateHero='<section class="sectionGraphicHero"><div class="buttonRow"><a class="button" href="/admin/users/new">Add customer</a><a class="button" href="/admin/attention">Fix first issue</a></div></section>';
+const pageActions='<a class="button" href="/admin/users/new">Add customer</a><a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a>';
+const dedupedHero=htmlCore.dedupeOverviewActions(duplicateHero,pageActions);
+assert(!dedupedHero.includes('>Add customer</a>'),'Page-header actions must not be repeated inside overview heroes');
+assert(dedupedHero.includes('>Fix first issue</a>'),'Corrective overview actions must survive page-action deduplication');
+const localSection='<section class="section"><a class="button" href="/admin/users/new">Section-specific action</a></section>';
+assert(htmlCore.dedupeOverviewActions(localSection,pageActions).includes('Section-specific action'),'Section-specific controls must not be stripped by page-action deduplication');
 
 console.log(`admin visible action integrity: ok (${uniqueActions.length} static POST/formaction targets checked)`);
