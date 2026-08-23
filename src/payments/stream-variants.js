@@ -10,6 +10,7 @@ function eligible(plan){
 }
 function paymentOption(row){return{id:row.id,provider:row.provider,checkoutMode:row.checkout_mode,externalId:row.external_id,configured:true,verificationStatus:row.verification_status};}
 function coinGateOption(priceMinor){return number(priceMinor)>0?{id:null,provider:'coingate',checkoutMode:'payment',externalId:null,configured:true,verificationStatus:'not_required'}:null;}
+function sellableSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW()) AND ${alias}.audience IN ('direct','both')`;}
 
 async function rowsForPlans(planIds,currency){
   const ids=(planIds||[]).filter(Boolean);if(!ids.length)return[];
@@ -59,7 +60,7 @@ async function resolve(planCode,provider,currency,streams,checkoutMode=null){
       NULL::uuid provider_mapping_id,NULL::text external_id,'payment'::text checkout_mode,'{"automatic":true,"streamVariant":true}'::jsonb provider_metadata
       FROM plans p JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE
       JOIN plan_stream_variants v ON v.plan_id=p.id AND v.active=TRUE AND v.currency=pr.currency
-      WHERE p.code=$1 AND pr.currency=$2 AND v.streams=$3 AND v.price_minor>0
+      WHERE p.code=$1 AND ${sellableSql('p')} AND pr.currency=$2 AND v.streams=$3 AND v.price_minor>0
       LIMIT 1`,[planCode,String(currency).toUpperCase(),requested]);
     return result.rows.map(row=>({...row,streams:requested}));
   }
@@ -68,7 +69,7 @@ async function resolve(planCode,provider,currency,streams,checkoutMode=null){
     FROM plans p JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE
     JOIN plan_stream_variants v ON v.plan_id=p.id AND v.active=TRUE AND v.currency=pr.currency
     JOIN plan_stream_variant_provider_prices vp ON vp.stream_variant_id=v.id AND vp.active=TRUE
-    WHERE p.code=$1 AND pr.currency=$2 AND v.streams=$3 AND vp.provider=$4
+    WHERE p.code=$1 AND ${sellableSql('p')} AND pr.currency=$2 AND v.streams=$3 AND vp.provider=$4
       AND ($5::text IS NULL OR vp.checkout_mode=$5)
     ORDER BY CASE vp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END`,[planCode,String(currency).toUpperCase(),requested,provider,mode]);
   return result.rows.map(row=>({...row,streams:requested}));
@@ -86,4 +87,4 @@ async function byExternalId(provider,externalId){
   const row=result.rows[0];return row?{...row,streams:number(row.streams,1)}:null;
 }
 
-module.exports={eligible,decoratePlans,adminState,resolve,byExternalId,coinGateOption};
+module.exports={eligible,decoratePlans,adminState,resolve,byExternalId,coinGateOption,sellableSql};
