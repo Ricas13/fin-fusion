@@ -101,8 +101,8 @@ function buildWhere(filters, scope) {
         else if (PAYMENT_PROVIDERS.includes(filters.paymentProvider)) where.push(`pay.provider=${p(filters.paymentProvider)}`);
     }
 
-    if (filters.expiryFrom) where.push(`cur.current_period_end >= ${p(filters.expiryFrom)}::timestamptz`);
-    if (filters.expiryTo) where.push(`cur.current_period_end <= ${p(filters.expiryTo)}::timestamptz`);
+    if (filters.expiryFrom) where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE AND cur.current_period_end >= ${p(filters.expiryFrom)}::timestamptz`);
+    if (filters.expiryTo) where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE AND cur.current_period_end <= ${p(filters.expiryTo)}::timestamptz`);
     if (filters.lastActiveFrom) where.push(`acc.last_activity_at >= ${p(filters.lastActiveFrom)}::timestamptz`);
     if (filters.lastActiveTo) where.push(`acc.last_activity_at <= ${p(filters.lastActiveTo)}::timestamptz`);
     if (filters.registeredFrom) where.push(`c.created_at >= ${p(filters.registeredFrom)}::timestamptz`);
@@ -137,8 +137,9 @@ function buildWhere(filters, scope) {
 const SELECT_COLUMNS = `
     c.id,c.display_name,c.email,c.created_at,
     au.username AS login_username,au.active AS login_active,
-    cur.status AS subscription_status,cur.current_period_end,
-    p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,
+    cur.status AS subscription_status,
+    CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END AS current_period_end,
+    p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,COALESCE(p.is_free_tier,FALSE) AS is_free_tier,
     acc.account_count,acc.last_activity_at,acc.has_enabled_account,acc.server_names,
     recon.rank AS recon_rank,pay.provider AS payment_provider,ovr.has_override
 `;
@@ -146,7 +147,7 @@ const SELECT_COLUMNS = `
 async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'recent' } = {}) {
     const { whereSql, params } = buildWhere(filters, scope);
     const orderSql = sort === 'expiring'
-        ? 'ORDER BY cur.current_period_end ASC NULLS LAST'
+        ? 'ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END ASC NULLS LAST'
         : sort === 'name'
             ? 'ORDER BY COALESCE(c.display_name,au.username,c.email) ASC'
             : 'ORDER BY COALESCE(acc.last_activity_at,c.created_at) DESC NULLS LAST';
