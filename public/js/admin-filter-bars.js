@@ -226,6 +226,9 @@
     originalGrid.replaceWith(shell);
     const originalButtons = form.querySelector(':scope > .buttonRow');
     originalButtons?.remove();
+    for (const button of form.querySelectorAll(':scope > button')) {
+      if (/^(apply|filter|search)/i.test(String(button.textContent || '').trim())) button.remove();
+    }
 
     const showAdvanced = () => {
       if (!advanced || !more) return;
