@@ -35,7 +35,8 @@ async function loadPlan(planId,db=query){
 async function legacyUsage(plan,db=query,{excludeReservationId=null}={}){
   const result=await db(`SELECT
       (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS used,
-      (SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId]);
+      ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
+       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW())) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId]);
   const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
@@ -132,6 +133,9 @@ function legacyAcquisitionSql(alias='p'){
   ) + (
     SELECT COUNT(*) FROM free_access_registration_reservations cr
     WHERE cr.plan_id=${alias}.id AND cr.consumed_at IS NULL AND cr.released_at IS NULL AND cr.expires_at>NOW()
+  ) + (
+    SELECT COUNT(*) FROM billing_checkout_intents ci
+    WHERE ci.plan_id=${alias}.id AND ci.state='open' AND ci.expires_at>NOW()
   )))`;
 }
 function acquisitionSql(alias='p'){
