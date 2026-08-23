@@ -33,7 +33,7 @@ const exists=file=>fs.existsSync(path.join(root,file));
 
 const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.map(page=>page[0])]));
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard'],'Dashboard must expose one operator starting point; Needs Attention is a contextual drill-down');
-assert.deepStrictEqual(pageKeys.jellyfin,['servers','activity'],'Jellyfin must expose Servers and Playback while placement/libraries stay contextual');
+assert.deepStrictEqual(pageKeys.jellyfin,['servers','activity'],'Jellyfin must expose Servers and Playback; placement and scanning belong inside Servers');
 assert.deepStrictEqual(pageKeys.stremio,['stremio-sources'],'Stremio must expose one control room rather than separate Sources/IP sidebar destinations');
 assert.deepStrictEqual(pageKeys.resellers,['reseller-overview'],'Resellers must expose one reserved control room without duplicate overview/account navigation');
 assert.deepStrictEqual(pageKeys.people,['users','tickets'],'Customers must expose customer management and Support; activity is contextual');
@@ -42,7 +42,7 @@ assert.deepStrictEqual(pageKeys.automation,['provisioning','automation-jobs','ba
 assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security','settings-integrations','system'],'Settings must collapse to General, Security, Connections, and System');
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a sidebar destination');
 assert(nav.hiddenPages.attention?.parentKey==='dashboard','Needs Attention must remain routable beneath Dashboard');
-assert(nav.hiddenPages['fleet-operations']?.parentKey==='servers'&&nav.hiddenPages.libraries?.parentKey==='servers','Placement and Libraries must remain contextual Server workflows');
+assert(!nav.hiddenPages['fleet-operations']&&!nav.hiddenPages.libraries&&nav.aliases['fleet-operations']==='servers'&&nav.aliases.libraries==='servers','Placement and Libraries must resolve into the single Servers workflow rather than remain contextual siblings');
 assert(nav.hiddenPages['stremio-playback']?.parentKey==='stremio-sources','Stremio IP access must remain contextual to the single Stremio control room');
 assert(nav.hiddenPages['users-dashboard']?.parentKey==='users','Customer activity must remain contextual to Customers');
 assert(nav.hiddenPages.discounts?.parentKey==='orders'&&nav.hiddenPages.referrals?.parentKey==='orders','Discounts and Affiliates must remain available from Orders & Growth');
