@@ -8,13 +8,14 @@
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
 </head>
+<% const providerName=({stripe:'Stripe',paypal:'PayPal',coingate:'CoinGate'})[provider]||'Payment provider'; %>
 <body>
 <div class="portalShell">
   <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Secure checkout</div></div></a></div></header>
   <main class="portalMain" style="max-width:760px">
     <section class="heroCard" style="display:block">
       <div class="welcomePanel">
-        <div class="eyebrow"><%= provider === 'stripe' ? 'Stripe' : 'PayPal' %></div>
+        <div class="eyebrow"><%= providerName %></div>
         <h1>How would you like to pay?</h1>
         <p><strong><%= planName %></strong> · <%= priceLabel %>. Choose whether this purchase should renew automatically.</p>
       </div>
@@ -34,7 +35,7 @@
         </div>
         <div class="field" style="margin-top:16px"><label>Discount code <span class="brandMeta">(optional)</span></label><input class="input" name="discountCode" maxlength="40" value="<%= discountCode || '' %>" placeholder="Enter code"></div>
         <% if (provider === 'paypal' && options.some(function(o){return o.checkout_mode === 'subscription'})) { %><div class="brandMeta" style="margin-top:8px">PayPal discount codes currently apply only to one-time payments.</div><% } %>
-        <div class="heroButtons" style="margin-top:18px"><button class="button primary" type="submit">Continue to <%= provider === 'stripe' ? 'Stripe' : 'PayPal' %></button><a class="button secondary" href="/account#plans">Back to plans</a></div>
+        <div class="heroButtons" style="margin-top:18px"><button class="button primary" type="submit">Continue to <%= providerName %></button><a class="button secondary" href="/account#plans">Back to plans</a></div>
       </form>
     </section>
   </main>
