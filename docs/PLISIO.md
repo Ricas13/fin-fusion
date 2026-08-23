@@ -30,7 +30,3 @@ A callback is never treated as proof of payment on its own. CAPTAiNFiN:
 7. processes repeated callbacks idempotently through the existing payment-event and checkout-intent lifecycle.
 
 Pending payments keep the checkout open. Expired/cancelled/error/mismatch states never activate access.
-
-## CoinGate migration
-
-New checkouts no longer expose CoinGate. Existing CoinGate database records remain valid and the legacy CoinGate callback/return endpoints stay mounted so an order created before the migration can finish safely. The admin event history labels those records as legacy rather than deleting payment history.
