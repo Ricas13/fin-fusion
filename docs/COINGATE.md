@@ -7,7 +7,8 @@ CAPTAiNFiN supports CoinGate as a hosted **one-time crypto checkout** provider. 
 - CoinGate is available for paid direct-customer plans that have an active price in the platform portal currency.
 - No `plan_provider_prices` mapping is required. CAPTAiNFiN creates a CoinGate order dynamically from the immutable local plan-price contract.
 - CoinGate checkout is one-time only. A monthly, six-month or yearly plan receives its normal access duration, but CoinGate does not create an automatically renewing CAPTAiNFiN subscription.
-- Discounts and mixed service-credit checkout are calculated locally before the CoinGate order is created. The paid CoinGate order amount/currency must match that immutable local contract before access is activated.
+- Discount codes are calculated locally before the CoinGate order is created. The discount reservation is kept for the longer hosted-crypto checkout window and the paid CoinGate order amount/currency must match the immutable local contract before access is activated.
+- Mixed service-credit + CoinGate checkout is intentionally disabled. CoinGate confirmation can outlive a normal credit reservation, so allowing a partial credit reservation to expire while crypto is still confirming could make the same credit spendable twice. Customers can use full service credit when their balance covers the plan, or pay the CoinGate amount without mixed service credit.
 - Access is activated only after CoinGate reports the remote order as `paid` and CAPTAiNFiN independently re-fetches that order through the authenticated CoinGate API.
 - `new`, `pending` and `confirming` remain waiting states. `expired`/`canceled` close the checkout, and `invalid` fails it.
 - Refund callbacks are recorded in the normal payment-risk incident system. Full refunds also revisit any qualifying affiliate reward.
