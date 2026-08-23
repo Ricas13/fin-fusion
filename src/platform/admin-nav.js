@@ -9,7 +9,7 @@ const groups=Object.freeze([
   {key:'stremio',label:'Stremio',pages:[['stremio-sources','Stremio','/admin/servers/stremio']]},
   {key:'resellers',label:'Resellers',pages:[['reseller-overview','Resellers','/admin/resellers']]},
   {key:'people',label:'Customers',pages:[['users','Customers','/admin/users'],['tickets','Support','/admin/tickets']]},
-  {key:'commerce',label:'Commerce',pages:[['plans','Plans & Storefront','/admin/plans'],['orders','Orders & Growth','/admin/orders'],['payments','Payments & Billing','/admin/payments']]},
+  {key:'commerce',label:'Commerce',pages:[['plans','Plans & Storefront','/admin/plans'],['orders','Orders & Growth','/admin/commerce/orders'],['payments','Payments & Billing','/admin/payments']]},
   {key:'automation',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Automation','/admin/automation'],['backups','Backups & Recovery','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings/integrations'],['system','System','/admin/system']]}
 ]);
