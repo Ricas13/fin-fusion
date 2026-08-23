@@ -7,95 +7,15 @@ function serviceType(plan){return String(plan?.service_type||'jellyfin').toLower
 function variantKind(plan){const service=serviceType(plan);if(service==='stremio')return'households';if(service==='jellyfin'||service==='bundle')return'streams';return null;}
 function baseQuantity(plan){return variantKind(plan)==='households'?Math.max(1,number(plan?.stremio_household_network_limit,1)):Math.max(1,number(plan?.streams,1));}
 function maxQuantity(kind){return kind==='households'?10:50;}
-function eligible(plan){
-  const audience=String(plan?.audience||'direct').toLowerCase();
-  return Boolean(variantKind(plan))&&['direct','both'].includes(audience)&&!plan?.is_free_tier&&String(plan?.billing_interval||'')!=='trial'&&number(plan?.price_minor)>0;
-}
+function eligible(plan){const audience=String(plan?.audience||'direct').toLowerCase();return Boolean(variantKind(plan))&&['direct','both'].includes(audience)&&!plan?.is_free_tier&&String(plan?.billing_interval||'')!=='trial'&&number(plan?.price_minor)>0;}
 function paymentOption(row){return{id:row.id,provider:row.provider,checkoutMode:row.checkout_mode,externalId:row.external_id,configured:true,verificationStatus:row.verification_status};}
-function coinGateOption(priceMinor){return number(priceMinor)>0?{id:null,provider:'coingate',checkoutMode:'payment',externalId:null,configured:true,verificationStatus:'not_required'}:null;}
+function automaticCryptoOption(priceMinor,provider='plisio'){return number(priceMinor)>0?{id:null,provider,checkoutMode:'payment',externalId:null,configured:true,verificationStatus:'not_required'}:null;}
 function sellableSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW()) AND ${alias}.audience IN ('direct','both')`;}
-function accessFields(plan,{variantId=null,kind=variantKind(plan),quantity=baseQuantity(plan),priceMinor=null,currency=null,paymentOptions=[]}={}){
-  const households=kind==='households'?quantity:Math.max(1,number(plan?.stremio_household_network_limit,1));
-  const streams=kind==='streams'?quantity:Math.max(1,number(plan?.streams,1));
-  return{access_variant_id:variantId,variant_kind:kind,access_quantity:quantity,quantity,streams,households,stremio_household_network_limit:households,price_minor:priceMinor==null?number(plan?.price_minor):number(priceMinor),currency:String(currency||plan?.currency||'GBP').toUpperCase(),active:true,payment_options:paymentOptions};
-}
-
-async function rowsForPlans(planIds,currency){
-  const ids=(planIds||[]).filter(Boolean);if(!ids.length)return[];
-  const result=await query(`SELECT v.*,vp.id mapping_id,vp.provider,vp.checkout_mode,vp.external_id,vp.active mapping_active,vp.verification_status
-    FROM plan_access_variants v
-    LEFT JOIN plan_access_variant_provider_prices vp ON vp.access_variant_id=v.id AND vp.active=TRUE
-    WHERE v.plan_id=ANY($1::uuid[]) AND v.currency=$2 AND v.active=TRUE
-    ORDER BY v.plan_id,v.variant_kind,v.quantity,vp.provider,vp.checkout_mode`,[ids,String(currency||'GBP').toUpperCase()]);
-  return result.rows;
-}
-
-async function decoratePlans(plans,currency){
-  const list=Array.isArray(plans)?plans:[];if(!list.length)return list;
-  const rows=await rowsForPlans(list.filter(eligible).map(p=>p.id),currency);
-  const grouped=new Map();
-  for(const row of rows){
-    const key=String(row.plan_id);if(!grouped.has(key))grouped.set(key,new Map());const variants=grouped.get(key),variantKey=String(row.id);
-    if(!variants.has(variantKey))variants.set(variantKey,{access_variant_id:row.id,variant_kind:row.variant_kind,access_quantity:number(row.quantity,1),quantity:number(row.quantity,1),price_minor:number(row.price_minor),currency:String(row.currency).toUpperCase(),active:Boolean(row.active),payment_options:[]});
-    if(row.mapping_id)variants.get(variantKey).payment_options.push(paymentOption({id:row.mapping_id,...row}));
-  }
-  return list.map(plan=>{
-    if(!eligible(plan))return plan;
-    const kind=variantKind(plan),base=accessFields(plan,{kind,quantity:baseQuantity(plan),paymentOptions:Array.isArray(plan.payment_options)?plan.payment_options:[]});
-    const extras=Array.from(grouped.get(String(plan.id))?.values()||[]).filter(v=>v.variant_kind===kind&&v.quantity!==base.quantity).map(v=>accessFields(plan,{variantId:v.access_variant_id,kind:v.variant_kind,quantity:v.quantity,priceMinor:v.price_minor,currency:v.currency,paymentOptions:v.payment_options}));
-    for(const variant of extras){const coin=coinGateOption(variant.price_minor);if(coin&&!variant.payment_options.some(o=>o.provider==='coingate'))variant.payment_options.push(coin);}
-    const variants=[base,...extras].sort((a,b)=>a.quantity-b.quantity);
-    return{...plan,access_variant_kind:kind,access_variants:variants,has_access_variants:variants.length>1};
-  });
-}
-
-async function adminState(planId,currency){
-  const result=await query(`SELECT v.*,vp.id mapping_id,vp.provider,vp.checkout_mode,vp.external_id,vp.active mapping_active,vp.verified_at,vp.verification_status,vp.verification_error,vp.remote_amount_minor,vp.remote_currency,vp.remote_interval,vp.remote_active
-    FROM plan_access_variants v
-    LEFT JOIN plan_access_variant_provider_prices vp ON vp.access_variant_id=v.id
-    WHERE v.plan_id=$1 AND v.currency=$2
-    ORDER BY v.variant_kind,v.quantity,vp.provider,vp.checkout_mode`,[planId,String(currency||'GBP').toUpperCase()]);
-  const variants=new Map();
-  for(const row of result.rows){const key=String(row.id);if(!variants.has(key))variants.set(key,{id:row.id,plan_id:row.plan_id,variant_kind:row.variant_kind,quantity:number(row.quantity,1),currency:String(row.currency).toUpperCase(),price_minor:number(row.price_minor),active:Boolean(row.active),mappings:new Map()});if(row.mapping_id)variants.get(key).mappings.set(`${row.provider}:${row.checkout_mode}`,row);}
-  return Array.from(variants.values()).sort((a,b)=>a.quantity-b.quantity);
-}
-
+function accessFields(plan,{variantId=null,kind=variantKind(plan),quantity=baseQuantity(plan),priceMinor=null,currency=null,paymentOptions=[]}={}){const households=kind==='households'?quantity:Math.max(1,number(plan?.stremio_household_network_limit,1)),streams=kind==='streams'?quantity:Math.max(1,number(plan?.streams,1));return{access_variant_id:variantId,variant_kind:kind,access_quantity:quantity,quantity,streams,households,stremio_household_network_limit:households,price_minor:priceMinor==null?number(plan?.price_minor):number(priceMinor),currency:String(currency||plan?.currency||'GBP').toUpperCase(),active:true,payment_options:paymentOptions};}
+async function rowsForPlans(planIds,currency){const ids=(planIds||[]).filter(Boolean);if(!ids.length)return[];const result=await query(`SELECT v.*,vp.id mapping_id,vp.provider,vp.checkout_mode,vp.external_id,vp.active mapping_active,vp.verification_status FROM plan_access_variants v LEFT JOIN plan_access_variant_provider_prices vp ON vp.access_variant_id=v.id AND vp.active=TRUE WHERE v.plan_id=ANY($1::uuid[]) AND v.currency=$2 AND v.active=TRUE ORDER BY v.plan_id,v.variant_kind,v.quantity,vp.provider,vp.checkout_mode`,[ids,String(currency||'GBP').toUpperCase()]);return result.rows;}
+async function decoratePlans(plans,currency){const list=Array.isArray(plans)?plans:[];if(!list.length)return list;const rows=await rowsForPlans(list.filter(eligible).map(p=>p.id),currency),grouped=new Map();for(const row of rows){const key=String(row.plan_id);if(!grouped.has(key))grouped.set(key,new Map());const variants=grouped.get(key),variantKey=String(row.id);if(!variants.has(variantKey))variants.set(variantKey,{access_variant_id:row.id,variant_kind:row.variant_kind,access_quantity:number(row.quantity,1),quantity:number(row.quantity,1),price_minor:number(row.price_minor),currency:String(row.currency).toUpperCase(),active:Boolean(row.active),payment_options:[]});if(row.mapping_id)variants.get(variantKey).payment_options.push(paymentOption({id:row.mapping_id,...row}));}return list.map(plan=>{if(!eligible(plan))return plan;const kind=variantKind(plan),base=accessFields(plan,{kind,quantity:baseQuantity(plan),paymentOptions:Array.isArray(plan.payment_options)?plan.payment_options:[]}),extras=Array.from(grouped.get(String(plan.id))?.values()||[]).filter(v=>v.variant_kind===kind&&v.quantity!==base.quantity).map(v=>accessFields(plan,{variantId:v.access_variant_id,kind:v.variant_kind,quantity:v.quantity,priceMinor:v.price_minor,currency:v.currency,paymentOptions:v.payment_options}));for(const variant of extras){const crypto=automaticCryptoOption(variant.price_minor,'plisio');if(crypto&&!variant.payment_options.some(o=>o.provider==='plisio'))variant.payment_options.push(crypto);}const variants=[base,...extras].sort((a,b)=>a.quantity-b.quantity);return{...plan,access_variant_kind:kind,access_variants:variants,has_access_variants:variants.length>1};});}
+async function adminState(planId,currency){const result=await query(`SELECT v.*,vp.id mapping_id,vp.provider,vp.checkout_mode,vp.external_id,vp.active mapping_active,vp.verified_at,vp.verification_status,vp.verification_error,vp.remote_amount_minor,vp.remote_currency,vp.remote_interval,vp.remote_active FROM plan_access_variants v LEFT JOIN plan_access_variant_provider_prices vp ON vp.access_variant_id=v.id WHERE v.plan_id=$1 AND v.currency=$2 ORDER BY v.variant_kind,v.quantity,vp.provider,vp.checkout_mode`,[planId,String(currency||'GBP').toUpperCase()]),variants=new Map();for(const row of result.rows){const key=String(row.id);if(!variants.has(key))variants.set(key,{id:row.id,plan_id:row.plan_id,variant_kind:row.variant_kind,quantity:number(row.quantity,1),currency:String(row.currency).toUpperCase(),price_minor:number(row.price_minor),active:Boolean(row.active),mappings:new Map()});if(row.mapping_id)variants.get(key).mappings.set(`${row.provider}:${row.checkout_mode}`,row);}return Array.from(variants.values()).sort((a,b)=>a.quantity-b.quantity);}
 function rowWithAccess(row){if(!row)return null;const kind=row.variant_kind||variantKind(row),quantity=number(row.quantity,baseQuantity(row));return{...row,...accessFields(row,{variantId:row.access_variant_id||null,kind,quantity,priceMinor:row.price_minor,currency:row.currency,paymentOptions:[]})};}
-
-async function resolve(planCode,provider,currency,quantity,checkoutMode=null){
-  const requested=Number(quantity);if(!Number.isInteger(requested)||requested<1)return[];
-  const mode=checkoutMode&&['payment','subscription'].includes(checkoutMode)?checkoutMode:null;
-  const kindSql=`((p.service_type='stremio' AND v.variant_kind='households') OR (p.service_type IN('jellyfin','bundle') AND v.variant_kind='streams'))`;
-  if(provider==='coingate'){
-    const result=await query(`SELECT p.*,pr.id plan_price_id,v.id access_variant_id,v.variant_kind,v.quantity,v.price_minor,v.currency,pr.is_default,
-      NULL::uuid provider_mapping_id,NULL::text external_id,'payment'::text checkout_mode,'{"automatic":true,"accessVariant":true}'::jsonb provider_metadata
-      FROM plans p JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE
-      JOIN plan_access_variants v ON v.plan_id=p.id AND v.active=TRUE AND v.currency=pr.currency
-      WHERE p.code=$1 AND ${sellableSql('p')} AND pr.currency=$2 AND v.quantity=$3 AND ${kindSql} AND v.price_minor>0
-      LIMIT 1`,[planCode,String(currency).toUpperCase(),requested]);
-    return result.rows.map(rowWithAccess);
-  }
-  const result=await query(`SELECT p.*,pr.id plan_price_id,v.id access_variant_id,v.variant_kind,v.quantity,v.price_minor,v.currency,pr.is_default,
-      NULL::uuid provider_mapping_id,vp.external_id,vp.checkout_mode,'{"accessVariant":true}'::jsonb provider_metadata
-    FROM plans p JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE
-    JOIN plan_access_variants v ON v.plan_id=p.id AND v.active=TRUE AND v.currency=pr.currency
-    JOIN plan_access_variant_provider_prices vp ON vp.access_variant_id=v.id AND vp.active=TRUE
-    WHERE p.code=$1 AND ${sellableSql('p')} AND pr.currency=$2 AND v.quantity=$3 AND ${kindSql} AND vp.provider=$4
-      AND ($5::text IS NULL OR vp.checkout_mode=$5)
-    ORDER BY CASE vp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END`,[planCode,String(currency).toUpperCase(),requested,provider,mode]);
-  return result.rows.map(rowWithAccess);
-}
-
-async function byExternalId(provider,externalId){
-  const result=await query(`SELECT p.*,pr.id plan_price_id,v.id access_variant_id,v.variant_kind,v.quantity,v.price_minor,v.currency,pr.is_default,
-      NULL::uuid provider_mapping_id,vp.external_id,vp.checkout_mode,'{"accessVariant":true}'::jsonb provider_metadata,vp.active mapping_active
-    FROM plan_access_variant_provider_prices vp
-    JOIN plan_access_variants v ON v.id=vp.access_variant_id
-    JOIN plans p ON p.id=v.plan_id
-    JOIN plan_prices pr ON pr.plan_id=p.id AND pr.currency=v.currency AND pr.active=TRUE
-    WHERE vp.provider=$1 AND vp.external_id=$2
-    ORDER BY vp.updated_at DESC LIMIT 1`,[provider,externalId]);
-  return rowWithAccess(result.rows[0]||null);
-}
-
-module.exports={eligible,variantKind,baseQuantity,maxQuantity,accessFields,decoratePlans,adminState,resolve,byExternalId,coinGateOption,sellableSql};
+async function resolve(planCode,provider,currency,quantity,checkoutMode=null){const requested=Number(quantity);if(!Number.isInteger(requested)||requested<1)return[];const mode=checkoutMode&&['payment','subscription'].includes(checkoutMode)?checkoutMode:null,kindSql=`((p.service_type='stremio' AND v.variant_kind='households') OR (p.service_type IN('jellyfin','bundle') AND v.variant_kind='streams'))`;if(provider==='plisio'||provider==='coingate'){const result=await query(`SELECT p.*,pr.id plan_price_id,v.id access_variant_id,v.variant_kind,v.quantity,v.price_minor,v.currency,pr.is_default,NULL::uuid provider_mapping_id,NULL::text external_id,'payment'::text checkout_mode,'{"automatic":true,"accessVariant":true}'::jsonb provider_metadata FROM plans p JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE JOIN plan_access_variants v ON v.plan_id=p.id AND v.active=TRUE AND v.currency=pr.currency WHERE p.code=$1 AND ${sellableSql('p')} AND pr.currency=$2 AND v.quantity=$3 AND ${kindSql} AND v.price_minor>0 LIMIT 1`,[planCode,String(currency).toUpperCase(),requested]);return result.rows.map(rowWithAccess);}const result=await query(`SELECT p.*,pr.id plan_price_id,v.id access_variant_id,v.variant_kind,v.quantity,v.price_minor,v.currency,pr.is_default,NULL::uuid provider_mapping_id,vp.external_id,vp.checkout_mode,'{"accessVariant":true}'::jsonb provider_metadata FROM plans p JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE JOIN plan_access_variants v ON v.plan_id=p.id AND v.active=TRUE AND v.currency=pr.currency JOIN plan_access_variant_provider_prices vp ON vp.access_variant_id=v.id AND vp.active=TRUE WHERE p.code=$1 AND ${sellableSql('p')} AND pr.currency=$2 AND v.quantity=$3 AND ${kindSql} AND vp.provider=$4 AND ($5::text IS NULL OR vp.checkout_mode=$5) ORDER BY CASE vp.checkout_mode WHEN 'payment' THEN 0 ELSE 1 END`,[planCode,String(currency).toUpperCase(),requested,provider,mode]);return result.rows.map(rowWithAccess);}
+async function byExternalId(provider,externalId){const result=await query(`SELECT p.*,pr.id plan_price_id,v.id access_variant_id,v.variant_kind,v.quantity,v.price_minor,v.currency,pr.is_default,NULL::uuid provider_mapping_id,vp.external_id,vp.checkout_mode,'{"accessVariant":true}'::jsonb provider_metadata,vp.active mapping_active FROM plan_access_variant_provider_prices vp JOIN plan_access_variants v ON v.id=vp.access_variant_id JOIN plans p ON p.id=v.plan_id JOIN plan_prices pr ON pr.plan_id=p.id AND pr.currency=v.currency AND pr.active=TRUE WHERE vp.provider=$1 AND vp.external_id=$2 ORDER BY vp.updated_at DESC LIMIT 1`,[provider,externalId]);return rowWithAccess(result.rows[0]||null);}
+module.exports={eligible,variantKind,baseQuantity,maxQuantity,accessFields,decoratePlans,adminState,resolve,byExternalId,automaticCryptoOption,sellableSql};
