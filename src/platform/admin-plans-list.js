@@ -7,6 +7,7 @@ const { listData } = require('./admin-plans');
 const runtimeSettings = require('./runtime-settings');
 const readiness = require('./product-readiness');
 const planComponents = require('../access/plan-components');
+const capacity = require('../entitlements/plan-capacity');
 const ui = require('./admin-ui');
 
 function gate(req, res, next) {
@@ -55,23 +56,24 @@ function familyMatches(plan, type) {
   return family === type || service === type;
 }
 function capacityCell(plan) {
-  const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`;
-  const limit = plan.capacity_limit == null ? null : Number(plan.capacity_limit);
-  const used = Number(plan.live_subscriber_count || 0);
-  if (limit == null) return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${used} active · legacy unlimited/not-configured state</div><a class="subText" href="${esc(link)}">Set inventory →</a>`;
-  if (limit === 0) return `<div class="capacityMeter"><strong class="statusBad">Closed · 0 available</strong><div class="subText">${used ? `${used} existing active subscription${used === 1 ? '' : 's'} unaffected` : 'No new acquisition'}</div><div class="capacityMeterLine"><span class="capacityMeterFill nearFull" style="width:100%"></span></div><a class="subText" href="${esc(link)}">Open availability →</a></div>`;
-  const remaining = Math.max(0, limit - used), pct = Math.min(100, Math.round((used / limit) * 100)), near = pct >= 85 ? ' nearFull' : '';
-  return `<div class="capacityMeter"><strong class="${remaining === 0 ? 'statusBad' : remaining <= Math.max(2, Math.ceil(limit * .1)) ? 'statusWarn' : 'statusGood'}">${remaining} available</strong><div class="subText">${used} / ${limit} used</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage inventory →</a></div>`;
+  const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{};
+  if(state.model==='fleet_streams'){
+    const occupied=Number(state.streamUsed||0)+Number(state.streamReserved||0),limit=Math.max(0,Number(state.streamLimit||0)),pct=limit?Math.min(100,Math.round((occupied/limit)*100)):100,near=pct>=85?' nearFull':'';
+    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':Number(state.remaining)<=10?'statusWarn':'statusGood'}">${esc(state.label||`${state.remaining} available`)}</strong><div class="subText">${occupied} / ${limit} stream entitlements allocated or held · ${esc(state.requiredStreams)} per new customer</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View shared ${esc(state.pool)} capacity →</a></div>`;
+  }
+  const limit=state.limit==null?null:Number(state.limit),used=Number(state.used||0)+Number(state.reserved||0);
+  if(limit==null)return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${used} active/held · legacy unlimited state</div><a class="subText" href="${esc(link)}">Set inventory →</a>`;
+  if(limit===0)return `<div class="capacityMeter"><strong class="statusBad">Closed · 0 available</strong><div class="subText">${Number(plan.live_subscriber_count||0)?`${Number(plan.live_subscriber_count||0)} existing active subscription${Number(plan.live_subscriber_count||0)===1?'':'s'} unaffected`:'No new acquisition'}</div><div class="capacityMeterLine"><span class="capacityMeterFill nearFull" style="width:100%"></span></div><a class="subText" href="${esc(link)}">Open availability →</a></div>`;
+  const remaining=Math.max(0,Number(state.remaining||0)),pct=Math.min(100,Math.round((used/limit)*100)),near=pct>=85?' nearFull':'';
+  return `<div class="capacityMeter"><strong class="${remaining===0?'statusBad':remaining<=Math.max(2,Math.ceil(limit*.1))?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${used} / ${limit} used or held</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage inventory →</a></div>`;
 }
 function planRow(plan, ctx) {
   const href = `/admin/plans/${encodeURIComponent(plan.id)}/edit`;
   const accessHref = `/admin/plans/${encodeURIComponent(plan.id)}/access`;
   const lifecycleHref = `/admin/plans/${encodeURIComponent(plan.id)}/lifecycle`;
   const base = readiness.evaluate(plan, ctx);
-  const limit = plan.capacity_limit == null ? null : Number(plan.capacity_limit);
-  const used = Number(plan.live_subscriber_count || 0);
-  const soldOut = limit != null && used >= limit;
-  const s = soldOut ? { ...base, key: 'sold_out', kind: 'bad', label: limit === 0 ? 'Closed' : 'Sold out', sellable: false } : base;
+  const soldOut = Boolean(plan.capacity_state?.soldOut);
+  const s = soldOut ? { ...base, key: 'sold_out', kind: 'bad', label: 'Sold out', sellable: false } : base;
   const free = Number(plan.price_minor || 0) === 0;
   const subs = Number(plan.subscription_count || 0);
   const delivery = readiness.deliveryLabel(plan);
@@ -83,7 +85,8 @@ async function withCapacity(rows) {
   if (!rows.length) return rows;
   const counts = await query(`SELECT plan_id,COUNT(DISTINCT customer_id)::int used FROM subscriptions WHERE superseded_by IS NULL AND status IN('active','trialing','past_due','paused') AND starts_at<=NOW() AND current_period_end>NOW() GROUP BY plan_id`);
   const map = new Map(counts.rows.map(row => [String(row.plan_id), Number(row.used || 0)]));
-  return rows.map(row => ({ ...row, live_subscriber_count: map.get(String(row.id)) || 0 }));
+  const states=await Promise.all(rows.map(row=>capacity.usage(row.id).catch(()=>({model:'manual_plan',limit:row.capacity_limit??null,used:map.get(String(row.id))||0,reserved:0,remaining:row.capacity_limit==null?null:Math.max(0,Number(row.capacity_limit)-(map.get(String(row.id))||0)),soldOut:row.capacity_limit!=null&&(map.get(String(row.id))||0)>=Number(row.capacity_limit),label:'Availability unavailable',kind:'warn'}))));
+  return rows.map((row,index) => ({ ...row, live_subscriber_count: map.get(String(row.id)) || 0,capacity_state:states[index] }));
 }
 function sectionTable(key, title, description, rows, ctx) {
   if (!rows.length) return '';
@@ -96,8 +99,6 @@ function createAction(type) {
   if (type === 'paid' || type === 'jellyfin') return { href: '/admin/plans/new?type=paid', label: 'Add Paid Server plan' };
   return { href: '/admin/plans/new', label: 'Add plan' };
 }
-// Kept as a compatibility export for extensions/tests that imported it. The
-// Plans catalogue deliberately no longer renders a page-level readiness hero.
 function planReadinessHero(rows, ctx, create) {
   if (!rows || !ctx || !create) return '';
   return ui.operatorHero({ title: 'Plans', actionsHtml: '' });
@@ -122,9 +123,9 @@ async function plansPage(req) {
   const groups = { free: [], paid: [], stremio: [], reseller: [], legacy: [] };
   for (const row of rows) (groups[planFamily(row)] || groups.legacy).push(row);
   const sections = [
-    sectionTable('free', 'Free Server Plans', 'Free Jellyfin server access. No billing period is shown to customers; removal is governed by usage rules and capacity.', groups.free, ctx),
-    sectionTable('paid', 'Paid Plans', 'Paid and trial Jellyfin server plans managed by CAPTAiNFiN.', groups.paid, ctx),
-    sectionTable('stremio', 'Stremio Plans', 'Standalone Stremio access with a configurable household connection allowance and unlimited streams/devices.', groups.stremio, ctx),
+    sectionTable('free', 'Free Server Plans', 'Free Jellyfin availability is derived from the shared Free server stream-capacity pool.', groups.free, ctx),
+    sectionTable('paid', 'Paid Plans', 'Paid Jellyfin plans share Premium server stream capacity; trials also keep their own manual concurrency cap.', groups.paid, ctx),
+    sectionTable('stremio', 'Stremio Plans', 'Standalone Stremio availability remains a manually configured place limit.', groups.stremio, ctx),
     sectionTable('reseller', 'Reseller Plans', 'Reseller catalogue plans remain separated from direct customer plans.', groups.reseller, ctx),
     sectionTable('legacy', 'Historical Bundles / Add-ons', 'Historical rows kept for existing customer contracts; new bundle/add-on creation is retired.', groups.legacy, ctx)
   ].join('');
