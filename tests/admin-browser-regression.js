@@ -172,14 +172,16 @@ async function main(){
       ['/admin/settings?section=integrations','Connections'],
       ['/admin/request-users','Request service']
     ]) await assertWorkflow(page,url,integrationTabs,active);
-    await assertWorkflow(page,'/admin/request-plan-policy',[]);
-    assert.equal(String(await page.locator('.topBreadcrumb span').textContent()).trim(),'Commerce','Request limits must be owned by Commerce');
-    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Request limits','Request limits breadcrumb must reflect plan policy ownership');
+    const legacyRequestResponse=await page.goto(`${BASE}/admin/request-plan-policy`,{waitUntil:'domcontentloaded',timeout:20000});
+    assert(legacyRequestResponse&&legacyRequestResponse.status()<400,'legacy Request limits URL must remain a safe compatibility redirect');
+    assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');
+    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Plans & Storefront','legacy Request limits must land in Plans & Storefront');
+    assert(!(await page.locator('.operatorTabs').allTextContents()).join(' ').includes('Request limits'),'Request limits must not remain as a duplicate Plans workflow card');
     await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
     await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/request-plan-policy','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
