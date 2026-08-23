@@ -12,13 +12,25 @@
     '.integrationCard'
   ].join(',');
 
+  // A table is a configuration surface only when it contains a setting the
+  // operator can define. Generic row-selection checkboxes and action buttons
+  // remain data-table affordances rather than changing the table's meaning.
   const MUTABLE_TABLE_CONTROL = [
-    'input:not([type="hidden"]):not([type="submit"]):not([readonly]):not([disabled])',
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([readonly]):not([disabled])',
     'select:not([disabled])',
     'textarea:not([readonly]):not([disabled])',
+    '.inlineToggle input[type="checkbox"]:not([disabled])',
     '[role="switch"]',
-    '[data-setting-control]',
-    'button[type="submit"]'
+    '[data-setting-control]'
+  ].join(',');
+
+  const MUTABLE_SETTING_CONTROL = [
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([readonly]):not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([readonly]):not([disabled])',
+    '.inlineToggle input[type="checkbox"]:not([disabled])',
+    '[role="switch"]',
+    '[data-setting-control]'
   ].join(',');
 
   const OVERVIEW_SELECTOR = [
@@ -46,9 +58,14 @@
     ':scope > header'
   ].join(',');
 
-  function kindFor(container) {
+  function explicitKind(container) {
     const explicit = String(container.dataset.adminSurface || '').trim().toLowerCase();
-    if (['control', 'data', 'overview'].includes(explicit)) return explicit;
+    return ['control', 'data', 'overview'].includes(explicit) ? explicit : '';
+  }
+
+  function kindFor(container) {
+    const explicit = explicitKind(container);
+    if (explicit) return explicit;
     const tables = Array.from(container.querySelectorAll('table'));
     return tables.some(table => table.querySelector(MUTABLE_TABLE_CONTROL)) ? 'control' : 'data';
   }
@@ -77,6 +94,15 @@
     });
   }
 
+  function classifyStandaloneControls(root = document) {
+    root.querySelectorAll(CONTAINER_SELECTOR).forEach(container => {
+      if (container.dataset.adminSurfaceResolved || container.querySelector('table')) return;
+      const explicit = explicitKind(container);
+      if (explicit) return labelSurface(container, explicit);
+      if (container.querySelector(MUTABLE_SETTING_CONTROL)) labelSurface(container, 'control');
+    });
+  }
+
   function classifyOverview(root = document) {
     root.querySelectorAll(OVERVIEW_SELECTOR).forEach(element => {
       if (element.closest('.adminSurface--control')) return;
@@ -86,6 +112,7 @@
 
   function classify(root = document) {
     classifyTables(root);
+    classifyStandaloneControls(root);
     classifyOverview(root);
   }
 
