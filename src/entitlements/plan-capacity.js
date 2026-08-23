@@ -40,16 +40,42 @@ async function legacyUsage(plan,db=query,{excludeReservationId=null}={}){
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
 }
-function eligibleServerClause(plan){
-  const cls=serverClass(plan);
-  if(cls==='free')return`js.server_class='free'`;
-  if(isTrial(plan))return`js.server_class='premium' AND js.trial_enabled=TRUE`;
-  return`js.server_class='premium' AND js.paid_enabled=TRUE`;
+async function placementHealthMode(db=query){
+  const result=await db(`SELECT setting_value FROM platform_settings WHERE setting_key='operations_v1'`);
+  const mode=String(result.rows[0]?.setting_value?.placementHealthMode||'healthy_or_degraded');
+  return['healthy_only','healthy_or_degraded','fail_open'].includes(mode)?mode:'healthy_or_degraded';
+}
+function healthSql(alias,mode){
+  if(mode==='healthy_only')return`${alias}.health_status='healthy'`;
+  if(mode==='fail_open')return`COALESCE(${alias}.health_status,'unknown')<>'offline'`;
+  return`${alias}.health_status IN('healthy','degraded')`;
 }
 async function fleetStreams(plan,db=query,{excludeReservationId=null}={}){
-  const cls=serverClass(plan),serverClause=eligibleServerClause(plan);
-  const configured=await db(`SELECT COUNT(*) FILTER(WHERE js.max_users IS NOT NULL)::int configured_servers,COALESCE(SUM(js.max_users) FILTER(WHERE js.max_users IS NOT NULL),0)::int stream_limit
-    FROM jellyfin_servers js WHERE js.enabled=TRUE AND js.allow_new_users=TRUE AND COALESCE(js.placement_mode,'active')='active' AND ${serverClause}`);
+  const cls=serverClass(plan),healthMode=await placementHealthMode(db),health=healthSql('js',healthMode);
+  const serviceFlag=cls==='free'?'TRUE':isTrial(plan)?'js.trial_enabled=TRUE':'js.paid_enabled=TRUE';
+  // `configured_servers` deliberately ignores temporary health/drain/placement
+  // state. Once a plan's fleet has an explicit stream budget, a temporarily
+  // unavailable fleet must resolve to zero capacity rather than fall back to
+  // the old per-plan inventory and accidentally reopen sales.
+  const configured=await db(`WITH restriction AS (
+      SELECT EXISTS(
+        SELECT 1 FROM plan_server_eligibility pse
+        JOIN jellyfin_servers restricted_server ON restricted_server.id=pse.server_id
+        WHERE pse.plan_id=$1 AND restricted_server.server_class=$2
+      ) AS restricted
+    )
+    SELECT
+      COUNT(*) FILTER(WHERE js.max_users IS NOT NULL AND (NOT r.restricted OR pse.server_id IS NOT NULL))::int configured_servers,
+      COALESCE(SUM(js.max_users) FILTER(WHERE js.max_users IS NOT NULL
+        AND (NOT r.restricted OR pse.server_id IS NOT NULL)
+        AND js.enabled=TRUE AND js.allow_new_users=TRUE
+        AND COALESCE(js.placement_mode,'active')='active'
+        AND ${health}
+        AND ${serviceFlag}),0)::int stream_limit
+    FROM jellyfin_servers js
+    CROSS JOIN restriction r
+    LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
+    WHERE js.server_class=$2`,[plan.id,cls]);
   const configuredServers=Number(configured.rows[0]?.configured_servers||0),streamLimit=Number(configured.rows[0]?.stream_limit||0);
   if(!configuredServers)return null;
   const used=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(s.commercial_snapshot->'streams')='number' THEN (s.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_used
@@ -63,7 +89,7 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null}={}){
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
     WHERE ${RESERVATION_SQL} AND p.service_type='jellyfin' AND p.server_class=$1 AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
   const streamUsed=Number(used.rows[0]?.stream_used||0),streamReserved=Number(checkout.rows[0]?.stream_reserved||0)+Number(freeHolds.rows[0]?.stream_reserved||0),streamRemaining=Math.max(0,streamLimit-streamUsed-streamReserved);
-  return{pool:cls,configuredServers,streamLimit,streamUsed,streamReserved,streamRemaining};
+  return{pool:cls,configuredServers,streamLimit,streamUsed,streamReserved,streamRemaining,healthMode};
 }
 async function usage(planId,db=query,{excludeReservationId=null,streams=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
@@ -81,7 +107,7 @@ async function usage(planId,db=query,{excludeReservationId=null,streams=null}={}
     if(manual.remaining!=null)remaining=Math.min(remaining,manual.remaining);
     if(manual.limit!=null)limit=Math.min(limit,manual.limit);
   }
-  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining<=0,manualLimit,manualUsed,manualReserved};
+  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,healthMode:fleet.healthMode,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining<=0,manualLimit,manualUsed,manualReserved};
   return{...state,...scarcity(state)};
 }
 
@@ -109,11 +135,13 @@ function legacyAcquisitionSql(alias='p'){
   )))`;
 }
 function acquisitionSql(alias='p'){
-  const fleetConfigured=`(${alias}.service_type='jellyfin' AND ${alias}.billing_interval<>'trial' AND ${alias}.server_class IN('premium','free') AND EXISTS(
+  // Once a Premium/Free fleet has any explicit stream budget, runtime
+  // `lockAndAssert` is the authoritative capacity gate. Do not fall back to
+  // per-plan inventory merely because every configured server is temporarily
+  // drained, unhealthy or blocked for new users.
+  const fleetConfigured=`(${alias}.service_type='jellyfin' AND ${alias}.server_class IN('premium','free') AND EXISTS(
     SELECT 1 FROM jellyfin_servers capacity_server
-    WHERE capacity_server.enabled=TRUE AND capacity_server.allow_new_users=TRUE AND COALESCE(capacity_server.placement_mode,'active')='active'
-      AND capacity_server.server_class=${alias}.server_class AND capacity_server.max_users IS NOT NULL
-      AND (${alias}.server_class='free' OR capacity_server.paid_enabled=TRUE)
+    WHERE capacity_server.server_class=${alias}.server_class AND capacity_server.max_users IS NOT NULL
   ))`;
   return `(${fleetConfigured} OR ${legacyAcquisitionSql(alias)})`;
 }
