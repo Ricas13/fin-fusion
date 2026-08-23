@@ -5,13 +5,14 @@ const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
 const capacity = require('../entitlements/plan-capacity');
 const inactivityHolds = require('../entitlements/inactivity-hold-reconciliation');
+const planExpiry = require('../entitlements/plan-expiry');
 const commerce = require('./commerce-control');
 const stremio = require('../stremio/foundation');
 
 function addPlanDuration(plan, from = new Date()) {
-    return new Date(from.getTime() + Number(plan.duration_days || 30) * 86400000);
+    return planExpiry.endForPlan(plan, { now: from });
 }
-function permanentEnd() { return new Date('9999-12-31T23:59:59.000Z'); }
+function permanentEnd() { return planExpiry.freeTierEnd(); }
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
 
 async function getProviderOptions(planCode, provider) {
@@ -62,7 +63,7 @@ async function assertDirectPlan(planCode, { free = false, trial = false } = {}) 
     if (!result.rowCount) throw new Error('Plan is not available or is currently sold out.');
     const plan = state.assertAudience(result.rows[0], 'customer');
     stremio.assertAcquirable(plan,{context:trial?'new trial':free?'new free claim':'new customer acquisition'});
-    if (free && (Number(plan.price_minor) !== 0 || plan.billing_interval === 'trial')) throw new Error('This free plan is not available.');
+    if (free && (!planExpiry.isFreeTier(plan) || Number(plan.price_minor) !== 0 || plan.billing_interval === 'trial')) throw new Error('This free plan is not available.');
     if (trial && plan.billing_interval !== 'trial') throw new Error('This trial is not available.');
     return plan;
 }
@@ -88,7 +89,7 @@ async function saveTrialPolicy(input, actorUserId = null) {
         downgradeFreePlanCode: String(input.downgradeFreePlanCode || '').trim()
     };
     if (value.downgradeToFree) {
-        const target = await query(`SELECT code FROM plans p WHERE code=$1 AND ${availableWindowSql('p')} AND price_minor=0 AND billing_interval<>'trial' AND audience IN ('direct','both')`, [value.downgradeFreePlanCode]);
+        const target = await query(`SELECT code FROM plans p WHERE code=$1 AND ${availableWindowSql('p')} AND is_free_tier=TRUE AND price_minor=0 AND billing_interval<>'trial' AND audience IN ('direct','both')`, [value.downgradeFreePlanCode]);
         if (!target.rowCount) throw new Error('Choose an active direct free plan for automatic downgrade.');
         stremio.assertAcquirable((await query('SELECT service_type FROM plans WHERE code=$1',[value.downgradeFreePlanCode])).rows[0],{context:'automatic free downgrade'});
     } else value.downgradeFreePlanCode = '';
@@ -147,7 +148,7 @@ async function reservedFreePlan(reservationId){
     if(!result.rowCount)return null;
     const plan=state.assertAudience(result.rows[0],'customer');
     stremio.assertAcquirable(plan,{context:'reserved free claim'});
-    if(Number(plan.price_minor)!==0||plan.billing_interval==='trial'||plan.is_addon)throw new Error('This Free Access reservation is not valid.');
+    if(!planExpiry.isFreeTier(plan)||Number(plan.price_minor)!==0||plan.billing_interval==='trial'||plan.is_addon)throw new Error('This Free Access reservation is not valid.');
     return plan;
 }
 
@@ -173,11 +174,11 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
         if(live&&livePrice>0&&!policy.paidCanClaimFree&&!automatic)throw new Error('Free access cannot be claimed while a paid entitlement is active.');
         if(live&&livePrice===0&&String(live.plan_id)===String(plan.id))throw new Error('You already have free access on this plan.');
         const now=new Date(),startsAt=live&&livePrice>0?new Date(live.access_expires_at):now;
-        const endsAt=policy.freeMode==='permanent'?permanentEnd():addPlanDuration(plan,startsAt);
+        const endsAt=permanentEnd();
         const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',$3,$4) RETURNING *`,[customerId,plan.id,startsAt,endsAt]);
         if(live&&livePrice===0)await state.markSuperseded(client,{subscriptionId:live.subscription_id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
         if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id]);
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,reservationId:reservation?.id||null})]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,reservationId:reservation?.id||null})]);
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
