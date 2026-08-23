@@ -3,10 +3,13 @@
 const express=require('express');
 const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
+const routeRateLimit=require('../security/route-rate-limit');
 const runtimeSettings=require('./runtime-settings');
 const capacity=require('../entitlements/plan-capacity');
 const ui=require('./admin-ui');
 const {esc,layout}=require('./admin-html');
+
+const inventoryWriteLimit=routeRateLimit.middleware({scope:'admin-plan-inventory',max:30,windowSeconds:60,reason:'admin_plan_inventory'});
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
@@ -36,7 +39,7 @@ async function page(req){
 function createAdminPlanInventoryRouter(){
   const r=express.Router();r.use('/admin/plans/:id/inventory',gate,noStore);
   r.get('/admin/plans/:id/inventory',async(req,res,next)=>{try{const html=await page(req);return html?res.send(html):res.status(404).send('Plan not found');}catch(error){next(error)}});
-  r.post('/admin/plans/:id/inventory',async(req,res)=>{
+  r.post('/admin/plans/:id/inventory',inventoryWriteLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid security token');
     try{
       const p=await plan(req.params.id);if(!p)throw new Error('Plan not found.');
