@@ -14,10 +14,10 @@ function eligible(plan){
 function paymentOption(row){return{id:row.id,provider:row.provider,checkoutMode:row.checkout_mode,externalId:row.external_id,configured:true,verificationStatus:row.verification_status};}
 function coinGateOption(priceMinor){return number(priceMinor)>0?{id:null,provider:'coingate',checkoutMode:'payment',externalId:null,configured:true,verificationStatus:'not_required'}:null;}
 function sellableSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW()) AND ${alias}.audience IN ('direct','both')`;}
-function accessFields(plan,{id=null,kind=variantKind(plan),quantity=baseQuantity(plan),priceMinor=null,currency=null,paymentOptions=[]}={}){
+function accessFields(plan,{variantId=null,kind=variantKind(plan),quantity=baseQuantity(plan),priceMinor=null,currency=null,paymentOptions=[]}={}){
   const households=kind==='households'?quantity:Math.max(1,number(plan?.stremio_household_network_limit,1));
   const streams=kind==='streams'?quantity:Math.max(1,number(plan?.streams,1));
-  return{id,access_variant_id:id,variant_kind:kind,access_quantity:quantity,quantity,streams,households,stremio_household_network_limit:households,price_minor:priceMinor==null?number(plan?.price_minor):number(priceMinor),currency:String(currency||plan?.currency||'GBP').toUpperCase(),active:true,payment_options:paymentOptions};
+  return{access_variant_id:variantId,variant_kind:kind,access_quantity:quantity,quantity,streams,households,stremio_household_network_limit:households,price_minor:priceMinor==null?number(plan?.price_minor):number(priceMinor),currency:String(currency||plan?.currency||'GBP').toUpperCase(),active:true,payment_options:paymentOptions};
 }
 
 async function rowsForPlans(planIds,currency){
@@ -36,13 +36,13 @@ async function decoratePlans(plans,currency){
   const grouped=new Map();
   for(const row of rows){
     const key=String(row.plan_id);if(!grouped.has(key))grouped.set(key,new Map());const variants=grouped.get(key),variantKey=String(row.id);
-    if(!variants.has(variantKey))variants.set(variantKey,{id:row.id,access_variant_id:row.id,variant_kind:row.variant_kind,access_quantity:number(row.quantity,1),quantity:number(row.quantity,1),price_minor:number(row.price_minor),currency:String(row.currency).toUpperCase(),active:Boolean(row.active),payment_options:[]});
+    if(!variants.has(variantKey))variants.set(variantKey,{access_variant_id:row.id,variant_kind:row.variant_kind,access_quantity:number(row.quantity,1),quantity:number(row.quantity,1),price_minor:number(row.price_minor),currency:String(row.currency).toUpperCase(),active:Boolean(row.active),payment_options:[]});
     if(row.mapping_id)variants.get(variantKey).payment_options.push(paymentOption({id:row.mapping_id,...row}));
   }
   return list.map(plan=>{
     if(!eligible(plan))return plan;
     const kind=variantKind(plan),base=accessFields(plan,{kind,quantity:baseQuantity(plan),paymentOptions:Array.isArray(plan.payment_options)?plan.payment_options:[]});
-    const extras=Array.from(grouped.get(String(plan.id))?.values()||[]).filter(v=>v.variant_kind===kind&&v.quantity!==base.quantity).map(v=>accessFields(plan,{id:v.id,kind:v.variant_kind,quantity:v.quantity,priceMinor:v.price_minor,currency:v.currency,paymentOptions:v.payment_options}));
+    const extras=Array.from(grouped.get(String(plan.id))?.values()||[]).filter(v=>v.variant_kind===kind&&v.quantity!==base.quantity).map(v=>accessFields(plan,{variantId:v.access_variant_id,kind:v.variant_kind,quantity:v.quantity,priceMinor:v.price_minor,currency:v.currency,paymentOptions:v.payment_options}));
     for(const variant of extras){const coin=coinGateOption(variant.price_minor);if(coin&&!variant.payment_options.some(o=>o.provider==='coingate'))variant.payment_options.push(coin);}
     const variants=[base,...extras].sort((a,b)=>a.quantity-b.quantity);
     return{...plan,access_variant_kind:kind,access_variants:variants,has_access_variants:variants.length>1};
@@ -60,7 +60,7 @@ async function adminState(planId,currency){
   return Array.from(variants.values()).sort((a,b)=>a.quantity-b.quantity);
 }
 
-function rowWithAccess(row){if(!row)return null;const kind=row.variant_kind||variantKind(row),quantity=number(row.quantity,baseQuantity(row));return{...row,...accessFields(row,{id:row.access_variant_id||row.id&&row.variant_kind?row.id:null,kind,quantity,priceMinor:row.price_minor,currency:row.currency,paymentOptions:[]})};}
+function rowWithAccess(row){if(!row)return null;const kind=row.variant_kind||variantKind(row),quantity=number(row.quantity,baseQuantity(row));return{...row,...accessFields(row,{variantId:row.access_variant_id||null,kind,quantity,priceMinor:row.price_minor,currency:row.currency,paymentOptions:[]})};}
 
 async function resolve(planCode,provider,currency,quantity,checkoutMode=null){
   const requested=Number(quantity);if(!Number.isInteger(requested)||requested<1)return[];
