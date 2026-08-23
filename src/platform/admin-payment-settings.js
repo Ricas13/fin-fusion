@@ -63,7 +63,16 @@ function setupSteps(provider,url){
     return `<div class="operatorDisclosureBody"><ol class="setupSteps"><li>Open the PayPal Developer dashboard and select the REST app used for CAPTAiNFiN.</li><li>Add a webhook using this exact URL:${copyField(url,'PayPal webhook URL','paypal-webhook-url')}</li><li>Subscribe to billing-subscription, completed payment/sale, refund and dispute lifecycle events.</li><li>Save the webhook in PayPal, then copy its <strong>Webhook ID</strong> into the field below. This is the ID, not the webhook URL.</li><li>Keep Sandbox selected while testing; switch to Live only when using the production REST app.</li></ol><div class="operatorCallout warn">Recurring PayPal access depends on verified webhook delivery. A Client ID/secret can start checkout but cannot safely keep subscription state synchronised on its own.</div></div>`;
 }
 
-function providerHealthCard(req, provider, status, events) {
+function providerConfigDetails(req, provider, status, url) {
+    const label=provider==='stripe'?'Stripe':'PayPal';
+    const intro=provider==='stripe'
+        ? 'Manage the Stripe API credential and webhook signing secret without leaving this provider card.'
+        : 'Manage the PayPal REST app, environment and webhook ID without leaving this provider card.';
+    const form=provider==='stripe' ? stripeForm(req,status,url) : paypalForm(req,status,url);
+    return `<details class="integrationConfig" name="payment-provider-config" id="${esc(provider)}-provider"><summary><span>Configure ${esc(label)}</span><span>Credentials &amp; webhook</span></summary><div class="integrationConfigBody"><div class="integrationConfigIntro">${esc(intro)}</div>${form}</div></details>`;
+}
+
+function providerHealthCard(req, provider, status, events, url) {
     const label=provider==='stripe'?'Stripe':'PayPal';
     const providerEvents=(events||[]).filter(event=>event.provider===provider);
     const latest=providerEvents[0]||null;
@@ -80,16 +89,13 @@ function providerHealthCard(req, provider, status, events) {
     }else if(status.configured&&status.webhookConfigured){
         statusLabel='Configured';statusKind='good';workingLabel='Waiting for first webhook event';workingKind='';fixHint='Use Test connection, then send a provider test or checkout event to verify public webhook delivery.';
     }
-    const manageTarget=provider==='stripe'?'#stripe-provider':'#paypal-provider';
-    const actions=`${testForm(req,provider,!status.credentialsConfigured)}<a class="button secondary btn-sm" href="${manageTarget}">Manage</a>`;
+    const actions=testForm(req,provider,!status.credentialsConfigured);
     const summary=status.source==='database'?'Browser-managed credentials and verified event delivery.':'Environment credentials and verified event delivery.';
-    return integrationCard.renderIntegrationCard({ name:label, statusLabel, statusKind, summary, enabled:status.enabled, configured:status.configured&&status.webhookConfigured, workingLabel, workingKind, lastVerifiedAt:latestSuccessful?.processed_at||latestSuccessful?.created_at||null, lastVerifiedLabel:'Last successful provider event', fixHint, actionsHtml:actions });
+    return integrationCard.renderIntegrationCard({ name:label, statusLabel, statusKind, summary, enabled:status.enabled, configured:status.configured&&status.webhookConfigured, workingLabel, workingKind, lastVerifiedAt:latestSuccessful?.processed_at||latestSuccessful?.created_at||null, lastVerifiedLabel:'Last successful provider event', fixHint, actionsHtml:actions, detailsHtml:providerConfigDetails(req,provider,status,url) });
 }
 
 function stripeForm(req, status,url) {
-    const badge = !status.enabled ? pill('Disabled', 'warn') : status.configured ? pill(status.webhookConfigured ? 'Ready' : 'Webhook missing', status.webhookConfigured ? 'good' : 'warn') : pill('Not configured');
-    return `<section class="section" id="stripe-provider"><div class="sectionHead"><div><h2>Stripe</h2><div class="muted">Checkout, recurring billing and verified event delivery in one setup flow.</div></div>${badge}</div>
-    <details class="operatorDisclosure" ${!status.webhookConfigured?'open':''}><summary>Where do I get the Stripe webhook?</summary>${setupSteps('stripe',url)}</details>
+    return `<details class="operatorDisclosure" ${!status.webhookConfigured?'open':''}><summary>Where do I get the Stripe webhook?</summary>${setupSteps('stripe',url)}</details>
     <form class="formPanel" method="post" action="/admin/payments/stripe">${csrfInput(req)}
       <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable Stripe gateway</strong><small class="muted">When disabled, Stripe checkout and webhook handling are unavailable while saved credentials are retained.</small></span></label>
       <div class="formGrid" style="margin-top:14px">
@@ -98,15 +104,11 @@ function stripeForm(req, status,url) {
         ${secretField('webhookSecret','Webhook signing secret (whsec_…)','From the Stripe webhook endpoint created with the URL shown above.', status.webhookConfigured)}
       </div>
       <div class="buttonRow"><button class="button">Save Stripe settings</button>${status.source === 'database' ? `<button class="button secondary" type="submit" name="useEnvironment" value="1">Use environment fallback instead</button>` : ''}</div>
-    </form>
-    <div class="formPanel" style="margin-top:10px"><div class="sectionHead"><div><strong>Connection validation</strong><div class="subText">Tests the saved Stripe credential against the Stripe API. Webhook readiness is shown separately because Stripe must call your public endpoint.</div></div>${testForm(req, 'stripe', !status.credentialsConfigured)}</div></div>
-    </section>`;
+    </form>`;
 }
 
 function paypalForm(req, status,url) {
-    const badge = !status.enabled ? pill('Disabled', 'warn') : status.configured ? pill(status.webhookConfigured ? 'Ready' : 'Webhook missing', status.webhookConfigured ? 'good' : 'warn') : pill('Not configured');
-    return `<section class="section" id="paypal-provider"><div class="sectionHead"><div><h2>PayPal</h2><div class="muted">REST credentials, environment and verified recurring-event delivery.</div></div>${badge}</div>
-    <details class="operatorDisclosure" ${!status.webhookConfigured?'open':''}><summary>Where do I get the PayPal webhook ID?</summary>${setupSteps('paypal',url)}</details>
+    return `<details class="operatorDisclosure" ${!status.webhookConfigured?'open':''}><summary>Where do I get the PayPal webhook ID?</summary>${setupSteps('paypal',url)}</details>
     <form class="formPanel" method="post" action="/admin/payments/paypal">${csrfInput(req)}
       <label class="toggleRow"><input type="checkbox" name="enabled" ${status.enabled ? 'checked' : ''}><span><strong>Enable PayPal gateway</strong><small class="muted">Disabling PayPal preserves the saved credentials but removes it from checkout.</small></span></label>
       <div class="formGrid" style="margin-top:14px">
@@ -116,9 +118,7 @@ function paypalForm(req, status,url) {
         ${secretField('webhookId','Webhook ID','The ID PayPal creates for the webhook endpoint shown above.', status.webhookConfigured)}
       </div>
       <div class="buttonRow"><button class="button">Save PayPal settings</button>${status.source === 'database' ? `<button class="button secondary" type="submit" name="useEnvironment" value="1">Use environment fallback instead</button>` : ''}</div>
-    </form>
-    <div class="formPanel" style="margin-top:10px"><div class="sectionHead"><div><strong>Connection validation</strong><div class="subText">Requests a PayPal OAuth access token using the saved ${esc(status.environment || 'sandbox')} credentials.</div></div>${testForm(req, 'paypal', !status.credentialsConfigured)}</div></div>
-    </section>`;
+    </form>`;
 }
 
 function providerReadiness(status){return Boolean(status.enabled&&status.credentialsConfigured&&status.webhookConfigured)}
@@ -149,12 +149,11 @@ async function page(req) {
     const d = await paymentsData(req);
     const stored = d.paymentCustomers.reduce((n, row) => n + Number(row.count || 0), 0);
     const failed=d.events.filter(event=>event.failed);
-    const providers = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider health</h2><div class="muted">Enabled, configured, observed working state and recovery actions use the same layout for every payment provider.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="integrationCardGrid">${providerHealthCard(req,'stripe',d.stripeStatus,d.events)}${providerHealthCard(req,'paypal',d.paypalStatus,d.events)}</div><div class="metrics" style="margin-top:12px"><div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
+    const providers = `<section class="section" id="provider-setup"><div class="sectionHead"><div><h2>Provider health</h2><div class="muted">Enabled, configured, observed working state and provider configuration now live together in each card.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div><div class="integrationCardGrid">${providerHealthCard(req,'stripe',d.stripeStatus,d.events,d.webhookUrls.stripe)}${providerHealthCard(req,'paypal',d.paypalStatus,d.events,d.webhookUrls.paypal)}</div><div class="metrics" style="margin-top:12px"><div class="metric"><div class="metricLabel">Stored provider customers</div><div class="metricValue">${stored}</div></div></div></section>`;
     const state = `<section class="section" id="payment-operations"><div class="sectionHead"><div><h2>Operational payment state</h2><div class="muted">Read-only subscription counts from local records. Customer-impacting exceptions are handled in Commerce incidents.</div></div><a class="button secondary btn-sm" href="/admin/commerce#payment-incidents">Open incidents</a></div>${d.subscriptions.length ? `<div class="tableWrap"><table class="dataTable"><thead><tr><th>Source</th><th>Status</th><th>Count</th></tr></thead><tbody>${d.subscriptions.map(x => `<tr><td>${esc(x.source)}</td><td>${pill(x.status)}</td><td>${esc(x.count)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No subscriptions yet.</div>'}</section>`;
     const failures=failed.length?`<section class="section" id="provider-failures">${ui.sectionHeader({title:'Failed provider events',description:'These recent webhooks failed processing. Customer-impacting resolution remains in Commerce incidents.'})}<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Processed</th><th>Result</th></tr></thead><tbody>${failed.map(x=>`<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${esc(date(x.processed_at))}</td><td>${pill('error','bad')}</td></tr>`).join('')}</tbody></table></div></section>`:'';
-    const providerSetup=ui.detailDisclosure({title:'Stripe & PayPal credentials',summary:'Configuration · open to add/change credentials or webhook details',bodyHtml:`${stripeForm(req,d.stripeStatus,d.webhookUrls.stripe)}${paypalForm(req,d.paypalStatus,d.webhookUrls.paypal)}`});
     const events=`<section class="section">${ui.sectionHeader({title:'Recent provider events',description:'The latest 12 are shown by default; expand only when investigating provider delivery.'})}${d.events.length?`<div class="tableWrap"><table class="dataTable"><thead><tr><th>Time</th><th>Provider</th><th>Event</th><th>Result</th></tr></thead><tbody>${d.events.slice(0,12).map(x=>`<tr><td>${esc(date(x.created_at))}</td><td>${esc(x.provider)}</td><td>${esc(x.event_type)}</td><td>${pill(x.failed?'error':'ok',x.failed?'bad':'good')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No provider events yet.</div>'}${d.events.length>12?ui.detailDisclosure({title:`Full provider event history (${d.events.length})`,summary:'Detailed webhook history',bodyHtml:eventTable(d)}):''}</section>`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider safety first; credentials and detailed event history stay out of the way until needed', body: `${integrationCard.styles()}${ui.noticesFromRequest(req)}${paymentHero(d)}${failures}${providers}${providerSetup}${state}${events}` });
+    return layout({ siteName: runtimeSettings.siteName(), active: 'payments', title: 'Payments', subtitle: 'Provider health, credentials and webhook setup in one place', body: `${integrationCard.styles()}${ui.noticesFromRequest(req)}${paymentHero(d)}${failures}${providers}${state}${events}` });
 }
 
 function createAdminPaymentSettingsRouter() {
