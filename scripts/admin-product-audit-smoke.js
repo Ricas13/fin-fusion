@@ -91,12 +91,14 @@ for(const term of ['customerFilterToolbar','More filters','customerFilterChips',
 assert(customerFilterUi.includes("['q', 'service', 'status', 'plan', 'server']"),'the default customer filter toolbar must keep only high-frequency filters visible');
 assert(customerFilterUi.includes("['accountStatus', 'paymentProvider', 'reconciliationStatus', 'hasOverride', 'library'"),'less-frequent filters must live in the advanced section');
 
-for(const term of ['Unlimited streams','Unlimited devices','Household IPs','IP replacement','New purchases only','Existing customers too'])assert(stremioEditor.includes(term),`Stremio editor must expose household-first UX: ${term}`);
+for(const term of ['Unlimited streams','Unlimited devices','Household IPs','IP replacement'])assert(stremioEditor.includes(term),`Stremio editor must expose household-first UX: ${term}`);
+assert(!stremioEditor.includes('New purchases only')&&!stremioEditor.includes('Existing customers too'),'Stremio access changes must no longer support grandfathering current members onto stale household limits');
+assert(stremioEditor.includes("impactScope:'all_current'")&&stremioEditor.includes('queuePlanRequestReconciliation'),'Stremio plan saves must propagate access/request policy to all current plan members');
 assert(!stremioEditor.includes('Delivery service'),'ordinary Stremio plan editing must not expose internal delivery-service terminology');
 assert(!stremioEditor.includes('server_class')&&!stremioEditor.includes('allow_video_transcoding'),'ordinary Stremio plan editing must not expose Jellyfin placement or transcoding controls');
 assert(planCreateV2.includes("['free_jellyfin', 'Free Jellyfin'")&&planCreateV2.includes("['paid_jellyfin', 'Paid Jellyfin'")&&planCreateV2.includes("['stremio', 'Stremio'")&&planCreateV2.includes('name="stremioHouseholdNetworkLimit"'),'Canonical plan creation must adapt across Free Jellyfin, Paid Jellyfin and Stremio and expose configurable Stremio household connections');
 assert(householdMigration.includes('stremio_household_network_limit')&&householdMigration.includes('stremio_ip_replacement_policy'),'migration must persist the configurable household allowance and replacement policy');
-assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&householdMigration.includes('snapshot_subscription_stremio_household_policy'),'subscription policy snapshots must make new-purchases-only changes real');
+assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&householdMigration.includes('snapshot_subscription_stremio_household_policy'),'subscription policy snapshots must persist the effective household policy for current contracts');
 
 const mainWidgets=registry.listWidgets('main');
 assert(mainWidgets.length>=10,'Main dashboard must register a meaningful set of widgets, not a stub');
