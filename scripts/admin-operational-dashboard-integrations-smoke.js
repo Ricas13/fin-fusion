@@ -12,6 +12,8 @@ const paymentSource=read('src/platform/admin-payment-settings.js');
 const emailSource=read('src/platform/admin-email.js');
 const cardSource=read('src/platform/admin-integration-card.js');
 const cardCss=read('public/css/admin-integration-cards.css');
+const personalNotificationsSource=read('src/platform/admin-personal-notification-preferences-v2.js');
+const formFeedbackSource=read('public/js/admin-form-feedback.js');
 const dashboard=require('../src/platform/admin-dashboard');
 const cards=require('../src/platform/admin-integration-card');
 
@@ -43,5 +45,9 @@ assert(emailSource.includes("require('./admin-integration-card')"),'Email must u
 assert(emailSource.includes("(recent || []).find(row => row.status === 'sent')"),'Email last verification must use an observed successful delivery');
 assert(emailSource.includes('Test connection')&&emailSource.includes('href="#email-gateway">Manage</a>'),'Email card must provide test and manage actions');
 assert(emailSource.includes("statusLabel = 'Needs attention'")&&emailSource.includes('failed message'),'Email card must surface queued delivery failures as an operational warning');
+
+assert(formFeedbackSource.includes("if (form.dataset.nativeSubmit === 'true') return false;"),'Admin AJAX form enhancement must preserve native-submit escape hatches for browser-owned redirects');
+assert(personalNotificationsSource.includes('action="/admin/profile/notifications/telegram/start" data-native-submit="true"'),'Telegram account linking must use a native browser submission so the t.me redirect is not followed by fetch/CORS');
+assert(personalNotificationsSource.includes('action="/admin/profile/notifications/discord/start" data-native-submit="true"'),'Discord OAuth linking must use a native browser submission so the discord.com redirect is not followed by fetch/CORS');
 
 console.log('operational dashboard and integration cards smoke: ok');
