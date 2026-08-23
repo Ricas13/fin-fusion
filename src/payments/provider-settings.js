@@ -1,12 +1,9 @@
 'use strict';
 
-const crypto = require('crypto');
 const { query } = require('../db');
 const { encryptString, decryptString } = require('../crypto');
 
-// CoinGate stays registered only for historical/in-flight compatibility. New
-// crypto checkout is Plisio and all customer/admin acquisition UI points there.
-const PROVIDERS = ['stripe', 'paypal', 'coingate', 'plisio'];
+const PROVIDERS = ['stripe', 'paypal', 'plisio'];
 const cache = new Map();
 let loaded = false;
 let loading = null;
@@ -15,11 +12,6 @@ function envConfig(provider) {
     if (provider === 'stripe') {
         const cfg = { source:'environment', restrictedKey:process.env.STRIPE_RESTRICTED_KEY||'', apiKey:process.env.STRIPE_API_KEY||'', webhookSecret:process.env.STRIPE_WEBHOOK_SECRET||'' };
         cfg.enabled = process.env.STRIPE_ENABLED === 'false' ? false : Boolean(cfg.restrictedKey || cfg.apiKey);
-        return cfg;
-    }
-    if (provider === 'coingate') {
-        const cfg = { source:'environment', environment:process.env.COINGATE_ENV==='live'?'live':'sandbox', apiToken:process.env.COINGATE_API_TOKEN||'', callbackSecret:process.env.COINGATE_CALLBACK_SECRET||'' };
-        cfg.enabled = process.env.COINGATE_ENABLED === 'false' ? false : Boolean(cfg.apiToken);
         return cfg;
     }
     if (provider === 'plisio') {
@@ -34,15 +26,13 @@ function envConfig(provider) {
 
 function credentialsConfigured(provider, cfg) {
     if (provider === 'stripe') return Boolean(cfg?.restrictedKey || cfg?.apiKey);
-    if (provider === 'coingate') return Boolean(cfg?.apiToken);
     if (provider === 'plisio') return Boolean(cfg?.secretKey);
     return Boolean(cfg?.clientId && cfg?.clientSecret);
 }
 function configured(provider, cfg) { return Boolean(cfg?.enabled && credentialsConfigured(provider, cfg)); }
 function webhookConfigured(provider, cfg) {
     if (provider === 'stripe') return Boolean(cfg?.webhookSecret);
-    if (provider === 'coingate') return Boolean(cfg?.callbackSecret && String(cfg.callbackSecret).length >= 32);
-    if (provider === 'plisio') return Boolean(cfg?.secretKey); // Plisio signs callbacks with the merchant secret key.
+    if (provider === 'plisio') return Boolean(cfg?.secretKey);
     return Boolean(cfg?.webhookId);
 }
 function decodeRow(row) {
@@ -52,7 +42,7 @@ function decodeRow(row) {
 async function load() {
     if (loading) return loading;
     loading = (async()=>{
-        const result=await query('SELECT provider,secrets_encrypted,settings,updated_at FROM payment_provider_credentials');
+        const result=await query('SELECT provider,secrets_encrypted,settings,updated_at FROM payment_provider_credentials WHERE provider=ANY($1::text[])',[PROVIDERS]);
         const rows=new Map(result.rows.map(row=>[row.provider,row]));
         for (const provider of PROVIDERS) cache.set(provider, rows.has(provider)?decodeRow(rows.get(provider)):envConfig(provider));
         loaded=true;
@@ -64,7 +54,6 @@ function raw(provider){return cache.get(provider)||envConfig(provider);}
 function effective(provider,cfg){
     if(cfg?.enabled!==false)return cfg;
     if(provider==='stripe')return{...cfg,restrictedKey:'',apiKey:'',webhookSecret:''};
-    if(provider==='coingate')return{...cfg,apiToken:'',callbackSecret:''};
     if(provider==='plisio')return{...cfg,secretKey:''};
     return{...cfg,clientId:'',clientSecret:'',webhookId:''};
 }
@@ -73,7 +62,7 @@ async function get(provider){if(!PROVIDERS.includes(provider))throw new Error('U
 async function getRaw(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return raw(provider);}
 async function status(provider){
     const cfg=await getRaw(provider);
-    return { provider,source:cfg.source||'environment',enabled:Boolean(cfg.enabled),credentialsConfigured:credentialsConfigured(provider,cfg),configured:configured(provider,cfg),webhookConfigured:webhookConfigured(provider,cfg),environment:['paypal','coingate'].includes(provider)?(cfg.environment==='live'?'live':'sandbox'):null,updatedAt:cfg.updatedAt||null };
+    return { provider,source:cfg.source||'environment',enabled:Boolean(cfg.enabled),credentialsConfigured:credentialsConfigured(provider,cfg),configured:configured(provider,cfg),webhookConfigured:webhookConfigured(provider,cfg),environment:provider==='paypal'?(cfg.environment==='live'?'live':'sandbox'):null,updatedAt:cfg.updatedAt||null };
 }
 function clean(value,max=1000){return String(value==null?'':value).trim().slice(0,max);}
 
@@ -82,10 +71,6 @@ async function save(provider,input,actorUserId=null){
     const current=await getRaw(provider);let secrets;let settings={enabled:input.enabled!==false};
     if(provider==='stripe'){
         secrets={restrictedKey:input.clearRestrictedKey?'':(clean(input.restrictedKey)||current.restrictedKey||''),apiKey:input.clearApiKey?'':(clean(input.apiKey)||current.apiKey||''),webhookSecret:input.clearWebhookSecret?'':(clean(input.webhookSecret)||current.webhookSecret||'')};
-    }else if(provider==='coingate'){
-        const callbackSecret=clean(current.callbackSecret,256)||crypto.randomBytes(32).toString('hex');
-        secrets={apiToken:input.clearApiToken?'':(clean(input.apiToken,2000)||current.apiToken||''),callbackSecret};
-        settings={...settings,environment:input.environment==='live'?'live':'sandbox'};
     }else if(provider==='plisio'){
         secrets={secretKey:input.clearSecretKey?'':(clean(input.secretKey,2000)||current.secretKey||'')};
     }else{
@@ -119,13 +104,6 @@ async function testPayPal(cfg){
     if(!response.ok||!body?.access_token)throw new Error(body?.error_description||body?.message||`PayPal returned HTTP ${response.status}.`);
     return{ok:true,limited:false,message:`PayPal ${cfg.environment==='live'?'Live':'Sandbox'} connection successful. Client credentials were accepted.`};
 }
-async function testCoinGate(cfg){
-    if(!cfg.apiToken)throw new Error('CoinGate API token is not configured.');
-    const host=cfg.environment==='live'?'https://api.coingate.com':'https://api-sandbox.coingate.com';
-    const response=await fetchWithTimeout(`${host}/v2/auth/test`,{method:'GET',headers:{Authorization:`Token ${cfg.apiToken}`,Accept:'application/json'}}),text=await response.text();let body={};if(text){try{body=JSON.parse(text);}catch(_){body={message:text};}}
-    if(!response.ok)throw new Error(body?.message||body?.error||`CoinGate returned HTTP ${response.status}.`);
-    return{ok:true,limited:false,message:`CoinGate ${cfg.environment==='live'?'Live':'Sandbox'} connection successful. API token was accepted.`};
-}
 async function testPlisio(cfg){
     if(!cfg.secretKey)throw new Error('Plisio secret key is not configured.');
     const url=new URL('https://api.plisio.net/api/v1/currencies');url.searchParams.set('api_key',cfg.secretKey);
@@ -133,6 +111,6 @@ async function testPlisio(cfg){
     if(!response.ok||body?.status==='error')throw new Error(body?.data?.message||body?.message||`Plisio returned HTTP ${response.status}.`);
     return{ok:true,limited:false,message:'Plisio connection successful. The merchant secret key was accepted.'};
 }
-async function testConnection(provider){const cfg=await getRaw(provider);if(provider==='stripe')return testStripe(cfg);if(provider==='paypal')return testPayPal(cfg);if(provider==='coingate')return testCoinGate(cfg);if(provider==='plisio')return testPlisio(cfg);throw new Error('Unsupported payment provider');}
+async function testConnection(provider){const cfg=await getRaw(provider);if(provider==='stripe')return testStripe(cfg);if(provider==='paypal')return testPayPal(cfg);if(provider==='plisio')return testPlisio(cfg);throw new Error('Unsupported payment provider');}
 
 module.exports={PROVIDERS,ensureLoaded,get,getRaw,peek,status,save,remove,configured,credentialsConfigured,webhookConfigured,testConnection};
