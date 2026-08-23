@@ -1,9 +1,10 @@
 'use strict';
 
+const crypto = require('crypto');
 const { query } = require('../db');
 const { encryptString, decryptString } = require('../crypto');
 
-const PROVIDERS = ['stripe', 'paypal'];
+const PROVIDERS = ['stripe', 'paypal', 'coingate'];
 const cache = new Map();
 let loaded = false;
 let loading = null;
@@ -19,6 +20,16 @@ function envConfig(provider) {
         cfg.enabled = process.env.STRIPE_ENABLED === 'false' ? false : Boolean(cfg.restrictedKey || cfg.apiKey);
         return cfg;
     }
+    if (provider === 'coingate') {
+        const cfg = {
+            source: 'environment',
+            environment: process.env.COINGATE_ENV === 'live' ? 'live' : 'sandbox',
+            apiToken: process.env.COINGATE_API_TOKEN || '',
+            callbackSecret: process.env.COINGATE_CALLBACK_SECRET || ''
+        };
+        cfg.enabled = process.env.COINGATE_ENABLED === 'false' ? false : Boolean(cfg.apiToken);
+        return cfg;
+    }
     const cfg = {
         source: 'environment',
         environment: process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox',
@@ -32,6 +43,7 @@ function envConfig(provider) {
 
 function credentialsConfigured(provider, cfg) {
     if (provider === 'stripe') return Boolean(cfg?.restrictedKey || cfg?.apiKey);
+    if (provider === 'coingate') return Boolean(cfg?.apiToken);
     return Boolean(cfg?.clientId && cfg?.clientSecret);
 }
 
@@ -41,6 +53,7 @@ function configured(provider, cfg) {
 
 function webhookConfigured(provider, cfg) {
     if (provider === 'stripe') return Boolean(cfg?.webhookSecret);
+    if (provider === 'coingate') return Boolean(cfg?.callbackSecret && String(cfg.callbackSecret).length >= 32);
     return Boolean(cfg?.webhookId);
 }
 
@@ -86,6 +99,7 @@ function raw(provider) {
 function effective(provider, cfg) {
     if (cfg?.enabled !== false) return cfg;
     if (provider === 'stripe') return { ...cfg, restrictedKey: '', apiKey: '', webhookSecret: '' };
+    if (provider === 'coingate') return { ...cfg, apiToken: '', callbackSecret: '' };
     return { ...cfg, clientId: '', clientSecret: '', webhookId: '' };
 }
 
@@ -114,7 +128,7 @@ async function status(provider) {
         credentialsConfigured: credentialsConfigured(provider, cfg),
         configured: configured(provider, cfg),
         webhookConfigured: webhookConfigured(provider, cfg),
-        environment: provider === 'paypal' ? (cfg.environment === 'live' ? 'live' : 'sandbox') : null,
+        environment: ['paypal', 'coingate'].includes(provider) ? (cfg.environment === 'live' ? 'live' : 'sandbox') : null,
         updatedAt: cfg.updatedAt || null
     };
 }
@@ -135,6 +149,13 @@ async function save(provider, input, actorUserId = null) {
             apiKey: input.clearApiKey ? '' : (clean(input.apiKey) || current.apiKey || ''),
             webhookSecret: input.clearWebhookSecret ? '' : (clean(input.webhookSecret) || current.webhookSecret || '')
         };
+    } else if (provider === 'coingate') {
+        const callbackSecret = clean(current.callbackSecret, 256) || crypto.randomBytes(32).toString('hex');
+        secrets = {
+            apiToken: input.clearApiToken ? '' : (clean(input.apiToken, 2000) || current.apiToken || ''),
+            callbackSecret
+        };
+        settings = { ...settings, environment: input.environment === 'live' ? 'live' : 'sandbox' };
     } else {
         secrets = {
             clientId: input.clearClientId ? '' : (clean(input.clientId) || current.clientId || ''),
@@ -231,12 +252,33 @@ async function testPayPal(cfg) {
     };
 }
 
+async function testCoinGate(cfg) {
+    if (!cfg.apiToken) throw new Error('CoinGate API token is not configured.');
+    const host = cfg.environment === 'live' ? 'https://api.coingate.com' : 'https://api-sandbox.coingate.com';
+    const response = await fetchWithTimeout(`${host}/v2/auth/test`, {
+        method: 'GET',
+        headers: { Authorization: `Token ${cfg.apiToken}`, Accept: 'application/json' }
+    });
+    const text = await response.text();
+    let body = {};
+    if (text) { try { body = JSON.parse(text); } catch (_) { body = { message: text }; } }
+    if (!response.ok) throw new Error(body?.message || body?.error || `CoinGate returned HTTP ${response.status}.`);
+    return {
+        ok: true,
+        limited: false,
+        message: `CoinGate ${cfg.environment === 'live' ? 'Live' : 'Sandbox'} connection successful. API token was accepted.`
+    };
+}
+
 async function testConnection(provider) {
     const cfg = await getRaw(provider);
-    return provider === 'stripe' ? testStripe(cfg) : testPayPal(cfg);
+    if (provider === 'stripe') return testStripe(cfg);
+    if (provider === 'coingate') return testCoinGate(cfg);
+    return testPayPal(cfg);
 }
 
 module.exports = {
+    PROVIDERS,
     ensureLoaded,
     get,
     getRaw,
