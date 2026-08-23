@@ -1,69 +1,92 @@
 'use strict';
-
-const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
+const assert=require('assert');
 const { chromium }=require('playwright');
-const {Pool}=require('pg');
-const {encryptWithEnv}=require('../src/security/secret-envelope');
-
+const { Pool }=require('pg');
+const { encryptWithEnv }=require('../src/security/purpose-crypto');
 const BASE=process.env.BROWSER_BASE_URL||'http://127.0.0.1:3030';
-const ADMIN_USERNAME=process.env.BROWSER_ADMIN_USERNAME||process.env.ADMIN_USERNAME||'browseradmin';
-const ADMIN_PASSWORD=process.env.BROWSER_ADMIN_PASSWORD||process.env.ADMIN_PASSWORD||'BrowserAuditPass!2026';
-const OUT=path.join(__dirname,'..','test-results','admin-browser');
+const USER=process.env.BROWSER_ADMIN_USERNAME||'admin';
+const PASSWORD=process.env.BROWSER_ADMIN_PASSWORD||'';
+const OUT=path.join(process.cwd(),'test-results','admin-browser');
 fs.mkdirSync(OUT,{recursive:true});
 
-function slug(value){return String(value||'').replace(/^https?:\/\/[^/]+/,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,120)||'root';}
+function unique(values){return [...new Set(values)]}
 function canonical(href){
   try{
-    const url=new URL(href,BASE);
-    if(url.origin!==new URL(BASE).origin)return null;
-    if(!url.pathname.startsWith('/admin'))return null;
-    if(url.pathname.includes('/logout'))return null;
-    return `${url.pathname}${url.search}`;
-  }catch{return null;}
+    const u=new URL(href,BASE);
+    if(u.origin!==new URL(BASE).origin)return null;
+    if(!u.pathname.startsWith('/admin'))return null;
+    if(u.pathname.startsWith('/admin/api/'))return null;
+    if(u.pathname.includes(':'))return null;
+    return `${u.pathname}${u.search}`;
+  }catch{return null}
 }
+function slug(value){return value.replace(/^\/admin\/?/,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'')||'dashboard'}
+function visibleText(value){return String(value||'').replace(/\s+/g,' ').trim()}
 
 async function login(page){
   await page.goto(`${BASE}/login`,{waitUntil:'domcontentloaded'});
-  await page.fill('input[name="username"]',ADMIN_USERNAME);
-  await page.fill('input[name="password"]',ADMIN_PASSWORD);
-  await Promise.all([
-    page.waitForNavigation({waitUntil:'domcontentloaded'}),
-    page.click('button[type="submit"]')
-  ]);
-  assert(new URL(page.url()).pathname.startsWith('/admin'),'Browser audit could not authenticate as admin');
+  await page.fill('#username',USER);
+  await page.fill('#password',PASSWORD);
+  await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.click('button[type="submit"]')]);
+  assert(new URL(page.url()).pathname.startsWith('/admin'),'browser login did not reach the admin area');
 }
-
-async function pageRuntimeMetrics(page){
+async function captureRuntime(page){
   return page.evaluate(()=>({
-    horizontalOverflow:document.documentElement.scrollWidth-document.documentElement.clientWidth,
-    emptyHrefCount:[...document.querySelectorAll('a[href]')].filter(a=>!String(a.getAttribute('href')||'').trim()).length,
-    missingButtonTypeCount:[...document.querySelectorAll('form button')].filter(b=>!b.getAttribute('type')&&!b.getAttribute('formaction')).length,
-    duplicateIds:(()=>{const seen=new Set(),dups=[];for(const el of document.querySelectorAll('[id]')){if(seen.has(el.id))dups.push(el.id);seen.add(el.id)}return [...new Set(dups)]})(),
-    navActiveCount:document.querySelectorAll('.navLink.active,.navSubLink.active').length,
-    title:document.title,
-    h1:[...document.querySelectorAll('h1')].map(x=>x.textContent.trim()).filter(Boolean)
+    h1:[...document.querySelectorAll('h1')].map(x=>x.textContent.trim()).filter(Boolean),
+    activeSidebar:[...document.querySelectorAll('.adminTab.active')].map(x=>x.textContent.trim()).filter(Boolean),
+    landmarks:{main:document.querySelectorAll('main').length,nav:document.querySelectorAll('nav').length,h1:document.querySelectorAll('h1').length},
+    overflowX:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)-window.innerWidth,
+    focusables:[...document.querySelectorAll('a[href],button,input,select,textarea,summary,[tabindex]')].filter(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return !el.disabled&&s.visibility!=='hidden'&&s.display!=='none'&&r.width>0&&r.height>0}).length
   }));
 }
-
 async function auditPage(page,url,{mobile=false}={}){
   const consoleErrors=[],pageErrors=[],requestFailures=[];
   const onConsole=msg=>{if(msg.type()==='error')consoleErrors.push(msg.text())};
-  const onPageError=err=>pageErrors.push(err.message);
+  const onPageError=error=>pageErrors.push(error.message);
   const onRequestFailed=req=>requestFailures.push(`${req.method()} ${req.url()} ${req.failure()?.errorText||''}`);
   page.on('console',onConsole);page.on('pageerror',onPageError);page.on('requestfailed',onRequestFailed);
   try{
-    const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
+    let response;
+    try{
+      response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
+    }catch(error){
+      if(!/Download is starting/i.test(String(error?.message||error)))throw error;
+      const downloadResponse=await page.context().request.get(`${BASE}${url}`,{timeout:20000,failOnStatusCode:false});
+      const headers=downloadResponse.headers();
+      const contentType=String(headers['content-type']||'');
+      const contentDisposition=String(headers['content-disposition']||'');
+      assert(downloadResponse.status()<400,`${url} download returned ${downloadResponse.status()}`);
+      assert(/attachment/i.test(contentDisposition),`${url} started a download without attachment content disposition`);
+      assert(!contentType.includes('text/html'),`${url} download unexpectedly returned HTML`);
+      return{url,finalUrl:url,status:downloadResponse.status(),nonHtml:true,download:true,contentType,contentDisposition};
+    }
+    assert(response,`${url} did not return a response`);
+    const contentType=String(response.headers()['content-type']||'');
     const final=new URL(page.url());
-    const contentType=response?.headers()['content-type']||'';
-    if(!contentType.includes('text/html'))return{url,finalUrl:final.pathname+final.search,status:response?.status()||0,nonHtml:true};
+    if(!contentType.includes('text/html'))return{url,finalUrl:final.pathname+final.search,status:response.status(),nonHtml:true};
     await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
-    const metrics=await pageRuntimeMetrics(page);
-    assert(metrics.horizontalOverflow<=3,`${url} has horizontal overflow of ${metrics.horizontalOverflow}px`);
-    assert.equal(metrics.emptyHrefCount,0,`${url} contains empty href links`);
-    assert.deepStrictEqual(metrics.duplicateIds,[],`${url} contains duplicate IDs: ${metrics.duplicateIds.join(', ')}`);
-    const runtime={consoleErrors,pageErrors,requestFailures};
+    const metrics=await page.evaluate(()=>({
+      links:[...document.querySelectorAll('a[href]')].map(a=>({href:a.getAttribute('href'),text:a.textContent.trim(),download:a.hasAttribute('download')})),
+      forms:[...document.querySelectorAll('form')].map(f=>({method:(f.method||'get').toUpperCase(),action:new URL(f.action,location.href).pathname})),
+      buttons:[...document.querySelectorAll('button')].map(b=>b.textContent.trim()).filter(Boolean),
+      emptyLinks:[...document.querySelectorAll('a[href]')].filter(a=>!a.textContent.trim()&&!a.getAttribute('aria-label')&&!a.querySelector('img[alt]')).length,
+      duplicateIds:Object.entries([...document.querySelectorAll('[id]')].reduce((m,el)=>(m[el.id]=(m[el.id]||0)+1,m),{})).filter(([,n])=>n>1),
+      labelsMissing:[...document.querySelectorAll('input:not([type=hidden]),select,textarea')].filter(el=>!el.labels?.length&&!el.getAttribute('aria-label')&&!el.getAttribute('aria-labelledby')).map(el=>el.name||el.id||el.outerHTML.slice(0,80)),
+      imagesMissingAlt:[...document.querySelectorAll('img:not([alt])')].length,
+      headings:[...document.querySelectorAll('h1,h2,h3')].map(h=>({tag:h.tagName,text:h.textContent.trim()})),
+      contentText:document.querySelector('main')?.innerText?.slice(0,3000)||''
+    }));
+    const runtime=await captureRuntime(page);
+    if(response.status()>=400)throw new Error(`${url} returned ${response.status()}`);
+    if(metrics.duplicateIds.length)throw new Error(`${url} has duplicate element IDs: ${JSON.stringify(metrics.duplicateIds)}`);
+    if(metrics.emptyLinks)throw new Error(`${url} has ${metrics.emptyLinks} accessible-name-less links`);
+    if(metrics.imagesMissingAlt)throw new Error(`${url} has ${metrics.imagesMissingAlt} images without alt attributes`);
+    if(metrics.labelsMissing.length)throw new Error(`${url} has unlabeled controls: ${metrics.labelsMissing.join(', ')}`);
+    if(runtime.landmarks.main!==1)throw new Error(`${url} must expose exactly one main landmark`);
+    if(runtime.landmarks.h1!==1)throw new Error(`${url} must expose exactly one h1`);
+    if(mobile&&runtime.overflowX>4)throw new Error(`${url} overflows mobile viewport by ${runtime.overflowX}px`);
     const severe=consoleErrors.filter(x=>!/favicon|net::ERR_/i.test(x));
     if(pageErrors.length||severe.length)throw new Error(`${url} browser runtime errors: ${[...pageErrors,...severe].join(' | ')}`);
     const file=`${mobile?'mobile-':'desktop-'}${slug(url)}.png`;
@@ -151,21 +174,28 @@ async function main(){
       ['/admin/provisioning/migrations','Customer moves'],
       ['/admin/provisioning/drift','Access consistency']
     ]) await assertWorkflow(page,url,provisioningTabs,active);
-
     const legacyRequestResponse=await page.goto(`${BASE}/admin/request-plan-policy`,{waitUntil:'domcontentloaded',timeout:20000});
     assert(legacyRequestResponse&&legacyRequestResponse.status()<400,'legacy Request limits URL must remain a safe compatibility redirect');
     assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');
     assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Plans & Storefront','legacy Request limits must land in Plans & Storefront');
     assert(!(await page.locator('.operatorTabs').allTextContents()).join(' ').includes('Request limits'),'Request limits must not remain as a duplicate Plans workflow card');
     await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
+    await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
 
-    await safeMutationAudit(page);
+    await page.setViewportSize({width:390,height:844});
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups']){
+      inventory.mobile.push(await auditPage(page,url,{mobile:true}));
+    }
+
+    inventory.summary={desktopPages:inventory.desktop.length,mobilePages:inventory.mobile.length,uniqueForms:unique(inventory.desktop.flatMap(x=>(x.forms||[]).map(f=>`${f.method} ${f.action}`))).length,uniqueButtons:unique(inventory.desktop.flatMap(x=>x.buttons||[])).length};
     fs.writeFileSync(path.join(OUT,'inventory.json'),JSON.stringify(inventory,null,2));
+    console.log(`admin browser regression: ok — ${inventory.summary.desktopPages} desktop pages, ${inventory.summary.mobilePages} mobile pages, ${inventory.summary.uniqueForms} form targets, ${inventory.summary.uniqueButtons} visible button labels`);
     await context.close();
-  }finally{
-    await browser.close();
-    await pool.end();
-  }
+  }catch(error){
+    inventory.failure=error.stack||String(error);
+    fs.writeFileSync(path.join(OUT,'inventory.json'),JSON.stringify(inventory,null,2));
+    throw error;
+  }finally{await browser.close();await pool.end();}
 }
 
-main().catch(error=>{console.error(error);process.exit(1)});
+main().catch(error=>{console.error(error.stack||error);process.exit(1);});
