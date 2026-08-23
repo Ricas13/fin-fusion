@@ -158,9 +158,9 @@ function discountScriptFor(options={}){
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
     const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script>';
-    options={...options,body:workflow+String(options.body||'')+scripts};
     const canonicalBody=canonicalizeRetiredAdminDestinations(options.body);
-    const safeBody=stripInlineScripts(canonicalBody);
+    options={...options,body:workflow+canonicalBody+scripts};
+    const safeBody=stripInlineScripts(options.body);
     return core.layout({...options,body:decorateSettingHelp(safeBody)});
 }
 
