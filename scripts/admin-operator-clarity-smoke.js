@@ -83,7 +83,7 @@ assert(!notifications.includes('<th>Destination</th>'), 'Default notification hi
 assert(notifications.includes('notificationOutbox.recent(80)'), 'Notification health must reuse the canonical outbox history');
 
 assert(payments.includes('Payment control room') && payments.includes('Failed provider events'), 'Payments must summarize provider safety and expose failed events first');
-assert(payments.includes("ui.detailDisclosure({title:'Stripe & PayPal credentials'"), 'Payment credentials must be behind deliberate disclosure');
+assert(payments.includes('payment-provider-config') && payments.includes('integrationConfig') && payments.includes('detailsHtml:providerConfigDetails(req,provider,status,url)'), 'Payment credentials must be behind deliberate inline provider disclosure');
 assert(payments.includes("providerEvents=(events||[]).filter(event=>event.provider===provider)"), 'Payment hero/cards must reuse canonical provider event state');
 assert(payments.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"), 'Payment provider evidence must remain based on successfully processed events');
 
