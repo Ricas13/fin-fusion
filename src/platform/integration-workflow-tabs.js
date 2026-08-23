@@ -10,7 +10,7 @@ const CONNECTIONS_TABS=Object.freeze([
 ]);
 
 function normalize(active){
-  return ({integrations:'connections',global:'notifications',health:'email'})[String(active||'')]||String(active||'connections');
+  return ({integrations:'connections',global:'notifications',health:'notifications'})[String(active||'')]||String(active||'connections');
 }
 function tabs(active='connections'){
   if(active==='limits')return'';
