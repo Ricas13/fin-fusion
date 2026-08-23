@@ -52,11 +52,10 @@ function dangerZone({ title = 'Danger zone', description = '', bodyHtml = '', ac
     return `<section class="uiDangerZone">${sectionHeader({ title, description })}${bodyHtml ? `<div class="uiDangerBody">${bodyHtml}</div>` : ''}${actionsHtml ? `<div class="uiDangerActions">${actionsHtml}</div>` : ''}</section>`;
 }
 function operatorHero({ tone = 'info', eyebrow = 'Current state', title, body = '', statusLabel = '', facts = [], actionsHtml = '', next = '' }) {
-    // Page-level control-room/status heroes became visually dominant as the
-    // admin surface matured. Keep the primitive for backwards compatibility,
-    // but retire it from the rendered UI by default so pages begin with the
-    // controls and data the operator actually came to use.
-    if (!PAGE_STATUS_HERO_ENABLED) return '';
+    // The large page-level status/control-room panel is deliberately retired.
+    // Keep any actions it owned as a compact row so removing the status panel
+    // never removes an operator capability with it.
+    if (!PAGE_STATUS_HERO_ENABLED) return actionsHtml ? `<div class="operatorHeroActions operatorHeroActions-compact">${actionsHtml}</div>` : '';
     const cleanTone = ['good', 'warn', 'bad', 'info', 'commerce', 'streaming'].includes(tone) ? tone : 'info';
     const factHtml = Array.isArray(facts) && facts.length
         ? `<div class="operatorHeroFacts">${facts.map(fact => `<div class="operatorHeroFact"><span>${esc(fact.label || '')}</span><strong>${esc(fact.value ?? '—')}</strong>${fact.detail ? `<small>${esc(fact.detail)}</small>` : ''}</div>`).join('')}</div>`
