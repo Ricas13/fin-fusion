@@ -7,8 +7,28 @@ const pricing=require('./plan-pricing');
 
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
 
+async function automaticOneTimePlan(planCode,currency){
+  const result=await query(`
+    SELECT p.*,pr.id plan_price_id,pr.price_minor,pr.currency,pr.is_default,
+           NULL::uuid provider_mapping_id,NULL::text external_id,
+           'payment'::text checkout_mode,'{"automatic":true}'::jsonb AS provider_metadata
+    FROM plans p
+    JOIN plan_prices pr ON pr.plan_id=p.id AND pr.active=TRUE
+    WHERE p.code=$1 AND ${availableWindowSql('p')}
+      AND ${capacity.acquisitionSql('p')}
+      AND p.audience IN ('direct','both')
+      AND pr.currency=$2 AND pr.price_minor>0
+    LIMIT 1
+  `,[planCode,currency]);
+  return result.rows[0]||null;
+}
+
 async function getProviderOptions(planCode,provider,_currency){
   const c=await pricing.platformDefaultCurrency();
+  if(provider==='coingate'){
+    const plan=await automaticOneTimePlan(planCode,c);
+    return plan?[plan]:[];
+  }
   const result=await query(`
     SELECT p.*,pr.id plan_price_id,pr.price_minor,pr.currency,pr.is_default,
            pp.id provider_mapping_id,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
@@ -26,6 +46,12 @@ async function getProviderOptions(planCode,provider,_currency){
 
 async function getProviderPlan(planCode,provider,checkoutMode,_currency){
   const mode=checkoutMode&&['payment','subscription'].includes(checkoutMode)?checkoutMode:null,c=await pricing.platformDefaultCurrency();
+  if(provider==='coingate'){
+    if(mode==='subscription')return null;
+    const plan=await automaticOneTimePlan(planCode,c);
+    if(plan)stremio.assertAcquirable(plan,{context:'new coingate checkout'});
+    return plan;
+  }
   const result=await query(`
     SELECT p.*,pr.id plan_price_id,pr.price_minor,pr.currency,pr.is_default,
            pp.id provider_mapping_id,pp.external_id,pp.checkout_mode,pp.metadata AS provider_metadata
@@ -62,4 +88,4 @@ async function paymentOptionsForPrices(planPriceIds){
   const map=new Map();for(const row of result.rows){const key=String(row.plan_price_id);if(!map.has(key))map.set(key,[]);map.get(key).push({id:row.id,provider:row.provider,checkoutMode:row.checkout_mode,externalId:row.external_id,configured:true,verificationStatus:row.verification_status});}return map;
 }
 
-module.exports={getProviderOptions,getProviderPlan,getProviderPlanByExternalId,paymentOptionsForPrices,availableWindowSql};
+module.exports={getProviderOptions,getProviderPlan,getProviderPlanByExternalId,paymentOptionsForPrices,availableWindowSql,automaticOneTimePlan};
