@@ -69,7 +69,7 @@ assert(bulkJobs.includes("'request_plan_reconcile'"), 'request-only plan fanout 
 assert(bulkWorker.includes("registerHandler('request_plan_reconcile'"), 'bulk worker must execute request-only plan fanout');
 assert(bulkWorker.includes('reconcileRequestUser(item.customer_id)'), 'full plan reconciliation must also keep request policy current');
 
-assert(planCss.includes('.dataTable thead th{background:rgba(255,255,255,.065)'), 'admin tables must have a visibly lighter header band');
-assert(planCss.includes('.planFamilySection>.sectionHead{background:rgba(255,255,255,.075)'), 'plan-family table sections must have stronger visual separation');
+assert(planCss.includes('.dataTable thead th{background:rgba(255,255,255,.10)'), 'admin tables must have a clearly lighter header band');
+assert(planCss.includes('.planFamilySection>.sectionHead{background:rgba(255,255,255,.12)'), 'plan-family table sections must have strong visual separation');
 
 console.log('request plan Jellyseerr policy smoke: ok');
