@@ -11,7 +11,8 @@
 }
 
 .adminCardDensityGrid,
-.settings-grid{
+.settings-grid,
+.serverGrid{
   display:grid!important;
   grid-template-columns:repeat(6,minmax(0,1fr))!important;
   gap:var(--admin-card-gap)!important;
@@ -34,10 +35,22 @@
 .settings-grid>:only-child{grid-column:1/-1}
 .settings-grid:has(>:nth-child(2):last-child)>*{grid-column:span 3}
 .settings-grid:has(>:nth-child(4):last-child)>*{grid-column:span 3}
+.settings-grid>:has(.dataTable,.tableWrap,.booleanMatrix,.capabilityLibraryGrid){grid-column:1/-1!important}
 .settings-grid>[data-card-density="3"]{grid-column:span 2!important}
 .settings-grid>[data-card-density="2"]{grid-column:span 3!important}
 .settings-grid>[data-card-density="1"]{grid-column:1/-1!important}
 .settings-card{align-self:start;min-width:0}
+
+/* serverGrid is used for ordinary summary/config cards throughout Customer,
+   Server and Settings views. Give it the same balanced default without
+   changing KPI strips, analytics charts or data tables. */
+.serverGrid>*{grid-column:span 2;min-width:0;align-self:start}
+.serverGrid>:only-child{grid-column:1/-1}
+.serverGrid:has(>:nth-child(2):last-child)>*{grid-column:span 3}
+.serverGrid:has(>:nth-child(4):last-child)>*{grid-column:span 3}
+.serverGrid>[data-card-density="3"]{grid-column:span 2!important}
+.serverGrid>[data-card-density="2"]{grid-column:span 3!important}
+.serverGrid>[data-card-density="1"]{grid-column:1/-1!important}
 
 /* Keep personal connection cards at a maximum of three across. These are
    short settings cards, not KPI tiles, so four-across made the controls feel
@@ -69,6 +82,7 @@
    controls end instead of inheriting the height of a taller neighbour. */
 .planConfigCard,
 .settings-card,
+.serverCard,
 .stremioCard{height:auto;align-self:start}
 
 /* Stremio plan cards contain longer household/help controls, so their four
@@ -83,6 +97,12 @@
 .requestPlanCard.stremioCard,
 .stremioSourcesCard{align-self:start}
 
+/* Complex capability/source editors and analytics remain intentionally wide
+   or 2-up. Their controls/tables need horizontal context and are exceptions to
+   the 3-up default rather than candidates for forced mini-cards. */
+.capabilityControlGrid,
+.analyticsGrid{align-items:start!important}
+
 /* Shared card chrome: reduce decorative vertical bulk without shrinking real
    controls. Typography/input minimums stay owned by their existing components. */
 .settings-card>.card-header{min-height:44px!important;padding:8px 11px!important}
@@ -94,11 +114,13 @@
 @media(max-width:1180px){
   .adminCardDensityGrid,
   .settings-grid,
+  .serverGrid,
   .planControlGrid{
     grid-template-columns:repeat(2,minmax(0,1fr))!important;
   }
   .adminCardDensityGrid>*,
   .settings-grid>*,
+  .serverGrid>*,
   .planControlGrid>.planConfigCard,
   .adminCardDensity--3,
   .adminCardDensity--2,
@@ -106,6 +128,7 @@
   [data-card-density="2"]{grid-column:span 1!important}
   .adminCardDensity--1,
   [data-card-density="1"]{grid-column:1/-1!important}
+  .settings-grid>:has(.dataTable,.tableWrap,.booleanMatrix,.capabilityLibraryGrid){grid-column:1/-1!important}
   .planControlGrid>#product,
   .planControlGrid>#access,
   .planControlGrid>#requests,
@@ -119,11 +142,13 @@
 @media(max-width:720px){
   .adminCardDensityGrid,
   .settings-grid,
+  .serverGrid,
   .planControlGrid,
   .stremioPlanGrid,
   .notificationIdentityGrid{grid-template-columns:1fr!important}
   .adminCardDensityGrid>*,
   .settings-grid>*,
+  .serverGrid>*,
   .planControlGrid>*,
   .adminCardDensity--1,
   .adminCardDensity--2,
