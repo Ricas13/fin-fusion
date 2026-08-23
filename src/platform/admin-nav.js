@@ -23,7 +23,7 @@ const hiddenPages=Object.freeze({
   'reseller-accounts':Object.freeze({groupKey:'resellers',parentKey:'reseller-overview',page:Object.freeze(['reseller-accounts','Reseller accounts','/admin/resellers/resellers'])}),
   'users-dashboard':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['users-dashboard','Customer activity','/admin/users/dashboard'])}),
   'customer-claims':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['customer-claims','Imported-user claims','/admin/customer-claims'])}),
-  'jellyfin-import':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['jellyfin-import','Import Jellyfin users','/admin/jellyfin-import'])}),
+  'jellyfin-import':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['jellyfin-import','Import from Jellyfin','/admin/jellyfin-import'])}),
   'customer-jellyfin-password':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['customer-jellyfin-password','Jellyfin password support','/admin/customer-jellyfin-password'])}),
 
   'commerce-overview':Object.freeze({groupKey:'commerce',parentKey:'orders',page:Object.freeze(['commerce-overview','Commerce analytics','/admin/commerce'])}),
