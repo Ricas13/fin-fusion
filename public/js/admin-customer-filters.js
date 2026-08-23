@@ -10,6 +10,21 @@
   const originalButtons = form.querySelector('.buttonRow');
   if (!originalGrid) return;
 
+  let submitTimer = null;
+  const submitNow = () => {
+    if (submitTimer) window.clearTimeout(submitTimer);
+    submitTimer = null;
+    form.requestSubmit();
+  };
+  const scheduleSubmit = (delay = 550) => {
+    if (submitTimer) window.clearTimeout(submitTimer);
+    submitTimer = window.setTimeout(submitNow, delay);
+  };
+  form.addEventListener('submit', () => {
+    if (submitTimer) window.clearTimeout(submitTimer);
+    submitTimer = null;
+  });
+
   const style = document.createElement('style');
   style.textContent = `
     .customerFilterToolbar{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}
@@ -85,6 +100,7 @@
       if (value === 'custom') {
         advanced.hidden = false;
         more.setAttribute('aria-expanded', 'true');
+        more.textContent = 'Fewer filters';
         expiryFrom.focus();
         return;
       }
@@ -98,7 +114,7 @@
         expiryTo.value = iso(end);
       }
       if (value === 'expired') expiryTo.value = iso(today);
-      form.requestSubmit();
+      submitNow();
     });
   }
 
@@ -107,15 +123,6 @@
     const node = group(name);
     if (node) advancedGrid.appendChild(node);
   });
-
-  const applyRow = document.createElement('div');
-  applyRow.className = 'buttonRow';
-  const apply = document.createElement('button');
-  apply.className = 'button';
-  apply.type = 'submit';
-  apply.textContent = 'Apply filters';
-  applyRow.appendChild(apply);
-  advanced.appendChild(applyRow);
 
   const chips = document.createElement('div');
   chips.className = 'customerFilterChips';
@@ -144,7 +151,7 @@
         const preset = document.getElementById('customerExpiryPreset');
         if (preset) preset.value = 'custom';
       }
-      form.requestSubmit();
+      submitNow();
     });
     chips.appendChild(chip);
   });
@@ -161,9 +168,20 @@
   });
   if (!advanced.hidden) more.textContent = 'Fewer filters';
 
-  for (const name of ['service', 'status', 'plan', 'server']) {
+  const immediateNames = ['service', 'status', 'plan', 'server', 'accountStatus', 'paymentProvider', 'reconciliationStatus', 'hasOverride', 'expiryFrom', 'expiryTo', 'lastActiveFrom', 'lastActiveTo', 'registeredFrom', 'registeredTo'];
+  for (const name of immediateNames) {
     const control = field(name);
-    if (control) control.addEventListener('change', () => form.requestSubmit());
+    if (control) control.addEventListener('change', submitNow);
+  }
+
+  for (const name of ['q', 'library']) {
+    const control = field(name);
+    if (!control) continue;
+    control.addEventListener('input', event => {
+      if (event.isComposing) return;
+      scheduleSubmit();
+    });
+    control.addEventListener('change', submitNow);
   }
 
   originalGrid.replaceWith(toolbar);
