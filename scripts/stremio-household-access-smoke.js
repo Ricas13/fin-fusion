@@ -78,8 +78,8 @@ assert(managedEntitlements.includes('MaxActiveSessions:0'),'hidden Stremio Jelly
 const hiddenScope=(jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length;
 assert(hiddenScope>=2,'generic Jellyfin activity paths must keep excluding internal Stremio identities');
 
-// New household policy: configurable allowance, unlimited streams/devices,
-// safe default cooldown, and grandfatherable subscription snapshots.
+// Household policy: configurable allowance, unlimited streams/devices, safe
+// default cooldown, and durable subscription snapshots for runtime lookup.
 const threeHouseholds=planComponents.stremioHouseholdConfig({stremio_household_network_limit:3,stremio_household_lease_minutes:240,stremio_ip_replacement_policy:'customer_cooldown',stremio_ip_replacement_cooldown_minutes:1440});
 assert.strictEqual(threeHouseholds.networkLimit,3,'Stremio household allowance must be configurable');
 assert.strictEqual(threeHouseholds.leaseMinutes,1440,'customer cooldown must prevent automatic replacement before the cooldown');
@@ -90,13 +90,16 @@ assert(planComponentsSource.includes('stremio_household_network_limit'),'plan co
 assert(householdAccess.includes('stremio_household_network_limit_snapshot')&&householdAccess.includes('stremio_ip_replacement_policy_snapshot'),'runtime must prefer subscription policy snapshots');
 assert(householdAccess.includes('replacementState')&&householdAccess.includes('customerInitiated'),'replacement cooldown must be enforced server-side');
 assert(policyMigration.includes("DEFAULT 'customer_cooldown'")&&policyMigration.includes("SET stremio_ip_replacement_policy='auto_inactive'"),'new plans must default to cooldown while existing plans preserve old behavior');
-assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&policyMigration.includes('subscriptions_stremio_household_policy_snapshot'),'subscription snapshots must make new-purchases-only changes real');
+assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&policyMigration.includes('subscriptions_stremio_household_policy_snapshot'),'subscription snapshots must persist effective household policy on each contract');
 
 // Admin/customer UX must describe the product in customer terms, not delivery
-// architecture or IPv6 implementation details.
+// architecture or IPv6 implementation details. Plan edits are authoritative for
+// every current plan member; stale/new-purchases-only grandfathering is retired.
 assert(stremioPlanCreate.includes('const cards=[1,2,3]')&&stremioPlanCreate.includes('Household${n===1?')&&stremioPlanCreate.includes('Create custom'),'Stremio creation must expose generated 1/2/3-household presets plus custom');
 assert(stremioPlanCreate.includes('Unlimited streams')&&stremioPlanCreate.includes('Unlimited devices'),'Stremio creation must make unlimited playback explicit');
-assert(stremioPlanEditor.includes('New purchases only')&&stremioPlanEditor.includes('Existing customers too'),'restrictive access changes must have scoped impact choices without typed confirmation');
+assert(!stremioPlanEditor.includes('New purchases only')&&!stremioPlanEditor.includes('Existing customers too'),'Stremio plan edits must not offer stale-policy grandfathering for current members');
+assert(stremioPlanEditor.includes("impactScope:'all_current'")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio plan edits must update current household snapshots and queue current members for request-policy reconciliation');
+assert(stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must reset current Stremio leases so the new allowance takes effect');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
 assert(customerStremio.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'customer portal must show unlimited playback and use server-enforced replacement');
