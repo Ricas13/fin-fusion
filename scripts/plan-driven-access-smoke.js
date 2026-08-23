@@ -23,7 +23,7 @@ const plansList=read('src/platform/admin-plans-list.js');
 
 // Customers owns customer records and Jellyfin import/claim discovery. Invitation
 // onboarding is retired; imported-user claims remain a subordinate import flow.
-assert(nav.includes("['jellyfin-import','Import Jellyfin users'"),'Jellyfin import must remain discoverable under Customers with an explicit label');
+assert(nav.includes("['jellyfin-import','Import from Jellyfin'"),'Jellyfin import must remain discoverable under Customers with the canonical explicit label');
 assert(!nav.includes("['invitations','Invitations'"),'Retired Invitations must not return to Customers navigation');
 assert(nav.includes("'customer-claims':Object.freeze")&&nav.includes("['customer-claims','Imported-user claims'"),'Imported-user claims must remain addressable from the Jellyfin Import workflow');
 assert(nav.includes("['users','Customers','/admin/users']")&&nav.includes("['activity','Playback','/admin/activity']"),'Customers and Jellyfin Playback must remain visible operator starting points in the condensed navigation');
