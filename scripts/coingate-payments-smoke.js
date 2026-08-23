@@ -50,7 +50,7 @@ const returnSource = source('src/platform/customer-payment-return.js');
 expect(returnSource.includes("'/account/coingate/return'"), 'CoinGate customer return handler is missing.');
 expect(returnSource.includes("provider:'coingate'"), 'CoinGate return must verify checkout ownership and provider state.');
 
-const migration = source('db/migrations/014_coingate_payment_provider.sql');
+const migration = source('db/migrations/032_coingate_payment_provider.sql');
 for (const constraint of ['payment_provider_credentials_provider_check','billing_checkout_intents_provider_check','payment_events_provider_check','payment_incidents_provider_check','subscriptions_source_check']) {
     expect(migration.includes(constraint), `CoinGate migration is missing ${constraint}.`);
 }
