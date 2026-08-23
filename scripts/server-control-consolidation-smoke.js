@@ -14,7 +14,7 @@ const nav = read('src/platform/admin-nav.js');
 const css = read('public/css/admin-server-control.css');
 const capability = read('public/css/admin-capability.css');
 
-assert(fleet.includes('Health, capacity, placement and library maintenance in one place.'), 'Servers must be the consolidated fleet control surface');
+assert(fleet.includes('Health, stream capacity, placement and library maintenance in one place.'), 'Servers must be the consolidated fleet control surface');
 assert(fleet.includes('/admin/servers/operations/server/${esc(server.id)}/placement-mode'), 'server rows must own inline placement controls');
 assert(fleet.includes('/admin/libraries/${esc(server.id)}/refresh'), 'server rows must expose library Scan');
 assert(fleet.includes('>Active</option>') && fleet.includes('>Drain</option>') && fleet.includes('>Maintenance</option>'), 'placement selects must use compact labels');
