@@ -1,66 +1,264 @@
 'use strict';
 
-const crypto=require('crypto');
-const {query}=require('../db');
-const requestSettings=require('./request-service-settings');
-const outbound=require('../security/outbound-url-policy');
+const crypto = require('crypto');
+const { query } = require('../db');
+const requestSettings = require('./request-service-settings');
+const planPolicy = require('./request-plan-policy');
+const outbound = require('../security/outbound-url-policy');
 
-const REQUEST_PERMISSION=32;
-function cleanBaseUrl(value){const raw=String(value||'').trim();if(!raw)return'';let parsed;try{parsed=new URL(raw)}catch{throw new Error('Enter a valid Overseerr/Seerr URL.')}if(!['http:','https:'].includes(parsed.protocol))throw new Error('Requests URL must use http or https.');if(parsed.username||parsed.password||parsed.hash)throw new Error('Requests URL may not contain credentials or fragments.');parsed.search='';parsed.hash='';parsed.pathname=parsed.pathname.replace(/\/+$/,'');return parsed.toString().replace(/\/$/,'')}
-async function configuration(){const cfg=await requestSettings.get();return{baseUrl:cleanBaseUrl(cfg.baseUrl),apiKey:String(cfg.apiKey||'').trim(),configured:Boolean(cfg.enabled&&cfg.baseUrl&&cfg.apiKey)}}
-async function apiRequest(path,{method='GET',body=null,timeoutMs=10000}={}){const config=await configuration();if(!config.baseUrl)throw new Error('External request site URL is not configured.');if(!config.apiKey)throw new Error('Request-service API key is not configured.');if(typeof path!=='string'||!path.startsWith('/api/v1/')||path.startsWith('//'))throw new Error('Invalid requests API path.');const base=new URL(`${config.baseUrl}/`),url=new URL(path,base);if(url.origin!==base.origin)throw new Error('Request API path escaped the configured request-service origin.');try{const response=await outbound.safeFetch(url,{purpose:'Request service',method,timeoutMs,headers:{Accept:'application/json','Content-Type':'application/json','X-Api-Key':config.apiKey},body:body==null?undefined:JSON.stringify(body)});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload?.message||`Request service returned HTTP ${response.status}`);return payload}catch(error){if(error?.name==='AbortError')throw new Error('Request service request timed out.');throw error}}
-function validEmail(value){const email=String(value||'').trim().toLowerCase();return email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:null}
-function cleanUsername(value){const username=String(value||'').trim().replace(/[^A-Za-z0-9._-]/g,'_').replace(/^_+|_+$/g,'').slice(0,40);return username||'user'}
-function fallbackEmail(customerId){const compact=String(customerId||'').replace(/[^a-f0-9]/gi,'').toLowerCase().slice(0,24)||crypto.randomBytes(8).toString('hex');return `cf-${compact}@captainfin.invalid`}
-function quotaLimit(value){const n=Number(value);return Number.isInteger(n)&&n>0?n:0}
-function quotaDays(value){const n=Number(value);return Number.isInteger(n)&&n>0?n:30}
+const REQUEST_PERMISSION = planPolicy.DEFAULT_REQUEST_MASK;
 
-async function syncCandidates(){const result=await query(`
- SELECT c.id AS customer_id,
-        COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS email,
-        COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user') AS username,
-        COALESCE(jf.active_server_count,0)::int AS active_server_count,
-        jf.active_servers,
-        e.plan_id,e.name AS plan_name,e.code AS plan_code,e.access_expires_at AS current_period_end,
-        e.request_movie_quota_limit,e.request_movie_quota_days,
-        e.request_tv_quota_limit,e.request_tv_quota_days,
-        (e.subscription_id IS NOT NULL AND e.blocked=FALSE) AS entitlement_active,
-        rus.external_user_id,rus.external_email,rus.external_username,
-        rus.status,rus.password_reset_required,rus.last_error,
-        rus.last_attempt_at,rus.last_success_at,rus.active_permissions,
-        rus.access_suspended,rus.applied_plan_id,
-        rus.applied_movie_quota_limit,rus.applied_movie_quota_days,
-        rus.applied_tv_quota_limit,rus.applied_tv_quota_days
- FROM customers c
- LEFT JOIN app_users u ON u.id=c.user_id
- LEFT JOIN effective_customer_entitlements e ON e.customer_id=c.id
- LEFT JOIN LATERAL (
-   SELECT (ARRAY_AGG(ja.jellyfin_username ORDER BY ja.is_primary DESC,ja.created_at))[1] AS jellyfin_username,
-          COUNT(DISTINCT ja.server_id)::int AS active_server_count,
-          STRING_AGG(DISTINCT js.name,', ' ORDER BY js.name) AS active_servers
-   FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
-   WHERE ja.customer_id=c.id AND ja.disabled=FALSE AND js.enabled=TRUE
- ) jf ON TRUE
- LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
- ORDER BY COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user')
- `);return result.rows}
+function cleanBaseUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let parsed;
+  try { parsed = new URL(raw); } catch { throw new Error('Enter a valid Overseerr/Seerr URL.'); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Requests URL must use http or https.');
+  if (parsed.username || parsed.password || parsed.hash) throw new Error('Requests URL may not contain credentials or fragments.');
+  parsed.search = '';
+  parsed.hash = '';
+  parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+  return parsed.toString().replace(/\/$/, '');
+}
+async function configuration() {
+  const cfg = await requestSettings.get();
+  return { baseUrl: cleanBaseUrl(cfg.baseUrl), apiKey: String(cfg.apiKey || '').trim(), configured: Boolean(cfg.enabled && cfg.baseUrl && cfg.apiKey) };
+}
+async function apiRequest(path, { method = 'GET', body = null, timeoutMs = 10000 } = {}) {
+  const config = await configuration();
+  if (!config.baseUrl) throw new Error('External request site URL is not configured.');
+  if (!config.apiKey) throw new Error('Request-service API key is not configured.');
+  if (typeof path !== 'string' || !path.startsWith('/api/v1/') || path.startsWith('//')) throw new Error('Invalid requests API path.');
+  const base = new URL(`${config.baseUrl}/`), url = new URL(path, base);
+  if (url.origin !== base.origin) throw new Error('Request API path escaped the configured request-service origin.');
+  try {
+    const response = await outbound.safeFetch(url, { purpose: 'Request service', method, timeoutMs, headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': config.apiKey }, body: body == null ? undefined : JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.message || `Request service returned HTTP ${response.status}`);
+    return payload;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('Request service request timed out.');
+    throw error;
+  }
+}
+function validEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+function cleanUsername(value) {
+  const username = String(value || '').trim().replace(/[^A-Za-z0-9._-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  return username || 'user';
+}
+function fallbackEmail(customerId) {
+  const compact = String(customerId || '').replace(/[^a-f0-9]/gi, '').toLowerCase().slice(0, 24) || crypto.randomBytes(8).toString('hex');
+  return `cf-${compact}@captainfin.invalid`;
+}
+function quotaLimit(value) { const n = Number(value); return Number.isInteger(n) && n > 0 ? n : 0; }
+function quotaDays(value) { const n = Number(value); return Number.isInteger(n) && n > 0 ? n : 30; }
 
-async function externalUsers(){const users=[],take=100;for(let skip=0;skip<100000;skip+=take){const page=await apiRequest(`/api/v1/user?take=${take}&skip=${skip}&sort=displayname`),rows=Array.isArray(page?.results)?page.results:[];users.push(...rows);if(rows.length<take)break}return users}
-async function permissionState(externalUserId){const response=await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`),permissions=Number(response?.permissions);return Number.isInteger(permissions)&&permissions>=0?permissions:0}
-async function setPermissions(externalUserId,permissions){await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`,{method:'POST',body:{permissions:Math.max(0,Number(permissions)||0)}})}
-async function setQuotas(externalUserId,externalUsername,plan){const current=await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`);const body={username:current?.username??externalUsername??null,discordId:current?.discordId??null,locale:current?.locale??null,region:current?.region??null,originalLanguage:current?.originalLanguage??null,watchlistSyncMovies:current?.watchlistSyncMovies??false,watchlistSyncTv:current?.watchlistSyncTv??false,movieQuotaLimit:quotaLimit(plan?.request_movie_quota_limit),movieQuotaDays:quotaDays(plan?.request_movie_quota_days),tvQuotaLimit:quotaLimit(plan?.request_tv_quota_limit),tvQuotaDays:quotaDays(plan?.request_tv_quota_days)};await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`,{method:'POST',body});return body}
-async function mark(customerId,fields={}){const status=fields.status||'pending';await query(`
- INSERT INTO request_user_sync(customer_id,external_user_id,external_email,external_username,status,password_reset_required,last_error,last_attempt_at,last_success_at,updated_at,active_permissions,access_suspended,applied_plan_id,applied_movie_quota_limit,applied_movie_quota_days,applied_tv_quota_limit,applied_tv_quota_days)
- VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),CASE WHEN $5='synced' THEN NOW() ELSE NULL END,NOW(),$8,$9,$10,$11,$12,$13,$14)
- ON CONFLICT(customer_id) DO UPDATE SET external_user_id=COALESCE(EXCLUDED.external_user_id,request_user_sync.external_user_id),external_email=COALESCE(EXCLUDED.external_email,request_user_sync.external_email),external_username=COALESCE(EXCLUDED.external_username,request_user_sync.external_username),status=EXCLUDED.status,password_reset_required=EXCLUDED.password_reset_required,last_error=EXCLUDED.last_error,last_attempt_at=NOW(),last_success_at=CASE WHEN EXCLUDED.status='synced' THEN NOW() ELSE request_user_sync.last_success_at END,active_permissions=COALESCE(EXCLUDED.active_permissions,request_user_sync.active_permissions),access_suspended=EXCLUDED.access_suspended,applied_plan_id=EXCLUDED.applied_plan_id,applied_movie_quota_limit=EXCLUDED.applied_movie_quota_limit,applied_movie_quota_days=EXCLUDED.applied_movie_quota_days,applied_tv_quota_limit=EXCLUDED.applied_tv_quota_limit,applied_tv_quota_days=EXCLUDED.applied_tv_quota_days,updated_at=NOW()
- `,[customerId,fields.externalUserId||null,fields.email||null,fields.username||null,status,Boolean(fields.passwordResetRequired),fields.error?String(fields.error).slice(0,1000):null,fields.activePermissions==null?null:Math.max(0,Number(fields.activePermissions)||0),Boolean(fields.accessSuspended),fields.planId||null,fields.movieQuotaLimit==null?null:Number(fields.movieQuotaLimit),fields.movieQuotaDays==null?null:Number(fields.movieQuotaDays),fields.tvQuotaLimit==null?null:Number(fields.tvQuotaLimit),fields.tvQuotaDays==null?null:Number(fields.tvQuotaDays)])}
-async function suspendCustomer(candidate,external){if(!external?.id){await mark(candidate.customer_id,{status:'skipped',email:candidate.external_email||validEmail(candidate.email),username:candidate.external_username||cleanUsername(candidate.username),passwordResetRequired:Boolean(candidate.password_reset_required),activePermissions:candidate.active_permissions,accessSuspended:true,planId:null,movieQuotaLimit:candidate.applied_movie_quota_limit,movieQuotaDays:candidate.applied_movie_quota_days,tvQuotaLimit:candidate.applied_tv_quota_limit,tvQuotaDays:candidate.applied_tv_quota_days});return{status:'ignored',customerId:candidate.customer_id}}try{const currentPermissions=await permissionState(external.id),remembered=Number(candidate.active_permissions),activePermissions=Number.isInteger(remembered)&&remembered>0?remembered:currentPermissions>0?currentPermissions:REQUEST_PERMISSION;if(currentPermissions!==0)await setPermissions(external.id,0);await mark(candidate.customer_id,{status:'synced',externalUserId:external.id,email:external.email||candidate.external_email,username:external.username||candidate.external_username||candidate.username,passwordResetRequired:Boolean(candidate.password_reset_required),activePermissions,accessSuspended:true,planId:null,movieQuotaLimit:candidate.applied_movie_quota_limit,movieQuotaDays:candidate.applied_movie_quota_days,tvQuotaLimit:candidate.applied_tv_quota_limit,tvQuotaDays:candidate.applied_tv_quota_days});return{status:'suspended',customerId:candidate.customer_id}}catch(error){await mark(candidate.customer_id,{status:'failed',externalUserId:external.id,email:external.email||candidate.external_email,username:external.username||candidate.username,passwordResetRequired:Boolean(candidate.password_reset_required),activePermissions:candidate.active_permissions,accessSuspended:Boolean(candidate.access_suspended),planId:candidate.applied_plan_id,movieQuotaLimit:candidate.applied_movie_quota_limit,movieQuotaDays:candidate.applied_movie_quota_days,tvQuotaLimit:candidate.applied_tv_quota_limit,tvQuotaDays:candidate.applied_tv_quota_days,error:error.message});return{status:'failed',customerId:candidate.customer_id,error:error.message}}}
-function indexesFor(users){return{byId:new Map(users.filter(user=>user?.id!=null).map(user=>[String(user.id),user])),byEmail:new Map(users.filter(user=>user?.email).map(user=>[String(user.email).toLowerCase(),user]))}}
-async function syncCustomer(candidate,indexes={}){const username=cleanUsername(candidate.username),email=validEmail(candidate.email)||candidate.external_email||fallbackEmail(candidate.customer_id);let external=candidate.external_user_id?indexes.byId?.get(String(candidate.external_user_id)):null;if(!external)external=indexes.byEmail?.get(String(email).toLowerCase())||null;if(!candidate.entitlement_active)return suspendCustomer(candidate,external);try{let created=false;if(!external){const bootstrapPassword=crypto.randomBytes(30).toString('base64url');external=await apiRequest('/api/v1/user',{method:'POST',body:{email,username,password:bootstrapPassword}});created=true;if(external?.id&&indexes.byId)indexes.byId.set(String(external.id),external);if(external?.email&&indexes.byEmail)indexes.byEmail.set(String(external.email).toLowerCase(),external)}if(!external?.id)throw new Error('Request service did not return a user id.');const currentPermissions=await permissionState(external.id),remembered=Number(candidate.active_permissions),activePermissions=Number.isInteger(remembered)&&remembered>0?remembered:currentPermissions>0?currentPermissions:REQUEST_PERMISSION;if(candidate.access_suspended||currentPermissions===0)await setPermissions(external.id,activePermissions);const quotas=await setQuotas(external.id,external.username||username,candidate);await mark(candidate.customer_id,{status:'synced',externalUserId:external.id,email:external.email||email,username:external.username||username,passwordResetRequired:created||Boolean(candidate.password_reset_required),activePermissions,accessSuspended:false,planId:candidate.plan_id,movieQuotaLimit:quotas.movieQuotaLimit,movieQuotaDays:quotas.movieQuotaDays,tvQuotaLimit:quotas.tvQuotaLimit,tvQuotaDays:quotas.tvQuotaDays});return{status:'synced',customerId:candidate.customer_id,created}}catch(error){await mark(candidate.customer_id,{status:'failed',externalUserId:external?.id||candidate.external_user_id,email:external?.email||email,username:external?.username||username,passwordResetRequired:Boolean(candidate.password_reset_required),activePermissions:candidate.active_permissions,accessSuspended:Boolean(candidate.access_suspended),planId:candidate.applied_plan_id,movieQuotaLimit:candidate.applied_movie_quota_limit,movieQuotaDays:candidate.applied_movie_quota_days,tvQuotaLimit:candidate.applied_tv_quota_limit,tvQuotaDays:candidate.applied_tv_quota_days,error:error.message});return{status:'failed',customerId:candidate.customer_id,error:error.message}}}
-async function syncAll(){const config=await configuration();if(!config.configured)throw new Error('Configure the external request service URL and API key first.');const[candidates,existing]=await Promise.all([syncCandidates(),externalUsers()]),indexes=indexesFor(existing),summary={total:candidates.length,created:0,linked:0,suspended:0,failed:0};for(const candidate of candidates){const result=await syncCustomer(candidate,indexes);if(result.status==='failed')summary.failed++;else if(result.status==='suspended')summary.suspended++;else if(result.created)summary.created++;else if(result.status==='synced')summary.linked++}return summary}
-async function syncOneCustomer(customerId){const candidates=await syncCandidates(),candidate=candidates.find(row=>String(row.customer_id)===String(customerId));if(!candidate)throw new Error('Customer not found.');const existing=await externalUsers();return syncCustomer(candidate,indexesFor(existing))}
-async function requestAccessForCustomer(customerId){const result=await query(`SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,p.name AS applied_plan_name,p.code AS applied_plan_code FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN request_user_sync rus ON rus.customer_id=c.id LEFT JOIN plans p ON p.id=rus.applied_plan_id WHERE c.id=$1`,[customerId]);return result.rows[0]||null}
-async function setCustomerPassword(customerId,password){if(typeof password!=='string'||password.length<12||password.length>200)throw new Error('Request-site password must be between 12 and 200 characters.');let access=await requestAccessForCustomer(customerId);if(!access?.external_user_id){const result=await syncOneCustomer(customerId);if(result.status!=='synced')throw new Error(result.error||'Request-site user could not be synced.');access=await requestAccessForCustomer(customerId)}if(!access?.external_user_id)throw new Error('Request-site user is not synced yet.');if(access.access_suspended)throw new Error('Request access is suspended until the subscription becomes active again.');await apiRequest(`/api/v1/user/${encodeURIComponent(access.external_user_id)}/settings/password`,{method:'POST',body:{newPassword:password}});await query(`UPDATE request_user_sync SET password_reset_required=FALSE,last_error=NULL,updated_at=NOW() WHERE customer_id=$1`,[customerId]);return true}
-async function markPasswordSyncFailure(customerId,error){await query(`UPDATE request_user_sync SET password_reset_required=TRUE,last_error=$2,updated_at=NOW() WHERE customer_id=$1`,[customerId,String(error?.message||error||'Request password sync failed').slice(0,1000)])}
-async function statusSummary(){const[config,counts,suspended]=await Promise.all([configuration(),query(`SELECT status,COUNT(*)::int AS count FROM request_user_sync GROUP BY status`),query(`SELECT COUNT(*)::int AS count FROM request_user_sync WHERE access_suspended=TRUE`)]);return{...config,counts:Object.fromEntries(counts.rows.map(row=>[row.status,row.count])),suspended:Number(suspended.rows[0]?.count||0)}}
-module.exports={REQUEST_PERMISSION,cleanBaseUrl,configuration,apiRequest,validEmail,cleanUsername,fallbackEmail,quotaLimit,quotaDays,syncCandidates,externalUsers,permissionState,setPermissions,setQuotas,syncAll,syncOneCustomer,requestAccessForCustomer,setCustomerPassword,markPasswordSyncFailure,statusSummary};
+async function syncCandidates() {
+  const result = await query(`
+    SELECT c.id AS customer_id,
+      COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS email,
+      COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user') AS username,
+      COALESCE(jf.active_server_count,0)::int AS active_server_count,
+      jf.active_servers,
+      e.plan_id,e.name AS plan_name,e.code AS plan_code,e.access_expires_at AS current_period_end,
+      e.request_movie_quota_limit,e.request_movie_quota_days,
+      e.request_tv_quota_limit,e.request_tv_quota_days,
+      COALESCE(p.request_access_enabled,TRUE) AS request_access_enabled,
+      p.request_permissions,p.request_watchlist_sync_movies,p.request_watchlist_sync_tv,
+      p.request_locale,p.request_discover_region,p.request_streaming_region,p.request_original_language,
+      (e.subscription_id IS NOT NULL AND e.blocked=FALSE) AS entitlement_active,
+      rus.external_user_id,rus.external_email,rus.external_username,
+      rus.status,rus.password_reset_required,rus.last_error,
+      rus.last_attempt_at,rus.last_success_at,rus.active_permissions,
+      rus.access_suspended,rus.applied_plan_id,
+      rus.applied_movie_quota_limit,rus.applied_movie_quota_days,
+      rus.applied_tv_quota_limit,rus.applied_tv_quota_days
+    FROM customers c
+    LEFT JOIN app_users u ON u.id=c.user_id
+    LEFT JOIN effective_customer_entitlements e ON e.customer_id=c.id
+    LEFT JOIN plans p ON p.id=e.plan_id
+    LEFT JOIN LATERAL (
+      SELECT (ARRAY_AGG(ja.jellyfin_username ORDER BY ja.is_primary DESC,ja.created_at))[1] AS jellyfin_username,
+        COUNT(DISTINCT ja.server_id)::int AS active_server_count,
+        STRING_AGG(DISTINCT js.name,', ' ORDER BY js.name) AS active_servers
+      FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
+      WHERE ja.customer_id=c.id AND ja.disabled=FALSE AND js.enabled=TRUE
+    ) jf ON TRUE
+    LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
+    ORDER BY COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user')
+  `);
+  return result.rows;
+}
+
+async function externalUsers() {
+  const users = [], take = 100;
+  for (let skip = 0; skip < 100000; skip += take) {
+    const page = await apiRequest(`/api/v1/user?take=${take}&skip=${skip}&sort=displayname`), rows = Array.isArray(page?.results) ? page.results : [];
+    users.push(...rows);
+    if (rows.length < take) break;
+  }
+  return users;
+}
+async function permissionState(externalUserId) {
+  const response = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`), permissions = Number(response?.permissions);
+  return Number.isInteger(permissions) && permissions >= 0 ? permissions : 0;
+}
+async function setPermissions(externalUserId, permissions) {
+  await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`, { method: 'POST', body: { permissions: Math.max(0, Number(permissions) || 0) } });
+}
+function planValue(override, current, fallback = null) { return override === null || override === undefined || override === '' ? (current ?? fallback) : override; }
+async function setQuotas(externalUserId, externalUsername, plan, externalEmail = null) {
+  const current = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`);
+  const email = validEmail(current?.email) || validEmail(externalEmail) || fallbackEmail(plan?.customer_id);
+  const discoverRegion = planValue(plan?.request_discover_region, current?.discoverRegion ?? current?.region, null);
+  const streamingRegion = planValue(plan?.request_streaming_region, current?.streamingRegion ?? current?.region, null);
+  const body = {
+    username: current?.username ?? externalUsername ?? cleanUsername(plan?.username),
+    email,
+    locale: planValue(plan?.request_locale, current?.locale, null),
+    discoverRegion,
+    streamingRegion,
+    // Kept for compatibility with older Overseerr/Jellyseerr releases that
+    // represented both region settings as one field. Modern Seerr ignores it.
+    region: discoverRegion,
+    originalLanguage: planValue(plan?.request_original_language, current?.originalLanguage, null),
+    watchlistSyncMovies: planValue(plan?.request_watchlist_sync_movies, current?.watchlistSyncMovies, false),
+    watchlistSyncTv: planValue(plan?.request_watchlist_sync_tv, current?.watchlistSyncTv, false),
+    movieQuotaLimit: quotaLimit(plan?.request_movie_quota_limit),
+    movieQuotaDays: quotaDays(plan?.request_movie_quota_days),
+    tvQuotaLimit: quotaLimit(plan?.request_tv_quota_limit),
+    tvQuotaDays: quotaDays(plan?.request_tv_quota_days)
+  };
+  await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`, { method: 'POST', body });
+  return body;
+}
+
+async function mark(customerId, fields = {}) {
+  const status = fields.status || 'pending';
+  await query(`
+    INSERT INTO request_user_sync(customer_id,external_user_id,external_email,external_username,status,password_reset_required,last_error,last_attempt_at,last_success_at,updated_at,active_permissions,access_suspended,applied_plan_id,applied_movie_quota_limit,applied_movie_quota_days,applied_tv_quota_limit,applied_tv_quota_days)
+    VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),CASE WHEN $5='synced' THEN NOW() ELSE NULL END,NOW(),$8,$9,$10,$11,$12,$13,$14)
+    ON CONFLICT(customer_id) DO UPDATE SET external_user_id=COALESCE(EXCLUDED.external_user_id,request_user_sync.external_user_id),external_email=COALESCE(EXCLUDED.external_email,request_user_sync.external_email),external_username=COALESCE(EXCLUDED.external_username,request_user_sync.external_username),status=EXCLUDED.status,password_reset_required=EXCLUDED.password_reset_required,last_error=EXCLUDED.last_error,last_attempt_at=NOW(),last_success_at=CASE WHEN EXCLUDED.status='synced' THEN NOW() ELSE request_user_sync.last_success_at END,active_permissions=COALESCE(EXCLUDED.active_permissions,request_user_sync.active_permissions),access_suspended=EXCLUDED.access_suspended,applied_plan_id=EXCLUDED.applied_plan_id,applied_movie_quota_limit=EXCLUDED.applied_movie_quota_limit,applied_movie_quota_days=EXCLUDED.applied_movie_quota_days,applied_tv_quota_limit=EXCLUDED.applied_tv_quota_limit,applied_tv_quota_days=EXCLUDED.applied_tv_quota_days,updated_at=NOW()
+  `, [customerId, fields.externalUserId || null, fields.email || null, fields.username || null, status, Boolean(fields.passwordResetRequired), fields.error ? String(fields.error).slice(0, 1000) : null, fields.activePermissions == null ? null : Math.max(0, Number(fields.activePermissions) || 0), Boolean(fields.accessSuspended), fields.planId || null, fields.movieQuotaLimit == null ? null : Number(fields.movieQuotaLimit), fields.movieQuotaDays == null ? null : Number(fields.movieQuotaDays), fields.tvQuotaLimit == null ? null : Number(fields.tvQuotaLimit), fields.tvQuotaDays == null ? null : Number(fields.tvQuotaDays)]);
+}
+function desiredPermissions(candidate, currentPermissions) {
+  const remembered = Number(candidate.active_permissions);
+  const fallback = Number.isInteger(remembered) && remembered > 0 ? remembered : currentPermissions > 0 ? currentPermissions : REQUEST_PERMISSION;
+  return planPolicy.planPermissionMask(candidate, fallback) ?? REQUEST_PERMISSION;
+}
+async function suspendCustomer(candidate, external, { planId = null, desired = null } = {}) {
+  if (!external?.id) {
+    await mark(candidate.customer_id, { status: 'skipped', email: candidate.external_email || validEmail(candidate.email), username: candidate.external_username || cleanUsername(candidate.username), passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: desired ?? candidate.active_permissions, accessSuspended: true, planId, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
+    return { status: 'ignored', customerId: candidate.customer_id };
+  }
+  try {
+    const currentPermissions = await permissionState(external.id);
+    const activePermissions = desired == null ? desiredPermissions(candidate, currentPermissions) : planPolicy.sanitizePermissionMask(desired) ?? REQUEST_PERMISSION;
+    if (currentPermissions !== 0) await setPermissions(external.id, 0);
+    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || candidate.external_email || validEmail(candidate.email), username: external.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions, accessSuspended: true, planId, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
+    return { status: 'suspended', customerId: candidate.customer_id };
+  } catch (error) {
+    await mark(candidate.customer_id, { status: 'failed', externalUserId: external.id, email: external.email || candidate.external_email, username: external.username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
+    return { status: 'failed', customerId: candidate.customer_id, error: error.message };
+  }
+}
+function indexesFor(users) {
+  return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user])) };
+}
+async function syncCustomer(candidate, indexes = {}) {
+  const username = cleanUsername(candidate.username), email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
+  let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
+  if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
+  if (!candidate.entitlement_active) return suspendCustomer(candidate, external, { planId: null });
+  if (candidate.request_access_enabled === false) {
+    const managedDesired = candidate.request_permissions == null ? null : planPolicy.sanitizePermissionMask(candidate.request_permissions);
+    return suspendCustomer(candidate, external, { planId: candidate.plan_id, desired: managedDesired });
+  }
+  try {
+    let created = false;
+    if (!external) {
+      const bootstrapPassword = crypto.randomBytes(30).toString('base64url');
+      external = await apiRequest('/api/v1/user', { method: 'POST', body: { email, username, password: bootstrapPassword } });
+      created = true;
+      if (external?.id && indexes.byId) indexes.byId.set(String(external.id), external);
+      if (external?.email && indexes.byEmail) indexes.byEmail.set(String(external.email).toLowerCase(), external);
+    }
+    if (!external?.id) throw new Error('Request service did not return a user id.');
+    const currentPermissions = await permissionState(external.id);
+    const activePermissions = desiredPermissions(candidate, currentPermissions);
+    if (currentPermissions !== activePermissions) await setPermissions(external.id, activePermissions);
+    const settings = await setQuotas(external.id, external.username || username, candidate, external.email || email);
+    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired: created || Boolean(candidate.password_reset_required), activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
+    return { status: 'synced', customerId: candidate.customer_id, created };
+  } catch (error) {
+    await mark(candidate.customer_id, { status: 'failed', externalUserId: external?.id || candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
+    return { status: 'failed', customerId: candidate.customer_id, error: error.message };
+  }
+}
+function emptySummary(total) { return { total, created: 0, linked: 0, suspended: 0, failed: 0, ignored: 0 }; }
+function countResult(summary, result) {
+  if (result.status === 'failed') summary.failed++;
+  else if (result.status === 'suspended') summary.suspended++;
+  else if (result.status === 'ignored') summary.ignored++;
+  else if (result.created) summary.created++;
+  else if (result.status === 'synced') summary.linked++;
+}
+async function syncAll() {
+  const config = await configuration();
+  if (!config.configured) throw new Error('Configure the external request service URL and API key first.');
+  const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]), indexes = indexesFor(existing), summary = emptySummary(candidates.length);
+  for (const candidate of candidates) countResult(summary, await syncCustomer(candidate, indexes));
+  return summary;
+}
+function selectedIds(values) {
+  const ids = [...new Set((Array.isArray(values) ? values : [values]).map(v => String(v || '').trim()).filter(v => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)))];
+  if (!ids.length) throw new Error('Select at least one managed request user.');
+  if (ids.length > 500) throw new Error('Select no more than 500 request users at once.');
+  return ids;
+}
+async function syncSelected(customerIds) {
+  const ids = selectedIds(customerIds), config = await configuration();
+  if (!config.configured) throw new Error('Configure the external request service URL and API key first.');
+  const [allCandidates, existing] = await Promise.all([syncCandidates(), externalUsers()]);
+  const wanted = new Set(ids), candidates = allCandidates.filter(row => wanted.has(String(row.customer_id)));
+  if (candidates.length !== ids.length) throw new Error('One or more selected customers no longer exist. Refresh the page and try again.');
+  const indexes = indexesFor(existing), summary = emptySummary(candidates.length);
+  for (const candidate of candidates) countResult(summary, await syncCustomer(candidate, indexes));
+  return summary;
+}
+async function syncOneCustomer(customerId) {
+  const candidates = await syncCandidates(), candidate = candidates.find(row => String(row.customer_id) === String(customerId));
+  if (!candidate) throw new Error('Customer not found.');
+  const existing = await externalUsers();
+  return syncCustomer(candidate, indexesFor(existing));
+}
+async function requestAccessForCustomer(customerId) {
+  const result = await query(`SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,p.name AS applied_plan_name,p.code AS applied_plan_code FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN request_user_sync rus ON rus.customer_id=c.id LEFT JOIN plans p ON p.id=rus.applied_plan_id WHERE c.id=$1`, [customerId]);
+  return result.rows[0] || null;
+}
+async function setCustomerPassword(customerId, password) {
+  if (typeof password !== 'string' || password.length < 12 || password.length > 200) throw new Error('Request-site password must be between 12 and 200 characters.');
+  let access = await requestAccessForCustomer(customerId);
+  if (!access?.external_user_id) {
+    const result = await syncOneCustomer(customerId);
+    if (result.status !== 'synced') throw new Error(result.error || 'Request-site user could not be synced.');
+    access = await requestAccessForCustomer(customerId);
+  }
+  if (!access?.external_user_id) throw new Error('Request-site user is not synced yet.');
+  if (access.access_suspended) throw new Error('Request access is suspended until the subscription becomes active again.');
+  await apiRequest(`/api/v1/user/${encodeURIComponent(access.external_user_id)}/settings/password`, { method: 'POST', body: { newPassword: password } });
+  await query(`UPDATE request_user_sync SET password_reset_required=FALSE,last_error=NULL,updated_at=NOW() WHERE customer_id=$1`, [customerId]);
+  return true;
+}
+async function markPasswordSyncFailure(customerId, error) {
+  await query(`UPDATE request_user_sync SET password_reset_required=TRUE,last_error=$2,updated_at=NOW() WHERE customer_id=$1`, [customerId, String(error?.message || error || 'Request password sync failed').slice(0, 1000)]);
+}
+async function statusSummary() {
+  const [config, counts, suspended] = await Promise.all([configuration(), query(`SELECT status,COUNT(*)::int AS count FROM request_user_sync GROUP BY status`), query(`SELECT COUNT(*)::int AS count FROM request_user_sync WHERE access_suspended=TRUE`)]);
+  return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
+}
+
+module.exports = { REQUEST_PERMISSION, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncCandidates, externalUsers, permissionState, setPermissions, setQuotas, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
