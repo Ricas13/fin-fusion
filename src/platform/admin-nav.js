@@ -18,8 +18,6 @@ const hiddenPages=Object.freeze({
   search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
   attention:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['attention','Needs Attention','/admin/attention'])}),
 
-  'fleet-operations':Object.freeze({groupKey:'jellyfin',parentKey:'servers',page:Object.freeze(['fleet-operations','Fleet operations','/admin/servers/operations'])}),
-  libraries:Object.freeze({groupKey:'jellyfin',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
   'stremio-playback':Object.freeze({groupKey:'stremio',parentKey:'stremio-sources',page:Object.freeze(['stremio-playback','IP access','/admin/stremio/playback'])}),
 
   'reseller-accounts':Object.freeze({groupKey:'resellers',parentKey:'reseller-overview',page:Object.freeze(['reseller-accounts','Reseller accounts','/admin/resellers/resellers'])}),
@@ -62,7 +60,8 @@ const aliases=Object.freeze({
   notifications:'settings-integrations','notification-events':'settings-integrations',
   'payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general',
   'stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources',
-  'abuse-protection':'settings-security','security':'my-security','operations':'servers','servers-dashboard':'servers'
+  'abuse-protection':'settings-security','security':'my-security','operations':'servers','servers-dashboard':'servers',
+  'fleet-operations':'servers','libraries':'servers'
 });
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
