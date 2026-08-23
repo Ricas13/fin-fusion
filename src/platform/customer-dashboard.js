@@ -6,6 +6,7 @@ const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
 const coingate=require('../payments/coingate');
 const planPricing=require('../payments/plan-pricing');
+const streamVariants=require('../payments/stream-variants');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const permanentAccess=require('../entitlements/permanent-access');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
@@ -24,10 +25,17 @@ async function hideInternalAccounts(customerId,portal){
   return portal;
 }
 function deliveryType(entitlement){return productReadiness.serviceType({service_type:entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin'});}
+function fallbackCapacity(plan){return{limit:plan.capacity_limit??null,used:0,reserved:0,remaining:plan.capacity_limit??null,soldOut:false,label:'Available',kind:'available'};}
 async function sellablePlans(){
-  const logical=await customers.listPublicPlans(),rows=await planPricing.decoratePlans(logical,null),ctx=await productReadiness.context(),ready=rows.filter(plan=>productReadiness.evaluate(plan,ctx).sellable);
-  const capacityStates=await Promise.all(ready.map(plan=>planCapacity.usage(plan.id).catch(()=>({limit:plan.capacity_limit??null,used:0,reserved:0,remaining:plan.capacity_limit??null,soldOut:false}))));
-  return ready.map((plan,index)=>({...plan,capacity:capacityStates[index]})).filter(plan=>plan.is_free_tier||!plan.capacity.soldOut);
+  const currency=await planPricing.platformDefaultCurrency(),logical=await customers.listPublicPlans(),priced=await planPricing.decoratePlans(logical,null),decorated=await streamVariants.decoratePlans(priced,currency),ctx=await productReadiness.context(),ready=decorated.filter(plan=>productReadiness.evaluate(plan,ctx).sellable);
+  const enriched=[];
+  for(const plan of ready){
+    const capacity=await planCapacity.usage(plan.id).catch(()=>fallbackCapacity(plan));
+    let variants=Array.isArray(plan.stream_variants)?plan.stream_variants:[];
+    if(variants.length){variants=await Promise.all(variants.map(async variant=>({...variant,capacity:await planCapacity.usage(plan.id,undefined,{streams:Number(variant.streams||plan.streams||1)}).catch(()=>capacity)})));}
+    enriched.push({...plan,capacity,stream_variants:variants});
+  }
+  return enriched.filter(plan=>plan.is_free_tier||!plan.capacity.soldOut);
 }
 function onboardingMessage(portal,currentPlan,delivery){
   if(!currentPlan||!['jellyfin','bundle'].includes(delivery)||!Array.isArray(portal.accounts))return null;
