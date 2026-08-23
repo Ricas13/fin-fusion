@@ -43,7 +43,7 @@ const hiddenPages=Object.freeze({
   branding:Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['branding','Branding','/admin/settings/branding'])}),
   'support-policy':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['support-policy','Support & legal','/admin/settings/support'])}),
   'notification-settings':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['notification-settings','Notifications','/admin/notifications/preferences'])}),
-  'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['notification-gateway','Delivery health','/admin/notifications'])}),
+  'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['notification-gateway','Email infrastructure','/admin/notifications'])}),
   'request-service':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
 
   'my-profile':Object.freeze({groupKey:'settings',parentKey:'my-profile',page:Object.freeze(['my-profile','My Profile','/admin/profile'])}),
@@ -57,7 +57,7 @@ const aliases=Object.freeze({
   'jellyfin-plans':'plans','stremio-plans':'plans','reseller-plans':'plans',
   'jellyfin-customers':'users','stremio-customers':'users','reseller-users':'users',
   'reseller-servers':'reseller-overview','reseller-activity':'reseller-overview',
-  notifications:'settings-integrations','notification-events':'settings-integrations',
+  notifications:'notification-gateway','notification-events':'settings-integrations',
   'payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general',
   'stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources',
   'abuse-protection':'settings-security','security':'my-security','operations':'servers','servers-dashboard':'servers',

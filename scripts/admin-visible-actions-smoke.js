@@ -11,6 +11,9 @@ const navSource=fs.readFileSync(path.join(platformDir,'admin-nav.js'),'utf8');
 const navModel=require('../src/platform/admin-nav');
 const htmlCore=require('../src/platform/admin-html-core');
 const tabs=fs.readFileSync(path.join(platformDir,'notification-workflow-tabs.js'),'utf8');
+const connectionsTabs=fs.readFileSync(path.join(platformDir,'integration-workflow-tabs.js'),'utf8');
+const connectionsWorkflow=require('../src/platform/integration-workflow-tabs');
+const notificationWorkflow=require('../src/platform/notification-workflow-tabs');
 const provisioningTabs=fs.readFileSync(path.join(platformDir,'provisioning-workflow-tabs.js'),'utf8');
 const html=fs.readFileSync(path.join(platformDir,'admin-html.js'),'utf8');
 const customerDeletion=fs.readFileSync(path.join(platformDir,'customer-deletion.js'),'utf8');
@@ -76,10 +79,13 @@ assert(navModel.hiddenPages?.['notification-gateway'],'Notification delivery hea
 assert(navSource.includes("'my-notifications':Object.freeze"),'Hidden personal notification workflow metadata must remain explicit');
 assert.equal(navModel.hiddenPages?.['jellyfin-import']?.page?.[1],'Import from Jellyfin','Jellyfin import must use one canonical label in breadcrumbs and navigation');
 
-assert(tabs.includes("['global','Global notifications','/admin/notifications/preferences'") ,'Notification control room must expose global notification channels');
-assert(tabs.includes("['email','Email infrastructure','/admin/notifications/email'") ,'Notification control room must expose Email infrastructure');
-assert(tabs.includes("['health','Delivery health','/admin/notifications'") ,'Notification control room must expose Delivery health contextually');
-assert(tabs.includes('ui.workflowCards'),'Notification workflow must use card navigation instead of a narrow upper-tab strip');
+const connectionLabels=html=>[...String(html).matchAll(/<strong>([^<]+)<\/strong>/g)].map(match=>match[1]);
+const expectedConnections=['Connections','Notifications','Email infrastructure','Request service'];
+for(const active of ['connections','notifications','email','requests'])assert.deepStrictEqual(connectionLabels(connectionsWorkflow.tabs(active)),expectedConnections,`Connections navigation must keep one stable order while ${active} is active`);
+assert.deepStrictEqual(connectionLabels(notificationWorkflow.globalTabs('global')),expectedConnections,'Notification pages must reuse the exact Connections navigation');
+assert(connectionsTabs.includes("['connections','Connections','/admin/settings/integrations'")&&connectionsTabs.includes("['notifications','Notifications','/admin/notifications/preferences'")&&connectionsTabs.includes("['email','Email infrastructure','/admin/notifications'")&&connectionsTabs.includes("['requests','Request service','/admin/request-users'"),'Connections workflow must expose the four canonical destinations');
+assert(!connectionsTabs.includes('Delivery health'),'Connections workflow must not create a second email/delivery destination that changes the tab set');
+assert(tabs.includes("require('./integration-workflow-tabs')"),'Global notification pages must delegate to the canonical Connections workflow instead of defining another tab set');
 assert(tabs.includes("['profile','Profile','/admin/profile'") ,'My Profile workflow must expose Profile');
 assert(tabs.includes("['personal','Notifications','/admin/profile/notifications'") ,'My Profile workflow must expose personal Notifications');
 assert(provisioningTabs.includes("['provisioning','Provisioning','/admin/provisioning'")&&provisioningTabs.includes("['drift','Access consistency','/admin/provisioning/drift'")&&provisioningTabs.includes('ui.workflowCards'),'Provisioning and access consistency must share one card-based workflow');
