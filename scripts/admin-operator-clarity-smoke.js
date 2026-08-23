@@ -85,12 +85,12 @@ assert(!notifications.includes('<th>Destination</th>'), 'Default notification hi
 assert(notifications.includes('notificationOutbox.recent(80)'), 'Notification health must reuse the canonical outbox history');
 
 assert(payments.includes('Payment control room') && payments.includes('Failed provider events'), 'Payments must retain provider-safety calculation and expose failed events');
-assert(payments.includes("ui.detailDisclosure({title:'Stripe, PayPal & Plisio credentials'"), 'Payment credentials must be behind deliberate disclosure');
+assert(payments.includes('payment-provider-config') && payments.includes('integrationConfig') && payments.includes('detailsHtml:providerConfigDetails(req,provider,status,url)') && !payments.includes("title:'Stripe, PayPal & Plisio credentials'"), 'Payment credentials must live behind deliberate inline provider disclosure without a duplicate combined configuration block');
 assert(payments.includes("providerEvents=(events||[]).filter(event=>event.provider===provider)"), 'Payment cards must reuse canonical provider event state');
 assert(payments.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"), 'Payment provider evidence must remain based on successfully processed events');
 
 assert(commerce.includes('Commerce control room') && commerce.includes('Payment incidents to resolve'), 'Commerce must retain customer-impacting payment state before revenue analytics');
-assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf('rangeControls(dashboardCtx.range)'), 'Commerce state calculation must remain before analytics controls');
+assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf('rangeControls(dashboardCtx.range)'), 'Commerce state calculation must remain before analytics controls in composition');
 assert(commerce.includes("d.paymentIncidents.filter(row=>!row.resolved_at)"), 'Commerce clarity must reuse canonical payment incidents');
 assert(commerce.includes("ui.detailDisclosure({title:'Commercial policies & detailed payment state'"), 'Routine commercial policy/state detail must be progressively disclosed');
 
@@ -115,7 +115,7 @@ assert(!billing.includes('<th>Provider ID</th>'), 'Billing default tables must n
 
 assert(support.includes('Support desk') && support.includes('Reply these first'), 'Support must lead with customer conversations waiting on staff');
 assert(support.includes("['open','awaiting_staff'].includes(row.status)"), 'Support priority must reuse canonical ticket lifecycle state');
-assert(support.includes("ui.detailDisclosure({title:'Ticket routing & status'"), 'Ticket routing/status controls must stay secondary to the conversation and reply action');
+assert(support.includes("ui.detailDisclosure({title:'Ticket routing & status'"), 'Support routing/status controls must stay secondary to the conversation and reply action');
 assert(support.includes('Internal note (staff only)'), 'Support clarity must preserve the internal-note privacy boundary');
 
 assert(events.includes('Audit & incident trail') && events.includes('Needs investigation'), 'Audit log must surface operational failures before routine history');
