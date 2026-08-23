@@ -57,15 +57,19 @@ assert(networkLeases.includes('network_family')&&networkLeases.includes('activeS
 assert(familyMigration.includes('access_network_leases_subject_family_idx'),'dual-stack lease lookup migration must remain present');
 assert(networkLeases.includes("decision === 'denied'")&&networkLeases.includes("INTERVAL '5 minutes'"),'repeated denied polling must remain audit-throttled');
 
-// Latest-main blocked-media behavior is intentionally preserved while the
-// customer-facing wording describes household connections rather than network internals.
+// The household denial is an ordinary Stremio stream result backed by a local
+// MP4. HTTPS MP4 is web-ready: marking it notWebReady causes Stremio Web to
+// discard the only explanatory result and show its generic no-streams message.
 assert(householdAccess.includes('bingeGroup')&&householdAccess.includes('videoSize'),'denied results must retain blocked-media playback hints');
+assert(householdAccess.includes('blockedMediaIsWebReady')&&householdAccess.includes("url.protocol === 'https:'"),'denied result visibility must distinguish a web-ready HTTPS MP4 from non-web-ready fallback URLs');
 const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{url:'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4',videoSize:blockedMedia.MEDIA_SIZE});
 assert.match(`${denied.title} ${denied.description}`,/Outside household connection.*another household internet connection.*change your household connection/is,'denial copy must explain the household-connection replacement action');
 assert.strictEqual(denied.url,'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4','denied result must point at the local MP4 endpoint');
-assert.strictEqual(denied.behaviorHints?.notWebReady,true,'blocked household result must use the same visible Stremio stream hint as raw Jellyfin results');
+assert.strictEqual(denied.behaviorHints?.notWebReady,false,'HTTPS MP4 household denial must remain visible to Stremio Web');
 assert.strictEqual(denied.behaviorHints?.filename,'CAPTAiNFiN household connection blocked.mp4','blocked result must keep its readable media filename');
 assert.strictEqual(denied.behaviorHints?.videoSize,blockedMedia.MEDIA_SIZE,'blocked result must expose the local MP4 size');
+const insecureDenied=householdModule.deniedStream({networkLimit:1},{url:'http://example.invalid/stremio/token/household-blocked/movie/tt1.mp4'});
+assert.strictEqual(insecureDenied.behaviorHints?.notWebReady,true,'non-HTTPS fallback block media must stay marked non-web-ready');
 assert(blockedMediaSource.includes('Accept-Ranges')&&blockedMediaSource.includes('Content-Range')&&blockedMediaSource.includes('video/mp4'),'block-media endpoint must continue to support byte ranges');
 assert(blockedMedia.MEDIA_SIZE>10000,'block-media asset must remain present');
 

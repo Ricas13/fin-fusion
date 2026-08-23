@@ -38,7 +38,12 @@ function firstMatch(value,items){for(const [label,pattern] of items){if(pattern.
 
 function parseFilenameMetadata(filename){
     const original=path.basename(String(filename||''));
-    const base=original.replace(/\.(?:strm|mkv|mp4|m4v|avi|ts|m2ts|mov)$/i,'');
+    // STRM libraries often expose names such as `Release-GROUP.mkv.strm`.
+    // Strip the wrapper extension first, then the underlying media extension,
+    // so the release group shown to Stremio never becomes `GROUP.mkv`.
+    const base=original
+        .replace(/\.strm$/i,'')
+        .replace(/\.(?:mkv|mp4|m4v|avi|ts|m2ts|mov)$/i,'');
     const resolution=firstMatch(base,[['4K',tokenBoundary('2160p|4k|uhd')],['1080p',tokenBoundary('1080p|1080i')],['720p',tokenBoundary('720p')],['480p',tokenBoundary('480p|576p')]]);
     const source=firstMatch(base,[['REMUX',tokenBoundary('remux')],['BluRay',tokenBoundary('blu[ ._-]?ray|bluray|bdrip|brrip')],['WEB-DL',tokenBoundary('web[ ._-]?dl|webdl')],['WEBRip',tokenBoundary('webrip')],['HDTV',tokenBoundary('hdtv')],['DVD',tokenBoundary('dvdrip|dvd')]]);
     const codec=firstMatch(base,[['AV1',tokenBoundary('av1')],['HEVC',tokenBoundary('hevc|h[ ._-]?265|x265')],['AVC',tokenBoundary('avc|h[ ._-]?264|x264')]]);
@@ -62,7 +67,14 @@ function streamDisplayFromFilename(filename,{prefix='CF ⚡'}={}){
     if(sound.length)description.push(`🔊 ${sound.join(' • ')}`);
     return {name:`[${prefix}] ${info.resolution||'Stream'}`,description:description.join('\n'),metadata:info};
 }
-function bytesLabel(value){const bytes=Number(value||0);if(!(bytes>0))return'';const gb=bytes/(1024**3);return gb>=1?`${gb.toFixed(gb>=10?1:2)} GB`:`${(bytes/(1024**2)).toFixed(0)} MB`;}
+function bytesLabel(value){
+    const bytes=Number(value||0);
+    // Tiny positive sizes are usually the .strm wrapper itself, not the media.
+    // Hiding sub-megabyte values also avoids meaningless labels such as `0 MB`.
+    if(!(bytes>=1024**2))return'';
+    const gb=bytes/(1024**3);
+    return gb>=1?`${gb.toFixed(gb>=10?1:2)} GB`:`${(bytes/(1024**2)).toFixed(0)} MB`;
+}
 function cleanTechnicalTitle(value){
     return String(value||'').trim()
         .replace(/\s+-\s+/g,' • ')
@@ -106,7 +118,10 @@ function richStreamDescription(display,media){
     if(audio?.DisplayTitle)replaceLine(parts,'🔊',cleanTechnicalTitle(audio.DisplayTitle));
     const subtitleLabels=[...new Set(subtitles.map(subtitleLabel).filter(Boolean))].slice(0,3);
     if(subtitleLabels.length)parts.push(`💬 ${subtitleLabels.join(' • ')}${subtitles.length>subtitleLabels.length?` +${subtitles.length-subtitleLabels.length}`:''}`);
-    const technical=[],size=bytesLabel(media?.Size);if(size)technical.push(size);if(Number(media?.Bitrate)>0)technical.push(`${(Number(media.Bitrate)/1000000).toFixed(1)} Mbps`);if(media?.Container)technical.push(String(media.Container).toUpperCase());if(technical.length)parts.push(`📦 ${technical.join(' • ')}`);
+    // Container/extension is deliberately omitted from the customer-facing
+    // result. For STRM-backed libraries it describes the wrapper rather than
+    // useful playback quality. Keep genuine file size and bitrate when known.
+    const technical=[],size=bytesLabel(media?.Size);if(size)technical.push(size);if(Number(media?.Bitrate)>0)technical.push(`${(Number(media.Bitrate)/1000000).toFixed(1)} Mbps`);if(technical.length)parts.push(`📦 ${technical.join(' • ')}`);
     return parts.join('\n')||'▶️ Stream';
 }
 

@@ -158,20 +158,22 @@ async function main(){
     await assertWorkflow(page,'/admin/profile',profileTabs);
     await assertWorkflow(page,'/admin/profile/notifications',profileTabs);
     await assertWorkflow(page,'/admin/security',profileTabs);
-    for(const url of ['/admin/notifications/preferences','/admin/notifications/email','/admin/notifications']){
-      await assertWorkflow(page,url,['Global notifications','Email infrastructure','Delivery health']);
-    }
+
+    const connectionTabs=['Connections','Notifications','Email infrastructure','Request service'];
+    for(const [url,active] of [
+      ['/admin/settings/integrations','Connections'],
+      ['/admin/notifications/preferences','Notifications'],
+      ['/admin/notifications/email','Email infrastructure'],
+      ['/admin/notifications','Email infrastructure'],
+      ['/admin/request-users','Request service']
+    ]) await assertWorkflow(page,url,connectionTabs,active);
+
     const provisioningTabs=['Provisioning','Customer moves','Access consistency'];
     for(const [url,active] of [
       ['/admin/provisioning','Provisioning'],
       ['/admin/provisioning/migrations','Customer moves'],
       ['/admin/provisioning/drift','Access consistency']
     ]) await assertWorkflow(page,url,provisioningTabs,active);
-    const integrationTabs=['Connections','Request service'];
-    for(const [url,active] of [
-      ['/admin/settings?section=integrations','Connections'],
-      ['/admin/request-users','Request service']
-    ]) await assertWorkflow(page,url,integrationTabs,active);
     const legacyRequestResponse=await page.goto(`${BASE}/admin/request-plan-policy`,{waitUntil:'domcontentloaded',timeout:20000});
     assert(legacyRequestResponse&&legacyRequestResponse.status()<400,'legacy Request limits URL must remain a safe compatibility redirect');
     assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');

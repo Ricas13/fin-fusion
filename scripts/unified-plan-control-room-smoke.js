@@ -30,7 +30,10 @@ assert(editor.includes('Maximum plan slots'), 'availability must be configurable
 assert(editor.includes('Delivery & server placement'), 'server class and placement must be configured in the unified editor');
 assert(editor.includes('Library access'), 'library access must be configured in the unified editor');
 assert(capability.includes("@import url('/css/admin-plan-control-room.css')"), 'shared admin shell must load the plan/attention layout corrections');
-assert(css.includes('.planControlGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'), 'plan editor must use a compact three-column card grid on wide screens');
+assert(css.includes('.planControlGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use one predictable two-column card grid on wide screens');
+assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}'), 'legacy card spans must not recreate an irregular two/three/full-width mosaic');
+assert(css.includes('.planControlHeader{display:none!important}'), 'duplicate plan status strip must stay out of the editor');
+assert(css.includes('@media(max-width:700px)') && css.includes('.planControlGrid{grid-template-columns:1fr!important}'), 'plan editor must collapse to one column on small screens');
 assert(css.includes('.attentionBulkBar .input.compact,.attentionActionGrid .input.compact{min-width:0!important'), 'attention workflow inputs must be allowed to shrink instead of forcing horizontal overflow');
 assert(css.includes('.attentionActionGrid{grid-template-columns:minmax(92px'), 'attention row workflow must use bounded responsive columns');
 assert(attention.includes('responsiveTable attentionTable'), 'Needs Attention table must opt into the constrained workflow layout');

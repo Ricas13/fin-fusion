@@ -15,7 +15,7 @@ async function reserveForIntent({code,planCode,customerId,checkoutIntentId,baseM
         const reserved=await client.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE customer_id=$2)::int customer_total FROM discount_checkout_reservations WHERE discount_code_id=$1 AND state='reserved' AND expires_at>NOW()`,[d.id,customerId]);const totals=reserved.rows[0];
         if(d.max_redemptions!==null&&Number(d.redemption_count||0)+Number(totals.total||0)>=Number(d.max_redemptions))throw new Error('That discount code has reached its redemption limit');
         const used=await client.query(`SELECT COUNT(*)::int n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2`,[d.id,customerId]);if(Number(used.rows[0].n||0)+Number(totals.customer_total||0)>=Number(d.per_customer_limit||1))throw new Error('You have already used or reserved that discount code');
-        const discounted=computeDiscountedMinor(baseMinor,d),applied=Math.max(0,Number(baseMinor||0)-discounted),expiresAt=new Date(Date.now()+Math.max(5,Math.min(60,Number(ttlMinutes)||30))*60000);
+        const discounted=computeDiscountedMinor(baseMinor,d),applied=Math.max(0,Number(baseMinor||0)-discounted),expiresAt=new Date(Date.now()+Math.max(5,Math.min(180,Number(ttlMinutes)||30))*60000);
         const row=await client.query(`INSERT INTO discount_checkout_reservations(discount_code_id,customer_id,checkout_intent_id,amount_applied_minor,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING *`,[d.id,customerId,checkoutIntentId,applied,expiresAt]);return{discount:d,reservation:row.rows[0],discountedMinor:discounted};
     });
 }

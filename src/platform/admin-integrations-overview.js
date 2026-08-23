@@ -6,6 +6,7 @@ const requestServiceSettings=require('../integrations/request-service-settings')
 const emailSettings=require('../integrations/email-settings');
 const notificationSettings=require('../integrations/notification-settings');
 const runtimeSettings=require('./runtime-settings');
+const connectionsWorkflow=require('./integration-workflow-tabs');
 const ui=require('./admin-ui');
 const {esc,layout}=require('./admin-html');
 
@@ -16,7 +17,7 @@ function item(name,{enabled=false,configured=false,core=false,href,detail}){cons
 function catalogue(state){const n=state.notifications||{};return[
  item('Stripe',{enabled:state.stripe?.enabled,configured:state.stripe?.configured,core:true,href:'/admin/payments',detail:'Checkout, renewals and payment events'}),
  item('PayPal',{enabled:state.paypal?.enabled,configured:state.paypal?.configured,core:true,href:'/admin/payments',detail:'Checkout, renewals and payment events'}),
- item('Transactional email',{enabled:state.email?.enabled,configured:state.email?.configured,core:true,href:'/admin/notifications/email',detail:'Activation, password reset and support replies'}),
+ item('Transactional email',{enabled:state.email?.enabled,configured:state.email?.configured,core:true,href:'/admin/notifications',detail:'Activation, password reset and support replies'}),
  item('Request service',{enabled:state.requests?.enabled,configured:state.requests?.configured,href:'/admin/request-users',detail:'Optional Overseerr / Jellyseerr / Seerr account sync'}),
  item('Telegram',{enabled:n.telegramEnabled,configured:n.telegramConfigured,href:'/admin/notifications/preferences',detail:'Optional notification delivery'}),
  item('Discord',{enabled:n.discordEnabled,configured:n.discordConfigured,href:'/admin/notifications/preferences',detail:'Optional notification delivery'}),
@@ -25,13 +26,15 @@ function catalogue(state){const n=state.notifications||{};return[
 function statePill(row){if(row.issue)return'<span class="pill bad">Needs setup</span>';if(row.enabled&&row.configured)return'<span class="pill good">Ready</span>';return'<span class="pill">Disabled</span>';}
 function integrationCard(row){return `<div class="compact-item"><div><div class="compact-title">${esc(row.name)}</div><div class="compact-meta">${esc(row.detail)}</div></div><div class="buttonRow">${statePill(row)}<a class="button secondary btn-sm" href="${esc(row.href)}">${row.issue?'Fix':'Manage'}</a></div></div>`;}
 function integrationsHero(rows){const issues=rows.filter(row=>row.issue),coreIssues=issues.filter(row=>row.core),ready=rows.filter(row=>row.enabled&&row.configured),first=coreIssues[0]||issues[0];return ui.operatorHero({tone:coreIssues.length?'bad':issues.length?'warn':'good',eyebrow:'Integration control room',title:first?`${issues.length} enabled ${issues.length===1?'integration needs':'integrations need'} setup`:'Enabled integrations are ready',body:'Only enabled-but-incomplete services are treated as problems. Disabled optional integrations are not failures.',statusLabel:first?'Setup required':'Integrations healthy',next:first?`Finish ${first.name} configuration before relying on that workflow.`:'No integration repair is required. Enable optional services only when you intend to use them.',facts:[{label:'Needs setup',value:String(issues.length),detail:'enabled but incomplete'},{label:'Core issues',value:String(coreIssues.length),detail:'payments or transactional email'},{label:'Ready',value:String(ready.length),detail:'enabled and configured'},{label:'Optional off',value:String(rows.filter(row=>!row.enabled&&!row.core).length),detail:'intentionally disabled'}],actionsHtml:first?`<a class="button" href="${esc(first.href)}">Fix ${esc(first.name)}</a><a class="button secondary" href="#integration-health">Integration health</a>`:'<a class="button secondary" href="#integration-health">Integration health</a>'});}
-function connectionsCards(){return ui.workflowCards([
- ['connections','Connections','/admin/settings/integrations','Overall readiness for payment, email, messaging and request-service integrations'],
- ['notifications','Notifications','/admin/notifications/preferences','Global customer/admin events plus messaging channels'],
- ['email','Email infrastructure','/admin/notifications/email','SMTP delivery settings and connection validation'],
- ['health','Delivery health','/admin/notifications','Queue health, delivery failures and recent notification state'],
- ['requests','Request service','/admin/request-users','Request-service connection and customer synchronisation']
- ],'connections','Connections control room');}
-async function page(){await runtimeSettings.ensureLoaded();const rows=catalogue(await integrationState()),issues=rows.filter(row=>row.issue),core=rows.filter(row=>row.core),optional=rows.filter(row=>!row.core);const issueSection=issues.length?`<section class="section" id="integration-health">${ui.sectionHeader({title:'Fix enabled integrations first',description:'These services are switched on but are not ready to perform their configured job.'})}${issues.map(integrationCard).join('')}</section>`:`<section class="section" id="integration-health">${ui.sectionHeader({title:'Integration health',description:'No enabled integration is incomplete.'})}<div class="emptyCompact">Nothing needs repair.</div></section>`;const coreSection=`<section class="section">${ui.sectionHeader({title:'Core customer services',description:'Payment providers and transactional email are the integrations most likely to affect customer access.'})}${core.map(integrationCard).join('')}</section>`;const optionalSection=ui.detailDisclosure({title:'Optional integrations',summary:'Request service and messaging channels · disabled services are intentionally quiet',bodyHtml:optional.map(integrationCard).join('')});const body=`${connectionsCards()}${integrationsHero(rows)}${issueSection}${coreSection}${optionalSection}`;return layout({siteName:runtimeSettings.siteName(),active:'settings-integrations',title:'Connections',subtitle:'External-service readiness, messaging and customer integration entry points',body});}
+function connectionsCards(){return connectionsWorkflow.tabs('connections');}
+async function page(){
+ await runtimeSettings.ensureLoaded();
+ const rows=catalogue(await integrationState()),issues=rows.filter(row=>row.issue),core=rows.filter(row=>row.core),optional=rows.filter(row=>!row.core);
+ const issueSection=issues.length?`<section class="section" id="integration-health">${ui.sectionHeader({title:'Fix enabled integrations first',description:'These services are switched on but are not ready to perform their configured job.'})}${issues.map(integrationCard).join('')}</section>`:`<section class="section" id="integration-health">${ui.sectionHeader({title:'Integration health',description:'No enabled integration is incomplete.'})}<div class="emptyCompact">Nothing needs repair.</div></section>`;
+ const coreSection=`<section class="section">${ui.sectionHeader({title:'Core customer services',description:'Payment providers and transactional email are the integrations most likely to affect customer access.'})}${core.map(integrationCard).join('')}</section>`;
+ const optionalSection=ui.detailDisclosure({title:'Optional integrations',summary:'Request service and messaging channels · disabled services are intentionally quiet',bodyHtml:optional.map(integrationCard).join('')});
+ const body=`${integrationsHero(rows)}${issueSection}${coreSection}${optionalSection}`;
+ return layout({siteName:runtimeSettings.siteName(),active:'settings-integrations',title:'Connections',subtitle:'External-service readiness, messaging and customer integration entry points',body});
+}
 function createAdminIntegrationsOverviewRouter(){const router=express.Router();router.use('/admin/settings/integrations',gate,noStore);router.get('/admin/settings/integrations',async(_req,res,next)=>{try{return res.send(await page())}catch(error){next(error)}});return router;}
 module.exports={createAdminIntegrationsOverviewRouter,integrationState,catalogue,integrationsHero,connectionsCards};

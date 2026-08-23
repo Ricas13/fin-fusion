@@ -49,6 +49,7 @@ assert(lifecycle.includes('await inactivityHolds.releaseObsoleteForCustomer(inpu
 
 // Server-scoped user import owns execution even though Customers exposes the entry point.
 assert(serverForm.includes('Users / Import')&&serverForm.includes('/users'),'Each Jellyfin server must expose Users / Import in its local tabs');
+assert(serverForm.includes('Sellable stream capacity'),'Jellyfin server configuration must expose the shared storefront stream-capacity budget');
 assert(serverUsers.includes("'/admin/servers/:serverId/users'")&&serverUsers.includes('importer.discover({serverId:s.id})'),'Import must be scoped to exactly one Jellyfin server');
 assert(serverUsers.includes("'/admin/jellyfin-import'")&&serverUsers.includes('res.send(await importLanding(req))'),'Global Jellyfin Import must render the server-picker landing page');
 assert(serverUsers.includes('Choose Jellyfin server')&&serverUsers.includes('/admin/servers/${esc(s.id)}/users'),'Jellyfin Import landing must guide the operator into a server-scoped import');
@@ -57,8 +58,9 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 // Storefront remains plan-first and sold-out products stay visible.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
 assert(storefront.includes('Stremio plans')&&storefront.includes('Paid server plans')&&storefront.includes('Standalone Stremio access.'),'Storefront must retain explicit standalone service sections');
-assert(storefront.includes('0 spots available · Sold out')&&storefront.includes("sold?'soldOut':''"),'Sold-out product cards must remain visible and visually disabled');
+assert(storefront.includes('Currently full')&&storefront.includes("sold?'soldOut':''")&&storefront.includes('planAvailability'),'Sold-out product cards must remain visible, use the real scarcity state and be visually disabled');
 assert(plansList.includes('capacityMeter')&&plansList.includes('Manage inventory'),'Unified Plans must expose customer inventory state and its management entry point');
+assert(plansList.includes('stream entitlements allocated or held'),'Unified Plans must explain shared Jellyfin capacity in stream-entitlement terms');
 
 // Current workflow routes own customer-plan and server actions.
 assert(composition.includes('createAdminPlanCreateV2Router()'),'Full-policy plan creation must be mounted');
