@@ -27,6 +27,12 @@ function mapProviderStatus(provider, status) {
         if (['cancelled', 'canceled'].includes(value)) return 'cancelled';
         if (['expired'].includes(value)) return 'expired';
     }
+    if (provider === 'coingate') {
+        if (value === 'paid' || value === 'active') return 'active';
+        if (['pending', 'confirming', 'new'].includes(value)) return 'past_due';
+        if (['cancelled', 'canceled', 'invalid', 'refunded', 'partially_refunded'].includes(value)) return 'cancelled';
+        if (value === 'expired') return 'expired';
+    }
     return 'past_due';
 }
 
@@ -121,7 +127,7 @@ async function activatePurchase({
     discountAmountAppliedMinor = 0,
     commercialSnapshot = null
 }) {
-    if (!['stripe', 'paypal'].includes(provider)) throw new Error('Unsupported payment provider');
+    if (!['stripe', 'paypal', 'coingate'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
     const contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
 
