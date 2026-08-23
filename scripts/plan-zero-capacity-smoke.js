@@ -18,17 +18,19 @@ assert(/capacityLimit\s*=\s*int\(body\.capacityLimit,\s*0,\s*1000000,\s*'Availab
 assert(/capacityLimit:\s*input\.capacityLimit\s*\?\?\s*'0'/.test(create),'new plans must default to zero availability');
 assert(create.includes('name="capacityLimit" required')&&create.includes('min="0" max="1000000"'),'new-plan browser control must allow zero slots for manual/fallback capacity');
 assert(inventory.includes('name="capacityLimit" min="0" max="1000000"'),'manual Availability editor must allow zero slots');
-assert(inventory.includes('Maximum simultaneous trials')&&inventory.includes('Maximum Stremio places'),'trials and Stremio must retain explicit manual acquisition caps');
+assert(inventory.includes('Maximum simultaneous trials')&&inventory.includes('Stremio household capacity'),'trials and Stremio must retain explicit manual acquisition caps with household-unit semantics');
+assert(inventory.includes('Sold / held households')&&inventory.includes('multi-household purchases consume the correct amount'),'Stremio Availability must explain household-unit inventory to administrators');
 assert(inventory.includes('controlled by server stream capacity'),'paid/free Jellyfin plan inventory must direct capacity changes to the server fleet');
 assert(inventory.includes('Fleet stream capacity')&&inventory.includes('Sold / held streams'),'derived Jellyfin availability must expose the shared stream budget to administrators');
 assert(inventory.includes('n<0||n>1000000'),'Availability backend must accept zero and reject negative manual limits');
 assert(serverForm.includes('Sellable stream capacity')&&serverForm.includes('A 3-stream plan consumes 3 units'),'server configuration must explain that max_users is the sellable stream-entitlement budget');
 assert(capacitySource.includes("commercial_snapshot->'streams'")&&capacitySource.includes('billing_checkout_intents'),'fleet usage must count snapshotted stream entitlements and open checkout holds');
+assert(capacitySource.includes("commercial_snapshot->'stremioHouseholdNetworkLimit'")&&capacitySource.includes('async function stremioHouseholdUsage'),'Stremio usage must count purchased and held household units');
 assert(capacitySource.includes("key=model==='fleet_streams'?`fleet:${serverClass(plan)}`"),'fleet acquisition must serialize against a shared Premium/Free capacity lock');
 assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'fleet capacity must follow placement health/state and retain an explicit configured-fleet signal during drain/outage');
-assert(checkoutIntents.includes("capacity.lockAndAssert(client,planId")&&checkoutIntents.includes('streams:snapshot.streams'),'paid checkout must reserve shared stream capacity atomically before creating an open intent');
+assert(checkoutIntents.includes("capacity.lockAndAssert(client,planId")&&checkoutIntents.includes('streams:snapshot.streams')&&checkoutIntents.includes('households:snapshot.stremioHouseholdNetworkLimit'),'checkout must reserve the selected Jellyfin stream or Stremio household capacity atomically');
 assert(onboarding.includes('scarcityBadge')&&onboarding.includes('sharedCapacity'),'customer onboarding must surface shared fleet scarcity at the plan-family level');
-assert(onboarding.includes("if(sold)")&&onboarding.includes('No new place can be activated until shared capacity becomes available.'),'sold-out Free, trial and paid plans must disable acquisition actions in the customer portal');
+assert(onboarding.includes("if(sold)")&&onboarding.includes('No new place can be activated until capacity becomes available.'),'sold-out plans must disable acquisition actions in the customer portal');
 assert(storefront.includes('sectionAvailability')&&storefront.includes('state?.label'),'public storefront must use the real capacity scarcity label rather than synthetic inventory copy');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must admit explicit zero capacity');
 
@@ -59,5 +61,5 @@ assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit I
   assert.strictEqual(unavailable.remaining,0,'unavailable fleet must expose zero places');
   assert.strictEqual(unavailable.soldOut,true,'unavailable fleet must close acquisition instead of falling back to the legacy per-plan limit');
 
-  console.log('plan zero-capacity and fleet-scarcity staging smoke: OK');
+  console.log('plan zero-capacity and fleet/household scarcity staging smoke: OK');
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});
