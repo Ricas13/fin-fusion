@@ -7,10 +7,12 @@ const assert=require('assert');
 const root=path.resolve(__dirname,'..');
 const reseller=['re','seller'].join('');
 const credit=['cred','it'].join('');
+const retiredCryptoBrand=['coin','gate'].join('');
 const forbiddenPatterns=[
   new RegExp(`${reseller}[_ -]?${credit}s?`,'i'),
   new RegExp(`${reseller}[^\\n]{0,80}${credit}\\s*(?:balance|based|model|system|wallet|ledger)`,'i'),
-  new RegExp(`${credit}\\s*(?:balance|based)[^\\n]{0,80}${reseller}`,'i')
+  new RegExp(`${credit}\\s*(?:balance|based)[^\\n]{0,80}${reseller}`,'i'),
+  new RegExp(retiredCryptoBrand,'i')
 ];
 const ignored=new Set(['.git','node_modules','coverage','test-results']);
 const hits=[];
@@ -39,8 +41,8 @@ function walk(dir){
 walk(root);
 if(hits.length){
   const files=[...new Set(hits.map(hit=>hit.replace(/:\d+$/,'')))].sort();
-  console.error(`Retired commercial-credit traces remain in ${files.length} files (${hits.length} occurrences):`);
+  console.error(`Retired commercial/provider traces remain in ${files.length} files (${hits.length} occurrences):`);
   for(const file of files) console.error(`  ${file}`);
 }
-assert.deepStrictEqual(hits,[],'Retired commercial credit model must have no source, route, UI, documentation, test, configuration, or migration traces');
-console.log('retired commercial credit-model trace audit: ok');
+assert.deepStrictEqual(hits,[],'Retired commercial credit model and retired crypto-provider brand must have no source, route, UI, documentation, test, configuration, or migration traces');
+console.log('retired commercial/provider trace audit: ok');
