@@ -27,6 +27,7 @@ const ejs = require('ejs');
         ],
         stripeEnabled: false,
         paypalEnabled: false,
+        coingateEnabled: false,
         overseerrUrl: null,
         requestAccess: null,
         requestSyncConfigured: false,
