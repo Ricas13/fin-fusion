@@ -17,13 +17,14 @@
       <div class="welcomePanel">
         <div class="eyebrow"><%= providerName %></div>
         <h1>How would you like to pay?</h1>
-        <p><strong><%= planName %></strong> · <%= priceLabel %>. Choose whether this purchase should renew automatically.</p>
+        <p><strong><%= planName %></strong> · <%= priceLabel %> · <%= streams %> concurrent stream<%= Number(streams)===1?'':'s' %>. Choose whether this purchase should renew automatically.</p>
       </div>
     </section>
     <section class="sectionBlock">
       <form method="post" action="/account/checkout/<%= provider %>" class="panel">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="planCode" value="<%= planCode %>">
+        <input type="hidden" name="streams" value="<%= streams %>">
         <div class="plansGrid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))">
           <% options.forEach(function(option){ %>
             <label class="planCard" style="cursor:pointer">
