@@ -198,20 +198,39 @@ async function syncCustomer(candidate, indexes = {}) {
     return { status: 'failed', customerId: candidate.customer_id, error: error.message };
   }
 }
-function emptySummary(total) { return { total, created: 0, linked: 0, suspended: 0, failed: 0 }; }
+function cleanFailureMessage(value) {
+  const message = String(value || 'Request-user sync failed').replace(/\s+/g, ' ').trim();
+  return (message || 'Request-user sync failed').slice(0, 300);
+}
+function emptySummary(total) {
+  return { total, created: 0, linked: 0, suspended: 0, failed: 0, _failureReasons: new Map() };
+}
 function countResult(summary, result) {
-  if (result.status === 'failed') summary.failed++;
-  else if (result.status === 'suspended') summary.suspended++;
+  if (result.status === 'failed') {
+    summary.failed++;
+    const message = cleanFailureMessage(result.error);
+    summary._failureReasons.set(message, Number(summary._failureReasons.get(message) || 0) + 1);
+  } else if (result.status === 'suspended') summary.suspended++;
   else if (result.status === 'ignored') summary.ignored = Number(summary.ignored || 0) + 1;
   else if (result.created) summary.created++;
   else if (result.status === 'synced') summary.linked++;
+}
+function finalizeSummary(summary) {
+  const reasons = [...(summary._failureReasons || new Map()).entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  delete summary._failureReasons;
+  if (summary.failed > 0 && reasons.length) {
+    const [message, count] = reasons[0];
+    const otherCount = reasons.slice(1).reduce((total, [, occurrences]) => total + occurrences, 0);
+    summary.warning = `${summary.failed} request-user sync${summary.failed === 1 ? '' : 's'} failed. Most common: ${count}× ${message}${otherCount ? ` · ${otherCount} other failure${otherCount === 1 ? '' : 's'}` : ''}`.slice(0, 1200);
+  }
+  return summary;
 }
 async function syncAll() {
   const config = await configuration();
   if (!config.configured) throw new Error('Configure the external request service URL and API key first.');
   const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]), indexes = indexesFor(existing), summary = emptySummary(candidates.length);
   for (const candidate of candidates) countResult(summary, await syncCustomer(candidate, indexes));
-  return summary;
+  return finalizeSummary(summary);
 }
 function selectedIds(values) {
   const ids = [...new Set((Array.isArray(values) ? values : [values]).map(v => String(v || '').trim()).filter(v => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)))];
@@ -227,7 +246,7 @@ async function syncSelected(customerIds) {
   if (candidates.length !== ids.length) throw new Error('One or more selected customers no longer exist. Refresh the page and try again.');
   const indexes = indexesFor(existing), summary = emptySummary(candidates.length);
   for (const candidate of candidates) countResult(summary, await syncCustomer(candidate, indexes));
-  return summary;
+  return finalizeSummary(summary);
 }
 async function syncOneCustomer(customerId) {
   const candidates = await syncCandidates(), candidate = candidates.find(row => String(row.customer_id) === String(customerId));
@@ -261,4 +280,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncCandidates, externalUsers, permissionState, setPermissions, setQuotas, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
+module.exports = { REQUEST_PERMISSION, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncCandidates, externalUsers, permissionState, setPermissions, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
