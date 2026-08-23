@@ -13,8 +13,8 @@
 .adminSurface--data table th,.adminSurface--data .dataTable th{padding:8px 11px!important;background:rgba(255,255,255,.085)!important;color:#b5c0cc!important;border-bottom:1px solid #3a4653!important;font-size:10px!important}
 .adminSurface--data table td,.adminSurface--data .dataTable td{padding:8px 11px!important}
 .adminSurface--data table tbody tr:hover td,.adminSurface--data .dataTable tbody tr:hover td{background:rgba(255,255,255,.025)!important}
-.adminSurface--data .operatorPager{margin-top:7px;padding:6px 8px}
-.adminSurface--data .empty{padding:16px 14px}
+.adminSurface--data .operatorPager,.adminSurface--data .capabilityPagination{margin-top:5px;padding:5px 8px}
+.adminSurface--data .empty,.adminSurface--data .capabilityEmpty{padding:12px 13px}
 
 /* Editable/configuration surfaces --------------------------------------- */
 .adminSurface--control{border-color:rgba(52,183,226,.42)!important;background:linear-gradient(180deg,rgba(32,169,214,.035),rgba(255,255,255,.006))!important;box-shadow:inset 3px 0 0 #32b7e3,0 9px 24px rgba(0,0,0,.11)!important}
@@ -35,14 +35,18 @@
 .sectionMeter.adminOverviewSurface{padding:6px 8px!important}
 .sectionInsightCard.adminOverviewSurface,.dashboardFocusCard.adminOverviewSurface{padding:8px 9px!important;min-height:0!important}
 .analyticsKpi.adminOverviewSurface{min-height:66px!important;padding:8px 10px!important}
-.capabilitySummary.adminOverviewSurface{padding:7px 9px!important}
+.capabilitySummary.adminOverviewSurface{padding:6px 8px!important;gap:7px!important}
+.capabilitySummary.adminOverviewSurface .capabilitySummaryStats{gap:0!important}
+.capabilitySummary.adminOverviewSurface .capabilityStat{padding:4px 8px!important;min-height:0!important}
+.capabilitySummary.adminOverviewSurface .capabilitySummaryActions{gap:5px!important}
 .adminOverviewSurface p{line-height:1.35}
 
 /* Keep explanatory/status chrome subordinate to settings. ---------------- */
-.notice:not(.error):not(.warn),.securityNote,.setupCompact{padding:8px 10px;margin-bottom:9px}
+.notice:not(.error):not(.warn),.securityNote,.setupCompact,.statusBanner{padding:7px 10px!important;margin-bottom:8px!important;min-height:0!important;line-height:1.35}
 .uiEmptyState{padding:10px 11px}
 .uiSectionHeader{margin-bottom:9px}
 .uiSectionHeader p{margin-top:3px;line-height:1.35}
+.capabilityPage>.statusBanner{font-size:11px}
 
 @media(max-width:760px){
   .adminSurfaceKind{font-size:7px;padding:3px 6px}
