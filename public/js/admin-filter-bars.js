@@ -304,7 +304,10 @@
       let path = '';
       try { path = new URL(form.action || location.href, location.href).pathname; } catch { return false; }
       if (!path.startsWith('/admin/')) return false;
-      return form.querySelectorAll('input[name]:not([type="hidden"]),select[name],textarea[name]').length >= 2;
+      const controls = form.querySelectorAll('input[name]:not([type="hidden"]),select[name],textarea[name]');
+      if (controls.length < 2) return false;
+      const hasFilterIntent = form.matches('[data-admin-filter-form],.filterForm,.compactFilterForm') || Array.from(form.querySelectorAll('button')).some(button => /^(apply|filter|search)/i.test(String(button.textContent || '').trim()));
+      return hasFilterIntent;
     });
   }
 
