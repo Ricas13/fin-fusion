@@ -49,12 +49,16 @@ async function lastDiscountUse() {
 }
 
 async function freeClaimRace() {
-    const p=await plan('free',{price:0}),c=await customer('free');
+    const free=await query(`UPDATE plans SET capacity_limit=1,updated_at=NOW() WHERE is_free_tier=TRUE RETURNING *`);
+    assert.strictEqual(free.rowCount,1,'Fresh database must contain exactly one canonical Free Access plan');
+    const p=free.rows[0],c=await customer('free');
     const results=await Promise.allSettled([lifecycle.claimFreePlan(c.id,p.code),lifecycle.claimFreePlan(c.id,p.code)]);
-    assert.strictEqual(results.filter(x=>x.status==='fulfilled').length,1,'Concurrent free claim produced multiple successful claims');
-    assert.strictEqual(results.filter(x=>x.status==='rejected').length,1,'Concurrent free claim did not reject duplicate claim');
+    assert.strictEqual(results.filter(x=>x.status==='fulfilled').length,1,'Concurrent free claim must produce exactly one successful claim');
+    assert.strictEqual(results.filter(x=>x.status==='rejected').length,1,'Concurrent free claim must reject the duplicate claim');
     const count=await query(`SELECT COUNT(*)::int n FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'`,[c.id,p.id]);
     assert.strictEqual(Number(count.rows[0].n),1,'Concurrent free claim persisted duplicate subscriptions');
+    const persisted=await query(`SELECT current_period_end FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim'`,[c.id,p.id]);
+    assert(new Date(persisted.rows[0].current_period_end).getUTCFullYear()===9999,'Canonical Free Access claim must be non-expiring');
 }
 
 async function checkoutSurvivesCatalogueRetirement() {
