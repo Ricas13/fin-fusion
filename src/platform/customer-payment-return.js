@@ -3,6 +3,7 @@ const express=require('express');
 const intents=require('../payments/checkout-intents');
 const paypal=require('../payments/paypal');
 const stripe=require('../payments/stripe');
+const coingate=require('../payments/coingate');
 const csrf=require('../auth/csrf');
 const operations=require('./operations-settings');
 const routeRateLimit=require('../security/route-rate-limit');
@@ -18,5 +19,7 @@ function createCustomerPaymentReturnRouter(){const r=express.Router();r.get('/ac
     // already activated, so don't show the customer a false "expired/already used" error.
     const already=await intents.alreadyCompletedByOwner({intentId,nonce:state,scope:'customer',provider:'paypal',ownerId:req.session.customerId}).catch(()=>null);
     if(already)return res.redirect('/account?welcome=1&message='+encodeURIComponent('PayPal payment completed. Your access details are below.'));
-    return res.redirect('/account?error='+encodeURIComponent(error.message))}});r.post('/account/stripe/portal',customerPortalLimit,requireCustomer,mutationGuard,async(req,res)=>{try{const portal=await stripe.createCustomerPortal({customerId:req.session.customerId,returnUrl:await absoluteUrl(req,'/account')});return res.redirect(303,portal.url)}catch(error){return res.redirect('/account?error='+encodeURIComponent(error.message))}});return r}
+    return res.redirect('/account?error='+encodeURIComponent(error.message))}});
+ r.get('/account/coingate/return',paymentReturnLimit,requireCustomer,async(req,res)=>{const intentId=String(req.query.checkout_intent||''),state=String(req.query.checkout_state||'');try{const row=await intents.verify({intentId,nonce:state,scope:'customer',provider:'coingate',ownerId:req.session.customerId});const providerId=String(row.provider_checkout_id||'');if(!providerId)throw new Error('CoinGate return does not match the checkout that was started.');const outcome=await coingate.confirmCheckout(providerId,row);if(outcome?.completed)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Crypto payment confirmed. Your access details are below.'));if(outcome?.waiting)return res.redirect('/account?message='+encodeURIComponent('Crypto payment received. CoinGate is waiting for blockchain confirmation. Access will activate automatically when the payment is confirmed.'));return res.redirect('/account?error='+encodeURIComponent(`CoinGate payment is ${outcome?.status||'not complete'}. No access was activated.`))}catch(error){const already=await intents.alreadyCompletedByOwner({intentId,nonce:state,scope:'customer',provider:'coingate',ownerId:req.session.customerId}).catch(()=>null);if(already)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Crypto payment confirmed. Your access details are below.'));return res.redirect('/account?error='+encodeURIComponent(error.message))}});
+ r.post('/account/stripe/portal',customerPortalLimit,requireCustomer,mutationGuard,async(req,res)=>{try{const portal=await stripe.createCustomerPortal({customerId:req.session.customerId,returnUrl:await absoluteUrl(req,'/account')});return res.redirect(303,portal.url)}catch(error){return res.redirect('/account?error='+encodeURIComponent(error.message))}});return r}
 module.exports={createCustomerPaymentReturnRouter,mutationGuard,sameOrigin,absoluteUrl};
