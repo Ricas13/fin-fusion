@@ -21,6 +21,7 @@ const payments = read('src/platform/admin-payment-settings.js');
 const commerce = read('src/platform/admin-commerce.js');
 const plans = read('src/platform/admin-plans-list.js');
 const customer360 = read('src/platform/customer-360-view.js');
+const stableCustomerNav = read('public/js/customer-360-navigation.js');
 const orders = read('src/platform/admin-orders.js');
 const billing = read('src/platform/admin-billing.js');
 const support = read('src/platform/admin-support-tickets.js');
@@ -99,9 +100,9 @@ assert(!plans.includes('Plan policies & storefront tools') && plans.includes('/a
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search'), 'Plans must not render filters for the deliberately small catalogue');
 assert(plans.includes('archived=1') && plans.includes('Retired catalogue versions'), 'Archived plan versions must remain reachable without cluttering the active catalogue');
 
-assert(customer360.includes('Customer journey') && customer360.includes("['overview','1','Account'") && customer360.includes("['access','2','Access'") && customer360.includes("['billing','3','Billing'") && customer360.includes("['activity','4','Activity'"), 'Customer 360 must present the account → access → billing → activity journey');
-assert(customer360.includes('ui.operatorHero({') && customer360.includes('activeSubscription(detail)'), 'Customer 360 journey must reuse the canonical customer detail rather than a second status model');
-assert(customer360.includes("if(tab!=='access')return journeyHtml+html"), 'Customer journey must lead every Customer 360 tab');
+assert(customer360.includes("function journey(){return'';}"), 'Customer 360 must keep the duplicate journey navigation retired');
+assert(stableCustomerNav.includes("['overview','Overview'") && stableCustomerNav.includes("['manage','Manage'"), 'Customer 360 must expose one stable customer-scoped navigation from Overview through Manage');
+assert(stableCustomerNav.includes("link.setAttribute('href',href)") && stableCustomerNav.includes('MutationObserver'), 'late service-aware enrichment must not mutate Customer 360 navigation after render');
 
 assert(orders.includes('Transaction desk') && orders.includes('Open customer billing →'), 'Orders must act as a transaction trail into customer billing rather than a raw record table');
 assert(orders.includes("ui.detailDisclosure({title:`Full purchase history"), 'Older order history must be progressively disclosed');
