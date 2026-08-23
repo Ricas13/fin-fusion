@@ -59,7 +59,7 @@ function createCustomerDashboardRouter(){
         const openCheckout=await checkoutIntents.getOpenForOwner('customer',req.session.customerId).catch(()=>null);
         return res.render('customer/onboarding',{portal,plans,stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),currency,openCheckout,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});
       }
-      const isPermanent=Boolean(permanentState?.active&&String(permanentState.subscription_id)===String(currentPlan.subscription_id));
+      const isPermanent=Boolean(currentPlan?.is_free_tier)||Boolean(permanentState?.active&&String(permanentState.subscription_id)===String(currentPlan.subscription_id));
       const provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null;
       const delivery=deliveryType(currentPlan),hasJellyfin=['jellyfin','bundle'].includes(delivery),hasStremio=['stremio','bundle'].includes(delivery);
       if(delivery==='stremio'){
