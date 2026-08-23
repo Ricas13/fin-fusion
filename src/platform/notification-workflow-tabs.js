@@ -1,13 +1,10 @@
 'use strict';
 
 const ui=require('./admin-ui');
+const connectionsWorkflow=require('./integration-workflow-tabs');
 
-function globalTabs(active='global'){
-  return ui.workflowCards([
-    ['global','Global notifications','/admin/notifications/preferences','Global customer/admin events plus Telegram, Discord and WhatsApp'],
-    ['email','Email infrastructure','/admin/notifications/email','SMTP delivery settings and connection validation'],
-    ['health','Delivery health','/admin/notifications','Queue health, delivery failures and recent notification state']
-  ],active,'Notification control room');
+function globalTabs(active='notifications'){
+  return connectionsWorkflow.tabs(active);
 }
 
 function profileTabs(active='profile'){
@@ -18,7 +15,7 @@ function profileTabs(active='profile'){
   ],active,'My account');
 }
 
-function tabs(active='global'){
+function tabs(active='notifications'){
   return ['profile','personal','security'].includes(active)?profileTabs(active):globalTabs(active);
 }
 
