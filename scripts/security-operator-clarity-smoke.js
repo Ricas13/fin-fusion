@@ -79,7 +79,7 @@ assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP st
 
 const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
 assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
-const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),adminShell=text('src/platform/admin-html-core-base.js'),operatorExperience=text('public/js/operator-experience.js');
+const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),serverControl=text('src/platform/admin-server-fleet-dashboard.js'),adminShell=text('src/platform/admin-html-core-base.js'),operatorExperience=text('public/js/operator-experience.js');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
@@ -99,17 +99,17 @@ assert(Boolean(operationsGroup),'Operations navigation group must exist.');
 assert(operationsGroup.pages.some(page=>page[0]==='backups'&&page[1]==='Backups & Recovery'&&page[2]==='/admin/backups'),'Backup controls must be discoverable as Operations → Backups & Recovery.');
 const jellyfinGroup=navModel.groups.find(group=>group.key==='jellyfin');
 assert(Boolean(jellyfinGroup),'Jellyfin navigation group must exist.');
-assert(navModel.hiddenPages['fleet-operations']?.parentKey==='servers'&&navModel.hiddenPages['fleet-operations']?.page?.[2]==='/admin/servers/operations','Fleet drain/placement controls must remain contextual to the Jellyfin Servers control room.');
-assert(navModel.aliases.operations==='servers','Legacy Operations links must resolve to the Jellyfin Servers control room.');
+assert(!navModel.hiddenPages['fleet-operations']&&!navModel.hiddenPages.libraries,'Placement and Libraries must not remain separate Jellyfin Servers workflows.');
+assert(navModel.aliases.operations==='servers'&&navModel.aliases['fleet-operations']==='servers'&&navModel.aliases.libraries==='servers','Legacy Operations, Placement and Libraries links must resolve visually to Servers.');
 assert(jellyfinGroup.pages.some(page=>page[1]==='Servers'&&page[2]==='/admin/servers'),'Managed Jellyfin servers must be discoverable under Jellyfin.');
-assert(operatorExperience.includes("['Placement','/admin/servers/operations'")&&operatorExperience.includes("['Libraries','/admin/libraries'"),'Jellyfin Servers control room must expose placement and libraries contextually.');
+assert(/\/admin\/servers\/operations\/server\/\$\{esc\(server\.id\)\}\/placement-mode/.test(serverControl)&&/\/admin\/libraries\/\$\{esc\(server\.id\)\}\/refresh/.test(serverControl),'Servers must expose placement and library scan controls inline.');
 const stremioGroup=navModel.groups.find(group=>group.key==='stremio');
 assert(Boolean(stremioGroup),'Stremio navigation group must exist.');
 assert(stremioGroup.pages.some(page=>page[0]==='stremio-sources'&&page[1]==='Stremio'&&page[2]==='/admin/servers/stremio'),'External Jellyfin sources must remain discoverable through the single Stremio control room.');
 assert(navModel.hiddenPages['stremio-playback']?.parentKey==='stremio-sources','Stremio IP access must remain contextual to the Stremio control room.');
 assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
 assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');
-assert(/Placement health policy/.test(fleet)&&/Future capacity preview/.test(fleet)&&/placement-mode/.test(fleet),'Fleet operations must own placement-health, drain/maintenance and simulation controls.');
+assert(/Placement health policy/.test(serverControl)&&/Future capacity preview/.test(serverControl)&&/placement-mode/.test(fleet),'Servers must own placement-health, drain/maintenance and simulation controls while legacy fleet mutations remain compatible.');
 assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verification/.test(settings),'Security settings must expose staged-registration state.');
 
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;

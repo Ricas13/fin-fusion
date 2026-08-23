@@ -56,21 +56,21 @@ async function main(){
     await screenshot(page,'plan-delivery-redirect');
 
     await gotoAdmin(page,'/admin/operations');
-    assert.equal(new URL(page.url()).pathname,'/admin/servers/operations','Legacy Operations page did not redirect to Fleet operations');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Servers'],'Contextual Fleet operations must keep Servers as the permanent Jellyfin sidebar destination');
+    assert.equal(new URL(page.url()).pathname,'/admin/servers','Legacy Operations page did not redirect to unified Servers');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Servers'],'Unified server operations must keep Servers as the permanent Jellyfin sidebar destination');
     const fleetText=await page.locator('body').innerText();
-    assert(/Placement control room/.test(fleetText)&&/Eligible now/.test(fleetText),'Fleet operations is missing operator-first placement readiness');
-    assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Fleet operations still contains unrelated platform/security settings');
+    assert(/Placement ready/.test(fleetText)&&/Managed capacity/.test(fleetText)&&/Live streams/.test(fleetText),'Unified Servers is missing fleet placement readiness');
+    assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Unified Servers still contains unrelated platform/security settings');
     const placementPolicyDetails=page.locator('details.operatorDetails').filter({has:page.locator('summary',{hasText:'Placement health policy'})}).first();
-    assert.equal(await placementPolicyDetails.count(),1,'Fleet placement health policy disclosure is missing');
-    const capacityDetails=page.locator('#placement-preview');
-    assert.equal(await capacityDetails.count(),1,'Fleet future capacity preview disclosure is missing');
+    assert.equal(await placementPolicyDetails.count(),1,'Server placement health policy disclosure is missing');
+    const capacityDetails=page.locator('#capacity-preview');
+    assert.equal(await capacityDetails.count(),1,'Server future capacity preview disclosure is missing');
     const fleetForm=page.locator('form[action="/admin/servers/operations/placement-policy"]');
-    assert.equal(await fleetForm.count(),1,'Fleet placement policy form is missing');
+    assert.equal(await fleetForm.count(),1,'Server placement policy form is missing');
     await placementPolicyDetails.evaluate(element=>{element.open=true;});
-    await submit(fleetForm,'Save placement policy');
-    assert(/Placement health policy saved/.test(await page.locator('body').innerText()),'Fleet placement policy did not round-trip');
-    await screenshot(page,'fleet-operations');
+    await submit(fleetForm,'Save policy');
+    assert(/Placement health policy saved/.test(await page.locator('body').innerText()),'Server placement policy did not round-trip');
+    await screenshot(page,'servers-placement');
 
     const beforeGeneral=await operationsValue(pool);
     await gotoAdmin(page,'/admin/settings?section=general');
