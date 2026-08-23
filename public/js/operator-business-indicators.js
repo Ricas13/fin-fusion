@@ -14,7 +14,7 @@
   };
   const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
   function businessAreaForPath(path){
-    if(path==='/admin/users'||path==='/admin/users/dashboard')return'customers';
+    if(path==='/admin/users'||path==='/admin/users/dashboard'||/^\/admin\/users\/[0-9a-f-]{36}$/i.test(path))return'customers';
     if(path==='/admin/orders')return'orders';
     if(path==='/admin/tickets')return'tickets';
     return null;
@@ -64,7 +64,7 @@
 
   function markCurrentAreaRead(data){
     if(!areaForCurrentPage||!data?.csrfToken)return Promise.resolve(null);
-    const body=new URLSearchParams({area:areaForCurrentPage});
+    const body=new URLSearchParams({area:areaForCurrentPage,_csrf:data.csrfToken});
     return fetch('/admin/api/operator-state/read',{
       method:'POST',
       credentials:'same-origin',
@@ -77,12 +77,28 @@
     });
   }
 
+  function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+  async function markCurrentAreaReadWithRetry(seed){
+    let data=seed,lastError=null;
+    for(let attempt=0;attempt<3;attempt+=1){
+      try{
+        await markCurrentAreaRead(data);
+        return await fetchSnapshot();
+      }catch(error){
+        lastError=error;
+        if(attempt>=2)break;
+        await wait(150*(attempt+1));
+        data=await fetchSnapshot()||data;
+      }
+    }
+    throw lastError||new Error('Read acknowledgement failed');
+  }
+
   setTimeout(()=>fetchSnapshot()
     .then(data=>{
       if(!data)return;
       if(!areaForCurrentPage){apply(data);return;}
-      return markCurrentAreaRead(data)
-        .then(()=>fetchSnapshot())
+      return markCurrentAreaReadWithRetry(data)
         .then(fresh=>apply(fresh||data))
         .catch(()=>apply(data));
     })
