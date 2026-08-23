@@ -2,10 +2,13 @@
 
 const express = require('express');
 const csrf = require('../auth/csrf');
+const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const requestUsers = require('../integrations/request-user-sync');
 const requestServiceSettings = require('../integrations/request-service-settings');
 const { layout, esc } = require('./admin-html');
+
+const writeLimit = routeRateLimit.middleware({ scope: 'admin-request-users-write', max: 60, windowSeconds: 60, reason: 'admin_request_users_write' });
 
 function gate(req, res, next) {
   if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -83,7 +86,7 @@ function createAdminRequestUsersRouter() {
   const router = express.Router();
   router.use('/admin/request-users', gate, noStore);
   router.get('/admin/request-users', async (req, res, next) => { try { return res.send(await page(req)); } catch (error) { return next(error); } });
-  router.post('/admin/request-users/settings', async (req, res) => {
+  router.post('/admin/request-users/settings', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
       if (req.body.useEnvironment === '1') { await requestServiceSettings.useEnvironment(req.session.authUserId); return res.redirect('/admin/request-users?message=' + encodeURIComponent('Request service now uses environment fallback settings.')); }
@@ -91,22 +94,22 @@ function createAdminRequestUsersRouter() {
       return res.redirect('/admin/request-users?message=' + encodeURIComponent('Request service settings saved securely.'));
     } catch (error) { return res.redirect('/admin/request-users?error=' + encodeURIComponent(error.message || 'Request service settings could not be saved.')); }
   });
-  router.post('/admin/request-users/test', async (req, res) => {
+  router.post('/admin/request-users/test', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try { const result = await requestServiceSettings.testConnection(); return res.redirect('/admin/request-users?message=' + encodeURIComponent(result.message)); }
     catch (error) { return res.redirect('/admin/request-users?error=' + encodeURIComponent(`Request service test failed: ${error.message || error}`)); }
   });
-  router.post('/admin/request-users/sync-all', async (req, res) => {
+  router.post('/admin/request-users/sync-all', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try { await requestServiceSettings.ensureLoaded(); const result = await requestUsers.syncAll(); return res.redirect('/admin/request-users?message=' + encodeURIComponent(syncSummaryMessage('Request users synced', result))); }
     catch (error) { return res.redirect('/admin/request-users?error=' + encodeURIComponent(error.message || 'Request user sync failed.')); }
   });
-  router.post('/admin/request-users/sync-selected', async (req, res) => {
+  router.post('/admin/request-users/sync-selected', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try { await requestServiceSettings.ensureLoaded(); const result = await requestUsers.syncSelected(req.body.customerId); return res.redirect('/admin/request-users?message=' + encodeURIComponent(syncSummaryMessage(`${result.total} selected request users synced`, result))); }
     catch (error) { return res.redirect('/admin/request-users?error=' + encodeURIComponent(error.message || 'Selected request users could not be synced.')); }
   });
-  router.post('/admin/request-users/:customerId/sync', async (req, res) => {
+  router.post('/admin/request-users/:customerId/sync', writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
       await requestServiceSettings.ensureLoaded();
