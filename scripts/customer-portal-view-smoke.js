@@ -94,6 +94,35 @@ const ejs = require('ejs');
     assert.match(empty, /Choose your access/);
     assert.doesNotMatch(empty, /Your referral code/, 'Disabled Benefits module must not appear in the portal');
 
+    const onboarding = await ejs.renderFile(path.join(__dirname, '..', 'views', 'customer', 'onboarding.ejs'), {
+        siteName: 'Test Streams',
+        portal: { customer: { login_username: 'newviewer' } },
+        currency: 'USD',
+        csrfToken: 'csrf-test',
+        message: null,
+        error: null,
+        openCheckout: null,
+        stripeEnabled: true,
+        paypalEnabled: true,
+        coingateEnabled: false,
+        plans: [
+            { id: 'free-1', code: 'free-server', name: 'Free Server', audience: 'direct', service_type: 'jellyfin', is_free_tier: true, billing_interval: 'custom', price_minor: 0, currency: 'USD', streams: 1, capacity: { soldOut: false, remaining: 5, limit: 10 }, payment_options: [] },
+            { id: 'paid-1', code: 'monthly', name: 'Monthly', audience: 'direct', service_type: 'jellyfin', billing_interval: 'month', price_minor: 600, currency: 'USD', streams: 3, capacity: { soldOut: false, remaining: 50, limit: 60 }, payment_options: [
+                { provider: 'stripe', checkoutMode: 'payment' }, { provider: 'stripe', checkoutMode: 'subscription' },
+                { provider: 'paypal', checkoutMode: 'payment' }, { provider: 'paypal', checkoutMode: 'subscription' }
+            ] },
+            { id: 'stremio-1', code: 'stremio-month', name: 'Stremio Monthly', audience: 'direct', service_type: 'stremio', billing_interval: 'month', price_minor: 500, currency: 'USD', streams: 1, capacity: { soldOut: false, remaining: 20, limit: 20 }, payment_options: [] }
+        ]
+    });
+    assert.match(onboarding, /Free Server Plans/);
+    assert.match(onboarding, /Paid Plans/);
+    assert.match(onboarding, /Stremio Plans/);
+    assert.match(onboarding, /Stripe · One-off payment/);
+    assert.match(onboarding, /Stripe · Subscription/);
+    assert.match(onboarding, /PayPal · One-off payment/);
+    assert.match(onboarding, /PayPal · Subscription/);
+    assert.strictEqual((onboarding.match(/PayPal · Subscription/g)||[]).length, 1, 'PayPal subscription option should have a distinct single label');
+
     console.log('customer portal view smoke: ok');
 })().catch(error => {
     console.error(error);
