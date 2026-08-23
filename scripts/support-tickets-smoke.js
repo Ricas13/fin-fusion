@@ -33,11 +33,14 @@ assert(admin.includes('email:current.ticket.customer_email'),'staff-reply notifi
 assert(!admin.includes('.login_email')&&!admin.includes('.login_username'),'admin support UI must not depend on retired/nonexistent customer login fields');
 assert(admin.includes("catch(error){console.warn('Support reply notification could not be queued:'"),'notification failure must not invalidate a committed staff reply');
 assert(nav.includes("['tickets','Support','/admin/tickets']"),'Support tickets must remain visible under the canonical Customers navigation');
-assert(nav.includes("['orders','Orders & Growth','/admin/orders']"),'Orders & Growth must remain visible in the condensed Commerce navigation');
+assert(nav.includes("['orders','Orders & Growth','/admin/commerce/orders']"),'Orders & Growth must remain visible at the canonical Commerce-owned route');
 assert(composition.includes('createAdminSupportTicketsRouter')&&composition.includes('createAdminOrdersRouter'),'admin support/orders must use canonical route composition');
 assert(router.includes('createCustomerSupportRouter'),'customer support must be mounted in the customer runtime');
 for(const key of ['customers','orders','tickets'])assert(operator.includes(`${key}:`)||operator.includes(`const [customers,orders`),`operator state missing ${key}`);
-for(const href of ['/admin/users','/admin/orders','/admin/tickets'])assert(indicator.includes(href),`business indicator missing ${href}`);
+for(const href of ['/admin/users','/admin/commerce/orders','/admin/tickets'])assert(indicator.includes(href),`business indicator missing ${href}`);
+assert(indicator.includes("path==='/admin/commerce/orders'||path==='/admin/orders'"),'business indicator must recognise both canonical and legacy Orders paths');
 assert(indicator.includes('markCurrentAreaRead')&&indicator.includes('/admin/api/operator-state/read'),'top-right business indicators must clear after the operator views the relevant area');
+assert(orders.includes("router.get('/admin/commerce/orders'"),'Orders router must own the canonical Commerce route');
+assert(orders.includes("router.get('/admin/orders'")&&orders.includes('res.redirect(308,ORDERS_PATH)'),'legacy Orders route must remain a compatibility redirect');
 assert(orders.includes("source IN ('stripe','paypal')"),'orders view must be provider-backed');
 console.log('support tickets smoke: ok');

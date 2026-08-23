@@ -10,12 +10,14 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const script = read('public/js/admin-surface-semantics.js');
 const css = read('public/css/admin-surface-semantics.css');
 const density = read('public/css/admin-card-density.css');
+const operations = read('public/css/admin-operations-layout.css');
 const capability = read('public/css/admin-capability.css');
 const htmlCore = read('src/platform/admin-html-core.js');
 const legacyHead = read('views/admin/_head.ejs');
 
 assert(capability.includes("@import url('/css/admin-surface-semantics.css')"), 'shared capability CSS must load the semantic surface layer');
 assert(capability.includes("@import url('/css/admin-card-density.css')"), 'shared capability CSS must load the global card density layer after component styles');
+assert(capability.includes("@import url('/css/admin-operations-layout.css')"), 'shared capability CSS must load operational layout corrections after card density');
 assert(htmlCore.includes('/js/admin-surface-semantics.js'), 'HTML admin shell must load the semantic classifier');
 assert(legacyHead.includes('/js/admin-surface-semantics.js'), 'legacy EJS admin shell must load the semantic classifier');
 
@@ -51,5 +53,11 @@ assert(density.includes('.notificationIdentityGrid') && density.includes('repeat
 assert(density.includes('.capabilityControlGrid') && density.includes('.analyticsGrid'), 'complex capability and analytics surfaces must remain explicit wide/2-up exceptions');
 assert(density.includes('align-items:start!important') && density.includes('height:auto'), 'short cards must not stretch to match taller neighbours');
 assert(density.includes('@media(max-width:1180px)') && density.includes('@media(max-width:720px)'), 'card density must collapse safely for tablet and mobile widths');
+
+assert(operations.includes('.topBar')&&operations.includes('position:relative!important'),'admin top bar must stay in document flow rather than overlay page titles and controls');
+assert(operations.includes('.serverGrid>.automationJobCard')&&operations.includes('grid-column:span 3!important'),'automation configuration cards must use deliberate two-up density even when only one job is unhealthy');
+assert(operations.includes('.automationJobCard .kvList')&&operations.includes('grid-template-columns:repeat(2,minmax(0,1fr))'),'automation metadata must compact into a readable two-column grid');
+assert(operations.includes('.operatorDetailsBody>.section:only-child')&&operations.includes('980px'),'single expanded settings editors must not stretch into empty full-width canvases');
+assert(operations.includes('.ordersTable')&&operations.includes('.provisioningTable'),'problematic operational tables must have explicit responsive sizing contracts');
 
 console.log('admin semantic surface hierarchy checks passed.');

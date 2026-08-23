@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const hrefByKey={customers:'/admin/users',orders:'/admin/orders',tickets:'/admin/tickets'};
+  const hrefByKey={customers:'/admin/users',orders:'/admin/commerce/orders',tickets:'/admin/tickets'};
   const labelByKey={
     customers:['Customers','New customers since you last reviewed Customers'],
     orders:['Orders','New paid orders since you last reviewed Orders'],
@@ -15,7 +15,7 @@
   const normalizedPath=location.pathname.replace(/\/+$/,'')||'/';
   function businessAreaForPath(path){
     if(path==='/admin/users'||path==='/admin/users/dashboard'||/^\/admin\/users\/[0-9a-f-]{36}$/i.test(path))return'customers';
-    if(path==='/admin/orders')return'orders';
+    if(path==='/admin/commerce/orders'||path==='/admin/orders')return'orders';
     if(path==='/admin/tickets')return'tickets';
     return null;
   }
