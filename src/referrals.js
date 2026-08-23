@@ -52,7 +52,7 @@ async function rewardIfQualifying(referredCustomerId){
       COALESCE(s.currency_snapshot,p.currency,'GBP') currency,
       CASE WHEN (s.commercial_snapshot->>'discountedMinor') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'discountedMinor')::int ELSE COALESCE(s.price_minor_snapshot,p.price_minor,0)::int END AS paid_minor
       FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-      WHERE s.customer_id=$1 AND s.source IN('stripe','paypal','coingate') AND s.superseded_by IS NULL AND s.status='active'
+      WHERE s.customer_id=$1 AND s.source IN('stripe','paypal','coingate','plisio') AND s.superseded_by IS NULL AND s.status='active'
       AND (CASE WHEN (s.commercial_snapshot->>'discountedMinor') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'discountedMinor')::int ELSE COALESCE(s.price_minor_snapshot,p.price_minor,0)::int END)>0
       ORDER BY s.starts_at,s.created_at LIMIT 1`,[referredCustomerId]);
     if(!paid.rowCount)return{rewarded:false,pending:true,reason:'no_qualifying_paid_event'};
