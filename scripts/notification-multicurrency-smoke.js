@@ -23,6 +23,7 @@ const navModel=require('../src/platform/admin-nav');
 const adminHtml=read('src/platform/admin-html.js');
 const adminHtmlCore=read('src/platform/admin-html-core-base.js');
 const notificationTabs=read('src/platform/notification-workflow-tabs.js');
+const connectionsTabs=read('src/platform/integration-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
 const provisioning=read('src/jellyfin/provisioning.js');
 const platformRouter=read('src/platform/router.js');
@@ -70,16 +71,20 @@ assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')
 assert(!settingsKeys.includes('settings-commerce'),'Unused Settings Commerce navigation must remain removed');
 assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 
-// Workflow cards carry a fourth description field, so lock the stable key,
-// title and route contract without depending on the presentation copy.
-assert(notificationTabs.includes("'global','Global notifications','/admin/notifications/preferences'"),'Global notification workflow must link back to global settings');
-assert(notificationTabs.includes("'email','Email infrastructure','/admin/notifications/email'"),'Global notification workflow must expose the canonical email infrastructure route');
+// Global notification pages must reuse the single stable Connections workflow.
+assert(notificationTabs.includes("require('./integration-workflow-tabs')"),'Global Notifications must delegate to the shared Connections workflow');
+assert(connectionsTabs.includes("'connections','Connections','/admin/settings/integrations'"),'Connections workflow must expose the overview');
+assert(connectionsTabs.includes("'notifications','Notifications','/admin/notifications/preferences'"),'Connections workflow must expose global notification settings');
+assert(connectionsTabs.includes("'email','Email infrastructure','/admin/notifications'"),'Connections workflow must expose canonical email infrastructure and delivery health together');
+assert(connectionsTabs.includes("'requests','Request service','/admin/request-users'"),'Connections workflow must expose Request service');
+assert(!connectionsTabs.includes('Delivery health'),'Delivery health must not reappear as a fifth, competing Connections destination');
 assert(notificationTabs.includes("'profile','Profile','/admin/profile'"),'My Profile workflow must expose personal account settings');
 assert(notificationTabs.includes("'personal','Notifications','/admin/profile/notifications'"),'My Profile workflow must expose personal notification routing');
 assert(adminHtml.includes("notificationWorkflow.globalTabs"),'Global notification layouts must keep a stable global workflow tab set');
 assert(adminHtml.includes("notificationWorkflow.profileTabs('profile')")&&adminHtml.includes("notificationWorkflow.profileTabs('personal')"),'My Profile and My Notifications must share a stable personal workflow tab set');
 assert(platformRouter.includes('createAdminProfileAccountRouter'),'Administrator profile routes must be mounted in the assembled platform router');
-assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must resolve to the canonical email infrastructure page');
+assert(adminProfile.includes("r.get('/admin/email'")&&adminProfile.includes("'/admin/notifications/email'"),'Legacy /admin/email must remain compatible with the email infrastructure page');
+assert(adminProfile.includes("r.get('/admin/notifications/email'")&&adminProfile.includes('emailInfrastructurePage(req)'),'Legacy /admin/notifications/email must remain compatible while navigation uses /admin/notifications');
 assert(!adminProfile.includes('/admin/profile/currency')&&!adminProfile.includes('Reporting currency'),'My Profile must not expose a personal currency setting');
 assert(adminProfile.includes("UPDATE app_users SET email=$2")&&adminProfile.includes("UPDATE customers SET email=$2"),'Changing administrator email must also keep an attached personal customer profile in sync');
 assert(adminProfile.includes("INSERT INTO customers(user_id,display_name,email,provisioning_mode,registration_source,note)"),'Personal media access must attach a customer record to the existing administrator user');
