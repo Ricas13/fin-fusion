@@ -11,7 +11,27 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  query(`SELECT id,name,health_status,last_health_check FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN('offline','degraded') ORDER BY name`).catch(()=>({rows:[]})),
  query(`SELECT id,customer_id,action,status,detail,started_at FROM provisioning_runs WHERE status='failed' AND started_at>NOW()-INTERVAL '7 days' ORDER BY started_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`SELECT id,channel,event_type,message_type,status,last_error,created_at FROM notification_outbox WHERE status IN('failed','dead') ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
- query(`SELECT id,status,error,started_at FROM backup_runs WHERE status='failed' OR (status='succeeded' AND verified_at IS NULL AND started_at<NOW()-INTERVAL '2 days') ORDER BY started_at DESC LIMIT 50`).catch(()=>({rows:[]})),
+ query(`WITH latest_success AS (
+          SELECT id,status,error,verification_note,verified_at,started_at
+          FROM backup_runs
+          WHERE status='succeeded'
+          ORDER BY started_at DESC
+          LIMIT 1
+        ), latest_failure AS (
+          SELECT id,status,error,NULL::text AS verification_note,NULL::timestamptz AS verified_at,started_at
+          FROM backup_runs
+          WHERE status='failed'
+          ORDER BY started_at DESC
+          LIMIT 1
+        )
+        SELECT id,status,error,verification_note,verified_at,started_at
+        FROM latest_failure f
+        WHERE NOT EXISTS (SELECT 1 FROM latest_success s WHERE s.started_at>f.started_at)
+        UNION ALL
+        SELECT id,status,error,verification_note,verified_at,started_at
+        FROM latest_success
+        WHERE verified_at IS NULL AND started_at<NOW()-INTERVAL '2 days'
+        ORDER BY started_at DESC`).catch(()=>({rows:[]})),
  query(`SELECT DISTINCT ON(c.id) c.id customer_id,COALESCE(c.display_name,u.username,u.email,'Customer') customer_name,u.email,t.created_at,EXTRACT(DAY FROM(NOW()-t.created_at))::int age_days,EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id) has_subscription,EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id) has_jellyfin FROM account_activation_tokens t JOIN app_users u ON u.id=t.user_id JOIN customers c ON c.user_id=u.id LEFT JOIN platform_settings ps ON ps.setting_key='activation_cleanup_v1' WHERE t.purpose='customer_activation' AND t.used_at IS NULL AND t.revoked_at IS NULL AND u.role='customer' AND (EXISTS(SELECT 1 FROM subscriptions s WHERE s.customer_id=c.id) OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id)) AND t.created_at<=NOW()-(COALESCE(NULLIF(ps.setting_value->>'retentionDays','')::int,30)||' days')::interval ORDER BY c.id,t.created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`SELECT s.id,s.name,s.auth_state,s.last_error,s.updated_at,COALESCE(i.status,'never') index_status,i.last_error index_error,i.updated_at index_updated_at FROM stremio_sources s LEFT JOIN stremio_source_index_state i ON i.source_id=s.id WHERE s.enabled=TRUE AND (s.auth_state IN('reconnect_required','error') OR i.status='failed') ORDER BY GREATEST(COALESCE(s.updated_at,'1970-01-01'::timestamptz),COALESCE(i.updated_at,'1970-01-01'::timestamptz)) DESC LIMIT 100`).catch(()=>({rows:[]}))
  ]);
@@ -21,7 +41,7 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  for(const r of servers.rows)out.push(item({key:key('server',r.id),title:`${r.name} is ${r.health_status}`,area:'Servers',severity:r.health_status==='offline'?'critical':'warning',detail:`Last health check ${r.last_health_check||'never'}`,href:`/admin/servers/dashboard?server=${encodeURIComponent(r.id)}`,createdAt:r.last_health_check}));
  for(const r of provisioning.rows)out.push(item({key:key('provisioning',r.id),title:`Provisioning failed: ${r.action}`,area:'Customers',severity:'critical',detail:r.detail?.error||'Provisioning run failed',href:`/admin/users/${r.customer_id}?tab=access#provisioning-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
  for(const r of notifications.rows)out.push(item({key:key('notification',r.id),title:`${r.channel} notification ${r.status}`,area:'Notifications',severity:r.status==='dead'?'critical':'warning',detail:r.last_error||r.event_type||r.message_type||'',href:`${r.channel==='email'?'/admin/notifications':'/admin/notifications/preferences'}?outboxId=${encodeURIComponent(r.id)}#outbox-${encodeURIComponent(r.id)}`,createdAt:r.created_at}));
- for(const r of backups.rows)out.push(item({key:key('backup',r.id),title:r.status==='failed'?'Backup failed':'Backup has not been restore-verified',area:'Backups',severity:r.status==='failed'?'critical':'warning',detail:r.error||'Restore verification missing',href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
+ for(const r of backups.rows)out.push(item({key:key('backup',r.id),title:r.status==='failed'?'Backup failed':'Latest backup has not been restore-verified',area:'Backups',severity:r.status==='failed'?'critical':'warning',detail:r.error||r.verification_note||'Restore verification missing',href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
  for(const r of protectedActivations.rows)out.push(item({key:key('activation',r.customer_id),title:`Paid/provisioned account still not activated: ${r.customer_name}`,area:'Customers',severity:'warning',detail:`Activation pending ${r.age_days} day(s) · ${r.has_subscription?'subscription ':''}${r.has_jellyfin?'Jellyfin':''}`.trim(),href:`/admin/users/${r.customer_id}?tab=access#activation`,createdAt:r.created_at}));
  for(const r of stremioSources.rows){
    const authProblem=['reconnect_required','error'].includes(r.auth_state);
