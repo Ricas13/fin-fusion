@@ -21,6 +21,7 @@ const payments = read('src/platform/admin-payment-settings.js');
 const commerce = read('src/platform/admin-commerce.js');
 const plans = read('src/platform/admin-plans-list.js');
 const customer360 = read('src/platform/customer-360-view.js');
+const stableCustomerNav = read('public/js/customer-360-navigation.js');
 const orders = read('src/platform/admin-orders.js');
 const billing = read('src/platform/admin-billing.js');
 const support = read('src/platform/admin-support-tickets.js');
@@ -84,12 +85,12 @@ assert(!notifications.includes('<th>Destination</th>'), 'Default notification hi
 assert(notifications.includes('notificationOutbox.recent(80)'), 'Notification health must reuse the canonical outbox history');
 
 assert(payments.includes('Payment control room') && payments.includes('Failed provider events'), 'Payments must retain provider-safety calculation and expose failed events');
-assert(payments.includes("ui.detailDisclosure({title:'Stripe, PayPal & CoinGate credentials'"), 'Payment credentials must be behind deliberate disclosure');
+assert(payments.includes('payment-provider-config') && payments.includes('integrationConfig') && payments.includes('detailsHtml:providerConfigDetails(req,provider,status,url)') && !payments.includes("title:'Stripe, PayPal & Plisio credentials'"), 'Payment credentials must live behind deliberate inline provider disclosure without a duplicate combined configuration block');
 assert(payments.includes("providerEvents=(events||[]).filter(event=>event.provider===provider)"), 'Payment cards must reuse canonical provider event state');
 assert(payments.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"), 'Payment provider evidence must remain based on successfully processed events');
 
 assert(commerce.includes('Commerce control room') && commerce.includes('Payment incidents to resolve'), 'Commerce must retain customer-impacting payment state before revenue analytics');
-assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf('rangeControls(dashboardCtx.range)'), 'Commerce state calculation must remain before analytics controls');
+assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf('rangeControls(dashboardCtx.range)'), 'Commerce state calculation must remain before analytics controls in composition');
 assert(commerce.includes("d.paymentIncidents.filter(row=>!row.resolved_at)"), 'Commerce clarity must reuse canonical payment incidents');
 assert(commerce.includes("ui.detailDisclosure({title:'Commercial policies & detailed payment state'"), 'Routine commercial policy/state detail must be progressively disclosed');
 
@@ -99,9 +100,9 @@ assert(!plans.includes('Plan policies & storefront tools') && plans.includes('/a
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search'), 'Plans must not render filters for the deliberately small catalogue');
 assert(plans.includes('archived=1') && plans.includes('Retired catalogue versions'), 'Archived plan versions must remain reachable without cluttering the active catalogue');
 
-assert(customer360.includes('Customer journey') && customer360.includes("['overview','1','Account'") && customer360.includes("['access','2','Access'") && customer360.includes("['billing','3','Billing'") && customer360.includes("['activity','4','Activity'"), 'Customer 360 must present the account → access → billing → activity journey');
-assert(customer360.includes('ui.operatorHero({') && customer360.includes('activeSubscription(detail)'), 'Customer 360 journey must reuse the canonical customer detail rather than a second status model');
-assert(customer360.includes("if(tab!=='access')return journeyHtml+html"), 'Customer journey must lead every Customer 360 tab');
+assert(customer360.includes("function journey(){return'';}"), 'Customer 360 must keep the duplicate journey navigation retired');
+assert(stableCustomerNav.includes("['overview','Overview'") && stableCustomerNav.includes("['manage','Manage'"), 'Customer 360 must expose one stable customer-scoped navigation from Overview through Manage');
+assert(stableCustomerNav.includes("link.setAttribute('href',href)") && stableCustomerNav.includes('MutationObserver'), 'late service-aware enrichment must not mutate Customer 360 navigation after render');
 
 assert(orders.includes('Transaction desk') && orders.includes('Open customer billing →'), 'Orders must act as a transaction trail into customer billing rather than a raw record table');
 assert(orders.includes("ui.detailDisclosure({title:`Full purchase history"), 'Older order history must be progressively disclosed');
@@ -114,7 +115,7 @@ assert(!billing.includes('<th>Provider ID</th>'), 'Billing default tables must n
 
 assert(support.includes('Support desk') && support.includes('Reply these first'), 'Support must lead with customer conversations waiting on staff');
 assert(support.includes("['open','awaiting_staff'].includes(row.status)"), 'Support priority must reuse canonical ticket lifecycle state');
-assert(support.includes("ui.detailDisclosure({title:'Ticket routing & status'"), 'Ticket routing/status controls must stay secondary to the conversation and reply action');
+assert(support.includes("ui.detailDisclosure({title:'Ticket routing & status'"), 'Support routing/status controls must stay secondary to the conversation and reply action');
 assert(support.includes('Internal note (staff only)'), 'Support clarity must preserve the internal-note privacy boundary');
 
 assert(events.includes('Audit & incident trail') && events.includes('Needs investigation'), 'Audit log must surface operational failures before routine history');

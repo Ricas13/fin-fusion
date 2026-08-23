@@ -12,6 +12,9 @@ const customerStremio=read('src/platform/customer-stremio.js');
 const management=read('src/platform/admin-customer-management.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
+const customerView=read('src/platform/customer-360-view.js');
+const stableNavigation=read('public/js/customer-360-navigation.js');
+const adminHtml=read('src/platform/admin-html.js');
 
 assert(migration.includes('CREATE TABLE public.stremio_install_credential_recovery'),'Stremio install recovery migration is missing');
 assert(migration.includes('credential_encrypted text NOT NULL'),'recoverable install credentials must be encrypted at rest');
@@ -48,11 +51,24 @@ assert(management.includes("serviceType:type")&&management.includes('hasJellyfin
 assert(management.includes('data-native-submit="true"'),'single-customer plan/expiry actions must bypass inline AJAX form handling');
 
 assert(composition.indexOf('createAdminCustomerManagementRouter()')<composition.indexOf('createAdminCustomer360Router()'),'customer management routes must mount before the wildcard Customer 360 route');
-assert(operator.includes("appendTopAction('Manage customer'"),'Customer 360 must expose the management workspace');
-assert(operator.includes('if(context.hasJellyfinAccount)appendTopAction(\'Change Jellyfin password\''),'Jellyfin password support must only appear for customers with a real Jellyfin account');
+assert(operator.includes("appendTopAction('Manage customer'"),'legacy operator enrichment must remain compatible until the customer-specific stabilizer runs');
+assert(operator.includes('if(context.hasJellyfinAccount)appendTopAction(\'Change Jellyfin password\''),'Jellyfin password support context must remain available to the legacy enrichment layer');
 assert(!operator.includes("link.textContent='Change Jellyfin password';link.setAttribute('data-customer-password-support'"),'the old unconditional Jellyfin password action must not return');
 assert(operator.includes("form.dataset.nativeSubmit='true'"),'Customer 360 bulk preview controls must submit as full-page workflows');
 assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-verification pill markup must be repaired safely in Customer 360');
-assert(operator.includes("accessTab.textContent='Stremio'"),'Stremio-only customers must not be sent to Jellyfin-centric access controls');
+
+// Customer navigation is deliberately owned by one deterministic layer. The
+// large journey cards are retired and async service context must never rewrite
+// Access into another workspace after the page has rendered.
+assert(customerView.includes("function journey(){return'';}"),'the duplicate Account/Access/Billing/Activity journey navigation must stay retired');
+for(const label of ["['overview','Overview'","['access','Access'","['activity','Activity'","['billing','Billing'","['security','Security'","['history','History'","['manage','Manage'"]){
+  assert(stableNavigation.includes(label),`stable Customer 360 navigation is missing ${label}`);
+}
+assert(stableNavigation.includes("href===`${base}?tab=activity`"),'Activity must be removed from duplicate top-bar navigation');
+assert(stableNavigation.includes('[data-customer-management],[data-customer-password-support]'),'legacy async customer top actions must be removed once represented in the stable customer workspace');
+assert(stableNavigation.includes("link.setAttribute('href',href)"),'async Stremio context must not be able to mutate the canonical Access tab destination');
+assert(stableNavigation.includes("nav.insertAdjacentElement('afterend',controls)"),'Customer control centre must sit beneath the stable identity/summary/navigation context');
+assert(stableNavigation.includes('MutationObserver'),'late async operator enrichment must not make the customer navigation change after first paint');
+assert(adminHtml.includes('/js/customer-360-navigation.js'),'Customer 360 navigation stabilizer must load on admin pages');
 
 console.log('customer 360 admin management smoke: ok');
