@@ -46,10 +46,11 @@
     ':scope > header'
   ].join(',');
 
-  function kindFor(container, table) {
+  function kindFor(container) {
     const explicit = String(container.dataset.adminSurface || '').trim().toLowerCase();
     if (['control', 'data', 'overview'].includes(explicit)) return explicit;
-    return table.querySelector(MUTABLE_TABLE_CONTROL) ? 'control' : 'data';
+    const tables = Array.from(container.querySelectorAll('table'));
+    return tables.some(table => table.querySelector(MUTABLE_TABLE_CONTROL)) ? 'control' : 'data';
   }
 
   function labelSurface(container, kind) {
@@ -72,7 +73,7 @@
     root.querySelectorAll('table').forEach(table => {
       const container = table.closest(CONTAINER_SELECTOR) || table.closest('.tableWrap,.table-container') || table.parentElement;
       if (!container || container.dataset.adminSurfaceResolved) return;
-      labelSurface(container, kindFor(container, table));
+      labelSurface(container, kindFor(container));
     });
   }
 
