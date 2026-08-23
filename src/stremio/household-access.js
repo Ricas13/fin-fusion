@@ -61,12 +61,6 @@ async function preview(entitlement, req, options = {}) {
   return leases.preview(leaseOptions(entitlement, component, address, options));
 }
 
-function familyLabel(decision) {
-  if (decision?.networkFamily === 'ipv4') return 'IPv4';
-  if (decision?.networkFamily === 'ipv6') return 'IPv6';
-  return 'network';
-}
-
 function deniedTitle() {
   return 'Outside household connection';
 }
