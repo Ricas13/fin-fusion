@@ -193,7 +193,15 @@ async function testStripe(cfg) {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) throw new Error(body?.error?.message || 'Stripe rejected the API key.');
     if (response.status === 403) {
-        return { ok: true, limited: true, message: 'Stripe accepted the credential, but this restricted key cannot read Prices. Review its resource permissions before checkout testing.' };
+        const detail = clean(body?.error?.message, 500);
+        const suffix = 'Check Prices: Read and any IP/network restrictions configured on the restricted key.';
+        return {
+            ok: true,
+            limited: true,
+            message: detail
+                ? `Stripe denied the Prices request (HTTP 403): ${detail} ${suffix}`
+                : `Stripe denied the Prices request (HTTP 403). ${suffix}`
+        };
     }
     if (!response.ok) throw new Error(body?.error?.message || `Stripe returned HTTP ${response.status}.`);
     return { ok: true, limited: false, message: 'Stripe connection successful. API credentials were accepted.' };
