@@ -29,7 +29,7 @@
 <section class="sectionBlock" id="plans"><div class="sectionHead"><div><h2>Available access</h2><p>Only products that can be delivered are shown. Free Access always remains visible, even when all current free places are taken. All paid prices are in <strong><%= currency %></strong>.</p></div></div>
 <% if(!plans.length){ %><div class="empty">No access products are currently available. Your account remains active; check again later or contact support.</div><% } %>
 <div class="choiceGrid">
-<% plans.forEach(function(p){const opts=Array.isArray(p.payment_options)?p.payment_options:[],stripeOpts=opts.filter(o=>o.provider==='stripe'),paypalOpts=opts.filter(o=>o.provider==='paypal'),isFree=Boolean(p.is_free_tier)||Number(p.price_minor||0)===0&&p.billing_interval!=='trial',isTrial=p.billing_interval==='trial',sold=Boolean(p.capacity&&p.capacity.soldOut); %>
+<% plans.forEach(function(p){const opts=Array.isArray(p.payment_options)?p.payment_options:[],stripeOpts=opts.filter(o=>o.provider==='stripe'),paypalOpts=opts.filter(o=>o.provider==='paypal'),coingateOpts=opts.filter(o=>o.provider==='coingate'),isFree=Boolean(p.is_free_tier)||Number(p.price_minor||0)===0&&p.billing_interval!=='trial',isTrial=p.billing_interval==='trial',sold=Boolean(p.capacity&&p.capacity.soldOut); %>
 <article class="choiceCard <%= isFree?'freeChoice':'' %>"><div class="eyebrow"><%= isFree?'Free Access':kind(p) %></div><h3><%= p.name %></h3><div class="choicePrice"><%= price(p) %></div><div class="choiceMeta"><%= p.description||'Streaming access managed through your account.' %></div><ul class="featureList"><li><%= kind(p) %></li><li><%= p.streams||1 %> concurrent stream<%= Number(p.streams||1)===1?'':'s' %></li><% if(p.capacity&&p.capacity.limit!=null){ %><li><%= p.capacity.remaining %> of <%= p.capacity.limit %> places currently available</li><% } %></ul>
 <div class="choiceActions">
 <% if(isFree){ %>
@@ -39,7 +39,8 @@
 <% } else { %>
   <% if(stripeEnabled){stripeOpts.forEach(function(opt){ %><form class="plainForm" method="post" action="/account/checkout/stripe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="checkoutMode" value="<%= opt.checkoutMode||opt.checkout_mode||'payment' %>"><button class="button stripe full">Continue with Stripe</button></form><% })} %>
   <% if(paypalEnabled){paypalOpts.forEach(function(opt){ %><form class="plainForm" method="post" action="/account/checkout/paypal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="checkoutMode" value="<%= opt.checkoutMode||opt.checkout_mode||'payment' %>"><button class="button paypal full">Continue with PayPal</button></form><% })} %>
-  <% if((!stripeEnabled||!stripeOpts.length)&&(!paypalEnabled||!paypalOpts.length)){ %><div class="paymentNote">No payment method is currently configured for this plan.</div><% } %>
+  <% if(coingateEnabled&&coingateOpts.length){ %><div class="paymentNote">Crypto is a one-time payment for this plan period and does not auto-renew.</div><form class="plainForm" method="post" action="/account/checkout/coingate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planCode" value="<%= p.code %>"><input type="hidden" name="checkoutMode" value="payment"><button class="button primary full">Pay with crypto</button></form><% } %>
+  <% if((!stripeEnabled||!stripeOpts.length)&&(!paypalEnabled||!paypalOpts.length)&&(!coingateEnabled||!coingateOpts.length)){ %><div class="paymentNote">No payment method is currently configured for this plan.</div><% } %>
 <% } %>
 </div></article>
 <% }) %>
