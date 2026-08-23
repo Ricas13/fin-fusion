@@ -8,7 +8,10 @@
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
 </head>
-<% const providerName=({stripe:'Stripe',paypal:'PayPal',coingate:'CoinGate'})[provider]||'Payment provider'; %>
+<%
+  const providerName=({stripe:'Stripe',paypal:'PayPal',coingate:'CoinGate'})[provider]||'Payment provider';
+  const quantity=Number(accessQuantity||1),quantityLabel=accessVariantKind==='households'?`${quantity} household${quantity===1?'':'s'}`:`${quantity} concurrent stream${quantity===1?'':'s'}`;
+%>
 <body>
 <div class="portalShell">
   <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Secure checkout</div></div></a></div></header>
@@ -17,14 +20,14 @@
       <div class="welcomePanel">
         <div class="eyebrow"><%= providerName %></div>
         <h1>How would you like to pay?</h1>
-        <p><strong><%= planName %></strong> · <%= priceLabel %> · <%= streams %> concurrent stream<%= Number(streams)===1?'':'s' %>. Choose whether this purchase should renew automatically.</p>
+        <p><strong><%= planName %></strong> · <%= priceLabel %> · <%= quantityLabel %>. Choose whether this purchase should renew automatically.</p>
       </div>
     </section>
     <section class="sectionBlock">
       <form method="post" action="/account/checkout/<%= provider %>" class="panel">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="planCode" value="<%= planCode %>">
-        <input type="hidden" name="streams" value="<%= streams %>">
+        <input type="hidden" name="accessQuantity" value="<%= quantity %>">
         <div class="plansGrid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))">
           <% options.forEach(function(option){ %>
             <label class="planCard" style="cursor:pointer">
