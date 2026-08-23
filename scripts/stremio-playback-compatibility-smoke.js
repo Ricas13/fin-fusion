@@ -22,7 +22,10 @@ assert.strictEqual(direct.searchParams.get('api_key'),'token');
 assert.strictEqual(direct.searchParams.get('PlaySessionId'),null,'raw Stremio URLs must not carry Jellyfin play-session identifiers');
 assert.strictEqual(direct.searchParams.get('DeviceId'),null,'raw Stremio URLs must not create Jellyfin playback devices');
 assert.strictEqual(managed.pathExtension('Movie.2026.1080p.mkv'),'mkv');
+assert.strictEqual(managed.pathExtension('Movie.2026.1080p.mkv.strm'),'mkv','double-extension STRM paths must preserve the underlying video container');
 assert.strictEqual(managed.containerExtension('mkv,webm'),'mkv');
+const strmFallback=new URL(managed.directUrl(mapping,'strm-item','strm-source','token','','Movie.2026.1080p.mkv.strm'));
+assert.strictEqual(strmFallback.pathname,'/jellyfin/Videos/strm-item/stream.mkv','STRM items without MediaSource.Container must still expose a video extension to Stremio');
 
 assert.strictEqual(typeof external.directPlaybackUrl,'function','external sources must expose a direct raw-file URL builder');
 
@@ -55,6 +58,7 @@ assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includ
 
 assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
 assert(externalSource.includes("url.searchParams.set('Static', 'true')"),'external sources must also return Jellyfin static/original-file URLs');
+assert(externalSource.includes('containerExtension(container) || pathExtension(file)'),'external raw URLs must share the same container fallback used for double-extension STRM paths');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside Jellyfin playback-session reporting');
 
 console.log('stremio raw-file playback compatibility smoke: ok');
