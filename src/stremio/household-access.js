@@ -61,12 +61,6 @@ async function preview(entitlement, req, options = {}) {
   return leases.preview(leaseOptions(entitlement, component, address, options));
 }
 
-function familyLabel(decision) {
-  if (decision?.networkFamily === 'ipv4') return 'IPv4';
-  if (decision?.networkFamily === 'ipv6') return 'IPv6';
-  return 'network';
-}
-
 function deniedTitle() {
   return 'Outside household connection';
 }
@@ -75,24 +69,36 @@ function deniedMessage(_decision) {
   return 'This Stremio plan is already linked to another household internet connection. The connection you are using now is different, so playback is blocked. Connect from the registered household connection, wait until it can be replaced automatically, or change your household connection from your account when eligible.';
 }
 
+function blockedMediaIsWebReady(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && /\.mp4$/i.test(url.pathname);
+  } catch (_error) {
+    return false;
+  }
+}
+
 function deniedStream(decision, options = {}) {
   const title = deniedTitle();
   const description = deniedMessage(decision);
+  const url = options.url ? String(options.url) : '';
   const stream = {
-    name: `CAPTAiNFiN - ${title}`,
+    name: `CAPTAiNFiN • ${title}`,
     title,
     description,
     behaviorHints: {
-      // Match the shape used by normal raw Jellyfin results. In particular,
-      // notWebReady keeps Stremio clients from silently filtering the result
-      // merely because the local explanatory MP4 is not a browser-native URL.
-      notWebReady: true,
+      // The local explanation is a real HTTPS MP4 in production, so it must
+      // remain web-ready. Marking an HTTPS MP4 as notWebReady makes Stremio Web
+      // hide the only denial result and fall back to "no addons provided streams".
+      notWebReady: url ? !blockedMediaIsWebReady(url) : true,
       bingeGroup: 'captainfin-household-ip-block',
       filename: 'CAPTAiNFiN household connection blocked.mp4'
     }
   };
   if (Number(options.videoSize) > 0) stream.behaviorHints.videoSize = Number(options.videoSize);
-  if (options.url) stream.url = String(options.url);
+  if (url) stream.url = url;
   if (options.externalUrl) {
     const externalUrl = String(options.externalUrl);
     stream.externalUrl = externalUrl;
@@ -146,4 +152,4 @@ async function release(entitlement, { actorUserId = null, reason = 'manual_reset
   return released;
 }
 
-module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, deniedStream, applyDeniedResponse, replacementState, cooldownMessage, release };
+module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, blockedMediaIsWebReady, deniedStream, applyDeniedResponse, replacementState, cooldownMessage, release };

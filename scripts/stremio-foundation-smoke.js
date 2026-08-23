@@ -43,8 +43,18 @@ assert.deepStrictEqual(card.split('\n'),[
     '📺 HEVC • Dolby Vision P8.1 • HDR10',
     '🔊 English • DD+ Atmos • 5.1',
     '💬 English • SDH',
-    '📦 18.0 GB • 24.0 Mbps • MKV'
+    '📦 18.0 GB • 24.0 Mbps'
 ]);
+assert(!card.includes('MKV'),'Container/file extensions must not be shown in customer-facing Stremio results');
+
+const wrapped=foundation.streamDisplayFromFilename('Movie.Name.2026.1080p.WEB-DL.AVC.AC3.5.1-Slay3R.mkv.strm');
+assert.strictEqual(wrapped.metadata.releaseGroup,'Slay3R','stacked media + STRM extensions must not leak into the release group');
+assert.strictEqual(wrapped.description.split('\n')[0],'🎬 WEB-DL • Slay3R');
+const wrappedCard=foundation.richStreamDescription(wrapped,{Container:'strm',Size:8192,MediaStreams:[]});
+assert(!wrappedCard.includes('0 MB'),'tiny STRM wrapper sizes must not render as 0 MB');
+assert(!wrappedCard.includes('STRM'),'STRM wrapper extensions must not be shown');
+assert(!wrappedCard.includes('.mkv'),'underlying file extensions must not leak into release-group labels');
+assert(!wrappedCard.includes('📦'),'empty technical rows must disappear completely');
 
 const web1080=foundation.streamDisplayFromFilename('Future.Man.S02E12.The.Brain.Job.WEBRip-1080p-DEFLATE.strm');
 assert.strictEqual(web1080.name,'[CF ⚡] 1080p');
