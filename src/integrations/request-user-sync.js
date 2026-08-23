@@ -198,11 +198,11 @@ async function syncCustomer(candidate, indexes = {}) {
     return { status: 'failed', customerId: candidate.customer_id, error: error.message };
   }
 }
-function emptySummary(total) { return { total, created: 0, linked: 0, suspended: 0, failed: 0, ignored: 0 }; }
+function emptySummary(total) { return { total, created: 0, linked: 0, suspended: 0, failed: 0 }; }
 function countResult(summary, result) {
   if (result.status === 'failed') summary.failed++;
   else if (result.status === 'suspended') summary.suspended++;
-  else if (result.status === 'ignored') summary.ignored++;
+  else if (result.status === 'ignored') summary.ignored = Number(summary.ignored || 0) + 1;
   else if (result.created) summary.created++;
   else if (result.status === 'synced') summary.linked++;
 }
