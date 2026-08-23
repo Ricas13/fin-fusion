@@ -1,0 +1,70 @@
+/* Operational/admin layout corrections ---------------------------------
+   Keep navigation chrome in normal document flow, make configuration cards
+   use deliberate widths, and let dense data use the shared table primitive. */
+
+/* A sticky top bar was covering heroes/tabs/section titles while scrolling
+   and produced duplicated/overlaid chrome in full-page captures. Status stays
+   at the top of the page without floating over the workspace. */
+.topBar{
+  position:relative!important;
+  top:auto!important;
+  z-index:70!important;
+}
+
+/* Automation jobs contain schedule configuration and six health facts. One
+   unhealthy job should not become a giant full-width settings slab. */
+.serverGrid>.automationJobCard{
+  grid-column:span 3!important;
+  min-width:0;
+}
+.automationJobCard .serverTop{padding:9px 11px!important;min-height:44px!important}
+.automationJobCard .serverStats{
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:7px!important;
+  padding:9px 11px!important;
+}
+.automationJobCard .serverStats>div{min-width:0}
+.automationJobCard .metricMini{font-size:17px!important}
+.automationJobCard .kvList{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:0 14px;
+  padding:0 11px 7px;
+}
+.automationJobCard .kvRow{min-width:0;padding:5px 0!important}
+.automationJobCard .formPanel{padding:9px 11px!important}
+.automationJobCard .formGrid{
+  grid-template-columns:minmax(0,1fr) auto!important;
+  gap:10px!important;
+  align-items:end;
+}
+.automationJobCard .formGroup{margin-bottom:0!important}
+.automationJobCard .checkRow{margin:0 0 1px!important;min-height:40px}
+.automationJobCard>form:last-child{padding:0 11px 11px}
+
+/* Expanded settings are configuration workspaces, not empty full-width
+   canvases. Keep a single editor comfortably readable while data/history
+   disclosures remain free to use the full available width. */
+.operatorDetailsBody>.section:only-child{
+  width:min(100%,980px);
+}
+.operatorDetailsBody>.section:only-child .formPanel{padding:12px!important}
+
+/* Orders moved off the legacy inline-grid table. Preserve enough width for
+   desktop scanning while responsiveTable owns the narrow/mobile fallback. */
+.ordersTable{min-width:680px}
+.ordersTable td:first-child,.ordersTable th:first-child{white-space:nowrap}
+
+/* Provisioning is a wide diagnostic table; keep controls readable but reduce
+   the previous excessive horizontal footprint. */
+.provisioningTable{min-width:1080px!important}
+.provisioningTable .button{white-space:nowrap}
+
+@media(max-width:1180px){
+  .serverGrid>.automationJobCard{grid-column:span 1!important}
+}
+@media(max-width:860px){
+  .automationJobCard .kvList{grid-template-columns:1fr}
+  .automationJobCard .formGrid{grid-template-columns:1fr!important}
+  .operatorDetailsBody>.section:only-child{width:100%}
+}
