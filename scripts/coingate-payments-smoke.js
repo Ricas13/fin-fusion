@@ -63,10 +63,15 @@ for (const constraint of ['payment_provider_credentials_provider_check','billing
 }
 expect(migration.includes("'coingate'::text"), 'CoinGate migration must add the provider to database constraints.');
 
-for (const view of ['views/customer/onboarding.ejs','views/customer/dashboard.ejs','views/customer/stremio-dashboard.ejs']) {
+const cryptoViews = {
+    'views/customer/onboarding.ejs': 'CoinGate · One-off payment',
+    'views/customer/dashboard.ejs': 'Pay with crypto',
+    'views/customer/stremio-dashboard.ejs': 'Pay with crypto'
+};
+for (const [view, label] of Object.entries(cryptoViews)) {
     const html = source(view);
     expect(html.includes('/account/checkout/coingate'), `${view} does not expose CoinGate checkout.`);
-    expect(html.includes('Pay with crypto'), `${view} does not label the crypto checkout clearly.`);
+    expect(html.includes(label), `${view} does not label the crypto checkout clearly.`);
 }
 
 const admin = source('src/platform/admin-payment-settings.js');

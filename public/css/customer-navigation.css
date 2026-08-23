@@ -5,23 +5,24 @@
 .customerPortalNavLink.active{border-color:#337d95;background:var(--customer-nav-active);color:#9ae6fb;box-shadow:inset 3px 0 0 #4cc9f0}
 .customerSidebar .customerPortalNav{display:grid;margin:0;padding:0;border:0;background:transparent}
 .customerSidebar .customerPortalNavLink{width:100%}
-.customerPortalPage{width:min(1220px,calc(100% - 36px));margin:0 auto;padding:24px 0 64px;display:grid;grid-template-columns:var(--customer-nav-width) minmax(0,1fr);column-gap:24px;align-items:start}
-.customerPortalPage>.customerPortalNav{grid-column:1;grid-row:1 / span 200;display:grid;align-content:start;gap:5px;margin:0;position:sticky;top:20px;padding:12px;border-color:#2b3948;border-radius:13px;background:#101820;box-shadow:0 12px 34px rgba(0,0,0,.14)}
-.customerPortalPage>.customerPortalNav::before{content:"My account";display:block;padding:2px 8px 8px;color:#6f8192;font-size:10px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}
-.customerPortalPage>.customerPortalNav .customerPortalNavLink{width:100%}
-.customerPortalPage>:not(.customerPortalNav){grid-column:2;min-width:0}
+.customerPortalPage,.securityMain{width:min(1220px,calc(100% - 36px));margin:0 auto;padding:24px 0 64px;display:grid;grid-template-columns:var(--customer-nav-width) minmax(0,1fr);column-gap:24px;align-items:start}
+.securityMain{max-width:1220px!important}
+.customerPortalPage>.customerPortalNav,.securityMain>.customerPortalNav{grid-column:1;grid-row:1 / span 200;display:grid;align-content:start;gap:5px;margin:0;position:sticky;top:20px;padding:12px;border-color:#2b3948;border-radius:13px;background:#101820;box-shadow:0 12px 34px rgba(0,0,0,.14)}
+.customerPortalPage>.customerPortalNav::before,.securityMain>.customerPortalNav::before{content:"My account";display:block;padding:2px 8px 8px;color:#6f8192;font-size:10px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}
+.customerPortalPage>.customerPortalNav .customerPortalNavLink,.securityMain>.customerPortalNav .customerPortalNavLink{width:100%}
+.customerPortalPage>:not(.customerPortalNav),.securityMain>:not(.customerPortalNav){grid-column:2;min-width:0}
 .customerPortalPageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
 .customerPortalPageHeader h1{margin:0 0 5px}
 .customerPortalPageHeader p{margin:0;color:#8d99aa}
 @media(max-width:900px){
- .customerPortalPage{display:block;width:min(100% - 28px,1180px);padding-top:16px}
- .customerPortalPage>.customerPortalNav,.customerSidebar .customerPortalNav{position:static;display:flex;overflow-x:auto;gap:4px;margin:0 0 18px;padding:8px;border:1px solid #29323d;border-radius:11px;background:#10161d;box-shadow:none}
- .customerPortalPage>.customerPortalNav::before{display:none}
- .customerPortalPage>.customerPortalNav .customerPortalNavLink,.customerSidebar .customerPortalNavLink{width:auto;white-space:nowrap;flex:0 0 auto}
+ .customerPortalPage,.securityMain{display:block;width:min(100% - 28px,1180px);padding-top:16px}
+ .customerPortalPage>.customerPortalNav,.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav{position:static;display:flex;overflow-x:auto;gap:4px;margin:0 0 18px;padding:8px;border:1px solid #29323d;border-radius:11px;background:#10161d;box-shadow:none}
+ .customerPortalPage>.customerPortalNav::before,.securityMain>.customerPortalNav::before{display:none}
+ .customerPortalPage>.customerPortalNav .customerPortalNavLink,.securityMain>.customerPortalNav .customerPortalNavLink,.customerSidebar .customerPortalNavLink{width:auto;white-space:nowrap;flex:0 0 auto}
  .customerPortalNavLink:hover{transform:none}
 }
 @media(max-width:700px){
- .customerPortalPage{width:min(100% - 24px,1180px)}
+ .customerPortalPage,.securityMain{width:min(100% - 24px,1180px)}
  .customerPortalNav{overflow-x:auto;flex-wrap:nowrap}
  .customerPortalNavLink{white-space:nowrap;flex:0 0 auto}
  .customerPortalPageHeader{flex-direction:column}

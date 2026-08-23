@@ -6,6 +6,7 @@ const ITEMS=[
   ['streaming','Setup','/account#streaming'],
   ['plans','Plan & billing','/account#plans'],
   ['activity','Activity','/account/activity'],
+  ['support','Support','/account/support'],
   ['account','Account','/account/security']
 ];
 function nav(active='',options={}){
