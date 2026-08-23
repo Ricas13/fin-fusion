@@ -31,7 +31,8 @@ assert(client.includes('_csrf:data.csrfToken'),'browser read acknowledgement mus
 assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before acknowledging unread state');
 assert(client.includes("path==='/admin/users'||path==='/admin/users/dashboard'"),'customer unread state must clear from both the customer list and its Overview landing page');
 assert(client.includes('/^\\/admin\\/users\\/[0-9a-f-]{36}$/i'),'opening a customer detail must count as reviewing the new-customer indicator');
-assert(client.includes("path==='/admin/orders'")&&client.includes("path==='/admin/tickets'"),'orders and tickets must still clear only from their own inbox pages');
+assert(client.includes("orders:'/admin/commerce/orders'"),'order indicators must link to the canonical Commerce Orders route');
+assert(client.includes("path==='/admin/commerce/orders'||path==='/admin/orders'")&&client.includes("path==='/admin/tickets'"),'orders must clear on the canonical route while legacy Orders and Support remain recognised');
 assert(client.includes('if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`)'),'browser must not pretend a failed acknowledgement cleared an unread business alert');
 assert(client.includes('markCurrentAreaReadWithRetry'),'browser must retry transient read acknowledgement failures instead of leaving a sticky badge');
 assert(client.includes('attempt<3'),'read acknowledgement must have a bounded retry budget');
