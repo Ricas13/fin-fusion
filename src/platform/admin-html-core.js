@@ -20,8 +20,33 @@ function addFilterStyles(html){
   return html.includes('</head>')?html.replace('</head>',`${link}</head>`):html;
 }
 
+// Page-action placement contract -----------------------------------------
+// Generic navigation/actions belong in the top-right page header. Overview
+// heroes may still carry corrective actions, but must not repeat a destination
+// already exposed by the page header. Keeping the rule in the shared renderer
+// prevents individual pages from drifting back into duplicate Add/Import/etc.
+function actionHrefs(action=''){
+  const hrefs=new Set();
+  const re=/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>/gi;
+  let match;
+  while((match=re.exec(String(action||''))))hrefs.add(match[2]);
+  return hrefs;
+}
+
+function dedupeOverviewActions(body='',action=''){
+  const hrefs=actionHrefs(action);
+  if(!hrefs.size)return String(body||'');
+  return String(body||'').replace(
+    /<section\b[^>]*class=(["'])[^"']*\b(?:sectionGraphicHero|operatorHero)\b[^"']*\1[^>]*>[\s\S]*?<\/section>/gi,
+    section=>section
+      .replace(/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>[\s\S]*?<\/a>/gi,(anchor,_quote,href)=>hrefs.has(href)?'':anchor)
+      .replace(/<div\s+class=(["'])(?:buttonRow|operatorHeroActions)\1>\s*<\/div>/gi,'')
+  );
+}
+
 function layout(options={}){
-  const html=addFilterStyles(addCommandPalette(base.layout(options)));
+  const normalized={...options,body:dedupeOverviewActions(options.body,options.action)};
+  const html=addFilterStyles(addCommandPalette(base.layout(normalized)));
   // admin-customer-filters.js remains after the shared enhancer for backward
   // asset compatibility. Once admin-filter-bars.js has transformed Customers,
   // the legacy controller finds no original filter grid and exits immediately.
@@ -29,4 +54,4 @@ function layout(options={}){
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
 
-module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles};
+module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,actionHrefs,dedupeOverviewActions};
