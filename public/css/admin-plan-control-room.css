@@ -5,10 +5,10 @@
 /* Table hierarchy ------------------------------------------------------- */
 /* Table headings previously sat too close to the body tone, which made two
    adjacent tables read like one continuous list. Give every admin data-table
-   a clear header band, then make Plans family headers one step stronger so
-   Free / Paid / Stremio / Reseller sections are obvious at a glance. */
-.dataTable thead th{background:rgba(255,255,255,.065)!important;color:var(--text-strong)!important;border-bottom-color:rgba(255,255,255,.13)!important}
-.planFamilySection>.sectionHead{background:rgba(255,255,255,.075);border-bottom:1px solid rgba(255,255,255,.14);box-shadow:inset 0 -1px 0 rgba(0,0,0,.18)}
+   a deliberately lighter header band, then make Plans family headers one
+   step stronger so Free / Paid / Stremio / Reseller sections are obvious. */
+.dataTable thead th{background:rgba(255,255,255,.10)!important;color:var(--text-strong)!important;border-bottom-color:rgba(255,255,255,.18)!important}
+.planFamilySection>.sectionHead{background:rgba(255,255,255,.12);border-bottom:1px solid rgba(255,255,255,.20);box-shadow:inset 0 -1px 0 rgba(0,0,0,.22)}
 .planFamilySection>.sectionHead h2{color:var(--text-strong)}
 .planFamilySection+.planFamilySection{margin-top:14px}
 
