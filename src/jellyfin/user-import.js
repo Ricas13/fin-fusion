@@ -1,6 +1,7 @@
 'use strict';
 
 const { query, transaction } = require('../db');
+const planExpiry = require('../entitlements/plan-expiry');
 const registry = require('./registry');
 const planServers = require('./plan-servers');
 const provisioning = require('./provisioning');
@@ -133,7 +134,7 @@ async function assertServerFitsPlan(server, plan) {
     if (plan.billing_interval === 'trial' && server.trial_enabled === false) {
         throw new Error(`${server.name} does not accept trial users.`);
     }
-    if (plan.billing_interval !== 'trial' && server.paid_enabled === false) {
+    if (plan.billing_interval !== 'trial' && !planExpiry.isFreeTier(plan) && server.paid_enabled === false) {
         throw new Error(`${server.name} does not accept paid users.`);
     }
     return true;
@@ -141,13 +142,7 @@ async function assertServerFitsPlan(server, plan) {
 
 function expiryForPlan(plan, override) {
     if (!plan) return null;
-    if (override) {
-        const parsed = new Date(override);
-        if (Number.isNaN(parsed.getTime()) || parsed <= new Date()) throw new Error('Imported subscription expiry must be in the future.');
-        return parsed;
-    }
-    const days = Number(plan.duration_days || 30);
-    return new Date(Date.now() + Math.max(1, Math.min(days, 3650)) * 86400000);
+    return planExpiry.endForPlan(plan, { override });
 }
 
 async function assertRemoteUnmanaged(client, serverId, user) {
@@ -202,6 +197,7 @@ async function createImportedCustomer({ serverId, jellyfinUserId, planId = null,
             jellyfinUsername: user.jellyfin_username,
             planId: plan?.id || null,
             planCode: plan?.code || null,
+            freeTier: Boolean(plan?.is_free_tier),
             applyPolicy: Boolean(applyPolicy)
         })]);
         return { customer: customer.rows[0], account: account.rows[0], subscription };
