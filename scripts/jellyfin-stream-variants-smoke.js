@@ -10,6 +10,7 @@ const provider=read('src/payments/provider-plan-pricing.js');
 const checkout=read('src/platform/flexible-checkout.js');
 const dashboard=read('src/platform/customer-dashboard.js');
 const onboarding=read('views/customer/onboarding.ejs');
+const selector=read('public/js/customer-stream-selector.js');
 const choice=read('views/customer/payment-choice.ejs');
 const admin=read('src/platform/admin-plan-stream-variants.js');
 const pricingAdmin=read('src/platform/admin-plan-payment-options.js');
@@ -24,6 +25,8 @@ assert(checkout.includes('targetStreams:choice.streams'),'future/current subscri
 assert(dashboard.includes('streamVariants.decoratePlans')&&dashboard.includes('{streams:Number(variant.streams||plan.streams||1)}'),'Available Access must calculate real capacity for each stream choice');
 assert(onboarding.includes('data-stream-selector')&&onboarding.includes('How many simultaneous streams?')&&onboarding.includes('input type="hidden" name="streams"'),'paid plan cards must remain one plan while submitting the selected stream quantity');
 assert(onboarding.includes('data-payment-key')&&onboarding.includes('data-sold'),'stream choices must hide unavailable provider modes and respect real capacity');
+assert(onboarding.includes('<script src="/js/customer-stream-selector.js" defer></script>')&&!/<script(?![^>]*src=)[^>]*>/i.test(onboarding),'stream selector behavior must stay in an external CSP-safe script');
+assert(selector.includes("querySelectorAll('[data-stream-card]')")&&selector.includes("input[name=\"streams\"]")&&selector.includes('payments.has(el.dataset.paymentKey)'),'external selector script must synchronize price, entitlement, capacity and provider buttons');
 assert(choice.includes('name="streams" value="<%= streams %>"'),'payment-mode interstitial must preserve the selected stream variant');
 assert(admin.includes('Configure up to three higher stream limits')&&admin.includes('Verify & save stream choices'),'admin must control hidden stream variants without creating duplicate catalogue plans');
 assert(pricingAdmin.includes('Configure stream choices')&&pricingAdmin.includes('streamVariantAdmin.summary'),'Pricing must expose stream-choice configuration in the normal plan workflow');
