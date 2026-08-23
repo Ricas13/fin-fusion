@@ -42,10 +42,11 @@ for (const primitive of ['operatorHero', 'resolutionCard', 'detailDisclosure']) 
   assert(ui.includes(`function ${primitive}`), `shared admin UI must expose ${primitive}`);
   assert(ui.includes(primitive), `shared admin UI exports must include ${primitive}`);
 }
-assert(ui.includes('PAGE_STATUS_HERO_ENABLED = false') && ui.includes("if (!PAGE_STATUS_HERO_ENABLED) return ''"), 'page-level status heroes must remain retired by default');
+assert(ui.includes('PAGE_STATUS_HERO_ENABLED = false') && ui.includes('operatorHeroActions-compact'), 'page-level status heroes must stay retired while preserving their operator actions compactly');
 for (const tone of ['operatorHero-good', 'operatorHero-warn', 'operatorHero-bad', 'operatorHero-commerce', 'operatorHero-streaming']) {
   assert(css.includes(tone), `operator clarity CSS must retain dormant hero styling for backwards compatibility`);
 }
+assert(css.includes('.operatorHeroActions-compact{margin:0 0 12px}'), 'retired status heroes must leave only a compact action row when actions are needed');
 assert(capability.includes("@import url('/css/admin-operator-clarity.css')"), 'operator clarity CSS must load through canonical admin capability bundle');
 
 assert(dashboard.includes('Operator control room') && dashboard.includes('ui.operatorHero({') && dashboard.includes('next,'), 'dashboard status calculation must remain available even though the page-level hero renderer is retired');
