@@ -28,15 +28,19 @@ assert(problems.includes('2 things need attention')&&problems.includes('Provisio
 assert(problems.includes('Fix provisioning')&&problems.includes('Fix backup'),'Dashboard must label exception links with the actual corrective intent');
 
 assert(cardSource.includes('Enabled')&&cardSource.includes('Configured')&&cardSource.includes('Current state')&&cardSource.includes('Last verified'),'Shared integration cards must answer the standard operator health questions');
-const rendered=cards.renderIntegrationCard({name:'Example',statusLabel:'Connected',statusKind:'good',enabled:true,configured:true,workingLabel:'Delivery observed',workingKind:'good',lastVerifiedAt:'2026-08-21T20:00:00Z',fixHint:'Retest the connection.',actionsHtml:'<a href="#manage">Manage</a>'});
-assert(rendered.includes('integrationCard')&&rendered.includes('Connected')&&rendered.includes('Delivery observed')&&rendered.includes('Retest the connection.')&&rendered.includes('Manage'),'Shared integration card renderer must carry status, evidence, recovery guidance and actions');
-assert(cardCss.includes('.integrationCardGrid')&&cardCss.includes('.attentionOverview'),'Shared integration and dashboard exception styles must live outside individual page templates');
+assert(cardSource.includes('detailsHtml'),'Shared integration cards must support optional inline configuration without changing existing callers');
+const rendered=cards.renderIntegrationCard({name:'Example',statusLabel:'Connected',statusKind:'good',enabled:true,configured:true,workingLabel:'Delivery observed',workingKind:'good',lastVerifiedAt:'2026-08-21T20:00:00Z',fixHint:'Retest the connection.',actionsHtml:'<a href="#manage">Manage</a>',detailsHtml:'<details class="integrationConfig"><summary>Configure</summary></details>'});
+assert(rendered.includes('integrationCard')&&rendered.includes('Connected')&&rendered.includes('Delivery observed')&&rendered.includes('Retest the connection.')&&rendered.includes('Manage')&&rendered.includes('integrationConfig'),'Shared integration card renderer must carry status, evidence, recovery guidance, actions and optional inline detail');
+assert(cardCss.includes('.integrationCardGrid')&&cardCss.includes('.integrationDetails')&&cardCss.includes('.integrationConfig')&&cardCss.includes('.attentionOverview'),'Shared integration and dashboard exception styles must live outside individual page templates');
 
 assert(paymentSource.includes("require('./admin-integration-card')"),'Payments must use the shared integration-card renderer');
 assert(paymentSource.includes("providerHealthCard(req,'stripe'")&&paymentSource.includes("providerHealthCard(req,'paypal'"),'Stripe and PayPal must use the same provider health-card path');
 assert(paymentSource.includes("providerEvents=(events||[]).filter(event=>event.provider===provider)"),'Payment working state must be derived from existing provider events');
 assert(paymentSource.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"),'Payment last verification must use a successfully processed provider event');
-assert(paymentSource.includes('Test connection')&&paymentSource.includes('>Manage</a>'),'Payment cards must provide test and manage actions');
+assert(paymentSource.includes('Test connection')&&paymentSource.includes('Configure ${esc(label)}'),'Payment cards must provide test and inline configure actions');
+assert(paymentSource.includes('payment-provider-config'),'Payment provider configuration details must share an exclusive native details group so only one provider is expanded at a time');
+assert(paymentSource.includes('detailsHtml:providerConfigDetails(req,provider,status,url)'),'Provider credentials and webhook setup must render inside the matching health card');
+assert(!paymentSource.includes("title:'Stripe & PayPal credentials'"),'The duplicate lower combined credentials disclosure must not remain');
 assert(!paymentSource.includes('function providerMetric'),'Old provider-specific metric cards must not remain alongside the shared integration cards');
 
 assert(emailSource.includes("require('./admin-integration-card')"),'Email must use the shared integration-card renderer');
