@@ -72,7 +72,7 @@ async function savePreferences(req,res){
     const events=(await query(`SELECT event_type,email_enabled,telegram_enabled,discord_enabled,whatsapp_enabled FROM notification_preferences WHERE event_scope IN ('admin','both') ORDER BY event_type`)).rows;
     await transaction(async client=>{
       for(const event of events){for(const channel of CHANNELS){const globalEnabled=Boolean(event[`${channel}_enabled`]),enabled=globalEnabled&&String(req.body[`${channel}__${event.event_type}`]||'')==='on';await client.query(`INSERT INTO admin_notification_preferences(admin_user_id,event_type,channel,enabled) VALUES($1,$2,$3,$4) ON CONFLICT(admin_user_id,event_type,channel) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=NOW()`,[req.session.authUserId,event.event_type,channel,enabled]);}}
-      await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.notifications.personal.update','app_user',$1,$2::jsonb)`,[req.session.authUserId,JSON.stringify({eventCount:events.length})]);
+      await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.notifications.personal.update','app_user',$2,$3::jsonb)`,[req.session.authUserId,String(req.session.authUserId),JSON.stringify({eventCount:events.length})]);
     });
     return res.redirect('/admin/profile/notifications?message='+encodeURIComponent('Your notification preferences were saved.'));
   }catch(error){return res.redirect('/admin/profile/notifications?error='+encodeURIComponent(error.message||'Notification preferences could not be saved.'));}
@@ -92,5 +92,4 @@ function createAdminPersonalNotificationPreferencesRouter(){
   r.post('/admin/profile/notifications/whatsapp',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled||'')==='on',phone=enabled?e164(req.body.phone):String(req.body.phone||'').trim()||null;await query(`INSERT INTO admin_communication_preferences(admin_user_id,phone_e164,whatsapp_opt_in,whatsapp_opted_in_at) VALUES($1,$2,$3,CASE WHEN $3 THEN NOW() ELSE NULL END) ON CONFLICT(admin_user_id) DO UPDATE SET phone_e164=EXCLUDED.phone_e164,whatsapp_opt_in=EXCLUDED.whatsapp_opt_in,whatsapp_opted_in_at=CASE WHEN EXCLUDED.whatsapp_opt_in THEN COALESCE(admin_communication_preferences.whatsapp_opted_in_at,NOW()) ELSE NULL END,updated_at=NOW()`,[req.session.authUserId,phone,enabled]);return res.redirect('/admin/profile/notifications?message='+encodeURIComponent('WhatsApp preference saved.'));}catch(error){return res.redirect('/admin/profile/notifications?error='+encodeURIComponent(error.message));}});
   return r;
 }
-
 module.exports={createAdminPersonalNotificationPreferencesRouter,page,data,eventGroups};
