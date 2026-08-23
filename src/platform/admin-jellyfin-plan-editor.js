@@ -10,6 +10,7 @@ const accessEditor = require('./admin-plan-access');
 const libraryEditor = require('./admin-plan-libraries');
 const planPricing = require('../payments/plan-pricing');
 const paymentOptions = require('./admin-plan-payment-options');
+const requestPlanPolicy = require('./admin-request-plan-policy');
 const placement = require('../jellyfin/placement');
 const { queuePlanReconciliation } = require('./bulk-jobs');
 const { esc, layout } = require('./admin-html');
@@ -163,7 +164,7 @@ function page(data, req) {
   const open = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const availabilityBadge = open == null ? 'No slot limit' : `${open} slots open`;
   const header = `<div class="planControlHeader"><div class="planControlIdentity"><strong>${esc(p.name)}</strong><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free Jellyfin' : 'Paid Jellyfin'}</span><span class="muted">${esc(data.affected)} live entitlement${data.affected === 1 ? '' : 's'}</span></div><div class="planControlIdentity"><span class="pill ${open == null || open > 0 ? 'good' : 'warn'}">${esc(availabilityBadge)}</span>${p.archived_at ? '<span class="pill warn">Archived</span>' : ''}</div></div>`;
-  const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition is controlled only by its own availability, access and delivery policy.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
+  const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${requestPlanPolicy.planCard(req, p)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition is controlled only by its own availability, access and delivery policy.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
   return layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: p.name, subtitle: data.free ? 'Free Access · independent product configuration' : 'Paid Jellyfin · unified product configuration', body, action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' });
 }
 
@@ -290,9 +291,6 @@ function decodePlanId(value) {
 function createAdminJellyfinPlanEditorRouter() {
   const router = express.Router();
   router.use('/admin/plans', gate, noStore);
-  // Match the existing Stremio dispatcher pattern: GET compatibility is
-  // middleware dispatch, not a second formal route owner. The legacy modules
-  // remain the assembled route owners if this dispatcher falls through.
   router.use((req, res, next) => {
     if (req.method !== 'GET') return next();
     const pathname = req.path;

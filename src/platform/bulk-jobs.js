@@ -116,28 +116,45 @@ function newIdempotencyKey() {
 
 // ---- Plan-change reconciliation fanout ---------------------------------
 
+// One definition of "currently on this plan" for every plan-level fanout.
+// Keep this aligned with the plan editors/effective entitlement window so a
+// paused customer is not silently left on stale limits and a superseded or
+// not-yet-started subscription is never mutated by the old plan.
 async function affectedCustomerIdsForPlan(planId) {
     const result = await query(`
         SELECT DISTINCT customer_id FROM subscriptions
-        WHERE plan_id=$1 AND status IN ('active','trialing','past_due') AND current_period_end>NOW()
+        WHERE plan_id=$1
+          AND superseded_by IS NULL
+          AND status IN ('active','trialing','past_due','paused')
+          AND starts_at<=NOW()
+          AND current_period_end>NOW()
     `, [planId]);
     return result.rows.map(r => r.customer_id);
 }
 
-// Called after a plan's Jellyfin/library settings are saved. Queues a
-// bounded, retry-safe background job that reconciles every currently active
-// customer on that plan, instead of blocking the admin's save request.
-// Returns null (no job) when nothing is affected.
-async function queuePlanReconciliation(planId, actorUserId) {
+async function queuePlanCustomerJob(jobType, planId, actorUserId, auditAction) {
     const customerIds = await affectedCustomerIdsForPlan(planId);
     if (!customerIds.length) return null;
-    const { job } = await createJob('plan_reconcile', { planId }, { createdBy: actorUserId });
+    const { job } = await createJob(jobType, { planId }, { createdBy: actorUserId });
     await enqueueItems(job.id, customerIds);
     await query(`
         INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-        VALUES($1,'admin.plan.reconcile_queued','plan',$2,$3::jsonb)
-    `, [actorUserId, planId, JSON.stringify({ jobId: job.id, affected: customerIds.length })]);
+        VALUES($1,$2,'plan',$3,$4::jsonb)
+    `, [actorUserId, auditAction, planId, JSON.stringify({ jobId: job.id, affected: customerIds.length })]);
     return getJob(job.id);
+}
+
+// Full Jellyfin reconciliation. Use this only when the plan change is meant
+// to re-apply the Jellyfin account policy (including an intentional Libraries
+// card change). Request-service policy is reconciled by the same worker item.
+async function queuePlanReconciliation(planId, actorUserId) {
+    return queuePlanCustomerJob('plan_reconcile', planId, actorUserId, 'admin.plan.reconcile_queued');
+}
+
+// Request-only fanout for settings that do not need to touch Jellyfin account
+// policy at all (for example request quotas or a Stremio household change).
+async function queuePlanRequestReconciliation(planId, actorUserId) {
+    return queuePlanCustomerJob('request_plan_reconcile', planId, actorUserId, 'admin.plan.request_reconcile_queued');
 }
 
 module.exports = {
@@ -151,5 +168,6 @@ module.exports = {
     retryFailedItems,
     newIdempotencyKey,
     affectedCustomerIdsForPlan,
-    queuePlanReconciliation
+    queuePlanReconciliation,
+    queuePlanRequestReconciliation
 };

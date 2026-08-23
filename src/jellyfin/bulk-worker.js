@@ -142,14 +142,32 @@ async function processBatch() {
     return items.length;
 }
 
-// Plan-change reconciliation fanout: reconcile the customer's Jellyfin
-// accounts against their current entitlement (which already reflects the
-// plan change that queued this job). Registered here since it belongs to
-// the provisioning domain this file already depends on; other job types are
-// registered by the routers that define them.
+async function reconcileRequestUser(customerId) {
+    const requestSettings = require('../integrations/request-service-settings');
+    await requestSettings.ensureLoaded();
+    const state = await requestSettings.status();
+    if (!state.enabled || !state.configured) return { status: 'not_configured' };
+    const requestUsers = require('../integrations/request-user-sync');
+    const result = await requestUsers.syncOneCustomer(customerId);
+    if (result?.status === 'failed') throw new Error(result.error || 'Request-service reconciliation failed.');
+    return result || { status: 'unknown' };
+}
+
+// Full plan reconciliation: Jellyfin account policy follows the current
+// entitlement, and request-service policy is pushed in the same retry-safe
+// item. Libraries are only changed here when the plan's Libraries card (or an
+// explicit customer library action) actually changed their effective policy.
 registerHandler('plan_reconcile', async item => {
     const outcome = await provisioning.reconcileCustomer(item.customer_id);
-    return { active: Boolean(outcome?.active) };
+    const request = await reconcileRequestUser(item.customer_id);
+    return { active: Boolean(outcome?.active), requestStatus: request.status || null };
+});
+
+// Request-only fanout is used by request quota/permission changes and by
+// Stremio plan changes. It deliberately never touches Jellyfin libraries.
+registerHandler('request_plan_reconcile', async item => {
+    const request = await reconcileRequestUser(item.customer_id);
+    return { requestStatus: request.status || null };
 });
 
 module.exports = { registerHandler, processBatch, reclaimStaleRunningItems, finishItem, BATCH_SIZE, STALE_RUNNING_MINUTES };
