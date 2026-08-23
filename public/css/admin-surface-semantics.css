@@ -1,0 +1,54 @@
+/* Semantic admin surface hierarchy.
+   Overview = glanceable and compressed.
+   Data = read-only/inspection-first and dense.
+   Control = genuinely editable and visually prominent. */
+
+.adminSurface{position:relative;min-width:0;transition:border-color .14s ease,box-shadow .14s ease,background .14s ease}
+.adminSurfaceKind{flex:0 0 auto;display:inline-flex;align-items:center;min-height:20px;padding:3px 7px;border-radius:999px;font-size:8px;font-weight:850;letter-spacing:.075em;text-transform:uppercase;white-space:nowrap}
+
+/* Read-only data surfaces ------------------------------------------------ */
+.adminSurface--data{border-color:#2b3541!important;background:linear-gradient(180deg,rgba(255,255,255,.012),rgba(255,255,255,.003))!important;box-shadow:inset 2px 0 0 rgba(130,149,169,.28)!important}
+.adminSurface--data>.sectionHead,.adminSurface--data>.card-header,.adminSurface--data>.capabilitySectionHead,.adminSurface--data>.analyticsCardHeader,.adminSurface--data>.serverTop,.adminSurface--data>header{min-height:38px!important;padding:7px 11px!important;background:rgba(255,255,255,.045)!important;border-bottom-color:#34404d!important}
+.adminSurface--data .adminSurfaceKind{color:#9ba9b7;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.17)}
+.adminSurface--data table th,.adminSurface--data .dataTable th{padding:8px 11px!important;background:rgba(255,255,255,.085)!important;color:#b5c0cc!important;border-bottom:1px solid #3a4653!important;font-size:10px!important}
+.adminSurface--data table td,.adminSurface--data .dataTable td{padding:8px 11px!important}
+.adminSurface--data table tbody tr:hover td,.adminSurface--data .dataTable tbody tr:hover td{background:rgba(255,255,255,.025)!important}
+.adminSurface--data .operatorPager,.adminSurface--data .capabilityPagination{margin-top:5px;padding:5px 8px}
+.adminSurface--data .empty,.adminSurface--data .capabilityEmpty{padding:12px 13px}
+
+/* Editable/configuration surfaces --------------------------------------- */
+.adminSurface--control{border-color:rgba(52,183,226,.42)!important;background:linear-gradient(180deg,rgba(32,169,214,.035),rgba(255,255,255,.006))!important;box-shadow:inset 3px 0 0 #32b7e3,0 9px 24px rgba(0,0,0,.11)!important}
+.adminSurface--control>.sectionHead,.adminSurface--control>.card-header,.adminSurface--control>.capabilitySectionHead,.adminSurface--control>.analyticsCardHeader,.adminSurface--control>.serverTop,.adminSurface--control>header{min-height:46px!important;padding:9px 12px!important;background:linear-gradient(90deg,rgba(32,169,214,.12),rgba(32,169,214,.035) 52%,rgba(255,255,255,.015))!important;border-bottom:1px solid rgba(70,187,224,.3)!important}
+.adminSurface--control .adminSurfaceKind{color:#8bdcf3;background:rgba(32,169,214,.12);border:1px solid rgba(69,192,231,.32)}
+.adminSurface--control table th,.adminSurface--control .dataTable th{padding:9px 11px!important;background:rgba(32,169,214,.12)!important;color:#c8dce5!important;border-bottom:1px solid rgba(70,187,224,.34)!important;font-size:10px!important}
+.adminSurface--control table td,.adminSurface--control .dataTable td{padding:10px 11px!important}
+.adminSurface--control table tbody tr:hover td,.adminSurface--control .dataTable tbody tr:hover td{background:rgba(32,169,214,.045)!important}
+.adminSurface--control table input:not([type=hidden]),.adminSurface--control table select,.adminSurface--control table textarea{border-color:#405465;background:#0d151d}
+.adminSurface--control table input:focus,.adminSurface--control table select:focus,.adminSurface--control table textarea:focus{border-color:#3fc2ed;box-shadow:0 0 0 3px rgba(32,169,214,.09)}
+.adminSurface--control details{border-color:rgba(65,139,164,.22)}
+
+/* Information-only surfaces: make them recede and stay compact. ---------- */
+.adminOverviewSurface{box-shadow:none!important}
+.sectionGraphicHero.adminOverviewSurface,.operatorHero .adminOverviewSurface{box-shadow:none!important}
+.sectionStat.adminOverviewSurface,.sectionMeter.adminOverviewSurface,.summaryCard.adminOverviewSurface,.metric.adminOverviewSurface,.stat-card.adminOverviewSurface,.operatorHeroFact.adminOverviewSurface,.analyticsKpi.adminOverviewSurface,.capabilitySummary.adminOverviewSurface,.serverControlStat.adminOverviewSurface,.controlCentreSummary>div.adminOverviewSurface,.dashboardFocusCard.adminOverviewSurface,.sectionInsightCard.adminOverviewSurface{border-color:rgba(120,138,158,.18)!important;background:rgba(255,255,255,.018)!important}
+.sectionStat.adminOverviewSurface,.summaryCard.adminOverviewSurface,.metric.adminOverviewSurface,.stat-card.adminOverviewSurface,.operatorHeroFact.adminOverviewSurface,.serverControlStat.adminOverviewSurface,.controlCentreSummary>div.adminOverviewSurface{padding:6px 8px!important}
+.sectionMeter.adminOverviewSurface{padding:6px 8px!important}
+.sectionInsightCard.adminOverviewSurface,.dashboardFocusCard.adminOverviewSurface{padding:8px 9px!important;min-height:0!important}
+.analyticsKpi.adminOverviewSurface{min-height:66px!important;padding:8px 10px!important}
+.capabilitySummary.adminOverviewSurface{padding:6px 8px!important;gap:7px!important}
+.capabilitySummary.adminOverviewSurface .capabilitySummaryStats{gap:0!important}
+.capabilitySummary.adminOverviewSurface .capabilityStat{padding:4px 8px!important;min-height:0!important}
+.capabilitySummary.adminOverviewSurface .capabilitySummaryActions{gap:5px!important}
+.adminOverviewSurface p{line-height:1.35}
+
+/* Keep explanatory/status chrome subordinate to settings. ---------------- */
+.notice:not(.error):not(.warn),.securityNote,.setupCompact,.statusBanner{padding:7px 10px!important;margin-bottom:8px!important;min-height:0!important;line-height:1.35}
+.uiEmptyState{padding:10px 11px}
+.uiSectionHeader{margin-bottom:9px}
+.uiSectionHeader p{margin-top:3px;line-height:1.35}
+.capabilityPage>.statusBanner{font-size:11px}
+
+@media(max-width:760px){
+  .adminSurfaceKind{font-size:7px;padding:3px 6px}
+  .adminSurface--data table th,.adminSurface--data table td,.adminSurface--control table th,.adminSurface--control table td{padding-left:9px!important;padding-right:9px!important}
+}
