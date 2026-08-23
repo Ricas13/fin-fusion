@@ -21,7 +21,12 @@ assert(attention.includes("return[];"),'Attention state failure must fall back t
 assert(attention.includes("acknowledged_at!=null?'acknowledged':'open'"),'Attention status must derive from acknowledgement state while the source remains authoritative');
 assert(attention.includes("href:`/admin/servers/dashboard?server=${encodeURIComponent(r.id)}`"),'Server health findings must preserve the affected server when opening the fleet control room');
 assert(servers.includes('selectedServerResolution')&&servers.includes('/admin/servers/${esc(server.id)}/edit'),'Fleet control room must turn server issue context into an explicit corrective settings action');
-assert(attention.includes("href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`"),'Backup findings must deep-link to the matching backup run');
+assert(attention.includes('WITH latest_success AS'),'Backup attention must derive from current recovery state instead of listing historical runs');
+assert(attention.includes('latest_failure AS'),'Backup attention must retain the newest unresolved backup failure');
+assert(attention.includes("WHERE verified_at IS NULL AND started_at<NOW()-INTERVAL '2 days'"),'Backup verification warning must only consider the latest successful recovery point after the grace period');
+assert(!attention.includes("FROM backup_runs WHERE status='failed' OR (status='succeeded' AND verified_at IS NULL"),'Attention must not create one warning for every historical unverified backup');
+assert(attention.includes("title:r.status==='failed'?'Backup failed':'Latest backup has not been restore-verified'"),'Backup attention copy must describe a current recovery condition');
+assert(attention.includes("href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`"),'Backup findings must deep-link to the matching current backup run');
 assert(admin.includes('class="attentionActionGrid"'),'Attention operator controls must be compact side-by-side without depending on client-side detection');
 assert(admin.includes('Issue & fix')&&admin.includes('actionLabel'),'Attention UI must present corrective intent separately from acknowledgement workflow');
 assert(operator.includes('attention.openSummary()'),'Unread operator state must count live attention findings instead of querying a phantom state table');
