@@ -37,9 +37,10 @@ function ordersHero(orders){
 async function page(){await runtimeSettings.ensureLoaded();const orders=await rows(),recent=orders.slice(0,25),body=`${ordersHero(orders)}<section class="section">${ui.sectionHeader({title:'Recent purchases',description:'Newest Stripe and PayPal purchases. Select a customer to continue in their Billing journey.'})}${orderTable(recent)}${orders.length>recent.length?ui.detailDisclosure({title:`Full purchase history (${orders.length})`,summary:'Older provider purchases · open only when tracing a historical transaction',bodyHtml:orderTable(orders)}):''}</section>`;return layout({siteName:runtimeSettings.siteName(),active:'orders',title:'Orders',subtitle:'Trace purchases to customers; handle recurring billing problems in Billing',body});}
 function createAdminOrdersRouter(){
  const router=express.Router();
- router.use([ORDERS_PATH,LEGACY_ORDERS_PATH],gate,noStore);
- router.get(ORDERS_PATH,async(_req,res,next)=>{try{return res.send(await page())}catch(error){next(error)}});
- router.get(LEGACY_ORDERS_PATH,(_req,res)=>res.redirect(308,ORDERS_PATH));
+ router.use('/admin/commerce/orders',gate,noStore);
+ router.use('/admin/orders',gate,noStore);
+ router.get('/admin/commerce/orders',async(_req,res,next)=>{try{return res.send(await page())}catch(error){next(error)}});
+ router.get('/admin/orders',(_req,res)=>res.redirect(308,ORDERS_PATH));
  return router;
 }
 module.exports={createAdminOrdersRouter,page,rows,orderTable,ordersHero,ORDERS_PATH,LEGACY_ORDERS_PATH};
