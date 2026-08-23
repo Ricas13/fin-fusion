@@ -36,6 +36,10 @@ const suites = [
     commands: [['node', ['scripts/admin-analytics-dashboard-smoke.js']]],
   },
   {
+    name: 'Admin personal notification save',
+    commands: [['node', ['scripts/admin-personal-notification-save-smoke.js']]],
+  },
+  {
     name: 'Adversarial concurrency and referral safety',
     commands: [
       ['node', ['scripts/adversarial-concurrency-smoke.js']],
