@@ -1,21 +1,19 @@
 'use strict';
 
-const express=require('express');
-const csrf=require('../auth/csrf');
-const {query}=require('../db');
-const operations=require('./operations-settings');
-const runtimeSettings=require('./runtime-settings');
-const placementPreview=require('../jellyfin/placement-preview');
-const planServers=require('../jellyfin/plan-servers');
-const ui=require('./admin-ui');
-const {layout,esc}=require('./admin-html');
+const express = require('express');
+const csrf = require('../auth/csrf');
+const { query } = require('../db');
+const operations = require('./operations-settings');
+const planServers = require('../jellyfin/plan-servers');
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
-function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
-function modeLabel(mode){return mode==='drain'?'Drain':mode==='maintenance'?'Maintenance':'Active';}
-function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`;}
-
+function forward(req,anchor='placement'){
+  const params=new URLSearchParams();
+  if(req.query.message)params.set('message',String(req.query.message));
+  if(req.query.error)params.set('error',String(req.query.error));
+  return `/admin/servers${params.toString()?`?${params.toString()}`:''}#${anchor}`;
+}
 async function data(){
   const [settings,servers,plans]=await Promise.all([
     operations.get(),
@@ -25,41 +23,46 @@ async function data(){
   return{settings,servers:servers.rows,plans:plans.rows};
 }
 function placementEligible(server,settings){return server.placement_mode==='active'&&server.allow_new_users===true&&planServers.healthEligible(server,settings.placementHealthMode);}
-function fleetState(d){const eligible=d.servers.filter(server=>placementEligible(server,d.settings)),offline=d.servers.filter(server=>server.health_status==='offline'),degraded=d.servers.filter(server=>server.health_status==='degraded'),paused=d.servers.filter(server=>server.placement_mode!=='active'),newUsersDisabled=d.servers.filter(server=>server.allow_new_users!==true);return{eligible,offline,degraded,paused,newUsersDisabled};}
-function fleetHero(d,state){
-  let tone='good',title='New customers can be placed safely',statusLabel='Placement ready',next='No placement intervention is required. Change a server mode only when you intentionally want to remove it from new assignments.';
-  if(!d.servers.length){tone='bad';title='No enabled Jellyfin servers are available';statusLabel='Placement unavailable';next='Add or enable a Jellyfin server before accepting customers who require Jellyfin access.';}
-  else if(!state.eligible.length){tone='bad';title='No server is currently eligible for a new customer';statusLabel='Placement blocked';next='Restore server health or return at least one suitable server to Active with new placements allowed.';}
-  else if(state.offline.length){tone='warn';title=`${state.offline.length} enabled ${state.offline.length===1?'server is':'servers are'} offline`;statusLabel='Reduced capacity';next='Restore the offline server or deliberately move it to Maintenance if it should remain unavailable.';}
-  else if(state.degraded.length){tone='warn';title=`${state.degraded.length} ${state.degraded.length===1?'server is':'servers are'} degraded`;statusLabel='Review health';next='Check degraded server health before changing placement policy to make more hosts eligible.';}
-  return ui.operatorHero({tone,eyebrow:'Placement control room',title,body:'Placement control room for future assignments. Existing customer access is not moved by these settings.',statusLabel,next,facts:[
-    {label:'Enabled servers',value:String(d.servers.length),detail:'Jellyfin servers in this fleet'},
-    {label:'Eligible now',value:String(state.eligible.length),detail:'can receive a new customer'},
-    {label:'Offline / degraded',value:`${state.offline.length} / ${state.degraded.length}`,detail:'health reducing placement options'},
-    {label:'Drain / maintenance',value:String(state.paused.length),detail:'deliberately excluded from new placement'}
-  ],actionsHtml:state.offline.length?'<a class="button" href="/admin/servers/dashboard">Fix server health</a><a class="button secondary" href="#server-placement-modes">Placement modes</a>':'<a class="button" href="#server-placement-modes">Placement modes</a><a class="button secondary" href="#placement-preview">Capacity preview</a>'});
+function fleetState(d){
+  const eligible=d.servers.filter(server=>placementEligible(server,d.settings));
+  const offline=d.servers.filter(server=>server.health_status==='offline');
+  const degraded=d.servers.filter(server=>server.health_status==='degraded');
+  const paused=d.servers.filter(server=>server.placement_mode!=='active');
+  const newUsersDisabled=d.servers.filter(server=>server.allow_new_users!==true);
+  return{eligible,offline,degraded,paused,newUsersDisabled};
 }
-function stateCards(d,state){const cards=[];if(!state.eligible.length&&d.servers.length)cards.push(ui.resolutionCard({tone:'bad',badge:'Placement blocked',title:'No server can receive a new customer',body:'Every enabled server is excluded by health, placement mode or its new-user switch.',reason:'Provisioning cannot safely choose a target until at least one server is eligible under the current placement policy.',actionHtml:'<a class="button" href="#server-placement-modes">Review placement modes</a>',secondaryHtml:'<a class="button secondary" href="/admin/servers/dashboard">Check fleet health</a>'}));if(state.offline.length)cards.push(ui.resolutionCard({tone:'warn',badge:'Server health',title:`${state.offline.length} enabled ${state.offline.length===1?'server is':'servers are'} offline`,body:state.offline.map(server=>server.name).join(', '),reason:'Offline servers cannot receive new customers and reduce the fleet options available to provisioning.',actionHtml:'<a class="button" href="/admin/servers/dashboard">Open fleet health</a>'}));return cards.join('');}
-function serverRows(req,d,state){if(!d.servers.length)return'<div class="empty">No enabled Jellyfin servers.</div>';return `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Server</th><th>Health</th><th>New customers</th><th>Placement state</th><th>Mode</th></tr></thead><tbody>${d.servers.map(x=>{const eligible=state.eligible.some(server=>String(server.id)===String(x.id));const why=!x.allow_new_users?'New placements disabled':x.placement_mode!=='active'?modeLabel(x.placement_mode):!planServers.healthEligible(x,d.settings.placementHealthMode)?'Health excluded by policy':'Eligible';return `<tr><td><strong>${esc(x.name)}</strong><div class="subText">${esc(x.server_class)}${x.max_users?` · max ${esc(x.max_users)}`:''}</div></td><td><span class="pill ${x.health_status==='healthy'?'good':x.health_status==='offline'?'bad':'warn'}">${esc(x.health_status||'unknown')}</span></td><td>${x.allow_new_users?'Allowed':'Disabled'}</td><td><span class="pill ${eligible?'good':x.health_status==='offline'?'bad':'warn'}">${esc(why)}</span></td><td><form class="inlineForm" method="post" action="/admin/servers/operations/server/${esc(x.id)}/placement-mode">${token(req)}<label class="srOnly" for="server-placement-mode-${esc(x.id)}">Placement mode for ${esc(x.name)}</label><select id="server-placement-mode-${esc(x.id)}" class="input" name="mode"><option value="active" ${x.placement_mode==='active'?'selected':''}>Active — can receive new placements</option><option value="drain" ${x.placement_mode==='drain'?'selected':''}>Drain — no new placements</option><option value="maintenance" ${x.placement_mode==='maintenance'?'selected':''}>Maintenance — no new placements</option></select><button class="button secondary btn-sm">Save mode</button></form></td></tr>`;}).join('')}</tbody></table></div>`;}
-function policyPanel(req,d){const s=d.settings;return `<form class="formPanel" method="post" action="/admin/servers/operations/placement-policy">${token(req)}<div class="formGroup"><label>Which server health states may receive a new customer?</label><select class="input" name="placementHealthMode"><option value="healthy_only" ${s.placementHealthMode==='healthy_only'?'selected':''}>Healthy only</option><option value="healthy_or_degraded" ${s.placementHealthMode==='healthy_or_degraded'?'selected':''}>Healthy or degraded</option><option value="fail_open" ${s.placementHealthMode==='fail_open'?'selected':''}>Any server except offline</option></select><div class="inlineHelp">Healthy or degraded is the normal resilient default. “Any server except offline” trades placement caution for availability.</div></div><button class="button">Save placement policy</button></form>`;}
-function previewPanel(req,d,preview){const previewHtml=preview?`<div class="statusBanner"><strong>Capacity preview:</strong> ${esc(preview.requested)} hypothetical new users on ${esc(preview.plan.name)}; ${esc(preview.unplaced)} could not be placed.</div><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Server</th><th>Health</th><th>Existing</th><th>Simulated new</th><th>Max</th></tr></thead><tbody>${preview.servers.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.health)}</td><td>${esc(x.existingUsers)}</td><td><strong>${esc(x.simulatedNewUsers)}</strong></td><td>${esc(x.maxUsers||'∞')}</td></tr>`).join('')}</tbody></table></div>`:'';return `<form class="formPanel" method="post" action="/admin/servers/operations/placement-preview">${token(req)}<div class="formGrid"><div class="formGroup"><label>Plan</label><select class="input" name="planId" required>${d.plans.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.placement_strategy||'balanced')}</option>`).join('')}</select></div><div class="formGroup"><label>Hypothetical new customers</label><input class="input" type="number" name="count" min="1" max="1000" value="25"></div></div><button class="button secondary">Preview future capacity</button></form>${previewHtml}`;}
-
-async function page(req,preview=null){
-  await runtimeSettings.ensureLoaded();const d=await data(),state=fleetState(d);
-  const issues=stateCards(d,state);const issueSection=issues?`<section class="section">${ui.sectionHeader({eyebrow:'Current exceptions',title:'Fix placement blockers first',description:'Only current fleet conditions that reduce or stop new placement are elevated here.'})}<div style="display:grid;gap:12px">${issues}</div></section>`:'';
-  const modes=`<section class="section" id="server-placement-modes">${ui.sectionHeader({title:'Server placement modes',description:'Temporarily remove a server from future assignments without disrupting customers already hosted there.'})}<div class="operatorCallout"><strong>Active</strong> allows new assignments when health and server settings also permit them. <strong>Drain</strong> and <strong>Maintenance</strong> stop new assignments but do not move or disable existing customers.</div>${serverRows(req,d,state)}</section>`;
-  const policy=ui.detailDisclosure({title:'Placement health policy',summary:'Advanced rule controlling which health states can receive a new customer',bodyHtml:policyPanel(req,d)});
-  const previewBody=previewPanel(req,d,preview);const previewDisclosure=`<details class="operatorDetails" id="placement-preview" ${preview?'open':''}><summary><span>Future capacity preview</span><small>Simulate new assignments without creating customers or changing capacity</small></summary><div class="operatorDetailsBody">${previewBody}</div></details>`;
-  const body=`${notice(req)}${fleetHero(d,state)}${issueSection}${modes}${policy}${previewDisclosure}`;
-  return layout({siteName:runtimeSettings.siteName(),active:'fleet-operations',title:'Fleet operations',subtitle:'See current placement readiness first, then deliberately change where future Jellyfin customers can be assigned',body});
-}
+function fleetHero(d,state){return{enabled:d.servers.length,eligible:state.eligible.length,offline:state.offline.length,degraded:state.degraded.length,paused:state.paused.length};}
+async function page(){return '/admin/servers#placement';}
 
 function createAdminFleetOperationsRouter(){
   const r=express.Router();r.use('/admin/servers/operations',gate,noStore);
-  r.get('/admin/servers/operations',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){next(error);}});
-  r.post('/admin/servers/operations/placement-policy',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const mode=['healthy_only','healthy_or_degraded','fail_open'].includes(req.body.placementHealthMode)?req.body.placementHealthMode:null;if(!mode)throw new Error('Choose a valid placement health policy.');await operations.patch({placementHealthMode:mode},req.session.authUserId);return res.redirect('/admin/servers/operations?message='+encodeURIComponent('Placement health policy saved.'));}catch(error){return res.redirect('/admin/servers/operations?error='+encodeURIComponent(error.message));}});
-  r.post('/admin/servers/operations/server/:id/placement-mode',async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const mode=['active','drain','maintenance'].includes(req.body.mode)?req.body.mode:null;if(!mode)throw new Error('Unknown placement mode.');const result=await query(`UPDATE jellyfin_servers SET placement_mode=$2,updated_at=NOW() WHERE id=$1 RETURNING name`,[req.params.id,mode]);if(!result.rowCount)throw new Error('Server not found.');await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.placement_mode','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({mode})]);return res.redirect('/admin/servers/operations?message='+encodeURIComponent(`${result.rows[0].name} placement mode is now ${mode}.`));}catch(error){return res.redirect('/admin/servers/operations?error='+encodeURIComponent(error.message));}});
-  r.post('/admin/servers/operations/placement-preview',async(req,res,next)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{return res.send(await page(req,await placementPreview.preview(req.body.planId,req.body.count)));}catch(error){next(error);}});
+  r.get('/admin/servers/operations',(req,res)=>res.redirect(302,forward(req,'placement')));
+  r.post('/admin/servers/operations/placement-policy',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid security token');
+    try{
+      const mode=['healthy_only','healthy_or_degraded','fail_open'].includes(req.body.placementHealthMode)?req.body.placementHealthMode:null;
+      if(!mode)throw new Error('Choose a valid placement health policy.');
+      await operations.patch({placementHealthMode:mode},req.session.authUserId);
+      return res.redirect('/admin/servers?message='+encodeURIComponent('Placement health policy saved.')+'#placement-policy');
+    }catch(error){return res.redirect('/admin/servers?error='+encodeURIComponent(error.message)+'#placement-policy');}
+  });
+  r.post('/admin/servers/operations/server/:id/placement-mode',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid security token');
+    try{
+      const mode=['active','drain','maintenance'].includes(req.body.mode)?req.body.mode:null;
+      if(!mode)throw new Error('Unknown placement mode.');
+      const result=await query(`UPDATE jellyfin_servers SET placement_mode=$2,updated_at=NOW() WHERE id=$1 RETURNING name`,[req.params.id,mode]);
+      if(!result.rowCount)throw new Error('Server not found.');
+      await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.placement_mode','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.id,JSON.stringify({mode})]);
+      return res.redirect(`/admin/servers?message=${encodeURIComponent(`${result.rows[0].name} placement mode is now ${mode}.`)}#server-${encodeURIComponent(req.params.id)}`);
+    }catch(error){return res.redirect('/admin/servers?error='+encodeURIComponent(error.message)+'#placement');}
+  });
+  r.post('/admin/servers/operations/placement-preview',(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid security token');
+    const planId=String(req.body.planId||'').trim(),count=Math.max(1,Math.min(1000,Number(req.body.count)||25));
+    const params=new URLSearchParams({previewPlanId:planId,previewCount:String(count)});
+    return res.redirect(303,`/admin/servers?${params.toString()}#capacity-preview`);
+  });
   return r;
 }
 
