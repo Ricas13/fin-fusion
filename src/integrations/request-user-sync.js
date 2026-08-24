@@ -110,6 +110,10 @@ async function setPermissions(externalUserId, permissions) {
   await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/permissions`, { method: 'POST', body: { permissions: Math.max(0, Number(permissions) || 0) } });
 }
 function planValue(override, current, fallback = null) { return override === null || override === undefined || override === '' ? (current ?? fallback) : override; }
+function requestLocale(override, current) {
+  const value = planValue(override, current, 'en');
+  return String(value || '').trim() || 'en';
+}
 async function setQuotas(externalUserId, externalUsername, plan, externalEmail = null) {
   const current = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`);
   const email = validEmail(current?.email) || validEmail(externalEmail) || fallbackEmail(plan?.customer_id);
@@ -118,7 +122,7 @@ async function setQuotas(externalUserId, externalUsername, plan, externalEmail =
   const body = {
     username: current?.username ?? externalUsername ?? cleanUsername(plan?.username),
     email,
-    locale: planValue(plan?.request_locale, current?.locale, null),
+    locale: requestLocale(plan?.request_locale, current?.locale),
     discoverRegion,
     streamingRegion,
     // Kept for compatibility with older Overseerr/Jellyseerr releases that
