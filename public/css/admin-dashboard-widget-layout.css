@@ -13,6 +13,18 @@
   position:static;
   margin:0;
 }
+.analyticsGrid{
+  align-items:stretch;
+}
+.analyticsCard.widgetCard{
+  display:flex;
+  flex-direction:column;
+  height:100%;
+}
+.analyticsCard.widgetCard .analyticsCardBody{
+  flex:1 1 auto;
+  min-height:0;
+}
 .widgetCard .analyticsCardBody>.analyticsKpi{
   display:block;
   min-height:0;
@@ -24,11 +36,13 @@
   text-decoration:none;
   overflow:visible;
 }
+.widgetCard .analyticsCardBody>.analyticsKpi::before,
 .widgetCard .analyticsCardBody>.analyticsKpi::after{
   display:none;
 }
 .widgetCard .analyticsCardBody>a.analyticsKpi{
   cursor:pointer;
+  text-decoration:none;
 }
 .widgetCard .analyticsCardBody>a.analyticsKpi:hover .analyticsKpiValue{
   color:#fff;
