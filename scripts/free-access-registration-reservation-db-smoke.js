@@ -12,7 +12,7 @@ async function main(){
   assert(free,'canonical Free Access plan is missing');
   const originalLimit=free.capacity_limit;
   const tag=`hold-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-  let first=null,created=null,subscriptionId=null;
+  let first=null,created=null,subscriptionId=null,terminal=null,duplicateUserId=null;
   try{
     const before=await capacity.usage(free.id);
     const temporaryLimit=Number(before.used||0)+Number(before.reserved||0)+1;
@@ -47,12 +47,39 @@ async function main(){
     const after=await capacity.usage(free.id);
     assert.equal(after.reserved,Number(before.reserved||0),'converted hold still consumes reservation capacity');
     assert(after.used>=Number(before.used||0)+1,'converted hold did not become a live subscription');
+
+    const terminalLimit=Number(after.used||0)+Number(after.reserved||0)+1;
+    await query(`UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1`,[free.id,terminalLimit]);
+    terminal=await pending.begin({email:`${tag}-terminal@example.test`,username:`${tag}-terminal`.slice(0,40),password:'ReservationSmoke!2026',freeAccess:true,ttlMinutes:60});
+    assert(terminal.freeReservation?.id,'terminal registration did not create a reservation');
+    const terminalHeld=await capacity.usage(free.id);
+    assert.equal(terminalHeld.reserved,Number(after.reserved||0)+1,'terminal registration reservation was not counted');
+
+    const sourceHash=(await query(`SELECT password_hash FROM app_users WHERE id=$1`,[created.user.id])).rows[0]?.password_hash;
+    assert(sourceHash,'source password hash missing');
+    duplicateUserId=(await query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',NOW()) RETURNING id`,[terminal.email,`${tag}-dup`.slice(0,40),sourceHash])).rows[0].id;
+
+    let terminalRejected=false;
+    try{await pending.consume(terminal.token);}
+    catch(error){terminalRejected=/already exists/i.test(error.message);}
+    assert(terminalRejected,'identity race did not reject the pending registration');
+
+    const terminalRow=(await query(`SELECT consumed_at FROM pending_registrations WHERE id=$1`,[terminal.id])).rows[0];
+    assert(terminalRow?.consumed_at,'terminal pending registration remained reusable after rejection');
+    const releasedReservation=(await query(`SELECT consumed_at,released_at FROM free_access_registration_reservations WHERE id=$1`,[terminal.freeReservation.id])).rows[0];
+    assert(!releasedReservation?.consumed_at,'terminal reservation was incorrectly consumed');
+    assert(releasedReservation?.released_at,'terminal reservation was not released');
+    const afterRelease=await capacity.usage(free.id);
+    assert.equal(afterRelease.reserved,Number(after.reserved||0),'terminal rejection continued to consume Free Access capacity');
+
     console.log('Free Access registration reservation DB smoke: ok');
   } finally {
     if(subscriptionId)await query(`DELETE FROM subscriptions WHERE id=$1`,[subscriptionId]).catch(()=>{});
+    if(terminal?.id)await query(`DELETE FROM pending_registrations WHERE id=$1`,[terminal.id]).catch(()=>{});
     if(first?.id)await query(`DELETE FROM pending_registrations WHERE id=$1`,[first.id]).catch(()=>{});
     if(created?.customer?.id)await query(`DELETE FROM customers WHERE id=$1`,[created.customer.id]).catch(()=>{});
     if(created?.user?.id)await query(`DELETE FROM app_users WHERE id=$1`,[created.user.id]).catch(()=>{});
+    if(duplicateUserId)await query(`DELETE FROM app_users WHERE id=$1`,[duplicateUserId]).catch(()=>{});
     await query(`UPDATE plans SET capacity_limit=$2,updated_at=NOW() WHERE id=$1`,[free.id,originalLimit]).catch(()=>{});
   }
 }

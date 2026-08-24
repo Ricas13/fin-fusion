@@ -27,6 +27,11 @@ function cleanCommunicationPreferences(value={}){
     };
 }
 async function serialize(client){await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:pending-registration',$1::bigint))`,[LOCK_SEED]);}
+async function terminalize(client,pendingId,message){
+    await client.query(`UPDATE pending_registrations SET consumed_at=COALESCE(consumed_at,NOW()),updated_at=NOW() WHERE id=$1`,[pendingId]);
+    await client.query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()) WHERE pending_registration_id=$1 AND consumed_at IS NULL AND released_at IS NULL`,[pendingId]);
+    return{terminalError:message};
+}
 async function canonicalFreePlan(client){
     const found=await client.query(`SELECT id,code,name,capacity_limit FROM plans WHERE active=TRUE AND visible=TRUE AND is_free_tier=TRUE AND COALESCE(is_addon,FALSE)=FALSE AND audience IN('direct','both') AND price_minor=0 AND billing_interval<>'trial' AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY sort_order ASC,id ASC LIMIT 1`);
     return found.rows[0]||null;
@@ -68,9 +73,9 @@ async function consume(rawToken){
         const pending=found.rows[0],prefs=cleanCommunicationPreferences(pending.communication_preferences||{});
         const reservation=(await client.query(`SELECT id,plan_id,expires_at,consumed_at,released_at FROM free_access_registration_reservations WHERE pending_registration_id=$1 FOR UPDATE`,[pending.id])).rows[0]||null;
         const banned=await client.query(`SELECT 1 FROM customer_bans WHERE revoked_at IS NULL AND blocks_registration=TRUE AND normalized_email=LOWER(BTRIM($1)) LIMIT 1`,[pending.email]);
-        if(banned.rowCount){await client.query(`UPDATE pending_registrations SET consumed_at=NOW(),updated_at=NOW() WHERE id=$1`,[pending.id]);throw new Error('Registration is not available for this email address');}
+        if(banned.rowCount)return terminalize(client,pending.id,'Registration is not available for this email address');
         const exists=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) OR lower(username)=lower($2) LIMIT 1`,[pending.email,pending.username]);
-        if(exists.rowCount){await client.query(`UPDATE pending_registrations SET consumed_at=NOW(),updated_at=NOW() WHERE id=$1`,[pending.id]);throw new Error('An account already exists with that email or username');}
+        if(exists.rowCount)return terminalize(client,pending.id,'An account already exists with that email or username');
         const user=(await client.query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',NOW()) RETURNING id,email,username,role,active,email_verified_at,created_at,session_version`,[pending.email,pending.username,pending.password_hash])).rows[0];
         const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
         await client.query(`INSERT INTO customer_communication_preferences(customer_id,phone_e164,whatsapp_opt_in,whatsapp_opted_in_at,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,CASE WHEN $3 THEN NOW() ELSE NULL END,$4,$5,$6,$7) ON CONFLICT(customer_id) DO UPDATE SET phone_e164=EXCLUDED.phone_e164,whatsapp_opt_in=EXCLUDED.whatsapp_opt_in,whatsapp_opted_in_at=EXCLUDED.whatsapp_opted_in_at,telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.phone_e164,prefs.whatsapp_opt_in,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
@@ -79,6 +84,7 @@ async function consume(rawToken){
         return{user,customer,referralCode:pending.referral_code||null,pendingRegistrationId:pending.id,freeAccessRequested:Boolean(pending.free_access_requested),freeReservation:reservation};
     });
     if(!created)return null;
+    if(created.terminalError)throw new Error(created.terminalError);
     if(created.referralCode){try{const settings=await referrals.loadSettings();if(settings.enabled)await referrals.attributeReferral(created.customer.id,created.referralCode);}catch(error){console.error('Verified registration referral attribution failed:',error.message);}}
     return created;
 }
