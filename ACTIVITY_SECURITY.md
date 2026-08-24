@@ -30,7 +30,7 @@ Operational secrets are separated by purpose:
 
 - `JELLYFIN_ENCRYPTION_KEY` protects Jellyfin server API credentials.
 - `ACTIVITY_ENCRYPTION_KEY` protects activity telemetry such as remote endpoints.
-- `AUTH_ENCRYPTION_KEY` is reserved for authentication/2FA material and must never be given to the activity worker.
+- `AUTH_ENCRYPTION_KEY` protects authentication/2FA material and must never be given to the activity worker.
 - `DATA_ENCRYPTION_KEY` remains only for legacy/general migration compatibility.
 
 New Jellyfin credentials use the `jf1` envelope. Existing legacy values can be rotated with `npm run secrets:rotate-jellyfin`; legacy fallback is disabled unless explicitly enabled for migration.
@@ -56,6 +56,8 @@ The activity worker is a separate container with no published port. It runs with
 
 `/admin/activity` is read-only. It reuses the authenticated admin session, disables browser caching, records dashboard access in the audit log, and intentionally excludes encrypted remote endpoint values. Enforcement cannot be enabled from this page.
 
+Administrator TOTP is implemented separately through the authentication boundary and is regression-tested by `scripts/totp-smoke.js`; the activity worker never receives the authentication encryption key.
+
 ## Rollout procedure
 
 1. Apply migrations.
@@ -77,4 +79,3 @@ Before broad production cutover, add:
 - temporary policy exceptions with expiry and audit trails
 - privacy export/deletion workflows
 - download-policy instrumentation
-- administrator 2FA using the separate authentication encryption boundary
