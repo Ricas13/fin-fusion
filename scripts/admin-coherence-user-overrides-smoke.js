@@ -61,7 +61,7 @@ assert(pageKeys('settings').includes('settings-commerce')&&group('settings').pag
 assert(/Settings · Commerce/.test(settingsCommerce)&&/\/admin\/plans/.test(settingsCommerce)&&/\/admin\/payments/.test(settingsCommerce)&&/\/admin\/commerce\/orders/.test(settingsCommerce),'Settings Commerce must be a stable directory for plans, payments and orders/growth');
 assert(/router\.get\('\/admin\/settings\/commerce'/.test(settingsCommerce)&&!/router\.get\('\/admin\/settings',/.test(settingsCommerce),'Settings Commerce must use a unique canonical route rather than shadow the existing Settings owner');
 assert(/createAdminSettingsCommerceRouter/.test(routeComposition),'Admin route composition must mount the Settings Commerce owner');
-assert(/providerSettings\.status\('plisio'\)/.test(integrationsOverview)&&/item\('Plisio'/.test(integrationsOverview),'Connections overview must include Plisio alongside Stripe and PayPal');
+assert(/providerSettings\.status\('plisio'\)/.test(integrationsOverview)&&/item\('plisio','Plisio'/.test(integrationsOverview),'Connections overview must include Plisio alongside Stripe and PayPal');
 assert(/integrationOverviewGrid/.test(integrationsOverview),'Connections overview must use the settings-style integration grid');
 assert(/Settings sections/.test(navigationCoherence)&&/Commerce sections/.test(navigationCoherence)&&/Playback sections/.test(navigationCoherence),'shared navigation coherence layer must preserve parent and child section bars');
 assert(/\/admin\/settings\/commerce/.test(navigationCoherence),'Settings section navigation must point Commerce at its Settings-owned route');

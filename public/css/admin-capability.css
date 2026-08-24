@@ -16,6 +16,7 @@
 @import url('/css/admin-card-density.css');
 @import url('/css/admin-operations-layout.css');
 @import url('/css/admin-responsive-tables.css');
+@import url('/css/admin-integrations-inline.css');
 
 /* Contract reference: wide library grids originate in the base layer as
    grid-template-columns:repeat(5,minmax(0,1fr)) and then collapse responsively. */

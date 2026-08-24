@@ -55,3 +55,4 @@ assert(personalNotificationsSource.includes('action="/admin/profile/notification
 assert(personalNotificationsSource.includes('action="/admin/profile/notifications/discord/start" data-native-submit="true"'),'Discord OAuth linking must use a native browser submission so the discord.com redirect is not followed by fetch/CORS');
 
 console.log('operational dashboard and integration cards smoke: ok');
+require('./admin-integrations-inline-management-smoke');
