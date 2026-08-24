@@ -17,7 +17,10 @@ const MUTATION_PATTERNS=[
  /^\/admin\/discounts(?:\/|$)/,
  /^\/admin\/referrals(?:\/|$)/,
  /^\/admin\/configuration\/apply$/,
- /^\/admin\/provisioning\/migrations\//,
+ // Provisioning controls can create, disable or materially change external
+ // service access. Cover the whole control room so new retry/repair mutations
+ // inherit step-up automatically instead of relying on a route-name allow-list.
+ /^\/admin\/provisioning(?:\/|$)/,
  /^\/admin\/servers(?:\/|$)/,
  /^\/admin\/provider-mappings(?:\/|$)/,
  /^\/admin\/payments(?:\/|$)/,
