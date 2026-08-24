@@ -39,7 +39,7 @@ assert.deepStrictEqual(pageKeys.resellers,['reseller-overview'],'Resellers must 
 assert.deepStrictEqual(pageKeys.people,['users','tickets'],'Customers must expose customer management and Support; activity is contextual');
 assert.deepStrictEqual(pageKeys.commerce,['plans','orders','payments'],'Commerce must collapse to Plans & Storefront, Orders & Growth, and Payments & Billing');
 assert.deepStrictEqual(pageKeys.automation,['provisioning','automation-jobs','backups'],'Operations must collapse to Provisioning, Automation, and Backups & Recovery');
-assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security','settings-integrations','system'],'Settings must collapse to General, Security, Connections, and System');
+assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security','settings-integrations','settings-commerce','system'],'Settings must expose General, Security, Connections, Commerce, and System');
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a sidebar destination');
 assert(nav.hiddenPages.attention?.parentKey==='dashboard','Needs Attention must remain routable beneath Dashboard');
 assert(!nav.hiddenPages['fleet-operations']&&!nav.hiddenPages.libraries&&nav.aliases['fleet-operations']==='servers'&&nav.aliases.libraries==='servers','Placement and Libraries must resolve into the single Servers workflow rather than remain contextual siblings');
@@ -58,14 +58,14 @@ assert.strictEqual(nav.activeKey('stremio-plans'),'plans','legacy Stremio Plans 
 assert.strictEqual(nav.activeKey('reseller-plans'),'plans','legacy reseller Plans context must resolve to canonical Commerce Plans');
 assert.strictEqual(nav.activeKey('jellyfin-customers'),'users','legacy Jellyfin Customers context must resolve to canonical Customers');
 assert.strictEqual(nav.activeKey('stremio-customers'),'users','legacy Stremio Customers context must resolve to canonical Customers');
-assert(!pageKeys.settings.includes('settings-commerce'),'Commerce must not be duplicated under Settings');
+assert(pageKeys.settings.includes('settings-commerce')&&nav.groups.find(group=>group.key==='settings').pages.find(page=>page[0]==='settings-commerce')?.[2]==='/admin/settings/commerce','Commerce must have one Settings-owned configuration directory');
 assert(!pageKeys.settings.includes('settings-advanced'),'A vague Advanced link hub must not consume a Settings sidebar slot');
 assert(!pageKeys.settings.includes('backups'),'Backups belong in Operations, not general Settings');
 assert(nav.hiddenPages['policy-drift']&&nav.hiddenPages['notification-gateway']&&nav.hiddenPages['configuration-transfer'],'Diagnostic/detail workflow pages must stay routable without consuming sidebar space');
 assert(nav.hiddenPages['configuration-transfer']?.groupKey==='automation'&&nav.hiddenPages['configuration-transfer']?.parentKey==='backups','Configuration Transfer must stay subordinate to Backups & Recovery');
 assert(backupTabs.includes('Backups & recovery')&&backupTabs.includes('Configuration transfer')&&backupTabs.includes('ui.workflowCards'),'Backup and portable configuration must share one card-based workflow');
 assert(settings.includes("requested==='advanced')return res.redirect('/admin/configuration')"),'Legacy Settings Advanced URLs must resolve to Configuration Transfer');
-assert(settings.includes("requested==='commerce')return res.redirect('/admin/commerce')"),'Legacy Settings Commerce URLs must resolve to the real Commerce area');
+assert(settings.includes("requested==='commerce')return res.redirect('/admin/commerce')"),'Legacy Settings Commerce query URLs must remain compatible while the canonical Settings entry uses /admin/settings/commerce');
 assert(!settings.includes('Recent customers on dashboard')&&!settings.includes('Expiring-soon window'),'Retired dashboard settings must not remain visible controls');
 assert(operatorExperience.includes('function condensedWorkflow()')&&operatorExperience.includes('workflowCardGrid'),'Pages without a server-rendered workflow strip must receive contextual control-room cards');
 
