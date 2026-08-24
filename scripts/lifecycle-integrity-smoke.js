@@ -5,8 +5,18 @@ const crypto=require('crypto');
 const {getPool}=require('../src/db');
 const state=require('../src/entitlements/subscription-state');
 const jobHealth=require('../src/automation/job-health');
+const lifecycle=require('../src/payments/lifecycle-primitives');
+
+function assertIso(actual,expected,message){assert.strictEqual(actual.toISOString(),expected,message);}
 
 async function main(){
+ assertIso(lifecycle.addPlanDuration({billing_interval:'month',duration_days:30},new Date('2026-01-31T12:34:56.789Z')),'2026-02-28T12:34:56.789Z','monthly billing must clamp Jan 31 to February month-end');
+ assertIso(lifecycle.addPlanDuration({billing_interval:'month',duration_days:30},new Date('2028-01-31T12:34:56.789Z')),'2028-02-29T12:34:56.789Z','monthly billing must honor leap-year February');
+ assertIso(lifecycle.addPlanDuration({billingInterval:'month',durationDays:30},new Date('2026-08-31T08:15:00.000Z')),'2026-09-30T08:15:00.000Z','checkout snapshots must use calendar-month arithmetic');
+ assertIso(lifecycle.addPlanDuration({billing_interval:'6_months',duration_days:180},new Date('2026-03-31T00:00:00.000Z')),'2026-09-30T00:00:00.000Z','six-month billing must use six calendar months');
+ assertIso(lifecycle.addPlanDuration({billing_interval:'year',duration_days:365},new Date('2028-02-29T00:00:00.000Z')),'2029-02-28T00:00:00.000Z','yearly billing must clamp leap day to the following February');
+ assertIso(lifecycle.addPlanDuration({billing_interval:'custom',duration_days:30},new Date('2026-02-01T00:00:00.000Z')),'2026-03-03T00:00:00.000Z','custom plans must keep exact day-duration arithmetic');
+
  const client=await getPool().connect(),suffix=crypto.randomBytes(5).toString('hex');
  try{
   await client.query('BEGIN');

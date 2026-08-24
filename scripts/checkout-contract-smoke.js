@@ -10,6 +10,7 @@ const intents=require('../src/payments/checkout-intents');
 const provisioning=require('../src/jellyfin/resilient-provisioning');
 provisioning.reconcileCustomer=async()=>({active:true,account:null});
 const lifecycle=require('../src/payments/lifecycle');
+const {addPlanDuration}=require('../src/payments/lifecycle-primitives');
 const {commercialSnapshot}=require('../src/platform/flexible-checkout');
 
 function expect(condition,message){if(!condition)throw new Error(message);}
@@ -43,8 +44,8 @@ async function main(){
     expect(Number(subscription.price_minor_snapshot)===600,'Subscription price snapshot drifted to the edited catalogue.');
     expect(Number(subscription.duration_days_snapshot)===30,'Subscription duration snapshot drifted to the edited catalogue.');
     expect(subscription.commercial_snapshot?.streams===3,'Subscription lost the sold entitlement policy.');
-    const days=(new Date(subscription.current_period_end)-started)/86400000;
-    expect(days>29.9&&days<30.1,`One-time entitlement duration drifted to ${days} days.`);
+    const expectedEnd=addPlanDuration(verified.snapshot,started);
+    expect(new Date(subscription.current_period_end).getTime()===expectedEnd.getTime(),`One-time monthly entitlement did not end on the expected calendar-month boundary (${expectedEnd.toISOString()}).`);
 
     const effective=(await query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1`,[customer.id])).rows[0];
     expect(effective,'Canonical entitlement view did not return the activated purchase.');

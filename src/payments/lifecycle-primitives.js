@@ -6,7 +6,21 @@ const discounts = require('./discounts');
 const referrals = require('../referrals');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
-function addPlanDuration(plan,from=new Date()){const days=Number(plan.duration_days||plan.durationDays||30);return new Date(from.getTime()+days*86400000);}
+function addCalendarMonths(from,months){
+    const start=new Date(from),result=new Date(start.getTime());
+    if(!Number.isFinite(start.getTime()))return result;
+    const originalDay=start.getUTCDate(),absoluteMonth=start.getUTCMonth()+Number(months),targetYear=start.getUTCFullYear()+Math.floor(absoluteMonth/12),targetMonth=((absoluteMonth%12)+12)%12,lastDay=new Date(Date.UTC(targetYear,targetMonth+1,0)).getUTCDate();
+    result.setUTCFullYear(targetYear,targetMonth,Math.min(originalDay,lastDay));
+    return result;
+}
+function addPlanDuration(plan,from=new Date()){
+    const interval=String(plan?.billing_interval||plan?.billingInterval||'').toLowerCase();
+    if(interval==='month')return addCalendarMonths(from,1);
+    if(interval==='6_months')return addCalendarMonths(from,6);
+    if(interval==='year')return addCalendarMonths(from,12);
+    const days=Number(plan?.duration_days||plan?.durationDays||30);
+    return new Date(new Date(from).getTime()+days*86400000);
+}
 function mapProviderStatus(provider,status){
     const value=String(status||'').toLowerCase();
     if(provider==='stripe'){if(['active','trialing'].includes(value))return value;if(['past_due','unpaid','incomplete'].includes(value))return'past_due';if(value==='paused')return'paused';if(['canceled','cancelled','incomplete_expired'].includes(value))return'cancelled';}
