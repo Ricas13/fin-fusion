@@ -51,3 +51,4 @@ assert(secondaryOutbox.includes("WHERE channel<>'email' AND status IN('pending',
 assert(secondaryOutbox.includes("WHERE channel<>'email' ORDER BY created_at DESC"), 'secondary delivery history must remain isolated from email rows');
 
 console.log('workflow notification correctness smoke: ok');
+require('./notification-catalogue-producer-audit');
