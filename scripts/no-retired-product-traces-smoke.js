@@ -14,6 +14,15 @@ const forbiddenPatterns=[
   new RegExp(`${credit}\\s*(?:balance|based)[^\\n]{0,80}${reseller}`,'i'),
   new RegExp(retiredCryptoBrand,'i')
 ];
+const retiredRootArtifacts=[
+  'app.js',
+  'secure-start.js',
+  'login-rate-limit-preload.js',
+  'persistent-session-preload.js',
+  'platform-preload.js',
+  'staff-auth-preload.js',
+  'storefront-preload.js'
+];
 const ignored=new Set(['.git','node_modules','coverage','test-results']);
 const hits=[];
 
@@ -45,4 +54,8 @@ if(hits.length){
   for(const file of files) console.error(`  ${file}`);
 }
 assert.deepStrictEqual(hits,[],'Retired commercial credit model and retired crypto-provider brand must have no source, route, UI, documentation, test, configuration, or migration traces');
-console.log('retired commercial/provider trace audit: ok');
+for(const artifact of retiredRootArtifacts){
+  assert.strictEqual(fs.existsSync(path.join(root,artifact)),false,`${artifact} is a retired compatibility artifact and must not return`);
+}
+assert.strictEqual(fs.existsSync(path.join(root,'src/application.js')),true,'src/application.js must remain the canonical application entry point');
+console.log('retired commercial/provider and compatibility-artifact trace audit: ok');
