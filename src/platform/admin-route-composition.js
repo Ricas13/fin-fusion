@@ -15,6 +15,7 @@ const { createAdminCatalogVersioningRouter } = require('./admin-catalog-versioni
 const { createAdminConfigurationTransferRouter } = require('./admin-configuration-transfer');
 const { createAdminCurrencySettingsRouter } = require('./admin-currency-settings');
 const { createAdminIntegrationsOverviewRouter } = require('./admin-integrations-overview');
+const { createAdminSettingsCommerceRouter } = require('./admin-settings-commerce');
 const { createAdminOriginalSettingsRouter } = require('./admin-original-settings');
 const { createAdminBrandingRouter } = require('./admin-branding');
 const { createAdminCommercialPoliciesRouter } = require('./admin-commercial-policies');
@@ -94,6 +95,9 @@ function mountAdminRoutes(app) {
   app.use(createAdminConfigurationTransferRouter());
   app.use(createAdminCurrencySettingsRouter());
   app.use(createAdminIntegrationsOverviewRouter());
+  // Settings owns a stable Commerce directory. Mount it before the legacy
+  // settings router so ?section=commerce no longer escapes into /admin/commerce.
+  app.use(createAdminSettingsCommerceRouter());
   app.use(createAdminOriginalSettingsRouter());
   app.use(createAdminBrandingRouter());
   app.use(createAdminCommercialPoliciesRouter());

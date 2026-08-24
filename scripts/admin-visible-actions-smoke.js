@@ -64,7 +64,7 @@ assert(settingsKeys.includes('settings-integrations'),'Connections must remain a
 assert(!settingsKeys.includes('notification-settings'),'Global Notifications must be contextual to Connections rather than a separate Settings sidebar item');
 assert(navModel.hiddenPages?.['notification-settings']?.parentKey==='settings-integrations','Global Notifications must remain addressable from the Connections control room');
 assert(!settingsKeys.includes('my-notifications'),'My Notifications must not be duplicated in the Settings sidebar');
-assert(!settingsKeys.includes('settings-commerce'),'Unused Settings > Commerce must not be shown');
+assert(settingsKeys.includes('settings-commerce'),'Commerce must remain a visible Settings configuration directory');
 assert(!automationKeys.includes('policy-drift'),'Access consistency is a Provisioning sub-workflow, not a first-class sidebar destination');
 assert(!automationKeys.includes('notification-gateway'),'Notification delivery health belongs to Connections, not Operations');
 assert(!automationKeys.includes('events'),'Cross-platform audit/event history must be contextual to Automation rather than consuming permanent sidebar space');

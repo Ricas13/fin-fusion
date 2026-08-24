@@ -83,13 +83,13 @@ const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
 const labels=settingsGroup.pages.map(page=>page[1]);
-for(const label of ['General','Security','Connections','System'])assert(labels.includes(label),`Settings navigation is missing condensed control room ${label}.`);
+for(const label of ['General','Security','Connections','Commerce','System'])assert(labels.includes(label),`Settings navigation is missing condensed control room ${label}.`);
 for(const contextual of ['branding','support-policy','notification-settings','notification-gateway','request-service'])assert(navModel.hiddenPages[contextual],`Settings contextual workflow is missing ${contextual}.`);
 assert(navModel.hiddenPages.branding.parentKey==='settings-general'&&navModel.hiddenPages['support-policy'].parentKey==='settings-general','Branding and Support & legal must remain contextual to General.');
 assert(navModel.hiddenPages['notification-settings'].parentKey==='settings-integrations'&&navModel.hiddenPages['notification-gateway'].parentKey==='settings-integrations'&&navModel.hiddenPages['request-service'].parentKey==='settings-integrations','Notifications, delivery health and request service must remain contextual to Connections.');
 assert(!labels.includes('Backups'),'Backups must live under Operations rather than global Settings.');
 for(const personal of ['My Profile','My Notifications','My Security'])assert(!labels.includes(personal),`Personal ${personal} must live under My account rather than global Settings navigation.`);
-for(const obsolete of ['Commerce','Advanced','Operations','Stremio','Notifications','Branding','Integrations','Support & legal'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce specialist/obsolete ${obsolete} as a permanent destination.`);
+for(const obsolete of ['Advanced','Operations','Stremio','Notifications','Branding','Integrations','Support & legal'])assert(!labels.includes(obsolete),`Settings navigation must not reintroduce specialist/obsolete ${obsolete} as a permanent destination.`);
 assert(/headerActionLabel\">My account/.test(adminShell),'Admin shell must expose a dedicated My account area.');
 assert(/href=\"\/admin\/profile\">My profile/.test(adminShell)&&/href=\"\/admin\/profile\/notifications\">My notifications/.test(adminShell)&&/href=\"\/admin\/security\">My security/.test(adminShell),'My account area must expose personal profile, notifications and security.');
 assert(navModel.hiddenPages['admin-2fa-policy']?.page?.[2]==='/admin/settings/admin-2fa','Platform-wide administrator 2FA policy must remain owned by Settings → Security.');
