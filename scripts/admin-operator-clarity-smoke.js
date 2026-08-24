@@ -145,7 +145,7 @@ assert(playbackView.includes('Fleet context') && playbackView.includes('Full pol
 assert(playbackView.includes('I_UNDERSTAND_THIS_STOPS_PLAYBACK'), 'Playback enforcement must preserve the explicit destructive-action acknowledgement');
 assert(!playbackView.includes('remote_endpoint') && !playbackView.includes('jellyfin_session_id'), 'Playback UI must not expose raw network endpoints or Jellyfin session identifiers');
 
-assert(provisioning.includes('Provisioning control room') && provisioning.includes('Fix these customer access problems first'), 'Provisioning must retain failed/blocked customer-access state');
+assert(provisioning.includes('Provisioning control room') && provisioning.includes('These customer access problems have outlasted automatic recovery'), 'Provisioning must retain failed/blocked customer-access state while excluding transient retry noise');
 assert(provisioning.includes('Repair access now') && provisioning.includes("ui.detailDisclosure({title:'All customer access state'"), 'Provisioning must provide an explicit repair action and progressively disclose routine state');
 assert(provisioning.includes("row.username||row.email||'CAPTAiNFiN customer'"), 'Provisioning must not fall back to rendering a raw customer UUID');
 assert(provisioning.includes('Recheck all active customers') && !provisioning.includes('Queue all effective'), 'Provisioning maintenance controls must use task language rather than reconciliation jargon');
