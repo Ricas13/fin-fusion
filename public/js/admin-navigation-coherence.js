@@ -21,6 +21,15 @@
       if(target.searchParams.get('section')==='general')return path==='/admin/settings'&&(!section||section==='general')||['/admin/settings/branding','/admin/settings/support','/admin/setup'].some(prefix=>path.startsWith(prefix));
       if(target.searchParams.get('section')==='security')return path==='/admin/settings'&&section==='security'||path.startsWith('/admin/settings/admin-2fa')||path.startsWith('/admin/settings/abuse-protection')||path==='/admin/security';
     }
+    if(group==='jellyfin'){
+      if(target.pathname==='/admin/servers')return path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries';
+      if(target.pathname==='/admin/activity')return path==='/admin/activity'||path.startsWith('/admin/activity/');
+    }
+    if(group==='commerce'){
+      if(target.pathname==='/admin/plans')return path==='/admin/plans'||path.startsWith('/admin/plans/');
+      if(target.pathname==='/admin/commerce/orders')return path==='/admin/commerce'||path==='/admin/commerce/orders'||path.startsWith('/admin/commerce/orders/')||path==='/admin/discounts'||path.startsWith('/admin/discounts/')||path==='/admin/referrals'||path.startsWith('/admin/referrals/');
+      if(target.pathname==='/admin/payments')return path==='/admin/payments'||path.startsWith('/admin/payments/')||path==='/admin/billing'||path.startsWith('/admin/billing/')||path==='/admin/provider-mappings'||path.startsWith('/admin/provider-mappings/');
+    }
     return path===target.pathname||path.startsWith(target.pathname.endsWith('/')?target.pathname:target.pathname+'/');
   }
 
@@ -96,7 +105,7 @@
     insertPrimary(nav([
       ['Servers','/admin/servers'],
       ['Playback','/admin/activity']
-    ],{label:'Jellyfin sections'}));
+    ],{label:'Jellyfin sections',group:'jellyfin'}));
     if(path==='/admin/activity'||path.startsWith('/admin/activity/')){
       const existing=[...document.querySelectorAll('.operatorTabs')].find(el=>el.querySelector('a[href="/admin/activity/inactivity-policy"]'));
       if(!existing)insertSub(nav([
@@ -114,7 +123,7 @@
       ['Plans & Storefront','/admin/plans'],
       ['Orders & Growth','/admin/commerce/orders'],
       ['Payments & Billing','/admin/payments']
-    ],{label:'Commerce sections'}));
+    ],{label:'Commerce sections',group:'commerce'}));
 
     if(planOwned){
       removeWorkflow('Plans and storefront control room');
