@@ -1,7 +1,6 @@
 'use strict';
-const{expireSubscriptionsAndReconcile}=require('../jellyfin/provisioning');
+const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning');
 const{reconcileActiveEntitlements,healthcheckAllServers}=require('../jellyfin/jobs');
-const subscriptionExpiry=require('../entitlements/subscription-expiry');
 const drift=require('../jellyfin/drift-control');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const requestUserSync=require('../integrations/request-user-sync');
@@ -24,7 +23,7 @@ require('../platform/bulk-server-migration');
 require('../platform/operator-bulk-operations');
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
- async entitlements(){const warnings=await subscriptionExpiry.notifyExpiringSubscriptions(),expired=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements();return{...active,expired,warnings,processed:Number(expired||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)}},
+ async entitlements(){const warnings=await notifyExpiringSubscriptions(),expired=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements();return{...active,expired,warnings,processed:Number(expired||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)}},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
  async bulk_jobs(){return bulkWorker.processBatch()},
