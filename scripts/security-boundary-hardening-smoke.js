@@ -86,6 +86,31 @@ async function main() {
         'affiliate capacity must be re-checked before the subscription is inserted'
     );
 
+    const abuseProtection = read('src/security/public-abuse-protection.js');
+    assert(
+        abuseProtection.includes("const { query, transaction } = require('../db');"),
+        'public abuse-protection settings must use the shared database transaction helper'
+    );
+    assert(
+        abuseProtection.includes('await transaction(async client => {'),
+        'public abuse-protection settings must save inside a database transaction'
+    );
+    assert(
+        abuseProtection.includes('SELECT setting_value FROM platform_settings WHERE setting_key=$1 FOR UPDATE'),
+        'public abuse-protection settings must serialize concurrent edits'
+    );
+    const abuseSaveStart = abuseProtection.indexOf('async function save(');
+    const abuseSaveEnd = abuseProtection.indexOf('\nfunction shouldProtect(', abuseSaveStart);
+    const abuseSave = abuseProtection.slice(abuseSaveStart, abuseSaveEnd);
+    assert(
+        (abuseSave.match(/await client\.query\(/g) || []).length >= 3,
+        'public abuse-protection settings read, write and audit must share the same transaction client'
+    );
+    assert(
+        abuseSave.indexOf("INSERT INTO platform_settings") < abuseSave.indexOf("INSERT INTO audit_log"),
+        'public abuse-protection settings must persist before the audit row within one atomic transaction'
+    );
+
     const roles = read('scripts/configure-runtime-db-roles.js');
     assert((roles.match(/REVOKE UPDATE,DELETE ON audit_log FROM \$\{role\}/g) || []).length >= 2, 'web and automation role refreshes must preserve audit-log append-only privileges');
 
