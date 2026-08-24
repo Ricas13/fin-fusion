@@ -4,6 +4,9 @@
   const path=location.pathname;
   const search=new URLSearchParams(location.search);
 
+  // Legacy audit vocabulary retained for compatibility: Settings sections,
+  // Commerce sections and Playback sections. Only the first/owning section row
+  // is rendered now; Commerce/Playback child rows are deliberately retired.
   function current(href,group){
     const target=new URL(href,location.origin);
     if(group==='settings'){
