@@ -8,6 +8,9 @@ function esc(value) {
 
 const PERSONAL_KEYS = new Set(['my-profile', 'my-notifications', 'my-security']);
 const CONTEXT_ONLY_KEYS = new Set(['customer-jellyfin-password']);
+// Compatibility export for older callers. Analytics is intentionally NOT a
+// main Commerce tab anymore; it is owned by Orders & Growth as an in-page tool.
+const COMMERCE_ANALYTICS = Object.freeze(['commerce-overview', 'Analytics', '/admin/commerce']);
 
 const TOOL_DESCRIPTIONS = Object.freeze({
     search: 'Search across customers, plans and servers.',
@@ -93,7 +96,9 @@ function render(active) {
 
 function ownedToolPages(active) {
     const info = current(active);
-    if (PERSONAL_KEYS.has(info.key) || info.hidden) return [];
+    // Dashboard deliberately keeps its existing Dashboard / Needs Attention
+    // Current/Related row, so do not repeat Needs Attention as a content card.
+    if (info.group.key === 'dashboard' || PERSONAL_KEYS.has(info.key) || info.hidden) return [];
     const rows = [];
     for (const child of Object.values(nav.hiddenPages)) {
         const childKey=child.page[0];
@@ -125,8 +130,9 @@ function renderOwnedTools(active) {
 function breadcrumb(active) {
     const info = current(active);
     const pieces = [];
-    const groupHref = info.group.key === 'commerce' ? '/admin/commerce' : nav.landingFor(info.group);
-    pieces.push(`<a href="${esc(groupHref)}">${esc(info.group.label)}</a>`);
+    // A group breadcrumb should lead to that group's normal landing page. In
+    // particular Commerce no longer points to the demoted Analytics child.
+    pieces.push(`<a href="${esc(nav.landingFor(info.group))}">${esc(info.group.label)}</a>`);
     if (info.parent && info.parent[0] !== info.page[0]) pieces.push(`<a href="${esc(info.parent[2])}">${esc(info.parent[1])}</a>`);
     pieces.push(`<strong>${esc(info.page?.[1] || info.group.label)}</strong>`);
     return pieces.join('<span class="breadcrumbSep" aria-hidden="true">/</span>');
@@ -143,4 +149,4 @@ function model(active) {
     };
 }
 
-module.exports = { current, sectionPages, sectionActiveKey, subPages, subActiveKey, tabRow, render, ownedToolPages, renderOwnedTools, breadcrumb, model, TOOL_DESCRIPTIONS, EXTRA_OWNER_TOOLS, CONTEXT_ONLY_KEYS };
+module.exports = { current, sectionPages, sectionActiveKey, subPages, subActiveKey, tabRow, render, ownedToolPages, renderOwnedTools, breadcrumb, model, COMMERCE_ANALYTICS, TOOL_DESCRIPTIONS, EXTRA_OWNER_TOOLS, CONTEXT_ONLY_KEYS };
