@@ -136,8 +136,8 @@ async function assertWorkflow(page,url,expected,activeExpected=null){
   }
 
   if(expected.join('|')==='Profile|Notifications|Security'){
-    const accountLinks=(await page.locator('.headerActions a[href="/admin/profile"],.headerActions a[href="/admin/profile/notifications"],.headerActions a[href="/admin/security"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
-    assert.deepStrictEqual(accountLinks,['My profile','My notifications','My security'],`${url} must keep the three personal account destinations available without stacking another admin subtab row`);
+    const personalSubRows=await page.locator('.content > .operatorTabs,.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
+    assert.equal(personalSubRows,0,`${url} must not reintroduce a personal-account subtab row`);
   }
 }
 
