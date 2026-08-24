@@ -27,11 +27,10 @@ async function applyNotifications(client, items, actorUserId) {
 async function saveLegacyPlan(client, plan) {
     // Legacy documents do not own modern service/access columns. Updating an
     // existing row directly avoids constructing an invalid INSERT candidate
-    // (for example streams=NULL with the concurrent_streams column default)
-    // before ON CONFLICT gets a chance to preserve the modern household model.
+    // before ON CONFLICT gets a chance to preserve the modern access model.
     const existing = await client.query('SELECT id FROM plans WHERE code=$1 FOR UPDATE', [plan.code]);
     if (existing.rowCount) {
-        return client.query(`UPDATE plans SET name=$2,description=$3,audience=$4,billing_interval=$5,duration_days=$6,price_minor=$7,currency=$8,streams=$9,allow_downloads=$10,allow_video_transcoding=$11,allow_audio_transcoding=$12,allow_live_tv=$13,allow_live_tv_management=$14,allow_4k=$15,allow_remuxing=$16,allow_remote_access=$17,server_class=$18,active=$19,visible=$20,sort_order=$21,library_access_mode=$22,library_names=$23::text[],placement_strategy=$24,updated_at=NOW() WHERE id=$1 RETURNING id`, [existing.rows[0].id,plan.name,plan.description,plan.audience,plan.billing_interval,plan.duration_days,plan.price_minor,plan.currency,plan.streams,plan.allow_downloads,plan.allow_video_transcoding,plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,plan.allow_4k,plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,plan.sort_order,plan.library_access_mode,plan.library_names,plan.placement_strategy]);
+        return client.query(`UPDATE plans SET name=$2,description=$3,audience=$4,billing_interval=$5,duration_days=$6,price_minor=$7,currency=$8,streams=CASE WHEN jellyfin_access_model='household_network' THEN NULL ELSE COALESCE($9,1) END,allow_downloads=$10,allow_video_transcoding=$11,allow_audio_transcoding=$12,allow_live_tv=$13,allow_live_tv_management=$14,allow_4k=$15,allow_remuxing=$16,allow_remote_access=$17,server_class=$18,active=$19,visible=$20,sort_order=$21,library_access_mode=$22,library_names=$23::text[],placement_strategy=$24,updated_at=NOW() WHERE id=$1 RETURNING id`, [existing.rows[0].id,plan.name,plan.description,plan.audience,plan.billing_interval,plan.duration_days,plan.price_minor,plan.currency,plan.streams,plan.allow_downloads,plan.allow_video_transcoding,plan.allow_audio_transcoding,plan.allow_live_tv,plan.allow_live_tv_management,plan.allow_4k,plan.allow_remuxing,plan.allow_remote_access,plan.server_class,plan.active,plan.visible,plan.sort_order,plan.library_access_mode,plan.library_names,plan.placement_strategy]);
     }
 
     // A brand-new legacy plan has no modern contract to preserve. NULL was a
