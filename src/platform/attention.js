@@ -2,14 +2,64 @@
 const {query,transaction}=require('../db');
 const workerHealth=require('../automation/worker-health');
 const jobHealth=require('../automation/job-health');
+
+const PROVISIONING_FAILURE_GRACE_MS=5*60*1000;
+const PROVISIONING_CRITICAL_AFTER_MS=10*60*1000;
+const PROVISIONING_CRITICAL_FAILURES=3;
+
 function key(prefix,id){return `${prefix}:${id}`}
 function item({key,title,area,severity='warning',detail='',href='',createdAt=null,sourceStatus='open'}){return{key,title,area,severity,detail,href,createdAt,sourceStatus}}
+function provisioningGroupKey(run){return `${run.customer_id||'unknown'}:${run.action||'provisioning'}`}
+function runTimestamp(run){const ms=new Date(run?.started_at||0).getTime();return Number.isFinite(ms)?ms:0}
+function provisioningFailureDetail(run){
+ const detail=run?.detail;
+ if(detail&&typeof detail==='object')return detail.error||detail.message||'Provisioning run failed';
+ return typeof detail==='string'&&detail.trim()?detail:'Provisioning run failed';
+}
+function activeProvisioningFailures(rows,now=Date.now()){
+ const grouped=new Map();
+ for(const run of Array.isArray(rows)?rows:[]){
+   const groupKey=provisioningGroupKey(run);
+   if(!grouped.has(groupKey))grouped.set(groupKey,[]);
+   grouped.get(groupKey).push(run);
+ }
+ const active=[];
+ for(const runs of grouped.values()){
+   runs.sort((a,b)=>runTimestamp(b)-runTimestamp(a));
+   const latest=runs[0];
+   // A successful later reconcile is authoritative recovery. Likewise, while a
+   // newer retry is queued/running, do not keep presenting the older failure as
+   // the current state. Provisioning history still retains every attempt.
+   if(!latest||latest.status!=='failed')continue;
+   const streak=[];
+   for(const run of runs){
+     if(run.status==='succeeded')break;
+     if(run.status==='failed')streak.push(run);
+   }
+   const oldestFailure=streak[streak.length-1]||latest;
+   const oldestAt=runTimestamp(oldestFailure);
+   const unresolvedForMs=oldestAt?Math.max(0,now-oldestAt):PROVISIONING_CRITICAL_AFTER_MS;
+   const action=latest.action||'provisioning';
+   // Disable failures can leave a customer with access that should have been
+   // removed, so surface them immediately. Other transient failures get a short
+   // retry window before they become operator work.
+   if(action!=='disable'&&unresolvedForMs<PROVISIONING_FAILURE_GRACE_MS)continue;
+   active.push({
+     ...latest,
+     consecutive_failures:streak.length,
+     unresolved_for_ms:unresolvedForMs,
+     severity:action==='disable'||streak.length>=PROVISIONING_CRITICAL_FAILURES||unresolvedForMs>=PROVISIONING_CRITICAL_AFTER_MS?'critical':'warning'
+   });
+ }
+ return active.sort((a,b)=>runTimestamp(b)-runTimestamp(a));
+}
+
 async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,provisioning,notifications,backups,protectedActivations,stremioSources]=await Promise.all([
  query(`SELECT id,incident_type,incident_status,provider,provider_event_id,customer_id,created_at FROM payment_incidents WHERE resolved_at IS NULL ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  jobHealth.list().then(rows=>({rows})).catch(()=>({rows:[]})),
  query(`SELECT worker_key,last_heartbeat_at FROM operational_worker_state ORDER BY worker_key`).catch(()=>({rows:[]})),
  query(`SELECT id,name,health_status,last_health_check FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN('offline','degraded') ORDER BY name`).catch(()=>({rows:[]})),
- query(`SELECT id,customer_id,action,status,detail,started_at FROM provisioning_runs WHERE status='failed' AND started_at>NOW()-INTERVAL '7 days' ORDER BY started_at DESC LIMIT 100`).catch(()=>({rows:[]})),
+ query(`SELECT id,customer_id,action,status,detail,started_at FROM provisioning_runs WHERE started_at>NOW()-INTERVAL '7 days' ORDER BY started_at DESC LIMIT 500`).catch(()=>({rows:[]})),
  query(`SELECT id,channel,event_type,message_type,status,last_error,created_at FROM notification_outbox WHERE status IN('failed','dead') ORDER BY created_at DESC LIMIT 100`).catch(()=>({rows:[]})),
  query(`WITH latest_success AS (
           SELECT id,status,error,verification_note,verified_at,started_at
@@ -39,7 +89,10 @@ async function sourceItems(){const out=[];const[incidents,jobs,workers,servers,p
  for(const r of jobs.rows){const state=jobHealth.healthState(r);if(!['failed','stale'].includes(state))continue;out.push(item({key:key('job',r.job_key),title:`Automation job: ${r.job_key}`,area:'Automation',severity:state==='failed'?'critical':'warning',detail:r.last_error||`Last success ${r.last_success_at||'never'}`,href:`/admin/automation?job=${encodeURIComponent(r.job_key)}#job-${encodeURIComponent(r.job_key)}`,createdAt:r.last_success_at||r.last_started_at}));}
  for(const r of workers.rows){const state=workerHealth.describe(r.worker_key,r.last_heartbeat_at);if(state.stale)out.push(item({key:key('worker',r.worker_key),title:`Worker heartbeat stale: ${r.worker_key}`,area:'Automation',severity:'critical',detail:`Heartbeat age ${state.ageSeconds}s · threshold ${state.thresholdSeconds}s`,href:`/admin/automation?worker=${encodeURIComponent(r.worker_key)}`,createdAt:r.last_heartbeat_at}))}
  for(const r of servers.rows)out.push(item({key:key('server',r.id),title:`${r.name} is ${r.health_status}`,area:'Servers',severity:r.health_status==='offline'?'critical':'warning',detail:`Last health check ${r.last_health_check||'never'}`,href:`/admin/servers/dashboard?server=${encodeURIComponent(r.id)}`,createdAt:r.last_health_check}));
- for(const r of provisioning.rows)out.push(item({key:key('provisioning',r.id),title:`Provisioning failed: ${r.action}`,area:'Customers',severity:'critical',detail:r.detail?.error||'Provisioning run failed',href:`/admin/users/${r.customer_id}?tab=access#provisioning-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
+ for(const r of activeProvisioningFailures(provisioning.rows)){
+   const retries=r.consecutive_failures>1?` · ${r.consecutive_failures} consecutive failed attempts`:'';
+   out.push(item({key:key('provisioning',r.id),title:`Provisioning failed: ${r.action}`,area:'Customers',severity:r.severity,detail:`${provisioningFailureDetail(r)}${retries}`,href:`/admin/users/${r.customer_id}?tab=access#provisioning-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
+ }
  for(const r of notifications.rows)out.push(item({key:key('notification',r.id),title:`${r.channel} notification ${r.status}`,area:'Notifications',severity:r.status==='dead'?'critical':'warning',detail:r.last_error||r.event_type||r.message_type||'',href:`${r.channel==='email'?'/admin/notifications':'/admin/notifications/preferences'}?outboxId=${encodeURIComponent(r.id)}#outbox-${encodeURIComponent(r.id)}`,createdAt:r.created_at}));
  for(const r of backups.rows)out.push(item({key:key('backup',r.id),title:r.status==='failed'?'Backup failed':'Latest backup has not been restore-verified',area:'Backups',severity:r.status==='failed'?'critical':'warning',detail:r.error||r.verification_note||'Restore verification missing',href:`/admin/backups?run=${encodeURIComponent(r.id)}#backup-${encodeURIComponent(r.id)}`,createdAt:r.started_at}));
  for(const r of protectedActivations.rows)out.push(item({key:key('activation',r.customer_id),title:`Paid/provisioned account still not activated: ${r.customer_name}`,area:'Customers',severity:'warning',detail:`Activation pending ${r.age_days} day(s) · ${r.has_subscription?'subscription ':''}${r.has_jellyfin?'Jellyfin':''}`.trim(),href:`/admin/users/${r.customer_id}?tab=access#activation`,createdAt:r.created_at}));
@@ -88,4 +141,4 @@ async function setState(itemKey,{status='acknowledged',assignedTo=null,note=null
    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.attention.update','attention_item',$2,$3::jsonb)`,[actorUserId,source.key,JSON.stringify({status,assignedTo:assignedTo||null,note:Boolean(cleanNote),sourceStillOpen:true})]);
  });
 }
-module.exports={list,setState,sourceItems,openSummary,workflowStates};
+module.exports={list,setState,sourceItems,openSummary,workflowStates,activeProvisioningFailures};
