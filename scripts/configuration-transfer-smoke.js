@@ -6,6 +6,7 @@ const transfer=require('../src/platform/configuration-transfer');
 const {query,getPool}=require('../src/db');
 
 const PLAN_COLUMNS=`service_type,capacity_limit,is_addon,streams,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes,stremio_household_lease_minutes`;
+const MODULAR_KEYS=['service_type','capacity_limit','is_addon','jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes'];
 
 async function insertPlan(plan){
   await query(`
@@ -82,19 +83,30 @@ async function main(){
   const legacyV2=JSON.parse(JSON.stringify(exported));
   const protectedPlan=regressionPlans.find(plan=>plan.code==='audit-transfer-jellyfin-household');
   const legacyPlan=legacyV2.configuration.plans.find(plan=>plan.code===protectedPlan.code);
-  for(const key of ['service_type','capacity_limit','is_addon','jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes'])delete legacyPlan[key];
+  for(const key of MODULAR_KEYS)delete legacyPlan[key];
+
+  const protectedConcurrent=regressionPlans.find(plan=>plan.code==='audit-transfer-jellyfin-streams');
+  const legacyConcurrent=legacyV2.configuration.plans.find(plan=>plan.code===protectedConcurrent.code);
+  for(const key of MODULAR_KEYS)delete legacyConcurrent[key];
+  legacyConcurrent.streams=null;
+
   const newLegacyPlan={...legacyPlan,code:'audit-transfer-legacy-null-new',name:'Audit Legacy Null New'};
   legacyV2.configuration.plans.push(newLegacyPlan);
   const parsedLegacy=transfer.parseDocument(legacyV2);
   const parsedLegacyPlan=parsedLegacy.configuration.plans.find(plan=>plan.code===legacyPlan.code);
+  const parsedLegacyConcurrent=parsedLegacy.configuration.plans.find(plan=>plan.code===legacyConcurrent.code);
   const parsedNewLegacyPlan=parsedLegacy.configuration.plans.find(plan=>plan.code===newLegacyPlan.code);
   assert.strictEqual(parsedLegacyPlan._modular_plan_contract,false,'old V2 plan must be marked as a legacy contract');
   assert.strictEqual(parsedLegacyPlan.streams,null,'old V2 household stream sentinel must remain NULL');
+  assert.strictEqual(parsedLegacyConcurrent._modular_plan_contract,false,'old concurrent plan must be marked as a legacy contract');
+  assert.strictEqual(parsedLegacyConcurrent.streams,null,'old concurrent plan may carry the historical NULL sentinel through parsing');
   assert.strictEqual(parsedNewLegacyPlan._modular_plan_contract,false,'new legacy V2 plan must remain a legacy contract');
   assert.strictEqual(parsedNewLegacyPlan.streams,null,'new legacy V2 plan must preserve NULL through parsing');
   await transfer.applyImport(legacyV2,null);
   const afterLegacy=(await query(`SELECT ${PLAN_COLUMNS} FROM plans WHERE code=$1`,[protectedPlan.code])).rows[0];
   assert.deepStrictEqual(expectedShape(afterLegacy),expectedShape(protectedPlan),'old V2 import overwrote modern household plan semantics');
+  const afterLegacyConcurrent=(await query(`SELECT ${PLAN_COLUMNS} FROM plans WHERE code=$1`,[protectedConcurrent.code])).rows[0];
+  assert.deepStrictEqual(afterLegacyConcurrent,{...expectedShape(protectedConcurrent),streams:1},'legacy NULL streams must fail safe without changing an existing concurrent plan contract');
   const insertedLegacy=(await query(`SELECT service_type,streams,jellyfin_access_model FROM plans WHERE code=$1`,[newLegacyPlan.code])).rows[0];
   assert.deepStrictEqual(insertedLegacy,{service_type:'jellyfin',streams:1,jellyfin_access_model:'concurrent_streams'},'new legacy plan with NULL streams must use a safe concurrent-stream contract');
 
