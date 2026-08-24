@@ -9,7 +9,7 @@ function gate(req,res,next){return req.session?.authUserId&&req.session?.authRol
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function providerState(name,status){
   if(!status?.enabled)return `<span class="pill">${esc(name)} off</span>`;
-  if(status?.configured&&status?.webhookConfigured!==false)return `<span class="pill good">${esc(name)} ready</span>`;
+  if(status?.credentialsConfigured&&status?.webhookConfigured)return `<span class="pill good">${esc(name)} ready</span>`;
   return `<span class="pill warn">${esc(name)} needs setup</span>`;
 }
 function settingsCard(title,description,actions,statusHtml=''){
