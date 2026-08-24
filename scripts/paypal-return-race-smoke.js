@@ -7,6 +7,8 @@ if (skipIfNoDatabase('PayPal return/webhook race smoke')) process.exit(0);
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const intents = require('../src/payments/checkout-intents');
+const lifecycle = require('../src/payments/lifecycle');
+const webhooks = require('../src/platform/webhooks');
 
 function expect(condition, message) { if (!condition) throw new Error(message); }
 
@@ -19,9 +21,30 @@ async function main() {
     const nonce = created.nonce;
     await intents.attachProviderCheckout(created.id, `PAYPAL-ORDER-${suffix}`);
 
-    // Simulate the provider webhook winning the race: it completes the intent
-    // (the same path webhooks.js uses) before the browser's own return request
-    // is processed -- this is what customer-payment-return.js must tolerate.
+    // A duplicate webhook can arrive while the original signed event is still
+    // activating the entitlement. The duplicate must be acknowledged without
+    // marking the checkout complete until the durable payment-event row says
+    // the first processor actually finished successfully.
+    const eventId = `PAYPAL-EVENT-${suffix}`;
+    const eventRow = await lifecycle.beginPaymentEvent({ provider: 'paypal', eventId, eventType: 'PAYMENT.SALE.COMPLETED', payload: { id: eventId } });
+    expect(eventRow, 'first payment-event delivery must acquire the processing lease');
+    const duplicateLease = await lifecycle.beginPaymentEvent({ provider: 'paypal', eventId, eventType: 'PAYMENT.SALE.COMPLETED', payload: { id: eventId } });
+    expect(duplicateLease === null, 'concurrent duplicate payment event must not acquire a second lease');
+    expect(await lifecycle.paymentEventProcessed('paypal', eventId) === false, 'leased but unfinished payment event must not look processed');
+    expect(await webhooks.checkoutFinalizationReady('paypal', eventId, { duplicate: true }) === false, 'in-flight duplicate webhook must not finalize the checkout intent');
+    expect(await lifecycle.finishPaymentEvent(eventRow) === true, 'successful payment event must release its lease and mark processed');
+    expect(await lifecycle.paymentEventProcessed('paypal', eventId) === true, 'successfully finished event must expose durable processed state');
+    expect(await webhooks.checkoutFinalizationReady('paypal', eventId, { duplicate: true }) === true, 'a later duplicate may repair checkout finalization after the original payment event succeeded');
+    expect(await webhooks.checkoutFinalizationReady('paypal', `${eventId}-fresh`, { duplicate: false }) === true, 'the original successful delivery may finalize normally');
+
+    const failedEventId = `${eventId}-failed`;
+    const failedRow = await lifecycle.beginPaymentEvent({ provider: 'paypal', eventId: failedEventId, eventType: 'PAYMENT.SALE.COMPLETED', payload: { id: failedEventId } });
+    expect(failedRow, 'failed-event fixture must acquire a lease');
+    expect(await lifecycle.finishPaymentEvent(failedRow, new Error('fixture activation failure')) === true, 'failed event must release its lease');
+    expect(await lifecycle.paymentEventProcessed('paypal', failedEventId) === false, 'failed payment processing must never authorize checkout finalization');
+
+    // Simulate the provider webhook winning the normal completed race: it
+    // completes the intent before the browser's own return request is processed.
     await intents.completeVerifiedProvider('paypal', `PAYPAL-ORDER-${suffix}`, 'completed');
 
     let verifyThrew = false;
