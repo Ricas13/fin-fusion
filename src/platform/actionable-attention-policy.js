@@ -120,12 +120,12 @@ function paymentDecision(row) {
     if (type === 'dispute' || type === 'chargeback') {
         return { visible: true, severity: 'critical', reason: type };
     }
-    // Refunds and mapped renewal failures are provider lifecycle history. Access
-    // policy is already applied automatically and they do not need a dashboard
-    // interruption unless identity/reconciliation itself is unresolved.
-    if (type === 'refund') return { visible: unresolvedIdentity, severity: 'warning', reason: unresolvedIdentity ? 'unresolved_identity' : 'history_only' };
-    if (type === 'failed_renewal') return { visible: unresolvedIdentity, severity: 'warning', reason: unresolvedIdentity ? 'unresolved_identity' : 'provider_retry' };
-    if (type === 'checkout_completion') return { visible: true, severity: unresolvedIdentity ? 'critical' : 'warning', reason: 'checkout_reconciliation' };
+    // Refunds, mapped renewal failures and mapped checkout completions are
+    // provider/lifecycle history. Surface them only when CAPTAiNFiN cannot
+    // safely identify the customer or finish checkout reconciliation.
+    if (type === 'refund') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'history_only' };
+    if (type === 'failed_renewal') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'provider_retry' };
+    if (type === 'checkout_completion') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'critical' : null, reason: unresolvedIdentity ? 'checkout_reconciliation' : 'history_only' };
     if (unresolvedIdentity) return { visible: true, severity: 'warning', reason: 'unresolved_identity' };
     return { visible: false, severity: null, reason: 'history_only' };
 }
