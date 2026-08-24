@@ -36,8 +36,8 @@ async function enqueue({ type, to, subject, text, html = '', dedupeKey = null })
     if (!payload.subject || !payload.text) throw new Error('Email subject and text body are required.');
     const key = dedupeKey ? cleanText(dedupeKey, 300) : null;
     const result = await query(`
-        INSERT INTO notification_outbox(message_type,recipient_email,payload_encrypted,dedupe_key,status,next_attempt_at)
-        VALUES($1,$2,$3,$4,'pending',NOW())
+        INSERT INTO notification_outbox(channel,message_type,recipient_email,payload_encrypted,dedupe_key,status,next_attempt_at)
+        VALUES('email',$1,$2,$3,$4,'pending',NOW())
         ON CONFLICT(dedupe_key) DO UPDATE SET updated_at=notification_outbox.updated_at
         RETURNING id,status,created_at
     `, [cleanText(type || 'transactional', 100), recipient, encryptPayload(payload), key]);
@@ -48,7 +48,7 @@ async function claimOne() {
     return transaction(async client => {
         const found = await client.query(`
             SELECT id FROM notification_outbox
-            WHERE status IN ('pending','failed') AND next_attempt_at<=NOW()
+            WHERE channel='email' AND status IN ('pending','failed') AND next_attempt_at<=NOW()
             ORDER BY next_attempt_at,created_at
             FOR UPDATE SKIP LOCKED LIMIT 1
         `);
@@ -56,7 +56,7 @@ async function claimOne() {
         const claimed = await client.query(`
             UPDATE notification_outbox
             SET status='sending',attempts=attempts+1,last_attempt_at=NOW(),updated_at=NOW()
-            WHERE id=$1
+            WHERE id=$1 AND channel='email'
             RETURNING *
         `, [found.rows[0].id]);
         return claimed.rows[0];
@@ -70,7 +70,7 @@ async function deliverOne(row, sender = emailSettings.send) {
         await query(`
             UPDATE notification_outbox
             SET status='sent',sent_at=NOW(),last_error=NULL,updated_at=NOW()
-            WHERE id=$1
+            WHERE id=$1 AND channel='email'
         `, [row.id]);
         return { id: row.id, ok: true };
     } catch (error) {
@@ -78,7 +78,7 @@ async function deliverOne(row, sender = emailSettings.send) {
         await query(`
             UPDATE notification_outbox
             SET status='failed',last_error=$2,next_attempt_at=$3,updated_at=NOW()
-            WHERE id=$1
+            WHERE id=$1 AND channel='email'
         `, [row.id, String(error?.message || error).slice(0, 1500), next]);
         return { id: row.id, ok: false, error: error.message };
     }
@@ -106,7 +106,7 @@ async function retry(id) {
             next_attempt_at=CASE WHEN status='sent' THEN next_attempt_at ELSE NOW() END,
             last_error=CASE WHEN status='sent' THEN last_error ELSE NULL END,
             updated_at=NOW()
-        WHERE id=$1 RETURNING id,status
+        WHERE id=$1 AND channel='email' RETURNING id,status
     `, [id]);
     if (!result.rowCount) throw new Error('Email delivery not found.');
     return result.rows[0];
@@ -115,7 +115,7 @@ async function retry(id) {
 async function recent(limit = 100) {
     const result = await query(`
         SELECT id,message_type,recipient_email,status,attempts,next_attempt_at,last_attempt_at,sent_at,last_error,created_at
-        FROM notification_outbox ORDER BY created_at DESC LIMIT $1
+        FROM notification_outbox WHERE channel='email' ORDER BY created_at DESC LIMIT $1
     `, [Math.max(1, Math.min(500, Number(limit) || 100))]);
     return result.rows;
 }
@@ -127,6 +127,7 @@ async function counts() {
                COUNT(*) FILTER (WHERE status='failed')::int AS failed,
                COUNT(*) FILTER (WHERE status='sent')::int AS sent
         FROM notification_outbox
+        WHERE channel='email'
     `);
     return result.rows[0] || { total: 0, pending: 0, failed: 0, sent: 0 };
 }
