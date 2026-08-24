@@ -51,12 +51,12 @@ assert(css.includes('.operatorHeroActions-compact{margin:0 0 12px}'), 'retired s
 assert(capability.includes("@import url('/css/admin-operator-clarity.css')"), 'operator clarity CSS must load through canonical admin capability bundle');
 
 assert(dashboard.includes('Operator control room') && dashboard.includes('ui.operatorHero({') && dashboard.includes('next,'), 'dashboard status calculation must remain available even though the page-level hero renderer is retired');
-for (const label of ['Fix backup', 'Fix server', 'Fix automation', 'Resolve payment', 'Fix notification', 'Fix provisioning']) {
-  assert(dashboard.includes(label), `dashboard attention rows must use explicit action language: ${label}`);
+for (const label of ['Open backup recovery', 'Open server recovery', 'Open automation', 'Review payment case', 'Open delivery failures', 'Review access retry']) {
+  assert(dashboard.includes(label), `dashboard attention rows must use explicit intervention language: ${label}`);
 }
-assert(attention.includes('Issue & fix') && attention.includes('actionLabel'), 'Needs Attention must present source-resolution actions, not generic source links');
-assert(attention.includes('Fix the source problem first'), 'Needs Attention must distinguish fixing source problems from acknowledgement workflow');
-assert(attentionSource.includes('/admin/servers/dashboard?server='), 'server attention items must preserve server context when opening the fleet control room');
+assert(attention.includes('Current problem & next step') && attention.includes('actionLabel'), 'Needs Attention must present the current problem and the concrete recovery action separately from workflow controls');
+assert(attention.includes('Automatic retries and recovery history remain elsewhere.'), 'Needs Attention must keep self-healing and historical failures out of the intervention queue');
+assert(attentionSource.includes('/admin/servers/dashboard?server='), 'single-server attention items must preserve server context when opening the fleet control room');
 
 assert(backups.includes('selectedResolution') && backups.includes('You came here to fix this'), 'Backups must render contextual resolution when opened from an issue');
 assert(backups.includes('Verify this backup now'), 'Backups must provide an explicit verification action for the selected recovery point');
@@ -145,7 +145,7 @@ assert(playbackView.includes('Fleet context') && playbackView.includes('Full pol
 assert(playbackView.includes('I_UNDERSTAND_THIS_STOPS_PLAYBACK'), 'Playback enforcement must preserve the explicit destructive-action acknowledgement');
 assert(!playbackView.includes('remote_endpoint') && !playbackView.includes('jellyfin_session_id'), 'Playback UI must not expose raw network endpoints or Jellyfin session identifiers');
 
-assert(provisioning.includes('Provisioning control room') && provisioning.includes('Fix these customer access problems first'), 'Provisioning must retain failed/blocked customer-access state');
+assert(provisioning.includes('Provisioning control room') && provisioning.includes('These customer access problems have outlasted automatic recovery'), 'Provisioning must retain failed/blocked customer-access state while excluding transient retry noise');
 assert(provisioning.includes('Repair access now') && provisioning.includes("ui.detailDisclosure({title:'All customer access state'"), 'Provisioning must provide an explicit repair action and progressively disclose routine state');
 assert(provisioning.includes("row.username||row.email||'CAPTAiNFiN customer'"), 'Provisioning must not fall back to rendering a raw customer UUID');
 assert(provisioning.includes('Recheck all active customers') && !provisioning.includes('Queue all effective'), 'Provisioning maintenance controls must use task language rather than reconciliation jargon');

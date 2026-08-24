@@ -109,9 +109,14 @@ async function main(){
     await shot(customer,'deferred-customer-portal');
 
     await gotoPage(admin,`${BASE}/admin/provisioning`);
+    // A fresh blocked attempt is deliberately not promoted as an intervention.
+    // It must still remain discoverable in the diagnostic access-state disclosure.
+    const accessState=admin.locator('details.operatorDetails').filter({hasText:'All customer access state'}).first();
+    assert.equal(await accessState.count(),1,'Provisioning diagnostics disclosure is missing');
+    await accessState.locator('summary').click();
     const provisioningText=await admin.locator('body').innerText();
-    assert(provisioningText.includes('Browser Deferred Customer'),'Failed deferred provisioning is not discoverable in Automation → Provisioning');
-    assert(/No eligible Jellyfin server/.test(provisioningText),'Provisioning UI hides the reason deferred access could not be created');
+    assert(provisioningText.includes('Browser Deferred Customer'),'Failed deferred provisioning is not discoverable in Automation → Provisioning diagnostics');
+    assert(/No eligible Jellyfin server/.test(provisioningText),'Provisioning diagnostics hide the reason deferred access could not be created');
     await shot(admin,'deferred-provisioning-attention');
 
     await adminContext.close();await customerContext.close();

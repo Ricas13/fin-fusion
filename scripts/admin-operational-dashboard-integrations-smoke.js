@@ -24,10 +24,10 @@ assert(dashboardSource.includes('${dashboardHero(ctx)}${attentionOverview(stats)
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
 
 const clear=dashboard.attentionOverview({attention:{count:0,items:[]}});
-assert(clear.includes('No operational issues need attention')&&clear.includes('/admin/attention')&&clear.includes('Open operational inbox'),'Clear dashboard state must explain that no exceptions are open and retain the canonical workspace link');
-const problems=dashboard.attentionOverview({attention:{count:2,items:[{key:'provisioning:1',title:'Provisioning failed',detail:'Customer access was not created',area:'Customers',severity:'critical',href:'/admin/users/1'},{key:'backup:2',title:'Backup verification missing',detail:'Restore verification missing',area:'Backups',severity:'warning',href:'/admin/backups'}]}});
-assert(problems.includes('2 things need attention')&&problems.includes('Provisioning failed')&&problems.includes('Backup verification missing'),'Dashboard must surface real canonical attention items rather than generic counters');
-assert(problems.includes('Fix provisioning')&&problems.includes('Fix backup'),'Dashboard must label exception links with the actual corrective intent');
+assert(clear.includes('No intervention is required')&&clear.includes('Transient timeouts, automatic retries and recovered failures')&&clear.includes('/admin/attention')&&clear.includes('Open operational inbox'),'Clear dashboard state must explain that automatic recovery noise is excluded and retain the canonical workspace link');
+const problems=dashboard.attentionOverview({attention:{count:2,items:[{key:'provisioning:1',title:'Customer access still cannot reconcile',detail:'Automatic reconciliation has failed repeatedly',area:'Customers',severity:'critical',href:'/admin/provisioning?customer=1'},{key:'backup:2',title:'Latest backup is still unverified',detail:'Restore verification missing',area:'Backups',severity:'warning',href:'/admin/backups'}]}});
+assert(problems.includes('2 problems need intervention')&&problems.includes('Customer access still cannot reconcile')&&problems.includes('Latest backup is still unverified'),'Dashboard must surface real canonical intervention items rather than generic counters');
+assert(problems.includes('Review access retry')&&problems.includes('Open backup recovery'),'Dashboard must label intervention links with concrete recovery intent');
 
 assert(cardSource.includes('Enabled')&&cardSource.includes('Configured')&&cardSource.includes('Current state')&&cardSource.includes('Last verified'),'Shared integration cards must answer the standard operator health questions');
 assert(cardSource.includes('detailsHtml'),'Shared integration cards must support optional inline configuration without changing existing callers');
@@ -48,7 +48,7 @@ assert(!paymentSource.includes('function providerMetric'),'Old provider-specific
 assert(emailSource.includes("require('./admin-integration-card')"),'Email must use the shared integration-card renderer');
 assert(emailSource.includes("(recent || []).find(row => row.status === 'sent')"),'Email last verification must use an observed successful delivery');
 assert(emailSource.includes('Test connection')&&emailSource.includes('href="#email-gateway">Manage</a>'),'Email card must provide test and manage actions');
-assert(emailSource.includes("statusLabel = 'Needs attention'")&&emailSource.includes('failed message'),'Email card must surface queued delivery failures as an operational warning');
+assert(emailSource.includes("statusLabel = 'Needs attention'")&&emailSource.includes('failed message'),'Email card must surface queued delivery failures as an operational warning on the dedicated delivery page');
 
 assert(formFeedbackSource.includes("if (form.dataset.nativeSubmit === 'true') return false;"),'Admin AJAX form enhancement must preserve native-submit escape hatches for browser-owned redirects');
 assert(personalNotificationsSource.includes('action="/admin/profile/notifications/telegram/start" data-native-submit="true"'),'Telegram account linking must use a native browser submission so the t.me redirect is not followed by fetch/CORS');
