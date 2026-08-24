@@ -61,6 +61,7 @@ assert.strictEqual(attentionPolicy.serverDecision({health_status:'offline'},{con
 
 assert.strictEqual(attentionPolicy.paymentDecision({incident_type:'refund',scope:'customer',customer_id:'x'}).visible,false,'mapped refunds are lifecycle history, not dashboard work');
 assert.strictEqual(attentionPolicy.paymentDecision({incident_type:'failed_renewal',scope:'customer',customer_id:'x'}).visible,false,'mapped failed renewals should follow provider retry/lifecycle without immediate dashboard interruption');
+assert.strictEqual(attentionPolicy.paymentDecision({incident_type:'checkout_completion',scope:'customer',customer_id:'x'}).visible,false,'mapped checkout completions are lifecycle history once customer reconciliation is known');
 assert.strictEqual(attentionPolicy.paymentDecision({incident_type:'dispute',scope:'customer',customer_id:'x'}).severity,'critical','payment disputes require human review');
 assert.strictEqual(attentionPolicy.paymentDecision({incident_type:'checkout_completion',scope:'unresolved',customer_id:null}).severity,'critical','unresolved checkout completion must remain urgent');
 
