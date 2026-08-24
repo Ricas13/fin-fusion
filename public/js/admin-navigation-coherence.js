@@ -51,6 +51,28 @@
     else if(header?.parentNode)header.insertAdjacentElement('afterend',node);
   }
 
+  // A few legacy/client-enhanced pages can expose the same destinations twice:
+  // once as the preferred compact workflow cards and again as an older tab row.
+  // Keep layered navigation when the destinations differ, but remove exact/subset
+  // duplicates so one workflow is never represented by two adjacent controls.
+  function normalizedNavHref(link){
+    try{
+      const target=new URL(link.getAttribute('href')||'',location.origin);
+      return `${target.pathname}${target.search}${target.hash}`;
+    }catch(_){return'';}
+  }
+  function removeDuplicateWorkflowNavigation(){
+    const workflow=document.querySelector('.workflowCardGrid');
+    if(!workflow)return;
+    const workflowTargets=new Set([...workflow.querySelectorAll('a[href]')].map(normalizedNavHref).filter(Boolean));
+    if(!workflowTargets.size)return;
+    document.querySelectorAll('.operatorTabs,.coherenceSectionTabs,.coherenceSubTabs').forEach(candidate=>{
+      if(candidate===workflow||candidate.classList.contains('workflowCardGrid'))return;
+      const targets=[...candidate.querySelectorAll('a[href]')].map(normalizedNavHref).filter(Boolean);
+      if(targets.length&&targets.every(target=>workflowTargets.has(target)))candidate.remove();
+    });
+  }
+
   // Modern admin-html pages already contain both hierarchy rows in their
   // server-rendered HTML. Only the remaining legacy EJS pages reach this path.
   if(!document.querySelector('.coherenceSectionTabs')){
@@ -91,6 +113,7 @@
   }
   window.addEventListener('hashchange',syncPlaybackAnchor);
   syncPlaybackAnchor();
+  removeDuplicateWorkflowNavigation();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
