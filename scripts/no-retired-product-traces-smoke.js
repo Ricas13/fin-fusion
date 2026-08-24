@@ -25,6 +25,7 @@ const retiredRootArtifacts=[
 ];
 const ignored=new Set(['.git','node_modules','coverage','test-results']);
 const hits=[];
+const retiredArtifactReferences=[];
 
 function looksText(buffer){
   const sample=buffer.subarray(0,Math.min(buffer.length,4096));
@@ -40,9 +41,15 @@ function walk(dir){
     if(!entry.isFile()) continue;
     const buffer=fs.readFileSync(full);
     if(!looksText(buffer)) continue;
-    const lines=buffer.toString('utf8').split(/\r?\n/);
+    const source=buffer.toString('utf8');
+    const lines=source.split(/\r?\n/);
     for(let index=0;index<lines.length;index++){
       if(forbiddenPatterns.some(pattern=>pattern.test(lines[index])))hits.push(`${rel}:${index+1}`);
+    }
+    if(rel!=='scripts/no-retired-product-traces-smoke.js'){
+      for(const artifact of retiredRootArtifacts){
+        if(source.includes(artifact))retiredArtifactReferences.push(`${rel} -> ${artifact}`);
+      }
     }
   }
 }
@@ -57,5 +64,6 @@ assert.deepStrictEqual(hits,[],'Retired commercial credit model and retired cryp
 for(const artifact of retiredRootArtifacts){
   assert.strictEqual(fs.existsSync(path.join(root,artifact)),false,`${artifact} is a retired compatibility artifact and must not return`);
 }
+assert.deepStrictEqual(retiredArtifactReferences,[],'Retired compatibility entry points/preloads must not remain referenced by source, scripts, configuration, documentation, or tests');
 assert.strictEqual(fs.existsSync(path.join(root,'src/application.js')),true,'src/application.js must remain the canonical application entry point');
 console.log('retired commercial/provider and compatibility-artifact trace audit: ok');
