@@ -10,6 +10,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const transfer = require('../src/platform/configuration-transfer-v2-core');
 const activity = require('../src/jellyfin/activity');
 const outbound = require('../src/security/outbound-url-policy');
+const adminStepUp = require('../src/auth/admin-step-up');
 
 async function main() {
     const legacy = transfer.normalizeV2Plan({ code: 'legacy', streams: 1 }, { streams: null });
@@ -58,6 +59,32 @@ async function main() {
         const classification = outbound.classify(address);
         assert(classification.hard && classification.private && /metadata|link-local/.test(classification.reason), `NAT64 metadata embedding must be blocked for ${address}`);
     }
+
+    // Every per-customer admin POST is security-sensitive. New child actions
+    // must inherit step-up automatically rather than relying on a route-name list.
+    const customerMutationPaths = [
+        '/admin/users/00000000-0000-0000-0000-000000000001/manage/account',
+        '/admin/users/00000000-0000-0000-0000-000000000001/permanent-access',
+        '/admin/users/00000000-0000-0000-0000-000000000001/assign-server',
+        '/admin/users/00000000-0000-0000-0000-000000000001/stremio-household/reset'
+    ];
+    for (const route of customerMutationPaths) {
+        assert.strictEqual(adminStepUp.sensitive({ method: 'POST', path: route }), true, `admin step-up must protect ${route}`);
+        assert.strictEqual(adminStepUp.sensitive({ method: 'GET', path: route }), false, `admin step-up must not gate read-only GET ${route}`);
+    }
+
+    // Service-credit redemption creates a paid entitlement and therefore must
+    // obey the same emergency commerce pause and serialized capacity check as
+    // provider/free/trial acquisition paths.
+    const affiliateCredits = read('src/affiliate-credits.js');
+    assert(affiliateCredits.includes("require('./payments/commerce-control')"), 'affiliate redemption must use the commerce freeze control');
+    assert(affiliateCredits.includes("require('./entitlements/plan-capacity')"), 'affiliate redemption must use the shared plan-capacity service');
+    assert(affiliateCredits.includes('await commerce.assertOpen();'), 'affiliate redemption must fail closed while commerce is paused');
+    assert(affiliateCredits.includes("await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan');"), 'affiliate redemption must serialize and re-check plan capacity');
+    assert(
+        affiliateCredits.indexOf('await planCapacity.lockAndAssert') < affiliateCredits.indexOf('INSERT INTO subscriptions'),
+        'affiliate capacity must be re-checked before the subscription is inserted'
+    );
 
     const roles = read('scripts/configure-runtime-db-roles.js');
     assert((roles.match(/REVOKE UPDATE,DELETE ON audit_log FROM \$\{role\}/g) || []).length >= 2, 'web and automation role refreshes must preserve audit-log append-only privileges');

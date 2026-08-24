@@ -8,7 +8,10 @@ const routeRateLimit=require('../security/route-rate-limit');
 const WINDOW_MS=Math.max(2,Math.min(30,Number(process.env.ADMIN_STEP_UP_MINUTES||10)))*60*1000;
 const MUTATION_PATTERNS=[
  /^\/admin\/customers\/bulk\//,
- /^\/admin\/users\/[^/]+\/(?:reconcile|hold|release|plan|expiry|library-overrides|profile|policy|sessions)/,
+ // Every per-customer admin mutation is high-impact. Keep this broad so new
+ // customer-management child routes cannot silently bypass step-up merely
+ // because their action name was not added to a fixed allow-list.
+ /^\/admin\/users\/[^/]+(?:\/|$)/,
  /^\/admin\/customer(?:s)?\/[^/]+\//,
  /^\/admin\/plans(?:\/|$)/,
  /^\/admin\/discounts(?:\/|$)/,
