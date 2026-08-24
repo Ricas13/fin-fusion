@@ -67,7 +67,10 @@ function requestContext(req, res, next) {
 function securityHeaders(req, res, next) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'same-origin');
+  // One-time activation/reset/verification credentials can live in URL paths
+  // or query strings. Never forward those URLs as Referer, even to same-origin
+  // assets or logging middleware.
+  res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
