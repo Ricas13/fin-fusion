@@ -39,7 +39,7 @@ assert(router.includes('createCustomerSupportRouter'),'customer support must be 
 for(const key of ['customers','orders','tickets'])assert(operator.includes(`${key}:`)||operator.includes(`const [customers,orders`),`operator state missing ${key}`);
 for(const href of ['/admin/users','/admin/commerce/orders','/admin/tickets'])assert(indicator.includes(href),`business indicator missing ${href}`);
 assert(indicator.includes("path==='/admin/commerce/orders'||path==='/admin/orders'"),'business indicator must recognise both canonical and legacy Orders paths');
-assert(indicator.includes('markCurrentAreaRead')&&indicator.includes('/admin/api/operator-state/read'),'top-right business indicators must clear after the operator views the relevant area');
+assert(indicator.includes('markAreaRead')&&indicator.includes('markAreaReadWithRetry')&&indicator.includes('/admin/api/operator-state/read'),'top-right business indicators must clear after the operator views the relevant area');
 assert(orders.includes("router.get('/admin/commerce/orders'"),'Orders router must own the canonical Commerce route');
 assert(orders.includes("router.get('/admin/orders'")&&orders.includes('res.redirect(308,ORDERS_PATH)'),'legacy Orders route must remain a compatibility redirect');
 assert(orders.includes("source IN ('stripe','paypal')"),'orders view must be provider-backed');

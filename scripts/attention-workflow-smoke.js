@@ -21,6 +21,15 @@ assert(attention.includes("return[];"),'Attention state failure must fall back t
 assert(attention.includes("acknowledged_at!=null?'acknowledged':'open'"),'Attention status must derive from acknowledgement state while the source remains authoritative');
 assert(attention.includes("href:`/admin/servers/dashboard?server=${encodeURIComponent(r.id)}`"),'Server health findings must preserve the affected server when opening the fleet control room');
 assert(servers.includes('selectedServerResolution')&&servers.includes('/admin/servers/${esc(server.id)}/edit'),'Fleet control room must turn server issue context into an explicit corrective settings action');
+
+assert(attention.includes("FROM provisioning_runs WHERE started_at>NOW()-INTERVAL '7 days'"),'Provisioning attention must inspect successes as well as failures so recovery can be observed');
+assert(!attention.includes("FROM provisioning_runs WHERE status='failed' AND started_at>NOW()-INTERVAL '7 days'"),'Provisioning attention must not keep historical failed rows authoritative after a later success');
+assert(attention.includes('activeProvisioningFailures(provisioning.rows)'),'Provisioning findings must be reduced to currently unresolved retry streaks');
+assert(attention.includes("if(!latest||latest.status!=='failed')continue;"),'A newer succeeded or in-progress reconcile must clear the older failed attempt from live attention');
+assert(attention.includes('PROVISIONING_FAILURE_GRACE_MS=5*60*1000'),'Transient provisioning failures must get a five-minute self-heal window');
+assert(attention.includes('PROVISIONING_CRITICAL_FAILURES=3')&&attention.includes('PROVISIONING_CRITICAL_AFTER_MS=10*60*1000'),'Persistent provisioning failures must escalate after three failures or ten minutes');
+assert(attention.includes("action==='disable'||streak.length>=PROVISIONING_CRITICAL_FAILURES"),'Customer-access disable failures must remain immediately critical while ordinary retries escalate only when persistent');
+
 assert(attention.includes('WITH latest_success AS'),'Backup attention must derive from current recovery state instead of listing historical runs');
 assert(attention.includes('latest_failure AS'),'Backup attention must retain the newest unresolved backup failure');
 assert(attention.includes("WHERE verified_at IS NULL AND started_at<NOW()-INTERVAL '2 days'"),'Backup verification warning must only consider the latest successful recovery point after the grace period');
