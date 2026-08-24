@@ -16,24 +16,42 @@
     if(group==='settings'){
       const section=search.get('section')||'';
       if(target.pathname==='/admin/system')return path==='/admin/system';
+      if(target.pathname==='/admin/settings/integrations')return path==='/admin/settings/integrations'||path==='/admin/settings'&&section==='integrations'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
       if(target.searchParams.get('section')==='general')return path==='/admin/settings'&&(!section||section==='general')||['/admin/settings/branding','/admin/settings/support','/admin/setup'].some(prefix=>path.startsWith(prefix));
       if(target.searchParams.get('section')==='security')return path==='/admin/settings'&&section==='security'||path.startsWith('/admin/settings/admin-2fa')||path.startsWith('/admin/settings/abuse-protection')||path==='/admin/security';
-      if(target.searchParams.get('section')==='integrations')return path==='/admin/settings/integrations'||path==='/admin/settings'&&section==='integrations'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
       if(target.searchParams.get('section')==='commerce')return path==='/admin/settings'&&section==='commerce';
     }
     return path===target.pathname||path.startsWith(target.pathname.endsWith('/')?target.pathname:target.pathname+'/');
+  }
+
+  function subCurrent(href){
+    if(href==='/admin/activity')return path==='/admin/activity';
+    if(href==='/admin/activity/inactivity-policy')return path.startsWith('/admin/activity/inactivity-policy');
+    if(href==='/admin/plans/order')return path.startsWith('/admin/plans/order');
+    if(href==='/admin/plans/access-rules')return path.startsWith('/admin/plans/access-rules');
+    if(href==='/admin/plans')return (path==='/admin/plans'||path.startsWith('/admin/plans/'))&&!path.startsWith('/admin/plans/order')&&!path.startsWith('/admin/plans/access-rules');
+    if(href==='/admin/commerce/orders')return path==='/admin/commerce/orders'||path.startsWith('/admin/commerce/orders/');
+    if(href==='/admin/commerce')return path==='/admin/commerce';
+    if(href==='/admin/discounts')return path==='/admin/discounts'||path.startsWith('/admin/discounts/');
+    if(href==='/admin/referrals')return path==='/admin/referrals'||path.startsWith('/admin/referrals/');
+    if(href==='/admin/payments')return path==='/admin/payments';
+    if(href==='/admin/billing')return path==='/admin/billing'||path.startsWith('/admin/billing/');
+    if(href==='/admin/provider-mappings')return path==='/admin/provider-mappings'||path.startsWith('/admin/provider-mappings/');
+    if(href==='/admin/payments/risk-policy')return path==='/admin/payments/risk-policy'||path.startsWith('/admin/payments/risk-policy/');
+    return path===new URL(href,location.origin).pathname;
   }
 
   function nav(items,{label='Section navigation',group='',className='coherenceSectionTabs'}={}){
     const el=document.createElement('nav');
     el.className=className;
     el.setAttribute('aria-label',label);
+    const isSub=className==='coherenceSubTabs';
     items.forEach(([text,href])=>{
       const a=document.createElement('a');
-      a.className=className==='coherenceSectionTabs'?'coherenceSectionTab':'coherenceSubTab';
+      a.className=isSub?'coherenceSubTab':'coherenceSectionTab';
       a.href=href;
       a.textContent=text;
-      if(current(href,group)){
+      if(isSub?subCurrent(href):current(href,group)){
         a.classList.add('active');
         a.setAttribute('aria-current','page');
       }
@@ -73,7 +91,7 @@
     ],{label:'Settings sections',group:'settings'}));
   }
 
-  const jellyfinOwned=path==='/admin/servers'||path.startsWith('/admin/servers/')||path==='/admin/libraries'||path==='/admin/activity'||path.startsWith('/admin/activity/');
+  const jellyfinOwned=path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries'||path==='/admin/activity'||path.startsWith('/admin/activity/');
   if(jellyfinOwned){
     insertPrimary(nav([
       ['Servers','/admin/servers'],
