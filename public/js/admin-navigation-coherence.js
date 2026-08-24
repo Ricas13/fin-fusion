@@ -4,12 +4,9 @@
   const path=location.pathname;
   const search=new URLSearchParams(location.search);
 
-  if(!document.querySelector('link[href="/css/admin-navigation-coherence.css"]')){
-    const link=document.createElement('link');
-    link.rel='stylesheet';
-    link.href='/css/admin-navigation-coherence.css';
-    document.head.appendChild(link);
-  }
+  // Compatibility labels consumed by the legacy coherence audit. The modern
+  // renderer owns Settings sections and Commerce sections; this fallback owns
+  // the remaining legacy-EJS Jellyfin / Playback sections only when needed.
 
   function current(href,group){
     const target=new URL(href,location.origin);
@@ -25,136 +22,75 @@
       if(target.pathname==='/admin/servers')return path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries';
       if(target.pathname==='/admin/activity')return path==='/admin/activity'||path.startsWith('/admin/activity/');
     }
-    if(group==='commerce'){
-      if(target.pathname==='/admin/plans')return path==='/admin/plans'||path.startsWith('/admin/plans/');
-      if(target.pathname==='/admin/commerce/orders')return path==='/admin/commerce'||path==='/admin/commerce/orders'||path.startsWith('/admin/commerce/orders/')||path==='/admin/discounts'||path.startsWith('/admin/discounts/')||path==='/admin/referrals'||path.startsWith('/admin/referrals/');
-      if(target.pathname==='/admin/payments')return path==='/admin/payments'||path.startsWith('/admin/payments/')||path==='/admin/billing'||path.startsWith('/admin/billing/')||path==='/admin/provider-mappings'||path.startsWith('/admin/provider-mappings/');
-    }
     return path===target.pathname||path.startsWith(target.pathname.endsWith('/')?target.pathname:target.pathname+'/');
   }
 
-  function subCurrent(href){
-    if(href==='/admin/activity')return path==='/admin/activity';
-    if(href==='/admin/activity/inactivity-policy')return path.startsWith('/admin/activity/inactivity-policy');
-    if(href==='/admin/plans/order')return path.startsWith('/admin/plans/order');
-    if(href==='/admin/plans/access-rules')return path.startsWith('/admin/plans/access-rules');
-    if(href==='/admin/plans')return (path==='/admin/plans'||path.startsWith('/admin/plans/'))&&!path.startsWith('/admin/plans/order')&&!path.startsWith('/admin/plans/access-rules');
-    if(href==='/admin/commerce/orders')return path==='/admin/commerce/orders'||path.startsWith('/admin/commerce/orders/');
-    if(href==='/admin/commerce')return path==='/admin/commerce';
-    if(href==='/admin/discounts')return path==='/admin/discounts'||path.startsWith('/admin/discounts/');
-    if(href==='/admin/referrals')return path==='/admin/referrals'||path.startsWith('/admin/referrals/');
-    if(href==='/admin/payments')return path==='/admin/payments';
-    if(href==='/admin/billing')return path==='/admin/billing'||path.startsWith('/admin/billing/');
-    if(href==='/admin/provider-mappings')return path==='/admin/provider-mappings'||path.startsWith('/admin/provider-mappings/');
-    if(href==='/admin/payments/risk-policy')return path==='/admin/payments/risk-policy'||path.startsWith('/admin/payments/risk-policy/');
-    return path===new URL(href,location.origin).pathname;
-  }
-
-  function nav(items,{label='Section navigation',group='',className='coherenceSectionTabs'}={}){
+  function fallbackNav(items,{label='Section navigation',group='',sub=false}={}){
     const el=document.createElement('nav');
-    el.className=className;
+    el.className=sub?'coherenceSubTabs':'coherenceSectionTabs';
     el.setAttribute('aria-label',label);
-    const isSub=className==='coherenceSubTabs';
     items.forEach(([text,href])=>{
       const a=document.createElement('a');
-      a.className=isSub?'coherenceSubTab':'coherenceSectionTab';
+      a.className=sub?'coherenceSubTab':'coherenceSectionTab';
       a.href=href;
       a.textContent=text;
-      if(isSub?subCurrent(href):current(href,group)){
-        a.classList.add('active');
-        a.setAttribute('aria-current','page');
-      }
+      const selected=sub
+        ? (href.includes('#playback-policy')?location.hash==='#playback-policy':path===new URL(href,location.origin).pathname&&location.hash!=='#playback-policy')
+        : current(href,group);
+      if(selected){a.classList.add('active');a.setAttribute('aria-current','page');}
       el.appendChild(a);
     });
     return el;
   }
 
-  function insertPrimary(node){
-    if(document.querySelector('.coherenceSectionTabs'))return;
-    const header=document.querySelector('.pageHeader');
-    if(header?.parentNode)header.insertAdjacentElement('afterend',node);
-  }
-  function insertSub(node){
-    if(document.querySelector('.coherenceSubTabs'))return;
+  function insertFallback(node,sub=false){
+    if(document.querySelector(sub?'.coherenceSubTabs':'.coherenceSectionTabs'))return;
     const primary=document.querySelector('.coherenceSectionTabs');
-    if(primary)primary.insertAdjacentElement('afterend',node);
-    else{
-      const header=document.querySelector('.pageHeader');
-      if(header?.parentNode)header.insertAdjacentElement('afterend',node);
+    const header=document.querySelector('.pageHeader');
+    if(sub&&primary)primary.insertAdjacentElement('afterend',node);
+    else if(header?.parentNode)header.insertAdjacentElement('afterend',node);
+  }
+
+  // Modern admin-html pages already contain both hierarchy rows in their
+  // server-rendered HTML. Only the remaining legacy EJS pages reach this path.
+  if(!document.querySelector('.coherenceSectionTabs')){
+    const settingsOwned=path.startsWith('/admin/settings')||path==='/admin/system'||path==='/admin/security'||path==='/admin/setup'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
+    if(settingsOwned){
+      insertFallback(fallbackNav([
+        ['General','/admin/settings?section=general'],
+        ['Security','/admin/settings?section=security'],
+        ['Connections','/admin/settings/integrations'],
+        ['Commerce','/admin/settings/commerce'],
+        ['System','/admin/system']
+      ],{label:'Settings sections',group:'settings'}));
+    }
+
+    const jellyfinOwned=path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries'||path==='/admin/activity'||path.startsWith('/admin/activity/');
+    if(jellyfinOwned){
+      insertFallback(fallbackNav([
+        ['Servers','/admin/servers'],
+        ['Playback','/admin/activity']
+      ],{label:'Jellyfin sections',group:'jellyfin'}));
+      if(path==='/admin/activity'||path.startsWith('/admin/activity/')){
+        insertFallback(fallbackNav([
+          ['Live playback','/admin/activity'],
+          ['Policy settings','/admin/activity#playback-policy']
+        ],{label:'Playback sections',sub:true}),true);
+      }
     }
   }
-  function removeWorkflow(label){
-    document.querySelectorAll('.workflowCardGrid').forEach(el=>{
-      if((el.getAttribute('aria-label')||'')===label)el.remove();
+
+  function syncPlaybackAnchor(){
+    if(path!=='/admin/activity')return;
+    document.querySelectorAll('.coherenceSubTab').forEach(link=>{
+      const isPolicy=(link.getAttribute('href')||'').includes('#playback-policy');
+      const selected=isPolicy?location.hash==='#playback-policy':location.hash!=='#playback-policy';
+      link.classList.toggle('active',selected);
+      if(selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
     });
   }
-
-  const settingsOwned=path.startsWith('/admin/settings')||path==='/admin/system'||path==='/admin/security'||path==='/admin/setup'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
-  if(settingsOwned){
-    insertPrimary(nav([
-      ['General','/admin/settings?section=general'],
-      ['Security','/admin/settings?section=security'],
-      ['Connections','/admin/settings/integrations'],
-      ['Commerce','/admin/settings/commerce'],
-      ['System','/admin/system']
-    ],{label:'Settings sections',group:'settings'}));
-  }
-
-  const jellyfinOwned=path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries'||path==='/admin/activity'||path.startsWith('/admin/activity/');
-  if(jellyfinOwned){
-    insertPrimary(nav([
-      ['Servers','/admin/servers'],
-      ['Playback','/admin/activity']
-    ],{label:'Jellyfin sections',group:'jellyfin'}));
-    if(path==='/admin/activity'||path.startsWith('/admin/activity/')){
-      const existing=[...document.querySelectorAll('.operatorTabs')].find(el=>el.querySelector('a[href="/admin/activity/inactivity-policy"]'));
-      if(!existing)insertSub(nav([
-        ['Live playback','/admin/activity'],
-        ['Inactivity rules','/admin/activity/inactivity-policy']
-      ],{label:'Playback sections',className:'coherenceSubTabs'}));
-    }
-  }
-
-  const planOwned=path==='/admin/plans'||path.startsWith('/admin/plans/');
-  const growthOwned=path==='/admin/commerce'||path==='/admin/commerce/orders'||path.startsWith('/admin/commerce/orders/')||path==='/admin/discounts'||path.startsWith('/admin/discounts/')||path==='/admin/referrals'||path.startsWith('/admin/referrals/');
-  const paymentsOwned=path==='/admin/payments'||path.startsWith('/admin/payments/')||path==='/admin/billing'||path.startsWith('/admin/billing/')||path==='/admin/provider-mappings'||path.startsWith('/admin/provider-mappings/');
-  if(planOwned||growthOwned||paymentsOwned){
-    insertPrimary(nav([
-      ['Plans & Storefront','/admin/plans'],
-      ['Orders & Growth','/admin/commerce/orders'],
-      ['Payments & Billing','/admin/payments']
-    ],{label:'Commerce sections',group:'commerce'}));
-
-    if(planOwned){
-      removeWorkflow('Plans and storefront control room');
-      insertSub(nav([
-        ['Plans','/admin/plans'],
-        ['Storefront order','/admin/plans/order'],
-        ['Access rules','/admin/plans/access-rules']
-      ],{label:'Plans and storefront sections',className:'coherenceSubTabs'}));
-    }
-    if(growthOwned){
-      removeWorkflow('Orders and growth control room');
-      insertSub(nav([
-        ['Orders','/admin/commerce/orders'],
-        ['Commerce analytics','/admin/commerce'],
-        ['Discounts','/admin/discounts'],
-        ['Affiliates','/admin/referrals']
-      ],{label:'Orders and growth sections',className:'coherenceSubTabs'}));
-    }
-    if(paymentsOwned){
-      document.querySelectorAll('.workflowCardGrid').forEach(el=>{
-        const hrefs=[...el.querySelectorAll('a')].map(a=>a.getAttribute('href'));
-        if(hrefs.includes('/admin/payments')&&hrefs.includes('/admin/billing'))el.remove();
-      });
-      insertSub(nav([
-        ['Providers','/admin/payments'],
-        ['Billing','/admin/billing'],
-        ['Provider mappings','/admin/provider-mappings'],
-        ['Payment risk','/admin/payments/risk-policy']
-      ],{label:'Payments and billing sections',className:'coherenceSubTabs'}));
-    }
-  }
+  window.addEventListener('hashchange',syncPlaybackAnchor);
+  syncPlaybackAnchor();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
