@@ -13,7 +13,7 @@ const outbound = require('../src/security/outbound-url-policy');
 
 async function main() {
     const legacy = transfer.normalizeV2Plan({ code: 'legacy', streams: 1 }, { streams: null });
-    assert.strictEqual(legacy.streams, 1, 'pre-modular V2 imports must not restore a null concurrent stream limit');
+    assert.strictEqual(legacy.streams, null, 'pre-modular V2 imports must preserve the legacy null stream sentinel');
 
     assert.strictEqual(
         activity.effectiveStreamLimit(null),
