@@ -32,7 +32,10 @@ function relative(file) {
 
 function catalogueFromSql(sql) {
     const events = [];
-    const insert = /INSERT\s+INTO\s+(?:public\.)?notification_preferences\s*\([^;]*?\)\s*VALUES\s*([\s\S]*?)(?=\bON\s+CONFLICT\b|;)/gi;
+    // The clean-install baseline uses one INSERT per event without a column
+    // list, while later migrations may use a column list plus a multi-row
+    // VALUES block. Accept both shapes so the audit covers the real catalogue.
+    const insert = /INSERT\s+INTO\s+(?:public\.)?notification_preferences(?:\s*\([^;]*?\))?\s*VALUES\s*([\s\S]*?)(?=\bON\s+CONFLICT\b|;)/gi;
     let block;
     while ((block = insert.exec(sql))) {
         const tuple = /\(\s*'([a-z][a-z0-9_.-]+)'\s*,/gi;
@@ -48,6 +51,7 @@ function escapeRegex(value) {
 
 const catalogue = [...new Set(migrationPaths.flatMap(file => catalogueFromSql(fs.readFileSync(path.join(root, file), 'utf8'))))].sort();
 if (!catalogue.length) throw new Error('Notification catalogue audit could not discover any configured event types.');
+if (catalogue.length < 30) throw new Error(`Notification catalogue audit discovered only ${catalogue.length} event types; parser is incomplete.`);
 
 const sources = walk(sourceRoot)
     .map(file => ({ file: relative(file), text: fs.readFileSync(file, 'utf8') }))
