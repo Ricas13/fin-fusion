@@ -26,9 +26,18 @@ assert(sidebar.includes("window.matchMedia('(max-width:860px)').matches"),'sideb
 
 const capability=read('public/css/admin-capability.css');
 assert(capability.includes("@import url('/css/admin-accessibility-mobile.css')"),'admin shell must load accessibility/mobile layer');
+assert(capability.includes("@import url('/css/admin-responsive-tables.css')"),'admin shell must load shared responsive-table layer');
 const css=read('public/css/admin-accessibility-mobile.css');
 for(const contract of ['.srOnly',':focus-visible','min-height:44px','prefers-reduced-motion','td[data-label=""]'])assert(css.includes(contract),`accessibility/mobile CSS missing ${contract}`);
 assert(css.includes('.profileMeta,.summaryLabel,.summarySub'),'legacy customer metadata must use the readable shared override');
+
+const responsiveCss=read('public/css/admin-responsive-tables.css');
+for(const contract of ['@media(max-width:1100px)','.responsiveTable thead','.responsiveTable tbody','.responsiveTable td::before','content:attr(data-label)','word-break:normal','grid-template-columns:minmax(100px,30%) minmax(0,1fr)','.attentionBulkBar{grid-template-columns:1fr!important}'])assert(responsiveCss.includes(contract),`responsive table CSS missing ${contract}`);
+assert(responsiveCss.includes('min-width:0!important'),'responsive tables must clear legacy minimum widths before they become record cards');
+assert(responsiveCss.includes('@media(max-width:600px)'),'phone-width responsive tables must have a dedicated compact layout');
+const attention=read('src/platform/admin-attention.js');
+assert(attention.includes('class="dataTable responsiveTable attentionTable"'),'Needs Attention must use the shared responsive-table contract');
+for(const label of ['data-label="Severity"','data-label="Area"','data-label="Issue"','data-label="Owner"','data-label="Workflow"'])assert(attention.includes(label),`Needs Attention responsive table missing ${label}`);
 
 const customers=read('src/platform/admin-customers-list.js');
 for(const wording of ['Access sync','Custom access','Customer sign-in disabled','Customer health','customer sign-ins enabled','Customers who still need to verify their account'])assert(customers.includes(wording),`customers UI missing plain-language wording: ${wording}`);
