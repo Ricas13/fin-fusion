@@ -60,10 +60,9 @@
 .topBreadcrumb strong{color:#dce5ec;font-size:11px;font-weight:750}
 .breadcrumbSep{color:#455261;font-size:10px}
 
-/* The former workflow-card navigation is superseded when the canonical level
-   3 row is present. It remains in source as a compatibility contract for older
-   pages, but operators should never see two navigation systems at once. */
-body:has(.coherenceSubTabs) .workflowCardGrid.operatorTabs{display:none!important}
+/* Superseded workflow-card navigators are removed by the shared server
+   renderer. Do not hide workflowCardGrid globally here: some pages use that
+   component for genuine page-local workflows below the persistent hierarchy. */
 
 /* Settings/card surfaces: three cards where the contents remain legible, then
    two and one. Complex tables/matrices keep their existing wide exceptions. */
