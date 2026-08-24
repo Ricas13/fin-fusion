@@ -17,9 +17,9 @@
       const section=search.get('section')||'';
       if(target.pathname==='/admin/system')return path==='/admin/system';
       if(target.pathname==='/admin/settings/integrations')return path==='/admin/settings/integrations'||path==='/admin/settings'&&section==='integrations'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
+      if(target.pathname==='/admin/settings/commerce')return path==='/admin/settings/commerce';
       if(target.searchParams.get('section')==='general')return path==='/admin/settings'&&(!section||section==='general')||['/admin/settings/branding','/admin/settings/support','/admin/setup'].some(prefix=>path.startsWith(prefix));
       if(target.searchParams.get('section')==='security')return path==='/admin/settings'&&section==='security'||path.startsWith('/admin/settings/admin-2fa')||path.startsWith('/admin/settings/abuse-protection')||path==='/admin/security';
-      if(target.searchParams.get('section')==='commerce')return path==='/admin/settings'&&section==='commerce';
     }
     return path===target.pathname||path.startsWith(target.pathname.endsWith('/')?target.pathname:target.pathname+'/');
   }
@@ -86,7 +86,7 @@
       ['General','/admin/settings?section=general'],
       ['Security','/admin/settings?section=security'],
       ['Connections','/admin/settings/integrations'],
-      ['Commerce','/admin/settings?section=commerce'],
+      ['Commerce','/admin/settings/commerce'],
       ['System','/admin/system']
     ],{label:'Settings sections',group:'settings'}));
   }
@@ -148,5 +148,5 @@
   }
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
-  if(path==='/admin/settings'&&search.get('section')==='commerce')document.body.classList.add('page-settings-commerce');
+  if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
 })();
