@@ -36,19 +36,28 @@ async function main(){
     assert.equal(await row.locator('a[href$="/lifecycle"]').count(),0,'Stremio plan list still exposes Jellyfin lifecycle/usage rules');
     await screenshot(page,'plans-list-stremio');
 
-    const expected=['Overview','Delivery','Availability','Commerce'];
-    for(const [suffix,active] of [['edit','Overview'],['inventory','Availability'],['commerce','Commerce']]){
+    // Specific-plan workflow pages must not create a second upper row. Their
+    // sibling destinations remain reachable as ordinary in-page tools under
+    // the owning Commerce → Plans & Storefront area.
+    const relatedBySuffix={
+      edit:['Delivery','Availability','Commerce'],
+      inventory:['Overview','Delivery','Commerce'],
+      commerce:['Overview','Delivery','Availability']
+    };
+    for(const suffix of ['edit','inventory','commerce']){
       await gotoAdmin(page,`/admin/plans/${id}/${suffix}`);
-      const workflow=page.locator('.planWorkflowTabs a');
-      assert.deepStrictEqual(await labels(workflow),expected,`${suffix} has inconsistent plan workflow navigation`);
-      assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),[active],`${suffix} highlights the wrong plan workflow step`);
+      assert.equal(await page.locator('.planWorkflowTabs').count(),0,`${suffix} still renders the retired plan workflow subtab row`);
+      assert.deepStrictEqual(await labels(page.locator('.coherenceSectionTabs a.active strong')),['Plans & Storefront'],`${suffix} must keep Plans & Storefront active in the one upper row`);
+      const tools=await labels(page.locator('.coherenceOwnedTools .coherenceOwnedTool strong'));
+      for(const expected of relatedBySuffix[suffix])assert(tools.includes(expected),`${suffix} lost the ${expected} plan-management destination when subtabs were retired`);
       const allTabs=await labels(page.locator('.operatorTabs a'));
       assert(!allTabs.includes('All plans')&&!allTabs.includes('Bundles'),`${suffix} still mixes catalogue filters into a specific plan`);
       await screenshot(page,`plan-${suffix}`);
     }
     await gotoAdmin(page,`/admin/plans/${id}/delivery`);
     assert.equal(new URL(page.url()).pathname,`/admin/plans/${plan.id}/edit`,'Legacy Stremio Delivery URL must resolve to the canonical editor');
-    assert.deepStrictEqual(await labels(page.locator('.planWorkflowTabs a.active')),['Overview'],'Legacy Stremio Delivery redirect must land on the canonical editor');
+    assert.equal(await page.locator('.planWorkflowTabs').count(),0,'Legacy Stremio Delivery redirect must not recreate the retired plan workflow subtab row');
+    assert.deepStrictEqual(await labels(page.locator('.coherenceSectionTabs a.active strong')),['Plans & Storefront'],'Legacy Stremio Delivery redirect must remain inside Plans & Storefront');
     assert.equal(await page.locator('.planDeliveryTools').count(),0,'Canonical Stremio editor exposed Jellyfin-only delivery tools');
     const canonicalEditorText=await page.locator('body').innerText();
     assert(/Plan delivery/.test(canonicalEditorText)&&!/Delivery service/.test(canonicalEditorText),'Canonical Stremio editor must own source selection without exposing the retired Delivery screen');

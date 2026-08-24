@@ -101,17 +101,43 @@ async function assertWorkflow(page,url,expected,activeExpected=null){
   const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
   assert(response&&response.status()<400,`${url} workflow page returned ${response?.status()}`);
   await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
-  // Workflow navigation is card-based now. Read the card heading rather than
-  // concatenating the eyebrow, description and action copy into its label.
-  const clean=(await page.locator('.operatorTabs a strong').allTextContents()).map(x=>x.trim()).filter(Boolean);
-  assert.deepStrictEqual(clean,expected,`${url} workflow cards changed: ${JSON.stringify(clean)}`);
+
+  // The admin IA now allows only one contextual upper row. Specialist pages
+  // keep their owning main tab active and expose former subtabs as in-page tools.
+  const visibleUpper=await page.locator('.content > .coherenceSectionTabs,.content > .operatorTabs,.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
+  assert(visibleUpper<=1,`${url} renders ${visibleUpper} visible upper navigation rows`);
+  const visibleSubRows=await page.locator('.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
+  assert.equal(visibleSubRows,0,`${url} still renders a secondary coherence subtab row`);
+
+  const ownerByPath=url.startsWith('/admin/notifications')||url==='/admin/request-users'||url==='/admin/settings/integrations'?'Connections'
+    :url.startsWith('/admin/provisioning')?'Provisioning'
+      :url==='/admin/backups'||url==='/admin/configuration'?'Backups & Recovery'
+        :null;
+  if(ownerByPath){
+    const activeMain=(await page.locator('.coherenceSectionTabs a.active strong').allTextContents()).map(x=>x.trim()).filter(Boolean);
+    assert.deepStrictEqual(activeMain,[ownerByPath],`${url} must keep ${ownerByPath} active in the one main row: ${JSON.stringify(activeMain)}`);
+  }
+
   if(activeExpected){
-    const active=(await page.locator('.operatorTabs a.active strong').allTextContents()).map(x=>x.trim()).filter(Boolean);
-    assert.deepStrictEqual(active,[activeExpected],`${url} active workflow card changed: ${JSON.stringify(active)}`);
     const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
-    assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not match its workflow page`);
+    assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not identify its specialist page`);
     const siblingLinks=(await page.locator('.topBarActions > a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
     assert.deepStrictEqual(siblingLinks,[],`${url} mixes sibling-page navigation into the top-right action area: ${JSON.stringify(siblingLinks)}`);
+  }
+
+  const ownerTools={
+    '/admin/settings/integrations':['Notifications','Email infrastructure','Request service'],
+    '/admin/provisioning':['Customer moves','Access consistency'],
+    '/admin/backups':['Configuration Transfer']
+  }[url];
+  if(ownerTools){
+    const tools=(await page.locator('.coherenceOwnedTools .coherenceOwnedTool strong').allTextContents()).map(x=>x.trim()).filter(Boolean);
+    assert.deepStrictEqual(tools,ownerTools,`${url} in-page specialist tools changed: ${JSON.stringify(tools)}`);
+  }
+
+  if(expected.join('|')==='Profile|Notifications|Security'){
+    const personalSubRows=await page.locator('.content > .operatorTabs,.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
+    assert.equal(personalSubRows,0,`${url} must not reintroduce a personal-account subtab row`);
   }
 }
 

@@ -88,9 +88,12 @@ async function buildContext(req) {
 }
 registry.registerContextBuilder('servers', buildContext);
 
+// Default desktop rows intentionally add up to the full 12-column grid:
+// 6+6, 4+4+4, 6+6, then a full-width live-stream table. This keeps the
+// fleet dashboard visually ordered without taking customization away.
 registry.register('servers', 'concurrentStreamsByServer', {
     title: 'Concurrent streams by server', subtitle: 'Live snapshot only -- CAPTAiNFiN does not collect a historical concurrent-stream time series, so this does not follow the selected timeframe.',
-    defaultOrder: 1, defaultSpan: 8,
+    defaultOrder: 1, defaultSpan: 6,
     render: async ctx => {
         const rows = ctx.data.rows.map(row => ({ label: row.name, count: fleetMetric(row, 'active_streams', row.active_streams) }));
         return rows.length ? widgets.barChart(rows, 'count', undefined, { orientation: 'horizontal' }) : widgets.emptyState('No Jellyfin servers configured.');
@@ -98,11 +101,11 @@ registry.register('servers', 'concurrentStreamsByServer', {
 });
 registry.register('servers', 'playbackMethodBreakdown', {
     title: 'Playback method', subtitle: 'Only directplay, directstream, transcode and unknown are tracked -- there is no audio-vs-video transcode distinction.',
-    defaultOrder: 2, defaultSpan: 4,
+    defaultOrder: 2, defaultSpan: 6,
     render: async ctx => ctx.data.playbackMethods.length ? widgets.donutChart(ctx.data.playbackMethods) : widgets.emptyState('No playback sessions recorded in this period.')
 });
 registry.register('servers', 'capacityUtilization', {
-    title: 'Capacity utilization', defaultOrder: 3, defaultSpan: 3,
+    title: 'Capacity utilization', defaultOrder: 3, defaultSpan: 4,
     render: async ctx => {
         const managed = ctx.data.rows.reduce((sum, row) => sum + Number(row.assigned_users || 0), 0);
         const capacity = ctx.data.rows.reduce((sum, row) => sum + Number(row.max_users || 0), 0);
@@ -115,12 +118,12 @@ registry.register('servers', 'capacityUtilization', {
     }
 });
 registry.register('servers', 'playbackQuality', {
-    title: 'Playback quality distribution', defaultOrder: 4, defaultSpan: 3,
+    title: 'Playback quality distribution', defaultOrder: 4, defaultSpan: 4,
     render: async () => widgets.emptyState('CAPTAiNFiN does not currently collect playback resolution/quality data.')
 });
 registry.register('servers', 'serverStatus', {
     title: 'Server status', subtitle: 'Live status only -- there is not enough retained history to compute an uptime percentage.',
-    defaultOrder: 5, defaultSpan: 6,
+    defaultOrder: 5, defaultSpan: 4,
     render: async ctx => {
         if (!ctx.data.rows.length) return widgets.emptyState('No Jellyfin servers configured.');
         return widgets.healthWidget(ctx.data.rows.map(row => ({
@@ -146,7 +149,7 @@ registry.register('servers', 'currentErrors', {
 });
 registry.register('servers', 'libraryTotals', {
     title: 'Library totals', subtitle: 'Live counts from Jellyfin. No historical sparkline is shown -- that would need a new metrics-history table.',
-    defaultOrder: 7, defaultSpan: 4, lazy: true,
+    defaultOrder: 7, defaultSpan: 6, lazy: true,
     render: async () => {
         const totals = await libraryTotals();
         if (!totals.totalLibraries) return widgets.emptyState('No Jellyfin libraries found.');
@@ -156,7 +159,7 @@ registry.register('servers', 'libraryTotals', {
     }
 });
 registry.register('servers', 'currentActiveStreams', {
-    title: 'Current active streams', defaultOrder: 8, defaultSpan: 8, lazy: true,
+    title: 'Current active streams', defaultOrder: 8, defaultSpan: 12, lazy: true,
     render: async () => {
         const rows = await currentActiveStreams();
         if (!rows.length) return widgets.emptyState('No active playback sessions right now.');

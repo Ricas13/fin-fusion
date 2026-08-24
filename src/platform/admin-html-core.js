@@ -2,7 +2,7 @@
 
 // The stable base renderer owns the admin document chrome and the
 // /css/admin-capability.css link. This wrapper adds progressive behavior and
-// the server-owned navigation hierarchy shared by modern admin pages.
+// the one-row server-owned navigation hierarchy shared by modern admin pages.
 const base=require('./admin-html-core-base');
 const contextNavigation=require('./admin-context-navigation');
 
@@ -25,7 +25,8 @@ function addFilterStyles(html){
 function addServerContextNavigation(options={}){
   const body=String(options.body||'');
   const navigation=contextNavigation.render(options.active);
-  return {...options,body:navigation?`${navigation}${body}`:body};
+  const tools=contextNavigation.renderOwnedTools(options.active);
+  return {...options,body:`${navigation||''}${body}${tools||''}`};
 }
 
 function replaceBreadcrumb(html,active){
@@ -37,19 +38,18 @@ function replaceBreadcrumb(html,active){
   );
 }
 
-const REDUNDANT_WORKFLOW_LABELS=Object.freeze([
-  'Plans and storefront control room',
-  'Orders and growth control room',
-  'Payments and billing control room'
-]);
-function removeRedundantWorkflowNavigation(html){
-  let output=String(html||'');
-  for(const label of REDUNDANT_WORKFLOW_LABELS){
-    const escaped=label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    output=output.replace(new RegExp(`<nav class="workflowCardGrid operatorTabs" aria-label="${escaped}">[\\s\\S]*?<\\/nav>`,'g'),'');
-  }
-  return output;
+// Old workflow modules still return card/tab navigation because deep links and
+// specialist routes remain supported. The single-row IA now exposes those
+// destinations as ordinary tools inside the owning main page, so a second
+// server-rendered workflow navigator must never survive into the document.
+function removeSecondaryWorkflowNavigation(html){
+  return String(html||'')
+    .replace(/<nav class="workflowCardGrid operatorTabs"[^>]*>[\s\S]*?<\/nav>/g,'')
+    .replace(/<nav class="coherenceSubTabs"[^>]*>[\s\S]*?<\/nav>/g,'');
 }
+
+// Compatibility export retained for older smoke/tests/callers.
+function removeRedundantWorkflowNavigation(html){return removeSecondaryWorkflowNavigation(html);}
 
 // Page-action placement contract -----------------------------------------
 // Generic navigation/actions belong in the top-right page header. Overview
@@ -78,16 +78,16 @@ function dedupeOverviewActions(body='',action=''){
 function layout(options={}){
   const withActions={...options,body:dedupeOverviewActions(options.body,options.action)};
   const normalized=addServerContextNavigation(withActions);
-  const rendered=removeRedundantWorkflowNavigation(base.layout(normalized));
+  const rendered=removeSecondaryWorkflowNavigation(base.layout(normalized));
   const withBreadcrumb=replaceBreadcrumb(rendered,options.active);
   const html=addFilterStyles(addCommandPalette(withBreadcrumb));
   // admin-customer-filters.js remains after the shared enhancer for backward
   // asset compatibility. Once admin-filter-bars.js has transformed Customers,
   // the legacy controller finds no original filter grid and exits immediately.
-  // admin-navigation-coherence.js is now fallback/enhancement only: modern
-  // pages already contain their navigation in this server-rendered document.
+  // admin-navigation-coherence.js is fallback/enforcement only: modern pages
+  // already contain the single primary row in server-rendered HTML.
   const scripts='<script src="/js/admin-setting-controls.js" defer></script><script src="/js/admin-filter-bars.js" defer></script><script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-safety-confirmations.js" defer></script><script src="/js/admin-command-palette.js" defer></script><script src="/js/admin-sidebar-nav.js" defer></script><script src="/js/admin-stremio-journey.js" defer></script><script src="/js/admin-release-status.js" defer></script><script src="/js/admin-form-accessibility.js" defer></script><script src="/js/admin-surface-semantics.js" defer></script><script src="/js/admin-server-control.js" defer></script><script src="/js/admin-navigation-coherence.js" defer></script>';
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
 
-module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,addServerContextNavigation,replaceBreadcrumb,removeRedundantWorkflowNavigation,actionHrefs,dedupeOverviewActions};
+module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,addServerContextNavigation,replaceBreadcrumb,removeSecondaryWorkflowNavigation,removeRedundantWorkflowNavigation,actionHrefs,dedupeOverviewActions};

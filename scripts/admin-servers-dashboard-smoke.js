@@ -39,6 +39,22 @@ async function main() {
 
     const req = fakeReq();
     const ctx = await buildContext(req);
+
+    // The default desktop composition should fill each 12-column row exactly,
+    // avoiding the visible 2/4-column holes that made the dashboard look like
+    // a masonry layout. Admins can still customize these spans afterwards.
+    const defaultSpans = Object.fromEntries(registry.listWidgets('servers').map(spec => [spec.key, spec.defaultSpan]));
+    assert.deepStrictEqual(defaultSpans, {
+        concurrentStreamsByServer: 6,
+        playbackMethodBreakdown: 6,
+        capacityUtilization: 4,
+        playbackQuality: 4,
+        serverStatus: 4,
+        currentErrors: 6,
+        libraryTotals: 6,
+        currentActiveStreams: 12
+    }, 'server dashboard defaults must compose complete 12-column rows');
+
     for (const spec of registry.listWidgets('servers')) {
         if (spec.lazy) continue;
         const html = await spec.render(ctx);

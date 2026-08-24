@@ -12,74 +12,93 @@ const html=require('../src/platform/admin-html-core');
 const keys=rows=>rows.map(row=>row[0]);
 const labels=rows=>rows.map(row=>row[1]);
 
-// Settings keeps one stable section row while General-owned child pages expose
-// the same General / Branding / Support & legal sibling row.
+// The upper hierarchy has one level only. Hidden/specialist destinations must
+// select their owning main tab instead of creating another row underneath it.
 assert.deepStrictEqual(
   keys(context.sectionPages('branding')),
   ['settings-general','settings-security','settings-integrations','settings-commerce','system'],
-  'Settings child pages must preserve the complete Settings section row'
+  'Settings child pages must preserve the one main Settings row'
 );
 assert.strictEqual(context.sectionActiveKey('branding'),'settings-general','Branding must remain owned by Settings → General');
+assert.strictEqual(context.sectionActiveKey('discounts'),'orders','Discounts must remain owned by Commerce → Orders & Growth');
+assert.strictEqual(context.sectionActiveKey('commerce-overview'),'orders','Commerce analytics must now live inside Orders & Growth rather than becoming another upper tab');
+assert.strictEqual(context.sectionActiveKey('provider-mappings'),'payments','Provider mappings must remain owned by Payments & Billing');
+assert.deepStrictEqual(context.COMMERCE_ANALYTICS,['commerce-overview','Analytics','/admin/commerce'],'The old Commerce analytics tuple remains exported for compatibility without becoming an upper tab');
+for(const active of ['branding','discounts','activity','provider-mappings','server-migrations','configuration-transfer']){
+  assert.deepStrictEqual(context.subPages(active),[],`${active} must not generate a secondary upper-tab row`);
+  assert.strictEqual(context.subActiveKey(active),null,`${active} must not maintain a secondary active-tab state`);
+}
+
+// Former subsection destinations remain discoverable as ordinary tools inside
+// their main owner rather than disappearing when the secondary row is retired.
 assert.deepStrictEqual(
-  keys(context.subPages('branding')),
-  ['settings-general','branding','support-policy'],
-  'General, Branding and Support & legal must remain sibling pages'
+  labels(context.ownedToolPages('settings-general')),
+  ['Branding','Support & legal'],
+  'General must own Branding and Support & legal as in-page tools'
 );
+assert.deepStrictEqual(
+  labels(context.ownedToolPages('orders')),
+  ['Commerce analytics','Discounts','Affiliates'],
+  'Orders & Growth must own analytics, discounts and affiliates as in-page tools'
+);
+assert.deepStrictEqual(
+  labels(context.ownedToolPages('payments')),
+  ['Billing','Provider mappings','Payment risk'],
+  'Payments & Billing must own billing, mappings and risk as in-page tools'
+);
+assert(labels(context.ownedToolPages('activity')).includes('Free-user inactivity rules'),'Playback must expose inactivity rules inside the main Playback area');
+assert.deepStrictEqual(context.ownedToolPages('branding'),[],'A specialist child page must not repeat its parent tool directory');
+assert.deepStrictEqual(context.ownedToolPages('dashboard'),[],'Dashboard must not repeat Needs Attention below the preferred Current/Related row');
+assert(!labels(context.ownedToolPages('users')).includes('Jellyfin password support'),'Customer-specific credential support must remain contextual rather than becoming a generic Customers tool');
+
 const brandingCrumb=context.breadcrumb('branding');
 assert(brandingCrumb.includes('<a href="/admin/settings?section=general">General</a>'),'Branding breadcrumb must provide an in-product path back to General');
-assert(brandingCrumb.includes('<strong>Branding</strong>'),'Branding breadcrumb must identify the current page');
-
-// Commerce has one canonical section row. Discounts/Affiliates remain children
-// of Orders & Growth rather than becoming a new top-level navigation model.
-assert.deepStrictEqual(
-  keys(context.sectionPages('discounts')),
-  ['plans','orders','payments','commerce-overview'],
-  'Commerce must keep one stable Plans / Orders / Payments / Analytics section row'
-);
-assert.strictEqual(context.sectionActiveKey('discounts'),'orders','Discounts must remain owned by Orders & Growth');
-assert.deepStrictEqual(
-  labels(context.subPages('discounts')),
-  ['Orders & Growth','Commerce analytics','Discounts','Affiliates'],
-  'Orders & Growth child navigation must remain stable across its sibling pages'
-);
+assert(brandingCrumb.includes('<strong>Branding</strong>'),'Branding breadcrumb must identify the current specialist page');
 const discountCrumb=context.breadcrumb('discounts');
-assert(discountCrumb.includes('<a href="/admin/commerce/orders">Orders &amp; Growth</a>'),'Commerce child breadcrumb must link back to its canonical parent');
-assert(discountCrumb.includes('<strong>Discounts</strong>'),'Commerce child breadcrumb must identify the current page');
+assert(discountCrumb.includes('<a href="/admin/plans">Commerce</a>'),'Commerce breadcrumb must use the normal Commerce landing page rather than the demoted Analytics child');
+assert(discountCrumb.includes('<a href="/admin/commerce/orders">Orders &amp; Growth</a>'),'Commerce child breadcrumb must link back to its owning main tab');
+assert(discountCrumb.includes('<strong>Discounts</strong>'),'Commerce child breadcrumb must identify the specialist page');
 
-// Jellyfin Playback keeps the navigation required to move between live state
-// and policy without relying on browser Back or a disappearing page-only tab.
-assert.deepStrictEqual(
-  context.subPages('activity'),
-  [
-    ['activity-live','Live playback','/admin/activity'],
-    ['activity-policy','Policy settings','/admin/activity#playback-policy']
-  ],
-  'Playback must expose stable Live playback and Policy settings siblings'
-);
-assert.strictEqual(context.subActiveKey('activity'),'activity-live','Playback defaults to Live playback');
-assert.strictEqual(context.subActiveKey('activity','#playback-policy'),'activity-policy','Playback policy anchor must activate Policy settings');
+const oneRow=context.render('branding');
+assert(oneRow.includes('workflowCardGrid coherenceSectionTabs'),'The single upper row must use the preferred compact Current/Related visual language');
+assert(oneRow.includes('workflowCardEyebrow">Current'),'The active main tab must be labelled Current');
+assert(oneRow.includes('workflowCardEyebrow">Related'),'Sibling main tabs must be labelled Related');
+assert(!oneRow.includes('coherenceSubTabs'),'The server renderer must never emit a secondary upper row');
+assert.strictEqual((oneRow.match(/<nav\b/g)||[]).length,1,'Context navigation must render at most one upper nav element');
 
-// Modern pages must receive the hierarchy in server HTML, with ancestry links,
-// and must not retain the superseded card-based navigation for the same level.
+// Full modern documents keep one main row, strip legacy workflow navigators,
+// and append the former secondary destinations as ordinary page content.
 const rendered=html.layout({
   active:'payments',
   title:'Payments',
   subtitle:'Payment provider health',
   body:'<section id="navigation-coherence-sentinel">sentinel</section>'
 });
-assert(rendered.includes('aria-label="Commerce sections"'),'Modern Commerce pages must render the persistent section row server-side');
-assert(rendered.includes('aria-label="Payments &amp; Billing pages"'),'Payments must render its persistent subsection row server-side');
-assert(rendered.indexOf('coherenceSectionTabs')<rendered.indexOf('navigation-coherence-sentinel'),'Persistent navigation must appear before page content');
-assert(!rendered.includes('aria-label="Payments and billing control room"'),'Superseded Payments workflow-card navigation must not render beside the new hierarchy');
-assert(/topBreadcrumb[\s\S]*<a href="\/admin\/commerce">Commerce<\/a>/.test(rendered),'Top breadcrumb must expose clickable Commerce ancestry');
+assert(rendered.includes('aria-label="Commerce sections"'),'Commerce must render its one main section row server-side');
+assert.strictEqual((rendered.match(/class="workflowCardGrid coherenceSectionTabs"/g)||[]).length,1,'A modern page must contain exactly one primary contextual row');
+assert(!rendered.includes('class="coherenceSubTabs"'),'Modern documents must not contain a secondary coherence row');
+assert(!rendered.includes('class="workflowCardGrid operatorTabs"'),'Legacy server workflow navigators must be removed from the final document');
+assert(rendered.indexOf('coherenceSectionTabs')<rendered.indexOf('navigation-coherence-sentinel'),'The one contextual row must appear before page content');
+assert(rendered.includes('class="coherenceOwnedTools"'),'Former payment subtabs must become in-page tools');
+assert(rendered.includes('href="/admin/provider-mappings"')&&rendered.includes('href="/admin/billing"')&&rendered.includes('href="/admin/payments/risk-policy"'),'Payment specialist destinations must remain reachable from the Payments main page');
+assert(/topBreadcrumb[\s\S]*<a href="\/admin\/plans">Commerce<\/a>/.test(rendered),'Top breadcrumb must expose Commerce ancestry through its main landing page');
+
+const coreSource=read('src/platform/admin-html-core.js');
+assert(coreSource.includes('renderOwnedTools(options.active)'),'Shared admin rendering must append owner tools as page content');
+assert(coreSource.includes('function removeSecondaryWorkflowNavigation'),'Shared admin rendering must enforce removal of legacy server workflow rows');
+assert(coreSource.includes('workflowCardGrid operatorTabs'),'The server cleanup must target the legacy workflow-card navigation signature');
 
 const fallback=read('public/js/admin-navigation-coherence.js');
 assert(fallback.includes("if(!document.querySelector('.coherenceSectionTabs'))"),'Legacy navigation enhancer must remain fallback-only');
-assert(fallback.includes("['Live playback','/admin/activity']")&&fallback.includes("['Policy settings','/admin/activity#playback-policy']"),'Legacy Playback pages must use the same stable sibling destinations');
+assert(fallback.includes("['Servers','/admin/servers']")&&fallback.includes("['Playback','/admin/activity']"),'Legacy Jellyfin pages must receive the same one main row');
+assert(!fallback.includes("['Policy settings','/admin/activity#playback-policy']"),'Playback policy must stay in the Playback page instead of returning as an upper subtab');
+assert(fallback.includes('function enforceSingleUpperNavigation()'),'Client enhancement must enforce the one-row rule for legacy/client-inserted navigation');
+assert(fallback.includes('appendOwnedTools(content,demotedLinks)'),'Client enhancement must preserve demoted destinations as ordinary in-page tools');
 
 const css=read('public/css/admin-navigation-coherence.css');
-assert(css.includes('.coherenceSectionTabs')&&css.includes('.coherenceSubTabs'),'Persistent section and subsection rows must share one visual system');
-assert(!css.includes('body:has(.coherenceSubTabs) .workflowCardGrid.operatorTabs'),'Navigation CSS must not hide unrelated page-local workflow cards');
+assert(css.includes('.coherenceSectionTabs.workflowCardGrid'),'The one main row must use the preferred compact workflow-card presentation');
+assert(css.includes('.coherenceOwnedToolsGrid'),'Former secondary destinations must have a dedicated non-sticky content layout');
+assert(css.includes('.coherenceSubTabs,.pageHeader + .operatorTabs:not(.coherenceSectionTabs){display:none!important}'),'CSS must fail safe by never displaying stacked legacy upper rows');
 assert(/settingsCommerceGrid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/.test(css),'Settings-style configuration cards should remain three-up where practical');
 
 console.log('admin navigation coherence smoke: ok');
