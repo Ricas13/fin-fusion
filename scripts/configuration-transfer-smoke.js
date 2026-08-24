@@ -83,13 +83,20 @@ async function main(){
   const protectedPlan=regressionPlans.find(plan=>plan.code==='audit-transfer-jellyfin-household');
   const legacyPlan=legacyV2.configuration.plans.find(plan=>plan.code===protectedPlan.code);
   for(const key of ['service_type','capacity_limit','is_addon','jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes'])delete legacyPlan[key];
+  const newLegacyPlan={...legacyPlan,code:'audit-transfer-legacy-null-new',name:'Audit Legacy Null New'};
+  legacyV2.configuration.plans.push(newLegacyPlan);
   const parsedLegacy=transfer.parseDocument(legacyV2);
   const parsedLegacyPlan=parsedLegacy.configuration.plans.find(plan=>plan.code===legacyPlan.code);
+  const parsedNewLegacyPlan=parsedLegacy.configuration.plans.find(plan=>plan.code===newLegacyPlan.code);
   assert.strictEqual(parsedLegacyPlan._modular_plan_contract,false,'old V2 plan must be marked as a legacy contract');
   assert.strictEqual(parsedLegacyPlan.streams,null,'old V2 household stream sentinel must remain NULL');
+  assert.strictEqual(parsedNewLegacyPlan._modular_plan_contract,false,'new legacy V2 plan must remain a legacy contract');
+  assert.strictEqual(parsedNewLegacyPlan.streams,null,'new legacy V2 plan must preserve NULL through parsing');
   await transfer.applyImport(legacyV2,null);
   const afterLegacy=(await query(`SELECT ${PLAN_COLUMNS} FROM plans WHERE code=$1`,[protectedPlan.code])).rows[0];
   assert.deepStrictEqual(expectedShape(afterLegacy),expectedShape(protectedPlan),'old V2 import overwrote modern household plan semantics');
+  const insertedLegacy=(await query(`SELECT service_type,streams,jellyfin_access_model FROM plans WHERE code=$1`,[newLegacyPlan.code])).rows[0];
+  assert.deepStrictEqual(insertedLegacy,{service_type:'jellyfin',streams:1,jellyfin_access_model:'concurrent_streams'},'new legacy plan with NULL streams must use a safe concurrent-stream contract');
 
   // Damage local values so a current V2 apply proves settings and plan
   // semantics are restored rather than merely serialized in the export.
