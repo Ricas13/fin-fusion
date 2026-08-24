@@ -31,6 +31,11 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
           AND s.status IN('active','trialing','past_due','paused','cancelled')
           AND s.current_period_end IS NOT NULL
           AND COALESCE(p.is_free_tier,FALSE)=FALSE
+          AND NOT EXISTS (
+            SELECT 1 FROM customer_entitlement_overrides o
+            WHERE o.customer_id=s.customer_id AND o.subscription_id=s.id
+              AND o.permanent_access=TRUE AND o.revoked_at IS NULL
+          )
           AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval>NOW()
           AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval<=NOW()+($1::int*INTERVAL '1 day')
         ORDER BY access_expires_at,s.id
@@ -54,6 +59,7 @@ async function notifyExpiringSubscriptions({ days = DEFAULT_WARNING_DAYS, dispat
                 dedupeKey: `subscription-expiring:${row.id}:${endKey}`
             });
             if (delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp)) result.queued += 1;
+            if (Array.isArray(delivery?.errors) && delivery.errors.length) result.failed += 1;
         } catch (error) {
             result.failed += 1;
             console.warn('Subscription expiry warning failed:', { subscriptionId: row.id, customerId: row.customer_id, error: String(error?.message || error).slice(0, 300) });
