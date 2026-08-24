@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const breach = require('../src/security/password-breach');
+const customerLoginModule = require('../src/platform/customer-login');
 
 async function main() {
   const password = 'correct horse battery staple unique fixture';
@@ -79,6 +80,12 @@ async function main() {
   assert(customerLogin.includes('limit:30,windowMs:15*60*1000'), 'identity throttle should use the higher anti-DoS threshold');
   assert(customerRateLimit.includes("crypto.createHmac('sha256'"), 'raw login identities must remain HMAC-pseudonymized before persistence');
   assert(customerRateLimit.includes('const storageKey = bucketStorageKey(bucketKey)'), 'database writes must use the pseudonymous storage key');
+
+  assert.strictEqual(customerLoginModule.safeNext('/account'), '/account', 'customer login may return to the account root');
+  assert.strictEqual(customerLoginModule.safeNext('/account/security?tab=two-factor'), '/account/security?tab=two-factor', 'customer login may return to a local account child route');
+  for (const hostile of ['//evil.example', '///evil.example/path', '/\\evil.example/path', 'https://evil.example/account', '/admin', '/account\n//evil.example']) {
+    assert.strictEqual(customerLoginModule.safeNext(hostile), '/account', `customer login must reject unsafe next target ${JSON.stringify(hostile)}`);
+  }
 
   const validationCalls = customers.match(/await validateNewPassword\(/g) || [];
   assert(validationCalls.length >= 3, 'registration, password change and password reset must all screen new passwords');
