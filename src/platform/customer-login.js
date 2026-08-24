@@ -10,7 +10,7 @@ const emailChange=require('../security/customer-email-change');
 const twoFactor=require('../security/customer-two-factor');
 const customerRateLimit=require('../security/customer-rate-limit');
 const csrf=require('../auth/csrf');
-function safeNext(value){const next=String(value||'');return next.startsWith('/')&&!next.startsWith('//')?next:'/account'}
+function safeNext(value){const raw=String(value||'').trim();if(!raw||/[\u0000-\u001f\u007f\\]/.test(raw))return'/account';try{const base=new URL('https://captainfin.invalid'),local=new URL(raw,base);if(raw.startsWith('/')&&local.origin===base.origin&&(local.pathname==='/account'||local.pathname.startsWith('/account/')))return`${local.pathname}${local.search}${local.hash}`;}catch(_){}return'/account'}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function save(req){return new Promise((resolve,reject)=>req.session.save(e=>e?reject(e):resolve()));}
 function regenerate(req){return new Promise((resolve,reject)=>req.session.regenerate(e=>e?reject(e):resolve()));}
