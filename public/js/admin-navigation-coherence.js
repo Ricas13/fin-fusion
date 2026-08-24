@@ -4,10 +4,6 @@
   const path=location.pathname;
   const search=new URLSearchParams(location.search);
 
-  // Compatibility labels consumed by the legacy coherence audit. The modern
-  // renderer owns Settings sections and Commerce sections; this fallback owns
-  // the remaining legacy-EJS Jellyfin / Playback sections only when needed.
-
   function current(href,group){
     const target=new URL(href,location.origin);
     if(group==='settings'){
@@ -25,56 +21,32 @@
     return path===target.pathname||path.startsWith(target.pathname.endsWith('/')?target.pathname:target.pathname+'/');
   }
 
-  function fallbackNav(items,{label='Section navigation',group='',sub=false}={}){
+  function fallbackNav(items,{label='Section navigation',group=''}={}){
     const el=document.createElement('nav');
-    el.className=sub?'coherenceSubTabs':'coherenceSectionTabs';
+    el.className='workflowCardGrid coherenceSectionTabs';
     el.setAttribute('aria-label',label);
     items.forEach(([text,href])=>{
+      const selected=current(href,group);
       const a=document.createElement('a');
-      a.className=sub?'coherenceSubTab':'coherenceSectionTab';
+      a.className=`workflowCard coherenceSectionTab${selected?' active':''}`;
       a.href=href;
-      a.textContent=text;
-      const selected=sub
-        ? (href.includes('#playback-policy')?location.hash==='#playback-policy':path===new URL(href,location.origin).pathname&&location.hash!=='#playback-policy')
-        : current(href,group);
-      if(selected){a.classList.add('active');a.setAttribute('aria-current','page');}
-      el.appendChild(a);
+      if(selected)a.setAttribute('aria-current','page');
+      const eyebrow=document.createElement('span');eyebrow.className='workflowCardEyebrow';eyebrow.textContent=selected?'Current':'Related';
+      const title=document.createElement('strong');title.textContent=text;
+      a.append(eyebrow,title);el.appendChild(a);
     });
     return el;
   }
 
-  function insertFallback(node,sub=false){
-    if(document.querySelector(sub?'.coherenceSubTabs':'.coherenceSectionTabs'))return;
-    const primary=document.querySelector('.coherenceSectionTabs');
+  function insertFallback(node){
+    if(document.querySelector('.coherenceSectionTabs'))return;
     const header=document.querySelector('.pageHeader');
-    if(sub&&primary)primary.insertAdjacentElement('afterend',node);
-    else if(header?.parentNode)header.insertAdjacentElement('afterend',node);
+    if(header?.parentNode)header.insertAdjacentElement('afterend',node);
   }
 
-  // A few legacy/client-enhanced pages can expose the same destinations twice:
-  // once as the preferred compact workflow cards and again as an older tab row.
-  // Keep layered navigation when the destinations differ, but remove exact/subset
-  // duplicates so one workflow is never represented by two adjacent controls.
-  function normalizedNavHref(link){
-    try{
-      const target=new URL(link.getAttribute('href')||'',location.origin);
-      return `${target.pathname}${target.search}${target.hash}`;
-    }catch(_){return'';}
-  }
-  function removeDuplicateWorkflowNavigation(){
-    const workflow=document.querySelector('.workflowCardGrid');
-    if(!workflow)return;
-    const workflowTargets=new Set([...workflow.querySelectorAll('a[href]')].map(normalizedNavHref).filter(Boolean));
-    if(!workflowTargets.size)return;
-    document.querySelectorAll('.operatorTabs,.coherenceSectionTabs,.coherenceSubTabs').forEach(candidate=>{
-      if(candidate===workflow||candidate.classList.contains('workflowCardGrid'))return;
-      const targets=[...candidate.querySelectorAll('a[href]')].map(normalizedNavHref).filter(Boolean);
-      if(targets.length&&targets.every(target=>workflowTargets.has(target)))candidate.remove();
-    });
-  }
-
-  // Modern admin-html pages already contain both hierarchy rows in their
-  // server-rendered HTML. Only the remaining legacy EJS pages reach this path.
+  // Modern pages already receive their one primary row from the server. Legacy
+  // EJS pages get the exact same Current/Related treatment here, but never a
+  // second subsection row.
   if(!document.querySelector('.coherenceSectionTabs')){
     const settingsOwned=path.startsWith('/admin/settings')||path==='/admin/system'||path==='/admin/security'||path==='/admin/setup'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
     if(settingsOwned){
@@ -93,27 +65,109 @@
         ['Servers','/admin/servers'],
         ['Playback','/admin/activity']
       ],{label:'Jellyfin sections',group:'jellyfin'}));
-      if(path==='/admin/activity'||path.startsWith('/admin/activity/')){
-        insertFallback(fallbackNav([
-          ['Live playback','/admin/activity'],
-          ['Policy settings','/admin/activity#playback-policy']
-        ],{label:'Playback sections',sub:true}),true);
-      }
     }
   }
 
-  function syncPlaybackAnchor(){
-    if(path!=='/admin/activity')return;
-    document.querySelectorAll('.coherenceSubTab').forEach(link=>{
-      const isPolicy=(link.getAttribute('href')||'').includes('#playback-policy');
-      const selected=isPolicy?location.hash==='#playback-policy':location.hash!=='#playback-policy';
-      link.classList.toggle('active',selected);
-      if(selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+  function normalizedNavHref(link){
+    try{
+      const target=new URL(link.getAttribute('href')||'',location.origin);
+      return `${target.pathname}${target.search}${target.hash}`;
+    }catch(_){return'';}
+  }
+
+  function upperCandidates(content){
+    const children=[...content.children];
+    const headerIndex=children.findIndex(node=>node.classList?.contains('pageHeader'));
+    if(headerIndex<0)return[];
+    const result=[];
+    for(let i=headerIndex+1;i<children.length;i++){
+      const node=children[i];
+      const isNav=node.matches?.('.workflowCardGrid,.operatorTabs,.coherenceSubTabs,.coherenceSectionTabs');
+      if(isNav){result.push(node);continue;}
+      if(node.matches?.('script,link,.notice.widgetHidden'))continue;
+      break;
+    }
+    return result;
+  }
+
+  function promotePrimary(candidate){
+    if(!candidate)return null;
+    candidate.classList.add('workflowCardGrid','coherenceSectionTabs');
+    candidate.classList.remove('coherenceSubTabs');
+    candidate.querySelectorAll('a[href]').forEach(link=>{
+      const selected=normalizedNavHref(link)===`${location.pathname}${location.search}${location.hash}`||link.classList.contains('active');
+      link.classList.add('workflowCard','coherenceSectionTab');
+      link.classList.remove('operatorTab','coherenceSubTab');
+      let eyebrow=link.querySelector('.workflowCardEyebrow');
+      if(!eyebrow){
+        eyebrow=document.createElement('span');eyebrow.className='workflowCardEyebrow';link.prepend(eyebrow);
+      }
+      eyebrow.textContent=selected?'Current':'Related';
+      if(!link.querySelector(':scope > strong')){
+        const text=[...link.childNodes].filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent).join('').trim();
+        [...link.childNodes].filter(node=>node.nodeType===Node.TEXT_NODE).forEach(node=>node.remove());
+        const strong=document.createElement('strong');strong.textContent=text||link.textContent.trim();link.appendChild(strong);
+      }
+    });
+    return candidate;
+  }
+
+  function appendOwnedTools(content,links){
+    const existing=new Set([...content.querySelectorAll('.coherenceOwnedTools a[href]')].map(normalizedNavHref));
+    const primary=new Set([...content.querySelectorAll('.coherenceSectionTabs a[href]')].map(normalizedNavHref));
+    const currentHref=`${location.pathname}${location.search}${location.hash}`;
+    const unique=[];
+    for(const link of links){
+      const href=normalizedNavHref(link);
+      if(!href||href===currentHref||primary.has(href)||existing.has(href)||unique.some(item=>item.href===href))continue;
+      const title=(link.querySelector('strong')?.textContent||link.textContent||'Open tool').trim();
+      const description=[...link.querySelectorAll(':scope > span:not(.workflowCardEyebrow)')].map(node=>node.textContent.trim()).find(Boolean)||'Open this specialist control.';
+      unique.push({href,title,description});
+    }
+    if(!unique.length)return;
+    let section=content.querySelector('.coherenceOwnedTools');
+    let grid=section?.querySelector('.coherenceOwnedToolsGrid');
+    if(!section){
+      section=document.createElement('section');section.className='coherenceOwnedTools';section.setAttribute('aria-label','Related tools');
+      const head=document.createElement('div');head.className='coherenceOwnedToolsHead';
+      const copy=document.createElement('div');const h=document.createElement('h2');h.textContent='More in this area';const p=document.createElement('p');p.textContent='Specialist controls live inside the main area instead of creating another row of tabs.';copy.append(h,p);head.appendChild(copy);
+      grid=document.createElement('div');grid.className='coherenceOwnedToolsGrid';section.append(head,grid);content.appendChild(section);
+    }
+    unique.forEach(item=>{
+      const a=document.createElement('a');a.className='coherenceOwnedTool';a.href=item.href;
+      const strong=document.createElement('strong');strong.textContent=item.title;
+      const span=document.createElement('span');span.textContent=item.description;
+      const small=document.createElement('small');small.textContent='Open →';
+      a.append(strong,span,small);grid.appendChild(a);
     });
   }
-  window.addEventListener('hashchange',syncPlaybackAnchor);
-  syncPlaybackAnchor();
-  removeDuplicateWorkflowNavigation();
+
+  function enforceSingleUpperNavigation(){
+    const content=document.querySelector('.content');
+    if(!content)return;
+    let candidates=upperCandidates(content);
+    let primary=candidates.find(node=>node.classList.contains('coherenceSectionTabs'))||null;
+    if(!primary){
+      const preferred=candidates.find(node=>node.classList.contains('workflowCardGrid'))||candidates[0]||null;
+      primary=promotePrimary(preferred);
+      candidates=upperCandidates(content);
+    }
+    const demotedLinks=[];
+    for(const candidate of candidates){
+      if(candidate===primary)continue;
+      demotedLinks.push(...candidate.querySelectorAll('a[href]'));
+      candidate.remove();
+    }
+    // Any late/legacy subtab row outside the immediate header stack is still
+    // invalid; preserve its destinations as in-page tools before removing it.
+    content.querySelectorAll('.coherenceSubTabs').forEach(candidate=>{
+      demotedLinks.push(...candidate.querySelectorAll('a[href]'));
+      candidate.remove();
+    });
+    appendOwnedTools(content,demotedLinks);
+  }
+
+  enforceSingleUpperNavigation();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
