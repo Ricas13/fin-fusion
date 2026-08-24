@@ -1,6 +1,66 @@
 'use strict';
 
-const { transaction } = require('../db');
+const { query, transaction } = require('../db');
+const notificationDispatch = require('../integrations/notification-dispatch');
+
+const DEFAULT_WARNING_DAYS = Math.max(1, Math.min(30, Number(process.env.SUBSCRIPTION_EXPIRY_WARNING_DAYS || 7)));
+
+function recurringAutoRenewal(row) {
+    if (String(row?.status || '').toLowerCase() !== 'active') return false;
+    const source = String(row?.source || '').toLowerCase();
+    const providerId = String(row?.provider_subscription_id || '');
+    return (source === 'stripe' && providerId.startsWith('sub_')) ||
+        (source === 'paypal' && providerId.startsWith('I-'));
+}
+
+function expiryDate(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'soon';
+    return date.toLocaleDateString('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
+}
+
+async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
+    const warningDays = Math.max(1, Math.min(30, Number(days) || DEFAULT_WARNING_DAYS));
+    const result = await query(`
+        SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,
+               COALESCE(s.plan_name_snapshot,p.name,'Your subscription') AS plan_name,
+               s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at
+        FROM subscriptions s
+        JOIN plans p ON p.id=s.plan_id
+        WHERE s.superseded_by IS NULL
+          AND s.status IN('active','trialing','past_due','paused','cancelled')
+          AND s.current_period_end IS NOT NULL
+          AND COALESCE(p.is_free_tier,FALSE)=FALSE
+          AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval>NOW()
+          AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval<=NOW()+($1::int*INTERVAL '1 day')
+        ORDER BY access_expires_at,s.id
+    `, [warningDays]);
+    return result.rows.filter(row => !recurringAutoRenewal(row));
+}
+
+async function notifyExpiringSubscriptions({ days = DEFAULT_WARNING_DAYS, dispatch = notificationDispatch.dispatch } = {}) {
+    const rows = await expiringSubscriptions({ days });
+    const result = { candidates: rows.length, queued: 0, failed: 0 };
+    for (const row of rows) {
+        const end = new Date(row.access_expires_at);
+        const endKey = Number.isNaN(end.getTime()) ? String(row.access_expires_at || 'unknown') : end.toISOString();
+        const planName = String(row.plan_name || 'Your subscription').trim() || 'Your subscription';
+        try {
+            const delivery = await dispatch({
+                eventType: 'subscription.expiring',
+                customerId: row.customer_id,
+                subject: `${planName} expires soon`,
+                text: `Your ${planName} access is due to expire on ${expiryDate(row.access_expires_at)}. Renew or choose a plan before then to avoid interruption.`,
+                dedupeKey: `subscription-expiring:${row.id}:${endKey}`
+            });
+            if (delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp)) result.queued += 1;
+        } catch (error) {
+            result.failed += 1;
+            console.warn('Subscription expiry warning failed:', { subscriptionId: row.id, customerId: row.customer_id, error: String(error?.message || error).slice(0, 300) });
+        }
+    }
+    return result;
+}
 
 async function expireDueSubscriptions() {
     return transaction(async client => {
@@ -43,4 +103,4 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onR
     return expired.length;
 }
 
-module.exports = { expireDueSubscriptions, expireAndReconcile };
+module.exports = { DEFAULT_WARNING_DAYS, recurringAutoRenewal, expiryDate, expiringSubscriptions, notifyExpiringSubscriptions, expireDueSubscriptions, expireAndReconcile };
