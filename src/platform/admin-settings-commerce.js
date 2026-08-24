@@ -45,9 +45,8 @@ async function page(){
 }
 function createAdminSettingsCommerceRouter(){
   const router=express.Router();
-  router.use('/admin/settings',gate,noStore);
-  router.get('/admin/settings',async(req,res,next)=>{
-    if(String(req.query.section||'')!=='commerce')return next();
+  router.use('/admin/settings/commerce',gate,noStore);
+  router.get('/admin/settings/commerce',async(_req,res,next)=>{
     try{return res.send(await page());}catch(error){return next(error);}
   });
   return router;
