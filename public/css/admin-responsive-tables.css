@@ -1,0 +1,106 @@
+/* Shared responsive table contract ---------------------------------------
+   Tables opt into this behaviour with .responsiveTable and data-label cells.
+   When the admin workspace becomes narrow, preserve readable words and turn
+   each record into a labelled card instead of crushing six or more columns. */
+
+.responsiveTable th,.responsiveTable td{
+  overflow-wrap:normal;
+  word-break:normal;
+}
+.uiSectionHeader>div{min-width:0}
+.uiSectionHeader p{overflow-wrap:break-word;word-break:normal}
+
+@media(max-width:1100px){
+  .tableWrap>.responsiveTable,
+  .table-container>.responsiveTable{
+    display:block;
+    width:100%;
+    min-width:0!important;
+    max-width:100%;
+    border-collapse:separate;
+  }
+  .responsiveTable thead{
+    position:absolute!important;
+    width:1px!important;
+    height:1px!important;
+    padding:0!important;
+    margin:-1px!important;
+    overflow:hidden!important;
+    clip:rect(0,0,0,0)!important;
+    white-space:nowrap!important;
+    border:0!important;
+  }
+  .responsiveTable tbody{
+    display:grid;
+    gap:10px;
+    width:100%;
+    min-width:0;
+    padding:10px;
+  }
+  .responsiveTable tr{
+    display:grid;
+    width:100%;
+    min-width:0;
+    overflow:hidden;
+    border:1px solid #2b3947;
+    border-radius:10px;
+    background:#101820;
+  }
+  .responsiveTable td,
+  .adminSurface--data .responsiveTable td,
+  .adminSurface--control .responsiveTable td{
+    display:grid;
+    grid-template-columns:minmax(100px,30%) minmax(0,1fr);
+    gap:10px;
+    align-items:start;
+    width:100%;
+    min-width:0;
+    padding:10px 11px!important;
+    border-bottom:1px solid #273542!important;
+    background:transparent!important;
+  }
+  .responsiveTable td:last-child,
+  .adminSurface--data .responsiveTable td:last-child,
+  .adminSurface--control .responsiveTable td:last-child{
+    border-bottom:0!important;
+  }
+  .responsiveTable td::before{
+    content:attr(data-label);
+    min-width:0;
+    color:#8d9bab;
+    font-size:10px;
+    font-weight:800;
+    line-height:1.35;
+    letter-spacing:.045em;
+    text-transform:uppercase;
+    overflow-wrap:normal;
+    word-break:normal;
+  }
+  .responsiveTable td>*{min-width:0;max-width:100%}
+  .responsiveTable td>strong,
+  .responsiveTable td>.subText{
+    overflow-wrap:break-word;
+    word-break:normal;
+  }
+  .responsiveTable td[data-label=""]{
+    grid-template-columns:1fr!important;
+    justify-items:start;
+  }
+  .responsiveTable td[data-label=""]::before{display:none!important;content:none!important}
+}
+
+@media(max-width:600px){
+  .responsiveTable td,
+  .adminSurface--data .responsiveTable td,
+  .adminSurface--control .responsiveTable td{
+    grid-template-columns:1fr;
+    gap:4px;
+  }
+
+  /* Needs Attention uses compact inputs that otherwise retain a 230px minimum
+     width. A single-column toolbar prevents those controls widening the card. */
+  .attentionBulkBar{grid-template-columns:1fr!important}
+  .attentionBulkBar>*{grid-column:1/-1!important;min-width:0!important}
+  .attentionBulkBar .input.compact{min-width:0!important}
+  .attentionBulkBar .button{width:100%}
+}
