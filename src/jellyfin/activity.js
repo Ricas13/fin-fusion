@@ -49,6 +49,13 @@ function playbackKey(serverId, session) {
         .digest('hex');
 }
 
+function effectiveStreamLimit(entitlement) {
+    if (!entitlement) return null;
+    if (entitlement.jellyfin_access_model === 'household_network') return null;
+    const streams = Number(entitlement.streams);
+    return Number.isInteger(streams) && streams > 0 ? streams : 1;
+}
+
 function normalizeSession(serverId, account, entitlement, session) {
     const state = session.PlayState || {};
     const transcodeReasons = Array.isArray(session?.TranscodingInfo?.TranscodeReasons)
@@ -74,7 +81,7 @@ function normalizeSession(serverId, account, entitlement, session) {
         isPaused: Boolean(state.IsPaused),
         positionTicks: Number.isFinite(Number(state.PositionTicks)) ? Number(state.PositionTicks) : null,
         lastActivityAt: session.LastActivityDate ? new Date(session.LastActivityDate) : null,
-        streamLimit: entitlement?.streams || null,
+        streamLimit: effectiveStreamLimit(entitlement),
         supportsMediaControl: session.SupportsMediaControl === true,
         raw: session
     };
@@ -83,7 +90,7 @@ function normalizeSession(serverId, account, entitlement, session) {
 async function activeEntitlements() {
     const result = await query(`
         SELECT DISTINCT ON (s.customer_id)
-            s.customer_id,s.id AS subscription_id,p.id AS plan_id,p.code,p.streams,
+            s.customer_id,s.id AS subscription_id,p.id AS plan_id,p.code,p.streams,p.jellyfin_access_model,
             s.current_period_end + (COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
@@ -523,6 +530,7 @@ async function listCustomerPolicyEvents(customerId, limit = 50) {
 module.exports = {
     ENFORCEMENT_ACK,
     config,
+    effectiveStreamLimit,
     runActivityPolicyCycle,
     listCustomerActivity,
     listCustomerPolicyEvents,

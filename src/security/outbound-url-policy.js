@@ -55,9 +55,29 @@ function mappedIpv4(value){
   return `${high>>>8}.${high&0xff}.${low>>>8}.${low&0xff}`;
 }
 
+function nat64Ipv4(value){
+  const words=expandIpv6Hex(value);
+  if(!words)return null;
+  const bytes=[];
+  for(const word of words)bytes.push(word>>>8,word&0xff);
+
+  // RFC 6052 well-known prefix 64:ff9b::/96.
+  if(words[0]===0x64&&words[1]===0xff9b&&words.slice(2,6).every(word=>word===0)){
+    return bytes.slice(12,16).join('.');
+  }
+
+  // RFC 8215 local-use translation prefix 64:ff9b:1::/48, encoded using
+  // the RFC 6052 /48 format: 16 IPv4 bits, the zero u-octet, then 16 bits.
+  if(words[0]===0x64&&words[1]===0xff9b&&words[2]===1&&bytes[8]===0&&bytes.slice(11).every(byte=>byte===0)){
+    return [bytes[6],bytes[7],bytes[9],bytes[10]].join('.');
+  }
+  return null;
+}
+
 function classify(address){
-  const normalized=stripHostLiteral(address),mapped=mappedIpv4(normalized);
+  const normalized=stripHostLiteral(address),mapped=mappedIpv4(normalized),translated=nat64Ipv4(normalized);
   if(mapped)return classify(mapped);
+  if(translated)return classify(translated);
   const version=net.isIP(normalized);
   if(version===4){
     const p=ipv4(normalized);
@@ -165,4 +185,4 @@ async function safeFetch(raw,{purpose='integration',method='GET',headers={},body
 }
 
 function clearCache(){cache.clear();}
-module.exports={classify,resolveHost,addressTrustedByCidrs,assertSafeIntegrationUrl,safeFetch,clearCache,mappedIpv4};
+module.exports={classify,resolveHost,addressTrustedByCidrs,assertSafeIntegrationUrl,safeFetch,clearCache,mappedIpv4,nat64Ipv4};

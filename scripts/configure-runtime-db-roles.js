@@ -73,6 +73,7 @@ async function grantApp(client) {
     await client.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
     await client.query(`REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM ${role}`);
     await client.query(`GRANT SELECT ON schema_migrations TO ${role}`);
+    await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
 }
 
 async function grantAutomation(client) {
@@ -80,6 +81,7 @@ async function grantAutomation(client) {
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
     await client.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+    await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
     for (const table of ['auth_totp_enrollments','auth_recovery_codes','auth_sessions','auth_events','login_rate_limits','schema_migrations','user_sessions']) {
         const exists = await client.query('SELECT to_regclass($1) AS table_name', [`public.${table}`]);
         if (exists.rows[0]?.table_name) await client.query(`REVOKE ALL ON ${table} FROM ${role}`);
