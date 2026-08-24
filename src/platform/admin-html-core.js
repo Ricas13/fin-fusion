@@ -37,6 +37,20 @@ function replaceBreadcrumb(html,active){
   );
 }
 
+const REDUNDANT_WORKFLOW_LABELS=Object.freeze([
+  'Plans and storefront control room',
+  'Orders and growth control room',
+  'Payments and billing control room'
+]);
+function removeRedundantWorkflowNavigation(html){
+  let output=String(html||'');
+  for(const label of REDUNDANT_WORKFLOW_LABELS){
+    const escaped=label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    output=output.replace(new RegExp(`<nav class="workflowCardGrid operatorTabs" aria-label="${escaped}">[\\s\\S]*?<\\/nav>`,'g'),'');
+  }
+  return output;
+}
+
 // Page-action placement contract -----------------------------------------
 // Generic navigation/actions belong in the top-right page header. Overview
 // heroes may still carry corrective actions, but must not repeat a destination
@@ -64,8 +78,9 @@ function dedupeOverviewActions(body='',action=''){
 function layout(options={}){
   const withActions={...options,body:dedupeOverviewActions(options.body,options.action)};
   const normalized=addServerContextNavigation(withActions);
-  const rendered=replaceBreadcrumb(base.layout(normalized),options.active);
-  const html=addFilterStyles(addCommandPalette(rendered));
+  const rendered=removeRedundantWorkflowNavigation(base.layout(normalized));
+  const withBreadcrumb=replaceBreadcrumb(rendered,options.active);
+  const html=addFilterStyles(addCommandPalette(withBreadcrumb));
   // admin-customer-filters.js remains after the shared enhancer for backward
   // asset compatibility. Once admin-filter-bars.js has transformed Customers,
   // the legacy controller finds no original filter grid and exits immediately.
@@ -75,4 +90,4 @@ function layout(options={}){
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
 
-module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,addServerContextNavigation,replaceBreadcrumb,actionHrefs,dedupeOverviewActions};
+module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,addServerContextNavigation,replaceBreadcrumb,removeRedundantWorkflowNavigation,actionHrefs,dedupeOverviewActions};
