@@ -60,18 +60,28 @@ async function main() {
         assert(classification.hard && classification.private && /metadata|link-local/.test(classification.reason), `NAT64 metadata embedding must be blocked for ${address}`);
     }
 
-    // Every per-customer admin POST is security-sensitive. New child actions
-    // must inherit step-up automatically rather than relying on a route-name list.
-    const customerMutationPaths = [
+    // Every per-customer admin POST and every provisioning control mutation is
+    // security-sensitive. New child actions must inherit step-up automatically
+    // rather than relying on a route-name list.
+    const protectedMutationPaths = [
         '/admin/users/00000000-0000-0000-0000-000000000001/manage/account',
         '/admin/users/00000000-0000-0000-0000-000000000001/permanent-access',
         '/admin/users/00000000-0000-0000-0000-000000000001/assign-server',
-        '/admin/users/00000000-0000-0000-0000-000000000001/stremio-household/reset'
+        '/admin/users/00000000-0000-0000-0000-000000000001/stremio-household/reset',
+        '/admin/provisioning/00000000-0000-0000-0000-000000000001/reconcile',
+        '/admin/provisioning/retry-problems',
+        '/admin/provisioning/reconcile-all'
     ];
-    for (const route of customerMutationPaths) {
+    for (const route of protectedMutationPaths) {
         assert.strictEqual(adminStepUp.sensitive({ method: 'POST', path: route }), true, `admin step-up must protect ${route}`);
         assert.strictEqual(adminStepUp.sensitive({ method: 'GET', path: route }), false, `admin step-up must not gate read-only GET ${route}`);
     }
+
+    // Token-bearing activation/reset/verification URLs must never be copied
+    // into Referer headers for same-origin assets or reverse-proxy logs.
+    const application = read('src/application.js');
+    assert(application.includes("res.setHeader('Referrer-Policy', 'no-referrer')"), 'global Referrer-Policy must suppress token-bearing URL leakage');
+    assert(!application.includes("res.setHeader('Referrer-Policy', 'same-origin')"), 'same-origin referrer forwarding must not be reintroduced for token-bearing pages');
 
     // Service-credit redemption creates a paid entitlement and therefore must
     // obey the same emergency commerce pause and serialized capacity check as
