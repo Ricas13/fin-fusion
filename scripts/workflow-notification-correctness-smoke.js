@@ -10,6 +10,8 @@ const expiry = require('../src/entitlements/subscription-expiry');
 
 const expirySource = read('src/entitlements/subscription-expiry.js');
 const jobs = read('src/automation/jobs.js');
+const lifecycleNotifications = read('src/automation/notification-lifecycle.js');
+const retirementMigration = read('db/migrations/037_notification_catalogue_runtime.sql');
 const provisioning = read('src/jellyfin/provisioning.js');
 const emailOutbox = read('src/integrations/email-outbox.js');
 const secondaryOutbox = read('src/integrations/notification-outbox.js');
@@ -36,6 +38,51 @@ assert(jobs.includes('const{expireSubscriptionsAndReconcile,notifyExpiringSubscr
 assert(jobs.includes('const warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
 assert(jobs.indexOf('notifyExpiringSubscriptions()') < jobs.indexOf('expireSubscriptionsAndReconcile()'), 'warnings must be checked before due subscriptions are expired');
 
+// Every other durable lifecycle notification is reconciled from committed DB
+// state. The automation worker discovers the job automatically from jobs.names().
+assert(jobs.includes("const notificationLifecycle=require('./notification-lifecycle');"), 'notification lifecycle reconciler must be registered');
+assert(jobs.includes('async notification_lifecycle(){return notificationLifecycle.run()}'), 'notification lifecycle automation job is missing');
+assert(lifecycleNotifications.includes("const STATE_KEY = 'notification_lifecycle_cursor_v1'"), 'notification lifecycle must persist a cursor');
+assert(lifecycleNotifications.includes("event_type='invoice.paid'"), 'Stripe paid invoices must produce renewal payment receipts');
+assert(lifecycleNotifications.includes("a.action='payment.subscription.activate'"), 'committed payment activations must produce payment receipts');
+assert(lifecycleNotifications.includes("action='customer.inactivity.disable_jellyfin'"), 'inactivity notifications must come from durable enforcement audit rows');
+assert(lifecycleNotifications.includes("currentStatus === 'offline' && prior?.status !== 'offline'"), 'server offline notifications must be transition based');
+assert(lifecycleNotifications.includes("dedupeKey: `provisioning-failed:${row.customer_id}:${dateKey(row.last_success_at)}`"), 'provisioning failures must dedupe by failure episode');
+assert(lifecycleNotifications.includes("dedupeKey: `automation-error:${row.job_key}:${dateKey(row.last_success_at)}`"), 'automation failures must dedupe by failure episode');
+
+for (const eventType of [
+    'automation.error',
+    'customer.plan_change.applied',
+    'customer.plan_change.failed',
+    'customer.plan_change.scheduled',
+    'customer.service.expired',
+    'customer.service.inactive',
+    'payment.chargeback',
+    'payment.disputed',
+    'payment.failed',
+    'payment.received',
+    'payment.refunded',
+    'payment.renewal_failed',
+    'provisioning.failed',
+    'server.offline',
+    'subscription.activated',
+    'subscription.cancelled'
+]) assert(lifecycleNotifications.includes(`eventType: '${eventType}'`), `missing durable producer for ${eventType}`);
+
+for (const retired of [
+    'account.announcement',
+    'attention.created',
+    'customer.created',
+    'request.created',
+    'security.alert',
+    'customer.subscription.cancelled',
+    'customer.subscription.requested',
+    'customer.trial.requested',
+    'customer.stremio.requested'
+]) assert(retirementMigration.includes(`'${retired}'`), `retired notification event is missing from migration: ${retired}`);
+assert(retirementMigration.includes("SET event_scope='customer'"), 'payment.failed must be customer scoped to avoid duplicate admin renewal alerts');
+assert(retirementMigration.includes("WHERE event_type='payment.failed'"), 'payment.failed scope migration is missing');
+
 // Email and secondary messaging use one physical table. Each worker must claim,
 // retry and report only its own rows or the workers can steal incompatible
 // encrypted payloads from one another.
@@ -51,3 +98,4 @@ assert(secondaryOutbox.includes("WHERE channel<>'email' AND status IN('pending',
 assert(secondaryOutbox.includes("WHERE channel<>'email' ORDER BY created_at DESC"), 'secondary delivery history must remain isolated from email rows');
 
 console.log('workflow notification correctness smoke: ok');
+require('./notification-catalogue-producer-audit');
