@@ -7,6 +7,7 @@ function esc(value) {
 }
 
 const PERSONAL_KEYS = new Set(['my-profile', 'my-notifications', 'my-security']);
+const CONTEXT_ONLY_KEYS = new Set(['customer-jellyfin-password']);
 
 const TOOL_DESCRIPTIONS = Object.freeze({
     search: 'Search across customers, plans and servers.',
@@ -16,7 +17,6 @@ const TOOL_DESCRIPTIONS = Object.freeze({
     'users-dashboard': 'Review customer lifecycle, growth and access activity.',
     'customer-claims': 'Let imported Jellyfin users claim their existing account in the portal.',
     'jellyfin-import': 'Import existing Jellyfin users without recreating their server accounts.',
-    'customer-jellyfin-password': 'Support an existing customer with Jellyfin credential recovery.',
     'commerce-overview': 'Review revenue, MRR, churn and checkout performance.',
     discounts: 'Manage promotions, coupon rules and redemption state.',
     referrals: 'Manage affiliate referrals and service-credit rewards.',
@@ -96,7 +96,8 @@ function ownedToolPages(active) {
     if (PERSONAL_KEYS.has(info.key) || info.hidden) return [];
     const rows = [];
     for (const child of Object.values(nav.hiddenPages)) {
-        if (child.groupKey !== info.group.key || child.parentKey !== info.sidebarKey || child.page[0] === 'search') continue;
+        const childKey=child.page[0];
+        if (child.groupKey !== info.group.key || child.parentKey !== info.sidebarKey || childKey === 'search' || PERSONAL_KEYS.has(childKey) || CONTEXT_ONLY_KEYS.has(childKey)) continue;
         const [key, label, href] = child.page;
         if (key === info.rawKey) continue;
         rows.push([key, label, href, TOOL_DESCRIPTIONS[key] || 'Open this specialist tool.']);
@@ -142,4 +143,4 @@ function model(active) {
     };
 }
 
-module.exports = { current, sectionPages, sectionActiveKey, subPages, subActiveKey, tabRow, render, ownedToolPages, renderOwnedTools, breadcrumb, model, TOOL_DESCRIPTIONS, EXTRA_OWNER_TOOLS };
+module.exports = { current, sectionPages, sectionActiveKey, subPages, subActiveKey, tabRow, render, ownedToolPages, renderOwnedTools, breadcrumb, model, TOOL_DESCRIPTIONS, EXTRA_OWNER_TOOLS, CONTEXT_ONLY_KEYS };
