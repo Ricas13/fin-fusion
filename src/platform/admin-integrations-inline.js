@@ -26,7 +26,7 @@ function returnUrl(message = '', error = '', anchor = '') {
     return `/admin/settings/integrations${params.size ? `?${params.toString()}` : ''}${anchor ? `#${anchor}` : ''}`;
 }
 function secretField(name, label, configured, help = '') {
-    return `<label class="integrationInlineField"><span>${esc(label)}</span><input class="input" type="password" name="${esc(name)}" autocomplete="new-password" placeholder="${configured ? 'Configured — leave blank to keep' : 'Enter value'}">${help ? `<small>${esc(help)}</small>` : ''}<label class="toggleRow compact integrationInlineClear"><input type="checkbox" name="clear_${esc(name)}"><span>Clear saved value</span></label></label>`;
+    return `<div class="integrationInlineField"><span>${esc(label)}</span><input class="input" type="password" name="${esc(name)}" autocomplete="new-password" placeholder="${configured ? 'Configured — leave blank to keep' : 'Enter value'}">${help ? `<small>${esc(help)}</small>` : ''}<label class="toggleRow compact integrationInlineClear"><input type="checkbox" name="clear_${esc(name)}"><span>Clear saved value</span></label></div>`;
 }
 function copyField(value, label, id) {
     return `<label class="integrationInlineField"><span>${esc(label)}</span><div class="copyField"><input id="${esc(id)}" class="input" value="${esc(value)}" readonly><button class="button secondary btn-sm" type="button" data-copy-value="${esc(value)}">Copy</button></div></label>`;
@@ -93,7 +93,7 @@ function manager(req, row, state, urls) {
     const inner = row.key === 'email'
         ? emailForm(req, state.email || {})
         : providerForm(req, row.key, state[row.key] || {}, urls[row.key] || '');
-    return `<details class="integrationOverviewManage" name="core-integration-manage" id="integration-${esc(row.key)}"><summary><span>${row.issue ? 'Fix setup' : 'Manage'}</span><span aria-hidden="true">⌄</span></summary>${inner}</details>`;
+    return `<details class="integrationOverviewManage" name="core-integration-manage" id="integration-${esc(row.key)}"${row.issue ? ' open' : ''}><summary><span>${row.issue ? 'Fix setup' : 'Manage'}</span><span aria-hidden="true">⌄</span></summary>${inner}</details>`;
 }
 function paymentProviderSummary(rows) {
     const paymentRows = rows.filter(row => PAYMENT_PROVIDERS.includes(row.key));
