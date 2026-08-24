@@ -21,8 +21,11 @@ function provisioningDecision(row, now = Date.now()) {
     if (!['failed', 'blocked'].includes(status)) return { visible: false, automatic: true, severity: null };
     const action = String(row?.last_action || row?.action || '').toLowerCase();
     const failures = Math.max(0, Number(row?.consecutive_failures || 0));
-    const lastAttempt = timestamp(row?.last_attempt_at || row?.run_started_at || row?.updated_at);
-    const ageMs = lastAttempt ? Math.max(0, now - lastAttempt) : Infinity;
+    // When available, measure from the beginning of the current unresolved
+    // streak rather than the most recent retry. Otherwise each automatic retry
+    // would reset the blocked grace period forever.
+    const problemStarted = timestamp(row?.problem_started_at || row?.last_attempt_at || row?.run_started_at || row?.updated_at);
+    const ageMs = problemStarted ? Math.max(0, now - problemStarted) : Infinity;
 
     // Access removal is safety-sensitive: a failed disable can leave service
     // available after CAPTAiNFiN intended to revoke it, so do not hide it behind
