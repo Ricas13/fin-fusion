@@ -76,6 +76,9 @@ assert(/topBreadcrumb[\s\S]*<a href="\/admin\/commerce">Commerce<\/a>/.test(rend
 const fallback=read('public/js/admin-navigation-coherence.js');
 assert(fallback.includes("if(!document.querySelector('.coherenceSectionTabs'))"),'Legacy navigation enhancer must remain fallback-only');
 assert(fallback.includes("['Live playback','/admin/activity']")&&fallback.includes("['Policy settings','/admin/activity#playback-policy']"),'Legacy Playback pages must use the same stable sibling destinations');
+assert(fallback.includes('function removeDuplicateWorkflowNavigation()'),'Navigation enhancer must remove duplicate page-level rows when compact workflow navigation already exposes the same destinations');
+assert(fallback.includes("document.querySelectorAll('.operatorTabs,.coherenceSectionTabs,.coherenceSubTabs')"),'Duplicate-navigation cleanup must cover legacy tabs plus both coherence hierarchy rows');
+assert(fallback.includes('targets.every(target=>workflowTargets.has(target))'),'Duplicate-navigation cleanup must only remove rows whose destinations are already represented by the preferred workflow navigation');
 
 const css=read('public/css/admin-navigation-coherence.css');
 assert(css.includes('.coherenceSectionTabs')&&css.includes('.coherenceSubTabs'),'Persistent section and subsection rows must share one visual system');
