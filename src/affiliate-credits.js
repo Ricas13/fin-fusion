@@ -3,6 +3,8 @@
 const {query,transaction}=require('./db');
 const planPricing=require('./payments/plan-pricing');
 const serviceCreditReservations=require('./payments/service-credit-reservations');
+const commerce=require('./payments/commerce-control');
+const planCapacity=require('./entitlements/plan-capacity');
 const provisioning=require('./jellyfin/resilient-provisioning');
 
 function cleanCurrency(value){return planPricing.cleanCurrency(value,'GBP');}
@@ -90,6 +92,9 @@ async function reverseReward({redemptionId,paymentIncidentId=null,reason='paymen
 }
 
 async function redeemPlan({customerId,planCode,currency}){
+  // Service-credit redemption grants the same paid entitlement as an ordinary
+  // purchase, so it must obey the same emergency commerce freeze.
+  await commerce.assertOpen();
   await matureDueCredits(customerId);
   const wanted=cleanCurrency(currency);
   const result=await transaction(async client=>{
@@ -107,6 +112,9 @@ async function redeemPlan({customerId,planCode,currency}){
     if(available<cost)throw new Error(`You need ${cost-available} more ${wanted} minor units of service credit for this plan.`);
     const live=await client.query(`SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);
     if(live.rowCount)throw new Error('You already have active service. Use your existing subscription controls before activating another plan.');
+    // Serialize with every other acquisition path and re-check capacity inside
+    // the same transaction immediately before creating the entitlement.
+    await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan');
     const days=Math.max(1,Number(plan.duration_days||30)),starts=new Date(),ends=new Date(starts.getTime()+days*86400000);
     const sub=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,price_minor_snapshot,currency_snapshot,plan_name_snapshot,service_type_snapshot)
       VALUES($1,$2,'active','service_credit',$3,$4,$5,$6,$7,$8) RETURNING id`,[customerId,plan.id,starts,ends,cost,wanted,plan.name,plan.service_type||'jellyfin'])).rows[0];
