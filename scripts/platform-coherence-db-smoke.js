@@ -26,6 +26,17 @@ async function main(){
   assert(!premature,'a future-dated subscription must not become effective before starts_at');
   await client.query(`UPDATE subscriptions SET status='expired' WHERE id=$1`,[future.id]);
 
+  // Current Stremio delivery does not require an entitlement-level Jellyfin
+  // server/account/token tuple. The database trigger must allow an activated
+  // install credential with those retired delivery columns detached.
+  const stremioPlan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible,service_type) VALUES($1,'Coherence Stremio','direct','month',30,0,'GBP',1,'custom',TRUE,TRUE,'stremio') RETURNING id`,[`coherence-stremio-${suffix}`])).rows[0];
+  const stremioSub=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW(),NOW()+INTERVAL '30 days') RETURNING id`,[customer.id,stremioPlan.id])).rows[0];
+  const installHash=crypto.createHash('sha256').update(`coherence-stremio-${suffix}`).digest('hex');
+  const detached=(await client.query(`INSERT INTO stremio_entitlements(customer_id,subscription_id,status,stream_limit,token_hash) VALUES($1,$2,'active',1,$3) RETURNING id,server_id,jellyfin_account_id,jellyfin_access_token_encrypted`,[customer.id,stremioSub.id,installHash])).rows[0];
+  assert(detached.id,'detached source-based Stremio entitlement must be accepted');
+  assert(detached.server_id===null&&detached.jellyfin_account_id===null&&detached.jellyfin_access_token_encrypted===null,'source-based Stremio entitlement must remain detached from the retired Jellyfin delivery identity');
+  await client.query(`UPDATE subscriptions SET status='expired' WHERE id=$1`,[stremioSub.id]);
+
   await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`sub_${suffix}_one`]);
   await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`I-${suffix}-two`],'overlapping recurring customer subscription');
 

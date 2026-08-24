@@ -5,6 +5,7 @@ const assert=require('assert');
 const read=file=>fs.readFileSync(file,'utf8');
 const migration=read('db/migrations/000_database_baseline.sql');
 const sourceMigration=migration;
+const deliveryContract=read('db/migrations/038_retire_stremio_delivery_identity_requirement.sql');
 const lifecycle=read('src/automation/jellyfin-lifecycle.js');
 const policy=read('src/entitlements/jellyfin-lifecycle-policy.js');
 const jobs=read('src/automation/jobs.js');
@@ -13,6 +14,7 @@ const pool=read('src/stremio/source-pool.js');
 const runtime=read('src/stremio/runtime.js');
 const managed=read('src/stremio/managed-runtime.js');
 const external=read('src/stremio/external-direct-runtime.js');
+const entitlements=read('src/stremio/entitlements.js');
 const admin=read('src/platform/admin-stremio-sources.js');
 
 for(const expected of ['freeNoPlaybackDays:7','freeDeleteAfterDisableDays:7','trialDeleteAfterDisableDays:30','paidDeleteAfterDisableDays:30'])assert(policy.includes(expected),`missing default ${expected}`);
@@ -33,6 +35,17 @@ assert(managed.includes("url.searchParams.set('Static','true')")&&external.inclu
 assert(!runtime.includes("require('./managed-playback-lifecycle')"),'normal Stremio delivery must not create or report Jellyfin playback sessions');
 assert(admin.includes('External fallback playback goes directly to this Jellyfin server')&&/media bytes never pass through the portal/i.test(admin),'operator UI must be transparent about direct upstream playback and the no-byte-proxy boundary');
 assert(admin.includes('The password is stored encrypted only when automatic token rotation is enabled.')&&admin.includes('Libraries included in Stremio'),'operator UI must explain external credential storage and indexing boundaries');
-assert(sourceMigration.includes('plan_stremio_sources')&&sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'database must support external source mappings without weakening managed identity integrity');
+
+// The clean-install baseline is a historical dump and still documents the old
+// delivery-identity guard. Migration 038 must replace that trigger contract for
+// both upgrades and fresh installs after all migrations have applied.
+assert(sourceMigration.includes('selected shared sources or a managed Jellyfin delivery identity'),'historical baseline must retain the old Stremio delivery rule as an upgrade regression fixture');
+assert(deliveryContract.includes('CREATE OR REPLACE FUNCTION public.enforce_stremio_entitlement_integrity()'),'latest migration must replace the Stremio entitlement trigger contract');
+assert(!deliveryContract.includes("RAISE EXCEPTION 'Active Stremio entitlement requires either selected shared sources or a managed Jellyfin delivery identity'"),'latest trigger must not require the retired entitlement-level delivery identity');
+assert(deliveryContract.includes("RAISE EXCEPTION 'Active Stremio entitlement requires an install credential'"),'active Stremio entitlements must still require a customer install credential');
+assert(deliveryContract.includes('Legacy managed Jellyfin delivery identity must be complete when attached to an active Stremio entitlement'),'attached legacy identities must remain all-or-nothing');
+assert(deliveryContract.includes('UPDATE customer_provisioning_state')&&deliveryContract.includes('consecutive_failures=0')&&deliveryContract.includes('last_error=NULL'),'upgrade migration must reset the retired failure episode and requeue it');
+assert(entitlements.includes('server_id=NULL,jellyfin_account_id=NULL')&&entitlements.includes('jellyfin_access_token_encrypted=NULL'),'current Stremio reconciliation must detach the retired entitlement-level Jellyfin identity');
+assert(entitlements.includes("active:row.status==='active'&&Boolean(row.token_hash)"),'current source-based entitlement activity must depend on install activation, not a Jellyfin delivery identity');
 assert(migration.includes('portal customer'),'migration must document portal identity invariant');
 console.log('Jellyfin lifecycle + Stremio Sources smoke: OK');
