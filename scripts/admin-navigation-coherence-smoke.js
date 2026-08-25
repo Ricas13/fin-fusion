@@ -24,7 +24,7 @@ assert.strictEqual(context.sectionActiveKey('discounts'),'orders','Discounts mus
 assert.strictEqual(context.sectionActiveKey('commerce-overview'),'orders','Commerce analytics must now live inside Orders & Growth rather than becoming another upper tab');
 assert.strictEqual(context.sectionActiveKey('provider-mappings'),'payments','Provider mappings must remain owned by Payments & Billing');
 assert.deepStrictEqual(context.COMMERCE_ANALYTICS,['commerce-overview','Analytics','/admin/commerce'],'The old Commerce analytics tuple remains exported for compatibility without becoming an upper tab');
-for(const active of ['branding','discounts','activity','provider-mappings','server-migrations','configuration-transfer']){
+for(const active of ['branding','discounts','activity','provider-mappings','expenses','server-migrations','configuration-transfer']){
   assert.deepStrictEqual(context.subPages(active),[],`${active} must not generate a secondary upper-tab row`);
   assert.strictEqual(context.subActiveKey(active),null,`${active} must not maintain a secondary active-tab state`);
 }
@@ -43,11 +43,12 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   labels(context.ownedToolPages('payments')),
-  ['Billing','Provider mappings','Payment risk'],
-  'Payments & Billing must own billing, mappings and risk as in-page tools'
+  ['Billing','Expenses & Profitability','Provider mappings','Payment risk'],
+  'Payments & Billing must own billing, expenses, mappings and risk as in-page tools'
 );
 assert(labels(context.ownedToolPages('activity')).includes('Free-user inactivity rules'),'Playback must expose inactivity rules inside the main Playback area');
 assert.deepStrictEqual(context.ownedToolPages('branding'),[],'A specialist child page must not repeat its parent tool directory');
+assert.deepStrictEqual(context.ownedToolPages('expenses'),[],'Expenses must not repeat the Payments & Billing tool directory inside the specialist page');
 assert.deepStrictEqual(context.ownedToolPages('dashboard'),[],'Dashboard must not repeat Needs Attention below the preferred Current/Related row');
 assert(!labels(context.ownedToolPages('users')).includes('Jellyfin password support'),'Customer-specific credential support must remain contextual rather than becoming a generic Customers tool');
 
@@ -80,7 +81,7 @@ assert(!rendered.includes('class="coherenceSubTabs"'),'Modern documents must not
 assert(!rendered.includes('class="workflowCardGrid operatorTabs"'),'Legacy server workflow navigators must be removed from the final document');
 assert(rendered.indexOf('coherenceSectionTabs')<rendered.indexOf('navigation-coherence-sentinel'),'The one contextual row must appear before page content');
 assert(rendered.includes('class="coherenceOwnedTools"'),'Former payment subtabs must become in-page tools');
-assert(rendered.includes('href="/admin/provider-mappings"')&&rendered.includes('href="/admin/billing"')&&rendered.includes('href="/admin/payments/risk-policy"'),'Payment specialist destinations must remain reachable from the Payments main page');
+assert(rendered.includes('href="/admin/provider-mappings"')&&rendered.includes('href="/admin/billing"')&&rendered.includes('href="/admin/expenses"')&&rendered.includes('href="/admin/payments/risk-policy"'),'Payment specialist destinations must remain reachable from the Payments main page');
 assert(/topBreadcrumb[\s\S]*<a href="\/admin\/plans">Commerce<\/a>/.test(rendered),'Top breadcrumb must expose Commerce ancestry through its main landing page');
 
 const coreSource=read('src/platform/admin-html-core.js');
