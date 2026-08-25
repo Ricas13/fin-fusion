@@ -369,6 +369,14 @@ async function verifyAfterStop(candidate, streamLimit, cfg) {
     };
 }
 
+async function recordClearedViolation(candidate, streamCount, streamLimit, cfg, detail = {}) {
+    await policyEvent({
+        session: candidate, mode: cfg.effectiveMode, decision: 'skipped_safety',
+        streamCount, streamLimit, reason: 'violation_cleared_before_action', detail
+    });
+    return false;
+}
+
 async function stopSessionSafely(candidate, streamLimit, cfg) {
     const fresh = await freshCustomerSnapshot(candidate.customerId, cfg);
     if (!fresh.reliable) {
@@ -419,9 +427,16 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
             });
             return false;
         }
-        if (!verified.stillPresent || verified.withinLimit) {
+        if (!verified.stillPresent) {
             return finalizePolicyStop(candidate, countable.length, streamLimit, cfg, {
                 method: 'playback_stop',
+                notice,
+                supportsMediaControl: stillPresent.supportsMediaControl
+            });
+        }
+        if (verified.withinLimit) {
+            return recordClearedViolation(candidate, verified.countable.length, streamLimit, cfg, {
+                phase: 'post_stop_verification',
                 notice,
                 supportsMediaControl: stillPresent.supportsMediaControl
             });
@@ -478,9 +493,16 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
         });
         return false;
     }
-    if (!forced.stillPresent || forced.withinLimit) {
+    if (!forced.stillPresent) {
         return finalizePolicyStop(candidate, countable.length, streamLimit, cfg, {
             method: 'device_logout_fallback',
+            notice,
+            supportsMediaControl: stillPresent.supportsMediaControl
+        });
+    }
+    if (forced.withinLimit) {
+        return recordClearedViolation(candidate, forced.countable.length, streamLimit, cfg, {
+            phase: 'post_device_logout_verification',
             notice,
             supportsMediaControl: stillPresent.supportsMediaControl
         });
