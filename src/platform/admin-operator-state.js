@@ -10,7 +10,7 @@ const readCursors=require('./operator-read-cursors');
 const tickets=require('../support/tickets');
 const routeRateLimit=require('../security/route-rate-limit');
 const fleetDashboard=require('./admin-server-fleet-dashboard');
-const {revenueFromEvent}=require('./admin-dashboard-analytics');
+const finance=require('./finance-ledger');
 
 function gate(req,res,next){
   if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId){
@@ -34,46 +34,31 @@ const readPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-read'
 const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
 async function headerMetrics(){
-  const [fleet,reportingState,paymentRows]=await Promise.all([
+  const [fleet,financial]=await Promise.all([
     fleetDashboard.dashboardRows(),
-    reporting.get(),
-    query(`SELECT provider,provider_event_id,event_type,payload,created_at,
-                  created_at>=date_trunc('month',NOW()) AS in_current_month
-             FROM payment_events
-            WHERE provider IN ('stripe','paypal')
-              AND event_type IN ('invoice.paid','checkout.session.completed','PAYMENT.CAPTURE.COMPLETED')
-              AND processed_at IS NOT NULL AND processing_error IS NULL
-              AND created_at>=date_trunc('year',NOW())
-              AND created_at<date_trunc('year',NOW())+INTERVAL '1 year'`)
+    finance.headerFinancialSummary()
   ]);
   const enabled=fleet.filter(row=>row.enabled!==false);
   const activeStreams=enabled.reduce((sum,row)=>sum+metricNumber(row,'active_streams',row.active_streams),0);
   const totalStreams=enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0);
-  const currency=reporting.cleanCurrency(reportingState.currency);
-  let monthlyRevenueMinor=0,yearlyRevenueMinor=0;
-  for(const row of paymentRows.rows){
-    const payment=revenueFromEvent(row);
-    if(!payment)continue;
-    const converted=reporting.convertMinor(Number(payment.minor||0),payment.currency||currency,currency,reportingState);
-    yearlyRevenueMinor+=converted;
-    if(row.in_current_month)monthlyRevenueMinor+=converted;
-  }
   return {
     streams:{active:activeStreams,total:totalStreams},
-    monthlyRevenue:{minor:monthlyRevenueMinor,currency},
-    yearlyRevenue:{minor:yearlyRevenueMinor,currency}
+    monthlyRevenue:{minor:financial.month.netRevenueMinor,currency:financial.currency},
+    yearlyRevenue:{minor:financial.year.netRevenueMinor,currency:financial.currency},
+    revenueFeeCoverage:{month:financial.month.feeCoveragePct,year:financial.year.feeCoveragePct}
   };
 }
 
 async function snapshot(adminUserId=null){
   const seen=adminUserId?await readCursors.list(adminUserId):{};
-  const [customers,orders,attentionSummary,servers,payments,ticketSummary,metrics]=await Promise.all([
+  const [customers,orders,attentionSummary,servers,payments,ticketSummary,financeRenewals,metrics]=await Promise.all([
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM customers WHERE created_at>NOW()-INTERVAL '7 days' AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.customers||null]),
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal','plisio') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
     attention.openSummary(),
     query(`SELECT COUNT(*)::int n,MAX(last_health_check) updated FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN ('degraded','offline')`),
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`),
     tickets.staffQueueSummary(seen.tickets||null),
+    finance.renewalReminderSummary(),
     headerMetrics()
   ]);
   const rows={
@@ -82,7 +67,8 @@ async function snapshot(adminUserId=null){
     tickets:{n:ticketSummary.count,updated:ticketSummary.updatedAt},
     attention:{n:attentionSummary.count,updated:attentionSummary.updatedAt},
     servers:servers.rows[0],
-    payments:payments.rows[0]
+    payments:payments.rows[0],
+    finance:{n:financeRenewals.count,updated:financeRenewals.updatedAt||financeRenewals.nextDate}
   };
   return {
     counts:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,Number(v?.n||0)])),
@@ -116,7 +102,7 @@ function createAdminOperatorStateRouter(){
   router.use('/admin/reporting-currency',reportingCurrencyBurstLimit,reportingCurrencyPersistentLimit,gate);
   router.post('/admin/reporting-currency',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const saved=await reporting.saveCurrency(req.body.currency,res.locals.operatorActorUserId);return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
+    try{const saved=await reporting.saveCurrency(req.body.currency,res.locals.operatorActorUserId);finance.invalidateCache();return res.redirect('/admin?message='+encodeURIComponent(`Dashboard reporting currency changed to ${saved.currency}.`));}
     catch(error){return res.redirect('/admin?error='+encodeURIComponent(error.message||'Reporting currency could not be changed.'));}
   });
   return router;
