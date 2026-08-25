@@ -38,6 +38,7 @@ function money(minor, currency = 'USD') {
         return new Intl.NumberFormat('en', {
             style: 'currency',
             currency: currency || 'USD',
+            currencyDisplay: 'narrowSymbol',
             minimumFractionDigits: Number(minor) % 100 ? 2 : 0,
             maximumFractionDigits: 2
         }).format(amount);

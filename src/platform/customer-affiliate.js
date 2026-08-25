@@ -5,6 +5,8 @@ const customers=require('../customers');
 const affiliateCredits=require('../affiliate-credits');
 const planPricing=require('../payments/plan-pricing');
 const runtimeSettings=require('./runtime-settings');
+const operations=require('./operations-settings');
+const customerNav=require('./customer-nav-html');
 const csrf=require('../auth/csrf');
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/affiliate'));}
@@ -20,8 +22,9 @@ function createCustomerAffiliateRouter(){
       const enrolled=await affiliateCredits.enroll(req.session.customerId);
       await affiliateCredits.matureDueCredits(req.session.customerId);
       const currency=planPricing.cleanCurrency(req.query.currency||await planPricing.userPreferredCurrency(req.session.customerUserId),'GBP');
-      const [state,plans]=await Promise.all([affiliateCredits.profile(req.session.customerId),plansFor(currency)]);
-      return res.render('customer/affiliate',{siteName:runtimeSettings.siteName(),settings,code:enrolled.code,state,plans,currency,currencies:await planPricing.enabledCurrencies(),csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null});
+      const referralLink=await operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code));
+      const [state,plans,portal]=await Promise.all([affiliateCredits.profile(req.session.customerId),plansFor(currency),customers.getCustomerPortal(req.session.customerId)]);
+      return res.render('customer/affiliate',{siteName:runtimeSettings.siteName(),settings,code:enrolled.code,referralLink,state,plans,currency,currencies:await planPricing.enabledCurrencies(),navOptions:customerNav.optionsFromPortal(portal),csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null});
     }catch(error){next(error);}
   });
   r.post('/account/affiliate/redeem',requireCustomer,async(req,res)=>{

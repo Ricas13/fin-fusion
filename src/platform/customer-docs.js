@@ -4,6 +4,7 @@ const express=require('express');
 const docsRender=require('./docs-render');
 const guideSource=require('./docs-guide-source');
 const runtimeSettings=require('./runtime-settings');
+const customerNav=require('./customer-nav-html');
 
 const BASE_PATH='/account/docs';
 const SECTION_TITLES=['Start here','Customers','Help'];
@@ -17,6 +18,7 @@ function createCustomerDocsRouter(){
   router.get(BASE_PATH,async(req,res,next)=>{
     try{
       await runtimeSettings.ensureLoaded();
+      const accountNavHtml=customerNav.nav('docs',await customerNav.optionsForCustomer(req.session.customerId));
       const html=docsRender.renderDocsIndex({
         site:runtimeSettings.siteName(),
         basePath:BASE_PATH,
@@ -24,7 +26,8 @@ function createCustomerDocsRouter(){
         backLabel:'Back to your account',
         brandLabel:'Guides',
         description:'How to get set up and manage your account: connecting Jellyfin and Stremio, your plan and billing, streaming limits, and security.',
-        sections:guideSource.loadSections(SECTION_TITLES)
+        sections:guideSource.loadSections(SECTION_TITLES),
+        accountNavHtml
       });
       return res.send(html);
     }catch(error){return next(error);}
@@ -33,6 +36,7 @@ function createCustomerDocsRouter(){
   router.get(`${BASE_PATH}/:section/:page`,async(req,res,next)=>{
     try{
       await runtimeSettings.ensureLoaded();
+      const accountNavHtml=customerNav.nav('docs',await customerNav.optionsForCustomer(req.session.customerId));
       const html=docsRender.renderDocsPage({
         site:runtimeSettings.siteName(),
         basePath:BASE_PATH,
@@ -41,7 +45,8 @@ function createCustomerDocsRouter(){
         brandLabel:'Guides',
         sections:guideSource.loadSections(SECTION_TITLES),
         sectionSlug:req.params.section,
-        pageSlug:req.params.page
+        pageSlug:req.params.page,
+        accountNavHtml
       });
       if(!html)return res.status(404).send('Guide page not found');
       return res.send(html);
