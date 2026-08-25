@@ -6,6 +6,7 @@ const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const operations=require('./operations-settings');
 const runtimeSettings=require('./runtime-settings');
+const customerNav=require('./customer-nav-html');
 const provisioning=require('../jellyfin/provisioning');
 const foundation=require('../stremio/foundation');
 const stremio=require('../stremio/entitlements');
@@ -21,7 +22,7 @@ function stremioDeepLink(manifestUrl){const url=new URL(manifestUrl);return `str
 function householdLabel(limit){const value=Math.max(1,Number(limit||1));return `Unlimited streams · Unlimited devices · ${value} household connection${value===1?'':'s'}`;}
 async function model(req,{credential=null,message=null,error=null}={}){
   await runtimeSettings.ensureLoaded();
-  const sub=await provisioning.currentEntitlement(req.session.customerId),eligible=Boolean(sub&&['stremio','bundle'].includes(typeOf(sub))),row=await stremio.current(req.session.customerId);
+  const [sub,row,navOptions]=await Promise.all([provisioning.currentEntitlement(req.session.customerId),stremio.current(req.session.customerId),customerNav.optionsForCustomer(req.session.customerId)]),eligible=Boolean(sub&&['stremio','bundle'].includes(typeOf(sub)));
   let effectiveCredential=credential;
   if(!effectiveCredential){const recovered=await installRecovery.current(req.session.customerId).catch(()=>null);effectiveCredential=recovered?.credential||null;}
   let manifestUrl=null,stremioUrl=null;
@@ -34,7 +35,7 @@ async function model(req,{credential=null,message=null,error=null}={}){
     if(configured)accessModel=householdLabel(configured.component.config.networkLimit);
     if(row&&status==='active')replacementState=await householdAccess.replacementState(row).catch(()=>null);
   }
-  return{siteName:runtimeSettings.siteName(),csrfToken:csrf.token(req),eligible,runtimeReady:foundation.runtimeReady(),status,statusLabel:row?status.replace(/^./,c=>c.toUpperCase()):'Not installed',accessModel,replacementState,tokenHint:row?.token_hint||null,credential:effectiveCredential,manifestUrl,stremioUrl,message,error};
+  return{siteName:runtimeSettings.siteName(),csrfToken:csrf.token(req),navOptions,eligible,runtimeReady:foundation.runtimeReady(),status,statusLabel:row?status.replace(/^./,c=>c.toUpperCase()):'Not installed',accessModel,replacementState,tokenHint:row?.token_hint||null,credential:effectiveCredential,manifestUrl,stremioUrl,message,error};
 }
 async function preprovisionManaged(credential){
   try{const entitlement=await stremio.findByInstallToken(credential);if(entitlement)await managedEntitlements.ensure(entitlement);}catch(error){console.warn('Managed Stremio pre-provisioning deferred:',error.message);}
