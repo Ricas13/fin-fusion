@@ -23,10 +23,13 @@ function epoch(value){return value?new Date(value).getTime():0;}
 function operatorKey(req){return req.session?.authUserId?`admin:${req.session.authUserId}`:`ip:${ipKeyGenerator(req.ip)}`;}
 function metricNumber(server,key,fallback=0){return server?.fleet_metrics?.[key]==null?Number(fallback||0):Number(server.fleet_metrics[key]||0);}
 
-const unreadBurstLimit=rateLimit({windowMs:60_000,limit:120,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
+// This endpoint is a lightweight authenticated read used on every admin page
+// and by the live header poll. Allow full-page navigation/crawls to burst while
+// retaining both the in-process and persistent per-operator limits.
+const unreadBurstLimit=rateLimit({windowMs:60_000,limit:240,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const readBurstLimit=rateLimit({windowMs:60_000,limit:60,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const reportingCurrencyBurstLimit=rateLimit({windowMs:60_000,limit:20,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
-const unreadPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-unread',max:120,windowSeconds:60});
+const unreadPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-unread',max:240,windowSeconds:60});
 const readPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-read',max:60,windowSeconds:60});
 const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
