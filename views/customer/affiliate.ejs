@@ -10,13 +10,14 @@
   <link rel="stylesheet" href="/css/customer-navigation.css">
 </head>
 <%
-function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)}`}}
+function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)}`}}
 const balances=new Map((state.balances||[]).map(x=>[x.currency,x]));
 const selected=balances.get(currency)||{available_minor:0,pending_minor:0};
 const available=Number(selected.available_minor||0);
+const usdBalance=balances.get('USD')||{available_minor:0,pending_minor:0};
 %>
 <body><main class="customerPortalPage">
-<%- include('_nav',{active:'benefits',showBenefits:true}) %>
+<%- include('_nav',{active:'benefits'}) %>
 <div class="customerPortalPageHeader"><div><h1>Benefits</h1><p>Share your referral code and use earned service credit towards CAPTAiNFiN plans.</p></div></div>
 <% if(message){ %><div class="notice success"><%= message %></div><% } %>
 <% if(error){ %><div class="notice error"><%= error %></div><% } %>
@@ -25,8 +26,8 @@ const available=Number(selected.available_minor||0);
 <article class="metricCard"><div class="metricLabel">Pending <%= currency %> credit</div><div class="metricValue"><%= money(selected.pending_minor,currency) %></div><div class="metricSub">Waiting to qualify</div></article>
 <article class="metricCard"><div class="metricLabel">Reward rate</div><div class="metricValue"><%= settings.rewardPercent %>%</div><div class="metricSub">Of qualifying referred spend</div></article>
 </section>
-<section class="sectionBlock"><div class="sectionHead"><div><h2>Your referral code</h2><p>Share this code with someone who wants to join.</p></div></div><div class="panel referralPanel"><div><div class="accessTitle">Referral code</div><div class="referralCode"><%= code %></div></div><div class="accessMeta">Credit becomes available after at least <%= Math.max(settings.qualificationDelayDays,settings.refundWindowDays) %> day(s). A refunded or disputed qualifying purchase can reverse unused credit.</div></div></section>
-<section class="sectionBlock"><div class="sectionHead"><div><h2>Your balances</h2><p>Each currency is kept separately; balances are not automatically converted.</p></div></div><div class="plansGrid"><% ['GBP','USD','EUR'].forEach(function(c){const b=balances.get(c)||{available_minor:0,pending_minor:0}; %><article class="planCard"><div class="planName"><%= c %></div><div class="planPrice"><%= money(b.available_minor,c) %></div><div class="planDescription"><%= money(b.pending_minor,c) %> pending</div><a class="button secondary full" href="/account/affiliate?currency=<%= c %>">Use <%= c %> balance</a></article><% }) %></div></section>
+<section class="sectionBlock"><div class="sectionHead"><div><h2>Your referral code</h2><p>Share the code or the signup link below.</p></div></div><div class="panel referralPanel"><div><div class="accessTitle">Referral code</div><div class="referralCode"><%= code %></div><div class="field"><label for="referral-signup-link">Signup link</label><div class="copyLine"><input class="input" id="referral-signup-link" type="text" readonly value="<%= referralLink %>"><button class="button secondary" type="button" data-copy-referral-link>Copy link</button></div></div></div><div class="accessMeta">Credit becomes available after at least <%= Math.max(settings.qualificationDelayDays,settings.refundWindowDays) %> day(s). A refunded or disputed qualifying purchase can reverse unused credit.</div></div></section>
+<section class="sectionBlock"><div class="sectionHead"><div><h2>Your balances</h2><p>Your referral service-credit balance is shown in USD.</p></div></div><div class="overviewGrid"><article class="metricCard"><div class="metricLabel">USD balance</div><div class="metricValue"><%= money(usdBalance.available_minor,'USD') %></div><div class="metricSub"><%= money(usdBalance.pending_minor,'USD') %> pending</div></article></div></section>
 <section class="sectionBlock"><div class="sectionHead"><div><h2>Use <%= currency %> service credit</h2><p>Pay fully with credit when your balance covers a plan, or use available credit towards an eligible new checkout.</p></div></div><div class="plansGrid">
 <% plans.filter(p=>Number(p.price_minor)>0).forEach(function(p){const cost=Number(p.price_minor||0),canFull=available>=cost,remainder=Math.max(0,cost-available),opts=Array.isArray(p.payment_options)?p.payment_options:[],stripeOpts=opts.filter(o=>o.provider==='stripe'),paypalPayment=opts.find(o=>o.provider==='paypal'&&o.checkoutMode==='payment'); %>
 <article class="planCard"><div class="planName"><%= p.name %></div><div class="planPrice"><%= money(cost,p.currency) %></div><div class="planDescription"><%= p.description||'CAPTAiNFiN service plan' %></div>
@@ -40,4 +41,4 @@ const available=Number(selected.available_minor||0);
 <% } else { %><div class="paymentNote">Earn service credit first, or choose this plan from Plans &amp; billing.</div><% } %>
 </article><% }) %>
 </div><div class="notice">Recurring PayPal subscriptions cannot be part-paid with service credit. Stripe and one-time PayPal payments can use an eligible credit balance safely.</div></section>
-</main></body></html>
+</main><script>document.addEventListener('click',async event=>{const button=event.target.closest('[data-copy-referral-link]');if(!button)return;const input=document.getElementById('referral-signup-link');if(!input)return;const original=button.textContent;try{await navigator.clipboard.writeText(input.value);button.textContent='Copied';}catch(_){input.focus();input.select();try{document.execCommand('copy');button.textContent='Copied';}catch(__){button.textContent='Copy failed';}}window.setTimeout(()=>{button.textContent=original;},1500);});</script></body></html>
