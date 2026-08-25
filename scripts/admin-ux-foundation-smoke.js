@@ -64,7 +64,7 @@ assert(refinementCss.includes('.navSection[open] .navSectionPages'),'Accordion C
 assert(refinementCss.includes('.settings-grid{grid-template-columns:repeat(3,minmax(0,1fr))'),'Settings must use three side-by-side responsibility cards on wide screens');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))'),'Settings responsibility cards must fall back to two columns on narrower desktops/tablets');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:1fr}'),'Settings responsibility cards must become one column on mobile');
-assert(refinementCss.includes('.workflowCardGrid{position:sticky;top:66px')&&refinementCss.includes('display:flex!important'),'Workflow navigation must use the compact sticky horizontal control strip');
+assert(refinementCss.includes('.workflowCardGrid{position:relative;top:auto;z-index:auto')&&refinementCss.includes('display:flex!important')&&refinementCss.includes('margin:0 0 18px'),'Workflow navigation must remain compact while reserving normal-flow space so it cannot overlap page content');
 assert(operatorExperience.includes('controlRoomCards')&&operatorExperience.includes('condensedWorkflow'),'Visible control rooms must expose hidden specialist workflows contextually');
 assert(refinementCss.includes('.formGrid{grid-template-columns:repeat(3,minmax(0,1fr))'),'Wide forms must be capped at three columns');
 assert(refinementCss.includes('.planListToolbar{display:grid'),'Plan filters must render as a compact toolbar');
