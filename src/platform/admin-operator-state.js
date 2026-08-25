@@ -9,6 +9,8 @@ const attention=require('./attention');
 const readCursors=require('./operator-read-cursors');
 const tickets=require('../support/tickets');
 const routeRateLimit=require('../security/route-rate-limit');
+const fleetDashboard=require('./admin-server-fleet-dashboard');
+const {revenueFromEvent}=require('./admin-dashboard-analytics');
 
 function gate(req,res,next){
   if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId){
@@ -19,6 +21,7 @@ function gate(req,res,next){
 }
 function epoch(value){return value?new Date(value).getTime():0;}
 function operatorKey(req){return req.session?.authUserId?`admin:${req.session.authUserId}`:`ip:${ipKeyGenerator(req.ip)}`;}
+function metricNumber(server,key,fallback=0){return server?.fleet_metrics?.[key]==null?Number(fallback||0):Number(server.fleet_metrics[key]||0);}
 
 const unreadBurstLimit=rateLimit({windowMs:60_000,limit:120,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const readBurstLimit=rateLimit({windowMs:60_000,limit:60,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
@@ -27,15 +30,42 @@ const unreadPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-unr
 const readPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-read',max:60,windowSeconds:60});
 const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
+async function headerMetrics(){
+  const [fleet,reportingState,paymentRows]=await Promise.all([
+    fleetDashboard.dashboardRows(),
+    reporting.get(),
+    query(`SELECT provider,provider_event_id,event_type,payload,created_at
+             FROM payment_events
+            WHERE provider IN ('stripe','paypal')
+              AND processed_at IS NOT NULL AND processing_error IS NULL
+              AND created_at>=date_trunc('month',NOW())
+              AND created_at<date_trunc('month',NOW())+INTERVAL '1 month'
+            ORDER BY created_at DESC
+            LIMIT 25000`)
+  ]);
+  const enabled=fleet.filter(row=>row.enabled!==false);
+  const activeStreams=enabled.reduce((sum,row)=>sum+metricNumber(row,'active_streams',row.active_streams),0);
+  const totalStreams=enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0);
+  const currency=reporting.cleanCurrency(reportingState.currency);
+  let monthlyRevenueMinor=0;
+  for(const row of paymentRows.rows){
+    const payment=revenueFromEvent(row);
+    if(!payment)continue;
+    monthlyRevenueMinor+=reporting.convertMinor(Number(payment.minor||0),payment.currency||currency,currency,reportingState);
+  }
+  return {streams:{active:activeStreams,total:totalStreams},monthlyRevenue:{minor:monthlyRevenueMinor,currency}};
+}
+
 async function snapshot(adminUserId=null){
   const seen=adminUserId?await readCursors.list(adminUserId):{};
-  const [customers,orders,attentionSummary,servers,payments,ticketSummary]=await Promise.all([
+  const [customers,orders,attentionSummary,servers,payments,ticketSummary,metrics]=await Promise.all([
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM customers WHERE created_at>NOW()-INTERVAL '7 days' AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.customers||null]),
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
     attention.openSummary(),
     query(`SELECT COUNT(*)::int n,MAX(last_health_check) updated FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN ('degraded','offline')`),
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`),
-    tickets.staffQueueSummary(seen.tickets||null)
+    tickets.staffQueueSummary(seen.tickets||null),
+    headerMetrics()
   ]);
   const rows={
     customers:customers.rows[0],
@@ -47,7 +77,8 @@ async function snapshot(adminUserId=null){
   };
   return {
     counts:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,Number(v?.n||0)])),
-    updatedAt:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,epoch(v?.updated)]))
+    updatedAt:Object.fromEntries(Object.entries(rows).map(([k,v])=>[k,epoch(v?.updated)])),
+    metrics
   };
 }
 
@@ -82,4 +113,4 @@ function createAdminOperatorStateRouter(){
   return router;
 }
 
-module.exports={createAdminOperatorStateRouter,snapshot};
+module.exports={createAdminOperatorStateRouter,snapshot,headerMetrics};
