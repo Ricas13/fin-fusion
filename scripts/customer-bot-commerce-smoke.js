@@ -4,6 +4,7 @@ const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const nav=require('../src/platform/admin-nav');
 
 const plans=read('src/platform/admin-plans-list.js');
 const shell=read('src/platform/admin-html-core-base.js');
@@ -22,8 +23,12 @@ const baseline=read('db/migrations/000_database_baseline.sql');
 
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
 assert(!/credit wallet|buy credits/i.test(plans),'Unified Plans must not revive retired-product credit semantics');
-assert(shell.includes("paymentWorkflow.tabs(active)"),'Shared admin shell must render payment workflow tabs');
-for(const title of ['Payments','Provider mappings','Billing'])assert(shell.includes(`'${title}'`),`Payment workflow must recognise ${title}`);
+assert(shell.includes('function paymentTabsFor(options){return\'\';}'),'Shared admin shell must retire payment workflow tabs in favour of the canonical sidebar');
+assert.deepStrictEqual(
+  nav.childPages('payments').map(page=>page[1]),
+  ['Billing','Expenses & Profitability','Provider mappings','Payment risk'],
+  'Payments & Billing must expose every durable payment workflow directly in the sidebar'
+);
 
 assert(settings.includes("/users/@me/channels"),'Discord delivery must use the bot DM API');
 assert(!settings.includes("scope','identify"),'Discord OAuth scope belongs in linking routes, not notification settings');
