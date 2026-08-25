@@ -8,7 +8,8 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const registry = require('../src/platform/admin-dashboard-registry');
 const { buildContext, refundFromEvent } = require('../src/platform/admin-commerce-dashboard');
-const { dashboardRange } = require('../src/platform/admin-dashboard-analytics');
+const { dashboardRange, fillSeries } = require('../src/platform/admin-dashboard-analytics');
+const { normalizedDashboardMoney } = require('../src/platform/admin-dashboard-money');
 const reportingCurrency = require('../src/platform/reporting-currency');
 
 function fakeReq(adminId, queryParams = {}) {
@@ -61,6 +62,30 @@ async function seedCommerceData(suffix) {
     return { customer, plan };
 }
 
+async function seedImportedOverlap(suffix) {
+    const run = (await query(`
+        INSERT INTO payment_history_import_runs(provider_scope,range_start,range_end,total_seen,imported_count,matched_count)
+        VALUES('stripe','2099-01-01','2099-01-01',2,2,2) RETURNING id
+    `)).rows[0];
+    await query(`
+        INSERT INTO payment_history_transactions(provider,provider_transaction_id,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor,fee_amount_minor,net_amount_minor,provider_customer_id,first_import_run_id,last_import_run_id)
+        VALUES
+          ('stripe',$1,'charge','available','2099-01-01T12:00:00Z','USD',1500,59,1441,$2,$3,$3),
+          ('stripe',$4,'refund','available','2099-01-01T13:00:00Z','USD',-500,0,-500,$2,$3,$3)
+    `, [`txn_history_charge_${suffix}`, `cus_history_${suffix}`, run.id, `txn_history_refund_${suffix}`]);
+    await query(`
+        INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processed_at,created_at)
+        VALUES
+          ('stripe',$1,'invoice.paid',$2::jsonb,NOW(),'2099-01-01T12:00:00Z'),
+          ('stripe',$3,'charge.refunded',$4::jsonb,NOW(),'2099-01-01T13:00:00Z')
+    `, [
+        `evt_history_paid_${suffix}`,
+        JSON.stringify({ data: { object: { amount_paid: 1500, currency: 'usd', customer_email: `history-${suffix}@example.invalid` } } }),
+        `evt_history_refund_${suffix}`,
+        JSON.stringify({ data: { object: { amount_refunded: 500, currency: 'usd' } } })
+    ]);
+}
+
 async function main() {
     const suffix = crypto.randomBytes(5).toString('hex');
     const adminId = await seedAdmin(suffix);
@@ -93,6 +118,24 @@ async function main() {
 
     // Payment incident states must reflect the seeded open incident.
     assert(ctx.data.paymentStates.open >= 1, 'payment state breakdown must include the seeded open incident');
+
+    // Imported provider history is authoritative inside its imported date coverage.
+    // The matching webhook rows below deliberately describe the same money movement;
+    // both Commerce and Main dashboard accounting must still count each movement once.
+    await seedImportedOverlap(suffix);
+    const historyReq = fakeReq(adminId, { range: 'custom', from: '2099-01-01', to: '2099-01-01' });
+    const historyCtx = await buildContext(historyReq);
+    const historyGross = reportingCurrency.convertMinor(1500, 'USD', historyCtx.data.revenue.primaryCurrency, historyCtx.reporting);
+    const historyRefund = reportingCurrency.convertMinor(500, 'USD', historyCtx.data.revenue.primaryCurrency, historyCtx.reporting);
+    assert.strictEqual(historyCtx.data.revenue.grossMinor, historyGross, 'Commerce gross revenue must prefer imported ledger coverage without double-counting webhook events');
+    assert.strictEqual(historyCtx.data.revenue.refundMinor, historyRefund, 'Commerce refunds must prefer imported ledger coverage without double-counting webhook events');
+    assert.strictEqual(historyCtx.data.revenue.netMinor, historyGross - historyRefund, 'Commerce net revenue must use imported payment and refund once each');
+    assert.strictEqual(historyCtx.data.revenue.payingCustomers, 1, 'imported payer identity must contribute to paying-customer/ARPU calculations');
+
+    const normalized = await normalizedDashboardMoney(historyCtx.range, fillSeries(historyCtx.range, [], []), historyCtx.reporting);
+    assert.strictEqual(normalized.revenue.totalMinor, historyGross, 'Main dashboard revenue must include imported history without double-counting live webhook rows');
+    assert.strictEqual(normalized.revenue.recent.length, 1, 'Main dashboard recent payments must expose the imported payment exactly once');
+    assert.strictEqual(normalized.revenue.recent[0].source, 'history', 'Main dashboard should identify imported history as the accounting source inside covered dates');
 
     // No secret-shaped strings should ever end up in dashboard HTML output.
     for (const spec of registry.listWidgets('commerce')) {
