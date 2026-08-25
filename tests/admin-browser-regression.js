@@ -102,41 +102,40 @@ async function assertWorkflow(page,url,expected,activeExpected=null){
   assert(response&&response.status()<400,`${url} workflow page returned ${response?.status()}`);
   await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
 
-  // The admin IA now allows only one contextual upper row. Specialist pages
-  // keep their owning main tab active and expose former subtabs as in-page tools.
-  const visibleUpper=await page.locator('.content > .coherenceSectionTabs,.content > .operatorTabs,.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
-  assert(visibleUpper<=1,`${url} renders ${visibleUpper} visible upper navigation rows`);
-  const visibleSubRows=await page.locator('.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
-  assert.equal(visibleSubRows,0,`${url} still renders a secondary coherence subtab row`);
+  // The sidebar is the only navigation hierarchy. No legacy workflow cards,
+  // horizontal tabs, secondary rows, or bottom-of-page tool directories may
+  // remain visible in page content.
+  const visiblePageNavigation=await page.locator('.content nav.workflowCardGrid,.content nav.operatorTabs,.content nav.coherenceSectionTabs,.content nav.coherenceSubTabs,.content section.coherenceOwnedTools').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
+  assert.equal(visiblePageNavigation,0,`${url} still renders ${visiblePageNavigation} page-body navigation surfaces`);
 
   const ownerByPath=url.startsWith('/admin/notifications')||url==='/admin/request-users'||url==='/admin/settings/integrations'?'Connections'
     :url.startsWith('/admin/provisioning')?'Provisioning'
       :url==='/admin/backups'||url==='/admin/configuration'?'Backups & Recovery'
         :null;
   if(ownerByPath){
-    const activeMain=(await page.locator('.coherenceSectionTabs a.active strong').allTextContents()).map(x=>x.trim()).filter(Boolean);
-    assert.deepStrictEqual(activeMain,[ownerByPath],`${url} must keep ${ownerByPath} active in the one main row: ${JSON.stringify(activeMain)}`);
+    const activeMain=(await page.locator('.adminTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
+    assert.deepStrictEqual(activeMain,[ownerByPath],`${url} must keep ${ownerByPath} active in the left sidebar: ${JSON.stringify(activeMain)}`);
+
+    if(Array.isArray(expected)&&expected[0]===ownerByPath){
+      const children=(await page.locator('.adminTab.active').locator('xpath=..').locator('.adminSubTab').allTextContents()).map(x=>x.trim()).filter(Boolean);
+      assert.deepStrictEqual(children,expected.slice(1),`${url} nested sidebar tools changed: ${JSON.stringify(children)}`);
+    }
   }
 
   if(activeExpected){
     const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
-    assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not identify its specialist page`);
-    const siblingLinks=(await page.locator('.topBarActions > a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
-    assert.deepStrictEqual(siblingLinks,[],`${url} mixes sibling-page navigation into the top-right action area: ${JSON.stringify(siblingLinks)}`);
+    assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not identify its current page`);
+    if(ownerByPath&&activeExpected!==ownerByPath){
+      const activeChild=(await page.locator('.adminSubTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
+      assert.deepStrictEqual(activeChild,[activeExpected],`${url} must highlight ${activeExpected} as the current nested sidebar destination: ${JSON.stringify(activeChild)}`);
+    }
   }
 
-  const ownerTools={
-    '/admin/settings/integrations':['Notifications','Email infrastructure','Request service'],
-    '/admin/provisioning':['Customer moves','Access consistency'],
-    '/admin/backups':['Configuration Transfer']
-  }[url];
-  if(ownerTools){
-    const tools=(await page.locator('.coherenceOwnedTools .coherenceOwnedTool strong').allTextContents()).map(x=>x.trim()).filter(Boolean);
-    assert.deepStrictEqual(tools,ownerTools,`${url} in-page specialist tools changed: ${JSON.stringify(tools)}`);
-  }
+  const topBarAdminLinks=(await page.locator('.topBarActions > a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
+  assert.deepStrictEqual(topBarAdminLinks,[],`${url} mixes page navigation/actions into the global top utility bar: ${JSON.stringify(topBarAdminLinks)}`);
 
   if(expected.join('|')==='Profile|Notifications|Security'){
-    const personalSubRows=await page.locator('.content > .operatorTabs,.content > .coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
+    const personalSubRows=await page.locator('.content nav.operatorTabs,.content nav.coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
     assert.equal(personalSubRows,0,`${url} must not reintroduce a personal-account subtab row`);
   }
 }
@@ -205,8 +204,9 @@ async function main(){
     assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');
     assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Plans & Storefront','legacy Request limits must land in Plans & Storefront');
     assert(!(await page.locator('.operatorTabs').allTextContents()).join(' ').includes('Request limits'),'Request limits must not remain as a duplicate Plans workflow card');
-    await assertWorkflow(page,'/admin/backups',['Database backups','Configuration transfer']);
-    await assertWorkflow(page,'/admin/configuration',['Database backups','Configuration transfer']);
+    const backupTabs=['Backups & Recovery','Configuration Transfer'];
+    await assertWorkflow(page,'/admin/backups',backupTabs,'Backups & Recovery');
+    await assertWorkflow(page,'/admin/configuration',backupTabs,'Configuration Transfer');
 
     await page.setViewportSize({width:390,height:844});
     for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups']){

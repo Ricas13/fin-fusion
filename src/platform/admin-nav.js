@@ -1,8 +1,8 @@
 'use strict';
 
 // Keep the permanent sidebar focused on the few places an operator actually
-// starts work. Specialist screens remain routable as hidden workflow pages so
-// bookmarks, deep links and focused investigation flows do not break.
+// starts work. Specialist screens are nested beneath their owning page so the
+// sidebar is the single, predictable place to discover navigation.
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin']]},
   {key:'jellyfin',label:'Jellyfin',pages:[['servers','Servers','/admin/servers'],['activity','Playback','/admin/activity']]},
@@ -18,6 +18,11 @@ const hiddenPages=Object.freeze({
   search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
   attention:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['attention','Needs Attention','/admin/attention'])}),
 
+  'servers-dashboard':Object.freeze({groupKey:'jellyfin',parentKey:'servers',page:Object.freeze(['servers-dashboard','Fleet dashboard','/admin/servers/dashboard'])}),
+  'fleet-operations':Object.freeze({groupKey:'jellyfin',parentKey:'servers',page:Object.freeze(['fleet-operations','Placement & capacity','/admin/servers/operations'])}),
+  libraries:Object.freeze({groupKey:'jellyfin',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
+  'inactivity-policy':Object.freeze({groupKey:'jellyfin',parentKey:'activity',page:Object.freeze(['inactivity-policy','Free-user inactivity rules','/admin/activity/inactivity-policy'])}),
+
   'stremio-playback':Object.freeze({groupKey:'stremio',parentKey:'stremio-sources',page:Object.freeze(['stremio-playback','IP access','/admin/stremio/playback'])}),
 
   'reseller-accounts':Object.freeze({groupKey:'resellers',parentKey:'reseller-overview',page:Object.freeze(['reseller-accounts','Reseller accounts','/admin/resellers/resellers'])}),
@@ -26,7 +31,7 @@ const hiddenPages=Object.freeze({
   'jellyfin-import':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['jellyfin-import','Import from Jellyfin','/admin/jellyfin-import'])}),
   'customer-jellyfin-password':Object.freeze({groupKey:'people',parentKey:'users',page:Object.freeze(['customer-jellyfin-password','Jellyfin password support','/admin/customer-jellyfin-password'])}),
 
-  'commerce-overview':Object.freeze({groupKey:'commerce',parentKey:'orders',page:Object.freeze(['commerce-overview','Commerce analytics','/admin/commerce'])}),
+  'commerce-overview':Object.freeze({groupKey:'commerce',parentKey:'orders',page:Object.freeze(['commerce-overview','Analytics','/admin/commerce'])}),
   discounts:Object.freeze({groupKey:'commerce',parentKey:'orders',page:Object.freeze(['discounts','Discounts','/admin/discounts'])}),
   referrals:Object.freeze({groupKey:'commerce',parentKey:'orders',page:Object.freeze(['referrals','Affiliates','/admin/referrals'])}),
   'storefront-order':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['storefront-order','Storefront order','/admin/plans/order'])}),
@@ -43,6 +48,7 @@ const hiddenPages=Object.freeze({
 
   branding:Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['branding','Branding','/admin/settings/branding'])}),
   'support-policy':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['support-policy','Support & legal','/admin/settings/support'])}),
+  'abuse-protection':Object.freeze({groupKey:'settings',parentKey:'settings-security',page:Object.freeze(['abuse-protection','Turnstile & abuse protection','/admin/settings/abuse-protection'])}),
   'notification-settings':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['notification-settings','Notifications','/admin/notifications/preferences'])}),
   'notification-gateway':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['notification-gateway','Email infrastructure','/admin/notifications'])}),
   'request-service':Object.freeze({groupKey:'settings',parentKey:'settings-integrations',page:Object.freeze(['request-service','Request service','/admin/request-users'])}),
@@ -61,14 +67,24 @@ const aliases=Object.freeze({
   notifications:'notification-gateway','notification-events':'settings-integrations',
   'payment-reconciliation':'payments','configuration-health':'settings-general','setup':'settings-general','settings':'settings-general',
   'stremio-settings':'stremio-sources','stremio-source-pool':'stremio-sources','stremio-managed-sources':'stremio-sources',
-  'abuse-protection':'settings-security','security':'my-security','operations':'servers','servers-dashboard':'servers',
-  'fleet-operations':'servers','libraries':'servers'
+  security:'my-security','operations':'servers'
 });
+
+// Search already has a persistent command-palette launcher, while personal
+// account pages have their own fixed My account block. Everything else that is
+// a durable admin destination is allowed to appear as a nested sidebar item.
+const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','my-profile','my-notifications','my-security']);
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
 function groupFor(active){const key=activeKey(active),hidden=hiddenPages[key];if(hidden){const base=groups.find(group=>group.key===hidden.groupKey)||groups[0],personal=['my-profile','my-notifications','my-security'].includes(key);return {...base,label:personal?'My account':base.label,pages:[hidden.page,...base.pages]};}return groups.find(group=>group.pages.some(page=>page[0]===key))||groups[0];}
 function workflowParentPage(active){const key=activeKey(active),hidden=hiddenPages[key];if(!hidden)return null;const base=groups.find(group=>group.key===hidden.groupKey);return base?.pages.find(page=>page[0]===hidden.parentKey)||null;}
+function childPages(parentKey){
+  const parent=String(parentKey||'');
+  return Object.values(hiddenPages)
+    .filter(item=>item.parentKey===parent&&!SIDEBAR_EXCLUDED_CHILDREN.has(item.page[0]))
+    .map(item=>item.page);
+}
 function workflowPages(active){
   const key=activeKey(active),parentKey=sidebarKey(key),hidden=hiddenPages[key];
   if(parentKey.startsWith('my-'))return[];
@@ -76,8 +92,8 @@ function workflowPages(active){
   const group=groups.find(item=>item.key===groupKey);
   const parent=group?.pages.find(page=>page[0]===parentKey);
   if(!parent)return[];
-  const children=Object.values(hiddenPages).filter(item=>item.groupKey===groupKey&&item.parentKey===parentKey&&item.page[0]!=='search').map(item=>item.page);
+  const children=childPages(parentKey);
   return children.length?[parent,...children]:[];
 }
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
-module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,landingFor};
+module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,childPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};

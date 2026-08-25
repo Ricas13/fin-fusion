@@ -2,175 +2,53 @@
 
 (() => {
   const path=location.pathname;
-  const search=new URLSearchParams(location.search);
 
-  // Legacy audit vocabulary retained for compatibility: Settings sections,
-  // Commerce sections and Playback sections. Only the first/owning section row
-  // is rendered now; Commerce/Playback child rows are deliberately retired.
-  function current(href,group){
-    const target=new URL(href,location.origin);
-    if(group==='settings'){
-      const section=search.get('section')||'';
-      if(target.pathname==='/admin/system')return path==='/admin/system';
-      if(target.pathname==='/admin/settings/integrations')return path==='/admin/settings/integrations'||path==='/admin/settings'&&section==='integrations'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
-      if(target.pathname==='/admin/settings/commerce')return path==='/admin/settings/commerce';
-      if(target.searchParams.get('section')==='general')return path==='/admin/settings'&&(!section||section==='general')||['/admin/settings/branding','/admin/settings/support','/admin/setup'].some(prefix=>path.startsWith(prefix));
-      if(target.searchParams.get('section')==='security')return path==='/admin/settings'&&section==='security'||path.startsWith('/admin/settings/admin-2fa')||path.startsWith('/admin/settings/abuse-protection')||path==='/admin/security';
-    }
-    if(group==='jellyfin'){
-      if(target.pathname==='/admin/servers')return path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries';
-      if(target.pathname==='/admin/activity')return path==='/admin/activity'||path.startsWith('/admin/activity/');
-    }
-    return path===target.pathname||path.startsWith(target.pathname.endsWith('/')?target.pathname:target.pathname+'/');
-  }
-
-  function fallbackNav(items,{label='Section navigation',group=''}={}){
-    const el=document.createElement('nav');
-    el.className='workflowCardGrid coherenceSectionTabs';
-    el.setAttribute('aria-label',label);
-    items.forEach(([text,href])=>{
-      const selected=current(href,group);
-      const a=document.createElement('a');
-      a.className=`workflowCard coherenceSectionTab${selected?' active':''}`;
-      a.href=href;
-      if(selected)a.setAttribute('aria-current','page');
-      const eyebrow=document.createElement('span');eyebrow.className='workflowCardEyebrow';eyebrow.textContent=selected?'Current':'Related';
-      const title=document.createElement('strong');title.textContent=text;
-      a.append(eyebrow,title);el.appendChild(a);
-    });
-    return el;
-  }
-
-  function insertFallback(node){
-    if(document.querySelector('.coherenceSectionTabs'))return;
-    const header=document.querySelector('.pageHeader');
-    if(header?.parentNode)header.insertAdjacentElement('afterend',node);
-  }
-
-  // Modern pages already receive their one primary row from the server. Legacy
-  // EJS pages get the exact same Current/Related treatment here, but never a
-  // second subsection row.
-  if(!document.querySelector('.coherenceSectionTabs')){
-    const settingsOwned=path.startsWith('/admin/settings')||path==='/admin/system'||path==='/admin/security'||path==='/admin/setup'||path.startsWith('/admin/notifications')||path==='/admin/request-users';
-    if(settingsOwned){
-      insertFallback(fallbackNav([
-        ['General','/admin/settings?section=general'],
-        ['Security','/admin/settings?section=security'],
-        ['Connections','/admin/settings/integrations'],
-        ['Commerce','/admin/settings/commerce'],
-        ['System','/admin/system']
-      ],{label:'Settings sections',group:'settings'}));
-    }
-
-    const jellyfinOwned=path==='/admin/servers'||path.startsWith('/admin/servers/')&&!path.startsWith('/admin/servers/stremio')||path==='/admin/libraries'||path==='/admin/activity'||path.startsWith('/admin/activity/');
-    if(jellyfinOwned){
-      insertFallback(fallbackNav([
-        ['Servers','/admin/servers'],
-        ['Playback','/admin/activity']
-      ],{label:'Jellyfin sections',group:'jellyfin'}));
-    }
-  }
-
-  function normalizedNavHref(link){
-    try{
-      const target=new URL(link.getAttribute('href')||'',location.origin);
-      return `${target.pathname}${target.search}${target.hash}`;
-    }catch(_){return'';}
-  }
-
-  function upperCandidates(content){
-    const children=[...content.children];
-    const headerIndex=children.findIndex(node=>node.classList?.contains('pageHeader'));
-    if(headerIndex<0)return[];
-    const result=[];
-    for(let i=headerIndex+1;i<children.length;i++){
-      const node=children[i];
-      const isNav=node.matches?.('.workflowCardGrid,.operatorTabs,.coherenceSubTabs,.coherenceSectionTabs');
-      if(isNav){result.push(node);continue;}
-      if(node.matches?.('script,link,.notice.widgetHidden'))continue;
-      break;
-    }
-    return result;
-  }
-
-  function promotePrimary(candidate){
-    if(!candidate)return null;
-    candidate.classList.add('workflowCardGrid','coherenceSectionTabs');
-    candidate.classList.remove('coherenceSubTabs');
-    candidate.querySelectorAll('a[href]').forEach(link=>{
-      const selected=normalizedNavHref(link)===`${location.pathname}${location.search}${location.hash}`||link.classList.contains('active');
-      link.classList.add('workflowCard','coherenceSectionTab');
-      link.classList.remove('operatorTab','coherenceSubTab');
-      let eyebrow=link.querySelector('.workflowCardEyebrow');
-      if(!eyebrow){
-        eyebrow=document.createElement('span');eyebrow.className='workflowCardEyebrow';link.prepend(eyebrow);
-      }
-      eyebrow.textContent=selected?'Current':'Related';
-      if(!link.querySelector(':scope > strong')){
-        const text=[...link.childNodes].filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent).join('').trim();
-        [...link.childNodes].filter(node=>node.nodeType===Node.TEXT_NODE).forEach(node=>node.remove());
-        const strong=document.createElement('strong');strong.textContent=text||link.textContent.trim();link.appendChild(strong);
-      }
-    });
-    return candidate;
-  }
-
-  function appendOwnedTools(content,links){
-    const existing=new Set([...content.querySelectorAll('.coherenceOwnedTools a[href]')].map(normalizedNavHref));
-    const primary=new Set([...content.querySelectorAll('.coherenceSectionTabs a[href]')].map(normalizedNavHref));
-    const currentHref=`${location.pathname}${location.search}${location.hash}`;
-    const unique=[];
-    for(const link of links){
-      const href=normalizedNavHref(link);
-      if(!href||href===currentHref||primary.has(href)||existing.has(href)||unique.some(item=>item.href===href))continue;
-      const title=(link.querySelector('strong')?.textContent||link.textContent||'Open tool').trim();
-      const description=[...link.querySelectorAll(':scope > span:not(.workflowCardEyebrow)')].map(node=>node.textContent.trim()).find(Boolean)||'Open this specialist control.';
-      unique.push({href,title,description});
-    }
-    if(!unique.length)return;
-    let section=content.querySelector('.coherenceOwnedTools');
-    let grid=section?.querySelector('.coherenceOwnedToolsGrid');
-    if(!section){
-      section=document.createElement('section');section.className='coherenceOwnedTools';section.setAttribute('aria-label','Related tools');
-      const head=document.createElement('div');head.className='coherenceOwnedToolsHead';
-      const copy=document.createElement('div');const h=document.createElement('h2');h.textContent='More in this area';const p=document.createElement('p');p.textContent='Specialist controls live inside the main area instead of creating another row of tabs.';copy.append(h,p);head.appendChild(copy);
-      grid=document.createElement('div');grid.className='coherenceOwnedToolsGrid';section.append(head,grid);content.appendChild(section);
-    }
-    unique.forEach(item=>{
-      const a=document.createElement('a');a.className='coherenceOwnedTool';a.href=item.href;
-      const strong=document.createElement('strong');strong.textContent=item.title;
-      const span=document.createElement('span');span.textContent=item.description;
-      const small=document.createElement('small');small.textContent='Open →';
-      a.append(strong,span,small);grid.appendChild(a);
-    });
-  }
-
-  function enforceSingleUpperNavigation(){
+  // The left sidebar is the single navigation hierarchy. This enhancer is now
+  // only a cleanup safety net for legacy pages and client enhancers that may
+  // still emit historical workflow/tab navigation inside page content.
+  function enforceSidebarOnlyNavigation(){
     const content=document.querySelector('.content');
     if(!content)return;
-    let candidates=upperCandidates(content);
-    let primary=candidates.find(node=>node.classList.contains('coherenceSectionTabs'))||null;
-    if(!primary){
-      const preferred=candidates.find(node=>node.classList.contains('workflowCardGrid'))||candidates[0]||null;
-      primary=promotePrimary(preferred);
-      candidates=upperCandidates(content);
-    }
-    const demotedLinks=[];
-    for(const candidate of candidates){
-      if(candidate===primary)continue;
-      demotedLinks.push(...candidate.querySelectorAll('a[href]'));
-      candidate.remove();
-    }
-    // Any late/legacy subtab row outside the immediate header stack is still
-    // invalid; preserve its destinations as in-page tools before removing it.
-    content.querySelectorAll('.coherenceSubTabs').forEach(candidate=>{
-      demotedLinks.push(...candidate.querySelectorAll('a[href]'));
-      candidate.remove();
-    });
-    appendOwnedTools(content,demotedLinks);
+    content.querySelectorAll(
+      'nav.workflowCardGrid,nav.operatorTabs,nav.coherenceSectionTabs,nav.coherenceSubTabs,section.coherenceOwnedTools'
+    ).forEach(node=>node.remove());
   }
 
-  enforceSingleUpperNavigation();
+  // The top bar is reserved for global utilities (search, status, help and
+  // read-only header metrics). Page-scoped controls belong next to the page
+  // heading so Add/Edit/Import/Export actions are visibly tied to their page.
+  // Moving the existing nodes preserves forms, CSRF inputs, handlers and links.
+  function movePageActionsToHeading(){
+    const topActions=document.querySelector('.topBarActions');
+    const pageHeader=document.querySelector('.content > .pageHeader')||document.querySelector('.pageHeader');
+    if(!topActions||!pageHeader)return;
+
+    const utilitySelector='.topStatusWrap,.topHelpLink,.topHeaderMetrics';
+    const actions=[...topActions.children].filter(node=>!node.matches(utilitySelector));
+    if(!actions.length)return;
+
+    let target=pageHeader.querySelector(':scope > .pageHeaderActions');
+    if(!target){
+      target=document.createElement('div');
+      target.className='pageHeaderActions';
+      target.setAttribute('aria-label','Page actions');
+      pageHeader.appendChild(target);
+    }
+    actions.forEach(node=>target.appendChild(node));
+  }
+
+  function watchLatePageActions(){
+    const topActions=document.querySelector('.topBarActions');
+    if(!topActions||typeof MutationObserver!=='function')return;
+    const observer=new MutationObserver(mutations=>{
+      if(mutations.some(mutation=>mutation.type==='childList'&&mutation.addedNodes.length))movePageActionsToHeading();
+    });
+    observer.observe(topActions,{childList:true});
+  }
+
+  enforceSidebarOnlyNavigation();
+  movePageActionsToHeading();
+  watchLatePageActions();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
