@@ -90,10 +90,19 @@ async function reconcileCommittedCustomer(customerId, context = 'Entitlement') {
     }
 }
 
-async function ensurePaymentCustomer({ customerId, provider, providerCustomerId }) {
+async function ensurePaymentCustomerTx(client, { customerId, provider, providerCustomerId }) {
     if (!providerCustomerId) return null;
-    const result = await query(`INSERT INTO payment_customers(customer_id,provider,provider_customer_id) VALUES($1,$2,$3) ON CONFLICT(customer_id,provider) DO UPDATE SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW() RETURNING *`, [customerId, provider, providerCustomerId]);
+    const collision = await client.query(`SELECT customer_id FROM payment_customers WHERE provider=$1 AND provider_customer_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerCustomerId]);
+    if (collision.rowCount && String(collision.rows[0].customer_id) !== String(customerId)) {
+        throw new Error('Provider customer is already linked to another CAPTAiNFiN customer.');
+    }
+    const result = await client.query(`INSERT INTO payment_customers(customer_id,provider,provider_customer_id) VALUES($1,$2,$3) ON CONFLICT(customer_id,provider) DO UPDATE SET provider_customer_id=EXCLUDED.provider_customer_id,updated_at=NOW() RETURNING *`, [customerId, provider, providerCustomerId]);
     return result.rows[0];
+}
+
+async function ensurePaymentCustomer(input) {
+    if (!input?.providerCustomerId) return null;
+    return transaction(client => ensurePaymentCustomerTx(client, input));
 }
 
 async function findPaymentCustomer(customerId, provider) {
@@ -124,6 +133,19 @@ function purchaseSnapshot(snapshot, { provider, planId }) {
     return { ...snapshot, durationDays, priceMinor };
 }
 
+function assertExistingProviderOwnership(existing, { customerId, planId, providerCustomerId = null }) {
+    if (!existing) return;
+    if (String(existing.customer_id) !== String(customerId)) {
+        throw new Error('Provider subscription/payment is already linked to another CAPTAiNFiN customer.');
+    }
+    if (String(existing.plan_id) !== String(planId)) {
+        throw new Error('Provider subscription/payment is already linked to a different CAPTAiNFiN plan.');
+    }
+    if (providerCustomerId && existing.provider_customer_id && String(existing.provider_customer_id) !== String(providerCustomerId)) {
+        throw new Error('Provider subscription/payment customer identity does not match its existing CAPTAiNFiN link.');
+    }
+}
+
 async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null }) {
     if (!['stripe', 'paypal', 'plisio'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
@@ -140,6 +162,8 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(contract || plan, startsAt);
         const status = mapProviderStatus(provider, providerStatus);
         const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
+        if (existing.rowCount) assertExistingProviderOwnership(existing.rows[0], { customerId, planId, providerCustomerId });
+        if (providerCustomerId) await ensurePaymentCustomerTx(client, { customerId, provider, providerCustomerId });
         const snapshotJson = contract ? JSON.stringify(contract) : null;
         const planNameSnapshot = contract?.planName || plan.name;
         const planCodeSnapshot = contract?.planCode || plan.code;
@@ -149,7 +173,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
         let row;
         if (existing.rowCount) {
-            const updated = await client.query(`UPDATE subscriptions SET customer_id=$1,plan_id=$2,status=$3,starts_at=$4,current_period_end=$5,cancel_at_period_end=$6,provider_customer_id=COALESCE($7,provider_customer_id),provider_price_id_snapshot=COALESCE($8,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $9::jsonb IS NULL THEN plan_name_snapshot ELSE $10 END,plan_code_snapshot=CASE WHEN $9::jsonb IS NULL THEN plan_code_snapshot ELSE $11 END,price_minor_snapshot=CASE WHEN $9::jsonb IS NULL THEN price_minor_snapshot ELSE $12 END,currency_snapshot=CASE WHEN $9::jsonb IS NULL THEN currency_snapshot ELSE $13 END,billing_interval_snapshot=CASE WHEN $9::jsonb IS NULL THEN billing_interval_snapshot ELSE $14 END,duration_days_snapshot=CASE WHEN $9::jsonb IS NULL THEN duration_days_snapshot ELSE $15 END,commercial_snapshot=CASE WHEN $9::jsonb IS NULL THEN commercial_snapshot ELSE $9::jsonb END,updated_at=NOW() WHERE id=$16 RETURNING *`, [customerId, planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, existing.rows[0].id]);
+            const updated = await client.query(`UPDATE subscriptions SET status=$1,starts_at=$2,current_period_end=$3,cancel_at_period_end=$4,provider_customer_id=COALESCE($5,provider_customer_id),provider_price_id_snapshot=COALESCE($6,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $7::jsonb IS NULL THEN plan_name_snapshot ELSE $8 END,plan_code_snapshot=CASE WHEN $7::jsonb IS NULL THEN plan_code_snapshot ELSE $9 END,price_minor_snapshot=CASE WHEN $7::jsonb IS NULL THEN price_minor_snapshot ELSE $10 END,currency_snapshot=CASE WHEN $7::jsonb IS NULL THEN currency_snapshot ELSE $11 END,billing_interval_snapshot=CASE WHEN $7::jsonb IS NULL THEN billing_interval_snapshot ELSE $12 END,duration_days_snapshot=CASE WHEN $7::jsonb IS NULL THEN duration_days_snapshot ELSE $13 END,commercial_snapshot=CASE WHEN $7::jsonb IS NULL THEN commercial_snapshot ELSE $7::jsonb END,updated_at=NOW() WHERE id=$14 RETURNING *`, [status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, existing.rows[0].id]);
             row = updated.rows[0];
         } else {
             const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb)) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson]);
@@ -171,7 +195,6 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status, checkoutContract: Boolean(contract) })]);
         return row;
     });
-    if (providerCustomerId) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
     await reconcileCommittedCustomer(customerId, 'Paid subscription');
     try { await referrals.rewardIfQualifying(customerId); }
     catch (error) { console.error('Referral reward check failed:', error.message); }
@@ -198,11 +221,13 @@ module.exports = {
     paymentDelinquencySourceKey,
     syncProviderAccessState,
     reconcileCommittedCustomer,
+    ensurePaymentCustomerTx,
     ensurePaymentCustomer,
     findPaymentCustomer,
     beginPaymentEvent,
     finishPaymentEvent,
     purchaseSnapshot,
+    assertExistingProviderOwnership,
     activatePurchase,
     updateProviderSubscription
 };
