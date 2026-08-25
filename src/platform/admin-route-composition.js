@@ -30,6 +30,7 @@ const { createAdminDriftRouter } = require('./admin-drift');
 const { createAdminEmailRouter } = require('./admin-email');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPaymentSettingsRouter } = require('./admin-payment-settings');
+const { createAdminPaymentHistoryRouter } = require('./admin-payment-history');
 const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings');
 const { createAdminBillingRouter } = require('./admin-billing');
 const { createAdminExpensesRouter } = require('./admin-expenses');
@@ -114,6 +115,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminEmailRouter());
   app.use(createAdminNotificationPreferencesRouter());
   app.use(createAdminPaymentSettingsRouter());
+  app.use(createAdminPaymentHistoryRouter());
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
   app.use(createAdminExpensesRouter());
