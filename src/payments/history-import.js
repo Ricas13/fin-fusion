@@ -101,9 +101,9 @@ function normalizePayPal(detail) {
     const fee = info.fee_amount || {};
     const currency = clean(amount.currency_code || fee.currency_code || 'GBP', 3).toUpperCase();
     const gross = majorToMinor(amount.value, currency);
-    // Transaction Search reports charged fees as negative values. Convert that
-    // to CAPTAiNFiN's positive-cost convention; a provider fee refund remains
-    // negative and therefore increases net revenue correctly.
+    // PayPal's reporting ledger represents charged fees as negative account
+    // movements. Store CAPTAiNFiN fees as positive processor costs; a fee
+    // credit therefore remains negative and increases the calculated net.
     const rawFee = majorToMinor(fee.value, currency);
     const normalizedFee = -rawFee;
     return {
@@ -123,7 +123,8 @@ function normalizePayPal(detail) {
         metadata: {
             eventCode: clean(info.transaction_event_code || '', 40) || null,
             referenceType: clean(info.paypal_reference_id_type || '', 80) || null,
-            protectionEligibility: clean(info.protection_eligibility || '', 80) || null
+            protectionEligibility: clean(info.protection_eligibility || '', 80) || null,
+            rawFeeAmountMinor: rawFee
         }
     };
 }
@@ -252,6 +253,10 @@ async function fetchPayPalTransactions(range) {
             url.searchParams.set('start_date', window.start.toISOString());
             url.searchParams.set('end_date', window.end.toISOString());
             url.searchParams.set('fields', 'all');
+            // PayPal documents Y as the default, but pin it explicitly: this is
+            // an accounting ledger and provider transaction IDs are not unique
+            // when non-balance-affecting companion records are also returned.
+            url.searchParams.set('balance_affecting_records_only', 'Y');
             url.searchParams.set('page_size', '500');
             url.searchParams.set('page', String(page));
             const { response, body } = await fetchJson(url.toString(), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
