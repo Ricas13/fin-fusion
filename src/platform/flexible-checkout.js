@@ -21,7 +21,7 @@ const routeRateLimit=require('../security/route-rate-limit');
 const checkoutStartLimit=routeRateLimit.middleware({scope:'customer-checkout-start',max:20,windowSeconds:3600});
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'))}
 function providerLabel(provider){return({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio'})[provider]||'Payment provider'}
-function priceLabel(plan){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'GBP'}).format(Number(plan.price_minor||0)/100)}catch{return `${plan.currency||'GBP'} ${(Number(plan.price_minor||0)/100).toFixed(2)}`}}
+function priceLabel(plan){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:plan.currency||'GBP',currencyDisplay:'narrowSymbol'}).format(Number(plan.price_minor||0)/100)}catch{return `${plan.currency||'GBP'} ${(Number(plan.price_minor||0)/100).toFixed(2)}`}}
 function requestedAccessQuantity(req){const n=Number(req.body.accessQuantity);return Number.isInteger(n)&&n>0?n:null;}
 function choiceQuantity(plan){return Number(plan?.access_quantity||plan?.quantity||(plan?.variant_kind==='households'?plan?.stremio_household_network_limit:plan?.streams)||1);}
 async function requestedCurrency(_req){return planPricing.platformDefaultCurrency();}
