@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS finance_expenses (
     created_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT finance_expenses_effective_window CHECK (effective_until IS NULL OR effective_until > effective_from),
+    CONSTRAINT finance_expenses_effective_window CHECK (effective_until IS NULL OR effective_until >= effective_from),
     CONSTRAINT finance_expenses_series_version_unique UNIQUE (series_id, version)
 );
 
