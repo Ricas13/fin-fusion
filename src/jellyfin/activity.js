@@ -74,6 +74,7 @@ function normalizeSession(serverId, account, entitlement, session) {
         itemType: session?.NowPlayingItem?.Type || null,
         clientName: session.Client || null,
         deviceName: session.DeviceName || null,
+        deviceId: session.DeviceId || null,
         applicationVersion: session.ApplicationVersion || null,
         remoteEndpointEncrypted: session.RemoteEndPoint ? encryptString(session.RemoteEndPoint) : null,
         method: playbackMethod(session),
@@ -292,12 +293,80 @@ async function freshCustomerSnapshot(customerId, cfg) {
                 customerId,
                 sessionId: String(session.Id),
                 playbackKey: playbackKey(serverId, session),
+                deviceId: session.DeviceId || null,
                 isPaused: Boolean(session?.PlayState?.IsPaused),
                 supportsMediaControl: session.SupportsMediaControl === true
             });
         }
     }
     return { reliable: true, sessions: current };
+}
+
+function concurrencyLimitMessage(streamLimit) {
+    const limit = Math.max(1, Number(streamLimit) || 1);
+    return {
+        Header: 'Concurrent stream limit reached',
+        Text: `Your plan allows ${limit} concurrent stream${limit === 1 ? '' : 's'}. No additional concurrent streams are allowed. This extra playback session will now stop.`,
+        TimeoutMs: 8000
+    };
+}
+
+function matchingSession(s, candidate) {
+    return s.serverId === candidate.serverId
+        && s.sessionId === candidate.sessionId
+        && s.playbackKey === candidate.playbackKey;
+}
+
+function countableSnapshot(snapshot, cfg) {
+    return snapshot.sessions.filter(s => cfg.countPaused || !s.isPaused);
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function sendConcurrencyLimitMessage(candidate, streamLimit) {
+    try {
+        await registry.request(
+            candidate.serverId,
+            `/Sessions/${encodeURIComponent(candidate.sessionId)}/Message`,
+            { method: 'POST', body: concurrencyLimitMessage(streamLimit), timeoutMs: 5000 }
+        );
+        return { attempted: true, requestAccepted: true };
+    } catch (error) {
+        return { attempted: true, requestAccepted: false, error: error.message };
+    }
+}
+
+async function finalizePolicyStop(candidate, streamCount, streamLimit, cfg, detail = {}) {
+    await query(`
+        UPDATE playback_history
+        SET ended_at=NOW(),ended_reason='policy_stop',last_seen_at=NOW()
+        WHERE server_id=$1 AND playback_key=$2
+    `, [candidate.serverId, candidate.playbackKey]);
+    await query(`
+        DELETE FROM active_playback_sessions
+        WHERE server_id=$1 AND jellyfin_session_id=$2
+    `, [candidate.serverId, candidate.sessionId]);
+    await policyEvent({
+        session: candidate, mode: cfg.effectiveMode, decision: 'stopped',
+        streamCount, streamLimit, reason: 'confirmed_concurrent_stream_limit', detail
+    });
+    return true;
+}
+
+async function verifyAfterStop(candidate, streamLimit, cfg) {
+    await delay(750);
+    const fresh = await freshCustomerSnapshot(candidate.customerId, cfg);
+    if (!fresh.reliable) return { reliable: false, error: fresh.error, sessions: [], countable: [], stillPresent: null };
+    const countable = countableSnapshot(fresh, cfg);
+    return {
+        reliable: true,
+        sessions: fresh.sessions,
+        countable,
+        stillPresent: countable.find(s => matchingSession(s, candidate)) || null,
+        withinLimit: countable.length <= streamLimit
+    };
 }
 
 async function stopSessionSafely(candidate, streamLimit, cfg) {
@@ -310,7 +379,7 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
         return false;
     }
 
-    const countable = fresh.sessions.filter(s => cfg.countPaused || !s.isPaused);
+    const countable = countableSnapshot(fresh, cfg);
     if (countable.length <= streamLimit) {
         await policyEvent({
             session: candidate, mode: cfg.effectiveMode, decision: 'skipped_safety',
@@ -319,11 +388,7 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
         return false;
     }
 
-    const stillPresent = countable.find(s =>
-        s.serverId === candidate.serverId &&
-        s.sessionId === candidate.sessionId &&
-        s.playbackKey === candidate.playbackKey
-    );
+    const stillPresent = countable.find(s => matchingSession(s, candidate));
     if (!stillPresent) {
         await policyEvent({
             session: candidate, mode: cfg.effectiveMode, decision: 'skipped_safety',
@@ -331,10 +396,60 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
         });
         return false;
     }
-    if (!stillPresent.supportsMediaControl) {
+
+    const notice = await sendConcurrencyLimitMessage(candidate, streamLimit);
+    let directStopError = null;
+    try {
+        await registry.request(
+            candidate.serverId,
+            `/Sessions/${encodeURIComponent(candidate.sessionId)}/Playing/Stop`,
+            { method: 'POST' }
+        );
+    } catch (error) {
+        directStopError = error;
+    }
+
+    if (!directStopError) {
+        const verified = await verifyAfterStop(candidate, streamLimit, cfg);
+        if (!verified.reliable) {
+            await policyEvent({
+                session: candidate, mode: cfg.effectiveMode, decision: 'stop_failed',
+                streamCount: countable.length, streamLimit, reason: 'post_stop_revalidation_failed',
+                detail: { error: verified.error, notice, supportsMediaControl: stillPresent.supportsMediaControl }
+            });
+            return false;
+        }
+        if (!verified.stillPresent || verified.withinLimit) {
+            return finalizePolicyStop(candidate, countable.length, streamLimit, cfg, {
+                method: 'playback_stop',
+                notice,
+                supportsMediaControl: stillPresent.supportsMediaControl
+            });
+        }
+    }
+
+    const deviceId = stillPresent.deviceId || candidate.deviceId || null;
+    if (!deviceId) {
         await policyEvent({
-            session: candidate, mode: cfg.effectiveMode, decision: 'skipped_safety',
-            streamCount: countable.length, streamLimit, reason: 'client_does_not_report_media_control_support'
+            session: candidate, mode: cfg.effectiveMode, decision: 'stop_failed',
+            streamCount: countable.length, streamLimit, reason: directStopError ? 'jellyfin_stop_failed' : 'jellyfin_stop_did_not_end_session',
+            detail: { error: directStopError?.message || null, notice, fallback: 'device_id_unavailable', supportsMediaControl: stillPresent.supportsMediaControl }
+        });
+        return false;
+    }
+
+    const sameDeviceSessions = countable.filter(s => s.deviceId === deviceId && !matchingSession(s, candidate));
+    if (sameDeviceSessions.length) {
+        await policyEvent({
+            session: candidate, mode: cfg.effectiveMode, decision: 'stop_failed',
+            streamCount: countable.length, streamLimit, reason: directStopError ? 'jellyfin_stop_failed' : 'jellyfin_stop_did_not_end_session',
+            detail: {
+                error: directStopError?.message || null,
+                notice,
+                fallback: 'device_logout_blocked_to_preserve_other_active_session',
+                sameDeviceActiveSessions: sameDeviceSessions.length,
+                supportsMediaControl: stillPresent.supportsMediaControl
+            }
         });
         return false;
     }
@@ -342,30 +457,41 @@ async function stopSessionSafely(candidate, streamLimit, cfg) {
     try {
         await registry.request(
             candidate.serverId,
-            `/Sessions/${encodeURIComponent(candidate.sessionId)}/Playing/Stop`,
-            { method: 'POST' }
+            `/Devices?id=${encodeURIComponent(deviceId)}`,
+            { method: 'DELETE' }
         );
-        await query(`
-            UPDATE playback_history
-            SET ended_at=NOW(),ended_reason='policy_stop',last_seen_at=NOW()
-            WHERE server_id=$1 AND playback_key=$2
-        `, [candidate.serverId, candidate.playbackKey]);
-        await query(`
-            DELETE FROM active_playback_sessions
-            WHERE server_id=$1 AND jellyfin_session_id=$2
-        `, [candidate.serverId, candidate.sessionId]);
-        await policyEvent({
-            session: candidate, mode: cfg.effectiveMode, decision: 'stopped',
-            streamCount: countable.length, streamLimit, reason: 'confirmed_concurrent_stream_limit'
-        });
-        return true;
     } catch (error) {
         await policyEvent({
             session: candidate, mode: cfg.effectiveMode, decision: 'stop_failed',
-            streamCount: countable.length, streamLimit, reason: 'jellyfin_stop_failed', detail: { error: error.message }
+            streamCount: countable.length, streamLimit, reason: 'jellyfin_force_logout_failed',
+            detail: { error: error.message, directStopError: directStopError?.message || null, notice, supportsMediaControl: stillPresent.supportsMediaControl }
         });
         return false;
     }
+
+    const forced = await verifyAfterStop(candidate, streamLimit, cfg);
+    if (!forced.reliable) {
+        await policyEvent({
+            session: candidate, mode: cfg.effectiveMode, decision: 'stop_failed',
+            streamCount: countable.length, streamLimit, reason: 'post_stop_revalidation_failed',
+            detail: { error: forced.error, notice, fallback: 'device_logout', supportsMediaControl: stillPresent.supportsMediaControl }
+        });
+        return false;
+    }
+    if (!forced.stillPresent || forced.withinLimit) {
+        return finalizePolicyStop(candidate, countable.length, streamLimit, cfg, {
+            method: 'device_logout_fallback',
+            notice,
+            supportsMediaControl: stillPresent.supportsMediaControl
+        });
+    }
+
+    await policyEvent({
+        session: candidate, mode: cfg.effectiveMode, decision: 'stop_failed',
+        streamCount: countable.length, streamLimit, reason: 'jellyfin_stop_did_not_end_session',
+        detail: { notice, fallback: 'device_logout_did_not_clear_session', supportsMediaControl: stillPresent.supportsMediaControl }
+    });
+    return false;
 }
 
 async function evaluatePolicies(sessions, pollsReliable, cfg) {
