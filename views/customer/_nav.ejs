@@ -1,4 +1,4 @@
-<% const navBenefits=typeof showBenefits!=='undefined'&&Boolean(showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):''; %>
+<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); %>
 <nav class="customerPortalNav" aria-label="Customer navigation">
   <a class="customerPortalNavLink <%= active==='overview'?'active':'' %>" href="/account">Home</a>
   <a class="customerPortalNavLink <%= active==='streaming'?'active':'' %>" href="/account#streaming">Setup</a>
