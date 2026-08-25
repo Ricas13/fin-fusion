@@ -4,6 +4,7 @@ const {query}=require('../db');
 const {esc,layout}=require('./admin-html');
 const csrf=require('../auth/csrf');
 const customerFilters=require('./customer-filters');
+const tableSort=require('./admin-table-sort');
 const registry=require('../jellyfin/registry');
 const {sendCsv}=require('./export');
 const {BULK_ACTIONS}=require('./admin-bulk-customers');
@@ -67,8 +68,8 @@ async function filterOptions(){
 
 function optionList(items,current){return items.map(x=>`<option value="${esc(x.id)}" ${String(x.id)===String(current)?'selected':''}>${esc(x.name)}</option>`).join('')}
 function clearHref(filters){return filters.service?`/admin/users?service=${encodeURIComponent(filters.service)}`:'/admin/users'}
-function filterForm(filters,options){
-    return `<form class="formPanel filterForm compactFilterForm" method="get" action="/admin/users"><div class="formGrid">
+function filterForm(filters,options,sort){
+    return `<form class="formPanel filterForm compactFilterForm" method="get" action="/admin/users"><input type="hidden" name="sort" value="${esc(sort.key)}"><input type="hidden" name="dir" value="${esc(sort.direction)}"><div class="formGrid">
         <div class="formGroup"><label for="customerFilterProduct">Product</label><select class="input" id="customerFilterProduct" name="service"><option value="">All products</option><option value="jellyfin" ${filters.service==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${filters.service==='stremio'?'selected':''}>Stremio</option></select></div>
         <div class="formGroup"><label for="customerFilterSearch">Search</label><input class="input" id="customerFilterSearch" name="q" value="${esc(filters.q||'')}" placeholder="Name, email, username"></div>
         <div class="formGroup"><label for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server"><option value="">Any</option>${optionList(options.servers,filters.serverId)}</select></div>
@@ -106,13 +107,22 @@ function row(x){
     </tr>`;
 }
 
-function pagination(filters,page,pageSize,total){
+function sortHeader(filters,sort,label,key){
+    const active=sort.key===key;
+    const dir=tableSort.nextDirection(sort,key,customerFilters.CUSTOMER_SORTS);
+    const aria=active?` aria-sort="${sort.direction==='asc'?'ascending':'descending'}"`:'';
+    const arrow=active?` <span class="sortArrow" aria-hidden="true">${sort.direction==='asc'?'↑':'↓'}</span>`:'';
+    return `<th${aria}><a class="tableSortLink ${active?'active':''}" href="/admin/users?${queryStringFor(filters,{sort:key,dir,page:1})}">${esc(label)}${arrow}</a></th>`;
+}
+
+function pagination(filters,sort,page,pageSize,total){
     const pages=Math.max(Math.ceil(total/pageSize),1);
     if(pages<=1)return '';
     const links=[];
-    if(page>1)links.push(`<a class="button secondary btn-sm" href="/admin/users?${queryStringFor(filters,{page:page-1})}">Previous</a>`);
+    const state={sort:sort.key,dir:sort.direction};
+    if(page>1)links.push(`<a class="button secondary btn-sm" href="/admin/users?${queryStringFor(filters,{...state,page:page-1})}">Previous</a>`);
     links.push(`<span class="muted">Page ${page} of ${pages}</span>`);
-    if(page<pages)links.push(`<a class="button secondary btn-sm" href="/admin/users?${queryStringFor(filters,{page:page+1})}">Next</a>`);
+    if(page<pages)links.push(`<a class="button secondary btn-sm" href="/admin/users?${queryStringFor(filters,{...state,page:page+1})}">Next</a>`);
     return `<nav class="buttonRow" aria-label="Customer pages">${links.join('')}</nav>`;
 }
 
@@ -168,10 +178,11 @@ function productContext(filters){if(!filters.service)return'';const label=servic
 async function listPage(req){
     const filters=parseFilters(req.query);
     const page=Math.max(parseInt(req.query.page,10)||1,1);
-    const sort=['expiring','name','recent'].includes(req.query.sort)?req.query.sort:'recent';
+    const sort=customerFilters.normalizeCustomerSort(req.query);
     const [options,result,overview]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize:25,sort}),filters.service?Promise.resolve(null):customerOverview()]);
-    const rows=result.rows,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users';
-    const body=`${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options)}<section class="section"><div class="sectionHead"><h2>${context?`${esc(context)} customers`:'Customers'}</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr><th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th><th>Customer</th><th>Plan</th><th>Status</th><th>Expires</th><th>Jellyfin</th><th>Server</th><th>Access sync</th><th>Custom access</th><th>Last active</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customers-bulk.js" defer></script>`;
+    const rows=result.rows,sortState=result.sort,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users';
+    const headers=`<th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th>${sortHeader(filters,sortState,'Customer','name')}${sortHeader(filters,sortState,'Plan','plan')}${sortHeader(filters,sortState,'Status','status')}${sortHeader(filters,sortState,'Expires','expiring')}${sortHeader(filters,sortState,'Jellyfin','jellyfin')}${sortHeader(filters,sortState,'Server','server')}${sortHeader(filters,sortState,'Access sync','sync')}${sortHeader(filters,sortState,'Custom access','custom')}${sortHeader(filters,sortState,'Last active','recent')}`;
+    const body=`${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options,sortState)}<section class="section"><div class="sectionHead"><h2>${context?`${esc(context)} customers`:'Customers'}</h2><span class="muted">${result.total} total</span></div>${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr>${headers}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>${pagination(filters,sortState,result.page,result.pageSize,result.total)}`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customers-bulk.js" defer></script>`;
     const common='<a class="button" href="/admin/users/new">Add customer</a>',jellyfinAction=filters.service==='stremio'?'':` <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a>`;
     return layout({siteName:site(),active,title:context?`${context} customers`:'Customers',subtitle:context?`Shared customer records in ${context} context`:'Managed customers, subscriptions and service access',body,action:`${common}${jellyfinAction} <a class="button secondary" href="/admin/users/export?${queryStringFor(filters)}">Export CSV</a>`});
 }
@@ -194,4 +205,4 @@ function createAdminCustomersListRouter(){
     });
     return r;
 }
-module.exports={createAdminCustomersListRouter,parseFilters,queryStringFor,filterHiddenFields};
+module.exports={createAdminCustomersListRouter,parseFilters,queryStringFor,filterHiddenFields,sortHeader};

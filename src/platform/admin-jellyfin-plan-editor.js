@@ -180,7 +180,7 @@ async function saveProduct(req, plan, data) {
     if (value.downgradeToFree === true && String(value.downgradeFreePlanCode || '') === String(plan.code)) throw new Error('This plan is the configured automatic free-downgrade target. Choose another target under Plans → Access rules before disabling it.');
   }
   await transaction(async client => {
-    await client.query(`UPDATE plans SET name=$2,description=$3,marketing_features=$4::jsonb,visible=$5,active=$6,updated_at=NOW() WHERE id=$1`, [plan.id, name, description, JSON.stringify(features), visible, active]);
+    await client.query(`UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],visible=$5,active=$6,updated_at=NOW() WHERE id=$1`, [plan.id, name, description, features, visible, active]);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.product.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ name, visible, active, freeTier: data.free })]);
   });
 }
