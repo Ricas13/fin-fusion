@@ -47,9 +47,43 @@
     link.appendChild(badge);
   }
 
+  function ensureMetricNodes(){
+    const topActions=document.querySelector('.topBarActions');
+    const status=document.querySelector('.topStatusWrap');
+    if(!topActions||!status)return null;
+    let group=topActions.querySelector('[data-operator-header-metrics]');
+    if(!group){
+      group=document.createElement('div');
+      group.className='topHeaderMetrics';
+      group.setAttribute('data-operator-header-metrics','');
+      group.setAttribute('aria-label','Live business metrics');
+      group.innerHTML='<span class="topHeaderMetric" title="Live Jellyfin streams / configured sellable stream capacity"><span>Streams</span><strong data-operator-streams>— / —</strong></span><span class="topHeaderMetric" title="Successful provider payments received this calendar month"><span>Month</span><strong data-operator-monthly-revenue>—</strong></span>';
+      status.insertAdjacentElement('afterend',group);
+    }
+    return group;
+  }
+
+  function formatMoney(minor,currency){
+    const value=Number(minor);
+    if(!Number.isFinite(value)||!currency)return'—';
+    try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency),minimumFractionDigits:value%100?2:0,maximumFractionDigits:2}).format(value/100);}
+    catch(_){return `${String(currency)} ${(value/100).toFixed(2)}`;}
+  }
+
+  function applyMetrics(metrics){
+    const group=ensureMetricNodes();
+    if(!group)return;
+    const streams=group.querySelector('[data-operator-streams]');
+    const revenue=group.querySelector('[data-operator-monthly-revenue]');
+    const active=Number(metrics?.streams?.active),total=Number(metrics?.streams?.total);
+    if(streams)streams.textContent=Number.isFinite(active)&&Number.isFinite(total)?`${active} / ${total}`:'— / —';
+    if(revenue)revenue.textContent=formatMoney(metrics?.monthlyRevenue?.minor,metrics?.monthlyRevenue?.currency);
+  }
+
   function apply(data){
     if(!data?.counts)return;
     latestSnapshot=data;
+    applyMetrics(data.metrics);
     Object.keys(hrefByKey).forEach(key=>{
       const count=Number(data.counts[key]||0);
       if(count<=0||key===areaForCurrentPage)clearSidebarBadge(key);
@@ -60,9 +94,6 @@
       .filter(row=>row.count>0);
     const businessRows=Object.entries(labelByKey)
       .map(([key,[label,meta]])=>({key,label,meta,href:hrefByKey[key],count:Number(data.counts[key]||0),business:true}))
-      // Being inside a business workspace is itself a review. Never keep telling
-      // the operator that Customers is unread while they are looking at it;
-      // the server-side cursor is persisted independently below.
       .filter(row=>row.count>0&&row.key!==areaForCurrentPage);
     const rows=[...operationalRows,...businessRows];
     const total=rows.reduce((sum,row)=>sum+row.count,0);
@@ -96,15 +127,10 @@
     if(!area||!data?.csrfToken)return Promise.reject(new Error('Read acknowledgement token unavailable'));
     const body=new URLSearchParams({area,_csrf:data.csrfToken});
     return fetch('/admin/api/operator-state/read',{
-      method:'POST',
-      credentials:'same-origin',
+      method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-CSRF-Token':data.csrfToken,Accept:'application/json'},
-      body:body.toString(),
-      keepalive:true
-    }).then(response=>{
-      if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`);
-      return response.json();
-    });
+      body:body.toString(),keepalive:true
+    }).then(response=>{if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`);return response.json();});
   }
 
   function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
@@ -113,27 +139,16 @@
     const delays=[0,200,500,1000,2000,4000];
     for(let attempt=0;attempt<delays.length;attempt+=1){
       if(delays[attempt])await wait(delays[attempt]);
-      try{
-        await markAreaRead(area,data);
-        return await fetchSnapshot();
-      }catch(error){
-        lastError=error;
-        if(attempt<delays.length-1)data=await fetchSnapshot().catch(()=>null)||data;
-      }
+      try{await markAreaRead(area,data);return await fetchSnapshot();}
+      catch(error){lastError=error;if(attempt<delays.length-1)data=await fetchSnapshot().catch(()=>null)||data;}
     }
     throw lastError||new Error('Read acknowledgement failed');
   }
 
-  setTimeout(()=>fetchSnapshot()
-    .then(data=>{
-      if(!data)return;
-      // Paint immediately so the current workspace cannot display its own stale
-      // unread warning while the durable acknowledgement is being written.
-      apply(data);
-      if(!areaForCurrentPage)return;
-      return markAreaReadWithRetry(areaForCurrentPage,data)
-        .then(fresh=>apply(fresh||data))
-        .catch(()=>{});
-    })
-    .catch(()=>{}),80);
+  async function refresh(){const data=await fetchSnapshot().catch(()=>null);if(data)apply(data);return data;}
+  setTimeout(()=>refresh().then(data=>{
+    if(!data||!areaForCurrentPage)return;
+    return markAreaReadWithRetry(areaForCurrentPage,data).then(fresh=>apply(fresh||data)).catch(()=>{});
+  }).catch(()=>{}),80);
+  setInterval(()=>refresh().catch(()=>{}),15000);
 })();
