@@ -1,0 +1,80 @@
+'use strict';
+
+const express=require('express');
+const csrf=require('../auth/csrf');
+const runtimeSettings=require('./runtime-settings');
+const finance=require('./finance-ledger');
+const reporting=require('./reporting-currency');
+const {layout,esc}=require('./admin-html');
+
+function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
+function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
+function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
+function today(){return new Date().toISOString().slice(0,10);}
+function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP'),minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(minor||0)/100);}catch{return `${currency||''} ${(Number(minor||0)/100).toFixed(2)}`.trim();}}
+function amountValue(minor){return (Number(minor||0)/100).toFixed(2);}
+function pct(value){return value==null?'—':`${Number(value).toFixed(1)}%`;}
+function date(value){if(!value)return'—';const text=String(value).slice(0,10);const parsed=new Date(`${text}T00:00:00.000Z`);return Number.isNaN(parsed.getTime())?text:parsed.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});}
+function cadence(value){return({monthly:'Monthly',quarterly:'Quarterly',six_monthly:'Every 6 months',yearly:'Yearly'})[value]||value||'—';}
+function category(value){return String(value||'other').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());}
+function checked(value){return value?' checked':'';}
+function selected(a,b){return String(a)===String(b)?' selected':'';}
+function redirect(res,message,error=false){const key=error?'error':'message';return res.redirect(`/admin/finance?${key}=${encodeURIComponent(message)}`);}
+function csrfOk(req,res){if(csrf.verify(req))return true;res.status(403).send('Invalid or expired security token');return false;}
+
+function metric(label,value,detail=''){return `<div class="metric"><div class="metricLabel">${esc(label)}</div><div class="metricValue">${esc(value)}</div>${detail?`<div class="subText">${esc(detail)}</div>`:''}</div>`;}
+function summaryColumn(title,row,currency){return `<section class="section"><div class="sectionHead"><div><h2>${esc(title)}</h2><div class="muted">Actual customer cash received, known merchant fees, completed reversals and accrued operating costs.</div></div></div><div class="metrics">${metric('Gross revenue',money(row.grossMinor,currency),`${row.paymentCount} successful payment${row.paymentCount===1?'':'s'}`)}${metric('Merchant fees',`−${money(row.merchantFeesMinor,currency)}`,`${row.feeCoveragePct}% of payment fees resolved`)}${metric('Refunds / chargebacks',`−${money(row.reversalsMinor,currency)}`)}${metric('Net revenue',money(row.netRevenueMinor,currency),'gross − known fees − completed reversals')}${metric('Operating expenses',`−${money(row.operatingExpensesMinor,currency)}`)}${metric('Profit',money(row.profitMinor,currency),`margin ${pct(row.profitMarginPct)}`)}</div></section>`;}
+
+function renewalState(row){const days=Number(row.days_until);if(!Number.isFinite(days))return{tone:'',text:'No renewal date'};const verb=row.auto_renews?'Renews':'Expires';if(days<0)return{tone:'bad',text:`${verb} overdue by ${Math.abs(days)} day${Math.abs(days)===1?'':'s'}`};if(days===0)return{tone:'bad',text:`${verb} today`};if(days<=Number(row.reminder_days||0))return{tone:'warn',text:`${verb} in ${days} day${days===1?'':'s'}`};return{tone:'',text:`${verb} in ${days} days`};}
+function daysUntil(value){if(!value)return null;const target=new Date(`${String(value).slice(0,10)}T00:00:00.000Z`),base=new Date(`${today()}T00:00:00.000Z`);return Number.isNaN(target.getTime())?null:Math.floor((target-base)/86400000);}
+
+function expenseFields(row={},prefix=''){
+  const current=today(),effective=String(row.effective_from||current).slice(0,10),renewal=String(row.next_renewal_date||'').slice(0,10),currency=row.currency||'GBP',cad=row.cadence||'monthly',cat=row.category||'software';
+  return `<div class="settingsGrid">
+    <div><label>${esc(prefix)}Expense name</label><input class="input" name="name" maxlength="120" required value="${esc(row.name||'')}"></div>
+    <div><label>Vendor / supplier</label><input class="input" name="vendor" maxlength="120" value="${esc(row.vendor||'')}"></div>
+    <div><label>Category</label><select class="input" name="category">${finance.CATEGORIES.map(value=>`<option value="${esc(value)}"${selected(cat,value)}>${esc(category(value))}</option>`).join('')}</select></div>
+    <div><label>Amount</label><input class="input" name="amount" inputmode="decimal" required value="${esc(row.amount_minor==null?'':amountValue(row.amount_minor))}" placeholder="0.00"></div>
+    <div><label>Currency</label><select class="input" name="currency">${reporting.CURRENCIES.map(value=>`<option value="${esc(value)}"${selected(currency,value)}>${esc(value)}</option>`).join('')}</select></div>
+    <div><label>Billing cadence</label><select class="input" name="cadence">${Object.keys(finance.CADENCE_MONTHS).map(value=>`<option value="${esc(value)}"${selected(cad,value)}>${esc(cadence(value))}</option>`).join('')}</select></div>
+    <div><label>Effective from</label><input class="input" type="date" name="effectiveFrom" required value="${esc(effective)}"></div>
+    <div><label>Next renewal / expiry</label><input class="input" type="date" name="nextRenewalDate" value="${esc(renewal)}"><div class="fieldHelp">Leave blank for a cadence-based first renewal; afterwards keep the provider's real date here.</div></div>
+    <div><label>Reminder lead time</label><input class="input" type="number" min="0" max="365" name="reminderDays" value="${esc(row.reminder_days??30)}"><div class="fieldHelp">Days before renewal/expiry to flag this cost.</div></div>
+    <div><label>Renewal behaviour</label><label class="checkRow"><input type="checkbox" name="autoRenews" value="1"${checked(row.auto_renews??true)}> Auto-renews</label><div class="fieldHelp">Untick for a fixed subscription or contract that expires unless you renew it.</div></div>
+    <div class="span2"><label>Notes</label><textarea class="input" name="notes" maxlength="1000" rows="2">${esc(row.notes||'')}</textarea></div>
+  </div>`;
+}
+
+function renewalEditor(req,row){return `<details><summary class="button secondary btn-sm">Renewal</summary><form class="formPanel" method="post" action="/admin/finance/expenses/${encodeURIComponent(row.id)}/renewal">${token(req)}<label>Next renewal / expiry</label><input class="input" type="date" name="nextRenewalDate" required value="${esc(String(row.next_renewal_date||'').slice(0,10))}"><label>Reminder days</label><input class="input" type="number" min="0" max="365" name="reminderDays" required value="${esc(row.reminder_days??30)}"><label class="checkRow"><input type="checkbox" name="autoRenews" value="1"${checked(row.auto_renews)}> Auto-renews</label><button class="button btn-sm" type="submit">Save reminder</button></form></details>`;}
+function changeEditor(req,row){return `<details><summary class="button secondary btn-sm">Change</summary><form class="formPanel" method="post" action="/admin/finance/expenses/${encodeURIComponent(row.id)}/change">${token(req)}<div class="muted">Use a later effective date to preserve the old cost as history. Using the same start date corrects this version in place.</div>${expenseFields(row,'Updated ')}<button class="button" type="submit">Save expense change</button></form></details>`;}
+function cancelEditor(req,row){return `<details><summary class="button secondary btn-sm">End</summary><form class="formPanel" method="post" action="/admin/finance/expenses/${encodeURIComponent(row.id)}/cancel">${token(req)}<label>Effective end date</label><input class="input" type="date" name="endDate" required value="${esc(today())}"><div class="fieldHelp">The expense stops accruing from this date onward. Previous periods stay unchanged.</div><button class="button danger btn-sm" type="submit">End expense</button></form></details>`;}
+
+function expenseTable(req,rows){if(!rows.length)return'<div class="empty">No active operating expenses yet. Add hosting, software, domains, services or any other recurring cost below.</div>';return `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Expense</th><th>Cost</th><th>Effective</th><th>Renewal / reminder</th><th>Actions</th></tr></thead><tbody>${rows.map(row=>{const days=daysUntil(row.next_renewal_date),state=renewalState({...row,days_until:days});return `<tr><td><strong>${esc(row.name)}</strong><div class="subText">${esc(row.vendor||category(row.category))}${row.vendor?` · ${esc(category(row.category))}`:''}</div>${row.notes?`<div class="subText">${esc(row.notes)}</div>`:''}</td><td><strong>${esc(money(row.amount_minor,row.currency))}</strong><div class="subText">${esc(cadence(row.cadence))}</div></td><td>${esc(date(row.effective_from))}<div class="subText">version ${esc(row.version)}</div></td><td>${row.next_renewal_date?`<span class="pill ${esc(state.tone)}">${esc(state.text)}</span><div class="subText">${esc(date(row.next_renewal_date))} · remind ${esc(row.reminder_days)} days before</div>`:'<span class="pill">No date</span>'}</td><td><div class="buttonRow">${renewalEditor(req,row)}${changeEditor(req,row)}${cancelEditor(req,row)}</div></td></tr>`;}).join('')}</tbody></table></div>`;}
+
+function historyTable(rows){if(!rows.length)return'<div class="empty">No historical expense versions yet. Changes and cancellations will appear here automatically.</div>';return `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Expense</th><th>Cost</th><th>Period</th><th>Version</th></tr></thead><tbody>${rows.slice().sort((a,b)=>String(b.effective_until||'').localeCompare(String(a.effective_until||''))).map(row=>`<tr><td><strong>${esc(row.name)}</strong><div class="subText">${esc(row.vendor||category(row.category))}</div></td><td>${esc(money(row.amount_minor,row.currency))}<div class="subText">${esc(cadence(row.cadence))}</div></td><td>${esc(date(row.effective_from))} → ${esc(date(row.effective_until))}</td><td>${esc(row.version)}</td></tr>`).join('')}</tbody></table></div>`;}
+
+async function page(req){
+  await runtimeSettings.ensureLoaded();
+  const [summary,allExpenses]=await Promise.all([finance.financialSummary({stripeBackfillLimit:25}),finance.listExpenses()]);
+  finance.invalidateCache();
+  const current=allExpenses.filter(row=>!row.effective_until),history=allExpenses.filter(row=>row.effective_until);
+  const due=current.map(row=>({...row,days_until:daysUntil(row.next_renewal_date)})).filter(row=>row.days_until!=null&&row.days_until<=Number(row.reminder_days||0)).sort((a,b)=>a.days_until-b.days_until);
+  const feeIncomplete=summary.month.feeCoveragePct<100||summary.year.feeCoveragePct<100;
+  const notice=feeIncomplete?`<div class="notice warning"><strong>Merchant-fee coverage is still filling in.</strong> Profit deducts every provider fee CAPTAiNFiN can verify. Current coverage is ${esc(summary.month.feeCoveragePct)}% this month and ${esc(summary.year.feeCoveragePct)}% year-to-date; missing fees are treated as unknown, never as zero. <form class="plainForm" method="post" action="/admin/finance/fees/refresh">${token(req)}<button class="button secondary btn-sm" type="submit">Refresh provider fees</button></form></div>`:`<div class="notice"><strong>Merchant fees are fully resolved for the successful payments in these periods.</strong> Net revenue is gross revenue minus verified merchant fees and completed refunds/lost chargebacks.</div>`;
+  const dueNotice=due.length?`<div class="notice warning"><strong>${esc(due.length)} expense renewal${due.length===1?'':'s'} need review.</strong> ${esc(due.slice(0,3).map(row=>`${row.name} ${renewalState(row).text.toLowerCase()}`).join(' · '))}${due.length>3?` · +${esc(due.length-3)} more`:''}</div>`:'';
+  const body=`${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}${dueNotice}${notice}<div class="metrics">${metric('Expense run-rate / month',money(summary.runRate.monthlyMinor,summary.currency),'active recurring costs normalized monthly')}${metric('Expense run-rate / year',money(summary.runRate.yearlyMinor,summary.currency),'active recurring costs normalized annually')}${metric('Profit M / Y',`${money(summary.month.profitMinor,summary.currency)} / ${money(summary.year.profitMinor,summary.currency)}`,'month-to-date / calendar year-to-date')}${metric('Profit margin M / Y',`${pct(summary.month.profitMarginPct)} / ${pct(summary.year.profitMarginPct)}`)}</div>${summaryColumn('This month',summary.month,summary.currency)}${summaryColumn('Calendar year to date',summary.year,summary.currency)}<section class="section" id="expenses"><div class="sectionHead"><div><h2>Operating expenses & renewals</h2><div class="muted">Each subscription is independent. Changes create dated versions so old months keep their original cost.</div></div></div>${expenseTable(req,current)}</section><section class="section"><div class="sectionHead"><div><h2>Add an expense</h2><div class="muted">Track hosting, software, domains, contractors or any other recurring business cost.</div></div></div><form class="formPanel" method="post" action="/admin/finance/expenses">${token(req)}${expenseFields({},'')}<button class="button" type="submit">Add expense</button></form></section><section class="section"><details><summary><strong>Expense history</strong> · ${esc(history.length)} closed version${history.length===1?'':'s'}</summary><div class="detailBody">${historyTable(history)}</div></details></section>`;
+  return layout({siteName:runtimeSettings.siteName(),active:'finance',title:'Finance',subtitle:'Merchant fees, recurring expenses, renewals and operating profit',body});
+}
+
+function createAdminFinanceRouter(){
+  const router=express.Router();router.use('/admin/finance',gate,noStore);
+  router.get('/admin/finance',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){return next(error);}});
+  router.post('/admin/finance/expenses',async(req,res)=>{if(!csrfOk(req,res))return;try{await finance.createExpense(req.body,req.session.authUserId);return redirect(res,'Expense added.');}catch(error){return redirect(res,error.message||'Expense could not be added.',true);}});
+  router.post('/admin/finance/expenses/:id/change',async(req,res)=>{if(!csrfOk(req,res))return;try{await finance.changeExpense(req.params.id,req.body,req.session.authUserId);return redirect(res,'Expense change saved with its effective date.');}catch(error){return redirect(res,error.message||'Expense could not be changed.',true);}});
+  router.post('/admin/finance/expenses/:id/renewal',async(req,res)=>{if(!csrfOk(req,res))return;try{await finance.updateRenewal(req.params.id,req.body,req.session.authUserId);return redirect(res,'Renewal reminder updated.');}catch(error){return redirect(res,error.message||'Renewal reminder could not be updated.',true);}});
+  router.post('/admin/finance/expenses/:id/cancel',async(req,res)=>{if(!csrfOk(req,res))return;try{await finance.cancelExpense(req.params.id,req.body.endDate,req.session.authUserId);return redirect(res,'Expense ended. Its history has been preserved.');}catch(error){return redirect(res,error.message||'Expense could not be ended.',true);}});
+  router.post('/admin/finance/fees/refresh',async(req,res)=>{if(!csrfOk(req,res))return;try{await finance.financialSummary({stripeBackfillLimit:100});finance.invalidateCache();return redirect(res,'Merchant-fee refresh completed.');}catch(error){return redirect(res,error.message||'Merchant fees could not be refreshed.',true);}});
+  return router;
+}
+
+module.exports={createAdminFinanceRouter,page,expenseTable,historyTable,renewalState,daysUntil};
