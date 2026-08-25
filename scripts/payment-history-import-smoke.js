@@ -29,6 +29,7 @@ assert.strictEqual(paypal.providerCustomerId, 'PAYER-1');
 assert.strictEqual(paypal.grossAmountMinor, 1000);
 assert.strictEqual(paypal.feeAmountMinor, 59, 'PayPal negative fee should normalize to a positive processor cost');
 assert.strictEqual(paypal.netAmountMinor, 941);
+assert.strictEqual(paypal.metadata.rawFeeAmountMinor, -59, 'PayPal provider fee sign should be retained for accounting auditability');
 
 const jpy = history.normalizePayPal({ transaction_info: { transaction_id: 'PP-JPY', transaction_initiation_date: '2026-01-02T12:00:00Z', transaction_amount: { currency_code: 'JPY', value: '1000' }, fee_amount: { currency_code: 'JPY', value: '-50' } } });
 assert.strictEqual(jpy.grossAmountMinor, 1000, 'zero-decimal currencies must not be multiplied by 100');
@@ -44,6 +45,7 @@ assert.strictEqual(summary.newCount, 1);
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'history-import.js'), 'utf8');
 assert.ok(!source.includes("require('./lifecycle')"), 'historical imports must stay outside lifecycle/entitlement code');
 assert.ok(!/activatePurchase|updateProviderSubscription|grantAccess/.test(source), 'historical imports must never activate or update access');
+assert.ok(source.includes("url.searchParams.set('balance_affecting_records_only', 'Y')"), 'PayPal imports must explicitly request only balance-impacting records');
 
 const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'migrations', '042_payment_history_import.sql'), 'utf8');
 assert.ok(/UNIQUE\(provider, provider_transaction_id\)/.test(migration), 'historical ledger must enforce provider-level transaction dedupe');
