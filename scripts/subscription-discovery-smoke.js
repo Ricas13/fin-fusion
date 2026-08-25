@@ -69,6 +69,11 @@ conflictContext.providerSubscriptionOwners.set('stripe:sub_live', { subscription
 matches = discovery.matchPremiumRows([local], [stripe], conflictContext);
 assert.strictEqual(matches[0].state, 'conflict', 'a remote subscription already owned locally must never be stolen');
 
+const identityMismatch = baseContext();
+identityMismatch.providerIdentityToCustomers.set('stripe:cus_1', new Set(['different-customer']));
+matches = discovery.matchPremiumRows([local], [stripe], identityMismatch);
+assert.strictEqual(matches[0].state, 'unresolved', 'a known provider-customer-ID mismatch must never be overridden by matching email');
+
 matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', provider_subscription_id: 'sub_existing' }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'linked', 'already-linked premium users must not be rewritten');
 
@@ -76,13 +81,18 @@ matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }
 assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptions must not be used to justify premium access');
 
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
+const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
 assert.ok(discoverySource.includes("e.server_class='premium'"), 'discovery must be scoped to active Premium Server entitlements');
 assert.ok(discoverySource.includes("IN ('jellyfin','bundle')"), 'discovery must only cover Jellyfin-capable premium entitlements');
 assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must inspect all subscriptions before selecting current states');
 assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T0002', 'T0003'])"), 'PayPal discovery must cover subscription and preapproved recurring payments');
 assert.ok(discoverySource.includes("paypal_reference_id_type || '').toUpperCase() === 'SUB'"), 'PayPal discovery must only treat SUB references as subscription IDs');
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
-assert.ok(discoverySource.includes('assertNoOtherLiveRecurring'), 'bulk linking must preserve the one-live-recurring-primary invariant');
+assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
+assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
+assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lifecycle must own discovered provider-subscription attachment');
+assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
+assert.ok(/plan_id=\$2[\s\S]*external_id=ANY\(\$3::text\[\]\)/.test(lifecycleSource), 'lifecycle must snapshot the exact remote price/plan that maps to the existing premium plan');
 
 const adminSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-billing.js'), 'utf8');
 assert.ok(adminSource.includes('/admin/billing/discover/preview'), 'Billing must expose preview-first subscription discovery');
