@@ -36,7 +36,11 @@ assert.deepStrictEqual(
 );
 assert(labels(nav.childPages('activity')).includes('Free-user inactivity rules'),'Playback must expose its inactivity policy in the sidebar');
 assert(labels(nav.childPages('settings-security')).includes('Turnstile & abuse protection'),'Security must expose abuse protection in the sidebar');
-assert(!labels(nav.childPages('users')).includes('Jellyfin password support'),'Customer-specific support actions must remain contextual rather than permanent navigation');
+assert.deepStrictEqual(
+  labels(nav.childPages('users')),
+  ['Customer activity','Imported-user claims','Import from Jellyfin','Jellyfin password support'],
+  'Customers must expose durable support and import destinations directly in the sidebar'
+);
 
 // Specialist pages keep their owning main page highlighted while highlighting
 // their own nested destination as the exact current location.
