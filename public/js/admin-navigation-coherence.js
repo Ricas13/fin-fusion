@@ -4,13 +4,13 @@
   const path=location.pathname;
 
   // The left sidebar is the single navigation hierarchy. This enhancer is now
-  // only a cleanup safety net for legacy pages that may still emit historical
-  // workflow/tab navigation in their page body.
+  // only a cleanup safety net for legacy pages and client enhancers that may
+  // still emit historical workflow/tab navigation inside page content.
   function enforceSidebarOnlyNavigation(){
     const content=document.querySelector('.content');
     if(!content)return;
     content.querySelectorAll(
-      'nav.workflowCardGrid.operatorTabs,nav.coherenceSectionTabs,nav.coherenceSubTabs,section.coherenceOwnedTools'
+      'nav.workflowCardGrid,nav.operatorTabs,nav.coherenceSectionTabs,nav.coherenceSubTabs,section.coherenceOwnedTools'
     ).forEach(node=>node.remove());
   }
 
