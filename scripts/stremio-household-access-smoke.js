@@ -102,7 +102,7 @@ assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&pol
 assert(stremioPlanCreate.includes('const cards=[1,2,3]')&&stremioPlanCreate.includes('Household${n===1?')&&stremioPlanCreate.includes('Create custom'),'Stremio creation must expose generated 1/2/3-household presets plus custom');
 assert(stremioPlanCreate.includes('Unlimited streams')&&stremioPlanCreate.includes('Unlimited devices'),'Stremio creation must make unlimited playback explicit');
 assert(!stremioPlanEditor.includes('New purchases only')&&!stremioPlanEditor.includes('Existing customers too'),'Stremio plan edits must not offer stale-policy grandfathering for current members');
-assert(stremioPlanEditor.includes("impactScope:'all_current'")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio plan edits must update current household snapshots and queue current members for request-policy reconciliation');
+assert(stremioPlanEditor.includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must update all current household snapshots and queue current members for request-policy reconciliation');
 assert(stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must reset current Stremio leases so the new allowance takes effect');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
