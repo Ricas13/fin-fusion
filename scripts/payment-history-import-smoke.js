@@ -52,6 +52,13 @@ assert.strictEqual(coverage.stripe.length, 2, 'adjacent Stripe import runs shoul
 assert.strictEqual(coverage.paypal.length, 1, 'both-provider runs must create PayPal coverage');
 assert(dashboardLedger.isCovered(coverage, 'stripe', '2025-02-15T12:00:00Z'));
 assert(!dashboardLedger.isCovered(coverage, 'paypal', '2025-02-15T12:00:00Z'));
+
+const sameDayCoverage = dashboardLedger.coverageFromRuns([
+    { provider_scope: 'stripe', range_start: '2026-08-25', range_end: '2026-08-25', completed_at: '2026-08-25T12:00:00.000Z' }
+]);
+assert(dashboardLedger.isCovered(sameDayCoverage, 'stripe', '2026-08-25T11:59:59.000Z'), 'same-day imported rows before completion must be authoritative');
+assert(!dashboardLedger.isCovered(sameDayCoverage, 'stripe', '2026-08-25T12:00:01.000Z'), 'live payments after a same-day import completes must remain visible');
+
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'stripe', transaction_type: 'charge', gross_amount_minor: 1000 }), 'payment');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'stripe', transaction_type: 'refund', gross_amount_minor: -500 }), 'refund');
 assert.strictEqual(dashboardLedger.historyKind({ provider: 'stripe', transaction_type: 'payout', gross_amount_minor: -941 }), null, 'Stripe payouts must never be counted as customer revenue');
@@ -67,6 +74,7 @@ assert.ok(source.includes("url.searchParams.set('balance_affecting_records_only'
 
 const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'dashboard-ledger.js'), 'utf8');
 assert.ok(dashboardSource.includes("status='completed'"), 'dashboard accounting may only trust completed import coverage');
+assert.ok(dashboardSource.includes('completed_at'), 'dashboard accounting must cap same-day coverage at the actual import completion time');
 assert.ok(dashboardSource.includes("if (isCovered(coverage, row.provider, row.created_at)) continue"), 'covered provider/date windows must suppress duplicate live webhook accounting');
 assert.ok(/STRIPE_PAYMENT_CATEGORIES[\s\S]*charge/.test(dashboardSource), 'dashboard history must classify Stripe charges as customer revenue');
 assert.ok(/PAYPAL_PAYMENT_CODES[\s\S]*T0006/.test(dashboardSource), 'dashboard history must classify PayPal checkout receipts as customer revenue');
