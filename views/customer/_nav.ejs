@@ -1,3 +1,4 @@
+<% const navBenefits=typeof showBenefits!=='undefined'&&Boolean(showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):''; %>
 <nav class="customerPortalNav" aria-label="Customer navigation">
   <a class="customerPortalNavLink <%= active==='overview'?'active':'' %>" href="/account">Home</a>
   <a class="customerPortalNavLink <%= active==='streaming'?'active':'' %>" href="/account#streaming">Setup</a>
@@ -5,11 +6,12 @@
   <a class="customerPortalNavLink <%= active==='activity'?'active':'' %>" href="/account/activity">Activity</a>
   <a class="customerPortalNavLink <%= active==='support'?'active':'' %>" href="/account/support">Support</a>
   <a class="customerPortalNavLink <%= active==='docs'?'active':'' %>" href="/account/docs">Guides</a>
+  <a class="customerPortalNavLink <%= active==='history'?'active':'' %>" href="/account/history">Payments</a>
   <a class="customerPortalNavLink <%= active==='account' || active==='notifications' || active==='security' ?'active':'' %>" href="/account/security">Account</a>
-  <% if (typeof showBenefits !== 'undefined' && showBenefits) { %>
+  <% if (navBenefits) { %>
     <a class="customerPortalNavLink <%= active==='benefits'?'active':'' %>" href="/account/affiliate">Benefits</a>
   <% } %>
-  <% if (typeof showHelp !== 'undefined' && showHelp) { %>
-    <a class="customerPortalNavLink" href="/help">Help</a>
+  <% if (navOverseerrUrl) { %>
+    <a class="customerPortalNavLink" href="<%= navOverseerrUrl %>" target="_blank" rel="noreferrer">Request content ↗</a>
   <% } %>
 </nav>
