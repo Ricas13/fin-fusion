@@ -17,7 +17,10 @@ const REASON_LABELS = Object.freeze({
     candidate_changed_before_action: 'Playback changed before action',
     client_does_not_report_media_control_support: 'Client cannot confirm media-control support',
     confirmed_concurrent_stream_limit: 'Confirmed concurrent stream limit',
-    jellyfin_stop_failed: 'Jellyfin stop request failed'
+    jellyfin_stop_failed: 'Jellyfin stop request failed',
+    jellyfin_stop_did_not_end_session: 'Jellyfin client ignored the stop request',
+    jellyfin_force_logout_failed: 'Jellyfin device logout failed',
+    post_stop_revalidation_failed: 'Could not verify that playback stopped'
 });
 
 const DECISION_LABELS = Object.freeze({
