@@ -9,6 +9,7 @@ const dashboard=read('views/customer/dashboard.ejs');
 const onboarding=read('views/customer/onboarding.ejs');
 const affiliate=read('views/customer/affiliate.ejs');
 const affiliateRoute=read('src/platform/customer-affiliate.js');
+const referralCopy=read('public/js/customer-referral-copy.js');
 const nav=read('views/customer/_nav.ejs');
 const generatedNav=read('src/platform/customer-nav-html.js');
 const dashboardRoute=read('src/platform/customer-dashboard.js');
@@ -66,7 +67,9 @@ assert(history.includes("customerNav.nav('history',navOptions)"),'billing histor
 
 assert(affiliateRoute.includes("operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code))"),'affiliate route must build the canonical shareable referral signup URL');
 assert(affiliateRoute.includes('referralLink'),'affiliate route must pass the referral signup URL to the template');
-assert(affiliate.includes('id="referral-signup-link"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('navigator.clipboard.writeText(input.value)'),'Benefits must display and copy the full referral signup link');
+assert(affiliate.includes('id="referral-signup-link"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('/js/customer-referral-copy.js'),'Benefits must display the full referral signup link and load its customer copy handler');
+assert(!affiliate.includes('<script>'),'Benefits must not reintroduce inline JavaScript that violates the portal CSP');
+assert(referralCopy.includes('navigator.clipboard.writeText(input.value)')&&referralCopy.includes("document.execCommand('copy')"),'customer referral copy handler must support Clipboard API with a fallback');
 assert(affiliate.includes("balances.get('USD')")&&affiliate.includes('class="metricCard"'),'Benefits balances must use the compact metric-card language for USD');
 assert(!affiliate.includes("['GBP','USD','EUR'].forEach"),'Benefits must not render the previous three oversized currency plan cards');
 
