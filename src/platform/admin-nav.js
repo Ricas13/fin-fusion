@@ -70,7 +70,10 @@ const aliases=Object.freeze({
   security:'my-security','operations':'servers'
 });
 
-const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','customer-jellyfin-password','my-profile','my-notifications','my-security']);
+// Search already has a persistent command-palette launcher, while personal
+// account pages have their own fixed My account block. Everything else that is
+// a durable admin destination is allowed to appear as a nested sidebar item.
+const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','my-profile','my-notifications','my-security']);
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
