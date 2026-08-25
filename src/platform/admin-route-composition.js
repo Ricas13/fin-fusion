@@ -6,6 +6,7 @@ const { createAdminProductModulesRouter } = require('./admin-product-modules');
 const { createAdminAttentionRouter } = require('./admin-attention');
 const { createAdminSupportTicketsRouter } = require('./admin-support-tickets');
 const { createAdminOrdersRouter } = require('./admin-orders');
+const { createAdminFinanceRouter } = require('./admin-finance');
 const { createAdminSetupRouter } = require('./admin-setup');
 const { createAdminSystemRouter } = require('./admin-system');
 const { createAdminOperationsRouter } = require('./admin-operations');
@@ -86,6 +87,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminUsersDashboardRouter());
   app.use(createAdminSupportTicketsRouter());
   app.use(createAdminOrdersRouter());
+  app.use(createAdminFinanceRouter());
   app.use(createAdminSetupRouter());
   app.use(createAdminSystemRouter());
   app.use(createAdminOperationsRouter());
