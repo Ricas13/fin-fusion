@@ -1,13 +1,14 @@
 'use strict';
 
 // Shared GitBook-style rendering engine for the admin and end-user
-// documentation sections. Content is authored as small JS modules (see
-// admin-docs-content.js / customer-docs-content.js) using a deliberately
-// small markdown subset — headings, paragraphs, bold/italic/code, links,
-// lists and blockquote callouts — parsed by renderMarkdown below. Each doc
-// section renders as a fully standalone HTML document (its own shell, not
-// threaded through admin-html's operational layout pipeline) so the reading
-// experience stays a clean, distraction-free two-pane guide.
+// documentation sections. Content comes from the repo's own docs/guide/
+// GitBook source (see docs-guide-source.js), which already covers the
+// deliberately small markdown subset used here — headings, paragraphs,
+// bold/italic/code, links, lists, blockquote callouts and fenced code
+// blocks — parsed by renderMarkdown below. Each doc section renders as a
+// fully standalone HTML document (its own shell, not threaded through
+// admin-html's operational layout pipeline) so the reading experience
+// stays a clean, distraction-free two-pane guide.
 
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
 
@@ -23,9 +24,9 @@ function inline(text){
   return out;
 }
 
-function renderMarkdown(source){
+function renderProseBlocks(source){
   const blocks=String(source||'').trim().split(/\n{2,}/);
-  const html=blocks.map(block=>{
+  return blocks.map(block=>{
     const lines=block.split('\n').map(l=>l.trim()).filter(Boolean);
     if(!lines.length)return'';
     if(lines[0].startsWith('### '))return`<h3>${inline(lines[0].slice(4))}</h3>`;
@@ -35,6 +36,18 @@ function renderMarkdown(source){
     if(lines.every(l=>/^\d+\.\s/.test(l)))return`<ol>${lines.map(l=>`<li>${inline(l.replace(/^\d+\.\s/,''))}</li>`).join('')}</ol>`;
     return`<p>${lines.map(inline).join(' ')}</p>`;
   }).join('');
+}
+
+function renderMarkdown(source){
+  const text=String(source||'').trim();
+  const fence=/```[a-z0-9]*\n([\s\S]*?)```/g;
+  let cursor=0,html='',match;
+  while((match=fence.exec(text))){
+    html+=renderProseBlocks(text.slice(cursor,match.index));
+    html+=`<pre><code>${esc(match[1].replace(/\n$/,''))}</code></pre>`;
+    cursor=fence.lastIndex;
+  }
+  html+=renderProseBlocks(text.slice(cursor));
   return html;
 }
 
@@ -66,7 +79,7 @@ function sidebarMarkup(sections,basePath,activeHref){
   }).join('');
 }
 
-const SHELL_STYLE=`*{box-sizing:border-box}:root{--bg:#090d12;--sidebar:#0d1218;--panel:#121820;--border:#222b36;--text:#dfe6ed;--muted:#8390a0;--accent:#20a9d6}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14.5px;line-height:1.65}a{color:var(--accent)}.docShell{display:flex;min-height:100vh}.docSidebar{width:280px;flex:none;background:var(--sidebar);border-right:1px solid var(--border);padding:20px 14px 40px;overflow-y:auto;position:sticky;top:0;height:100vh}.docBrand{display:block;padding:2px 8px 16px;text-decoration:none}.docBrandSite{font-size:13px;font-weight:800;color:#f4f7fa}.docBrandLabel{font-size:11px;color:var(--muted);margin-top:2px}.docSearch{width:100%;padding:9px 11px;margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px}.docSearch::placeholder{color:#586777}.docNavSection{margin-bottom:6px}.docNavSection[hidden]{display:none}.docNavSectionLabel{padding:10px 8px 4px;font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#647184}.docNavLink{display:block;padding:7px 9px;border-radius:7px;color:#9aa6b5;text-decoration:none;font-size:13px;font-weight:500}.docNavLink[hidden]{display:none}.docNavLink:hover{background:rgba(32,169,214,.08);color:#eef7fb}.docNavLink.active{background:rgba(32,169,214,.14);color:#fff;box-shadow:inset 3px 0 0 var(--accent)}.docMain{flex:1;min-width:0;max-width:900px;margin:0 auto;padding:44px 48px 80px}.docCrumb{font-size:12.5px;color:var(--muted);margin-bottom:10px}.docCrumb a{color:var(--muted);text-decoration:none}.docCrumb a:hover{color:var(--text)}.docMain h1{margin:0 0 22px;font-size:30px;color:#f4f7fa;line-height:1.2}.docBody h2{margin:36px 0 12px;font-size:20px;color:#eef2f6}.docBody h3{margin:26px 0 10px;font-size:16px;color:#eef2f6}.docBody p{margin:0 0 14px;color:#c3ccd6}.docBody ul,.docBody ol{margin:0 0 14px;padding-left:22px;color:#c3ccd6}.docBody li{margin-bottom:6px}.docBody code{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.docBody blockquote{margin:0 0 16px;padding:12px 16px;background:rgba(32,169,214,.07);border-left:3px solid var(--accent);border-radius:0 8px 8px 0}.docBody blockquote p{margin:0;color:#dfe6ed}.docFooterNav{display:flex;justify-content:space-between;gap:16px;margin-top:48px;padding-top:20px;border-top:1px solid var(--border)}.docFooterLink{flex:1;text-decoration:none;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--panel);display:block}.docFooterLink.next{text-align:right}.docFooterLink .docFooterDir{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}.docFooterLink .docFooterTitle{color:#eef2f6;font-weight:600;font-size:13.5px}.docBack{display:inline-block;margin-top:24px;font-size:13px;color:var(--muted);text-decoration:none}.docBack:hover{color:var(--text)}@media(max-width:820px){.docShell{display:block}.docSidebar{position:static;height:auto;width:auto;border-right:0;border-bottom:1px solid var(--border)}.docMain{padding:28px 20px 56px}}`;
+const SHELL_STYLE=`*{box-sizing:border-box}:root{--bg:#090d12;--sidebar:#0d1218;--panel:#121820;--border:#222b36;--text:#dfe6ed;--muted:#8390a0;--accent:#20a9d6}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14.5px;line-height:1.65}a{color:var(--accent)}.docShell{display:flex;min-height:100vh}.docSidebar{width:280px;flex:none;background:var(--sidebar);border-right:1px solid var(--border);padding:20px 14px 40px;overflow-y:auto;position:sticky;top:0;height:100vh}.docBrand{display:block;padding:2px 8px 16px;text-decoration:none}.docBrandSite{font-size:13px;font-weight:800;color:#f4f7fa}.docBrandLabel{font-size:11px;color:var(--muted);margin-top:2px}.docSearch{width:100%;padding:9px 11px;margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px}.docSearch::placeholder{color:#586777}.docNavSection{margin-bottom:6px}.docNavSection[hidden]{display:none}.docNavSectionLabel{padding:10px 8px 4px;font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#647184}.docNavLink{display:block;padding:7px 9px;border-radius:7px;color:#9aa6b5;text-decoration:none;font-size:13px;font-weight:500}.docNavLink[hidden]{display:none}.docNavLink:hover{background:rgba(32,169,214,.08);color:#eef7fb}.docNavLink.active{background:rgba(32,169,214,.14);color:#fff;box-shadow:inset 3px 0 0 var(--accent)}.docMain{flex:1;min-width:0;max-width:900px;margin:0 auto;padding:44px 48px 80px}.docCrumb{font-size:12.5px;color:var(--muted);margin-bottom:10px}.docCrumb a{color:var(--muted);text-decoration:none}.docCrumb a:hover{color:var(--text)}.docMain h1{margin:0 0 22px;font-size:30px;color:#f4f7fa;line-height:1.2}.docBody h2{margin:36px 0 12px;font-size:20px;color:#eef2f6}.docBody h3{margin:26px 0 10px;font-size:16px;color:#eef2f6}.docBody p{margin:0 0 14px;color:#c3ccd6}.docBody ul,.docBody ol{margin:0 0 14px;padding-left:22px;color:#c3ccd6}.docBody li{margin-bottom:6px}.docBody code{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.docBody pre{margin:0 0 16px;padding:14px 16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow-x:auto}.docBody pre code{background:none;border:none;padding:0;color:#c3ccd6;line-height:1.6}.docBody blockquote{margin:0 0 16px;padding:12px 16px;background:rgba(32,169,214,.07);border-left:3px solid var(--accent);border-radius:0 8px 8px 0}.docBody blockquote p{margin:0;color:#dfe6ed}.docFooterNav{display:flex;justify-content:space-between;gap:16px;margin-top:48px;padding-top:20px;border-top:1px solid var(--border)}.docFooterLink{flex:1;text-decoration:none;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--panel);display:block}.docFooterLink.next{text-align:right}.docFooterLink .docFooterDir{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}.docFooterLink .docFooterTitle{color:#eef2f6;font-weight:600;font-size:13.5px}.docBack{display:inline-block;margin-top:24px;font-size:13px;color:var(--muted);text-decoration:none}.docBack:hover{color:var(--text)}@media(max-width:820px){.docShell{display:block}.docSidebar{position:static;height:auto;width:auto;border-right:0;border-bottom:1px solid var(--border)}.docMain{padding:28px 20px 56px}}`;
 
 const SEARCH_SCRIPT_TAG='<script src="/js/docs-search.js" defer></script>';
 
