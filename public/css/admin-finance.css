@@ -1,0 +1,12 @@
+.settingsGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start}
+.settingsGrid>div{display:grid;gap:5px;min-width:0}
+.settingsGrid label{color:#8d9aa8;font-size:11px;font-weight:700}
+.settingsGrid .input{width:100%;min-width:0}
+.settingsGrid .span2{grid-column:span 2}
+.financeInlineStatus{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.notice .plainForm{display:inline-flex;margin-left:8px;vertical-align:middle}
+.dataTable td details{min-width:0}
+.dataTable td details>.formPanel{min-width:min(560px,70vw);margin-top:8px}
+.dataTable td .buttonRow{align-items:flex-start;flex-wrap:wrap}
+@media(max-width:1050px){.settingsGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.settingsGrid{grid-template-columns:1fr}.settingsGrid .span2{grid-column:auto}.notice .plainForm{display:flex;margin:8px 0 0}.dataTable td details>.formPanel{min-width:0;width:100%}}
