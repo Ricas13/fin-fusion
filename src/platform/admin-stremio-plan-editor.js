@@ -24,7 +24,7 @@ function money(value){const raw=String(value??'').trim();if(!/^\d+(?:\.\d{1,2})?
 function features(value){return [...new Set(String(value||'').split(/\r?\n/).map(v=>v.trim()).filter(Boolean).map(v=>v.slice(0,160)))].slice(0,20);}
 function checked(value){return value?'checked':'';}
 function selected(a,b){return String(a)===String(b)?'selected':'';}
-function formatPrice(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(minor||0)/100);}catch{return `${currency||'GBP'} ${(Number(minor||0)/100).toFixed(2)}`;}}
+function formatPrice(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),currencyDisplay:'narrowSymbol',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(minor||0)/100);}catch{return `${currency||'GBP'} ${(Number(minor||0)/100).toFixed(2)}`;}}
 function activeSubscriptionSql(extra=''){return `plan_id=$1 AND superseded_by IS NULL AND status IN ('active','trialing','past_due','paused') AND starts_at<=NOW() AND current_period_end>NOW() ${extra}`;}
 
 async function loadData(planId){
