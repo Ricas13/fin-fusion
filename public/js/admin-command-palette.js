@@ -35,7 +35,7 @@
       {label:'Needs Attention',href:'/admin/attention',group:'Dashboard',keywords:'alerts problems issues review'}
     ].forEach(command=>addCommand(list,command));
 
-    document.querySelectorAll('a.adminTab[href]').forEach(link=>{
+    document.querySelectorAll('a.adminTab[href],a.adminSubTab[href]').forEach(link=>{
       addCommand(list,{
         label:(link.textContent||'').trim(),
         href:link.getAttribute('href'),
