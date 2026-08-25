@@ -10,7 +10,7 @@ const fleet = read('src/platform/admin-server-fleet-dashboard.js');
 const operations = read('src/platform/admin-fleet-operations.js');
 const libraries = read('src/platform/admin-libraries.js');
 const serverTabs = read('src/platform/admin-server-tabs.js');
-const nav = read('src/platform/admin-nav.js');
+const navModel = require('../src/platform/admin-nav');
 const css = read('public/css/admin-server-control.css');
 const capability = read('public/css/admin-capability.css');
 
@@ -27,8 +27,9 @@ assert(operations.includes('/admin/servers?message=') && operations.includes('#c
 assert(libraries.includes('/admin/servers?message=') && libraries.includes('#server-'), 'library scans must return to the originating server row');
 
 assert(!serverTabs.includes("['libraries','Libraries'"), 'per-server tabs must not expose a separate Libraries workflow');
-assert(!nav.includes("'fleet-operations':Object.freeze") && !nav.includes("libraries:Object.freeze({groupKey:'jellyfin',parentKey:'servers'"), 'Servers workflow must not advertise Placement or Libraries as siblings');
-assert(nav.includes("'fleet-operations':'servers','libraries':'servers'"), 'legacy pages must still resolve visually to Servers');
+assert(navModel.hiddenPages['fleet-operations']?.parentKey==='servers' && navModel.hiddenPages.libraries?.parentKey==='servers', 'Placement and Libraries must remain nested beneath the consolidated Servers control surface');
+assert.deepStrictEqual(navModel.childPages('servers').map(page=>page[1]), ['Fleet dashboard','Placement & capacity','Libraries'], 'durable Servers tools must be discoverable as nested sidebar destinations');
+assert(navModel.aliases.operations==='servers' && !navModel.aliases['fleet-operations'] && !navModel.aliases.libraries, 'legacy Operations may resolve to Servers while nested Placement/Libraries retain exact active identity');
 
 assert(capability.includes("@import url('/css/admin-server-control.css')"), 'shared admin shell must load server control styling');
 assert(css.includes('.serverControlTable') && css.includes('.serverControlOverview') && css.includes('.serverAdvancedGrid'), 'consolidated Servers needs dedicated compact layout contracts');
