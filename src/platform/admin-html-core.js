@@ -1,8 +1,8 @@
 'use strict';
 
 // The stable base renderer owns the admin document chrome and the
-// /css/admin-capability.css link. This wrapper adds progressive behavior and
-// the one-row server-owned navigation hierarchy shared by modern admin pages.
+// /css/admin-capability.css link. This wrapper adds progressive behavior while
+// keeping the sidebar as the single navigation hierarchy.
 const base=require('./admin-html-core-base');
 const contextNavigation=require('./admin-context-navigation');
 
@@ -22,10 +22,10 @@ function addFilterStyles(html){
   return html.includes('</head>')?html.replace('</head>',`${link}</head>`):html;
 }
 
+// Compatibility wrapper retained for callers. The sidebar now owns navigation,
+// so modern pages no longer receive a duplicated top Current/Related tab row.
 function addServerContextNavigation(options={}){
-  const body=String(options.body||'');
-  const navigation=contextNavigation.render(options.active);
-  return {...options,body:`${navigation||''}${body}`};
+  return {...options,body:String(options.body||'')};
 }
 
 function replaceBreadcrumb(html,active){
@@ -37,18 +37,17 @@ function replaceBreadcrumb(html,active){
   );
 }
 
-// Old workflow modules still return card/tab navigation because deep links and
-// specialist routes remain supported. The sidebar is now the canonical home
-// for specialist destinations, so redundant server-rendered workflow rows are
-// removed rather than moved into page content.
+// Old workflow modules may still return tab/card navigation. The sidebar is the
+// canonical home for those destinations, so redundant navigation is removed
+// instead of being moved elsewhere in page content.
 function removeSecondaryWorkflowNavigation(html){
   return String(html||'')
     .replace(/<nav class="workflowCardGrid operatorTabs"[^>]*>[\s\S]*?<\/nav>/g,'')
+    .replace(/<nav class="coherenceSectionTabs"[^>]*>[\s\S]*?<\/nav>/g,'')
     .replace(/<nav class="coherenceSubTabs"[^>]*>[\s\S]*?<\/nav>/g,'')
     .replace(/<section class="coherenceOwnedTools"[^>]*>[\s\S]*?<\/section>/g,'');
 }
 
-// Compatibility export retained for older smoke/tests/callers.
 function removeRedundantWorkflowNavigation(html){return removeSecondaryWorkflowNavigation(html);}
 
 function actionHrefs(action=''){
