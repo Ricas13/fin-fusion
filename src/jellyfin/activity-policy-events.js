@@ -2,8 +2,7 @@
 
 const SAFETY_ATTENTION_REASONS = Object.freeze([
     'incomplete_server_snapshot',
-    'revalidation_failed',
-    'client_does_not_report_media_control_support'
+    'revalidation_failed'
 ]);
 
 const REASON_LABELS = Object.freeze({
@@ -15,7 +14,7 @@ const REASON_LABELS = Object.freeze({
     revalidation_failed: 'Live session revalidation failed',
     violation_cleared_before_action: 'Limit violation cleared before action',
     candidate_changed_before_action: 'Playback changed before action',
-    client_does_not_report_media_control_support: 'Client cannot confirm media-control support',
+    client_does_not_report_media_control_support: 'Client could not confirm media-control support (legacy safety event)',
     confirmed_concurrent_stream_limit: 'Confirmed concurrent stream limit',
     jellyfin_stop_failed: 'Jellyfin stop request failed',
     jellyfin_stop_did_not_end_session: 'Jellyfin client ignored the stop request',
