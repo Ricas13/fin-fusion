@@ -11,6 +11,7 @@ const editor = read('src/platform/admin-jellyfin-plan-editor.js');
 const css = read('public/css/admin-plan-control-room.css');
 const capability = read('public/css/admin-capability.css');
 const attention = read('src/platform/admin-attention.js');
+const baseline = read('db/migrations/000_database_baseline.sql');
 
 assert(routes.includes('createAdminJellyfinPlanEditorRouter'), 'route composition must mount the unified Jellyfin plan editor');
 assert(routes.indexOf('createAdminJellyfinPlanEditorRouter()') < routes.indexOf('createAdminPlanAccessRouter()'), 'unified Jellyfin dispatch must run before legacy plan GET owners');
@@ -29,11 +30,18 @@ assert(editor.includes('data-jellyfin-access-model'), 'Jellyfin access card must
 assert(editor.includes('Maximum plan slots'), 'availability must be configurable directly in the unified editor');
 assert(editor.includes('Delivery & server placement'), 'server class and placement must be configured in the unified editor');
 assert(editor.includes('Library access'), 'library access must be configured in the unified editor');
+assert(baseline.includes("marketing_features text[] DEFAULT '{}'::text[] NOT NULL"), 'baseline must keep marketing features as a PostgreSQL text array');
+assert(editor.includes('marketing_features=$4::text[]'), 'product editor must persist homepage features using the schema text-array type');
+assert(!editor.includes('marketing_features=$4::jsonb'), 'product editor must never cast marketing features to jsonb');
+assert(editor.includes('[plan.id, name, description, features, visible, active]'), 'product editor must bind the feature array directly instead of JSON-encoding it');
 assert(capability.includes("@import url('/css/admin-plan-control-room.css')"), 'shared admin shell must load the plan/attention layout corrections');
 assert(css.includes('.planControlGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use one predictable two-column card grid on wide screens');
 assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}'), 'legacy card spans must not recreate an irregular two/three/full-width mosaic');
 assert(css.includes('.planControlHeader{display:none!important}'), 'duplicate plan status strip must stay out of the editor');
 assert(css.includes('@media(max-width:700px)') && css.includes('.planControlGrid{grid-template-columns:1fr!important}'), 'plan editor must collapse to one column on small screens');
+assert(css.includes('.planControlRoom,.planControlGrid{gap:12px}') && css.includes('.planConfigBody{padding:12px 13px}'), 'narrow plan editors must retain readable card spacing instead of desktop-density padding');
+assert(css.includes('@media(max-width:480px)') && css.includes('.planServerChoice{grid-template-columns:auto minmax(0,1fr)}'), 'very narrow server controls must stack the weight input rather than squeeze three columns');
+assert(css.includes('.section.bulkBar{overflow:visible}'), 'bulk-action sections must not clip controls or focus rings at the shared section boundary');
 assert(css.includes('.attentionBulkBar .input.compact,.attentionActionGrid .input.compact{min-width:0!important'), 'attention workflow inputs must be allowed to shrink instead of forcing horizontal overflow');
 assert(css.includes('.attentionActionGrid{grid-template-columns:minmax(92px'), 'attention row workflow must use bounded responsive columns');
 assert(attention.includes('responsiveTable attentionTable'), 'Needs Attention table must opt into the constrained workflow layout');
