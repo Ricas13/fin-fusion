@@ -137,6 +137,11 @@ function buildWhere(filters, scope) {
 const SELECT_COLUMNS = `
     c.id,c.display_name,c.email,c.created_at,
     au.username AS login_username,au.active AS login_active,
+    (SELECT ja_identity.jellyfin_username
+       FROM jellyfin_accounts ja_identity
+      WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL
+      ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC
+      LIMIT 1) AS jellyfin_username,
     cur.status AS subscription_status,
     CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END AS current_period_end,
     p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,COALESCE(p.is_free_tier,FALSE) AS is_free_tier,
@@ -149,7 +154,7 @@ async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = '
     const orderSql = sort === 'expiring'
         ? 'ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END ASC NULLS LAST'
         : sort === 'name'
-            ? 'ORDER BY COALESCE(c.display_name,au.username,c.email) ASC'
+            ? `ORDER BY COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,'')) ASC NULLS LAST`
             : 'ORDER BY COALESCE(acc.last_activity_at,c.created_at) DESC NULLS LAST';
     const boundedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 25, 5), 100);
     const boundedPage = Math.max(parseInt(page, 10) || 1, 1);
