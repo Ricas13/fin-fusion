@@ -7,6 +7,7 @@ const ITEMS=[
   ['plans','Plan & billing','/account#plans'],
   ['activity','Activity','/account/activity'],
   ['support','Support','/account/support'],
+  ['docs','Guides','/account/docs'],
   ['account','Account','/account/security']
 ];
 function nav(active='',options={}){

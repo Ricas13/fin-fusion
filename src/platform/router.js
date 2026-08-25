@@ -38,6 +38,7 @@ const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerSupportRouter } = require('./customer-support');
+const { createCustomerDocsRouter } = require('./customer-docs');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerCommunicationsRouter, createMessagingBotWebhookRouter } = require('./customer-communications');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
@@ -84,6 +85,7 @@ function createRouter() {
     router.use(createCustomerAffiliateRouter());
     router.use(createCustomerDashboardRouter());
     router.use(createCustomerSupportRouter());
+    router.use(createCustomerDocsRouter());
     router.use(createAdminOperatorStateRouter());
     router.use(createAdminDashboardLayoutRouter());
     router.use(createAdminServersDashboardRouter());
