@@ -25,23 +25,28 @@ function money(minor, currency) {
     catch { return `${esc(currency || '')} ${(Number(minor || 0) / 100).toFixed(2)}`; }
 }
 function providerLabel(value) { return value === 'stripe' ? 'Stripe' : value === 'paypal' ? 'PayPal' : value === 'both' ? 'Stripe + PayPal' : String(value || '—'); }
+function todayDateOnly() { return new Date().toISOString().slice(0, 10); }
 
 function defaults() {
-    const year = new Date().getUTCFullYear();
-    return { provider: 'both', startDate: `${year}-01-01`, endDate: `${year}-12-31` };
+    const today = todayDateOnly();
+    return { provider: 'both', startDate: `${today.slice(0, 4)}-01-01`, endDate: today };
 }
 function selected(value, expected) { return value === expected ? 'selected' : ''; }
+function assertHistoricalRange(values) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(values.endDate || '') && values.endDate > todayDateOnly()) throw new Error('End date cannot be in the future.');
+}
 
 function importForm(req, values, statuses) {
     const paypalEnvironment = statuses.paypal.environment === 'live' ? 'Live' : 'Sandbox';
+    const today = todayDateOnly();
     return `<section class="section" id="history-import">${ui.sectionHeader({ title: 'Import provider history', description: 'Backfill Stripe and PayPal accounting into a separate read-only historical ledger. Preview performs no writes.' })}
       <div class="operatorCallout warn"><strong>Access safety:</strong> historical transactions never activate, extend or restore customer access. Current provider subscription state and verified checkout/webhook flows remain authoritative.</div>
       <form class="formPanel" method="post" action="/admin/payments/history/preview">
         ${csrfInput(req)}
         <div class="formGrid">
           <div class="formGroup"><label>Provider</label><select class="input" name="provider"><option value="both" ${selected(values.provider,'both')}>Stripe + PayPal</option><option value="stripe" ${selected(values.provider,'stripe')}>Stripe</option><option value="paypal" ${selected(values.provider,'paypal')}>PayPal</option></select><div class="inlineHelp">PayPal currently points at <strong>${esc(paypalEnvironment)}</strong>. Disabled gateways can still be imported when saved credentials remain available.</div></div>
-          <div class="formGroup"><label>Start date</label><input class="input" type="date" name="startDate" value="${esc(values.startDate)}" required></div>
-          <div class="formGroup"><label>End date</label><input class="input" type="date" name="endDate" value="${esc(values.endDate)}" required><div class="inlineHelp">Maximum ${historyImport.MAX_RANGE_DAYS} days per run.</div></div>
+          <div class="formGroup"><label>Start date</label><input class="input" type="date" name="startDate" value="${esc(values.startDate)}" max="${esc(today)}" required></div>
+          <div class="formGroup"><label>End date</label><input class="input" type="date" name="endDate" value="${esc(values.endDate)}" max="${esc(today)}" required><div class="inlineHelp">Maximum ${historyImport.MAX_RANGE_DAYS} days per run. Future dates are not accepted.</div></div>
         </div>
         <label class="checkRow"><input type="checkbox" name="confirm" value="1"><span>I understand this writes historical accounting records only and does not change customer access.</span></label>
         <div class="buttonRow"><button class="button secondary" type="submit">Preview import</button><button class="button" type="submit" formaction="/admin/payments/history/import">Import transactions</button><a class="button secondary" href="/admin/payments">Back to provider health</a></div>
@@ -109,6 +114,7 @@ function createAdminPaymentHistoryRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         const values = valuesFrom(req);
         try {
+            assertHistoricalRange(values);
             const previewResult = await historyImport.preview(values);
             return res.send(await page(req, { values, previewResult }));
         } catch (error) {
@@ -120,6 +126,7 @@ function createAdminPaymentHistoryRouter() {
         const values = valuesFrom(req);
         if (req.body?.confirm !== '1') return res.status(400).send(await page(req, { values, error: 'Tick the confirmation box before committing a historical import.' }));
         try {
+            assertHistoricalRange(values);
             const importResult = await historyImport.importHistory(values, req.session.authUserId);
             return res.send(await page(req, { values, importResult }));
         } catch (error) {
