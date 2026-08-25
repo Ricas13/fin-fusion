@@ -27,6 +27,7 @@ const libraryJs=read('public/js/admin-server-library-dashboard.js');
 const payments=read('src/platform/admin-payment-settings.js');
 const commerce=read('src/platform/admin-commerce.js');
 const operatorExperience=read('public/js/operator-experience.js');
+const navigationCoherence=read('public/js/admin-navigation-coherence.js');
 const typoMigration=read('db/migrations/005_fix_stremio_monthly_plan_typo.sql');
 
 assert(html.includes('decorateSettingHelp'),'Shared admin renderer must decorate settings with helper descriptions');
@@ -44,12 +45,14 @@ assert(densityCss.includes('.analyticsKpi{min-height:78px'),'Analytics KPI cards
 assert(densityCss.includes('.summaryCard{padding:8px 9px')&&densityCss.includes('.metric,.stat-card{padding:11px 12px'),'Shared profile and legacy metric cards must participate in the density pass');
 assert(!/\.button\s*\{/.test(densityCss),'Density layer must not shrink global action targets');
 const commerceGroup=navModel.groups.find(group=>group.key==='commerce');
-assert(commerceGroup&&!commerceGroup.pages.some(page=>page[0]==='billing'),'Billing must not render as a left-sidebar Commerce child');
+assert(commerceGroup&&!commerceGroup.pages.some(page=>page[0]==='billing'),'Billing must not become a primary Commerce destination');
+assert(navModel.childPages('payments').some(page=>page[0]==='billing'&&page[2]==='/admin/billing'),'Billing must be directly discoverable beneath Payments & Billing');
 const billingGroup=navModel.groupFor('billing');
 assert(billingGroup.key==='commerce'&&billingGroup.pages.some(page=>page[0]==='billing'),'Billing must remain a routable Commerce workflow page for breadcrumb context');
 const jellyfinGroup=navModel.groups.find(group=>group.key==='jellyfin');
-assert(jellyfinGroup&&!jellyfinGroup.pages.some(page=>page[0]==='libraries'),'Libraries must not render as a standalone left-sidebar Jellyfin child');
-assert(navModel.aliases.libraries==='servers'&&navModel.sidebarKey('libraries')==='servers','Legacy Libraries context must resolve directly to the consolidated Servers control room');
+assert(jellyfinGroup&&!jellyfinGroup.pages.some(page=>page[0]==='libraries'),'Libraries must not become a primary Jellyfin destination');
+assert(navModel.childPages('servers').some(page=>page[0]==='libraries'&&page[2]==='/admin/libraries'),'Libraries must be directly discoverable beneath Jellyfin → Servers');
+assert(!navModel.aliases.libraries&&navModel.sidebarKey('libraries')==='servers','Libraries must retain its own nested active identity while keeping Servers highlighted as the parent');
 assert(planCreateV2.includes('name="streams"'),'New plan form must expose a Jellyfin concurrent-stream rule');
 assert(catalog.includes("int(body.streams,1,50,'Concurrent streams')"),'Legacy plan input compatibility must still validate concurrent streams from 1 to 50');
 assert(catalog.includes('sort_order,streams,allow_remuxing'),'Legacy plan input compatibility must still persist stream limits into plans.streams');
@@ -64,8 +67,9 @@ assert(refinementCss.includes('.navSection[open] .navSectionPages'),'Accordion C
 assert(refinementCss.includes('.settings-grid{grid-template-columns:repeat(3,minmax(0,1fr))'),'Settings must use three side-by-side responsibility cards on wide screens');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))'),'Settings responsibility cards must fall back to two columns on narrower desktops/tablets');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:1fr}'),'Settings responsibility cards must become one column on mobile');
-assert(refinementCss.includes('.workflowCardGrid{position:relative;top:auto;z-index:auto')&&refinementCss.includes('display:flex!important')&&refinementCss.includes('margin:0 0 18px'),'Workflow navigation must remain compact while reserving normal-flow space so it cannot overlap page content');
-assert(operatorExperience.includes('controlRoomCards')&&operatorExperience.includes('condensedWorkflow'),'Visible control rooms must expose hidden specialist workflows contextually');
+assert(refinementCss.includes('.workflowCardGrid{position:relative;top:auto;z-index:auto')&&refinementCss.includes('display:flex!important')&&refinementCss.includes('margin:0 0 18px'),'Legacy workflow cards must remain safe in normal flow until the final sidebar-only cleanup removes navigation rows');
+assert(operatorExperience.includes('controlRoomCards')&&operatorExperience.includes('condensedWorkflow'),'Legacy control-room enhancement must remain recognizable for compatibility cleanup');
+assert(navigationCoherence.includes('nav.workflowCardGrid,nav.operatorTabs'),'Final navigation coherence must remove legacy control-room and tab navigation in favour of the sidebar');
 assert(refinementCss.includes('.formGrid{grid-template-columns:repeat(3,minmax(0,1fr))'),'Wide forms must be capped at three columns');
 assert(refinementCss.includes('.planListToolbar{display:grid'),'Plan filters must render as a compact toolbar');
 assert(refinementCss.includes('.planListFilteredEmpty{display:none'),'Filtered-empty feedback must be hidden while plans are visible');
