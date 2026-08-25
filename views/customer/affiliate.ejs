@@ -8,6 +8,7 @@
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
+  <script src="/js/customer-referral-copy.js" defer></script>
 </head>
 <%
 function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)}`}}
@@ -41,4 +42,4 @@ const usdBalance=balances.get('USD')||{available_minor:0,pending_minor:0};
 <% } else { %><div class="paymentNote">Earn service credit first, or choose this plan from Plans &amp; billing.</div><% } %>
 </article><% }) %>
 </div><div class="notice">Recurring PayPal subscriptions cannot be part-paid with service credit. Stripe and one-time PayPal payments can use an eligible credit balance safely.</div></section>
-</main><script>document.addEventListener('click',async event=>{const button=event.target.closest('[data-copy-referral-link]');if(!button)return;const input=document.getElementById('referral-signup-link');if(!input)return;const original=button.textContent;try{await navigator.clipboard.writeText(input.value);button.textContent='Copied';}catch(_){input.focus();input.select();try{document.execCommand('copy');button.textContent='Copied';}catch(__){button.textContent='Copy failed';}}window.setTimeout(()=>{button.textContent=original;},1500);});</script></body></html>
+</main></body></html>
