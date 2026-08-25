@@ -6,12 +6,25 @@
 // customer implementations.
 
 const { query } = require('../db');
+const tableSort = require('./admin-table-sort');
 
 const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 'expired'];
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
 const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
 const SERVICE_VALUES = ['jellyfin', 'stremio'];
 const MAX_MATCHING = 5000;
+const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
+const CUSTOMER_SORTS = Object.freeze({
+    recent: { expression: 'COALESCE(acc.last_activity_at,c.created_at)', defaultDirection: 'desc', nulls: 'last' },
+    name: { expression: CUSTOMER_NAME_SORT, defaultDirection: 'asc', nulls: 'last' },
+    plan: { expression: "COALESCE(p.name,'')", defaultDirection: 'asc' },
+    status: { expression: "COALESCE(cur.status,'')", defaultDirection: 'asc' },
+    expiring: { expression: 'CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END', defaultDirection: 'asc', nulls: 'last' },
+    jellyfin: { expression: 'COALESCE(acc.account_count,0)', defaultDirection: 'desc' },
+    server: { expression: "COALESCE(acc.server_names,'')", defaultDirection: 'asc' },
+    sync: { expression: 'COALESCE(recon.rank,99)', defaultDirection: 'asc' },
+    custom: { expression: 'COALESCE(ovr.has_override,FALSE)', defaultDirection: 'desc' }
+});
 
 function isUuid(v) {
     return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -149,13 +162,15 @@ const SELECT_COLUMNS = `
     recon.rank AS recon_rank,pay.provider AS payment_provider,ovr.has_override
 `;
 
-async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'recent' } = {}) {
+function normalizeCustomerSort(input = {}) {
+    if (typeof input === 'string') return tableSort.normalize({ sort: input }, CUSTOMER_SORTS, 'recent');
+    return tableSort.normalize(input, CUSTOMER_SORTS, 'recent');
+}
+
+async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'recent', dir } = {}) {
     const { whereSql, params } = buildWhere(filters, scope);
-    const orderSql = sort === 'expiring'
-        ? 'ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END ASC NULLS LAST'
-        : sort === 'name'
-            ? `ORDER BY COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,'')) ASC NULLS LAST`
-            : 'ORDER BY COALESCE(acc.last_activity_at,c.created_at) DESC NULLS LAST';
+    const sortState = normalizeCustomerSort(typeof sort === 'object' ? sort : { sort, dir });
+    const orderSql = tableSort.orderBy(sortState, CUSTOMER_SORTS, 'c.id ASC');
     const boundedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 25, 5), 100);
     const boundedPage = Math.max(parseInt(page, 10) || 1, 1);
     const offset = (boundedPage - 1) * boundedPageSize;
@@ -163,7 +178,7 @@ async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = '
     const offsetIdx = params.length + 2;
     const rows = await query(`SELECT ${SELECT_COLUMNS} ${baseJoins()} ${whereSql} ${orderSql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`, [...params, boundedPageSize, offset]);
     const countResult = await query(`SELECT COUNT(*)::int AS n ${baseJoins()} ${whereSql}`, params);
-    return { rows: rows.rows, total: countResult.rows[0].n, page: boundedPage, pageSize: boundedPageSize };
+    return { rows: rows.rows, total: countResult.rows[0].n, page: boundedPage, pageSize: boundedPageSize, sort: sortState };
 }
 
 async function exportRows(filters, scope) {
@@ -193,8 +208,10 @@ module.exports = {
     RECON_VALUES,
     PAYMENT_PROVIDERS,
     SERVICE_VALUES,
+    CUSTOMER_SORTS,
     isUuid,
     buildWhere,
+    normalizeCustomerSort,
     listCustomers,
     exportRows,
     matchingCustomerIds,
