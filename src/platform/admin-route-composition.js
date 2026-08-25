@@ -31,6 +31,7 @@ const { createAdminNotificationPreferencesRouter } = require('./admin-notificati
 const { createAdminPaymentSettingsRouter } = require('./admin-payment-settings');
 const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings');
 const { createAdminBillingRouter } = require('./admin-billing');
+const { createAdminExpensesRouter } = require('./admin-expenses');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
 const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-dispatch');
 const { createAdminJellyfinPlanEditorRouter } = require('./admin-jellyfin-plan-editor');
@@ -114,6 +115,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminPaymentSettingsRouter());
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
+  app.use(createAdminExpensesRouter());
   app.use(createAdminCustomerCreateRouter());
   // Stremio keeps its dedicated adaptive editor. Jellyfin/free plans are then
   // dispatched into the unified control room before legacy configuration
