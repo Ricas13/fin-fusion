@@ -5,6 +5,8 @@ const path = require('path');
 const reconciliation = require('../src/payments/incident-reconciliation');
 const incidents = require('../src/payments/incidents');
 const stripe = require('../src/payments/stripe');
+const paypal = require('../src/payments/paypal');
+const primitives = require('../src/payments/lifecycle-primitives');
 
 function expectThrows(fn, pattern) {
     let thrown = null;
@@ -67,6 +69,15 @@ function main() {
         { scope: 'customer', owner_id: 'customer-b' }
     ), /different customer/i);
 
+    // A provider payment/subscription identity is immutable once it has a local
+    // owner. No webhook or retry may silently rebind it to another user, plan,
+    // or conflicting provider customer.
+    const owned = { customer_id: 'customer-a', plan_id: 'plan-a', provider_customer_id: 'cus-a' };
+    primitives.assertExistingProviderOwnership(owned, { customerId: 'customer-a', planId: 'plan-a', providerCustomerId: 'cus-a' });
+    expectThrows(() => primitives.assertExistingProviderOwnership(owned, { customerId: 'customer-b', planId: 'plan-a', providerCustomerId: 'cus-a' }), /another CAPTAiNFiN customer/i);
+    expectThrows(() => primitives.assertExistingProviderOwnership(owned, { customerId: 'customer-a', planId: 'plan-b', providerCustomerId: 'cus-a' }), /different CAPTAiNFiN plan/i);
+    expectThrows(() => primitives.assertExistingProviderOwnership(owned, { customerId: 'customer-a', planId: 'plan-a', providerCustomerId: 'cus-b' }), /customer identity does not match/i);
+
     // Guard the original regression directly: reconciliation must query CURRENT
     // provider resources, rather than deciding from the immutable webhook event.
     const source = fs.readFileSync(require.resolve('../src/payments/incident-reconciliation'), 'utf8');
@@ -108,20 +119,40 @@ function main() {
         throw new Error('A genuine failed renewal is not allowed to mark an active Stripe subscription delinquent.');
     }
 
-    // One Stripe invoice can emit several invoice.payment_failed events while
-    // Smart Retries run. Those retries must remain one operational incident and
-    // a terminal subscription event must settle the incident automatically.
+    // PayPal legacy agreements may predate CAPTAiNFiN custom_id metadata. They
+    // are allowed to synchronize only after the exact I- provider ID has been
+    // deterministically linked locally. Email is never an ownership fallback.
+    const paypalSource = fs.readFileSync(require.resolve('../src/payments/paypal'), 'utf8');
+    for (const required of [
+        "WHERE source='paypal' AND provider_subscription_id=$1",
+        'no exact local provider link',
+        'syncExactLegacySubscription',
+        'failedRenewals.record',
+        'failedRenewals.resolveOpen',
+        'paypalTerminalStatus(current.status)'
+    ]) {
+        if (!paypalSource.includes(required)) throw new Error(`PayPal exact-identity lifecycle is missing ${required}`);
+    }
+    if (/LOWER\([^\n]*email/i.test(paypalSource)) {
+        throw new Error('PayPal lifecycle contains an unsafe email-based ownership fallback.');
+    }
+    const kept = paypal.laterPeriodEnd('2026-12-01T00:00:00Z', '2026-11-01T00:00:00Z');
+    if (kept.toISOString() !== '2026-12-01T00:00:00.000Z') throw new Error('Legacy PayPal sync can shorten imported paid-through access.');
+    const extended = paypal.laterPeriodEnd('2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z');
+    if (extended.toISOString() !== '2026-12-01T00:00:00.000Z') throw new Error('Legacy PayPal sync does not advance a later provider billing period.');
+
+    // One Stripe/PayPal invoice or sale retry is one operational incident.
     const stripeSource = fs.readFileSync(require.resolve('../src/payments/stripe'), 'utf8');
     const renewalSource = fs.readFileSync(require.resolve('../src/payments/failed-renewals'), 'utf8');
     const renewalMigration = fs.readFileSync(path.join(__dirname, '../db/migrations/039_failed_renewal_incident_lifecycle.sql'), 'utf8');
     for (const required of [
-        "failedRenewals.record",
-        "failedRenewals.resolveOpen",
-        "terminalStripeStatus(synced.providerStatus)"
+        'failedRenewals.record',
+        'failedRenewals.resolveOpen',
+        'terminalStripeStatus(synced.providerStatus)'
     ]) {
         if (!stripeSource.includes(required)) throw new Error(`Stripe renewal lifecycle is missing ${required}`);
     }
-    if (!renewalSource.includes("ON CONFLICT (provider,provider_case_id,incident_type)")) {
+    if (!renewalSource.includes('ON CONFLICT (provider,provider_case_id,incident_type)')) {
         throw new Error('Repeated failed-renewal provider events are not deduplicated by invoice/case.');
     }
     if (!renewalMigration.includes('payment_incidents_one_open_failed_renewal_case')) {
@@ -131,15 +162,37 @@ function main() {
         throw new Error('Existing historical Stripe cancellation incidents are not retired during upgrade.');
     }
 
+    // Plisio is one-time rather than recurring, but its signed callback must
+    // resolve the CAPTaINFiN owner through the immutable local checkout intent,
+    // never through provider-supplied email or display data.
+    const plisioSource = fs.readFileSync(require.resolve('../src/payments/plisio'), 'utf8');
+    for (const required of ['checkoutIntents.findById(intentId)', 'checkoutIntents.verifiedProviderContract', 'customerId:intent.owner_id']) {
+        if (!plisioSource.includes(required)) throw new Error(`Plisio checkout ownership is missing ${required}`);
+    }
+    if (/LOWER\([^\n]*email/i.test(plisioSource)) throw new Error('Plisio callback contains an unsafe email-based ownership fallback.');
+
+    // Cross-provider database and transaction boundaries must make identity
+    // collisions impossible even if a caller supplies inconsistent IDs.
+    const primitivesSource = fs.readFileSync(require.resolve('../src/payments/lifecycle-primitives'), 'utf8');
+    for (const required of ['ensurePaymentCustomerTx(client', 'assertExistingProviderOwnership(existing.rows[0]', 'Provider customer is already linked to another CAPTAiNFiN customer']) {
+        if (!primitivesSource.includes(required)) throw new Error(`Provider ownership transaction guard is missing ${required}`);
+    }
+    const baseline = fs.readFileSync(path.join(__dirname, '../db/migrations/000_database_baseline.sql'), 'utf8');
+    if (!baseline.includes('subscriptions_source_provider_subscription_id_key UNIQUE (source, provider_subscription_id)')) {
+        throw new Error('Provider subscription IDs are not unique per provider in the database.');
+    }
+    if (!baseline.includes('payment_customers_provider_provider_customer_id_key UNIQUE (provider, provider_customer_id)')) {
+        throw new Error('Provider customer IDs are not unique per provider in the database.');
+    }
+
     // Grandfathering is continuity-only: hidden plans cannot be newly acquired,
     // while an already-linked recurring provider subscription can still be
     // synchronized by provider_subscription_id until it ends.
     const lifecycleSource = fs.readFileSync(require.resolve('../src/payments/lifecycle'), 'utf8');
-    const primitivesSource = fs.readFileSync(require.resolve('../src/payments/lifecycle-primitives'), 'utf8');
-    if (!lifecycleSource.includes(".visible=TRUE")) {
+    if (!lifecycleSource.includes('.visible=TRUE')) {
         throw new Error('Hidden legacy plans can accidentally re-enter new customer acquisition.');
     }
-    if (!primitivesSource.includes("WHERE source=$4 AND provider_subscription_id=$5")) {
+    if (!primitivesSource.includes('WHERE source=$4 AND provider_subscription_id=$5')) {
         throw new Error('Existing grandfathered provider subscriptions no longer synchronize independently of plan visibility.');
     }
 
