@@ -97,6 +97,10 @@ assert.strictEqual(paymentFinancials.integerOrNull('0'),0,'A genuine zero fee mu
 assert.strictEqual(finance.moneyToMinor('12.34'),1234,'Expense amounts must be stored in integer minor units');
 assert.strictEqual(finance.defaultRenewal('2026-01-31','monthly'),'2026-02-28','Monthly renewal dates must clamp safely at month end');
 assert.strictEqual(finance.defaultRenewal('2024-02-29','yearly'),'2025-02-28','Yearly renewal dates must clamp leap-day subscriptions safely');
+const februaryExpense={amount_minor:10000,currency:'GBP',cadence:'monthly',effective_from:'2026-02-01',effective_until:null};
+assert.strictEqual(finance.expenseAccrual([februaryExpense],new Date('2026-02-01T00:00:00Z'),new Date('2026-03-01T00:00:00Z'),{currency:'GBP'},'GBP'),10000,'A full calendar month must accrue exactly one monthly subscription charge');
+const yearlyExpense={amount_minor:12000,currency:'GBP',cadence:'yearly',effective_from:'2026-02-01',effective_until:null};
+assert.strictEqual(finance.expenseAccrual([yearlyExpense],new Date('2026-02-01T00:00:00Z'),new Date('2026-03-01T00:00:00Z'),{currency:'GBP'},'GBP'),1000,'A yearly expense must accrue exactly one twelfth during a full calendar month');
 const refundRows=finance.normalizedAdverseRows([
   {provider:'stripe',incident_type:'refund',provider_case_id:'ch_test',amount_minor:300,currency:'GBP',created_at:'2026-01-02T00:00:00Z'},
   {provider:'stripe',incident_type:'refund',provider_case_id:'ch_test',amount_minor:500,currency:'GBP',created_at:'2026-01-03T00:00:00Z'}
