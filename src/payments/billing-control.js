@@ -3,7 +3,6 @@
 const { query } = require('../db');
 const lifecycle = require('./lifecycle');
 const providerSettings = require('./provider-settings');
-const provisioning = require('../jellyfin/resilient-provisioning');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -108,7 +107,8 @@ async function paypalApi(path, { method = 'GET', body = null } = {}) {
     const text = await response.text();
     let payload = {};
     if (text) {
-        try { payload = JSON.parse(text); } catch { payload = { message: text }; }
+        try { payload = JSON.parse(text); }
+        catch { payload = { message: text }; }
     }
     if (!response.ok) throw new Error(`PayPal HTTP ${response.status}: ${payload.message || payload.name || 'request failed'}`);
     return payload;
@@ -210,27 +210,17 @@ async function recordFailure(row, error) {
 }
 
 async function applyRemoteState(row, remote) {
-    const status = lifecycle.mapProviderStatus(row.source, remote.status);
-    const updated = await query(`
-        UPDATE subscriptions
-        SET status=$1,
-            current_period_end=COALESCE($2,current_period_end),
-            cancel_at_period_end=COALESCE($3,cancel_at_period_end),
-            updated_at=NOW()
-        WHERE id=$4
-        RETURNING customer_id,status,current_period_end,cancel_at_period_end
-    `, [status, remote.periodEnd || null, remote.cancelAtPeriodEnd ?? null, row.id]);
-    if (!updated.rowCount) throw new Error('Subscription disappeared during provider sync.');
-
-    // Provider verification is authoritative independently of Jellyfin health.
-    // Provisioning has its own retry/control state, so an offline media server
-    // must not make a successful payment-provider verification look failed.
-    try {
-        await provisioning.reconcileCustomer(updated.rows[0].customer_id);
-    } catch (error) {
-        console.warn(`Billing sync provisioning follow-up blocked for ${updated.rows[0].customer_id}:`, error.message);
+    const updated = await lifecycle.updateProviderSubscription({
+        provider: row.source,
+        providerSubscriptionId: row.provider_subscription_id,
+        providerStatus: remote.status,
+        periodEnd: remote.periodEnd || null,
+        cancelAtPeriodEnd: remote.cancelAtPeriodEnd ?? null
+    });
+    if (!updated || String(updated.id) !== String(row.id)) {
+        throw new Error('Subscription disappeared during provider sync.');
     }
-    return updated.rows[0];
+    return updated;
 }
 
 async function syncSubscription(subscriptionId, { adapter = null } = {}) {
@@ -284,7 +274,7 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
     const row = await subscriptionById(subscriptionId);
     if (!row) throw new Error('Subscription not found.');
     if (!isRecurring(row)) throw new Error('This is not a recurring subscription.');
-    if (!['active','trialing','past_due','paused'].includes(row.status)) throw new Error('This subscription is no longer renewable.');
+    if (!['active', 'trialing', 'past_due', 'paused'].includes(row.status)) throw new Error('This subscription is no longer renewable.');
     if (row.source === 'paypal' && enabled) throw new Error('A cancelled PayPal subscription cannot be resumed. The customer must subscribe again.');
 
     const remoteAdapter = adapter || await defaultAdapter(row.source);
@@ -334,7 +324,7 @@ async function dashboardData() {
         events: events.rows,
         stats: {
             recurring: rows.filter(row => row.recurring).length,
-            active: rows.filter(row => row.recurring && ['active','trialing'].includes(row.status)).length,
+            active: rows.filter(row => row.recurring && ['active', 'trialing'].includes(row.status)).length,
             pastDue: rows.filter(row => row.recurring && row.status === 'past_due').length,
             cancelling: rows.filter(row => row.recurring && row.cancel_at_period_end).length,
             syncProblems: rows.filter(row => row.recurring && row.last_error).length
