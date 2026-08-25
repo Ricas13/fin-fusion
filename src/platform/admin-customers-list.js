@@ -8,6 +8,7 @@ const registry=require('../jellyfin/registry');
 const {sendCsv}=require('./export');
 const {BULK_ACTIONS}=require('./admin-bulk-customers');
 const graphics=require('./admin-section-graphics');
+const {customerIdentity}=require('./customer-list-identity');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
@@ -90,10 +91,10 @@ function filterForm(filters,options){
 function row(x){
     const statusKind=x.subscription_status==='active'||x.subscription_status==='trialing'?'good':x.subscription_status?'warn':'';
     const syncState=x.recon_rank?{1:'failed',2:'pending',3:'running',4:'successful'}[x.recon_rank]:null;
-    const customerName=x.display_name||x.login_username||'Customer';
+    const identity=customerIdentity(x),customerName=identity.primary;
     return `<tr>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
-        <td data-label="Customer"><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a><div class="subText">${esc(x.email||x.login_username||'')}</div></td>
+        <td data-label="Customer"><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}</td>
         <td data-label="Plan">${esc(x.plan_name||'No plan')}</td>
         <td data-label="Status">${pill(x.subscription_status||'none',statusKind)}</td>
         <td data-label="Expires">${esc(date(x.current_period_end))}</td>
