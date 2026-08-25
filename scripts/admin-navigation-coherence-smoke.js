@@ -21,10 +21,11 @@ assert.deepStrictEqual(
 );
 assert.strictEqual(context.sectionActiveKey('branding'),'settings-general','Branding must remain owned by Settings → General');
 assert.strictEqual(context.sectionActiveKey('discounts'),'orders','Discounts must remain owned by Commerce → Orders & Growth');
+assert.strictEqual(context.sectionActiveKey('finance'),'orders','Finance must remain owned by Commerce → Orders & Growth');
 assert.strictEqual(context.sectionActiveKey('commerce-overview'),'orders','Commerce analytics must now live inside Orders & Growth rather than becoming another upper tab');
 assert.strictEqual(context.sectionActiveKey('provider-mappings'),'payments','Provider mappings must remain owned by Payments & Billing');
 assert.deepStrictEqual(context.COMMERCE_ANALYTICS,['commerce-overview','Analytics','/admin/commerce'],'The old Commerce analytics tuple remains exported for compatibility without becoming an upper tab');
-for(const active of ['branding','discounts','activity','provider-mappings','server-migrations','configuration-transfer']){
+for(const active of ['branding','discounts','finance','activity','provider-mappings','server-migrations','configuration-transfer']){
   assert.deepStrictEqual(context.subPages(active),[],`${active} must not generate a secondary upper-tab row`);
   assert.strictEqual(context.subActiveKey(active),null,`${active} must not maintain a secondary active-tab state`);
 }
@@ -38,8 +39,8 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   labels(context.ownedToolPages('orders')),
-  ['Commerce analytics','Discounts','Affiliates'],
-  'Orders & Growth must own analytics, discounts and affiliates as in-page tools'
+  ['Commerce analytics','Discounts','Affiliates','Finance'],
+  'Orders & Growth must own analytics, discounts, affiliates and Finance as in-page tools'
 );
 assert.deepStrictEqual(
   labels(context.ownedToolPages('payments')),
@@ -58,6 +59,9 @@ const discountCrumb=context.breadcrumb('discounts');
 assert(discountCrumb.includes('<a href="/admin/plans">Commerce</a>'),'Commerce breadcrumb must use the normal Commerce landing page rather than the demoted Analytics child');
 assert(discountCrumb.includes('<a href="/admin/commerce/orders">Orders &amp; Growth</a>'),'Commerce child breadcrumb must link back to its owning main tab');
 assert(discountCrumb.includes('<strong>Discounts</strong>'),'Commerce child breadcrumb must identify the specialist page');
+const financeCrumb=context.breadcrumb('finance');
+assert(financeCrumb.includes('<a href="/admin/commerce/orders">Orders &amp; Growth</a>'),'Finance breadcrumb must link back to Orders & Growth');
+assert(financeCrumb.includes('<strong>Finance</strong>'),'Finance breadcrumb must identify the specialist page');
 
 const oneRow=context.render('branding');
 assert(oneRow.includes('workflowCardGrid coherenceSectionTabs'),'The single upper row must use the preferred compact Current/Related visual language');
