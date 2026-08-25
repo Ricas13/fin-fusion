@@ -1,10 +1,9 @@
 'use strict';
 
 const Stripe = require('stripe');
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const providerSettings = require('./provider-settings');
-const lifecycle = require('./lifecycle-primitives');
-const subscriptionState = require('../entitlements/subscription-state');
+const lifecycle = require('./lifecycle');
 
 const MAX_REMOTE_SUBSCRIPTIONS = 5000;
 const MAX_PROVIDER_PAGES = 2000;
@@ -42,8 +41,7 @@ function normalizeStripeSubscription(subscription, customer = null) {
         status: clean(subscription?.status, 60).toLowerCase(),
         periodEnd: stripePeriod(subscription),
         cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end),
-        externalPlanIds: Array.from(new Set((subscription?.items?.data || []).map(item => objectId(item?.price)).filter(Boolean))),
-        rawPlanId: null
+        externalPlanIds: Array.from(new Set((subscription?.items?.data || []).map(item => objectId(item?.price)).filter(Boolean)))
     };
 }
 function normalizePayPalSubscription(subscription) {
@@ -56,15 +54,14 @@ function normalizePayPalSubscription(subscription) {
         status: clean(subscription?.status, 60).toUpperCase(),
         periodEnd: next && !Number.isNaN(next.getTime()) ? next : null,
         cancelAtPeriodEnd: String(subscription?.status || '').toUpperCase() === 'CANCELLED',
-        externalPlanIds: clean(subscription?.plan_id, 255) ? [clean(subscription.plan_id, 255)] : [],
-        rawPlanId: clean(subscription?.plan_id, 255) || null
+        externalPlanIds: clean(subscription?.plan_id, 255) ? [clean(subscription.plan_id, 255)] : []
     };
 }
 
 async function premiumEntitlements() {
     const result = await query(`
         SELECT e.customer_id,e.subscription_id,e.plan_id,e.status,e.source,e.current_period_end,e.cancel_at_period_end,
-               e.provider_customer_id,e.provider_subscription_id,e.server_class,
+               e.provider_customer_id,e.provider_subscription_id,e.provider_price_id_snapshot,e.server_class,
                COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) AS service_type,
                COALESCE(e.price_minor_snapshot,e.price_minor,0) AS price_minor,
                COALESCE(NULLIF(e.plan_name_snapshot,''),e.name) AS plan_name,
@@ -133,18 +130,24 @@ function customerEvidence(remote, local, context) {
     const reasons = [];
     if (remote.providerCustomerId) {
         const mapped = context.providerIdentityToCustomers.get(`${remote.provider}:${remote.providerCustomerId}`);
-        if (mapped?.size === 1 && mapped.has(String(local.customer_id))) reasons.push('provider customer ID');
-        if (clean(local.provider_customer_id) && clean(local.provider_customer_id) === remote.providerCustomerId) reasons.push('subscription customer ID');
+        if (mapped?.size) {
+            if (mapped.size === 1 && mapped.has(String(local.customer_id))) return ['provider customer ID'];
+            return [];
+        }
+        if (clean(local.provider_customer_id)) {
+            return clean(local.provider_customer_id) === remote.providerCustomerId ? ['subscription customer ID'] : [];
+        }
     }
     const remoteEmail = emailKey(remote.email), localEmail = emailKey(local.email);
     if (remoteEmail && localEmail && remoteEmail === localEmail) {
         const owners = context.emailToCustomers.get(remoteEmail);
         if (owners?.size === 1 && owners.has(String(local.customer_id))) reasons.push('unique customer email');
     }
-    return Array.from(new Set(reasons));
+    return reasons;
 }
 
 function matchPremiumRows(premiumRows, remotes, context) {
+    const current = remotes.filter(currentRemote);
     const rows = [];
     for (const local of premiumRows) {
         if (recurringId(local.source, local.provider_subscription_id)) {
@@ -152,15 +155,12 @@ function matchPremiumRows(premiumRows, remotes, context) {
             continue;
         }
         const candidateDetails = [];
-        for (const remote of remotes.filter(currentRemote)) {
-            const plans = mappedPlans(remote, context);
-            const planMatch = plans.has(String(local.plan_id));
+        for (const remote of current) {
+            const planMatch = mappedPlans(remote, context).has(String(local.plan_id));
             const customerReasons = customerEvidence(remote, local, context);
             const owner = context.providerSubscriptionOwners.get(`${remote.provider}:${remote.id}`);
-            const conflict = owner && owner.subscriptionId !== String(local.subscription_id);
-            if (planMatch && customerReasons.length) {
-                candidateDetails.push({ remote, customerReasons, planMatch, conflict, owner });
-            }
+            const conflict = Boolean(owner && owner.subscriptionId !== String(local.subscription_id));
+            if (planMatch && customerReasons.length) candidateDetails.push({ remote, customerReasons, conflict, owner });
         }
         const nonConflicting = candidateDetails.filter(item => !item.conflict);
         if (nonConflicting.length === 1) {
@@ -170,8 +170,8 @@ function matchPremiumRows(premiumRows, remotes, context) {
         } else if (candidateDetails.some(item => item.conflict)) {
             rows.push({ local, state: 'conflict', candidates: candidateDetails, match: null, reason: 'A matching provider subscription is already attached to another local subscription.' });
         } else {
-            const sameCustomer = remotes.filter(currentRemote).filter(remote => customerEvidence(remote, local, context).length);
-            const samePlan = remotes.filter(currentRemote).filter(remote => mappedPlans(remote, context).has(String(local.plan_id)));
+            const sameCustomer = current.filter(remote => customerEvidence(remote, local, context).length);
+            const samePlan = current.filter(remote => mappedPlans(remote, context).has(String(local.plan_id)));
             const reason = sameCustomer.length ? 'Provider customer matched, but no current subscription maps to this local plan.' : samePlan.length ? 'Plan matched, but provider customer identity did not resolve uniquely to this user.' : 'No current provider subscription matched both this premium user and plan.';
             rows.push({ local, state: 'unresolved', candidates: [], match: null, reason });
         }
@@ -179,25 +179,31 @@ function matchPremiumRows(premiumRows, remotes, context) {
     return rows;
 }
 
-async function stripeRemoteSubscriptions() {
+function stripeNeedsEmail(normalized, context) {
+    if (!currentRemote(normalized) || !normalized.providerCustomerId) return false;
+    if (!(normalized.externalPlanIds || []).some(id => context.externalToPlans.has(`stripe:${id}`))) return false;
+    const known = context.providerIdentityToCustomers.get(`stripe:${normalized.providerCustomerId}`);
+    return !known?.size;
+}
+async function stripeRemoteSubscriptions(context) {
     const cfg = await providerSettings.getRaw('stripe');
     const key = cfg.restrictedKey || cfg.apiKey || '';
     if (!key) return { remotes: [], warnings: ['Stripe credentials are not configured.'] };
     const stripe = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' }, maxNetworkRetries: 2, timeout: 20000 });
     const remotes = [], warnings = [];
-    let cursor = null, pages = 0;
+    let cursor = null, pages = 0, emailEnrichmentFailures = 0;
     try {
         while (true) {
             if (++pages > MAX_PROVIDER_PAGES) throw new Error('Stripe subscription discovery exceeded the safety page limit.');
             const page = await stripe.subscriptions.list({ status: 'all', limit: 100, ...(cursor ? { starting_after: cursor } : {}) });
             for (const sub of page.data || []) {
-                let customer = null;
-                const customerId = objectId(sub.customer);
-                if (customerId) {
-                    try { customer = await stripe.customers.retrieve(customerId); }
-                    catch { /* Customer read is optional; provider customer ID matching still works. */ }
+                let normalized = normalizeStripeSubscription(sub);
+                if (stripeNeedsEmail(normalized, context)) {
+                    try {
+                        const customer = await stripe.customers.retrieve(normalized.providerCustomerId);
+                        if (!customer?.deleted) normalized = normalizeStripeSubscription(sub, customer);
+                    } catch { emailEnrichmentFailures += 1; }
                 }
-                const normalized = normalizeStripeSubscription(sub, customer?.deleted ? null : customer);
                 if (normalized.id) remotes.push(normalized);
                 if (remotes.length > MAX_REMOTE_SUBSCRIPTIONS) throw new Error(`More than ${MAX_REMOTE_SUBSCRIPTIONS} Stripe subscriptions were found; narrow the account before discovery.`);
             }
@@ -208,6 +214,7 @@ async function stripeRemoteSubscriptions() {
         if (Number(error?.statusCode) === 403) warnings.push('Stripe discovery needs Subscriptions: Read permission on the configured restricted key.');
         else warnings.push(`Stripe discovery failed: ${clean(error?.message || error, 300)}`);
     }
+    if (emailEnrichmentFailures) warnings.push(`${emailEnrichmentFailures} Stripe customer email lookup${emailEnrichmentFailures === 1 ? '' : 's'} could not be read. Provider-customer-ID matches are unaffected.`);
     return { remotes, warnings };
 }
 
@@ -318,7 +325,7 @@ function summarizeMatches(rows, remotes, warnings) {
 async function preview() {
     const premium = await premiumEntitlements();
     const context = await identityContext(premium);
-    const [stripe, paypal] = await Promise.all([stripeRemoteSubscriptions(), paypalRemoteSubscriptions()]);
+    const [stripe, paypal] = await Promise.all([stripeRemoteSubscriptions(context), paypalRemoteSubscriptions()]);
     const remotes = [...stripe.remotes, ...paypal.remotes];
     return summarizeMatches(matchPremiumRows(premium, remotes, context), remotes, [...stripe.warnings, ...paypal.warnings]);
 }
@@ -328,50 +335,21 @@ async function coverageStats() {
     return { premium: premium.length, linked, missing: premium.length - linked };
 }
 
-async function revalidatePlanMatch(client, local, remote) {
-    const result = await client.query(`SELECT DISTINCT plan_id FROM plan_provider_prices WHERE provider=$1 AND checkout_mode='subscription' AND external_id=ANY($2::text[])`, [remote.provider, remote.externalPlanIds || []]);
-    const plans = new Set(result.rows.map(row => String(row.plan_id)));
-    if (!plans.has(String(local.plan_id))) throw new Error('Provider subscription no longer maps to the local premium plan.');
-    return (remote.externalPlanIds || []).find(external => true) || null;
-}
 async function linkOne(item, actorUserId) {
     const remote = item.match;
     if (!remote || item.state !== 'safe' || !currentRemote(remote)) throw new Error('Only current, unambiguous provider matches can be linked automatically.');
-    const linked = await transaction(async client => {
-        const localResult = await client.query(`SELECT s.*,p.is_addon,p.server_class,p.service_type,p.price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.id=$1 FOR UPDATE`, [item.local.subscription_id]);
-        const local = localResult.rows[0];
-        if (!local) throw new Error('Local premium subscription disappeared.');
-        if (local.server_class !== 'premium' || !['jellyfin','bundle'].includes(local.service_type) || Number(local.price_minor) <= 0) throw new Error('Local subscription is no longer a paid premium Jellyfin entitlement.');
-        if (subscriptionState.recurringProvider(local)) {
-            if (local.source === remote.provider && local.provider_subscription_id === remote.id) return { row: local, already: true };
-            throw new Error('Local subscription became linked to another provider subscription.');
-        }
-        const duplicate = await client.query(`SELECT id,customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND id<>$3 LIMIT 1 FOR UPDATE`, [remote.provider, remote.id, local.id]);
-        if (duplicate.rowCount) throw new Error('Provider subscription is already attached to another local subscription.');
-        await subscriptionState.assertNoOtherLiveRecurring(client, local.customer_id, local.id, local.plan_id);
-        const providerPriceId = await revalidatePlanMatch(client, local, remote);
-        const mappedStatus = lifecycle.mapProviderStatus(remote.provider, remote.status);
-        const updated = await client.query(`
-            UPDATE subscriptions
-               SET source=$2,provider_customer_id=COALESCE($3,provider_customer_id),provider_subscription_id=$4,
-                   provider_price_id_snapshot=COALESCE($5,provider_price_id_snapshot),status=$6,
-                   current_period_end=COALESCE($7,current_period_end),cancel_at_period_end=$8,updated_at=NOW()
-             WHERE id=$1 RETURNING *
-        `, [local.id, remote.provider, remote.providerCustomerId, remote.id, providerPriceId, mappedStatus, remote.periodEnd, Boolean(remote.cancelAtPeriodEnd)]);
-        const row = updated.rows[0];
-        await lifecycle.syncProviderAccessState({ customerId: row.customer_id, provider: remote.provider, providerSubscriptionId: remote.id, status: mappedStatus }, client);
-        const now = new Date(), next = new Date(now.getTime() + 6 * 60 * 60 * 1000);
-        await client.query(`
-            INSERT INTO subscription_provider_sync(subscription_id,provider,remote_status,remote_period_end,remote_cancel_at_period_end,last_attempt_at,last_success_at,last_error,consecutive_failures,next_attempt_at,updated_at)
-            VALUES($1,$2,$3,$4,$5,$6,$6,NULL,0,$7,NOW())
-            ON CONFLICT(subscription_id) DO UPDATE SET provider=EXCLUDED.provider,remote_status=EXCLUDED.remote_status,remote_period_end=EXCLUDED.remote_period_end,remote_cancel_at_period_end=EXCLUDED.remote_cancel_at_period_end,last_attempt_at=EXCLUDED.last_attempt_at,last_success_at=EXCLUDED.last_success_at,last_error=NULL,consecutive_failures=0,next_attempt_at=EXCLUDED.next_attempt_at,updated_at=NOW()
-        `, [row.id, remote.provider, remote.status, remote.periodEnd, Boolean(remote.cancelAtPeriodEnd), now, next]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.billing.subscription_discovery.link','subscription',$2,$3::jsonb)`, [actorUserId, row.id, JSON.stringify({ customerId: row.customer_id, provider: remote.provider, providerCustomerId: remote.providerCustomerId, providerSubscriptionId: remote.id, providerPlanIds: remote.externalPlanIds, remoteStatus: remote.status, matchReason: item.reason })]);
-        return { row, already: false };
+    return lifecycle.attachDiscoveredProviderSubscription({
+        subscriptionId: item.local.subscription_id,
+        provider: remote.provider,
+        providerCustomerId: remote.providerCustomerId,
+        providerSubscriptionId: remote.id,
+        providerStatus: remote.status,
+        periodEnd: remote.periodEnd,
+        cancelAtPeriodEnd: remote.cancelAtPeriodEnd,
+        externalPlanIds: remote.externalPlanIds,
+        actorUserId,
+        matchReason: item.reason
     });
-    if (remote.providerCustomerId) await lifecycle.ensurePaymentCustomer({ customerId: linked.row.customer_id, provider: remote.provider, providerCustomerId: remote.providerCustomerId });
-    await lifecycle.reconcileCommittedCustomer(linked.row.customer_id, 'Provider subscription discovery');
-    return linked;
 }
 async function apply(actorUserId) {
     const result = await preview();
