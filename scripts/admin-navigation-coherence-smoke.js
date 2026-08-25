@@ -65,6 +65,7 @@ const rendered=html.layout({
   active:'payments',
   title:'Payments',
   subtitle:'Payment provider health',
+  action:'<a class="button" href="/admin/expenses?new=1">Add expense</a>',
   body:'<section id="navigation-coherence-sentinel">sentinel</section><section class="coherenceOwnedTools"><a href="/admin/expenses">old hidden directory</a></section>'
 });
 assert(rendered.includes('href="/admin/expenses"'),'Expenses must be reachable from the canonical sidebar');
@@ -92,5 +93,14 @@ assert(fallback.includes('function enforceSidebarOnlyNavigation()'),'Client enha
 assert(fallback.includes('section.coherenceOwnedTools'),'Legacy bottom navigation directories must be removed client-side too');
 assert(!fallback.includes('appendOwnedTools'),'Client code must never recreate hidden bottom-of-page navigation');
 assert(!fallback.includes('fallbackNav('),'Client code must not rebuild duplicate top section tabs');
+assert(fallback.includes('function movePageActionsToHeading()'),'Admin enhancement must move page-scoped controls beside the page heading');
+assert(fallback.includes("utilitySelector='.topStatusWrap,.topHelpLink,.topHeaderMetrics'"),'Status, Help and read-only metrics must remain global top-bar utilities');
+assert(fallback.includes("target.className='pageHeaderActions'")&&fallback.includes("target.setAttribute('aria-label','Page actions')"),'Page actions must have a dedicated accessible heading control region');
+assert(fallback.includes('actions.forEach(node=>target.appendChild(node))'),'Existing action nodes must be moved rather than cloned so forms and handlers stay intact');
+
+const css=read('public/css/admin-navigation-coherence.css');
+assert(css.includes('.content>.pageHeader{display:flex'),'Page headings must reserve layout space for contextual controls');
+assert(css.includes('.pageHeaderActions{display:flex'),'Page actions must use a dedicated responsive action layout');
+assert(css.includes('@media(max-width:760px){.content>.pageHeader{flex-direction:column'),'Page actions must stack below the heading on narrow screens');
 
 console.log('admin navigation coherence smoke: ok');
