@@ -47,7 +47,10 @@ function coverageFromRuns(runs) {
         const start = dateStart(run.range_start);
         const endInclusive = dateStart(run.range_end);
         if (!start || !endInclusive) continue;
-        const end = new Date(endInclusive.getTime() + 86400000);
+        let end = new Date(endInclusive.getTime() + 86400000);
+        const completedAt = run.completed_at ? new Date(run.completed_at) : null;
+        if (completedAt && !Number.isNaN(completedAt.getTime()) && completedAt >= start && completedAt < end) end = completedAt;
+        if (end <= start) continue;
         for (const provider of providersForScope(String(run.provider_scope || '').toLowerCase())) {
             coverage[provider].push({ start, end });
         }
@@ -146,7 +149,7 @@ function eventRecords(row) {
 
 async function accountingRecords(range) {
     const [runs, history, events] = await Promise.all([
-        query(`SELECT provider_scope,range_start,range_end FROM payment_history_import_runs WHERE status='completed' ORDER BY range_start`),
+        query(`SELECT provider_scope,range_start,range_end,completed_at FROM payment_history_import_runs WHERE status='completed' ORDER BY range_start`),
         query(`
             SELECT provider,provider_transaction_id,transaction_type,occurred_at,currency,gross_amount_minor,customer_id,provider_customer_id
             FROM payment_history_transactions
