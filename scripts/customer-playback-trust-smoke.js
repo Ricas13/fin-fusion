@@ -25,6 +25,14 @@ expect(activityView.includes('freeUsage.observed_streams')===false,'Customer Act
 expect(activityView.includes('e.observed_streams'),'Stream-limit actions must render the canonical observed stream count.');
 expect(!activityView.includes('a.max_height')&&!activityView.includes('a.container'),'Customer Activity must not render playback fields that are absent from playback_history.');
 
+const enforcement=source('src/jellyfin/activity.js');
+expect(!enforcement.includes('if (!stillPresent.supportsMediaControl)'),'Stream enforcement must not abandon a confirmed violation solely because the client omits media-control support.');
+expect(enforcement.includes('/Message')&&enforcement.includes('Concurrent stream limit reached')&&enforcement.includes('No additional concurrent streams are allowed'),'Excess playback must receive a clear best-effort concurrency-limit message before enforcement.');
+expect(enforcement.includes('/Playing/Stop')&&enforcement.includes('verifyAfterStop'),'A Jellyfin stop response must be live-revalidated instead of being assumed successful.');
+expect(enforcement.includes('/Devices?id=')&&enforcement.includes('device_logout_fallback'),'Ignored client stop commands must have a device-logout fallback.');
+expect(enforcement.includes('device_logout_blocked_to_preserve_other_active_session'),'The device fallback must refuse to terminate another allowed active session sharing the same device.');
+expect(enforcement.includes('jellyfin_stop_did_not_end_session'),'A 204/no-op Jellyfin stop must be recorded as a real enforcement failure rather than a false success.');
+
 const dashboard=source('views/customer/dashboard.ejs');
 expect(dashboard.includes('/account/activity')&&dashboard.includes('View playback activity'),'Dashboard must provide a direct playback-activity shortcut.');
 expect(dashboard.includes('/account/requests/password/sync')&&dashboard.includes('currentPortalPassword'),'Dashboard must expose explicit portal-password sync to Seerr.');
