@@ -16,6 +16,15 @@ async function subscription({ customerId, planId, source, providerId, status = '
     `, [customerId, planId, status, source, providerId, days])).rows[0];
 }
 
+async function activeDelinquencyHolds(customerId) {
+    return (await query(`
+        SELECT hold_type,source_key,reason
+        FROM customer_access_holds
+        WHERE customer_id=$1 AND hold_type='payment_delinquency' AND released_at IS NULL
+        ORDER BY created_at,id
+    `, [customerId])).rows;
+}
+
 (async () => {
     const plan = (await query(`
         INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
@@ -35,10 +44,11 @@ async function subscription({ customerId, planId, source, providerId, status = '
     const futureStripe = new Date(Date.now() + 10 * 86400000);
     const futurePayPal = new Date(Date.now() + 25 * 86400000);
     let stripeCancel = false;
+    let stripeStatus = 'past_due';
     const stripeAdapter = {
         async fetchRemote(row) {
             if (String(row.id) === String(failureSub.id)) throw new Error('simulated Stripe outage');
-            return { status: 'past_due', periodEnd: futureStripe, cancelAtPeriodEnd: stripeCancel };
+            return { status: stripeStatus, periodEnd: futureStripe, cancelAtPeriodEnd: stripeCancel };
         },
         async stopRenewal() { stripeCancel = true; },
         async resumeRenewal() { stripeCancel = false; }
@@ -64,6 +74,21 @@ async function subscription({ customerId, planId, source, providerId, status = '
     assert.strictEqual(stripeAfter.status, 'past_due');
     assert.strictEqual(stripeAfter.cancel_at_period_end, false);
     assert(Math.abs(new Date(stripeAfter.current_period_end).getTime() - futureStripe.getTime()) < 2000);
+    let stripeHolds = await activeDelinquencyHolds(stripeCustomer.id);
+    assert.strictEqual(stripeHolds.length, 1, 'past-due recurring payment must create an access hold');
+    assert.strictEqual(stripeHolds[0].source_key, 'stripe:sub_test_123');
+
+    stripeStatus = 'active';
+    const recovered = await billing.syncSubscription(stripeSub.id, { adapter: stripeAdapter });
+    assert.strictEqual(recovered.ok, true, 'provider recovery sync should succeed');
+    assert.strictEqual((await query(`SELECT status FROM subscriptions WHERE id=$1`, [stripeSub.id])).rows[0].status, 'active');
+    stripeHolds = await activeDelinquencyHolds(stripeCustomer.id);
+    assert.strictEqual(stripeHolds.length, 0, 'successful payment recovery must release the delinquency hold');
+
+    stripeStatus = 'past_due';
+    const relapsed = await billing.syncSubscription(stripeSub.id, { adapter: stripeAdapter });
+    assert.strictEqual(relapsed.ok, true);
+    assert.strictEqual((await activeDelinquencyHolds(stripeCustomer.id)).length, 1, 'a later failed renewal must suspend access again');
 
     const paypalAfter = (await query(`SELECT status,current_period_end,cancel_at_period_end FROM subscriptions WHERE id=$1`, [paypalSub.id])).rows[0];
     assert.strictEqual(paypalAfter.status, 'active');
@@ -72,6 +97,7 @@ async function subscription({ customerId, planId, source, providerId, status = '
 
     const failureAfter = (await query(`SELECT status,current_period_end FROM subscriptions WHERE id=$1`, [failureSub.id])).rows[0];
     assert.strictEqual(failureAfter.status, 'active', 'provider network failure must not change local entitlement state');
+    assert.strictEqual((await activeDelinquencyHolds(failureCustomer.id)).length, 0, 'provider outage alone must not suspend a paying customer');
     const failureSync = (await query(`SELECT last_error,consecutive_failures,next_attempt_at,last_success_at FROM subscription_provider_sync WHERE subscription_id=$1`, [failureSub.id])).rows[0];
     assert(/simulated Stripe outage/.test(failureSync.last_error));
     assert.strictEqual(Number(failureSync.consecutive_failures), 1);
@@ -109,6 +135,12 @@ async function subscription({ customerId, planId, source, providerId, status = '
     const renewalAudits = await query(`SELECT action FROM audit_log WHERE entity_type='subscription' AND entity_id=$1 ORDER BY created_at`, [String(stripeSub.id)]);
     assert(renewalAudits.rows.some(row => row.action === 'billing.renewal.stop'));
     assert(renewalAudits.rows.some(row => row.action === 'billing.renewal.resume'));
+
+    stripeStatus = 'canceled';
+    const cancelled = await billing.syncSubscription(stripeSub.id, { adapter: stripeAdapter });
+    assert.strictEqual(cancelled.ok, true);
+    assert.strictEqual((await query(`SELECT status FROM subscriptions WHERE id=$1`, [stripeSub.id])).rows[0].status, 'cancelled');
+    assert.strictEqual((await activeDelinquencyHolds(stripeCustomer.id)).length, 0, 'cancelled subscription must not leave a stale delinquency hold');
 
     console.log('billing lifecycle smoke: ok');
 })().finally(() => getPool().end()).catch(error => {
