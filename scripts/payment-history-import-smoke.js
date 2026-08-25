@@ -54,5 +54,8 @@ assert.ok(/Historical provider accounting ledger only/.test(migration), 'migrati
 const adminSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-payment-history.js'), 'utf8');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'history mutations must be CSRF protected');
 assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'committed imports must require explicit operator confirmation');
+assert.ok(adminSource.includes("endDate: today"), 'the initial current-year import should end today rather than requesting future provider history');
+assert.ok(adminSource.includes("assertHistoricalRange(values)"), 'payment history endpoints must reject future end dates server-side');
+assert.ok(adminSource.includes('Future dates are not accepted.'), 'the admin form must explain the historical-only range constraint');
 
 console.log('Payment history import smoke passed.');
