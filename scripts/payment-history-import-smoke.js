@@ -92,8 +92,8 @@ assert.strictEqual(revenueRows[0].net_proceeds_minor, 741, 'payout movement must
 
 const usdReporting = { currency: 'USD', rates: { GBP: 1, USD: 1.25, EUR: 1.1 }, source: 'test' };
 const normalizedUsd = paymentHistoryAdmin.normalizeRevenueRows([
-    { provider: 'paypal', currency: 'GBP', raw_transactions: 3, payment_transactions: 2, refund_transactions: 0, ignored_transactions: 1, gross_sales_minor: 1000, refund_amount_minor: 0, payment_fees_minor: 50, first_at: '2026-01-01', last_at: '2026-01-03' },
-    { provider: 'paypal', currency: 'EUR', raw_transactions: 2, payment_transactions: 1, refund_transactions: 1, ignored_transactions: 0, gross_sales_minor: 1100, refund_amount_minor: 220, payment_fees_minor: 55, first_at: '2026-01-04', last_at: '2026-01-05' },
+    { provider: 'paypal', currency: 'GBP', raw_transactions: 3, payment_transactions: 2, refund_transactions: 0, ignored_transactions: 1, gross_sales_minor: 1000, refund_amount_minor: 0, payment_fees_minor: 40, first_at: '2026-01-01', last_at: '2026-01-03' },
+    { provider: 'paypal', currency: 'EUR', raw_transactions: 2, payment_transactions: 1, refund_transactions: 1, ignored_transactions: 0, gross_sales_minor: 1100, refund_amount_minor: 220, payment_fees_minor: 44, first_at: '2026-01-04', last_at: '2026-01-05' },
     { provider: 'paypal', currency: 'USD', raw_transactions: 1, payment_transactions: 1, refund_transactions: 0, ignored_transactions: 0, gross_sales_minor: 1000, refund_amount_minor: 0, payment_fees_minor: 25, first_at: '2026-01-06', last_at: '2026-01-06' }
 ], usdReporting);
 assert.strictEqual(normalizedUsd.length, 1, 'all supported source currencies for one provider should collapse to one reporting-currency row');
@@ -103,19 +103,19 @@ assert.strictEqual(normalizedUsd[0].raw_transactions, 6);
 assert.strictEqual(normalizedUsd[0].payment_transactions, 4);
 assert.strictEqual(normalizedUsd[0].gross_sales_minor, 3500, 'GBP/EUR/USD gross sales should normalize into the configured USD reporting currency');
 assert.strictEqual(normalizedUsd[0].refund_amount_minor, 250);
-assert.strictEqual(normalizedUsd[0].payment_fees_minor, 150);
-assert.strictEqual(normalizedUsd[0].net_proceeds_minor, 3100);
+assert.strictEqual(normalizedUsd[0].payment_fees_minor, 125);
+assert.strictEqual(normalizedUsd[0].net_proceeds_minor, 3125);
 
 const normalizedPreview = paymentHistoryAdmin.normalizePreviewTotals({ byCurrency: {
-    GBP: { transactions: 2, grossAmountMinor: 1000, feeAmountMinor: 50, netAmountMinor: 950 },
-    EUR: { transactions: 1, grossAmountMinor: 1100, feeAmountMinor: 55, netAmountMinor: 1045 },
+    GBP: { transactions: 2, grossAmountMinor: 1000, feeAmountMinor: 40, netAmountMinor: 960 },
+    EUR: { transactions: 1, grossAmountMinor: 1100, feeAmountMinor: 44, netAmountMinor: 1056 },
     USD: { transactions: 1, grossAmountMinor: 1000, feeAmountMinor: 25, netAmountMinor: 975 }
 } }, usdReporting);
 assert.strictEqual(normalizedPreview.currency, 'USD');
 assert.strictEqual(normalizedPreview.transactions, 4);
 assert.strictEqual(normalizedPreview.grossAmountMinor, 3500);
-assert.strictEqual(normalizedPreview.feeAmountMinor, 150);
-assert.strictEqual(normalizedPreview.netAmountMinor, 3350);
+assert.strictEqual(normalizedPreview.feeAmountMinor, 125);
+assert.strictEqual(normalizedPreview.netAmountMinor, 3375);
 assert.deepStrictEqual(normalizedPreview.sourceCurrencies, ['EUR', 'GBP', 'USD']);
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'history-import.js'), 'utf8');
