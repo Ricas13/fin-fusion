@@ -5,9 +5,9 @@ const fs=require('fs');
 const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const nav=require('../src/platform/admin-nav');
+const adminShell=require('../src/platform/admin-html-core-base');
 
 const plans=read('src/platform/admin-plans-list.js');
-const shell=read('src/platform/admin-html-core-base.js');
 const settings=read('src/integrations/notification-settings.js');
 const dispatch=read('src/integrations/notification-dispatch.js');
 const outbox=read('src/integrations/notification-outbox.js');
@@ -23,7 +23,7 @@ const baseline=read('db/migrations/000_database_baseline.sql');
 
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
 assert(!/credit wallet|buy credits/i.test(plans),'Unified Plans must not revive retired-product credit semantics');
-assert(shell.includes('function paymentTabsFor(options){return\'\';}'),'Shared admin shell must retire payment workflow tabs in favour of the canonical sidebar');
+for(const title of ['Payments','Provider mappings','Billing','Payment Risk Policy'])assert.strictEqual(adminShell.paymentTabsFor({title}),'',`Shared admin shell must not render a payment workflow tab row for ${title}`);
 assert.deepStrictEqual(
   nav.childPages('payments').map(page=>page[1]),
   ['Billing','Expenses & Profitability','Provider mappings','Payment risk'],
