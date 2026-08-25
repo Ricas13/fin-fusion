@@ -1,45 +1,7 @@
 'use strict';
 
 const { query } = require('../db');
-
-// Stripe recommends reporting_category for accounting classification. The
-// importer stores reporting_category in transaction_type when available.
-const STRIPE_PAYMENT_CATEGORIES = new Set(['charge']);
-const STRIPE_REFUND_CATEGORIES = new Set(['refund', 'partial_capture_reversal']);
-
-// PayPal T00xx includes both customer payments and non-sales movements such as
-// Mass Payments, postage, rebates and payouts. Keep only merchant/customer
-// payment channels here; everything else remains in the raw audit ledger.
-const PAYPAL_PAYMENT_CODES = new Set([
-    'T0000', 'T0002', 'T0003', 'T0004', 'T0005', 'T0006', 'T0007',
-    'T0009', 'T0010', 'T0011', 'T0012', 'T0013', 'T0018', 'T0019',
-    'T0021', 'T0022', 'T0023'
-]);
-const PAYPAL_REFUND_CODES = new Set(['T1106', 'T1107', 'T1120', 'T1201']);
-
-function historyKind(row) {
-    const provider = String(row?.provider || '').toLowerCase();
-    const type = String(row?.transaction_type || '').trim();
-    const gross = Number(row?.gross_amount_minor || 0);
-
-    if (provider === 'stripe') {
-        const category = type.toLowerCase();
-        if (gross > 0 && STRIPE_PAYMENT_CATEGORIES.has(category)) return 'payment';
-        if (gross < 0 && STRIPE_REFUND_CATEGORIES.has(category)) return 'refund';
-        return null;
-    }
-
-    if (provider === 'paypal') {
-        // Transaction Search status S means successfully completed. Pending,
-        // denied and already-reversed payment rows are not booked as revenue.
-        const status = String(row?.transaction_status || '').toUpperCase();
-        if (status && status !== 'S') return null;
-        const code = type.toUpperCase();
-        if (gross > 0 && PAYPAL_PAYMENT_CODES.has(code)) return 'payment';
-        if (gross < 0 && PAYPAL_REFUND_CODES.has(code)) return 'refund';
-    }
-    return null;
-}
+const classifier = require('./provider-transaction-classifier');
 
 function summarizeRows(rows) {
     const groups = new Map();
@@ -68,7 +30,7 @@ function summarizeRows(rows) {
             if (!current.last_at || at > current.last_at) current.last_at = at;
         }
 
-        const kind = historyKind(row);
+        const kind = classifier.historyKind(row);
         if (kind === 'payment') {
             const gross = Math.max(0, Number(row.gross_amount_minor || 0));
             const fee = Math.max(0, Number(row.fee_amount_minor || 0));
@@ -102,9 +64,11 @@ async function storedRevenueSummary() {
 }
 
 module.exports = {
-    historyKind,
+    historyKind: classifier.historyKind,
     summarizeRows,
     storedRevenueSummary,
-    PAYPAL_PAYMENT_CODES,
-    PAYPAL_REFUND_CODES
+    PAYPAL_PAYMENT_CODES: classifier.PAYPAL_PAYMENT_CODES,
+    PAYPAL_REFUND_CODES: classifier.PAYPAL_REFUND_CODES,
+    STRIPE_PAYMENT_CATEGORIES: classifier.STRIPE_PAYMENT_CATEGORIES,
+    STRIPE_REFUND_CATEGORIES: classifier.STRIPE_REFUND_CATEGORIES
 };

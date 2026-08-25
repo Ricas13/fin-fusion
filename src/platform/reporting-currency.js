@@ -4,11 +4,13 @@ const {query,transaction}=require('../db');
 const CURRENCIES=Object.freeze(['GBP','USD','EUR']);
 const KEY='reporting_currency_v1';
 let refreshPromise=null;
+let lastFinancialWarning=null;
 function cleanCurrency(value){const c=String(value||'GBP').trim().toUpperCase();return CURRENCIES.includes(c)?c:'GBP';}
 function assertCurrency(value){const c=String(value||'').trim().toUpperCase();if(!CURRENCIES.includes(c))throw new Error('Portal currency must be GBP, USD or EUR.');return c;}
 function defaults(){return{currency:'GBP',rates:{GBP:1,USD:1.27,EUR:1.17},updatedAt:null,source:'fallback'};}
 function normalize(value={}){const d=defaults(),rates={...d.rates,...(value.rates||{})};for(const c of CURRENCIES){const n=Number(rates[c]);rates[c]=Number.isFinite(n)&&n>0?n:d.rates[c];}rates.GBP=1;return{currency:cleanCurrency(value.currency),rates,updatedAt:value.updatedAt||null,source:value.source||'stored'};}
-async function get(){const r=await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[KEY]);return normalize(r.rows[0]?.setting_value||{});}
+function withWarnings(state){return{...state,financialWarnings:lastFinancialWarning?[lastFinancialWarning]:[]};}
+async function get(){const r=await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[KEY]);return withWarnings(normalize(r.rows[0]?.setting_value||{}));}
 async function getForUser(_userId){const state=await get();return{...state,platformCurrency:state.currency,currency:state.currency,preferredCurrency:null,masterCurrency:true};}
 function convertMinor(minor,from,to,state){from=cleanCurrency(from);to=cleanCurrency(to);const cfg=normalize(state),amount=Number(minor||0);if(from===to)return Math.round(amount);const gbp=amount/Number(cfg.rates[from]||1);return Math.round(gbp*Number(cfg.rates[to]||1));}
 
@@ -78,10 +80,15 @@ async function refreshRates({maxAgeHours=6}={}){
     try{
       const response=await fetch('https://api.frankfurter.app/latest?from=GBP&to=USD,EUR',{headers:{Accept:'application/json'},redirect:'error',signal:controller.signal});
       if(!response.ok)throw new Error(`FX HTTP ${response.status}`);const body=await response.json(),usd=Number(body?.rates?.USD),eur=Number(body?.rates?.EUR);if(!Number.isFinite(usd)||usd<=0||!Number.isFinite(eur)||eur<=0)throw new Error('FX response missing GBP rates');
-      const value={...current,rates:{GBP:1,USD:usd,EUR:eur},updatedAt:new Date().toISOString(),source:'frankfurter'};
+      const value={...normalize(current),rates:{GBP:1,USD:usd,EUR:eur},updatedAt:new Date().toISOString(),source:'frankfurter'};
       await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[KEY,JSON.stringify(value)]);
-      return value;
-    }catch(error){console.warn('Historical FX refresh failed; using stored rates:',error.message);return current;}finally{clearTimeout(timer);refreshPromise=null;}
+      lastFinancialWarning=null;
+      return withWarnings(value);
+    }catch(error){
+      lastFinancialWarning=`FX rate refresh failed (${String(error.message||error).slice(0,180)}). Dashboard currency conversions are using the last stored rates until refresh succeeds.`;
+      console.warn(lastFinancialWarning);
+      return withWarnings(normalize(current));
+    }finally{clearTimeout(timer);refreshPromise=null;}
   })();return refreshPromise;
 }
 module.exports={CURRENCIES,KEY,get,getForUser,saveCurrency,saveUserCurrency,clearUserCurrency,refreshRates,convertMinor,cleanCurrency,assertCurrency,normalize,switchCatalogueCurrency};
