@@ -36,7 +36,7 @@ assert(nav.includes('Request content ↗'),'configured content requests must be 
 assert(generatedNav.includes("views/customer/_nav.ejs")&&generatedNav.includes('ejs.compile'),'server-rendered account pages must render the same EJS navigation partial as template-rendered pages');
 assert(generatedNav.includes('optionsForCustomer')&&generatedNav.includes('optionsFromPortal'),'customer navigation conditionals must come from one shared options helper');
 assert(dashboardRoute.includes('navOptions=customerNav.optionsFromPortal(portal)'),'dashboard and onboarding must compute canonical navigation options from the same portal model');
-assert(dashboard.includes("include('_nav'")&&dashboard.includes('navOptions'),'dashboard must use shared customer navigation options');
+assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must use the canonical customer navigation partial');
 assert(!dashboard.includes('customerNavLink" href="<%= overseerrUrl %>"'),'dashboard must not hardcode a second sidebar Request content link');
 assert(security.includes('class="securityMain"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
@@ -60,7 +60,7 @@ assert(stremio.includes('!currentPlan.is_free_tier'),'Stremio-only dashboard mus
 assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('scheduled for your next renewal'),'dashboard must disclose Stripe plan-change timing before checkout');
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
 assert(!/provisioning source|server placement|reconciliation/i.test(dashboard),'dashboard exposes operator-only jargon');
-assert(stremio.includes("include('_nav'")&&stremio.includes('navOptions'),'Stremio-only dashboard must use shared navigation options');
+assert(stremio.includes("include('_nav',{active:'overview'})"),'Stremio-only dashboard must use the canonical customer navigation partial');
 assert(customerPortalCss.includes('.accountHero')&&customerPortalCss.includes('.overviewGrid')&&customerPortalCss.includes('.metricCard')&&customerPortalCss.includes('.notice.error'),'customer dashboard hero, metrics and warning surfaces must be styled');
 assert(!stremio.includes('style="font-size:20px"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
 assert(history.includes("customerNav.nav('history',navOptions)"),'billing history must use canonical navigation with the Payments item highlighted');
