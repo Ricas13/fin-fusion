@@ -8,7 +8,6 @@ const { revenueFromEvent } = require('./admin-dashboard-analytics');
 
 const CADENCE_MONTHS = Object.freeze({ monthly:1, quarterly:3, six_monthly:6, yearly:12 });
 const CATEGORIES = Object.freeze(['hosting','infrastructure','software','domain','marketing','contractor','other']);
-const DAY_MS = 86400000;
 let headerCache = null;
 let headerCacheUntil = 0;
 let headerPromise = null;
@@ -97,9 +96,24 @@ async function listExpenses(){const result=await query(`SELECT e.*,CASE WHEN e.e
 async function currentExpenses(){const result=await query(`SELECT * FROM finance_expenses WHERE effective_until IS NULL ORDER BY COALESCE(next_renewal_date,'9999-12-31'::date),name`);return result.rows;}
 
 function dateMs(value){if(!value)return null;const text=String(value).slice(0,10);const d=new Date(`${text}T00:00:00.000Z`);return Number.isNaN(d.getTime())?null:d.getTime();}
-function overlapDays(row,start,end){const rowStart=dateMs(row.effective_from),rowEnd=dateMs(row.effective_until)??Infinity;const from=Math.max(rowStart??Infinity,start.getTime()),to=Math.min(rowEnd,end.getTime());return Math.max(0,(to-from)/DAY_MS);}
 function annualizedMinor(row){const months=CADENCE_MONTHS[row.cadence];return months?Number(row.amount_minor||0)*(12/months):0;}
-function expenseAccrual(rows,start,end,reportingState,targetCurrency){let minor=0;for(const row of rows){const days=overlapDays(row,start,end);if(days<=0)continue;const annual=annualizedMinor(row),accrued=Math.round(annual*days/365.2425);minor+=reporting.convertMinor(accrued,row.currency,targetCurrency,reportingState);}return minor;}
+function calendarMonthAccrualMinor(row,start,end){
+  const rowStart=dateMs(row.effective_from),rowEnd=dateMs(row.effective_until)??Infinity;
+  const activeStart=Math.max(rowStart??Infinity,start.getTime()),activeEnd=Math.min(rowEnd,end.getTime());
+  if(!Number.isFinite(activeStart)||activeEnd<=activeStart)return 0;
+  const monthly=annualizedMinor(row)/12;
+  let total=0,cursor=new Date(activeStart);
+  cursor=new Date(Date.UTC(cursor.getUTCFullYear(),cursor.getUTCMonth(),1));
+  let guard=0;
+  while(cursor.getTime()<activeEnd&&guard++<240){
+    const monthStart=cursor.getTime(),next=new Date(Date.UTC(cursor.getUTCFullYear(),cursor.getUTCMonth()+1,1)),monthEnd=next.getTime();
+    const overlapStart=Math.max(activeStart,monthStart),overlapEnd=Math.min(activeEnd,monthEnd);
+    if(overlapEnd>overlapStart)total+=monthly*((overlapEnd-overlapStart)/(monthEnd-monthStart));
+    cursor=next;
+  }
+  return Math.round(total);
+}
+function expenseAccrual(rows,start,end,reportingState,targetCurrency){let minor=0;for(const row of rows){const accrued=calendarMonthAccrualMinor(row,start,end);if(accrued<=0)continue;minor+=reporting.convertMinor(accrued,row.currency,targetCurrency,reportingState);}return minor;}
 function currentExpenseRunRate(rows,reportingState,targetCurrency){let monthly=0,yearly=0;for(const row of rows.filter(r=>!r.effective_until)){const annual=annualizedMinor(row);yearly+=reporting.convertMinor(annual,row.currency,targetCurrency,reportingState);monthly+=reporting.convertMinor(Math.round(annual/12),row.currency,targetCurrency,reportingState);}return{monthlyMinor:monthly,yearlyMinor:yearly};}
 
 function financeRevenueFromEvent(row){
@@ -169,4 +183,4 @@ async function headerFinancialSummary(){const now=Date.now();if(headerCache&&now
 async function upcomingRenewals(days=90){const limit=Math.max(1,Math.min(365,Number(days)||90));const result=await query(`SELECT *, (next_renewal_date-CURRENT_DATE)::int AS days_until FROM finance_expenses WHERE effective_until IS NULL AND next_renewal_date IS NOT NULL AND next_renewal_date<=CURRENT_DATE+($1::int) ORDER BY next_renewal_date,name`,[limit]);return result.rows;}
 async function renewalReminderSummary(){const result=await query(`SELECT COUNT(*)::int n,MIN(next_renewal_date) AS next_date,MAX(updated_at) AS updated FROM finance_expenses WHERE effective_until IS NULL AND next_renewal_date IS NOT NULL AND next_renewal_date<=CURRENT_DATE+(reminder_days::int)`);return{count:Number(result.rows[0]?.n||0),nextDate:result.rows[0]?.next_date||null,updatedAt:result.rows[0]?.updated||null};}
 
-module.exports={CADENCE_MONTHS,CATEGORIES,isoDate,moneyToMinor,normalizeExpenseInput,addMonthsIso,defaultRenewal,createExpense,changeExpense,cancelExpense,updateRenewal,listExpenses,currentExpenses,annualizedMinor,expenseAccrual,currentExpenseRunRate,financeRevenueFromEvent,enrichFinancialRows,normalizedAdverseRows,financialSummary,headerFinancialSummary,upcomingRenewals,renewalReminderSummary,invalidateCache};
+module.exports={CADENCE_MONTHS,CATEGORIES,isoDate,moneyToMinor,normalizeExpenseInput,addMonthsIso,defaultRenewal,createExpense,changeExpense,cancelExpense,updateRenewal,listExpenses,currentExpenses,annualizedMinor,calendarMonthAccrualMinor,expenseAccrual,currentExpenseRunRate,financeRevenueFromEvent,enrichFinancialRows,normalizedAdverseRows,financialSummary,headerFinancialSummary,upcomingRenewals,renewalReminderSummary,invalidateCache};
