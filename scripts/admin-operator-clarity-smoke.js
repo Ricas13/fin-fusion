@@ -133,8 +133,14 @@ assert(routes.includes('createAdminIntegrationsOverviewRouter()') && routes.inde
 assert(playback.includes('Playback control room') && playback.includes('playbackHero(data,policy,state)'), 'Playback must retain live operator-state calculation');
 assert(playback.includes('customer_stream_count') && playback.includes('overLimitCustomers'), 'Playback exceptions must derive from the canonical live-session counts and stream limits');
 assert(playback.includes("decision==='stop_failed'") && playback.includes('policyEvents.safetyAttention'), 'Playback must distinguish failed enforcement from safety-blocked actions');
-for (const reason of ['incomplete_server_snapshot', 'revalidation_failed', 'client_does_not_report_media_control_support']) {
-  assert(playbackEvents.includes(`'${reason}'`), `shared playback policy taxonomy must include ${reason}`);
+for (const reason of ['incomplete_server_snapshot', 'revalidation_failed']) {
+  assert(playbackEvents.includes(`'${reason}'`), `shared playback safety taxonomy must include ${reason}`);
+}
+assert(playbackEvents.includes('client_does_not_report_media_control_support') && playbackEvents.includes('legacy safety event'), 'historical unsupported-client safety events must remain readable in policy history');
+const safetyBlock = playbackEvents.slice(playbackEvents.indexOf('SAFETY_ATTENTION_REASONS'), playbackEvents.indexOf('REASON_LABELS'));
+assert(!safetyBlock.includes('client_does_not_report_media_control_support'), 'missing client media-control support must no longer block confirmed stream-limit enforcement');
+for (const reason of ['jellyfin_stop_did_not_end_session', 'jellyfin_force_logout_failed', 'post_stop_revalidation_failed']) {
+  assert(playbackEvents.includes(`${reason}:`), `shared playback policy taxonomy must explain ${reason}`);
 }
 assert(playback.includes("require('../jellyfin/activity-policy-events')"), 'Playback operator UI must reuse the shared Jellyfin policy-event taxonomy');
 assert(playbackEvents.includes('function reasonLabel') && playbackEvents.includes('function decisionLabel'), 'shared playback taxonomy must own operator-facing event labels');
