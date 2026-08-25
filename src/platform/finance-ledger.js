@@ -104,7 +104,7 @@ function currentExpenseRunRate(rows,reportingState,targetCurrency){let monthly=0
 
 function financeRevenueFromEvent(row){
   const known=revenueFromEvent(row);if(known)return known;
-  if(row.provider!=='plisio'||!String(row.event_type||'').toLowerCase().includes('completed'))return null;
+  if(row.provider!=='plisio'||String(row.event_type||'').toLowerCase()!=='operation.completed')return null;
   const payload=row.payload||{};const minor=paymentFinancials.decimalToMinor(payload.source_amount??payload.amount??payload.invoice_total);if(minor==null||minor<0)return null;const currency=paymentFinancials.cleanCurrency(payload.source_currency||payload.currency);if(!currency)return null;return{minor,currency,email:null};
 }
 
@@ -114,6 +114,7 @@ async function enrichFinancialRows(rows,{stripeLimit=0}={}){
   let stripe=null,stripeUsed=0;
   for(const row of rows){
     if(row.fee_minor!=null)continue;
+    if(row.fee_source==='unavailable'&&row.provider!=='stripe')continue;
     try{
       if(row.provider==='paypal'){
         const event=row.payload&&row.payload.event_type?row.payload:{...(row.payload||{}),id:row.provider_event_id,event_type:row.event_type};const values=paymentFinancials.paypalEventValues(event);if(values){const saved=await paymentFinancials.record({provider:'paypal',providerEventId:row.provider_event_id,eventType:row.event_type,...values,feeSource:values.feeMinor==null?'unavailable':'provider_actual'});if(saved){row.fee_minor=saved.fee_minor;row.financial_currency=saved.currency;row.fee_source=saved.fee_source;}}
@@ -128,18 +129,33 @@ async function enrichFinancialRows(rows,{stripeLimit=0}={}){
 }
 
 function converted(minor,currency,target,state){return reporting.convertMinor(Number(minor||0),currency||target,target,state);}
+function normalizedAdverseRows(rows){
+  const ordered=rows.slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const stripeRefundCumulative=new Map();
+  return ordered.map(row=>{
+    let effectiveMinor=Number(row.amount_minor||0);
+    if(row.provider==='stripe'&&row.incident_type==='refund'){
+      const caseKey=String(row.provider_case_id||row.provider_subscription_id||'');
+      const prior=caseKey?Number(stripeRefundCumulative.get(caseKey)||0):0;
+      const cumulative=Math.max(prior,effectiveMinor);
+      effectiveMinor=Math.max(0,cumulative-prior);
+      if(caseKey)stripeRefundCumulative.set(caseKey,cumulative);
+    }
+    return{...row,effective_minor:effectiveMinor};
+  });
+}
 function periodTotals(rows,adverse,start,end,state,currency){let gross=0,fees=0,payments=0,feeKnown=0;for(const row of rows){const at=new Date(row.created_at);if(at<start||at>=end)continue;const sale=financeRevenueFromEvent(row);if(!sale)continue;payments+=1;gross+=converted(sale.minor,sale.currency,currency,state);if(row.fee_minor!=null){fees+=converted(row.fee_minor,row.financial_currency||sale.currency,currency,state);feeKnown+=1;}}
-  let reversals=0;for(const row of adverse){const at=new Date(row.created_at);if(at<start||at>=end)continue;reversals+=converted(row.amount_minor,row.currency,currency,state);}return{grossMinor:gross,merchantFeesMinor:fees,reversalsMinor:reversals,netRevenueMinor:gross-fees-reversals,paymentCount:payments,feeKnownCount:feeKnown,feeCoveragePct:payments?Math.round(feeKnown/payments*100):100};}
+  let reversals=0;for(const row of adverse){const at=new Date(row.created_at);if(at<start||at>=end)continue;reversals+=converted(row.effective_minor,row.currency,currency,state);}return{grossMinor:gross,merchantFeesMinor:fees,reversalsMinor:reversals,netRevenueMinor:gross-fees-reversals,paymentCount:payments,feeKnownCount:feeKnown,feeCoveragePct:payments?Math.round(feeKnown/payments*100):100};}
 
 async function financialSummary({now=new Date(),stripeBackfillLimit=0}={}){
   const yearStart=new Date(Date.UTC(now.getUTCFullYear(),0,1)),monthStart=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),1)),end=new Date(now.getTime()+1);
   const [state,eventResult,adverseResult,expenseResult]=await Promise.all([
     reporting.get(),
     query(`SELECT pe.provider,pe.provider_event_id,pe.event_type,pe.payload,pe.created_at,pf.fee_minor,pf.currency AS financial_currency,pf.fee_source FROM payment_events pe LEFT JOIN payment_financials pf ON pf.provider=pe.provider AND pf.provider_event_id=pe.provider_event_id WHERE pe.provider IN('stripe','paypal','plisio') AND pe.processed_at IS NOT NULL AND pe.processing_error IS NULL AND pe.created_at>=$1 AND pe.created_at<$2 ORDER BY pe.created_at DESC LIMIT 50000`,[yearStart,end]),
-    query(`SELECT provider,incident_type,incident_status,amount_minor,currency,created_at FROM payment_incidents WHERE created_at>=$1 AND created_at<$2 AND amount_minor IS NOT NULL AND (incident_type='refund' OR (incident_type='chargeback' AND incident_status='lost'))`,[yearStart,end]),
-    query(`SELECT * FROM finance_expenses WHERE effective_from<$2::date AND (effective_until IS NULL OR effective_until>$1::date) ORDER BY effective_from`,[yearStart,end])
+    query(`SELECT provider,provider_event_id,provider_case_id,provider_subscription_id,incident_type,incident_status,amount_minor,currency,created_at FROM payment_incidents WHERE amount_minor IS NOT NULL AND (incident_type='refund' OR (incident_type='chargeback' AND incident_status='lost')) ORDER BY created_at ASC LIMIT 50000`),
+    query(`SELECT * FROM finance_expenses WHERE effective_from<=$2::date AND (effective_until IS NULL OR effective_until>$1::date) ORDER BY effective_from`,[yearStart,end])
   ]);
-  const currency=reporting.cleanCurrency(state.currency),events=await enrichFinancialRows(eventResult.rows,{stripeLimit:Math.max(0,Math.min(100,Number(stripeBackfillLimit)||0))}),adverse=adverseResult.rows,expenses=expenseResult.rows;
+  const currency=reporting.cleanCurrency(state.currency),events=await enrichFinancialRows(eventResult.rows,{stripeLimit:Math.max(0,Math.min(100,Number(stripeBackfillLimit)||0))}),adverse=normalizedAdverseRows(adverseResult.rows),expenses=expenseResult.rows;
   const month=periodTotals(events,adverse,monthStart,end,state,currency),year=periodTotals(events,adverse,yearStart,end,state,currency);
   month.operatingExpensesMinor=expenseAccrual(expenses,monthStart,end,state,currency);year.operatingExpensesMinor=expenseAccrual(expenses,yearStart,end,state,currency);
   month.profitMinor=month.netRevenueMinor-month.operatingExpensesMinor;year.profitMinor=year.netRevenueMinor-year.operatingExpensesMinor;
@@ -151,5 +167,6 @@ async function financialSummary({now=new Date(),stripeBackfillLimit=0}={}){
 async function headerFinancialSummary(){const now=Date.now();if(headerCache&&now<headerCacheUntil)return headerCache;if(headerPromise)return headerPromise;headerPromise=financialSummary({stripeBackfillLimit:2}).then(value=>{headerCache=value;headerCacheUntil=Date.now()+30000;return value;}).finally(()=>{headerPromise=null;});return headerPromise;}
 
 async function upcomingRenewals(days=90){const limit=Math.max(1,Math.min(365,Number(days)||90));const result=await query(`SELECT *, (next_renewal_date-CURRENT_DATE)::int AS days_until FROM finance_expenses WHERE effective_until IS NULL AND next_renewal_date IS NOT NULL AND next_renewal_date<=CURRENT_DATE+($1::int) ORDER BY next_renewal_date,name`,[limit]);return result.rows;}
+async function renewalReminderSummary(){const result=await query(`SELECT COUNT(*)::int n,MIN(next_renewal_date) AS next_date,MAX(updated_at) AS updated FROM finance_expenses WHERE effective_until IS NULL AND next_renewal_date IS NOT NULL AND next_renewal_date<=CURRENT_DATE+(reminder_days::int)`);return{count:Number(result.rows[0]?.n||0),nextDate:result.rows[0]?.next_date||null,updatedAt:result.rows[0]?.updated||null};}
 
-module.exports={CADENCE_MONTHS,CATEGORIES,isoDate,moneyToMinor,normalizeExpenseInput,addMonthsIso,defaultRenewal,createExpense,changeExpense,cancelExpense,updateRenewal,listExpenses,currentExpenses,annualizedMinor,expenseAccrual,currentExpenseRunRate,financeRevenueFromEvent,enrichFinancialRows,financialSummary,headerFinancialSummary,upcomingRenewals,invalidateCache};
+module.exports={CADENCE_MONTHS,CATEGORIES,isoDate,moneyToMinor,normalizeExpenseInput,addMonthsIso,defaultRenewal,createExpense,changeExpense,cancelExpense,updateRenewal,listExpenses,currentExpenses,annualizedMinor,expenseAccrual,currentExpenseRunRate,financeRevenueFromEvent,enrichFinancialRows,normalizedAdverseRows,financialSummary,headerFinancialSummary,upcomingRenewals,renewalReminderSummary,invalidateCache};
