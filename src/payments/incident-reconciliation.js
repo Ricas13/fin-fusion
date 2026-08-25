@@ -143,9 +143,6 @@ async function stripeCurrentState(incident) {
         };
     }
 
-    // Refund incidents are intentionally never allowed to restore access by a
-    // local override. Re-fetching their provider event is still useful for the
-    // reconciliation/audit trail.
     if (!event && incident.provider_event_id) event = await stripeEvent(incident.provider_event_id, key);
     return {
         reference: event?.reference || incident.provider_subscription_id || null,
@@ -228,8 +225,8 @@ async function paypalCurrentState(incident) {
     try {
         if (incident.provider_event_id) event = await paypalEvent(incident.provider_event_id, auth);
     } catch (_) {
-        // See the Stripe path: current provider state is the restore authority;
-        // the original webhook event is only a fallback for old references.
+        // Current provider state is the restore authority; the original webhook
+        // event is only a fallback for old references.
     }
 
     if (['dispute', 'chargeback'].includes(incident.incident_type)) {
@@ -347,17 +344,21 @@ async function reconcile(incidentId, actorUserId = null) {
         matchedPeriodEnd: match?.current_period_end || null
     };
 
+    const resolvedScope = match?.scope === 'customer' ? 'direct' : null;
+    const matchedCustomerId = match?.scope === 'customer' ? match.owner_id : null;
     await query(`
         UPDATE payment_incidents
-        SET customer_id=COALESCE($2,customer_id),
-            provider_subscription_id=COALESCE($3,provider_subscription_id),
-            provider_object_id=COALESCE($4,provider_object_id),
-            metadata=COALESCE(metadata,'{}'::jsonb)||$5::jsonb,
+        SET scope=COALESCE($2,scope),
+            customer_id=COALESCE($3,customer_id),
+            provider_subscription_id=COALESCE($4,provider_subscription_id),
+            provider_object_id=COALESCE($5,provider_object_id),
+            metadata=COALESCE(metadata,'{}'::jsonb)||$6::jsonb,
             updated_at=NOW()
         WHERE id=$1
     `, [
         incidentId,
-        match?.scope === 'customer' ? match.owner_id : null,
+        resolvedScope,
+        matchedCustomerId,
         reference,
         current.objectId || null,
         JSON.stringify({ providerReconciliation: snapshot })
