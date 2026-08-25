@@ -3,6 +3,7 @@
 const assert = require('assert');
 const { query, getPool } = require('../src/db');
 const billing = require('../src/payments/billing-control');
+const primitives = require('../src/payments/lifecycle-primitives');
 
 async function customer(name, email) {
     return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`, [name, email])).rows[0];
@@ -141,6 +142,57 @@ async function activeDelinquencyHolds(customerId) {
     assert.strictEqual(cancelled.ok, true);
     assert.strictEqual((await query(`SELECT status FROM subscriptions WHERE id=$1`, [stripeSub.id])).rows[0].status, 'cancelled');
     assert.strictEqual((await activeDelinquencyHolds(stripeCustomer.id)).length, 0, 'cancelled subscription must not leave a stale delinquency hold');
+
+    // Provider ownership and payment-customer mapping are one atomic identity
+    // boundary. A replay/caller bug cannot move a provider payment to another
+    // CAPTAiNFiN customer, and a provider-customer collision cannot leave behind
+    // a partially committed subscription.
+    const identityA = await customer('Identity A', 'identity-a@example.test');
+    const identityB = await customer('Identity B', 'identity-b@example.test');
+    const identityEnd = new Date(Date.now() + 30 * 86400000);
+    const identityPayment = await primitives.activatePurchase({
+        customerId: identityA.id,
+        planId: plan.id,
+        provider: 'stripe',
+        providerCustomerId: 'cus_identity_a',
+        providerSubscriptionId: 'pi_identity_a',
+        providerStatus: 'active',
+        periodEnd: identityEnd
+    });
+    assert.strictEqual(String(identityPayment.customer_id), String(identityA.id));
+    const mappingA = (await query(`SELECT customer_id FROM payment_customers WHERE provider='stripe' AND provider_customer_id='cus_identity_a'`)).rows[0];
+    assert.strictEqual(String(mappingA.customer_id), String(identityA.id));
+
+    await assert.rejects(
+        primitives.activatePurchase({
+            customerId: identityB.id,
+            planId: plan.id,
+            provider: 'stripe',
+            providerCustomerId: 'cus_identity_a',
+            providerSubscriptionId: 'pi_identity_a',
+            providerStatus: 'active',
+            periodEnd: identityEnd
+        }),
+        /already linked to another CAPTAiNFiN customer/i
+    );
+    const stillOwned = (await query(`SELECT customer_id FROM subscriptions WHERE source='stripe' AND provider_subscription_id='pi_identity_a'`)).rows[0];
+    assert.strictEqual(String(stillOwned.customer_id), String(identityA.id), 'provider payment ownership changed after a cross-user replay');
+
+    await primitives.ensurePaymentCustomer({ customerId: identityB.id, provider: 'stripe', providerCustomerId: 'cus_identity_b' });
+    await assert.rejects(
+        primitives.activatePurchase({
+            customerId: identityA.id,
+            planId: plan.id,
+            provider: 'stripe',
+            providerCustomerId: 'cus_identity_b',
+            providerSubscriptionId: 'pi_identity_collision',
+            providerStatus: 'active',
+            periodEnd: identityEnd
+        }),
+        /Provider customer is already linked to another CAPTAiNFiN customer/i
+    );
+    const partial = await query(`SELECT id FROM subscriptions WHERE source='stripe' AND provider_subscription_id='pi_identity_collision'`);
+    assert.strictEqual(partial.rowCount, 0, 'provider customer collision left a partially committed subscription');
 
     console.log('billing lifecycle smoke: ok');
 })().finally(() => getPool().end()).catch(error => {
