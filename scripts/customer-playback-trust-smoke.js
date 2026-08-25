@@ -14,13 +14,16 @@ expect(inactivity.includes('!row.currently_playing'),'A currently-playing custom
 
 const activityRoute=source('src/platform/customer-activity.js');
 expect(activityRoute.includes('customer-inactivity-status'),'Customer Activity must expose the same canonical inactivity evidence used by automation.');
-expect(activityRoute.includes('ph.play_method AS playback_method'),'Customer Activity must map the playback schema to the field rendered by the portal.');
+expect(activityRoute.includes('ph.playback_method'),'Customer Activity must select the playback_history playback_method column directly.');
+expect(!activityRoute.includes('ph.play_method'),'Customer Activity must not query the nonexistent playback_history play_method column.');
+expect(!activityRoute.includes('ph.max_height')&&!activityRoute.includes('ph.container'),'Customer Activity must not query nonexistent playback_history media-detail columns.');
 expect(activityRoute.includes('observed_streams'),'Customer Activity must use the canonical observed stream count.');
 const activityView=source('views/customer/activity.ejs');
 expect(activityView.includes('Free Server usage'),'Customer Activity must explain Free Server usage status.');
 expect(activityView.includes('Automatic inactivity removal is paused.'),'Customer Activity must tell customers when telemetry safety pauses removal.');
 expect(activityView.includes('freeUsage.observed_streams')===false,'Customer Activity must not read observed streams from the wrong object.');
 expect(activityView.includes('e.observed_streams'),'Stream-limit actions must render the canonical observed stream count.');
+expect(!activityView.includes('a.max_height')&&!activityView.includes('a.container'),'Customer Activity must not render playback fields that are absent from playback_history.');
 
 const dashboard=source('views/customer/dashboard.ejs');
 expect(dashboard.includes('/account/activity')&&dashboard.includes('View playback activity'),'Dashboard must provide a direct playback-activity shortcut.');
