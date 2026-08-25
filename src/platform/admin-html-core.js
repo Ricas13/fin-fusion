@@ -25,8 +25,7 @@ function addFilterStyles(html){
 function addServerContextNavigation(options={}){
   const body=String(options.body||'');
   const navigation=contextNavigation.render(options.active);
-  const tools=contextNavigation.renderOwnedTools(options.active);
-  return {...options,body:`${navigation||''}${body}${tools||''}`};
+  return {...options,body:`${navigation||''}${body}`};
 }
 
 function replaceBreadcrumb(html,active){
@@ -39,23 +38,19 @@ function replaceBreadcrumb(html,active){
 }
 
 // Old workflow modules still return card/tab navigation because deep links and
-// specialist routes remain supported. The single-row IA now exposes those
-// destinations as ordinary tools inside the owning main page, so a second
-// server-rendered workflow navigator must never survive into the document.
+// specialist routes remain supported. The sidebar is now the canonical home
+// for specialist destinations, so redundant server-rendered workflow rows are
+// removed rather than moved into page content.
 function removeSecondaryWorkflowNavigation(html){
   return String(html||'')
     .replace(/<nav class="workflowCardGrid operatorTabs"[^>]*>[\s\S]*?<\/nav>/g,'')
-    .replace(/<nav class="coherenceSubTabs"[^>]*>[\s\S]*?<\/nav>/g,'');
+    .replace(/<nav class="coherenceSubTabs"[^>]*>[\s\S]*?<\/nav>/g,'')
+    .replace(/<section class="coherenceOwnedTools"[^>]*>[\s\S]*?<\/section>/g,'');
 }
 
 // Compatibility export retained for older smoke/tests/callers.
 function removeRedundantWorkflowNavigation(html){return removeSecondaryWorkflowNavigation(html);}
 
-// Page-action placement contract -----------------------------------------
-// Generic navigation/actions belong in the top-right page header. Overview
-// heroes may still carry corrective actions, but must not repeat a destination
-// already exposed by the page header. Keeping the rule in the shared renderer
-// prevents individual pages from drifting back into duplicate Add/Import/etc.
 function actionHrefs(action=''){
   const hrefs=new Set();
   const re=/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>/gi;
@@ -81,11 +76,6 @@ function layout(options={}){
   const rendered=removeSecondaryWorkflowNavigation(base.layout(normalized));
   const withBreadcrumb=replaceBreadcrumb(rendered,options.active);
   const html=addFilterStyles(addCommandPalette(withBreadcrumb));
-  // admin-customer-filters.js remains after the shared enhancer for backward
-  // asset compatibility. Once admin-filter-bars.js has transformed Customers,
-  // the legacy controller finds no original filter grid and exits immediately.
-  // admin-navigation-coherence.js is fallback/enforcement only: modern pages
-  // already contain the single primary row in server-rendered HTML.
   const scripts='<script src="/js/admin-setting-controls.js" defer></script><script src="/js/admin-filter-bars.js" defer></script><script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-safety-confirmations.js" defer></script><script src="/js/admin-command-palette.js" defer></script><script src="/js/admin-sidebar-nav.js" defer></script><script src="/js/admin-stremio-journey.js" defer></script><script src="/js/admin-release-status.js" defer></script><script src="/js/admin-form-accessibility.js" defer></script><script src="/js/admin-surface-semantics.js" defer></script><script src="/js/admin-server-control.js" defer></script><script src="/js/admin-navigation-coherence.js" defer></script>';
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
