@@ -11,6 +11,7 @@ function money(minor, currency = 'USD') {
         return new Intl.NumberFormat('en-GB', {
             style: 'currency',
             currency: String(currency || 'USD').toUpperCase(),
+            currencyDisplay: 'narrowSymbol',
             minimumFractionDigits: 0,
             maximumFractionDigits: 2
         }).format(Number(minor || 0) / 100);
