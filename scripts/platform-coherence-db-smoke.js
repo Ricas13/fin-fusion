@@ -40,6 +40,31 @@ async function main(){
   await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`sub_${suffix}_one`]);
   await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`I-${suffix}-two`],'overlapping recurring customer subscription');
 
+  // Provider-customer identity semantics: PayPal payer IDs are funding-account
+  // identities and may legitimately fan in to multiple CAPTAiNFiN customers.
+  // Stripe customer objects are CAPTAiNFiN-created and remain one-to-one.
+  const payerA=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`PayPal A ${suffix}`,`paypal-a-${suffix}@example.invalid`])).rows[0];
+  const payerB=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`PayPal B ${suffix}`,`paypal-b-${suffix}@example.invalid`])).rows[0];
+  const sharedPayer=`PAYER-${suffix}`;
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[payerA.id,plan.id,sharedPayer,`I-${suffix}-A`]);
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[payerB.id,plan.id,sharedPayer,`I-${suffix}-B`]);
+  const sharedPayPalRows=await client.query(`SELECT customer_id FROM payment_customers WHERE provider='paypal' AND provider_customer_id=$1 ORDER BY customer_id`,[sharedPayer]);
+  assert(sharedPayPalRows.rowCount===2,'one PayPal payer must be allowed to fund two distinct CAPTAiNFiN customers');
+
+  const stripeA=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Stripe A ${suffix}`,`stripe-a-${suffix}@example.invalid`])).rows[0];
+  const stripeB=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Stripe B ${suffix}`,`stripe-b-${suffix}@example.invalid`])).rows[0];
+  const sharedStripe=`cus_${suffix}`;
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[stripeA.id,plan.id,sharedStripe,`sub_${suffix}_A`]);
+  await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[stripeB.id,plan.id,sharedStripe,`sub_${suffix}_B`],'shared Stripe customer identity');
+  const rolledBackStripe=await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND source='stripe' AND provider_subscription_id=$2`,[stripeB.id,`sub_${suffix}_B`]);
+  assert(rolledBackStripe.rowCount===0,'Stripe identity collision must roll back the subscription instead of leaving a half-linked purchase');
+  const stripeMappings=await client.query(`SELECT customer_id FROM payment_customers WHERE provider='stripe' AND provider_customer_id=$1`,[sharedStripe]);
+  assert(stripeMappings.rowCount===1&&String(stripeMappings.rows[0].customer_id)===String(stripeA.id),'Stripe customer identity must remain owned by exactly one CAPTAiNFiN customer');
+
+  const plisioCustomer=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Plisio ${suffix}`,`plisio-${suffix}@example.invalid`])).rows[0];
+  const plisioIdentity=(await client.query(`INSERT INTO payment_customers(customer_id,provider,provider_customer_id) VALUES($1,'plisio',$2) RETURNING id`,[plisioCustomer.id,`plisio-${suffix}`])).rows[0];
+  assert(plisioIdentity.id,'payment_customers provider constraint must include supported Plisio records');
+
   await client.query(`INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason) VALUES($1,'admin_suspended','admin','admin test'),($1,'payment_risk','risk-test','risk test')`,[customer.id]);
   const holds=await client.query(`SELECT COUNT(*)::int n FROM customer_access_holds WHERE customer_id=$1 AND released_at IS NULL`,[customer.id]);
   assert(Number(holds.rows[0].n)===2,'independent access holds must coexist');
