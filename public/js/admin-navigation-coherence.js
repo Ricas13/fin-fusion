@@ -37,8 +37,18 @@
     actions.forEach(node=>target.appendChild(node));
   }
 
+  function watchLatePageActions(){
+    const topActions=document.querySelector('.topBarActions');
+    if(!topActions||typeof MutationObserver!=='function')return;
+    const observer=new MutationObserver(mutations=>{
+      if(mutations.some(mutation=>mutation.type==='childList'&&mutation.addedNodes.length))movePageActionsToHeading();
+    });
+    observer.observe(topActions,{childList:true});
+  }
+
   enforceSidebarOnlyNavigation();
   movePageActionsToHeading();
+  watchLatePageActions();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
