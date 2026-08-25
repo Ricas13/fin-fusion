@@ -4,6 +4,7 @@ const assert = require('assert');
 const {
     renderStorefront,
     planCard,
+    paymentMethodsStrip,
     savingForPlan,
     monthlyEquivalent,
     bestValueCode
@@ -67,6 +68,15 @@ assert.match(soldTrial, /Currently full/);
 assert.match(soldTrial, /aria-disabled="true">Sold out/);
 assert.doesNotMatch(soldTrial, /href="\/account\/register"/);
 
+const methods=[
+    {provider:'stripe',name:'Card payments',detail:'Secure checkout with Stripe'},
+    {provider:'paypal',name:'PayPal',detail:'Pay securely with PayPal'},
+    {provider:'plisio',name:'Crypto',detail:'Cryptocurrency checkout via Plisio'}
+];
+const methodStrip=paymentMethodsStrip(methods);
+for(const expected of ['Payment methods accepted','Card payments','PayPal','Crypto','data-provider="stripe"','data-provider="paypal"','data-provider="plisio"'])assert.ok(methodStrip.includes(expected),`payment strip should include ${expected}`);
+assert.strictEqual(paymentMethodsStrip([]),'','payment strip must disappear when no payment providers are configured');
+
 const store = {
     copy: {
         heroTitle: 'Your entertainment. One simple subscription.',
@@ -76,28 +86,32 @@ const store = {
     features: ['Legacy feature data may remain stored but is no longer rendered.']
 };
 
-const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,support:{supportEmail:'support@example.test'} });
+const page = renderStorefront({ site: 'CAPTAiNFiN', plans, store, registrationOpen: false, logged: false,support:{supportEmail:'support@example.test'},paymentMethods:methods });
 for (const expected of [
-    'heroSection','freeTierPanel','pricingGrid','finalCta','Your entertainment. One simple subscription.',
+    'heroSection','paymentMethodsSection','Payment methods accepted','Card payments','PayPal','Crypto','freeTierPanel','pricingGrid','finalCta','Your entertainment. One simple subscription.',
     'Free access','Still here — currently full.','Choose the Jellyfin server access that fits you.','Stremio plans',
     'Currently full','support@example.test'
 ]) assert.ok(page.includes(expected), `rendered storefront should include ${expected}`);
-assert.ok(page.indexOf('heroSection') < page.indexOf('id="free-access"'), 'hero should appear before free access');
+assert.ok(page.indexOf('heroSection') < page.indexOf('paymentMethodsSection'), 'payment methods should sit directly below the hero');
+assert.ok(page.indexOf('paymentMethodsSection') < page.indexOf('id="free-access"'), 'payment methods should appear before plan content');
 assert.ok(page.indexOf('id="free-access"') < page.indexOf('id="plans"'), 'free access should appear above paid/trial plan cards');
 assert.ok(page.indexOf('id="plans"') < page.indexOf('id="stremio"'), 'main plans should appear before Stremio');
 for(const removed of ['featureGrid','experienceSection','stepsGrid','Everything you need to watch your way','From account to watching in minutes'])assert.ok(!page.includes(removed),`old marketing section should be gone: ${removed}`);
 
 const openPlans=plans.map(plan=>plan.is_free_tier?{...plan,capacity:{limit:20,used:3,remaining:17,soldOut:false,label:'Available',kind:'available'}}:plan);
-const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans:openPlans, store, registrationOpen: true, logged: false });
+const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans:openPlans, store, registrationOpen: true, logged: false, paymentMethods:[methods[1]] });
 assert.ok(openPage.includes('Create account'));
 assert.ok(openPage.includes('Free places are available now.'));
 assert.ok(openPage.includes('Claim free access'));
 assert.ok(openPage.includes('href="/account/register"'));
+assert.ok(openPage.includes('PayPal'));
+assert.ok(!openPage.includes('Card payments'),'disabled/unconfigured methods must not be advertised when omitted by provider status');
 assert.ok(!openPage.includes('New customers can currently join by invitation.'));
 
-const empty = renderStorefront({ site: 'Blank Install', plans: [], store: { copy: {}, features: [] }, registrationOpen: false, logged: false });
+const empty = renderStorefront({ site: 'Blank Install', plans: [], store: { copy: {}, features: [] }, registrationOpen: false, logged: false, paymentMethods:[] });
 assert.ok(empty.includes('Blank Install'));
 assert.ok(empty.includes('Everything stays in your account.'));
+assert.ok(!empty.includes('paymentMethodsSection'),'blank/unconfigured storefront should not render an empty payment strip');
 assert.ok(!empty.includes('NaN'));
 
 console.log('storefront v2 smoke: ok');
