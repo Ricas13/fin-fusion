@@ -15,7 +15,7 @@
     "db:offsite": "node scripts/offsite-backup.js",
     "db:inspect-backup": "node scripts/inspect-backup.js",
     "db:verify-backup": "node scripts/verify-backup.js",
-    "db:restore": "node scripts/restore-backup.js",
+    "db:restore": "node scripts/restore-db.js",
     "db:backup-smoke": "node scripts/backup-crypto-smoke.js",
     "auth:bootstrap": "node scripts/bootstrap-admin.js",
     "auth:migrate-legacy": "node scripts/migrate-staff-auth.js",
