@@ -2,6 +2,7 @@
 
 const routeRateLimit = require('../security/route-rate-limit');
 const dashboard = require('./admin-dashboard');
+require('./admin-commerce-expense-widgets');
 const { createAdminProductModulesRouter } = require('./admin-product-modules');
 const { createAdminAttentionRouter } = require('./admin-attention');
 const { createAdminSupportTicketsRouter } = require('./admin-support-tickets');
