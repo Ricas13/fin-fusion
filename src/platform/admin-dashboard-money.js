@@ -1,21 +1,22 @@
 'use strict';
 
 const {query}=require('../db');
+const dashboardLedger=require('../payments/dashboard-ledger');
 const reportingCurrency=require('./reporting-currency');
-const {revenueFromEvent,bucketKey,delta}=require('./admin-dashboard-analytics');
+const {bucketKey,delta}=require('./admin-dashboard-analytics');
 
 function inWindow(at,start,end){return at>=start&&at<end;}
 function convert(minor,currency,target,state){return reportingCurrency.convertMinor(Number(minor||0),String(currency||target).toUpperCase(),target,state);}
 
 async function normalizedDashboardMoney(range,seriesSkeleton,reporting){
   const target=reportingCurrency.cleanCurrency(reporting?.currency||'GBP');
-  const events=await query(`SELECT provider,provider_event_id,event_type,payload,created_at FROM payment_events WHERE provider IN ('stripe','paypal') AND processed_at IS NOT NULL AND processing_error IS NULL AND created_at >= $1 AND created_at < $2 ORDER BY created_at DESC LIMIT 25000`,[range.previousStart,range.end]);
+  const accounting=await dashboardLedger.accountingRecords(range);
   const current=[],previous=[],sourceTotals=new Map();
-  for(const row of events.rows){
-    const raw=revenueFromEvent(row);if(!raw)continue;
-    const at=new Date(row.created_at),normalizedMinor=convert(raw.minor,raw.currency,target,reporting);
-    const record={...raw,originalMinor:Number(raw.minor||0),originalCurrency:String(raw.currency||target).toUpperCase(),minor:normalizedMinor,currency:target,provider:row.provider,eventType:row.event_type,createdAt:at,providerEventId:row.provider_event_id};
-    if(inWindow(at,range.start,range.end)){current.push(record);sourceTotals.set(record.originalCurrency,(sourceTotals.get(record.originalCurrency)||0)+record.originalMinor);}
+  for(const row of accounting.records){
+    if(row.kind!=='payment')continue;
+    const at=new Date(row.createdAt),originalMinor=Number(row.minor||0),originalCurrency=String(row.currency||target).toUpperCase(),normalizedMinor=convert(originalMinor,originalCurrency,target,reporting);
+    const record={...row,originalMinor,originalCurrency,minor:normalizedMinor,currency:target,createdAt:at};
+    if(inWindow(at,range.start,range.end)){current.push(record);sourceTotals.set(originalCurrency,(sourceTotals.get(originalCurrency)||0)+originalMinor);}
     else if(inWindow(at,range.previousStart,range.previousEnd))previous.push(record);
   }
   const totalMinor=current.reduce((sum,row)=>sum+row.minor,0),previousMinor=previous.reduce((sum,row)=>sum+row.minor,0);
@@ -42,7 +43,7 @@ async function normalizedDashboardMoney(range,seriesSkeleton,reporting){
   const renewalMinor=convertedRenewals.reduce((sum,row)=>sum+Number(row.price_minor||0),0);
 
   return{
-    revenue:{primaryCurrency:target,totalMinor,previousMinor,currencies:[{currency:target,minor:totalMinor}],sourceCurrencies:[...sourceTotals.entries()].map(([currency,minor])=>({currency,minor})),series,recent:current.sort((a,b)=>b.createdAt-a.createdAt).slice(0,12)},
+    revenue:{primaryCurrency:target,totalMinor,previousMinor,currencies:[{currency:target,minor:totalMinor}],sourceCurrencies:[...sourceTotals.entries()].map(([currency,minor])=>({currency,minor})),series,recent:current.sort((a,b)=>b.createdAt-a.createdAt).slice(0,12),coverage:accounting.coverage},
     revenueDelta:delta(totalMinor,previousMinor),
     renewals:convertedRenewals.slice(0,12),
     renewalCount:convertedRenewals.length,
