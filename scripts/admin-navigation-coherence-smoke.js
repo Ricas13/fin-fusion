@@ -98,6 +98,8 @@ assert(fallback.includes('function movePageActionsToHeading()'),'Admin enhanceme
 assert(fallback.includes("utilitySelector='.topStatusWrap,.topHelpLink,.topHeaderMetrics'"),'Status, Help and read-only metrics must remain global top-bar utilities');
 assert(fallback.includes("target.className='pageHeaderActions'")&&fallback.includes("target.setAttribute('aria-label','Page actions')"),'Page actions must have a dedicated accessible heading control region');
 assert(fallback.includes('actions.forEach(node=>target.appendChild(node))'),'Existing action nodes must be moved rather than cloned so forms and handlers stay intact');
+assert(fallback.includes('function watchLatePageActions()')&&fallback.includes('new MutationObserver'),'Late asynchronous page controls must not drift back into the global top bar');
+assert(fallback.includes("observer.observe(topActions,{childList:true})"),'The top utility bar must be watched for late page-scoped actions');
 
 const css=read('public/css/admin-navigation-coherence.css');
 assert(css.includes('.content>.pageHeader{display:flex'),'Page headings must reserve layout space for contextual controls');
