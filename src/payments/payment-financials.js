@@ -18,6 +18,7 @@ function cleanCurrency(value) {
 }
 
 function integerOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number) : null;
 }
@@ -76,8 +77,8 @@ async function stripeChargeFinancials(stripe, chargeLike, fallback = {}) {
   }
   let balance = charge?.balance_transaction || null;
   if (typeof balance === 'string') balance = await stripe.balanceTransactions.retrieve(balance);
-  const grossMinor = integerOrNull(charge?.amount ?? fallback.grossMinor);
-  const currency = cleanCurrency(charge?.currency || balance?.currency || fallback.currency);
+  const grossMinor = integerOrNull(balance?.amount ?? charge?.amount ?? fallback.grossMinor);
+  const currency = cleanCurrency(balance?.currency || charge?.currency || fallback.currency);
   const feeMinor = integerOrNull(balance?.fee);
   const netMinor = integerOrNull(balance?.net);
   return {
@@ -200,7 +201,10 @@ function firstMoneyMinor(values) {
 
 async function plisioOperationFinancials({ eventId, eventType, remote = {}, fallback = {} }) {
   const grossMinor = firstMoneyMinor([remote.source_amount, remote.amount, remote.invoice_total, fallback.sourceAmount]);
-  const feeMinor = firstMoneyMinor([remote.fee, remote.fee_amount, remote.source_fee, remote.txn_fee, remote.network_fee, remote.params?.fee]);
+  // Only source-denominated fee fields are safe to combine with source fiat
+  // revenue. Generic network/crypto fee fields can be in a different unit and
+  // must remain unknown rather than silently corrupting profit.
+  const feeMinor = firstMoneyMinor([remote.source_fee, remote.source_fee_amount, remote.fee_source_amount, remote.params?.source_fee]);
   const currency = cleanCurrency(remote.source_currency || remote.currency || fallback.sourceCurrency);
   return record({
     provider: 'plisio',
@@ -219,6 +223,7 @@ async function plisioOperationFinancials({ eventId, eventType, remote = {}, fall
 module.exports = {
   decimalToMinor,
   cleanCurrency,
+  integerOrNull,
   record,
   findStringByPattern,
   stripeChargeFinancials,
