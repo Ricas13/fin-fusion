@@ -1,6 +1,6 @@
 'use strict';
 
-const { query } = require('../db');
+const { query, transaction } = require('../db');
 const { encryptWithEnv, decryptWithEnv } = require('./purpose-crypto');
 
 const KEY = 'public_abuse_protection_v1';
@@ -59,40 +59,48 @@ async function reload() {
 }
 
 async function save(input, actorUserId = null) {
-  const existing = (await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1', [KEY])).rows[0]?.setting_value || {};
-  let encrypted = existing.turnstileSecretEncrypted || null;
-  if (bool(input.clearTurnstileSecret)) encrypted = null;
-  else if (text(input.turnstileSecret, 500)) encrypted = encryptWithEnv(text(input.turnstileSecret, 500), SECRET_ENV, PREFIX);
+  await transaction(async client => {
+    const existing = (
+      await client.query(
+        'SELECT setting_value FROM platform_settings WHERE setting_key=$1 FOR UPDATE',
+        [KEY]
+      )
+    ).rows[0]?.setting_value || {};
 
-  const value = {
-    turnstileEnabled: bool(input.turnstileEnabled),
-    turnstileSiteKey: text(input.turnstileSiteKey, 200),
-    turnstileSecretEncrypted: encrypted,
-    protectRegistration: true,
-    protectPasswordReset: input.protectPasswordReset !== undefined ? bool(input.protectPasswordReset) : true
-  };
-  if (value.turnstileEnabled && (!value.turnstileSiteKey || !value.turnstileSecretEncrypted)) {
-    throw new Error('Turnstile site key and secret are required when protection is enabled.');
-  }
+    let encrypted = existing.turnstileSecretEncrypted || null;
+    if (bool(input.clearTurnstileSecret)) encrypted = null;
+    else if (text(input.turnstileSecret, 500)) encrypted = encryptWithEnv(text(input.turnstileSecret, 500), SECRET_ENV, PREFIX);
 
-  await query(
-    `INSERT INTO platform_settings(setting_key,setting_value,updated_by)
-     VALUES($1,$2::jsonb,$3)
-     ON CONFLICT(setting_key) DO UPDATE
-     SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,
-    [KEY, JSON.stringify(value), actorUserId]
-  );
-  await query(
-    `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-     VALUES($1,'admin.public_abuse_protection.update','platform_setting',$2,$3::jsonb)`,
-    [actorUserId, KEY, JSON.stringify({
-      enabled: value.turnstileEnabled,
-      coreAuthenticationProtected: true,
-      protectPasswordReset: value.protectPasswordReset,
-      secretChanged: Boolean(input.turnstileSecret),
-      secretCleared: bool(input.clearTurnstileSecret)
-    })]
-  );
+    const value = {
+      turnstileEnabled: bool(input.turnstileEnabled),
+      turnstileSiteKey: text(input.turnstileSiteKey, 200),
+      turnstileSecretEncrypted: encrypted,
+      protectRegistration: true,
+      protectPasswordReset: input.protectPasswordReset !== undefined ? bool(input.protectPasswordReset) : true
+    };
+    if (value.turnstileEnabled && (!value.turnstileSiteKey || !value.turnstileSecretEncrypted)) {
+      throw new Error('Turnstile site key and secret are required when protection is enabled.');
+    }
+
+    await client.query(
+      `INSERT INTO platform_settings(setting_key,setting_value,updated_by)
+       VALUES($1,$2::jsonb,$3)
+       ON CONFLICT(setting_key) DO UPDATE
+       SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,
+      [KEY, JSON.stringify(value), actorUserId]
+    );
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'admin.public_abuse_protection.update','platform_setting',$2,$3::jsonb)`,
+      [actorUserId, KEY, JSON.stringify({
+        enabled: value.turnstileEnabled,
+        coreAuthenticationProtected: true,
+        protectPasswordReset: value.protectPasswordReset,
+        secretChanged: Boolean(text(input.turnstileSecret, 500)),
+        secretCleared: bool(input.clearTurnstileSecret)
+      })]
+    );
+  });
   return reload();
 }
 
