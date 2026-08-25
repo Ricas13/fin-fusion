@@ -12,6 +12,11 @@
 .coherenceSectionTabs .coherenceSectionTab .workflowCardEyebrow{font-size:8px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:#6f8193}
 .coherenceSectionTabs .coherenceSectionTab.active .workflowCardEyebrow{color:#72cfe9}
 
+/* Sidebar-only navigation fail-safe. JavaScript removes these obsolete rows as
+   well, but hiding them here prevents a legacy client enhancer from flashing a
+   second navigation system before the cleanup pass runs. */
+.content nav.workflowCardGrid,.content nav.operatorTabs,.content nav.coherenceSectionTabs,.content nav.coherenceSubTabs,.content section.coherenceOwnedTools{display:none!important}
+
 /* Page actions ---------------------------------------------------------------
    Navigation belongs in the sidebar; the top bar is global utilities only.
    Controls scoped to the current page sit beside its title. */
