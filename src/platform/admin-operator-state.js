@@ -34,26 +34,32 @@ async function headerMetrics(){
   const [fleet,reportingState,paymentRows]=await Promise.all([
     fleetDashboard.dashboardRows(),
     reporting.get(),
-    query(`SELECT provider,provider_event_id,event_type,payload,created_at
+    query(`SELECT provider,provider_event_id,event_type,payload,created_at,
+                  created_at>=date_trunc('month',NOW()) AS in_current_month
              FROM payment_events
             WHERE provider IN ('stripe','paypal')
+              AND event_type IN ('invoice.paid','checkout.session.completed','PAYMENT.CAPTURE.COMPLETED')
               AND processed_at IS NOT NULL AND processing_error IS NULL
-              AND created_at>=date_trunc('month',NOW())
-              AND created_at<date_trunc('month',NOW())+INTERVAL '1 month'
-            ORDER BY created_at DESC
-            LIMIT 25000`)
+              AND created_at>=date_trunc('year',NOW())
+              AND created_at<date_trunc('year',NOW())+INTERVAL '1 year'`)
   ]);
   const enabled=fleet.filter(row=>row.enabled!==false);
   const activeStreams=enabled.reduce((sum,row)=>sum+metricNumber(row,'active_streams',row.active_streams),0);
   const totalStreams=enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0);
   const currency=reporting.cleanCurrency(reportingState.currency);
-  let monthlyRevenueMinor=0;
+  let monthlyRevenueMinor=0,yearlyRevenueMinor=0;
   for(const row of paymentRows.rows){
     const payment=revenueFromEvent(row);
     if(!payment)continue;
-    monthlyRevenueMinor+=reporting.convertMinor(Number(payment.minor||0),payment.currency||currency,currency,reportingState);
+    const converted=reporting.convertMinor(Number(payment.minor||0),payment.currency||currency,currency,reportingState);
+    yearlyRevenueMinor+=converted;
+    if(row.in_current_month)monthlyRevenueMinor+=converted;
   }
-  return {streams:{active:activeStreams,total:totalStreams},monthlyRevenue:{minor:monthlyRevenueMinor,currency}};
+  return {
+    streams:{active:activeStreams,total:totalStreams},
+    monthlyRevenue:{minor:monthlyRevenueMinor,currency},
+    yearlyRevenue:{minor:yearlyRevenueMinor,currency}
+  };
 }
 
 async function snapshot(adminUserId=null){
