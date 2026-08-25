@@ -6,7 +6,7 @@
 
   // Legacy audit vocabulary retained for compatibility: Settings sections,
   // Commerce sections and Playback sections. Only the first/owning section row
-  // is rendered now; Commerce/Playback child rows are deliberately retired.
+  // is rendered now; specialist destinations live in the canonical sidebar.
   function current(href,group){
     const target=new URL(href,location.origin);
     if(group==='settings'){
@@ -115,36 +115,6 @@
     return candidate;
   }
 
-  function appendOwnedTools(content,links){
-    const existing=new Set([...content.querySelectorAll('.coherenceOwnedTools a[href]')].map(normalizedNavHref));
-    const primary=new Set([...content.querySelectorAll('.coherenceSectionTabs a[href]')].map(normalizedNavHref));
-    const currentHref=`${location.pathname}${location.search}${location.hash}`;
-    const unique=[];
-    for(const link of links){
-      const href=normalizedNavHref(link);
-      if(!href||href===currentHref||primary.has(href)||existing.has(href)||unique.some(item=>item.href===href))continue;
-      const title=(link.querySelector('strong')?.textContent||link.textContent||'Open tool').trim();
-      const description=[...link.querySelectorAll(':scope > span:not(.workflowCardEyebrow)')].map(node=>node.textContent.trim()).find(Boolean)||'Open this specialist control.';
-      unique.push({href,title,description});
-    }
-    if(!unique.length)return;
-    let section=content.querySelector('.coherenceOwnedTools');
-    let grid=section?.querySelector('.coherenceOwnedToolsGrid');
-    if(!section){
-      section=document.createElement('section');section.className='coherenceOwnedTools';section.setAttribute('aria-label','Related tools');
-      const head=document.createElement('div');head.className='coherenceOwnedToolsHead';
-      const copy=document.createElement('div');const h=document.createElement('h2');h.textContent='More in this area';const p=document.createElement('p');p.textContent='Specialist controls live inside the main area instead of creating another row of tabs.';copy.append(h,p);head.appendChild(copy);
-      grid=document.createElement('div');grid.className='coherenceOwnedToolsGrid';section.append(head,grid);content.appendChild(section);
-    }
-    unique.forEach(item=>{
-      const a=document.createElement('a');a.className='coherenceOwnedTool';a.href=item.href;
-      const strong=document.createElement('strong');strong.textContent=item.title;
-      const span=document.createElement('span');span.textContent=item.description;
-      const small=document.createElement('small');small.textContent='Open →';
-      a.append(strong,span,small);grid.appendChild(a);
-    });
-  }
-
   function enforceSingleUpperNavigation(){
     const content=document.querySelector('.content');
     if(!content)return;
@@ -155,19 +125,13 @@
       primary=promotePrimary(preferred);
       candidates=upperCandidates(content);
     }
-    const demotedLinks=[];
     for(const candidate of candidates){
-      if(candidate===primary)continue;
-      demotedLinks.push(...candidate.querySelectorAll('a[href]'));
-      candidate.remove();
+      if(candidate!==primary)candidate.remove();
     }
-    // Any late/legacy subtab row outside the immediate header stack is still
-    // invalid; preserve its destinations as in-page tools before removing it.
-    content.querySelectorAll('.coherenceSubTabs').forEach(candidate=>{
-      demotedLinks.push(...candidate.querySelectorAll('a[href]'));
-      candidate.remove();
-    });
-    appendOwnedTools(content,demotedLinks);
+    // Late legacy subtab rows are invalid too. Their destinations are already
+    // available from the shared sidebar, so remove them instead of creating a
+    // second hidden navigation directory at the bottom of the page.
+    content.querySelectorAll('.coherenceSubTabs,.coherenceOwnedTools').forEach(candidate=>candidate.remove());
   }
 
   enforceSingleUpperNavigation();
