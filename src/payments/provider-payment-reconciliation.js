@@ -9,7 +9,6 @@ const MAX_HOURS=24*14;
 
 function sinceDate(hours=DEFAULT_HOURS){const n=Math.max(1,Math.min(MAX_HOURS,Number(hours)||DEFAULT_HOURS));return new Date(Date.now()-n*60*60*1000);}
 function iso(value){return new Date(value).toISOString();}
-function lower(value){return String(value||'').trim().toLowerCase();}
 function providerLabel(provider){return provider==='paypal'?'PayPal':'Stripe';}
 function money(minor,currency){const value=Number(minor);if(!Number.isFinite(value))return'—';try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'USD').toUpperCase(),currencyDisplay:'narrowSymbol'}).format(value/100);}catch(_){return `${String(currency||'USD').toUpperCase()} ${(value/100).toFixed(2)}`;}}
 function paypalBase(config){return config?.environment==='live'?'https://api-m.paypal.com':'https://api-m.sandbox.paypal.com';}
@@ -22,7 +21,7 @@ function localMatch(row,local){const ids=collectIds(row);const intent=local.inte
 async function localRows(provider,since){const [intents,subscriptions,events]=await Promise.all([
   query(`SELECT id,customer_id,plan_id,provider_checkout_id,state,created_at,completed_at,commercial_snapshot FROM billing_checkout_intents WHERE provider=$1 AND created_at>=$2 ORDER BY created_at DESC`,[provider,since]),
   query(`SELECT id,customer_id,plan_id,provider_subscription_id,status,created_at,current_period_end FROM subscriptions WHERE source=$1 AND created_at>=$2 ORDER BY created_at DESC`,[provider,new Date(since.getTime()-30*24*60*60*1000)]),
-  query(`SELECT event_id,event_type,payload,processed_at,processing_error,created_at FROM payment_events WHERE provider=$1 AND created_at>=$2 ORDER BY created_at DESC`,[provider,since])
+  query(`SELECT provider_event_id AS event_id,event_type,payload,processed_at,processing_error,created_at FROM payment_events WHERE provider=$1 AND created_at>=$2 ORDER BY created_at DESC`,[provider,since])
 ]);return{intents:intents.rows,subscriptions:subscriptions.rows,events:events.rows};}
 async function providerResult(provider,since){try{const remote=provider==='paypal'?await paypalRecent(since):await stripeRecent(since);if(!remote.configured)return{provider,configured:false,error:null,rows:[]};const local=await localRows(provider,since),rows=remote.rows.map(row=>({...row,...localMatch(row,local)})).filter(row=>row.reason);return{provider,configured:true,error:null,rows};}catch(error){return{provider,configured:true,error:error.message||String(error),rows:[]};}}
 async function recentUnmapped({hours=DEFAULT_HOURS}={}){const since=sinceDate(hours),results=await Promise.all(['paypal','stripe'].map(provider=>providerResult(provider,since))),rows=results.flatMap(result=>result.rows).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));return{since,hours:Math.round((Date.now()-since.getTime())/3600000),results,rows};}
