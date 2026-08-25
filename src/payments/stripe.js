@@ -49,9 +49,11 @@ async function ensureStripeCoupon(discount,plan) {
 async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,discountCode=null,checkoutMode=null,idempotencyKey=null,resolvedPlan=null,currency=null,finalAmountMinor=null,checkoutExpiresAt=null,commercialSnapshot=null}) {
     const plan=resolvedPlan||await providerPricing.getProviderPlan(planCode,'stripe',checkoutMode,currency);if(!plan)throw new Error('This plan is not configured for the selected Stripe payment type and currency');
     const stripe=await getStripe(),stripeCustomerId=await ensureStripeCustomer(customerId,email),mode=plan.checkout_mode==='subscription'?'subscription':'payment',baseMinor=Number(plan.price_minor||0),finalMinor=finalAmountMinor==null?null:Number(finalAmountMinor);
+    if(mode==='subscription'&&!plan.external_id)throw new Error('This Stripe recurring option has no Price ID');
     if(finalMinor!=null&&(!Number.isInteger(finalMinor)||finalMinor<50||finalMinor>baseMinor))throw new Error('Adjusted Stripe checkout amount is invalid.');
     const metadata={internal_customer_id:customerId,internal_plan_id:plan.id,internal_plan_code:plan.code,...(plan.plan_price_id?{internal_plan_price_id:String(plan.plan_price_id)}:{}),...(plan.provider_mapping_id?{internal_provider_mapping_id:String(plan.provider_mapping_id)}:{}),...(idempotencyKey?{internal_checkout_intent_id:String(idempotencyKey)}:{})};
-    const params={mode,customer:stripeCustomerId,line_items:[{price:plan.external_id,quantity:1}],success_url:successUrl,cancel_url:cancelUrl,metadata,integration_identifier:randomIntegrationIdentifier()};
+    const lineItem=mode==='payment'?{price_data:{currency:String(plan.currency||'GBP').toLowerCase(),unit_amount:baseMinor,product_data:{name:plan.name}},quantity:1}:{price:plan.external_id,quantity:1};
+    const params={mode,customer:stripeCustomerId,line_items:[lineItem],success_url:successUrl,cancel_url:cancelUrl,metadata,integration_identifier:randomIntegrationIdentifier()};
     if(finalMinor!=null&&finalMinor<baseMinor){const coupon=await stripe.coupons.create({duration:'once',name:'CAPTAiNFiN checkout adjustment',amount_off:baseMinor-finalMinor,currency:String(plan.currency||'GBP').toLowerCase()});params.discounts=[{coupon:coupon.id}];if(commercialSnapshot?.discountCodeId)metadata.internal_discount_code_id=String(commercialSnapshot.discountCodeId);}
     else if(discountCode){const discount=await discounts.validateForCheckout({code:discountCode,planId:plan.id,planCode,customerId});if(discount.discount_type==='fixed'&&discount.currency&&String(discount.currency).toUpperCase()!==String(plan.currency).toUpperCase())throw new Error("That discount code's currency does not match this plan");const couponId=await ensureStripeCoupon(discount,plan);params.discounts=[{coupon:couponId}];metadata.internal_discount_code_id=discount.id;}
     if(checkoutExpiresAt){const epoch=Math.floor(new Date(checkoutExpiresAt).getTime()/1000),now=Math.floor(Date.now()/1000);if(Number.isFinite(epoch)&&epoch>=now+30*60&&epoch<=now+24*60*60)params.expires_at=epoch;}
@@ -79,7 +81,7 @@ async function checkoutContract(session) {
     const verified=await stripe.checkout.sessions.retrieve(session.id,{expand:['line_items.data.price']});
     if(!['paid','no_payment_required'].includes(verified.payment_status))throw new Error('Stripe Checkout session is not paid');
     const price=verified.line_items?.data?.[0]?.price||null,priceId=price?.id||null;
-    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:priceId,amountMinor:verified.mode==='payment'?verified.amount_total:null,currency:verified.mode==='payment'?verified.currency:price?.currency});
+    const contract=await checkoutIntents.verifiedProviderContract({provider:'stripe',providerCheckoutId:verified.id,scope:'customer',ownerId:customerId,planId,checkoutMode:verified.mode,providerMappingId:verified.mode==='subscription'?priceId:null,amountMinor:verified.mode==='payment'?verified.amount_total:null,currency:verified.mode==='payment'?verified.currency:price?.currency});
     return{session:verified,customerId,planId,priceId,...contract};
 }
 async function activateCheckoutSession(session) {
@@ -91,10 +93,12 @@ async function activateCheckoutSession(session) {
         const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price']}),period=subscriptionPeriod(subscription);
         const subscriptionPrice=subscription.items?.data?.[0]?.price?.id||null;
         if(contract.snapshot.providerMappingId&&subscriptionPrice&&String(contract.snapshot.providerMappingId)!==String(subscriptionPrice))throw new Error('Stripe subscription price does not match the checkout contract.');
-        return lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot});
+        const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:subscription.id,providerStatus:subscription.status,periodStart:period.start,periodEnd:period.end,cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),commercialSnapshot:contract.snapshot});
+        await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');return activated;
     }
     const paymentId=typeof verified.payment_intent==='string'?verified.payment_intent:verified.payment_intent?.id||verified.id;
-    return lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:paymentId,providerStatus:'active',commercialSnapshot:contract.snapshot});
+    const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:paymentId,providerStatus:'active',commercialSnapshot:contract.snapshot});
+    await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');return activated;
 }
 async function syncSubscription(subscriptionId,statusOverride=null) {
     const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price']}),period=subscriptionPeriod(subscription);
