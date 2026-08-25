@@ -7,11 +7,15 @@ const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 
 const dashboard=read('views/customer/dashboard.ejs');
 const onboarding=read('views/customer/onboarding.ejs');
+const affiliate=read('views/customer/affiliate.ejs');
+const affiliateRoute=read('src/platform/customer-affiliate.js');
 const nav=read('views/customer/_nav.ejs');
 const generatedNav=read('src/platform/customer-nav-html.js');
 const dashboardRoute=read('src/platform/customer-dashboard.js');
 const customerNavigationCss=read('public/css/customer-navigation.css');
 const security=read('src/platform/customer-security.js');
+const docsRoute=read('src/platform/customer-docs.js');
+const docsRender=read('src/platform/docs-render.js');
 const router=read('src/platform/router.js');
 const publicAuth=read('src/platform/customer-public-auth.js');
 const pending=read('src/security/pending-registration.js');
@@ -33,13 +37,25 @@ assert(generatedNav.includes('optionsForCustomer')&&generatedNav.includes('optio
 assert(dashboardRoute.includes('navOptions=customerNav.optionsFromPortal(portal)'),'dashboard and onboarding must compute canonical navigation options from the same portal model');
 assert(dashboard.includes("include('_nav'")&&dashboard.includes('navOptions'),'dashboard must use shared customer navigation options');
 assert(!dashboard.includes('customerNavLink" href="<%= overseerrUrl %>"'),'dashboard must not hardcode a second sidebar Request content link');
+assert(security.includes('class="securityMain"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
+assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
+assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Guides must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
+assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
+
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
 for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans'])assert(onboarding.includes(group),`customer access catalogue must preserve the admin plan family ${group}`);
+assert(onboarding.includes('.choiceGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))'),'four-card onboarding groups must use four equal desktop columns');
+assert(onboarding.includes('.choiceGrid.choiceGrid--1{grid-template-columns:minmax(260px,320px)}'),'single-card onboarding groups must remain compact on desktop');
+assert(onboarding.includes('@media(max-width:980px){.choiceGrid,.choiceGrid.choiceGrid--2,.choiceGrid.choiceGrid--3{grid-template-columns:repeat(2,minmax(0,1fr))}'),'onboarding plan groups must collapse to two columns on tablet widths');
+assert(onboarding.includes('@media(max-width:700px){.choiceGrid,.choiceGrid.choiceGrid--1,.choiceGrid.choiceGrid--2,.choiceGrid.choiceGrid--3{grid-template-columns:1fr}'),'onboarding plan groups must collapse to one column on mobile');
+assert(onboarding.includes('choiceGrid--<%= Math.min(group.plans.length,4) %>'),'onboarding must choose compact grid sizing from the actual group card count');
 assert(onboarding.includes("'One-off payment'")&&onboarding.includes("'Subscription'"),'payment buttons must explicitly distinguish one-off payment from subscription checkout');
 assert(onboarding.includes("paymentButton('paypal',opt)")&&onboarding.includes("paymentButton('stripe',opt)"),'provider buttons must include both provider and payment mode');
-assert(security.includes('class="securityMain"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
-assert(security.includes('optionsForCustomer'),'Account security must compute the same canonical conditional navigation options as other customer pages');
-assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
+
+for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans','Other Plans'])assert(dashboard.includes(group),`dashboard Plan & billing grouping missing ${group}`);
+assert(dashboard.includes("accessGroups.forEach(function(group)")&&dashboard.includes('group.plans.forEach(function(p)'),'dashboard Plan & billing must render each family as its own group without changing per-plan card actions');
+assert(dashboard.includes('hideFreeOrTrial=Boolean(activeSubscription&&currentPlan&&!currentPlan.is_free_tier&&Number(p.price_minor)===0&&!isCurrent)'),'free and trial plans must only be hidden when the current plan is genuinely paid');
+assert(stremio.includes('!currentPlan.is_free_tier'),'Stremio-only dashboard must preserve the same paid-vs-free trial visibility rule');
 assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('scheduled for your next renewal'),'dashboard must disclose Stripe plan-change timing before checkout');
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
 assert(!/provisioning source|server placement|reconciliation/i.test(dashboard),'dashboard exposes operator-only jargon');
@@ -47,6 +63,13 @@ assert(stremio.includes("include('_nav'")&&stremio.includes('navOptions'),'Strem
 assert(customerPortalCss.includes('.accountHero')&&customerPortalCss.includes('.overviewGrid')&&customerPortalCss.includes('.metricCard')&&customerPortalCss.includes('.notice.error'),'customer dashboard hero, metrics and warning surfaces must be styled');
 assert(!stremio.includes('style="font-size:20px"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
 assert(history.includes("customerNav.nav('history',navOptions)"),'billing history must use canonical navigation with the Payments item highlighted');
+
+assert(affiliateRoute.includes("operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code))"),'affiliate route must build the canonical shareable referral signup URL');
+assert(affiliateRoute.includes('referralLink'),'affiliate route must pass the referral signup URL to the template');
+assert(affiliate.includes('id="referral-signup-link"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('navigator.clipboard.writeText(input.value)'),'Benefits must display and copy the full referral signup link');
+assert(affiliate.includes("balances.get('USD')")&&affiliate.includes('class="metricCard"'),'Benefits balances must use the compact metric-card language for USD');
+assert(!affiliate.includes("['GBP','USD','EUR'].forEach"),'Benefits must not render the previous three oversized currency plan cards');
+
 assert(router.includes('createCustomerActivityRouter')&&activity.includes("r.get('/account/activity'"),'customer Activity navigation must have a mounted /account/activity route');
 assert(activity.includes('WHERE ph.customer_id=$1')&&activity.includes('WHERE customer_id=$1'),'customer Activity page must only query the signed-in customer');
 assert(/\/account\/trial\/start[\s\S]*welcome=1/.test(router),'trial completion must enter welcome flow');
