@@ -49,7 +49,7 @@ function paymentTabsFor(options){
 function layout(options={}){
   const site=options.siteName||'CAPTAiNFiN';
   const current=activePage(options.active);
-  const docsAction='<a class="topHelpLink" href="/help" target="_blank" rel="noopener noreferrer">Help & docs</a>';
+  const docsAction='<a class="topHelpLink" href="/admin/docs">Help & docs</a>';
   const statusAction='<div class="topStatusWrap"><button class="topStatusLink clear" type="button" data-operator-alerts aria-expanded="false" aria-controls="operatorStatusMenu" title="Open status and alerts"><span class="topStatusDot" aria-hidden="true"></span><span>Status</span><strong data-operator-alert-count>Clear</strong></button><div class="topStatusMenu" id="operatorStatusMenu" data-operator-alert-menu hidden><div class="topStatusMenuHead"><strong>Status & alerts</strong><a href="/admin/attention">View all</a></div><div class="topStatusMenuBody" data-operator-alert-list aria-live="polite"><div class="topStatusEmpty">Loading status…</div></div></div></div>';
   const topActions=`<div class="topBarActions">${statusAction}${docsAction}${options.action||''}</div>`;
   const quickFind='<form class="adminQuickFind" method="get" action="/admin/search" role="search"><label class="srOnly" for="adminQuickFindInput">Search customers, plans and servers</label><input class="adminQuickFindInput" id="adminQuickFindInput" name="q" type="search" minlength="2" autocomplete="off" placeholder="Search customers, plans, servers…"></form>';

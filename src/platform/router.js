@@ -28,6 +28,7 @@ const { createAdminDashboardLayoutRouter } = require('./admin-dashboard-layout')
 const { createAdminServersDashboardRouter } = require('./admin-servers-dashboard');
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAdminCustomerJellyfinPasswordRouter } = require('./admin-customer-jellyfin-password');
+const { createAdminDocsRouter } = require('./admin-docs');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
@@ -88,6 +89,7 @@ function createRouter() {
     router.use(createAdminServersDashboardRouter());
     router.use(createAdminJellyfinLifecycleRouter());
     router.use(createAdminCustomerJellyfinPasswordRouter());
+    router.use(createAdminDocsRouter());
     router.use(createAdminAutomationRouter());
     router.use(createAdminSearchRouter());
     router.use(createAdminEventsRouter());
