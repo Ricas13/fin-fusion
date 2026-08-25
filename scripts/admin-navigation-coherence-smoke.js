@@ -8,6 +8,8 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const context=require('../src/platform/admin-context-navigation');
 const html=require('../src/platform/admin-html-core');
+const finance=require('../src/platform/finance-ledger');
+const paymentFinancials=require('../src/payments/payment-financials');
 
 const keys=rows=>rows.map(row=>row[0]);
 const labels=rows=>rows.map(row=>row[1]);
@@ -87,10 +89,28 @@ assert(rendered.includes('class="coherenceOwnedTools"'),'Former payment subtabs 
 assert(rendered.includes('href="/admin/provider-mappings"')&&rendered.includes('href="/admin/billing"')&&rendered.includes('href="/admin/payments/risk-policy"'),'Payment specialist destinations must remain reachable from the Payments main page');
 assert(/topBreadcrumb[\s\S]*<a href="\/admin\/plans">Commerce<\/a>/.test(rendered),'Top breadcrumb must expose Commerce ancestry through its main landing page');
 
+// Finance values must stay conservative: unknown fees are null, not zero, and
+// dated expense changes/refunds preserve historical accounting semantics.
+assert.strictEqual(paymentFinancials.integerOrNull(null),null,'Unknown provider fees must not be converted to zero');
+assert.strictEqual(paymentFinancials.integerOrNull(undefined),null,'Missing provider fees must stay unknown');
+assert.strictEqual(paymentFinancials.integerOrNull('0'),0,'A genuine zero fee must remain representable');
+assert.strictEqual(finance.moneyToMinor('12.34'),1234,'Expense amounts must be stored in integer minor units');
+assert.strictEqual(finance.defaultRenewal('2026-01-31','monthly'),'2026-02-28','Monthly renewal dates must clamp safely at month end');
+assert.strictEqual(finance.defaultRenewal('2024-02-29','yearly'),'2025-02-28','Yearly renewal dates must clamp leap-day subscriptions safely');
+const refundRows=finance.normalizedAdverseRows([
+  {provider:'stripe',incident_type:'refund',provider_case_id:'ch_test',amount_minor:300,currency:'GBP',created_at:'2026-01-02T00:00:00Z'},
+  {provider:'stripe',incident_type:'refund',provider_case_id:'ch_test',amount_minor:500,currency:'GBP',created_at:'2026-01-03T00:00:00Z'}
+]);
+assert.deepStrictEqual(refundRows.map(row=>row.effective_minor),[300,200],'Cumulative Stripe partial refunds must only deduct the incremental reversal');
+
 const coreSource=read('src/platform/admin-html-core.js');
 assert(coreSource.includes('renderOwnedTools(options.active)'),'Shared admin rendering must append owner tools as page content');
 assert(coreSource.includes('function removeSecondaryWorkflowNavigation'),'Shared admin rendering must enforce removal of legacy server workflow rows');
 assert(coreSource.includes('workflowCardGrid operatorTabs'),'The server cleanup must target the legacy workflow-card navigation signature');
+const financeSource=read('src/platform/admin-finance.js');
+assert(financeSource.includes("active:'finance'"),'Finance must render through the standard admin layout');
+assert(financeSource.includes('/admin/finance/fees/refresh'),'Finance must expose an explicit merchant-fee refresh action');
+assert(financeSource.includes('effective_from:today()'),'Expense changes must default to a new dated version instead of rewriting history');
 
 const fallback=read('public/js/admin-navigation-coherence.js');
 assert(fallback.includes("if(!document.querySelector('.coherenceSectionTabs'))"),'Legacy navigation enhancer must remain fallback-only');
@@ -104,5 +124,6 @@ assert(css.includes('.coherenceSectionTabs.workflowCardGrid'),'The one main row 
 assert(css.includes('.coherenceOwnedToolsGrid'),'Former secondary destinations must have a dedicated non-sticky content layout');
 assert(css.includes('.coherenceSubTabs,.pageHeader + .operatorTabs:not(.coherenceSectionTabs){display:none!important}'),'CSS must fail safe by never displaying stacked legacy upper rows');
 assert(/settingsCommerceGrid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/.test(css),'Settings-style configuration cards should remain three-up where practical');
+assert(read('public/css/admin-capability.css').includes("@import url('/css/admin-finance.css')"),'Finance styles must be loaded by the shared admin capability bundle');
 
 console.log('admin navigation coherence smoke: ok');
