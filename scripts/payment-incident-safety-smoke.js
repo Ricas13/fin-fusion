@@ -77,6 +77,9 @@ function main() {
     ]) {
         if (!source.includes(required)) throw new Error(`Current-state provider verification is missing ${required}`);
     }
+    if (!source.includes('scope=COALESCE($2,scope)')) {
+        throw new Error('Provider reconciliation does not promote a matched unresolved incident to direct scope.');
+    }
 
     // Generic provider status "resolved" is ambiguous (especially for PayPal):
     // only an explicitly merchant-winning webhook may use the automatic restore
