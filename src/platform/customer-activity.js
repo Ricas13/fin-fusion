@@ -1,29 +1,19 @@
 'use strict';
 const express=require('express');
-const {pool}=require('../db');
+const {query}=require('../db');
 const runtimeSettings=require('./runtime-settings');
+const inactivityStatus=require('../automation/customer-inactivity-status');
 const customers=require('../customers');
-const activity=require('../activity/playback');
-const customerSecurity=require('./customer-security');
 const customerNav=require('./customer-nav-html');
-const router=express.Router();
-router.use(customerSecurity.requireCustomer);
+function requireCustomer(req,res,next){return req.session?.customerId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/activity'));}
 async function data(customerId){
- const [history,live,portal]=await Promise.all([
-  pool.query(`SELECT ph.id,ph.item_name,ph.item_type,ph.client_name,ph.device_name,ph.playback_method,ph.transcode_reasons,ph.started_at,ph.last_seen_at,ph.ended_at,ph.ended_reason,s.name AS server_name FROM playback_history ph LEFT JOIN servers s ON s.id=ph.server_id WHERE ph.customer_id=$1 ORDER BY ph.started_at DESC LIMIT 100`,[customerId]),
-  activity.listLiveSessions(customerId),
-  customers.getCustomerPortal(customerId)
- ]);
- return{history:history.rows,live,me:portal.customer,navOptions:customerNav.optionsFromPortal(portal)};
+  const [activityRows,eventRows,freeUsage,portal]=await Promise.all([
+    query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId]),
+    query(`SELECT created_at,decision,reason,stream_limit,observed_streams FROM playback_policy_events WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]),
+    inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
+    customers.getCustomerPortal(customerId)
+  ]);
+  return{activity:activityRows.rows,events:eventRows.rows,freeUsage,navOptions:customerNav.optionsFromPortal(portal)};
 }
-router.get('/account/activity',async(req,res)=>{
- try{
-  await runtimeSettings.ensureLoaded();
-  const d=await data(req.session.customerId);
-  return res.render('customer/activity',{siteName:runtimeSettings.siteName(),csrfToken:req.csrfToken(),customer:d.me,history:d.history,live:d.live,navOptions:d.navOptions,message:req.query.message||'',error:req.query.error||''});
- }catch(err){
-  req.log?.error?.(err);
-  return res.status(500).send('Request failed.');
- }
-});
-module.exports=router;
+function createCustomerActivityRouter(){const r=express.Router();r.get('/account/activity',requireCustomer,async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const d=await data(req.session.customerId);return res.render('customer/activity',{siteName:runtimeSettings.siteName(),...d});}catch(error){return next(error)}});return r}
+module.exports={createCustomerActivityRouter,data};
