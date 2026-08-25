@@ -76,6 +76,7 @@ assert(!rendered.includes('class="workflowCardGrid operatorTabs"'),'Legacy workf
 assert(!rendered.includes('class="coherenceOwnedTools"'),'Navigation must never be appended below page content');
 assert.strictEqual(base.paymentTabsFor({title:'Payments'}),'','Payment-specific top tabs must be retired in favour of nested sidebar navigation');
 assert(/topBreadcrumb[\s\S]*<a href="\/admin\/plans">Commerce<\/a>/.test(rendered),'Breadcrumb ancestry must remain available after removing duplicate tabs');
+assert(rendered.indexOf('/js/operator-experience.js')<rendered.indexOf('/js/admin-navigation-coherence.js'),'Sidebar-only cleanup must run after the legacy operator enhancer so dynamically injected workflow menus are removed');
 
 const baseSource=read('src/platform/admin-html-core-base.js');
 assert(baseSource.includes('function sidebarPage'),'Shared admin chrome must render nested sidebar destinations server-side');
@@ -90,7 +91,7 @@ assert(coreSource.includes('coherenceOwnedTools'),'Cleanup must remove stale bot
 
 const fallback=read('public/js/admin-navigation-coherence.js');
 assert(fallback.includes('function enforceSidebarOnlyNavigation()'),'Client enhancement must enforce sidebar-only navigation on legacy pages');
-assert(fallback.includes('section.coherenceOwnedTools'),'Legacy bottom navigation directories must be removed client-side too');
+assert(fallback.includes("'nav.workflowCardGrid,nav.operatorTabs,nav.coherenceSectionTabs,nav.coherenceSubTabs,section.coherenceOwnedTools'"),'Client cleanup must remove both server-rendered and dynamically injected workflow navigation');
 assert(!fallback.includes('appendOwnedTools'),'Client code must never recreate hidden bottom-of-page navigation');
 assert(!fallback.includes('fallbackNav('),'Client code must not rebuild duplicate top section tabs');
 assert(fallback.includes('function movePageActionsToHeading()'),'Admin enhancement must move page-scoped controls beside the page heading');
