@@ -23,6 +23,7 @@ const TOOL_DESCRIPTIONS = Object.freeze({
     'commerce-overview': 'Review revenue, MRR, churn and checkout performance.',
     discounts: 'Manage promotions, coupon rules and redemption state.',
     referrals: 'Manage affiliate referrals and service-credit rewards.',
+    finance: 'Track merchant fees, recurring costs, renewals and operating profit.',
     'storefront-order': 'Control how plans are ordered on the storefront.',
     'plan-access-rules': 'Manage advanced access and delivery rules for plans.',
     billing: 'Review billing state and billing-specific controls.',
