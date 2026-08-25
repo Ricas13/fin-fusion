@@ -10,7 +10,7 @@ function normalize(query, columns, defaultKey) {
   const keys = Object.keys(columns || {});
   if (!keys.length) throw new Error('At least one sortable column is required.');
   const fallback = own(columns, defaultKey) ? defaultKey : keys[0];
-  const requestedKey = String(query?.sort || '');
+  const requestedKey = String(query?.sort || query?.key || '');
   const key = own(columns, requestedKey) ? requestedKey : fallback;
   const spec = columns[key] || {};
   const fallbackDirection = DIRECTIONS.has(spec.defaultDirection) ? spec.defaultDirection : 'asc';
