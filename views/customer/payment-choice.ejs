@@ -11,20 +11,20 @@
 <%
   const providerName=({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio'})[provider]||'Payment provider';
   const quantity=Number(accessQuantity||1),quantityLabel=accessVariantKind==='households'?`${quantity} household${quantity===1?'':'s'}`:`${quantity} concurrent stream${quantity===1?'':'s'}`;
+  const promo=String(discountCode||'').trim();
 %>
 <body>
 <div class="portalShell">
   <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Secure checkout</div></div></a></div></header>
   <main class="portalMain" style="max-width:760px">
-    <section class="heroCard" style="display:block"><div class="welcomePanel"><div class="eyebrow"><%= providerName %></div><h1>How would you like to pay?</h1><p><strong><%= planName %></strong> · <%= priceLabel %> · <%= quantityLabel %>. Choose whether this purchase should renew automatically.</p></div></section>
+    <section class="heroCard" style="display:block"><div class="welcomePanel"><div class="eyebrow"><%= providerName %></div><h1>How would you like to pay?</h1><p><strong><%= planName %></strong> · <%= priceLabel %> · <%= quantityLabel %>. Choose whether this purchase should renew automatically.</p><% if(promo){ %><div class="notice success" style="margin-top:12px">Promo code <strong><%= promo %></strong> will be applied automatically to the eligible payment option.</div><% } %></div></section>
     <section class="sectionBlock">
       <form method="post" action="/account/checkout/<%= provider %>" class="panel">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="planCode" value="<%= planCode %>">
         <input type="hidden" name="accessQuantity" value="<%= quantity %>">
-        <div class="plansGrid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))"><% options.forEach(function(option){ %><label class="planCard" style="cursor:pointer"><div class="planTop"><div><div class="planName"><%= option.checkout_mode === 'subscription' ? 'Automatic renewal' : 'One-time payment' %></div><div class="planDuration"><%= option.checkout_mode === 'subscription' ? 'Renews automatically until cancelled' : 'No automatic renewal' %></div></div></div><div class="planDescription"><%= option.checkout_mode === 'subscription' ? 'Your access renews through the selected payment provider.' : 'Pay once now. Access ends after the plan duration unless you buy again.' %></div><div style="margin-top:14px"><input type="radio" name="checkoutMode" value="<%= option.checkout_mode %>" required> Choose this option</div></label><% }) %></div>
-        <div class="field" style="margin-top:16px"><label>Discount code <span class="brandMeta">(optional)</span></label><input class="input" name="discountCode" maxlength="40" value="<%= discountCode || '' %>" placeholder="Enter code"></div>
-        <% if (provider === 'paypal' && options.some(function(o){return o.checkout_mode === 'subscription'})) { %><div class="brandMeta" style="margin-top:8px">PayPal discount codes currently apply only to one-time payments.</div><% } %>
+        <input type="hidden" name="discountCode" value="<%= promo %>">
+        <div class="plansGrid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))"><% options.forEach(function(option){const promoBlocked=Boolean(promo&&provider==='paypal'&&option.checkout_mode==='subscription'); %><label class="planCard <%= promoBlocked?'muted':'' %>" style="cursor:<%= promoBlocked?'not-allowed':'pointer' %>"><div class="planTop"><div><div class="planName"><%= option.checkout_mode === 'subscription' ? 'Automatic renewal' : 'One-time payment' %></div><div class="planDuration"><%= option.checkout_mode === 'subscription' ? 'Renews automatically until cancelled' : 'No automatic renewal' %></div></div></div><div class="planDescription"><%= promoBlocked?'This PayPal recurring option cannot safely change the Billing Plan price. Choose one-time PayPal to use this promo, or return and choose Stripe/Plisio.':option.checkout_mode === 'subscription' ? 'Your access renews through the selected payment provider.' : 'Pay once now. Access ends after the plan duration unless you buy again.' %></div><div style="margin-top:14px"><input type="radio" name="checkoutMode" value="<%= option.checkout_mode %>" <%= promoBlocked?'disabled':'' %> required> <%= promoBlocked?'Promo not available for this option':'Choose this option' %></div></label><% }) %></div>
         <div class="heroButtons" style="margin-top:18px"><button class="button primary" type="submit">Continue to <%= providerName %></button><a class="button secondary" href="/account#plans">Back to plans</a></div>
       </form>
     </section>
