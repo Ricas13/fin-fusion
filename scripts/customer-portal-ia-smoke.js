@@ -40,17 +40,21 @@ assert(nav.includes('>Affiliate</a>')&&!nav.includes('>Benefits</a>'),'customer 
 assert(nav.includes('Request content ↗'),'configured content requests must be part of the canonical customer navigation');
 assert(generatedNav.includes("views/customer/_nav.ejs")&&generatedNav.includes('ejs.compile'),'server-rendered account pages must render the same EJS navigation partial as template-rendered pages');
 assert(generatedNav.includes('optionsForCustomer')&&generatedNav.includes('optionsFromPortal'),'customer navigation conditionals must come from one shared options helper');
+assert(generatedNav.includes('standaloneHeader')&&generatedNav.includes("['account','security']"),'signed-in Account must recover the shared account header without affecting login/2FA frames');
 assert(dashboardRoute.includes('navOptions=customerNav.optionsFromPortal(portal)'),'dashboard and onboarding must compute canonical navigation options from the same portal model');
 assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must use the canonical customer navigation partial');
 assert(!dashboard.includes('customerNavLink\" href=\"<%= overseerrUrl %>\"'),'dashboard must not hardcode a second sidebar Request content link');
+assert(dashboard.includes('href="/account/security">Account</a>')&&!dashboard.includes('href="/account/security">Security</a>'),'Home account shortcuts must use the same Account name as the canonical navigation');
 assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
+assert(customerNavigationCss.includes('.customerStandaloneHeader'),'signed-in Account must style the restored account header explicitly');
 assert(communications.includes("include('_nav',{active:'notifications'})"),'Notifications page must highlight Notifications rather than making Account look active');
 assert(communications.includes('class=\"portalTopbar\"'),'Notifications page must retain the customer account header');
 assert(activityView.includes('class=\"portalTopbar\"'),'Activity page must retain the customer account header');
 assert(history.includes('class=\"portalTopbar\"'),'Payments page must retain the customer account header');
 assert(affiliate.includes('class=\"portalTopbar\"')&&affiliate.includes("include('_nav',{active:'affiliate'})"),'Affiliate must retain the account shell and highlight Affiliate');
 assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Help must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
+assert(docsRender.includes('customerTopbar(site)'),'customer Help must retain the account header above the documentation reading shell');
 assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
 
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
