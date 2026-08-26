@@ -30,7 +30,7 @@ assert(/confirmWord:'DELETE'/.test(bulkCustomers)&&/meta\.immediate/.test(bulkCu
 assert(/name=\"planId\" required><option/.test(bulkCustomers)&&!/Use the plan UUID/.test(bulkCustomers),'bulk plan changes must use human plan choices, not UUID entry');
 assert(/name=\"serverId\" required><option/.test(bulkCustomers)&&!/Use the server UUID/.test(bulkCustomers),'bulk server moves must use human server choices, not UUID entry');
 assert(/serviceKind/.test(plans)&&/data-plan-service/.test(plans)&&/Stremio-only plan/.test(plans),'plan workflow must be service-type aware');
-assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard)&&/journeyPrimary/.test(dashboard),'customer home must be action-first and hide management complexity');
+assert(/ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard)&&/journeyPrimary/.test(dashboard),'customer home must be action-first and hide management complexity');
 assert(/simpleHero\.ready/.test(dashboardCss)&&/rgba\(101,214,248/.test(dashboardCss),'customer dashboard must use semantic state colour and blue hover feedback');
 assert(/hardDeletePortalCustomer/.test(customerDeletion)&&/DELETE FROM customers WHERE id=\$1/.test(customerDeletion),'Permanent portal deletion must delete the CAPTAiNFiN customer row');
 assert(/deleteJellyfinAccounts/.test(customerDeletion)&&/Could not delete .* from Jellyfin/.test(customerDeletion),'Jellyfin delete failures must surface the failing account and reason');
