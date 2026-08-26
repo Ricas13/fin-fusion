@@ -36,6 +36,7 @@ function main() {
     const expected = [
         'GET /api/platform/plans',
         'POST /account/libraries',
+        'POST /account/libraries/:accountId',
         'POST /account/requests/password',
         'POST /account/requests/password/sync'
     ].sort();
