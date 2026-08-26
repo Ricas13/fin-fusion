@@ -67,7 +67,8 @@ async function api(path, params = {}, { timeoutMs = 15000 } = {}) {
         }
         if (!response.ok || payload?.status === 'error') {
             const detail = payload?.data?.message || payload?.message || payload?.error || `HTTP ${response.status}`;
-            throw new Error(`Plisio ${response.status}: ${String(detail).slice(0, 600)}`);
+            console.error(`Plisio API error (${response.status}):`, String(detail).slice(0, 600));
+            throw new Error('This payment method is temporarily unavailable. Please try Stripe or PayPal, or contact support if you keep seeing this.');
         }
         return payload?.status === 'success' && payload?.data !== undefined ? payload.data : payload;
     } catch (error) {
