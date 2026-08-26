@@ -56,6 +56,16 @@ const futureCandidate = legacy.basicCandidate(input.payments[1], now);
 assert.strictEqual(futureCandidate.state, 'ready_future', 'prepaid future terms must be retained rather than discarded');
 assert.strictEqual(legacy.basicCandidate(input.payments[2], now).state, 'excluded', 'zero-dollar trial rows must never create paid access');
 
+
+const overlapCandidate = { start: new Date('2026-07-22T00:00:00Z'), end: new Date('2027-07-22T00:00:00Z') };
+const localPartial = { id: 'local-year', plan_id: 'year', source: 'migration', status: 'active', provider_subscription_id: null, effective_price_minor: 6000, starts_at: new Date('2026-07-22T00:00:00Z'), current_period_end: new Date('2027-01-22T00:00:00Z') };
+assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'year', [localPartial]).kind, 'extend', 'same-plan local paid access may be safely extended to the trusted legacy expiry');
+assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'six', [localPartial]).kind, 'review', 'a different-plan overlap must remain manual review');
+const liveRecurring = { ...localPartial, id: 'stripe-live', source: 'stripe', provider_subscription_id: 'sub_live_123', status: 'active' };
+assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'year', [liveRecurring]).kind, 'covered_recurring', 'verified recurring provider access must never be overwritten by CSV migration');
+const duplicateLocal = { ...localPartial, id: 'local-year-2' };
+assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'year', [localPartial, duplicateLocal]).kind, 'review', 'multiple local paid overlaps must never be guessed');
+
 const snapshot = legacy.commercialSnapshot({ ...input.payments[0], plan: legacy.parseLegacyPlan('Yearly - 6 streams') }, currentPlans[2]);
 assert.strictEqual(snapshot.kind, 'legacy_import');
 assert.strictEqual(snapshot.streams, 6, 'legacy stream count must override the current public plan in the immutable contract snapshot');
@@ -74,6 +84,8 @@ assert(!serviceSource.includes('activatePurchase('), 'legacy CSV rows must never
 assert(!/provider_subscription_id\s*=/.test(serviceSource), 'payment transaction IDs must never be faked into recurring provider subscription IDs');
 assert(serviceSource.includes('cancel_at_period_end') && serviceSource.includes('TRUE'), 'restored terms must end on their exported To date until verified live recurring state is linked');
 assert(serviceSource.includes('legacy_subscription_imports') && serviceSource.includes('provider_transaction_id'), 'migration must be idempotent on original provider transaction identity');
+assert(serviceSource.includes('existingPaidDecision') && serviceSource.includes('GREATEST(current_period_end'), 'same-plan local paid overlaps must use the guarded extension path instead of forcing manual review');
+assert(serviceSource.includes("plan_id=$5 AND superseded_by IS NULL AND status='active'"), 'extension writes must re-check same plan, live status and unsuperseded ownership under lock');
 assert(serviceSource.includes('customersByJellyfinName') && serviceSource.includes('jellyfin_username'), 'legacy Users names must be able to match an already-managed Jellyfin customer');
 assert(serviceSource.includes("COALESCE(ja.account_purpose,'jellyfin')='jellyfin'"), 'identity matching must only use customer-facing Jellyfin identities');
 assert(serviceSource.includes('needsJellyfinLink') && serviceSource.includes('managedAccount'), 'unlinked CSV-only customers must not be blindly provisioned into duplicate Jellyfin accounts');
@@ -84,6 +96,7 @@ assert(adminSource.includes('csrf.verify(req)'), 'preview/apply must be CSRF pro
 assert(adminSource.includes("req.body?.confirm !== '1'"), 'apply must require explicit operator confirmation');
 assert(adminSource.includes('It does not charge customers'), 'admin UI must state that migration does not create a provider charge');
 assert(adminSource.includes('Matched existing managed Jellyfin user') && adminSource.includes('deliberately did not create a duplicate Jellyfin user'), 'admin preview/result must explain managed-identity matching and safe unlinked handling');
+assert(adminSource.includes('Extend existing access'), 'safe same-plan legacy extensions must be clearly labelled in the preview UI');
 assert(uploadSource.includes('multiple') || adminSource.includes('multiple'), 'operator must be able to select all Users/Payments CSVs together');
 assert(uploadSource.includes('650 * 1024'), 'browser upload must remain safely below the application request-body ceiling');
 assert(mappingSource.includes('Use Migrate paid users'), 'Provider mappings must redirect confused migration operators to the correct workflow');

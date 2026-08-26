@@ -154,6 +154,20 @@ function choosePlan(legacy, plans) {
 
 function overlaps(aStart, aEnd, bStart, bEnd) { return aStart < bEnd && bStart < aEnd; }
 
+function existingPaidDecision(payment, planId, subscriptions) {
+    const overlappingRows = (subscriptions || []).filter(sub => overlaps(payment.start, payment.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
+    const recurring = overlappingRows.find(sub => subscriptionState.LIVE_STATUSES.includes(String(sub.status || '')) && subscriptionState.recurringProvider(sub));
+    if (recurring) return { kind: 'covered_recurring', subscription: recurring };
+    const localPaid = overlappingRows.filter(sub => String(sub.status || '') === 'active' && !subscriptionState.recurringProvider(sub) && Number(sub.effective_price_minor || 0) > 0);
+    const covering = localPaid.find(sub => new Date(sub.starts_at) <= payment.start && new Date(sub.current_period_end) >= payment.end);
+    if (covering) return { kind: 'covered', subscription: covering };
+    if (!localPaid.length) return { kind: 'none', subscription: null };
+    if (localPaid.length > 1) return { kind: 'review', subscription: null, reason: 'More than one active local paid subscription overlaps this legacy term.' };
+    const partial = localPaid[0];
+    if (String(partial.plan_id) !== String(planId)) return { kind: 'review', subscription: partial, reason: 'Existing local paid access overlaps this legacy term on a different plan.' };
+    return { kind: 'extend', subscription: partial };
+}
+
 async function loadContext(emails, transactionKeys, legacyNames = []) {
     const normalizedEmails = Array.from(new Set(emails.filter(Boolean)));
     const normalizedNames = Array.from(new Set((legacyNames || []).map(value => clean(value, 100).toLowerCase()).filter(Boolean)));
@@ -202,7 +216,7 @@ async function preview(files, { now = new Date() } = {}) {
     for (const payment of input.payments) {
         const base = basicCandidate(payment, now);
         const match = choosePlan(payment.plan, context.plans);
-        const row = { ...payment, ...base, planMatch: match.plan || null, streamOverride: Boolean(match.streamOverride), customer: null, customerMatch: null, createCustomer: false, linkUserId: null, needsJellyfinLink: false };
+        const row = { ...payment, ...base, planMatch: match.plan || null, streamOverride: Boolean(match.streamOverride), customer: null, customerMatch: null, createCustomer: false, linkUserId: null, needsJellyfinLink: false, extendSubscriptionId: null };
         if (['ready_current','ready_future'].includes(row.state)) {
             if (!match.plan) { row.state = 'review'; row.reason = match.reason; }
             const imported = context.imported.get(`${payment.provider}:${payment.transactionId}`);
@@ -229,15 +243,16 @@ async function preview(files, { now = new Date() } = {}) {
         }
         if (['ready_current','ready_future'].includes(row.state) && row.customer) {
             const subscriptions = context.subscriptionsByCustomer.get(String(row.customer.id)) || [];
-            const recurring = subscriptions.find(sub => subscriptionState.recurringProvider(sub) && overlaps(payment.start, payment.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
-            if (recurring) { row.state = 'covered'; row.reason = 'A live provider-managed recurring subscription already covers this customer.'; }
-            else {
-                const paid = subscriptions.find(sub => Number(sub.effective_price_minor || 0) > 0 && overlaps(payment.start, payment.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
-                if (paid && new Date(paid.current_period_end) >= payment.end) { row.state = 'covered'; row.reason = 'Existing paid access already covers at least this legacy term.'; }
-                else if (paid) { row.state = 'review'; row.reason = 'Existing paid access overlaps this legacy term but does not fully cover it.'; }
-                const free = subscriptions.find(sub => Boolean(sub.is_free_tier) && overlaps(payment.start, payment.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
-                if (free && row.state === 'ready_future') { row.state = 'review'; row.reason = 'A future paid term cannot safely replace current free access until its start date.'; }
+            const decision = existingPaidDecision(payment, row.planMatch?.id, subscriptions);
+            if (decision.kind === 'covered_recurring') { row.state = 'covered'; row.reason = 'A live provider-managed recurring subscription already covers this customer.'; }
+            else if (decision.kind === 'covered') { row.state = 'covered'; row.reason = 'Existing paid access already covers at least this legacy term.'; }
+            else if (decision.kind === 'review') { row.state = 'review'; row.reason = decision.reason; }
+            else if (decision.kind === 'extend') {
+                row.extendSubscriptionId = decision.subscription.id;
+                row.reason = 'Existing local paid access will be extended to the later trusted legacy expiry.';
             }
+            const free = subscriptions.find(sub => Boolean(sub.is_free_tier) && overlaps(payment.start, payment.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
+            if (free && row.state === 'ready_future' && !row.extendSubscriptionId) { row.state = 'review'; row.reason = 'A future paid term cannot safely replace current free access until its start date.'; }
         }
         candidates.push(row);
     }
@@ -255,11 +270,12 @@ async function preview(files, { now = new Date() } = {}) {
         }
     }
 
-    const counts = { files: files.length, userRows: input.users.size, paymentRows: input.payments.length, current: 0, future: 0, ready: 0, covered: 0, imported: 0, review: 0, expired: 0, excluded: 0 };
+    const counts = { files: files.length, userRows: input.users.size, paymentRows: input.payments.length, current: 0, future: 0, extend: 0, ready: 0, covered: 0, imported: 0, review: 0, expired: 0, excluded: 0 };
     for (const row of candidates) {
         if (row.state === 'ready_current') counts.current++;
         if (row.state === 'ready_future') counts.future++;
         if (['ready_current','ready_future'].includes(row.state)) counts.ready++;
+        if (row.extendSubscriptionId && ['ready_current','ready_future'].includes(row.state)) counts.extend++;
         if (row.state === 'covered') counts.covered++;
         if (row.state === 'already_imported') counts.imported++;
         if (row.state === 'review') counts.review++;
@@ -311,7 +327,7 @@ async function importSafe(files, actorUserId, { now = new Date() } = {}) {
     const ready = checked.candidates.filter(row => ['ready_current','ready_future'].includes(row.state)).sort((a, b) => a.start - b.start);
     if (!ready.length) return { ...checked, imported: [], createdCustomers: 0, provisionedCustomers: 0 };
     const result = await transaction(async client => {
-        const imported = [], customerIds = new Set(); let createdCustomers = 0;
+        const imported = [], customerIds = new Set(); let createdCustomers = 0, extendedSubscriptions = 0;
         for (const candidate of ready) {
             const prior = await client.query(`SELECT id FROM legacy_subscription_imports WHERE source_system='legacy_csv' AND provider=$1 AND provider_transaction_id=$2 FOR UPDATE`, [candidate.provider, candidate.transactionId]);
             if (prior.rowCount) continue;
@@ -320,38 +336,44 @@ async function importSafe(files, actorUserId, { now = new Date() } = {}) {
             if (!planResult.rowCount) throw new Error(`Mapped plan for ${candidate.email} is no longer available.`);
             const plan = planResult.rows[0];
             const activeSubs = await client.query(`SELECT s.*,p.is_free_tier,COALESCE(s.price_minor_snapshot,p.price_minor,0) effective_price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.current_period_end>NOW() FOR UPDATE OF s`, [customer.row.id]);
-            const recurring = activeSubs.rows.find(sub => subscriptionState.recurringProvider(sub) && overlaps(candidate.start, candidate.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
-            if (recurring) continue;
-            const coveringPaid = activeSubs.rows.find(sub => Number(sub.effective_price_minor || 0) > 0 && new Date(sub.starts_at) <= candidate.start && new Date(sub.current_period_end) >= candidate.end);
-            if (coveringPaid) continue;
-            const conflictingPaid = activeSubs.rows.find(sub => Number(sub.effective_price_minor || 0) > 0 && overlaps(candidate.start, candidate.end, new Date(sub.starts_at), new Date(sub.current_period_end)));
-            if (conflictingPaid) throw new Error(`Paid access changed for ${candidate.email} after preview; import stopped for review.`);
+            const decision = existingPaidDecision(candidate, plan.id, activeSubs.rows);
+            if (['covered_recurring','covered'].includes(decision.kind)) continue;
+            if (decision.kind === 'review') throw new Error(`Paid access changed for ${candidate.email} after preview: ${decision.reason}`);
             const snapshot = commercialSnapshot(candidate, plan);
-            const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,service_type_snapshot,commercial_snapshot) VALUES($1,$2,'active','migration',$3,$4,TRUE,$5,$6,$7,$8,$9,$10,$11,$12::jsonb) RETURNING *`, [customer.row.id, plan.id, candidate.start, candidate.end, plan.name, plan.code, candidate.money.minor, candidate.money.currency, plan.billing_interval, Number(plan.duration_days || 30), plan.service_type, JSON.stringify(snapshot)]);
-            const subscription = inserted.rows[0];
+            let subscription, extendedExisting = false;
+            if (decision.kind === 'extend') {
+                const extended = await client.query(`UPDATE subscriptions SET starts_at=LEAST(starts_at,$2),current_period_end=GREATEST(current_period_end,$3),cancel_at_period_end=TRUE,updated_at=NOW() WHERE id=$1 AND customer_id=$4 AND plan_id=$5 AND superseded_by IS NULL AND status='active' RETURNING *`, [decision.subscription.id, candidate.start, candidate.end, customer.row.id, plan.id]);
+                if (!extended.rowCount) throw new Error(`Existing paid access changed for ${candidate.email} after preview; import stopped for review.`);
+                subscription = extended.rows[0];
+                extendedExisting = true;
+                extendedSubscriptions++;
+            } else {
+                const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,service_type_snapshot,commercial_snapshot) VALUES($1,$2,'active','migration',$3,$4,TRUE,$5,$6,$7,$8,$9,$10,$11,$12::jsonb) RETURNING *`, [customer.row.id, plan.id, candidate.start, candidate.end, plan.name, plan.code, candidate.money.minor, candidate.money.currency, plan.billing_interval, Number(plan.duration_days || 30), plan.service_type, JSON.stringify(snapshot)]);
+                subscription = inserted.rows[0];
+            }
             if (candidate.start <= now) {
                 const free = activeSubs.rows.find(sub => Boolean(sub.is_free_tier) && new Date(sub.starts_at) <= now && new Date(sub.current_period_end) > now);
                 if (free) await subscriptionState.markSuperseded(client, { subscriptionId: free.id, replacementId: subscription.id, reason: 'legacy_paid_migration' });
             }
-            await client.query(`INSERT INTO legacy_subscription_imports(source_system,provider,provider_transaction_id,legacy_payment_id,legacy_user_id,email,legacy_plan_name,plan_id,customer_id,subscription_id,amount_minor,currency,period_start,period_end,metadata,requested_by) VALUES('legacy_csv',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)`, [candidate.provider, candidate.transactionId, candidate.legacyPaymentId, candidate.user?.legacyUserId || null, candidate.email, candidate.plan.name, plan.id, customer.row.id, subscription.id, candidate.money.minor, candidate.money.currency, candidate.start, candidate.end, JSON.stringify({ file: candidate.file, streamOverride: candidate.streamOverride, legacyStreams: candidate.plan.streams, currentPlanStreams: plan.streams }), actorUserId || null]);
-            await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.legacy_subscription.import','subscription',$2,$3::jsonb)`, [actorUserId || null, subscription.id, JSON.stringify({ customerId: customer.row.id, provider: candidate.provider, transactionId: candidate.transactionId, legacyPlanName: candidate.plan.name, periodStart: candidate.start, periodEnd: candidate.end, amountMinor: candidate.money.minor, currency: candidate.money.currency, noProviderCharge: true })]);
+            await client.query(`INSERT INTO legacy_subscription_imports(source_system,provider,provider_transaction_id,legacy_payment_id,legacy_user_id,email,legacy_plan_name,plan_id,customer_id,subscription_id,amount_minor,currency,period_start,period_end,metadata,requested_by) VALUES('legacy_csv',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)`, [candidate.provider, candidate.transactionId, candidate.legacyPaymentId, candidate.user?.legacyUserId || null, candidate.email, candidate.plan.name, plan.id, customer.row.id, subscription.id, candidate.money.minor, candidate.money.currency, candidate.start, candidate.end, JSON.stringify({ file: candidate.file, streamOverride: candidate.streamOverride, legacyStreams: candidate.plan.streams, currentPlanStreams: plan.streams, extendedExisting }), actorUserId || null]);
+            await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.legacy_subscription.import','subscription',$2,$3::jsonb)`, [actorUserId || null, subscription.id, JSON.stringify({ customerId: customer.row.id, provider: candidate.provider, transactionId: candidate.transactionId, legacyPlanName: candidate.plan.name, periodStart: candidate.start, periodEnd: candidate.end, amountMinor: candidate.money.minor, currency: candidate.money.currency, noProviderCharge: true, extendedExisting })]);
             let linkedJellyfin = false;
             if (candidate.start <= now) {
                 const managedAccount = await client.query(`SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND COALESCE(account_purpose,'jellyfin')='jellyfin' LIMIT 1`, [customer.row.id]);
                 linkedJellyfin = managedAccount.rowCount > 0;
                 if (linkedJellyfin) customerIds.add(String(customer.row.id));
             }
-            imported.push({ customerId: customer.row.id, subscriptionId: subscription.id, email: candidate.email, future: candidate.start > now, needsJellyfinLink: candidate.start <= now && !linkedJellyfin });
+            imported.push({ customerId: customer.row.id, subscriptionId: subscription.id, email: candidate.email, future: candidate.start > now, needsJellyfinLink: candidate.start <= now && !linkedJellyfin, extendedExisting });
         }
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.legacy_subscription.batch_import','legacy_subscription_import','legacy_csv',$2::jsonb)`, [actorUserId || null, JSON.stringify({ candidates: ready.length, imported: imported.length, createdCustomers, currentCustomersToReconcile: customerIds.size })]);
-        return { imported, createdCustomers, customerIds: [...customerIds] };
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.legacy_subscription.batch_import','legacy_subscription_import','legacy_csv',$2::jsonb)`, [actorUserId || null, JSON.stringify({ candidates: ready.length, imported: imported.length, createdCustomers, extendedSubscriptions, currentCustomersToReconcile: customerIds.size })]);
+        return { imported, createdCustomers, extendedSubscriptions, customerIds: [...customerIds] };
     });
     for (const customerId of result.customerIds) await lifecyclePrimitives.reconcileCommittedCustomer(customerId, 'Legacy paid-user migration');
-    return { ...checked, imported: result.imported, createdCustomers: result.createdCustomers, provisionedCustomers: result.customerIds.length, pendingJellyfinLinks: result.imported.filter(row => row.needsJellyfinLink).length };
+    return { ...checked, imported: result.imported, createdCustomers: result.createdCustomers, extendedSubscriptions: result.extendedSubscriptions, provisionedCustomers: result.customerIds.length, pendingJellyfinLinks: result.imported.filter(row => row.needsJellyfinLink).length };
 }
 
 module.exports = {
     MAX_FILES, MAX_PAYLOAD_BYTES, MAX_ROWS,
     parseCsv, parseFiles, decodePayload, encodePayload, parseLegacyDate, parseMoney, parseLegacyPlan, providerName,
-    normalizedInputs, choosePlan, basicCandidate, commercialSnapshot, preview, importSafe
+    normalizedInputs, choosePlan, basicCandidate, existingPaidDecision, commercialSnapshot, preview, importSafe
 };
