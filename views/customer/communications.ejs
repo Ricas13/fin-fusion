@@ -7,6 +7,7 @@
   <title>Notifications · <%= siteName %></title>
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
+  <link rel="stylesheet" href="/css/customer-dashboard.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
   <style>
     .notifyGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
@@ -18,12 +19,13 @@
     @media(max-width:760px){.notifyGrid{grid-template-columns:1fr}}
   </style>
 </head>
-<body>
+<body><div class="portalShell">
+<header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
 <main class="customerPortalPage">
-  <%- include('_nav',{active:'account'}) %>
+  <%- include('_nav',{active:'notifications'}) %>
   <div class="customerPortalPageHeader">
     <div><h1>Notifications</h1><p>Choose where optional updates reach you. Important account and payment email cannot be switched off.</p></div>
-    <a class="button secondary" href="/account/security">Account security</a>
+    <a class="button secondary" href="/account/security">Account settings</a>
   </div>
   <% if(message){ %><div class="notice success"><%= message %></div><% } %>
   <% if(error){ %><div class="notice error"><%= error %></div><% } %>
@@ -78,5 +80,5 @@
     </form>
   </section>
 </main>
-</body>
+</div></body>
 </html>
