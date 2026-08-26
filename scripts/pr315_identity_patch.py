@@ -1,0 +1,119 @@
+from pathlib import Path
+
+
+def replace_once(path, old, new):
+    p = Path(path)
+    text = p.read_text()
+    if old not in text:
+        raise SystemExit(f"Expected patch target not found in {path}: {old[:120]!r}")
+    p.write_text(text.replace(old, new, 1))
+
+
+service = "src/payments/legacy-customer-import.js"
+replace_once(
+    service,
+    "async function loadContext(emails, transactionKeys) {\n    const normalizedEmails = Array.from(new Set(emails.filter(Boolean)));\n    const [plansResult, customersResult, orphanUsersResult, importedResult] = await Promise.all([",
+    "async function loadContext(emails, transactionKeys, legacyNames = []) {\n    const normalizedEmails = Array.from(new Set(emails.filter(Boolean)));\n    const normalizedNames = Array.from(new Set((legacyNames || []).map(value => clean(value, 100).toLowerCase()).filter(Boolean)));\n    const [plansResult, customersResult, orphanUsersResult, importedResult, jellyfinResult] = await Promise.all([",
+)
+replace_once(
+    service,
+    "        transactionKeys.length ? query(`SELECT provider,provider_transaction_id,customer_id,subscription_id FROM legacy_subscription_imports WHERE (provider || ':' || provider_transaction_id)=ANY($1::text[])`, [transactionKeys]) : { rows: [] }\n    ]);",
+    "        transactionKeys.length ? query(`SELECT provider,provider_transaction_id,customer_id,subscription_id FROM legacy_subscription_imports WHERE (provider || ':' || provider_transaction_id)=ANY($1::text[])`, [transactionKeys]) : { rows: [] },\n        normalizedNames.length ? query(`SELECT DISTINCT c.id,c.user_id,c.display_name,COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) email,lower(ja.jellyfin_username) jellyfin_username FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id LEFT JOIN app_users u ON u.id=c.user_id WHERE COALESCE(ja.account_purpose,'jellyfin')='jellyfin' AND lower(ja.jellyfin_username)=ANY($1::text[])`, [normalizedNames]) : { rows: [] }\n    ]);",
+)
+replace_once(
+    service,
+    "    const customersByEmail = new Map(), orphanUsersByEmail = new Map(), imported = new Map();",
+    "    const customersByEmail = new Map(), customersByJellyfinName = new Map(), orphanUsersByEmail = new Map(), imported = new Map();",
+)
+replace_once(
+    service,
+    "    for (const row of orphanUsersResult.rows) {\n        const key = emailKey(row.email); if (!orphanUsersByEmail.has(key)) orphanUsersByEmail.set(key, []); orphanUsersByEmail.get(key).push(row);\n    }\n    for (const row of importedResult.rows) imported.set(`${row.provider}:${row.provider_transaction_id}`, row);",
+    "    for (const row of orphanUsersResult.rows) {\n        const key = emailKey(row.email); if (!orphanUsersByEmail.has(key)) orphanUsersByEmail.set(key, []); orphanUsersByEmail.get(key).push(row);\n    }\n    for (const row of jellyfinResult.rows) {\n        const key = clean(row.jellyfin_username, 100).toLowerCase(); if (!customersByJellyfinName.has(key)) customersByJellyfinName.set(key, []); customersByJellyfinName.get(key).push(row);\n    }\n    for (const row of importedResult.rows) imported.set(`${row.provider}:${row.provider_transaction_id}`, row);",
+)
+replace_once(
+    service,
+    "    const customerIds = customersResult.rows.map(row => row.id);",
+    "    const customerIds = Array.from(new Set([...customersResult.rows, ...jellyfinResult.rows].map(row => row.id)));",
+)
+replace_once(
+    service,
+    "    return { plans: plansResult.rows, customersByEmail, orphanUsersByEmail, imported, subscriptionsByCustomer };",
+    "    return { plans: plansResult.rows, customersByEmail, customersByJellyfinName, orphanUsersByEmail, imported, subscriptionsByCustomer };",
+)
+replace_once(
+    service,
+    "    const context = await loadContext(input.payments.map(row => row.email), keys);",
+    "    const context = await loadContext(input.payments.map(row => row.email), keys, [...input.users.values()].map(row => row.name).filter(Boolean));",
+)
+replace_once(
+    service,
+    "        const row = { ...payment, ...base, planMatch: match.plan || null, streamOverride: Boolean(match.streamOverride), customer: null, createCustomer: false, linkUserId: null };",
+    "        const row = { ...payment, ...base, planMatch: match.plan || null, streamOverride: Boolean(match.streamOverride), customer: null, customerMatch: null, createCustomer: false, linkUserId: null, needsJellyfinLink: false };",
+)
+replace_once(
+    service,
+    "            const matches = context.customersByEmail.get(payment.email) || [];\n            const orphanUsers = context.orphanUsersByEmail.get(payment.email) || [];\n            if (matches.length > 1) { row.state = 'review'; row.reason = 'More than one portal customer has this email.'; }\n            else if (matches.length === 1) row.customer = matches[0];\n            else if (orphanUsers.length > 1) { row.state = 'review'; row.reason = 'More than one unlinked portal login has this email.'; }\n            else { row.createCustomer = true; row.linkUserId = orphanUsers[0]?.id || null; }",
+    "            const matches = context.customersByEmail.get(payment.email) || [];\n            const orphanUsers = context.orphanUsersByEmail.get(payment.email) || [];\n            const jellyfinKey = clean(payment.user?.name, 100).toLowerCase();\n            const jellyfinMatches = jellyfinKey ? (context.customersByJellyfinName.get(jellyfinKey) || []) : [];\n            if (matches.length > 1) { row.state = 'review'; row.reason = 'More than one portal customer has this email.'; }\n            else if (matches.length === 1) {\n                const conflict = jellyfinMatches.find(item => String(item.id) !== String(matches[0].id));\n                if (conflict) { row.state = 'review'; row.reason = 'Legacy email and Jellyfin username point to different CAPTAiNFiN customers.'; }\n                else { row.customer = matches[0]; row.customerMatch = 'email'; }\n            }\n            else if (jellyfinMatches.length > 1) { row.state = 'review'; row.reason = 'More than one managed Jellyfin identity matches the legacy username.'; }\n            else if (jellyfinMatches.length === 1) { row.customer = jellyfinMatches[0]; row.customerMatch = 'jellyfin_username'; row.reason = 'Matched the existing managed Jellyfin user from the legacy Users export.'; }\n            else if (orphanUsers.length > 1) { row.state = 'review'; row.reason = 'More than one unlinked portal login has this email.'; }\n            else {\n                row.createCustomer = true; row.linkUserId = orphanUsers[0]?.id || null; row.needsJellyfinLink = true;\n                row.reason = row.state === 'ready_future' ? 'Prepaid future term will be scheduled; link the existing Jellyfin identity before it starts.' : 'Paid term can be restored locally; link the existing Jellyfin identity before CAPTAiNFiN provisioning.';\n            }",
+)
+old_resolver = '''async function resolveCustomerTx(client, candidate) {
+    const found = await client.query(`SELECT c.id,c.user_id FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=lower($1) FOR UPDATE OF c`, [candidate.email]);
+    if (found.rowCount > 1) throw new Error(`Multiple customers now match ${candidate.email}.`);
+    if (found.rowCount === 1) return { row: found.rows[0], created: false };
+    const orphan = await client.query(`SELECT u.id,u.username FROM app_users u LEFT JOIN customers c ON c.user_id=u.id WHERE u.role='customer' AND c.id IS NULL AND lower(COALESCE(u.email,''))=lower($1) FOR UPDATE OF u`, [candidate.email]);
+    if (orphan.rowCount > 1) throw new Error(`Multiple portal logins now match ${candidate.email}.`);
+    const displayName = clean(candidate.user?.name || orphan.rows[0]?.username, 100) || null;
+    const inserted = await client.query(`INSERT INTO customers(user_id,display_name,email,note) VALUES($1,$2,$3,$4) RETURNING id,user_id`, [orphan.rows[0]?.id || null, displayName, candidate.email, 'Imported from legacy paid-user CSV migration']);
+    return { row: inserted.rows[0], created: true };
+}'''
+new_resolver = '''async function resolveCustomerTx(client, candidate) {
+    if (candidate.customerMatch === 'jellyfin_username' && candidate.customer?.id && candidate.user?.name) {
+        const linked = await client.query(`SELECT c.id,c.user_id FROM customers c JOIN jellyfin_accounts ja ON ja.customer_id=c.id WHERE c.id=$1 AND COALESCE(ja.account_purpose,'jellyfin')='jellyfin' AND lower(ja.jellyfin_username)=lower($2) LIMIT 1 FOR UPDATE OF c`, [candidate.customer.id, clean(candidate.user.name, 100)]);
+        if (!linked.rowCount) throw new Error(`Managed Jellyfin identity changed for ${candidate.email} after preview; import stopped for review.`);
+        return { row: linked.rows[0], created: false, matchedByJellyfin: true };
+    }
+    const found = await client.query(`SELECT c.id,c.user_id FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=lower($1) FOR UPDATE OF c`, [candidate.email]);
+    if (found.rowCount > 1) throw new Error(`Multiple customers now match ${candidate.email}.`);
+    if (found.rowCount === 1) return { row: found.rows[0], created: false, matchedByJellyfin: false };
+    const orphan = await client.query(`SELECT u.id,u.username FROM app_users u LEFT JOIN customers c ON c.user_id=u.id WHERE u.role='customer' AND c.id IS NULL AND lower(COALESCE(u.email,''))=lower($1) FOR UPDATE OF u`, [candidate.email]);
+    if (orphan.rowCount > 1) throw new Error(`Multiple portal logins now match ${candidate.email}.`);
+    const displayName = clean(candidate.user?.name || orphan.rows[0]?.username, 100) || null;
+    const inserted = await client.query(`INSERT INTO customers(user_id,display_name,email,note) VALUES($1,$2,$3,$4) RETURNING id,user_id`, [orphan.rows[0]?.id || null, displayName, candidate.email, 'Imported from legacy paid-user CSV migration']);
+    return { row: inserted.rows[0], created: true, matchedByJellyfin: false };
+}'''
+replace_once(service, old_resolver, new_resolver)
+replace_once(
+    service,
+    "            imported.push({ customerId: customer.row.id, subscriptionId: subscription.id, email: candidate.email, future: candidate.start > now });\n            if (candidate.start <= now) customerIds.add(String(customer.row.id));",
+    "            let linkedJellyfin = false;\n            if (candidate.start <= now) {\n                const managedAccount = await client.query(`SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND COALESCE(account_purpose,'jellyfin')='jellyfin' LIMIT 1`, [customer.row.id]);\n                linkedJellyfin = managedAccount.rowCount > 0;\n                if (linkedJellyfin) customerIds.add(String(customer.row.id));\n            }\n            imported.push({ customerId: customer.row.id, subscriptionId: subscription.id, email: candidate.email, future: candidate.start > now, needsJellyfinLink: candidate.start <= now && !linkedJellyfin });",
+)
+replace_once(
+    service,
+    "    return { ...checked, imported: result.imported, createdCustomers: result.createdCustomers, provisionedCustomers: result.customerIds.length };",
+    "    return { ...checked, imported: result.imported, createdCustomers: result.createdCustomers, provisionedCustomers: result.customerIds.length, pendingJellyfinLinks: result.imported.filter(row => row.needsJellyfinLink).length };",
+)
+
+admin = "src/platform/admin-legacy-customer-import.js"
+replace_once(
+    admin,
+    "${row.customer ? 'Existing CAPTAiNFiN customer' : row.createCustomer ? (row.linkUserId ? 'Will attach existing portal login' : 'Will create imported customer record') : ''}",
+    "${row.customer ? (row.customerMatch === 'jellyfin_username' ? 'Matched existing managed Jellyfin user' : 'Existing CAPTAiNFiN customer') : row.createCustomer ? (row.linkUserId ? 'Will attach existing portal login; Jellyfin link still required' : 'Will create imported customer record; Jellyfin link still required') : ''}",
+)
+replace_once(
+    admin,
+    "  const done = importedResult ? `<div class=\"notice success\"><strong>Legacy paid-user migration completed.</strong> ${esc(importedResult.imported.length)} subscription term(s) were restored, ${esc(importedResult.createdCustomers)} customer record(s) were created, and ${esc(importedResult.provisionedCustomers)} current customer(s) were sent through access reconciliation.</div>` : '';",
+    "  const done = importedResult ? `<div class=\"notice success\"><strong>Legacy paid-user migration completed.</strong> ${esc(importedResult.imported.length)} subscription term(s) were restored, ${esc(importedResult.createdCustomers)} customer record(s) were created, and ${esc(importedResult.provisionedCustomers)} current customer(s) with an already-linked Jellyfin identity were sent through access reconciliation.${Number(importedResult.pendingJellyfinLinks || 0) ? ` <strong>${esc(importedResult.pendingJellyfinLinks)} current customer(s) still need their existing Jellyfin identity linked; CAPTAiNFiN deliberately did not create a duplicate Jellyfin user.</strong>` : ''}</div>` : '';",
+)
+
+smoke = "scripts/legacy-customer-import-smoke.js"
+replace_once(
+    smoke,
+    "assert(serviceSource.includes('legacy_subscription_imports') && serviceSource.includes('provider_transaction_id'), 'migration must be idempotent on original provider transaction identity');",
+    "assert(serviceSource.includes('legacy_subscription_imports') && serviceSource.includes('provider_transaction_id'), 'migration must be idempotent on original provider transaction identity');\nassert(serviceSource.includes('customersByJellyfinName') && serviceSource.includes('jellyfin_username'), 'legacy Users names must be able to match an already-managed Jellyfin customer');\nassert(serviceSource.includes(\"COALESCE(ja.account_purpose,'jellyfin')='jellyfin'\"), 'identity matching must only use customer-facing Jellyfin identities');\nassert(serviceSource.includes('needsJellyfinLink') && serviceSource.includes('managedAccount'), 'unlinked CSV-only customers must not be blindly provisioned into duplicate Jellyfin accounts');\nassert(!serviceSource.includes('if (candidate.start <= now) customerIds.add(String(customer.row.id));'), 'current imports must only reconcile after confirming a managed Jellyfin account');",
+)
+replace_once(
+    smoke,
+    "assert(adminSource.includes('It does not charge customers'), 'admin UI must state that migration does not create a provider charge');",
+    "assert(adminSource.includes('It does not charge customers'), 'admin UI must state that migration does not create a provider charge');\nassert(adminSource.includes('Matched existing managed Jellyfin user') && adminSource.includes('deliberately did not create a duplicate Jellyfin user'), 'admin preview/result must explain managed-identity matching and safe unlinked handling');",
+)
+
+print("PR315 identity patch applied")
