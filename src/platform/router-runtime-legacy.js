@@ -6,7 +6,6 @@ const customers = require('../customers');
 const { query } = require('../db');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const requestUserSync = require('../integrations/request-user-sync');
-const policy = require('../jellyfin/policy');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const { createAdminActionsRouter } = require('./admin-actions');
@@ -21,27 +20,30 @@ async function verifyPortalPassword(userId,password){
     return Boolean(row.rowCount&&row.rows[0]?.password_hash&&await bcrypt.compare(password,row.rows[0].password_hash));
 }
 
+async function saveLibraries(req,res,accountId){
+    if (!csrf.verify(req)) return res.redirect('/account?error=' + encodeURIComponent('Invalid or expired security token') + '#jellyfin-access');
+    try {
+        let target=String(accountId||req.body.accountId||'').trim();
+        if(!target){
+            const accounts=(await provisioning.normalAccounts(req.session.customerId)).filter(account=>!account.disabled&&account.server_enabled);
+            if(accounts.length!==1)throw new Error('Choose the Jellyfin server whose libraries you want to update.');
+            target=String(accounts[0].id);
+        }
+        const submitted=Array.isArray(req.body.library)?req.body.library:(req.body.library!==undefined?[req.body.library]:[]);
+        const chosen=await provisioning.setLibrarySelectionForAccount(req.session.customerId,target,submitted);
+        try { await provisioning.reconcileCustomer(req.session.customerId); } catch (_) {}
+        return res.redirect('/account?message=' + encodeURIComponent(`Library visibility updated for this Jellyfin server (${chosen.length} selected).`) + '#jellyfin-access');
+    } catch (error) {
+        return res.redirect('/account?error=' + encodeURIComponent(error.message || 'Library visibility could not be updated safely.') + '#jellyfin-access');
+    }
+}
+
 function createRuntimeLegacyRouter() {
     const router = express.Router();
     router.use(createAdminActionsRouter());
 
-    router.post('/account/libraries', requireCustomer, async (req, res) => {
-        if (!csrf.verify(req)) return res.redirect('/account?error=' + encodeURIComponent('Invalid or expired security token'));
-        try {
-            const plan = await provisioning.currentEntitlement(req.session.customerId);
-            const effective = await provisioning.effectivePolicyForCustomer(req.session.customerId, plan);
-            const submitted = Array.isArray(req.body.library) ? req.body.library : (req.body.library !== undefined ? [req.body.library] : []);
-            const chosen = [];
-            for (const raw of submitted) {
-                const name = String(raw || '').trim(); if (!name) continue;
-                const match = effective.entitlementRows.find(row => row.effective && policy.nameKey(row.name) === policy.nameKey(name));
-                if (match) chosen.push(match.name);
-            }
-            await provisioning.setLibrarySelection(req.session.customerId, chosen);
-            try { await provisioning.reconcileCustomer(req.session.customerId); } catch (_) {}
-            return res.redirect('/account?message=' + encodeURIComponent('Library visibility updated.'));
-        } catch (_) { return res.redirect('/account?error=' + encodeURIComponent('Library visibility could not be updated safely.')); }
-    });
+    router.post('/account/libraries', requireCustomer, (req,res)=>saveLibraries(req,res,null));
+    router.post('/account/libraries/:accountId', requireCustomer, (req,res)=>saveLibraries(req,res,req.params.accountId));
 
     router.post('/account/requests/password', requireCustomer, async (req, res) => {
         if (!csrf.verify(req)) return res.redirect('/account?error=' + encodeURIComponent('Invalid or expired security token'));
