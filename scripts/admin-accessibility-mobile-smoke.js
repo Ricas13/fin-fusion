@@ -24,12 +24,34 @@ assert(sidebar.includes("section.querySelector('.navSectionPages .adminTab[href]
 assert(sidebar.includes('event.preventDefault()')&&sidebar.includes('window.location.assign(first.href)'),'desktop parent clicks must expand the group and open its first submenu page');
 assert(sidebar.includes("window.matchMedia('(max-width:860px)').matches"),'sidebar accordion behavior must preserve the compact mobile navigation');
 
+const navCoherence=read('public/js/admin-navigation-coherence.js');
+for(const contract of [
+    'installMobileAdminDrawer()',
+    "window.matchMedia('(max-width:860px)')",
+    "data-admin-mobile-nav-toggle",
+    "adminMobileNavBackdrop",
+    "mobileNavOpen",
+    "aria-expanded",
+    "event.key==='Escape'",
+    "event.target.closest('a[href]')"
+]) assert(navCoherence.includes(contract),`mobile drawer behavior missing ${contract}`);
+
 const capability=read('public/css/admin-capability.css');
 assert(capability.includes("@import url('/css/admin-accessibility-mobile.css')"),'admin shell must load accessibility/mobile layer');
 assert(capability.includes("@import url('/css/admin-responsive-tables.css')"),'admin shell must load shared responsive-table layer');
 const css=read('public/css/admin-accessibility-mobile.css');
 for(const contract of ['.srOnly',':focus-visible','min-height:44px','prefers-reduced-motion','td[data-label=""]'])assert(css.includes(contract),`accessibility/mobile CSS missing ${contract}`);
 assert(css.includes('.profileMeta,.summaryLabel,.summarySub'),'legacy customer metadata must use the readable shared override');
+for(const contract of [
+    '.adminMobileNavToggle',
+    '.adminHeader.mobileNavOpen .adminTabsWrap',
+    'transform:translateX(-105%)',
+    'width:min(86vw,320px)',
+    '.navSectionLabel{display:flex!important',
+    '.navSection[open] .navSectionPages{display:grid!important',
+    'body.mobileNavLocked',
+    '.topBar{top:58px!important}'
+]) assert(css.includes(contract),`mobile drawer CSS missing ${contract}`);
 
 const responsiveCss=read('public/css/admin-responsive-tables.css');
 for(const contract of ['@media(max-width:1100px)','.responsiveTable thead','.responsiveTable tbody','.responsiveTable td::before','content:attr(data-label)','word-break:normal','grid-template-columns:minmax(100px,30%) minmax(0,1fr)','.attentionBulkBar{grid-template-columns:1fr!important}'])assert(responsiveCss.includes(contract),`responsive table CSS missing ${contract}`);

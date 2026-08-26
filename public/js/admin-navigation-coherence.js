@@ -46,9 +46,82 @@
     observer.observe(topActions,{childList:true});
   }
 
+  function installMobileAdminDrawer(){
+    const header=document.querySelector('.adminHeader');
+    const headerMain=header?.querySelector('.headerMain');
+    const tabsWrap=header?.querySelector('.adminTabsWrap');
+    const nav=tabsWrap?.querySelector('.adminTabs');
+    if(!header||!headerMain||!tabsWrap||!nav)return;
+
+    const mobile=window.matchMedia('(max-width:860px)');
+    if(!tabsWrap.id)tabsWrap.id='adminMobileNavigation';
+
+    let toggle=headerMain.querySelector('[data-admin-mobile-nav-toggle]');
+    if(!toggle){
+      toggle=document.createElement('button');
+      toggle.type='button';
+      toggle.className='adminMobileNavToggle';
+      toggle.setAttribute('data-admin-mobile-nav-toggle','');
+      toggle.setAttribute('aria-controls',tabsWrap.id);
+      toggle.setAttribute('aria-expanded','false');
+      toggle.setAttribute('aria-label','Open administration menu');
+      toggle.innerHTML='<span class="adminMobileNavGlyph" aria-hidden="true">☰</span><span>Menu</span>';
+      headerMain.appendChild(toggle);
+    }
+
+    let backdrop=document.querySelector('[data-admin-mobile-nav-backdrop]');
+    if(!backdrop){
+      backdrop=document.createElement('div');
+      backdrop.className='adminMobileNavBackdrop';
+      backdrop.setAttribute('data-admin-mobile-nav-backdrop','');
+      backdrop.hidden=true;
+      document.body.appendChild(backdrop);
+    }
+
+    const sections=[...nav.querySelectorAll('details.navSection')];
+    function closeOtherSections(opened){
+      for(const section of sections){
+        if(section!==opened&&section.open)section.open=false;
+      }
+    }
+    for(const section of sections){
+      section.addEventListener('toggle',()=>{
+        if(section.open)closeOtherSections(section);
+      });
+    }
+
+    function setOpen(open,{restoreFocus=false}={}){
+      const next=Boolean(open&&mobile.matches);
+      header.classList.toggle('mobileNavOpen',next);
+      document.body.classList.toggle('mobileNavLocked',next);
+      toggle.setAttribute('aria-expanded',next?'true':'false');
+      toggle.setAttribute('aria-label',next?'Close administration menu':'Open administration menu');
+      backdrop.hidden=!next;
+      if(next){
+        const active=nav.querySelector('.adminSubTab.active,.adminTab.active,.navSectionLabel');
+        if(active&&typeof active.focus==='function')active.focus({preventScroll:true});
+      }else if(restoreFocus&&typeof toggle.focus==='function')toggle.focus({preventScroll:true});
+    }
+
+    toggle.addEventListener('click',()=>setOpen(!header.classList.contains('mobileNavOpen')));
+    backdrop.addEventListener('click',()=>setOpen(false,{restoreFocus:true}));
+    nav.addEventListener('click',event=>{
+      if(event.target.closest('a[href]'))setOpen(false);
+    });
+    document.addEventListener('keydown',event=>{
+      if(event.key==='Escape'&&header.classList.contains('mobileNavOpen'))setOpen(false,{restoreFocus:true});
+    });
+    const onViewportChange=()=>{
+      if(!mobile.matches)setOpen(false);
+    };
+    if(typeof mobile.addEventListener==='function')mobile.addEventListener('change',onViewportChange);
+    else if(typeof mobile.addListener==='function')mobile.addListener(onViewportChange);
+  }
+
   enforceSidebarOnlyNavigation();
   movePageActionsToHeading();
   watchLatePageActions();
+  installMobileAdminDrawer();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
