@@ -3,6 +3,7 @@
 const primitives = require('./lifecycle-primitives');
 const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
+const serviceScope = require('../entitlements/service-scope');
 const capacity = require('../entitlements/plan-capacity');
 const inactivityHolds = require('../entitlements/inactivity-hold-reconciliation');
 const planExpiry = require('../entitlements/plan-expiry');
@@ -109,13 +110,15 @@ async function enforceTrialEligibility(customerId, plan) {
         if (prior.rowCount) throw new Error('This trial has already been used.');
         return policy;
     }
-    const priorTrial = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-        WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial' LIMIT 1`, [customerId]);
-    if (priorTrial.rowCount) throw new Error('A trial has already been used on this account.');
+    const priorTrial = await query(`SELECT s.service_type_snapshot,p.service_type,p.name
+        FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial'`, [customerId]);
+    if (priorTrial.rows.some(row=>serviceScope.overlaps(row,plan))) throw new Error(`A ${serviceScope.label(plan)} trial has already been used on this account.`);
     if (policy.trialMode === 'before_paid') {
-        const paid = await query(`SELECT 1 FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-            WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)<>'trial' AND COALESCE(s.price_minor_snapshot,p.price_minor)>0 LIMIT 1`, [customerId]);
-        if (paid.rowCount) throw new Error('Trials are only available before the first paid subscription.');
+        const paid = await query(`SELECT s.service_type_snapshot,p.service_type,p.name
+            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 AND COALESCE(s.billing_interval_snapshot,p.billing_interval)<>'trial' AND COALESCE(s.price_minor_snapshot,p.price_minor)>0`, [customerId]);
+        if (paid.rows.some(row=>serviceScope.overlaps(row,plan))) throw new Error(`${serviceScope.label(plan)} trials are only available before the first paid subscription for that service.`);
     }
     return policy;
 }
@@ -128,13 +131,26 @@ async function startFreeTrial(customerId, planCode) {
     const created = await transaction(async client => {
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         await capacity.lockAndAssert(client,plan.id,plan.name||'This trial');
-        const live = await client.query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`, [customerId]);
-        if (live.rowCount) throw new Error('An active entitlement already exists. Change or cancel it before starting a trial.');
+        const live = await client.query(`
+            SELECT s.id,s.service_type_snapshot,p.service_type,p.name,p.is_free_tier
+            FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+            WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE
+              AND s.superseded_by IS NULL AND s.starts_at<=NOW()
+              AND (
+                (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+                OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end + ((s.service_extension_days || ' days')::interval))>NOW())
+              )
+            FOR UPDATE OF s
+        `, [customerId]);
+        const conflict=live.rows.find(row=>serviceScope.overlaps(row,plan)&&!serviceScope.isFreeTier(row));
+        if (conflict) throw new Error(`You already have active ${serviceScope.label(conflict)} access. Change or cancel that service before starting another overlapping trial.`);
         const startsAt = new Date(), endsAt = addPlanDuration(plan, startsAt);
         const row = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end)
             VALUES($1,$2,'trialing','manual',$3,$4) RETURNING *`, [customerId, plan.id, startsAt, endsAt]);
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata)
-            VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code })]);
+            VALUES('subscription.trial.start','subscription',$1,$2::jsonb)`, [row.rows[0].id, JSON.stringify({ customerId, planCode: plan.code, serviceType: serviceScope.serviceType(plan) })]);
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
