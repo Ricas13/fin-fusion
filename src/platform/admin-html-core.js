@@ -23,9 +23,14 @@ function addFilterStyles(html){
 }
 
 function useAdminHelp(html){
-  return String(html||'').replace(
+  const withoutTopHelp=String(html||'').replace(
     /<a class="topHelpLink" href="\/help" target="_blank" rel="noopener noreferrer">Help &amp; docs<\/a>|<a class="topHelpLink" href="\/help" target="_blank" rel="noopener noreferrer">Help & docs<\/a>/,
-    '<a class="topHelpLink" href="/admin/docs">Admin help</a>'
+    ''
+  );
+  if(withoutTopHelp.includes('href="/admin/docs"'))return withoutTopHelp;
+  return withoutTopHelp.replace(
+    '<a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a>',
+    '<a class="headerButton" href="/admin/docs">Admin guide</a><a class="headerButton hideMobile" href="/" target="_blank" rel="noopener noreferrer">Open storefront</a>'
   );
 }
 
