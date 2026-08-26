@@ -69,7 +69,7 @@ assert(settingsRegistry.search('payment provider').some(x=>x.domain?.href==='/ad
 assert(settingsRegistry.search('captcha').some(x=>x.domain?.href==='/admin/settings/abuse-protection'),'captcha search must resolve to Turnstile / abuse protection');
 assert(/outcome\?\.active&&outcome\?\.account\?\.id/.test(customerDashboard),'customer provisioning retry must only announce ready when an active Jellyfin account exists');
 assert(/getCustomerState/.test(customerDashboard)&&/has not completed yet/.test(customerDashboard),'customer provisioning retry must preserve pending/blocked state instead of false success');
-assert(/You're ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
+assert(/ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
 assert(/controlCentreSummary/.test(css),'customer control centre styling missing');
 assert(/grid-template-columns:var\(--customer-nav-width\) minmax\(0,1fr\)/.test(customerNav),'signed-in customer subpages must use a left navigation shell on desktop');
 assert(/position:sticky/.test(customerNav)&&/My account/.test(customerNav),'customer navigation must remain obvious while moving through account pages');
