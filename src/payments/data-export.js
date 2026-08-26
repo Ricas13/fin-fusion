@@ -220,47 +220,7 @@ async function auditExport(actorUserId, kind, counts = {}) {
     await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.data_export.download','data_export',$2,$3::jsonb)`, [actorUserId || null, String(kind || 'unknown').slice(0,80), JSON.stringify({ kind, ...counts, secretsIncluded: false })]);
 }
 
-function crc32(buffer) {
-    let crc = 0xffffffff;
-    for (const byte of buffer) {
-        crc ^= byte;
-        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-    return (crc ^ 0xffffffff) >>> 0;
-}
-function dosDateTime(date = new Date()) {
-    const year = Math.max(1980, date.getFullYear());
-    const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
-    const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
-    return { dosTime, dosDate };
-}
-function zipStore(files, date = new Date()) {
-    const locals = [], centrals = [];
-    let offset = 0;
-    const { dosTime, dosDate } = dosDateTime(date);
-    for (const file of files) {
-        const name = Buffer.from(String(file.name), 'utf8');
-        const data = Buffer.isBuffer(file.data) ? file.data : Buffer.from(String(file.data), 'utf8');
-        const crc = crc32(data);
-        const local = Buffer.alloc(30);
-        local.writeUInt32LE(0x04034b50,0); local.writeUInt16LE(20,4); local.writeUInt16LE(0x0800,6); local.writeUInt16LE(0,8);
-        local.writeUInt16LE(dosTime,10); local.writeUInt16LE(dosDate,12); local.writeUInt32LE(crc,14); local.writeUInt32LE(data.length,18); local.writeUInt32LE(data.length,22); local.writeUInt16LE(name.length,26); local.writeUInt16LE(0,28);
-        locals.push(local,name,data);
-        const central = Buffer.alloc(46);
-        central.writeUInt32LE(0x02014b50,0); central.writeUInt16LE(20,4); central.writeUInt16LE(20,6); central.writeUInt16LE(0x0800,8); central.writeUInt16LE(0,10);
-        central.writeUInt16LE(dosTime,12); central.writeUInt16LE(dosDate,14); central.writeUInt32LE(crc,16); central.writeUInt32LE(data.length,20); central.writeUInt32LE(data.length,24); central.writeUInt16LE(name.length,28);
-        central.writeUInt16LE(0,30); central.writeUInt16LE(0,32); central.writeUInt16LE(0,34); central.writeUInt16LE(0,36); central.writeUInt32LE(0,38); central.writeUInt32LE(offset,42);
-        centrals.push(central,name);
-        offset += local.length + name.length + data.length;
-    }
-    const centralBuffer = Buffer.concat(centrals);
-    const end = Buffer.alloc(22);
-    end.writeUInt32LE(0x06054b50,0); end.writeUInt16LE(0,4); end.writeUInt16LE(0,6); end.writeUInt16LE(files.length,8); end.writeUInt16LE(files.length,10);
-    end.writeUInt32LE(centralBuffer.length,12); end.writeUInt32LE(offset,16); end.writeUInt16LE(0,20);
-    return Buffer.concat([...locals,centralBuffer,end]);
-}
-
 module.exports = {
     MAX_TRANSACTION_EXPORT_ROWS,csv,major,portableAmount,portablePlanName,portableTransactionId,portableProcessor,
-    loadUsers,loadPortablePayments,loadTransactions,usersCsv,paymentsCsv,transactionsCsv,summary,auditExport,zipStore
+    loadUsers,loadPortablePayments,loadTransactions,usersCsv,paymentsCsv,transactionsCsv,summary,auditExport
 };
