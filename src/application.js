@@ -265,6 +265,21 @@ function mountPlatform(app) {
   app.use(createRouter());
 }
 
+function unexpectedErrorPage({ isAdmin, requestId }) {
+  const backHref = isAdmin ? '/admin' : '/account';
+  const backLabel = isAdmin ? 'Back to admin' : 'Back to your account';
+  const ref = requestId ? `<p class="ref">Reference: <code>${requestId}</code></p>` : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Something went wrong</title><style>
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0c1117;color:#edf2f7;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    main{max-width:440px;margin:24px;padding:28px;border:1px solid #29323d;border-radius:14px;background:#141a21;text-align:center}
+    h1{margin:0 0 10px;font-size:20px}
+    p{margin:0 0 8px;color:#8d99aa;font-size:14px;line-height:1.5}
+    .ref{margin-top:16px;font-size:12px}
+    .ref code{color:#c3cbd6}
+    a.button{display:inline-block;margin-top:18px;padding:10px 18px;border-radius:8px;background:#123d4d;border:1px solid #22657b;color:#eafaff;text-decoration:none;font-size:13px;font-weight:700}
+  </style></head><body><main><h1>Something went wrong on our end</h1><p>This wasn't caused by anything you did. Please try again in a moment — if it keeps happening, contact support and mention the reference below.</p>${ref}<a class="button" href="${backHref}">${backLabel}</a></main></body></html>`;
+}
+
 function createApplication() {
   validateEnvironment();
   const app = express();
@@ -282,15 +297,20 @@ function createApplication() {
   app.use((req, res) => res.status(404).send('Not found'));
   app.use((error, req, res, _next) => {
     const routeTemplate = req.route?.path ? `${req.baseUrl || ''}${req.route.path}` : null;
+    const requestId = req.requestId || null;
     console.error('Request failed:', {
-      requestId: req.requestId || null,
+      requestId,
       method: req.method,
       route: routeTemplate,
       error: error.message
     });
     if (res.headersSent) return;
     const status = Number(error.status || error.statusCode || 500);
-    res.status(status >= 400 && status < 600 ? status : 500).send(status >= 500 ? 'Request failed.' : error.message);
+    const finalStatus = status >= 400 && status < 600 ? status : 500;
+    res.status(finalStatus);
+    if (finalStatus < 500) return res.send(error.message);
+    if (req.accepts(['html', 'json']) !== 'html') return res.json({ error: 'Something went wrong on our end.', requestId });
+    return res.send(unexpectedErrorPage({ isAdmin: req.path.startsWith('/admin'), requestId }));
   });
   return app;
 }

@@ -26,15 +26,30 @@ async function paypalToken(config) {
     return payload.access_token;
 }
 
+const MAX_PAYPAL_PAGES = 10;
+
+async function paypalTransactionPage(config, token, since, end, page) {
+    const params = new URLSearchParams({ start_date: iso(since), end_date: iso(end), fields: 'all', page_size: '100', page: String(page) });
+    const response = await fetch(`${paypalBase(config)}/v1/reporting/transactions?${params}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`PayPal reporting failed: ${payload.message || response.status}`);
+    return payload;
+}
+
 async function paypalRecent(since) {
     const config = await providerSettings.get('paypal');
     if (!config?.clientId || !config?.clientSecret) return { provider: 'paypal', configured: false, rows: [] };
     const token = await paypalToken(config), end = new Date();
-    const params = new URLSearchParams({ start_date: iso(since), end_date: iso(end), fields: 'all', page_size: '100', page: '1' });
-    const response = await fetch(`${paypalBase(config)}/v1/reporting/transactions?${params}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`PayPal reporting failed: ${payload.message || response.status}`);
-    const rows = (payload.transaction_details || []).map(detail => {
+    const details = [];
+    let page = 1, totalPages = 1, truncated = false;
+    while (page <= totalPages) {
+        const payload = await paypalTransactionPage(config, token, since, end, page);
+        details.push(...(payload.transaction_details || []));
+        totalPages = Math.max(1, Number(payload.total_pages) || 1);
+        if (page >= MAX_PAYPAL_PAGES && page < totalPages) { truncated = true; break; }
+        page += 1;
+    }
+    const rows = details.map(detail => {
         const info = detail.transaction_info || {}, amount = info.transaction_amount || {}, status = String(info.transaction_status || '');
         const referenceId = info.paypal_reference_id || null, referenceType = info.paypal_reference_id_type || null;
         return {
@@ -47,7 +62,7 @@ async function paypalRecent(since) {
     }).filter(row => row.id && classifyProviderTransaction({
         provider: 'paypal', type: row.eventCode, status: row.status, grossMinor: row.amountMinor
     }) === 'payment');
-    return { provider: 'paypal', configured: true, rows };
+    return { provider: 'paypal', configured: true, rows, truncated };
 }
 
 async function stripeRecent(since) {
@@ -107,7 +122,7 @@ async function providerResult(provider, since) {
         const remote = provider === 'paypal' ? await paypalRecent(since) : await stripeRecent(since);
         if (!remote.configured) return { provider, configured: false, error: null, rows: [] };
         const local = await localRows(provider, since), rows = remote.rows.map(row => ({ ...row, ...localMatch(row, local) })).filter(row => row.reason);
-        return { provider, configured: true, error: null, rows };
+        return { provider, configured: true, error: null, rows, truncated: Boolean(remote.truncated) };
     } catch (error) {
         // Financial/provider failures are deliberately returned to the UI, not
         // converted into an apparently clean empty reconciliation result.
