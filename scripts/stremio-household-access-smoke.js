@@ -24,8 +24,9 @@ const stremioPlanEditor=read('src/platform/admin-stremio-plan-editor.js');
 const plansList=read('src/platform/admin-plans-list.js');
 const storefront=read('src/platform/storefront-core.js');
 const customerStremio=read('src/platform/customer-stremio.js');
+const customerDashboard=read('src/platform/customer-dashboard.js');
+const dashboard=read('views/customer/dashboard.ejs');
 const adminCustomer=read('src/platform/admin-customer-360.js');
-const stremioSetup=read('views/customer/stremio.ejs');
 const migration=read('db/migrations/022_retire_stremio_stream_admission.sql');
 const familyMigration=read('db/migrations/024_network_lease_families.sql');
 const policyMigration=read('db/migrations/026_stremio_household_plan_policy.sql');
@@ -106,8 +107,10 @@ assert(stremioPlanEditor.includes("updateTrackingSnapshots(client,data.plan,inpu
 assert(stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must reset current Stremio leases so the new allowance takes effect');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
-assert(customerStremio.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'customer portal must show unlimited playback and use server-enforced replacement');
-assert(stremioSetup.includes('<%= accessModel %>')&&!stremioSetup.includes('/64')&&stremioSetup.includes('Use a different household connection'),'normal customer UI must hide network implementation detail');
+assert(customerStremio.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'customer Stremio routes must keep unlimited playback copy and server-enforced household replacement');
+assert(customerDashboard.includes('stremioHouseholdForCustomer')&&customerDashboard.includes('householdAccess.replacementState'),'Account Home must load the current Stremio household state');
+assert(dashboard.includes('<%= stremioHousehold.accessModel %>')&&!dashboard.includes('/64')&&dashboard.includes('Use a different household connection'),'Account Home Stremio UI must show household access without exposing network implementation detail and retain the household replacement control');
+assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired standalone Stremio setup view must stay removed');
 assert(adminCustomer.includes("'/admin/users/:customerId/stremio-household/reset'"),'admin household reset support must remain available');
 
 assert(!sourcePool.includes("const http=require('http')")&&!sourcePool.includes('openPlayback('),'retired source byte relay must stay removed');
