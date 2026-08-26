@@ -1,0 +1,162 @@
+name: Apply playback navigation and FX fix
+
+on:
+  push:
+    branches:
+      - fix/playback-nav-fx-warning
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/playback-nav-fx-warning
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - run: npm ci
+      - name: Apply production fixes and regressions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p=Path(path)
+              text=p.read_text()
+              if old not in text:
+                  raise SystemExit(f'missing expected block in {path}: {old[:100]!r}')
+              if text.count(old)!=1:
+                  raise SystemExit(f'expected one occurrence in {path}, found {text.count(old)}')
+              p.write_text(text.replace(old,new,1))
+
+          # Keep the Libraries utility route, but remove it from the permanent sidebar.
+          replace_once(
+              'src/platform/admin-nav.js',
+              "const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','my-profile','my-notifications','my-security']);",
+              "const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','libraries','my-profile','my-notifications','my-security']);"
+          )
+
+          # Let legacy EJS admin pages consume the same canonical nested-page registry.
+          replace_once(
+              'src/application.js',
+              "  app.locals.adminNavSidebarKey = adminNav.sidebarKey;\n",
+              "  app.locals.adminNavSidebarKey = adminNav.sidebarKey;\n  app.locals.adminNavChildPages = adminNav.childPages;\n"
+          )
+
+          p=Path('views/admin/_nav.ejs')
+          text=p.read_text()
+          text=text.replace(
+              "  const sidebarKeyFn = typeof adminNavSidebarKey === 'function' ? adminNavSidebarKey : key => key;\n",
+              "  const sidebarKeyFn = typeof adminNavSidebarKey === 'function' ? adminNavSidebarKey : key => key;\n  const childPagesFn = typeof adminNavChildPages === 'function' ? adminNavChildPages : () => [];\n",
+              1
+          )
+          text=text.replace(
+              "    automation:'<path d=\"M18 8a6 6 0 1 0 1.76 4.24\"/><path d=\"M18 3v5h5\"/><path d=\"m13 9-3 4h4l-3 4\"/>',\n",
+              "    stremio:'<path d=\"m9 7 8 5-8 5V7Z\"/><path d=\"M4 5.5v13\"/><path d=\"M20 5.5v13\"/>',\n    automation:'<path d=\"M18 8a6 6 0 1 0 1.76 4.24\"/><path d=\"M18 3v5h5\"/><path d=\"m13 9-3 4h4l-3 4\"/>',\n",
+              1
+          )
+          old='''        <summary class="navSectionLabel"><span class="navSectionHome"><span class="navIcon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><%- iconPaths[group.key]||iconPaths.dashboard %></svg></span><span><%= group.label %></span></span><span class="navChevron" aria-hidden="true">⌄</span></summary>
+        <div class="navSectionPages"><% group.pages.forEach(function(child){ %><a class="adminTab <%= currentSidebarKey===child[0]?'active':'' %>" href="<%= child[2] %>" title="Open <%= child[1] %>"><%= child[1] %></a><% }); %></div>'''
+          new='''        <summary class="navSectionLabel"><span class="navSectionHome"><span class="navIcon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><%- iconPaths[group.key==='jellyfin'?'servers':group.key==='resellers'?'people':group.key]||iconPaths.dashboard %></svg></span><span><%= group.label %></span></span><span class="navChevron" aria-hidden="true">⌄</span></summary>
+        <div class="navSectionPages">
+          <% group.pages.forEach(function(child){ const children=childPagesFn(child[0]); const parentSelected=currentSidebarKey===child[0]; const exactSelected=currentKey===child[0]; %>
+            <div class="adminTabGroup">
+              <a class="adminTab <%= parentSelected?'active':'' %>" href="<%= child[2] %>" title="Open <%= child[1] %>" <%= exactSelected?'aria-current="page"':'' %>><%= child[1] %></a>
+              <% if(children.length){ %><div class="adminTabChildren" aria-label="<%= child[1] %> tools">
+                <% children.forEach(function(grandchild){ const selected=currentKey===grandchild[0]; %><a class="adminSubTab <%= selected?'active':'' %>" href="<%= grandchild[2] %>" title="Open <%= grandchild[1] %>" <%= selected?'aria-current="page"':'' %>><%= grandchild[1] %></a><% }); %>
+              </div><% } %>
+            </div>
+          <% }); %>
+        </div>'''
+          if old not in text:
+              raise SystemExit('legacy EJS navigation block changed unexpectedly')
+          p.write_text(text.replace(old,new,1))
+
+          # Frankfurter moved its public API from .app/v1 to .dev/v2. The old
+          # URL can redirect; redirect:error makes that surface as "fetch failed".
+          p=Path('src/platform/reporting-currency.js')
+          text=p.read_text()
+          old="""      const response=await fetch('https://api.frankfurter.app/latest?from=GBP&to=USD,EUR',{headers:{Accept:'application/json'},redirect:'error',signal:controller.signal});
+      if(!response.ok)throw new Error(`FX HTTP ${response.status}`);const body=await response.json(),usd=Number(body?.rates?.USD),eur=Number(body?.rates?.EUR);if(!Number.isFinite(usd)||usd<=0||!Number.isFinite(eur)||eur<=0)throw new Error('FX response missing GBP rates');
+"""
+          new="""      const response=await fetch('https://api.frankfurter.dev/v2/rates?base=GBP&quotes=USD,EUR',{headers:{Accept:'application/json'},redirect:'error',signal:controller.signal});
+      if(!response.ok)throw new Error(`FX HTTP ${response.status}`);
+      const body=await response.json(),rows=Array.isArray(body)?body:[],rates=Object.fromEntries(rows.map(row=>[String(row?.quote||'').toUpperCase(),Number(row?.rate)])),usd=rates.USD,eur=rates.EUR;
+      if(!Number.isFinite(usd)||usd<=0||!Number.isFinite(eur)||eur<=0)throw new Error('FX response missing GBP quotes');
+"""
+          if old not in text:
+              raise SystemExit('reporting currency endpoint block changed unexpectedly')
+          p.write_text(text.replace(old,new,1))
+
+          # Static contracts: EJS parity, hidden Libraries utility, current FX API.
+          p=Path('scripts/admin-accessibility-mobile-smoke.js')
+          text=p.read_text()
+          anchor="const sidebar=read('public/js/admin-sidebar-nav.js');\n"
+          addition="""const applicationSource=read('src/application.js');
+          const legacyNav=read('views/admin/_nav.ejs');
+          const navRegistry=require('../src/platform/admin-nav');
+          assert(applicationSource.includes('app.locals.adminNavChildPages = adminNav.childPages'),'legacy EJS pages must receive canonical nested sidebar pages');
+          assert(legacyNav.includes('adminNavChildPages')&&legacyNav.includes('class=\"adminSubTab'),'legacy EJS sidebar must render the same nested destinations as the modern renderer');
+          assert(navRegistry.childPages('activity').some(page=>page[0]==='inactivity-policy'),'Playback must retain its Free-user inactivity rules child destination');
+          assert(!navRegistry.childPages('servers').some(page=>page[0]==='libraries'),'Libraries scan utility must not appear as permanent sidebar navigation');
+          """
+          if anchor not in text:
+              raise SystemExit('admin mobile smoke anchor missing')
+          p.write_text(text.replace(anchor,addition+anchor,1))
+
+          p=Path('scripts/storefront-currency-integrity-smoke.js')
+          text=p.read_text()
+          anchor="assert(reporting.includes(\"'admin.portal_currency.update'\"),'Master currency changes must be audited');\n"
+          addition="""assert(reporting.includes('https://api.frankfurter.dev/v2/rates?base=GBP&quotes=USD,EUR'),'FX refresh must use Frankfurter current public v2 endpoint');
+          assert(!reporting.includes('api.frankfurter.app'),'FX refresh must not use Frankfurter retired redirecting .app endpoint');
+          assert(reporting.includes('Array.isArray(body)')&&reporting.includes('row?.quote')&&reporting.includes('row?.rate'),'FX refresh must parse Frankfurter v2 flat rate rows');
+          """
+          if anchor not in text:
+              raise SystemExit('currency smoke anchor missing')
+          p.write_text(text.replace(anchor,addition+anchor,1))
+
+          # Real mobile browser coverage: include Playback and verify its nested
+          # child remains visible in the opened drawer on the EJS-rendered page.
+          p=Path('tests/admin-browser-regression.js')
+          text=p.read_text()
+          old="'/admin/backups','/admin/billing','/admin/payments/transactions','/admin/payments/export']"
+          new="'/admin/backups','/admin/billing','/admin/payments/transactions','/admin/payments/export','/admin/activity']"
+          if old not in text:
+              raise SystemExit('mobile URL inventory anchor changed')
+          text=text.replace(old,new,1)
+          anchor="""    // Export endpoints are POST + CSRF downloads. Exercise all four against the
+"""
+          addition="""    await page.goto(`${BASE}/admin/activity`,{waitUntil:'domcontentloaded'});
+    await page.locator('[data-admin-mobile-nav-toggle]').click();
+    const jellyfinSection=page.locator('details.navSection[data-nav-section=\"jellyfin\"]');
+    if(!(await jellyfinSection.getAttribute('open')))await jellyfinSection.locator(':scope > summary').click();
+    const jellyfinNested=(await jellyfinSection.locator('.adminSubTab').allTextContents()).map(value=>value.trim()).filter(Boolean);
+    assert(jellyfinNested.includes('Free-user inactivity rules'),`Playback mobile drawer lost its nested tools: ${JSON.stringify(jellyfinNested)}`);
+    assert(!jellyfinNested.includes('Libraries'),'Libraries utility must not reappear in the mobile drawer');
+
+"""
+          if anchor not in text:
+              raise SystemExit('browser export anchor missing')
+          p.write_text(text.replace(anchor,addition+anchor,1))
+          PY
+      - name: Validate focused contracts
+        run: |
+          node scripts/check-js-syntax.js
+          node scripts/admin-accessibility-mobile-smoke.js
+          node scripts/storefront-currency-integrity-smoke.js
+      - name: Commit production changes
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/apply-playback-nav-fx-fix.yml
+          git add src/application.js src/platform/admin-nav.js src/platform/reporting-currency.js views/admin/_nav.ejs scripts/admin-accessibility-mobile-smoke.js scripts/storefront-currency-integrity-smoke.js tests/admin-browser-regression.js
+          git commit -m "Fix playback navigation and FX refresh"
+          git push origin HEAD:fix/playback-nav-fx-warning
