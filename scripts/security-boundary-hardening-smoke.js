@@ -111,6 +111,16 @@ async function main() {
         'public abuse-protection settings must persist before the audit row within one atomic transaction'
     );
 
+    const application = read('src/application.js');
+    assert(
+        application.includes("res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet, noimageindex');"),
+        'every CAPTAiNFiN response must carry the global no-index header'
+    );
+    const robots = read('public/robots.txt');
+    assert(/User-agent:\s*\*/i.test(robots), 'robots.txt must target all crawlers');
+    assert(/^Disallow:\s*$/im.test(robots), 'robots.txt must allow crawling so known URLs can receive the noindex response header');
+    assert(!/Disallow:\s*\//i.test(robots), 'robots.txt must not block crawlers from observing noindex');
+
     const roles = read('scripts/configure-runtime-db-roles.js');
     assert((roles.match(/REVOKE UPDATE,DELETE ON audit_log FROM \$\{role\}/g) || []).length >= 2, 'web and automation role refreshes must preserve audit-log append-only privileges');
 

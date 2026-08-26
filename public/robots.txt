@@ -1,0 +1,7 @@
+User-agent: *
+Disallow:
+
+# CAPTAiNFiN is intentionally excluded from public search indexing.
+# Crawling remains allowed so search engines can fetch known URLs and receive
+# the site-wide X-Robots-Tag response header:
+# noindex, nofollow, noarchive, nosnippet, noimageindex.
