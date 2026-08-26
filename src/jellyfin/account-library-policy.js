@@ -2,7 +2,7 @@
 
 const { query } = require('../db');
 const policy = require('./policy');
-const engine = require('./provisioning-engine');
+const provisioning = require('./provisioning');
 
 async function scopedSelection(customerId, accountId) {
     if (accountId) {
@@ -16,7 +16,7 @@ async function scopedSelection(customerId, accountId) {
     }
     // Compatibility fallback for customers who already made one global choice
     // before selections became account/server scoped.
-    return engine.getLibrarySelection(customerId);
+    return provisioning.getLibrarySelection(customerId);
 }
 
 async function setScopedSelection(customerId, accountId, names) {
@@ -42,21 +42,21 @@ async function effectiveForAccount(customerId, plan, account) {
     const serverId = account?.server_id || null;
     const accountId = account?.id || null;
     const [override, libOverrides, selection] = await Promise.all([
-        engine.getPolicyOverride(customerId),
-        engine.getLibraryOverrides(customerId),
+        provisioning.getPolicyOverride(customerId),
+        provisioning.getLibraryOverrides(customerId),
         scopedSelection(customerId, accountId)
     ]);
     const technicalRows = policy.effectiveTechnicalPolicy(plan, override);
     let catalog;
     if (serverId) {
-        const folders = await engine.discoverServerLibraries(serverId);
+        const folders = await provisioning.discoverServerLibraries(serverId);
         catalog = {
             names: folders.map(folder => folder.name).sort((a, b) => a.localeCompare(b)),
             failedServers: [],
             serverCount: 1
         };
     } else {
-        catalog = await engine.libraryCatalogForPlan(plan);
+        catalog = await provisioning.libraryCatalogForPlan(plan);
     }
     const entitlementRows = policy.libraryEntitlement(plan, libOverrides, catalog.names);
     const visibleNames = policy.customerVisibleLibraries(entitlementRows, selection);
