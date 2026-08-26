@@ -24,17 +24,30 @@ jobs:
         with:
           node-version: 22.23.1
           cache: npm
+      - name: Restore required EJS dependency
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const file='package.json';
+          const pkg=JSON.parse(fs.readFileSync(file,'utf8'));
+          pkg.dependencies=pkg.dependencies||{};
+          pkg.dependencies.ejs='^3.1.10';
+          const ordered={};
+          for(const key of Object.keys(pkg.dependencies).sort()) ordered[key]=pkg.dependencies[key];
+          pkg.dependencies=ordered;
+          fs.writeFileSync(file,JSON.stringify(pkg,null,2)+'\n');
+          NODE
       - name: Regenerate lockfile dependency graph
         run: npm install --package-lock-only --ignore-scripts
-      - name: Commit repaired lockfile
+      - name: Commit repaired dependency manifest
         shell: bash
         run: |
-          if git diff --quiet -- package-lock.json; then
-            echo "package-lock.json already consistent"
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "dependency manifest already consistent"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- package-lock.json
-          git commit -m "Repair npm lockfile dependency graph"
+          git add -- package.json package-lock.json
+          git commit -m "Restore EJS dependency and repair lockfile"
           git push origin HEAD:feature/legacy-paid-user-import
