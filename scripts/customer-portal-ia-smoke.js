@@ -25,7 +25,7 @@ const capacity=read('src/entitlements/plan-capacity.js');
 const storefront=read('src/platform/storefront.js');
 const paymentReturn=read('src/platform/customer-payment-return.js');
 const checkout=read('src/platform/flexible-checkout.js');
-const stremio=read('views/customer/stremio-dashboard.ejs');
+const stremioRoute=read('src/platform/customer-stremio.js');
 const history=read('src/platform/customer-history.js');
 const activity=read('src/platform/customer-activity.js');
 const activityView=read('views/customer/activity.ejs');
@@ -50,6 +50,7 @@ assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account secur
 assert(customerNavigationCss.includes('.customerStandaloneHeader'),'signed-in Account must style the restored account header explicitly');
 assert(communications.includes("include('_nav',{active:'notifications'})"),'Notifications page must highlight Notifications rather than making Account look active');
 assert(communications.includes('class=\"portalTopbar\"'),'Notifications page must retain the customer account header');
+assert(communications.includes('href=\"/account/security\">Account</a>')&&!communications.includes('>Account settings</a>'),'Notifications must use the canonical Account destination name');
 assert(activityView.includes('class=\"portalTopbar\"'),'Activity page must retain the customer account header');
 assert(history.includes('class=\"portalTopbar\"'),'Payments page must retain the customer account header');
 assert(affiliate.includes('class=\"portalTopbar\"')&&affiliate.includes("include('_nav',{active:'affiliate'})"),'Affiliate must retain the account shell and highlight Affiliate');
@@ -71,13 +72,12 @@ for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller P
 assert(dashboard.includes("accessGroups.forEach(function(group)")&&dashboard.includes('group.plans.forEach(function(p)'),'dashboard Plans & payments must render each family as its own group without changing per-plan card actions');
 assert(dashboard.includes('lane=laneEntitlement(p)')&&dashboard.includes('isCurrent=Boolean(lane&&String(lane.plan_id||lane.id)===String(p.id))'),'plan-current state must remain scoped to the overlapping service lane');
 assert(dashboard.includes('without giving up your Free Server access'),'paid and Stremio acquisition must explicitly preserve simultaneous Free Server access');
-assert(stremio.includes('!currentPlan.is_free_tier'),'Stremio-only dashboard must preserve the same paid-vs-free trial visibility rule');
 assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('scheduled for your next renewal'),'dashboard must disclose Stripe plan-change timing before checkout');
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
 assert(!/provisioning source|server placement|reconciliation/i.test(dashboard),'dashboard exposes operator-only jargon');
-assert(stremio.includes("include('_nav',{active:'overview'})"),'Stremio-only dashboard must use the canonical customer navigation partial');
+assert(stremioRoute.includes("r.get('/account/stremio',(req,res)=>res.redirect(302,'/account#stremio-access'))"),'legacy Stremio setup URL must redirect to the canonical Home Stremio section');
+assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs'))&&!fs.existsSync(path.join(root,'views/customer/stremio-dashboard.ejs')),'retired standalone Stremio customer views must stay removed');
 assert(customerPortalCss.includes('.accountHero')&&customerPortalCss.includes('.overviewGrid')&&customerPortalCss.includes('.metricCard')&&customerPortalCss.includes('.notice.error'),'customer dashboard hero, metrics and warning surfaces must be styled');
-assert(!stremio.includes('style=\"font-size:20px\"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
 assert(history.includes("customerNav.nav('history',navOptions)"),'billing history must use canonical navigation with the Payments item highlighted');
 
 assert(affiliateRoute.includes("operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code))"),'affiliate route must build the canonical shareable referral signup URL');
