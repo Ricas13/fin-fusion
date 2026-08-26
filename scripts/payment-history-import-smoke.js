@@ -118,18 +118,18 @@ const dashboardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payme
 const accountingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'history-accounting.js'), 'utf8');
 const reconciliationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'provider-payment-reconciliation.js'), 'utf8');
 assert.ok(dashboardSource.includes("require('./provider-transaction-classifier')"), 'Commerce ledger must import the canonical classifier');
-assert.ok(accountingSource.includes("require('./provider-transaction-classifier')"), 'Payment History must import the canonical classifier');
+assert.ok(accountingSource.includes("require('./provider-transaction-classifier')"), 'Provider accounting must import the canonical classifier');
 assert.ok(reconciliationSource.includes("require('./provider-transaction-classifier')"), 'provider reconciliation must import the canonical classifier');
 assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(dashboardSource), 'Commerce must not define a second PayPal code list');
-assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(accountingSource), 'Payment History must not define a second PayPal code list');
+assert.ok(!/const PAYPAL_(?:PAYMENT|REFUND)_CODES/.test(accountingSource), 'Provider accounting must not define a second PayPal code list');
 assert.ok(/T0004[\s\S]*T0021/.test(classifierSource) && /T1106[\s\S]*T1201/.test(classifierSource), 'canonical classifier must retain the complete PayPal accounting code lists');
 assert.ok(/partial_capture_reversal/.test(classifierSource), 'canonical Stripe refunds must include partial capture reversals');
 assert.ok(dashboardSource.includes('transaction_status'), 'Commerce imported-history query must include provider transaction status');
 assert.ok(dashboardSource.includes('paymentEventsInRange(range)'), 'Commerce webhook fallback must use the paginated reader');
 assert.ok(dashboardSource.includes('EVENT_PAGE_SIZE') && dashboardSource.includes('cursor?.created_at'), 'webhook fallback must keyset paginate provider events');
 assert.ok(!dashboardSource.includes('LIMIT 25000'), 'Commerce financial totals must never silently stop at 25,000 payment events');
-assert.ok(dashboardSource.includes("status='completed'"), 'dashboard accounting may only trust completed import coverage');
-assert.ok(dashboardSource.includes('completed_at'), 'dashboard accounting must cap same-day coverage at the actual import completion time');
+assert.ok(dashboardSource.includes("status='completed'"), 'dashboard accounting may only trust completed provider-ledger coverage');
+assert.ok(dashboardSource.includes('completed_at'), 'dashboard accounting must cap same-day coverage at the actual provider-ledger completion time');
 
 const flexibleCheckoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'flexible-checkout.js'), 'utf8');
 const discountsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'discounts.js'), 'utf8');
@@ -152,13 +152,10 @@ const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'migrations',
 assert.ok(/UNIQUE\(provider, provider_transaction_id\)/.test(migration), 'historical ledger must enforce provider-level transaction dedupe');
 assert.ok(/Historical provider accounting ledger only/.test(migration), 'migration must document the non-entitlement boundary');
 
-const adminSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-payment-history.js'), 'utf8');
-assert.ok(adminSource.includes('csrf.verify(req)'), 'history mutations must be CSRF protected');
-assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'committed imports must require explicit operator confirmation');
-assert.ok(adminSource.includes("endDate: today"), 'the initial current-year import should end today rather than requesting future provider history');
-assert.ok(adminSource.includes("assertHistoricalRange(values)"), 'payment history endpoints must reject future end dates server-side');
-assert.ok(adminSource.includes('Future dates are not accepted.'), 'the admin form must explain the historical-only range constraint');
-assert.ok(adminSource.includes('Imported revenue summary'), 'the history page must present customer revenue rather than raw provider balance totals as the primary ledger summary');
-assert.ok(adminSource.includes('Raw provider movement preview'), 'raw balance movements must be explicitly labeled as non-revenue reconciliation data');
+const routeCompositionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-route-composition.js'), 'utf8');
+const navSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-nav.js'), 'utf8');
+assert.ok(!routeCompositionSource.includes('createAdminPaymentHistoryRouter'), 'retired manual provider-history import routes must not be mounted');
+assert.ok(!navSource.includes('/admin/payments/history'), 'retired Import history destination must not remain in the sidebar source');
+assert.ok(!fs.existsSync(path.join(__dirname, '..', 'src', 'platform', 'admin-payment-history.js')), 'retired Import history admin page must stay deleted');
 
-console.log('Payment history import smoke passed.');
+console.log('Provider accounting history smoke passed.');
