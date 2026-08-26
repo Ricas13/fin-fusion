@@ -69,7 +69,12 @@ function createRuntimeLegacyRouter() {
     });
 
     router.get('/api/platform/plans', async (_req, res, next) => { try { return res.json(await customers.listPublicPlans()); } catch (error) { return next(error); } });
-    router.use((error, req, res, _next) => { console.error('Platform route error:', error); if (req.path.startsWith('/api/')) return res.status(500).json({ success: false, error: 'Internal server error' }); return res.status(500).render('customer/message', { title:'Something went wrong', message:'The request could not be completed. Please try again.', siteName:runtimeSettings.siteName() }); });
+    router.use((error, req, res, _next) => {
+        console.error('Platform route error:', error);
+        if (req.path.startsWith('/api/')) return res.status(500).json({ success: false, error: 'Internal server error' });
+        if (req.path.startsWith('/account/')) return res.redirect('/account?error=' + encodeURIComponent('The request could not be completed. Please try again.'));
+        return res.status(500).render('customer/message', { title:'Something went wrong', message:'The request could not be completed. Please try again.', siteName:runtimeSettings.siteName() });
+    });
     return router;
 }
 module.exports = { createRuntimeLegacyRouter, requireCustomer, verifyPortalPassword };
