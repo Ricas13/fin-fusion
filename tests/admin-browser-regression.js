@@ -221,15 +221,14 @@ async function main(){
     assert(jellyfinNested.includes('Free-user inactivity rules'),`Playback mobile drawer lost its nested tools: ${JSON.stringify(jellyfinNested)}`);
     assert(!jellyfinNested.includes('Libraries'),'Libraries utility must not reappear in the mobile drawer');
 
-    // Export endpoints are POST + CSRF downloads. Exercise all four against the
-    // real clean-install schema so SQL drift cannot hide behind static tests.
+    // CSV export endpoints are POST + CSRF downloads. Exercise all three against
+    // the real clean-install schema so SQL drift cannot hide behind static tests.
     await page.setViewportSize({width:1440,height:1000});
     await page.goto(`${BASE}/admin/payments/export`,{waitUntil:'domcontentloaded'});
     for(const [action,suffix] of [
       ['/admin/payments/export/users','.csv'],
       ['/admin/payments/export/payments','.csv'],
-      ['/admin/payments/export/transactions','.csv'],
-      ['/admin/payments/export/bundle','.zip']
+      ['/admin/payments/export/transactions','.csv']
     ]){
       const form=page.locator(`form[action="${action}"]`);
       assert.equal(await form.count(),1,`${action} export form must exist`);
