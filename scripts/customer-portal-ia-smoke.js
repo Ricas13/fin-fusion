@@ -37,8 +37,8 @@ assert(generatedNav.includes("views/customer/_nav.ejs")&&generatedNav.includes('
 assert(generatedNav.includes('optionsForCustomer')&&generatedNav.includes('optionsFromPortal'),'customer navigation conditionals must come from one shared options helper');
 assert(dashboardRoute.includes('navOptions=customerNav.optionsFromPortal(portal)'),'dashboard and onboarding must compute canonical navigation options from the same portal model');
 assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must use the canonical customer navigation partial');
-assert(!dashboard.includes('customerNavLink" href="<%= overseerrUrl %>"'),'dashboard must not hardcode a second sidebar Request content link');
-assert(security.includes('class="securityMain"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
+assert(!dashboard.includes('customerNavLink\" href=\"<%= overseerrUrl %>\"'),'dashboard must not hardcode a second sidebar Request content link');
+assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
 assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Guides must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
 assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
@@ -55,22 +55,22 @@ assert(onboarding.includes("paymentButton('paypal',opt)")&&onboarding.includes("
 
 for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans','Other Plans'])assert(dashboard.includes(group),`dashboard Plan & billing grouping missing ${group}`);
 assert(dashboard.includes("accessGroups.forEach(function(group)")&&dashboard.includes('group.plans.forEach(function(p)'),'dashboard Plan & billing must render each family as its own group without changing per-plan card actions');
-assert(dashboard.includes('hideFreeOrTrial=Boolean(activeSubscription&&currentPlan&&!currentPlan.is_free_tier&&Number(p.price_minor)===0&&!isCurrent)'),'free and trial plans must only be hidden when the current plan is genuinely paid');
+assert(dashboard.includes('lane=laneEntitlement(p)')&&dashboard.includes('hideFreeOrTrial=Boolean(lane&&!lane.is_free_tier&&Number(p.price_minor)===0&&!isCurrent)'),'free and trial visibility must be scoped to the overlapping service lane');
 assert(stremio.includes('!currentPlan.is_free_tier'),'Stremio-only dashboard must preserve the same paid-vs-free trial visibility rule');
 assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('scheduled for your next renewal'),'dashboard must disclose Stripe plan-change timing before checkout');
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
 assert(!/provisioning source|server placement|reconciliation/i.test(dashboard),'dashboard exposes operator-only jargon');
 assert(stremio.includes("include('_nav',{active:'overview'})"),'Stremio-only dashboard must use the canonical customer navigation partial');
 assert(customerPortalCss.includes('.accountHero')&&customerPortalCss.includes('.overviewGrid')&&customerPortalCss.includes('.metricCard')&&customerPortalCss.includes('.notice.error'),'customer dashboard hero, metrics and warning surfaces must be styled');
-assert(!stremio.includes('style="font-size:20px"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
+assert(!stremio.includes('style=\"font-size:20px\"'),'Stremio dashboard should use customer CSS classes instead of inline metric sizing');
 assert(history.includes("customerNav.nav('history',navOptions)"),'billing history must use canonical navigation with the Payments item highlighted');
 
 assert(affiliateRoute.includes("operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code))"),'affiliate route must build the canonical shareable referral signup URL');
 assert(affiliateRoute.includes('referralLink'),'affiliate route must pass the referral signup URL to the template');
-assert(affiliate.includes('id="referral-signup-link"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('/js/customer-referral-copy.js'),'Benefits must display the full referral signup link and load its customer copy handler');
+assert(affiliate.includes('id=\"referral-signup-link\"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('/js/customer-referral-copy.js'),'Benefits must display the full referral signup link and load its customer copy handler');
 assert(!affiliate.includes('<script>'),'Benefits must not reintroduce inline JavaScript that violates the portal CSP');
 assert(referralCopy.includes('navigator.clipboard.writeText(input.value)')&&referralCopy.includes("document.execCommand('copy')"),'customer referral copy handler must support Clipboard API with a fallback');
-assert(affiliate.includes("balances.get('USD')")&&affiliate.includes('class="metricCard"'),'Benefits balances must use the compact metric-card language for USD');
+assert(affiliate.includes("balances.get('USD')")&&affiliate.includes('class=\"metricCard\"'),'Benefits balances must use the compact metric-card language for USD');
 assert(!affiliate.includes("['GBP','USD','EUR'].forEach"),'Benefits must not render the previous three oversized currency plan cards');
 
 assert(router.includes('createCustomerActivityRouter')&&activity.includes("r.get('/account/activity'"),'customer Activity navigation must have a mounted /account/activity route');
