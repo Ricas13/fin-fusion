@@ -47,7 +47,7 @@ function refundFromEvent(row, state = new Map(), warnings = []) {
         state.set(chargeId, Math.max(Number.isFinite(previousSeen) ? previousSeen : 0, cumulative));
 
         if (!Number.isFinite(incremental) || incremental <= 0) {
-            addWarning(warnings, 'A Stripe partial-refund webhook could not be reduced to a safe incremental amount. That event was excluded from live fallback totals; run Payment History import for exact provider accounting.');
+            addWarning(warnings, 'A Stripe partial-refund webhook could not be reduced to a safe incremental amount. That event was excluded from live fallback totals, so affected provider accounting totals may be incomplete.');
             return null;
         }
         return { minor: incremental, currency: String(object.currency || 'USD').toUpperCase() };
@@ -164,7 +164,7 @@ async function paymentEventsInRange(range) {
         if (result.rows.length < EVENT_PAGE_SIZE) return rows;
         cursor = result.rows[result.rows.length - 1];
     }
-    throw new Error(`Payment event accounting exceeded ${EVENT_PAGE_SIZE * MAX_EVENT_PAGES} rows. Run a Payment History import or narrow the dashboard range; totals were not rendered as complete.`);
+    throw new Error(`Payment event accounting exceeded ${EVENT_PAGE_SIZE * MAX_EVENT_PAGES} rows. Narrow the dashboard range; totals were not rendered as complete.`);
 }
 
 async function accountingRecords(range) {
