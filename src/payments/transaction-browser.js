@@ -100,6 +100,31 @@ async function listTransactions(input = {}) {
     return { filters, rows, total: matched, page: filters.page, pageSize: PAGE_SIZE, hasNext: truncated || matched > start + rows.length, truncated, scanned };
 }
 
+// Customer self-service view: every real transaction (one-time or
+// subscription-driven) for exactly one customer, hard-scoped by customer_id
+// rather than the free-text search admins use. Reuses the same imported
+// ledger and canonical classifier as the admin transaction browser so a
+// customer never sees a different answer than an admin would for the same
+// row. A customer's own transaction count is always small, so this skips
+// the admin path's scan/truncation machinery and just filters non-payment
+// rows out in memory.
+async function customerTransactions(customerId, input = {}) {
+    const id = String(customerId || '').trim();
+    if (!id) return { rows: [], total: 0, page: 1, pageSize: PAGE_SIZE, hasNext: false };
+    const filters = normalizeFilters(input);
+    const params = [];
+    const where = `${whereClause(filters, params)} AND t.customer_id=${(() => { params.push(id); return `$${params.length}`; })()}`;
+    const start = (filters.page - 1) * PAGE_SIZE;
+    const limitParams = [...params, PAGE_SIZE, start];
+    const [totalResult, rowsResult] = await Promise.all([
+        query(`SELECT COUNT(*)::bigint AS total FROM payment_history_transactions t LEFT JOIN customers c ON c.id=t.customer_id LEFT JOIN app_users u ON u.id=c.user_id WHERE ${where}`, params),
+        query(`${rowSelect()} WHERE ${where} ORDER BY t.occurred_at DESC,t.id DESC LIMIT $${limitParams.length - 1} OFFSET $${limitParams.length}`, limitParams)
+    ]);
+    const total = Number(totalResult.rows[0]?.total || 0);
+    const rows = rowsResult.rows.map(row => ({ ...row, kind: classify(row) })).filter(row => row.kind !== 'ignored');
+    return { filters, rows, total, page: filters.page, pageSize: PAGE_SIZE, hasNext: start + rowsResult.rows.length < total };
+}
+
 async function coverage() {
     const result = await query(`
         SELECT provider,COUNT(*)::bigint AS transactions,MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
@@ -111,4 +136,4 @@ async function coverage() {
     return result.rows;
 }
 
-module.exports = { PAGE_SIZE, MAX_CLASSIFIED_SCAN, normalizeFilters, classify, listTransactions, coverage };
+module.exports = { PAGE_SIZE, MAX_CLASSIFIED_SCAN, normalizeFilters, classify, listTransactions, customerTransactions, coverage };
