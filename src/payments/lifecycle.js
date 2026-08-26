@@ -75,7 +75,9 @@ async function trialPolicy() {
     return {
         trialMode: ['once_ever','once_per_plan','before_paid'].includes(value.trialMode) ? value.trialMode : 'once_ever',
         freeMode: ['once_per_plan','renewable','permanent'].includes(value.freeMode) ? value.freeMode : 'once_per_plan',
-        paidCanClaimFree: value.paidCanClaimFree === true,
+        // Compatibility property: Free Server is now an independent access lane,
+        // so paid Jellyfin never blocks a legitimate Free Server claim.
+        paidCanClaimFree: true,
         downgradeToFree: value.downgradeToFree === true,
         downgradeFreePlanCode: String(value.downgradeFreePlanCode || '').trim()
     };
@@ -85,7 +87,7 @@ async function saveTrialPolicy(input, actorUserId = null) {
     const value = {
         trialMode: ['once_ever','once_per_plan','before_paid'].includes(input.trialMode) ? input.trialMode : 'once_ever',
         freeMode: ['once_per_plan','renewable','permanent'].includes(input.freeMode) ? input.freeMode : 'once_per_plan',
-        paidCanClaimFree: input.paidCanClaimFree === true,
+        paidCanClaimFree: true,
         downgradeToFree: input.downgradeToFree === true,
         downgradeFreePlanCode: String(input.downgradeFreePlanCode || '').trim()
     };
@@ -182,19 +184,24 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
             if(!reservation||reservation.consumed_at||reservation.released_at||new Date(reservation.expires_at).getTime()<=Date.now()||String(reservation.plan_id)!==String(plan.id))throw new Error('Your Free Access hold has expired.');
         }
         await capacity.lockAndAssert(client,plan.id,plan.name||'This free plan',{excludeReservationId:reservationId});
-        const prior = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`, [customerId, plan.id]);
-        if (policy.freeMode !== 'renewable' && prior.rowCount) throw new Error('Free access on this plan has already been claimed.');
-        const liveResult=await client.query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);
-        const live=liveResult.rows[0]||null;
-        const livePrice=Number(live?.price_minor_snapshot??live?.price_minor??0);
-        if(live&&livePrice>0&&!policy.paidCanClaimFree&&!automatic)throw new Error('Free access cannot be claimed while a paid entitlement is active.');
-        if(live&&livePrice===0&&String(live.plan_id)===String(plan.id))throw new Error('You already have free access on this plan.');
-        const now=new Date(),startsAt=live&&livePrice>0?new Date(live.access_expires_at):now;
-        const endsAt=permanentEnd();
+        const historical = await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND plan_id=$2 AND source='free_claim' LIMIT 1`,[customerId,plan.id]);
+        const liveFree = await client.query(`
+            SELECT s.id,s.plan_id
+            FROM subscriptions s
+            JOIN plans p ON p.id=s.plan_id
+            WHERE s.customer_id=$1 AND s.source='free_claim' AND p.is_free_tier=TRUE
+              AND COALESCE(p.is_addon,FALSE)=FALSE AND s.superseded_by IS NULL
+              AND s.starts_at<=NOW() AND s.status IN('active','trialing','past_due','paused')
+              AND s.current_period_end>NOW()
+            FOR UPDATE OF s
+        `,[customerId]);
+        if(liveFree.rows.some(row=>String(row.plan_id)===String(plan.id)))throw new Error('You already have free access on this plan.');
+        if(policy.freeMode!=='renewable'&&historical.rowCount)throw new Error('Free access on this plan has already been claimed.');
+        const startsAt=new Date(),endsAt=permanentEnd();
         const row=await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',$3,$4) RETURNING *`,[customerId,plan.id,startsAt,endsAt]);
-        if(live&&livePrice===0)await state.markSuperseded(client,{subscriptionId:live.subscription_id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
+        for(const old of liveFree.rows)await state.markSuperseded(client,{subscriptionId:old.id,replacementId:row.rows[0].id,reason:automatic?'automatic_free_downgrade':'free_plan_change'});
         if(reservation)await client.query(`UPDATE free_access_registration_reservations SET consumed_at=NOW(),customer_id=$2,subscription_id=$3,updated_at=NOW() WHERE id=$1`,[reservation.id,customerId,row.rows[0].id]);
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,reservationId:reservation?.id||null})]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES($1,'subscription',$2,$3::jsonb)`,[automatic?'subscription.free.auto_downgrade':'subscription.free.claim',row.rows[0].id,JSON.stringify({customerId,planCode:plan.code,startsAt,endsAt,freeMode:policy.freeMode,nonExpiring:true,parallelWithPaid:true,reservationId:reservation?.id||null})]);
         return row.rows[0];
     });
     await inactivityHolds.releaseObsoleteForCustomer(customerId);
