@@ -48,11 +48,11 @@ async function effectiveAddons(customerId,{client=null,includeBlocked=false}={})
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        a.access_expires_at,a.blocked
+        a.access_expires_at,public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
  FROM effective_customer_addons a
  JOIN subscriptions s ON s.id=a.subscription_id
  JOIN plans p ON p.id=a.plan_id
- WHERE a.customer_id=$1 AND ($2::boolean OR a.blocked=FALSE)
+ WHERE a.customer_id=$1 AND ($2::boolean OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
  ORDER BY a.access_expires_at DESC,s.created_at DESC
  `,[customerId,Boolean(includeBlocked)]);return result.rows}
 async function assertNoOtherLiveRecurring(client,customerId,excludeId=null,targetPlanId=null){
