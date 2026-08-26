@@ -91,7 +91,7 @@ const fallbackRefund = dashboardLedger.refundFromEvent({ provider: 'stripe', eve
 assert.strictEqual(fallbackRefund.minor, 2000, 'when previous cumulative state is absent, use the refund object amount rather than charge.amount_refunded');
 const unsafeWarnings = [];
 assert.strictEqual(dashboardLedger.refundFromEvent({ provider: 'stripe', event_type: 'charge.refunded', payload: { data: { object: { id: 'ch_unknown', amount_refunded: 3000, currency: 'usd' } } } }, new Map(), unsafeWarnings), null, 'unsafe cumulative-only refunds must not be guessed');
-assert(unsafeWarnings.some(message => /Payment History import/.test(message)), 'unsafe refund fallback must produce an admin-facing completeness warning');
+assert(unsafeWarnings.some(message => /provider accounting totals may be incomplete/.test(message)), 'unsafe refund fallback must produce an admin-facing completeness warning without pointing to a retired import screen');
 
 const revenueRows = historyAccounting.summarizeRows([
     { provider: 'stripe', transaction_type: 'charge', transaction_status: 'available', currency: 'GBP', gross_amount_minor: 1000, fee_amount_minor: 59, occurred_at: '2026-08-01T12:00:00Z' },
