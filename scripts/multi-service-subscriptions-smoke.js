@@ -10,8 +10,9 @@ const state=require('../src/entitlements/subscription-state');
     await client.query('BEGIN');
     const customer=(await client.query(`INSERT INTO customers(display_name,email) VALUES('Multi Service Test','multi-service@example.invalid') RETURNING id`)).rows[0];
     const plans={};
+    plans.free=(await client.query(`SELECT id FROM plans WHERE is_free_tier=TRUE LIMIT 1`)).rows[0];
+    assert(plans.free,'clean install must provide the permanent Free Server plan');
     for(const spec of [
-      ['free','Multi Free Server','month',0,'jellyfin',true,'free'],
       ['premiumTrial','Multi Premium Trial','trial',0,'jellyfin',false,'premium'],
       ['stremioTrial','Multi Stremio Trial','trial',0,'stremio',false,'premium'],
       ['premiumPaid','Multi Premium Paid','month',600,'jellyfin',false,'premium'],
