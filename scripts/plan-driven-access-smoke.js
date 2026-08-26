@@ -5,6 +5,7 @@ const fs=require('fs');
 const path=require('path');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
 
 const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
@@ -35,6 +36,17 @@ assert(createPlan.includes('allow_4k'),'New Jellyfin plans must persist the exis
 assert(createPlan.includes('Subtitles:')&&createPlan.includes('does not expose a separate per-user subtitle permission'),'Plan UI must explain subtitle limitations instead of presenting a fake policy toggle');
 assert(createPlan.includes('inactivityEnabled')&&createPlan.includes('minimumPlaybackMinutes')&&createPlan.includes('noPlaybackDays'),'Free plan creation must include configurable Jellyfin usage rules');
 assert(planPolicy.includes("billing_interval||'')==='trial'"),'Plan usage disabling must explicitly exclude trial plans');
+const inheritedPolicy=planPolicyRuntime.effectiveForFreePlan({},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
+assert.strictEqual(inheritedPolicy.enabled,true,'Free plan with no lifecycle override must inherit globally enabled automation');
+assert.strictEqual(inheritedPolicy.dryRun,false,'Free plan with no lifecycle override must inherit global enforcement mode');
+assert.strictEqual(inheritedPolicy.noPlaybackDays,7,'Free plan with no lifecycle override must inherit global no-playback threshold');
+assert.strictEqual(planPolicyRuntime.hasUsageTrigger(inheritedPolicy),true,'Inherited Free rule must be an actionable usage policy');
+const explicitlyDisabled=planPolicyRuntime.effectiveForFreePlan({enabled:false,dryRun:false,noPlaybackDays:7},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
+assert.strictEqual(explicitlyDisabled.enabled,false,'Explicit per-plan disable must override a globally enabled lifecycle');
+const globallyDry=planPolicyRuntime.effectiveForFreePlan({enabled:true,dryRun:false,noPlaybackDays:3},{enabled:true,dryRun:true,freeNoPlaybackDays:7});
+assert.strictEqual(globallyDry.dryRun,true,'Global dry-run must prevent a plan override from forcing enforcement');
+assert(inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')")&&inactivity.includes('planPolicy.effectiveForFreePlan'),'Free inactivity worker must resolve the effective global-plus-plan lifecycle policy');
+assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE"),'Free candidates must not be silently excluded just because their plan has no explicit enabled override');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
