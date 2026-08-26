@@ -16,7 +16,7 @@ function stateLabel(state) { return ({ ready_current: 'Activate now', ready_futu
 function stateClass(state) { return ['ready_current','ready_future'].includes(state) ? 'good' : state === 'review' ? 'bad' : ['covered','already_imported'].includes(state) ? 'accent' : ''; }
 
 function uploadForm(req) {
-  return `<section class="section"><div class="sectionHead"><div><h2>Migrate paid users</h2><div class="muted">Restore existing paid terms from the old portal's Users and Payments CSV exports.</div></div><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div>
+  return `<section class="section"><div class="sectionHead"><div><h2>Migrate paid users</h2><div class="muted">Restore existing paid terms from the old portal's Users and Payments CSV exports.</div></div><div class="buttonRow"><a class="button secondary btn-sm" href="/admin/payments/export">Export data</a><a class="button secondary btn-sm" href="/admin/provider-mappings">Provider mappings</a></div></div>
     <div class="operatorCallout"><strong>This is the migration screen you want.</strong> Provider mappings configure prices for future checkout; they are not required to restore a trusted legacy customer's remaining paid term.</div>
     <div class="operatorCallout warn"><strong>No charge is created.</strong> CAPTAiNFiN reads the original email, plan, amount, processor and From/To dates. Expired terms and trials are ignored. A real Stripe/PayPal recurring subscription is linked separately from verified provider state.</div>
     <form class="formPanel" method="post" action="/admin/payments/legacy-import/preview" data-legacy-import-form>
