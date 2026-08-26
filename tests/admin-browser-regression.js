@@ -209,7 +209,7 @@ async function main(){
     await assertWorkflow(page,'/admin/configuration',backupTabs,'Configuration Transfer');
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups','/admin/billing','/admin/payments/transactions']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
