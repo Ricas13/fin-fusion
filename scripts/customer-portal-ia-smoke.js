@@ -15,6 +15,7 @@ const generatedNav=read('src/platform/customer-nav-html.js');
 const dashboardRoute=read('src/platform/customer-dashboard.js');
 const customerNavigationCss=read('public/css/customer-navigation.css');
 const security=read('src/platform/customer-security.js');
+const communications=read('views/customer/communications.ejs');
 const docsRoute=read('src/platform/customer-docs.js');
 const docsRender=read('src/platform/docs-render.js');
 const router=read('src/platform/router.js');
@@ -27,12 +28,15 @@ const checkout=read('src/platform/flexible-checkout.js');
 const stremio=read('views/customer/stremio-dashboard.ejs');
 const history=read('src/platform/customer-history.js');
 const activity=read('src/platform/customer-activity.js');
+const activityView=read('views/customer/activity.ejs');
 const customerPortalCss=read('public/css/customer-portal.css');
 
-for(const label of ['Home','Activity','Support','Help','Payments','Account'])assert(nav.includes(label),`customer navigation missing ${label}`);
+for(const label of ['Home','Activity','Support','Help','Payments','Account','Notifications'])assert(nav.includes(label),`customer navigation missing ${label}`);
 assert(!nav.includes('>Setup</a>')&&!nav.includes('Plan &amp; billing'),'customer navigation must not restore the redundant Setup or Plan & billing destinations');
-assert(nav.includes('navBenefits')&&nav.includes('navOverseerrUrl'),'customer navigation must keep Benefits and Request content conditional');
+assert(nav.includes('navBenefits')&&nav.includes('navOverseerrUrl'),'customer navigation must keep Affiliate and Request content conditional');
 assert(nav.includes('/account/history')&&nav.includes("active==='history'"),'Payments must link to billing history and preserve active highlighting');
+assert(nav.includes('/account/communications')&&nav.includes("active==='notifications'"),'Notifications must be a first-class navigation destination with its own active state');
+assert(nav.includes('>Affiliate</a>')&&!nav.includes('>Benefits</a>'),'customer navigation must consistently call the referral programme Affiliate');
 assert(nav.includes('Request content ↗'),'configured content requests must be part of the canonical customer navigation');
 assert(generatedNav.includes("views/customer/_nav.ejs")&&generatedNav.includes('ejs.compile'),'server-rendered account pages must render the same EJS navigation partial as template-rendered pages');
 assert(generatedNav.includes('optionsForCustomer')&&generatedNav.includes('optionsFromPortal'),'customer navigation conditionals must come from one shared options helper');
@@ -41,6 +45,11 @@ assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must
 assert(!dashboard.includes('customerNavLink\" href=\"<%= overseerrUrl %>\"'),'dashboard must not hardcode a second sidebar Request content link');
 assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
+assert(communications.includes("include('_nav',{active:'notifications'})"),'Notifications page must highlight Notifications rather than making Account look active');
+assert(communications.includes('class=\"portalTopbar\"'),'Notifications page must retain the customer account header');
+assert(activityView.includes('class=\"portalTopbar\"'),'Activity page must retain the customer account header');
+assert(history.includes('class=\"portalTopbar\"'),'Payments page must retain the customer account header');
+assert(affiliate.includes('class=\"portalTopbar\"')&&affiliate.includes("include('_nav',{active:'affiliate'})"),'Affiliate must retain the account shell and highlight Affiliate');
 assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Help must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
 assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
 
@@ -69,11 +78,11 @@ assert(history.includes("customerNav.nav('history',navOptions)"),'billing histor
 
 assert(affiliateRoute.includes("operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code))"),'affiliate route must build the canonical shareable referral signup URL');
 assert(affiliateRoute.includes('referralLink'),'affiliate route must pass the referral signup URL to the template');
-assert(affiliate.includes('id=\"referral-signup-link\"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('/js/customer-referral-copy.js'),'Benefits must display the full referral signup link and load its customer copy handler');
-assert(!affiliate.includes('<script>'),'Benefits must not reintroduce inline JavaScript that violates the portal CSP');
+assert(affiliate.includes('id=\"referral-signup-link\"')&&affiliate.includes('data-copy-referral-link')&&affiliate.includes('/js/customer-referral-copy.js'),'Affiliate must display the full referral signup link and load its customer copy handler');
+assert(!affiliate.includes('<script>'),'Affiliate must not reintroduce inline JavaScript that violates the portal CSP');
 assert(referralCopy.includes('navigator.clipboard.writeText(input.value)')&&referralCopy.includes("document.execCommand('copy')"),'customer referral copy handler must support Clipboard API with a fallback');
-assert(affiliate.includes("balances.get('USD')")&&affiliate.includes('class=\"metricCard\"'),'Benefits balances must use the compact metric-card language for USD');
-assert(!affiliate.includes("['GBP','USD','EUR'].forEach"),'Benefits must not render the previous three oversized currency plan cards');
+assert(affiliate.includes("balances.get('USD')")&&affiliate.includes('class=\"metricCard\"'),'Affiliate balances must use the compact metric-card language for USD');
+assert(!affiliate.includes("['GBP','USD','EUR'].forEach"),'Affiliate must not render the previous three oversized currency plan cards');
 
 assert(router.includes('createCustomerActivityRouter')&&activity.includes("r.get('/account/activity'"),'customer Activity navigation must have a mounted /account/activity route');
 assert(activity.includes('WHERE ph.customer_id=$1')&&activity.includes('WHERE customer_id=$1'),'customer Activity page must only query the signed-in customer');
