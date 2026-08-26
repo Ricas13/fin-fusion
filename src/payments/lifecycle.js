@@ -213,6 +213,99 @@ async function activatePurchase(input) {
     return activated;
 }
 
+async function attachDiscoveredProviderSubscription({
+    subscriptionId,
+    provider,
+    providerCustomerId = null,
+    providerSubscriptionId,
+    providerStatus,
+    periodEnd = null,
+    cancelAtPeriodEnd = false,
+    externalPlanIds = [],
+    actorUserId = null,
+    matchReason = null
+}) {
+    provider = String(provider || '').toLowerCase();
+    providerSubscriptionId = String(providerSubscriptionId || '').trim();
+    const remoteIdentity = { source: provider, provider_subscription_id: providerSubscriptionId };
+    if (!['stripe','paypal'].includes(provider) || !state.recurringProvider(remoteIdentity)) throw new Error('A valid Stripe or PayPal recurring subscription is required.');
+    const remotePlanIds = Array.from(new Set((externalPlanIds || []).map(value => String(value || '').trim()).filter(Boolean)));
+    if (!remotePlanIds.length) throw new Error('Provider subscription has no plan/price identity to verify.');
+
+    const attached = await transaction(async client => {
+        const localResult = await client.query(`
+            SELECT s.*,p.is_addon,p.is_free_tier,
+                   COALESCE(NULLIF(s.commercial_snapshot->>'serverClass',''),p.server_class) AS effective_server_class,
+                   COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type) AS effective_service_type,
+                   COALESCE(s.price_minor_snapshot,p.price_minor,0) AS effective_price_minor
+              FROM subscriptions s
+              JOIN plans p ON p.id=s.plan_id
+             WHERE s.id=$1
+             FOR UPDATE
+        `, [subscriptionId]);
+        const local = localResult.rows[0];
+        if (!local) throw new Error('Local premium subscription disappeared.');
+        if (local.effective_server_class !== 'premium' || !['jellyfin','bundle'].includes(local.effective_service_type) || Number(local.effective_price_minor) <= 0 || local.is_free_tier) {
+            throw new Error('Local subscription is no longer a paid Premium Server entitlement.');
+        }
+        if (state.recurringProvider(local)) {
+            if (local.source === provider && local.provider_subscription_id === providerSubscriptionId) return { row: local, already: true };
+            throw new Error('Local subscription became linked to another provider subscription.');
+        }
+
+        const duplicate = await client.query(`SELECT id,customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND id<>$3 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId, local.id]);
+        if (duplicate.rowCount) throw new Error('Provider subscription is already attached to another local subscription.');
+        await state.assertNoOtherLiveRecurring(client, local.customer_id, local.id, local.plan_id);
+
+        const mapping = await client.query(`
+            SELECT id,external_id,plan_price_id
+              FROM plan_provider_prices
+             WHERE provider=$1 AND checkout_mode='subscription' AND plan_id=$2
+               AND external_id=ANY($3::text[])
+             ORDER BY active DESC,updated_at DESC
+             LIMIT 1
+        `, [provider, local.plan_id, remotePlanIds]);
+        if (!mapping.rowCount) throw new Error('Provider subscription no longer maps to the local premium plan.');
+        const providerMap = mapping.rows[0];
+        const status = primitives.mapProviderStatus(provider, providerStatus);
+        if (!['active','trialing','past_due','paused'].includes(status)) throw new Error('Provider subscription is not in a current state that can be linked automatically.');
+
+        const updated = await client.query(`
+            UPDATE subscriptions
+               SET source=$2,
+                   provider_customer_id=COALESCE($3,provider_customer_id),
+                   provider_subscription_id=$4,
+                   provider_price_id_snapshot=COALESCE($5,provider_price_id_snapshot),
+                   plan_price_id_snapshot=COALESCE($6,plan_price_id_snapshot),
+                   provider_mapping_id_snapshot=COALESCE($7,provider_mapping_id_snapshot),
+                   provider_mapping_external_id_snapshot=COALESCE($5,provider_mapping_external_id_snapshot),
+                   status=$8,current_period_end=COALESCE($9,current_period_end),
+                   cancel_at_period_end=$10,updated_at=NOW()
+             WHERE id=$1
+             RETURNING *
+        `, [local.id, provider, providerCustomerId || null, providerSubscriptionId, providerMap.external_id || null, providerMap.plan_price_id || null, providerMap.id || null, status, periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd)]);
+        const row = updated.rows[0];
+        await primitives.syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status }, client);
+
+        const now = new Date(), next = new Date(now.getTime() + 6 * 60 * 60 * 1000);
+        await client.query(`
+            INSERT INTO subscription_provider_sync(subscription_id,provider,remote_status,remote_period_end,remote_cancel_at_period_end,last_attempt_at,last_success_at,last_error,consecutive_failures,next_attempt_at,updated_at)
+            VALUES($1,$2,$3,$4,$5,$6,$6,NULL,0,$7,NOW())
+            ON CONFLICT(subscription_id) DO UPDATE SET
+                provider=EXCLUDED.provider,remote_status=EXCLUDED.remote_status,
+                remote_period_end=EXCLUDED.remote_period_end,remote_cancel_at_period_end=EXCLUDED.remote_cancel_at_period_end,
+                last_attempt_at=EXCLUDED.last_attempt_at,last_success_at=EXCLUDED.last_success_at,
+                last_error=NULL,consecutive_failures=0,next_attempt_at=EXCLUDED.next_attempt_at,updated_at=NOW()
+        `, [row.id, provider, String(providerStatus || ''), periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd), now, next]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.billing.subscription_discovery.link','subscription',$2,$3::jsonb)`, [actorUserId, row.id, JSON.stringify({ customerId: row.customer_id, provider, providerCustomerId, providerSubscriptionId, providerPlanIds: remotePlanIds, providerMappingId: providerMap.id, providerMappingExternalId: providerMap.external_id, remoteStatus: providerStatus, matchReason })]);
+        return { row, already: false };
+    });
+
+    if (providerCustomerId) await primitives.ensurePaymentCustomer({ customerId: attached.row.customer_id, provider, providerCustomerId });
+    await primitives.reconcileCommittedCustomer(attached.row.customer_id, 'Provider subscription discovery');
+    return attached;
+}
+
 module.exports = {
     ...primitives,
     getProviderOptions,
@@ -221,6 +314,7 @@ module.exports = {
     startFreeTrial,
     claimFreePlan,
     activatePurchase,
+    attachDiscoveredProviderSubscription,
     trialPolicy,
     saveTrialPolicy,
     autoDowngradeEligibleCustomer,
