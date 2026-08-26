@@ -31,9 +31,10 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   labels(nav.childPages('servers')),
-  ['Fleet dashboard','Placement & capacity','Libraries'],
-  'Jellyfin Servers must expose its durable specialist destinations in the sidebar'
+  ['Fleet dashboard','Placement & capacity'],
+  'Jellyfin Servers must expose durable specialist destinations while omitting scan-only Libraries'
 );
+assert(nav.hiddenPages.libraries?.parentKey==='servers'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has('libraries'),'Libraries must remain a direct compatibility/scan utility without a permanent sidebar slot');
 assert(labels(nav.childPages('activity')).includes('Free-user inactivity rules'),'Playback must expose its inactivity policy in the sidebar');
 assert(labels(nav.childPages('settings-security')).includes('Turnstile & abuse protection'),'Security must expose abuse protection in the sidebar');
 assert.deepStrictEqual(

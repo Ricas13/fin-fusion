@@ -77,7 +77,7 @@ const aliases=Object.freeze({
 // Search already has a persistent command-palette launcher, while personal
 // account pages have their own fixed My account block. Everything else that is
 // a durable admin destination is allowed to appear as a nested sidebar item.
-const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','my-profile','my-notifications','my-security']);
+const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','libraries','my-profile','my-notifications','my-security']);
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
@@ -100,4 +100,5 @@ function workflowPages(active){
   return children.length?[parent,...children]:[];
 }
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
+for(const group of groups){for(const page of group.pages){if(!Object.prototype.hasOwnProperty.call(page,'children'))Object.defineProperty(page,'children',{value:Object.freeze(childPages(page[0])),enumerable:false});}}
 module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,childPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};

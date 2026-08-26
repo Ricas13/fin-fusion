@@ -44,7 +44,8 @@ assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security'
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a visible nested slot');
 assert(nav.hiddenPages.attention?.parentKey==='dashboard'&&nav.childPages('dashboard').some(page=>page[0]==='attention'),'Needs Attention must be directly discoverable beneath Dashboard');
 assert(nav.hiddenPages['fleet-operations']?.parentKey==='servers'&&nav.hiddenPages.libraries?.parentKey==='servers','Placement and Libraries must remain owned by Jellyfin → Servers');
-assert(nav.childPages('servers').some(page=>page[0]==='fleet-operations'&&page[1]==='Placement & capacity')&&nav.childPages('servers').some(page=>page[0]==='libraries'&&page[1]==='Libraries'),'Placement and Libraries must be direct nested sidebar destinations beneath Servers');
+assert(nav.childPages('servers').some(page=>page[0]==='fleet-operations'&&page[1]==='Placement & capacity'),'Placement must remain a direct nested sidebar destination beneath Servers');
+assert(!nav.childPages('servers').some(page=>page[0]==='libraries')&&nav.SIDEBAR_EXCLUDED_CHILDREN.has('libraries'),'Scan-only Libraries must stay routable but out of permanent Servers navigation');
 assert(!nav.aliases['fleet-operations']&&!nav.aliases.libraries,'Placement and Libraries must retain exact nested active identities rather than aliasing away to Servers');
 assert(nav.hiddenPages['stremio-playback']?.parentKey==='stremio-sources'&&nav.childPages('stremio-sources').some(page=>page[0]==='stremio-playback'),'Stremio IP access must remain nested beneath the Stremio control room');
 assert(nav.hiddenPages['users-dashboard']?.parentKey==='users'&&nav.childPages('users').some(page=>page[0]==='users-dashboard'),'Customer activity must be directly discoverable beneath Customers');
