@@ -7,14 +7,14 @@ const capacity=require('../src/entitlements/plan-capacity');
 const read=file=>fs.readFileSync(file,'utf8');
 const create=read('src/platform/admin-plan-create-v2.js');
 const inventory=read('src/platform/admin-plan-inventory.js');
-const migration=read('db/migrations/083_zero_capacity_plan_staging.sql');
+const migration=read('db/migrations/000_database_baseline.sql');
 
 assert(create.includes("capacityLimit=int(body.capacityLimit,0,1000000,'Available slots')"),'new-plan backend must accept zero available slots');
 assert(create.includes("capacityLimit:input.capacityLimit??'0'"),'new plans must default to zero availability');
 assert(create.includes('name="capacityLimit" required')&&create.includes('min="0" max="1000000"'),'new-plan browser control must allow zero slots');
 assert(inventory.includes('name="capacityLimit" min="0" max="1000000"'),'Availability editor must allow zero slots');
 assert(inventory.includes('n<0||n>1000000'),'Availability backend must accept zero and reject negative limits');
-assert(migration.includes('capacity_limit IS NULL OR capacity_limit >= 0'),'database constraint must admit explicit zero capacity');
+assert(/CONSTRAINT plans_capacity_limit_check CHECK \(\(\(capacity_limit IS NULL\) OR \(capacity_limit >= 0\)\)\)/.test(migration),'database constraint must admit explicit zero capacity');
 
 (async()=>{
   const fakeDb=async()=>({rowCount:1,rows:[{id:'zero-plan',capacity_limit:0,used:0}]});

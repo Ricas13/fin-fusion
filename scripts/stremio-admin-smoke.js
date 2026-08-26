@@ -15,7 +15,7 @@ const sourcePool=read('src/stremio/source-pool.js');
 const sourceClient=read('src/stremio/source-client.js');
 const sourceIndex=read('src/stremio/source-index.js');
 const runtimeSettings=read('src/stremio/runtime-settings.js');
-const migration=read('db/migrations/082_stremio_source_catalog.sql');
+const migration=read('db/migrations/000_database_baseline.sql');
 
 assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Servers-owned Stremio Sources router must be mounted');
 assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio']"),'Stremio must be a Servers navigation destination');
@@ -46,7 +46,7 @@ assert(sourcePool.includes('plan_stremio_sources')&&sourcePool.includes('if(expl
 assert(delivery.includes('Stremio sources')&&delivery.includes('/admin/plans/${esc(p.id)}/stremio-sources'),'Plan Delivery must own source selection');
 assert(delivery.includes('Lower priority numbers are tried first'),'Plan UI must explain source ordering');
 
-for(const table of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources'])assert(migration.includes(`CREATE TABLE IF NOT EXISTS ${table}`),`Migration missing ${table}`);
+for(const table of ['stremio_source_libraries','stremio_source_media_index','stremio_source_index_state','plan_stremio_sources'])assert(migration.includes(`CREATE TABLE public.${table} (`),`Migration missing ${table}`);
 assert(migration.includes('either selected shared sources or a managed Jellyfin delivery identity'),'Entitlement integrity must support source-only and legacy managed delivery');
 assert(runtimeSettings.includes('externalSources')&&runtimeSettings.includes('externalReadyIndexes')&&runtimeSettings.includes('eligibleSources'),'Runtime readiness must be based on usable Stremio sources');
 
