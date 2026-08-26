@@ -18,6 +18,12 @@ const progressiveShell=read('src/platform/admin-html-core.js');
 assert(progressiveShell.includes('/js/admin-safety-confirmations.js'),'admin shell must load shared safety confirmations');
 assert(progressiveShell.includes('/js/admin-sidebar-nav.js'),'admin shell must load shared sidebar navigation behavior');
 
+const legacyNav=read('views/admin/_nav.ejs');
+const navRegistry=require('../src/platform/admin-nav');
+assert(legacyNav.includes('Array.isArray(child.children)')&&legacyNav.includes('class="adminSubTab'),'legacy EJS sidebar must render canonical nested destinations');
+assert(navRegistry.childPages('activity').some(page=>page[0]==='inactivity-policy'),'Playback must retain its Free-user inactivity rules child destination');
+assert(!navRegistry.childPages('servers').some(page=>page[0]==='libraries'),'Libraries scan utility must not appear as permanent sidebar navigation');
+assert(navRegistry.groups.find(group=>group.key==='jellyfin').pages.find(page=>page[0]==='activity').children.some(page=>page[0]==='inactivity-policy'),'legacy nav group data must carry Playback nested destinations');
 const sidebar=read('public/js/admin-sidebar-nav.js');
 assert(sidebar.includes('closeOthers(section)')&&sidebar.includes('other.open=false'),'opening one admin navigation group must collapse the other groups');
 assert(sidebar.includes("section.querySelector('.navSectionPages .adminTab[href]')"),'parent navigation must resolve the first submenu destination');

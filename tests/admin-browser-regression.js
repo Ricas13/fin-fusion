@@ -209,9 +209,17 @@ async function main(){
     await assertWorkflow(page,'/admin/configuration',backupTabs,'Configuration Transfer');
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups','/admin/billing','/admin/payments/transactions','/admin/payments/export']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups','/admin/billing','/admin/payments/transactions','/admin/payments/export','/admin/activity']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
+
+    await page.goto(`${BASE}/admin/activity`,{waitUntil:'domcontentloaded'});
+    await page.locator('[data-admin-mobile-nav-toggle]').click();
+    const jellyfinSection=page.locator('details.navSection[data-nav-section="jellyfin"]');
+    if(!(await jellyfinSection.getAttribute('open')))await jellyfinSection.locator(':scope > summary').click();
+    const jellyfinNested=(await jellyfinSection.locator('.adminSubTab').allTextContents()).map(value=>value.trim()).filter(Boolean);
+    assert(jellyfinNested.includes('Free-user inactivity rules'),`Playback mobile drawer lost its nested tools: ${JSON.stringify(jellyfinNested)}`);
+    assert(!jellyfinNested.includes('Libraries'),'Libraries utility must not reappear in the mobile drawer');
 
     // Export endpoints are POST + CSRF downloads. Exercise all four against the
     // real clean-install schema so SQL drift cannot hide behind static tests.

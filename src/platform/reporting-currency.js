@@ -78,8 +78,10 @@ async function refreshRates({maxAgeHours=6}={}){
   refreshPromise=(async()=>{
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3500);
     try{
-      const response=await fetch('https://api.frankfurter.app/latest?from=GBP&to=USD,EUR',{headers:{Accept:'application/json'},redirect:'error',signal:controller.signal});
-      if(!response.ok)throw new Error(`FX HTTP ${response.status}`);const body=await response.json(),usd=Number(body?.rates?.USD),eur=Number(body?.rates?.EUR);if(!Number.isFinite(usd)||usd<=0||!Number.isFinite(eur)||eur<=0)throw new Error('FX response missing GBP rates');
+      const response=await fetch('https://api.frankfurter.dev/v2/rates?base=GBP&quotes=USD,EUR',{headers:{Accept:'application/json'},redirect:'error',signal:controller.signal});
+      if(!response.ok)throw new Error(`FX HTTP ${response.status}`);
+      const body=await response.json(),rows=Array.isArray(body)?body:[],rates=Object.fromEntries(rows.map(row=>[String(row?.quote||'').toUpperCase(),Number(row?.rate)])),usd=rates.USD,eur=rates.EUR;
+      if(!Number.isFinite(usd)||usd<=0||!Number.isFinite(eur)||eur<=0)throw new Error('FX response missing GBP quotes');
       const value={...normalize(current),rates:{GBP:1,USD:usd,EUR:eur},updatedAt:new Date().toISOString(),source:'frankfurter'};
       await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[KEY,JSON.stringify(value)]);
       lastFinancialWarning=null;
