@@ -1,4 +1,7 @@
-<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); %>
+<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); const navStandalone=typeof standaloneHeader!=='undefined'&&Boolean(standaloneHeader); const navSiteName=typeof siteName!=='undefined'?String(siteName||''):''; %>
+<% if(navStandalone){ %>
+<header class="customerStandaloneHeader"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= navSiteName %></div><div class="brandMeta">My account</div></div></a><a class="button ghost small" href="/account">Home</a></header>
+<% } %>
 <nav class="customerPortalNav" aria-label="Customer navigation">
   <a class="customerPortalNavLink <%= active==='overview'?'active':'' %>" href="/account">Home</a>
   <a class="customerPortalNavLink <%= active==='activity'?'active':'' %>" href="/account/activity">Activity</a>
