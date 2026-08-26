@@ -46,6 +46,22 @@ const state=require('../src/entitlements/subscription-state');
     assert.strictEqual(String(stremio.subscription_id),String(stremioPaid.id),'Jellyfin delinquency must not block independent Stremio access');
     assert.strictEqual(stremio.blocked,false);
 
+    const upgradeCustomer=(await client.query(`INSERT INTO customers(display_name,email) VALUES('Trial Upgrade Test','trial-upgrade@example.invalid') RETURNING id`)).rows[0];
+    const livePremiumTrial=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'trialing','manual',NOW(),NOW()+INTERVAL '7 days') RETURNING id`,[upgradeCustomer.id,plans.premiumTrial.id])).rows[0];
+    const liveStremioTrial=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'trialing','manual',NOW(),NOW()+INTERVAL '7 days') RETURNING id`,[upgradeCustomer.id,plans.stremioTrial.id])).rows[0];
+
+    await state.assertNoOtherLiveRecurring(client,upgradeCustomer.id,null,plans.premiumPaid.id);
+    const earlyPremiumPaid=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days','sub_trial_upgrade_jellyfin') RETURNING id`,[upgradeCustomer.id,plans.premiumPaid.id])).rows[0];
+    await state.assertNoOtherLiveRecurring(client,upgradeCustomer.id,null,plans.stremioPaid.id);
+    const earlyStremioPaid=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days','I-TRIAL-UPGRADE-STREMIO') RETURNING id`,[upgradeCustomer.id,plans.stremioPaid.id])).rows[0];
+
+    jellyfin=(await client.query(`SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1`,[upgradeCustomer.id])).rows[0];
+    stremio=(await client.query(`SELECT subscription_id FROM effective_stremio_entitlements WHERE customer_id=$1`,[upgradeCustomer.id])).rows[0];
+    assert.strictEqual(String(jellyfin.subscription_id),String(earlyPremiumPaid.id),'Customer must be able to subscribe to Premium before the Jellyfin trial ends');
+    assert.strictEqual(String(stremio.subscription_id),String(earlyStremioPaid.id),'Customer must be able to subscribe to Stremio before the Stremio trial ends');
+    assert.notStrictEqual(String(jellyfin.subscription_id),String(livePremiumTrial.id));
+    assert.notStrictEqual(String(stremio.subscription_id),String(liveStremioTrial.id));
+
     await client.query('ROLLBACK');
     console.log('multi-service subscriptions smoke: ok');
   }catch(error){
