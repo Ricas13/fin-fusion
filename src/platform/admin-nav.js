@@ -41,8 +41,6 @@ const hiddenPages=Object.freeze({
   'data-export':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['data-export','Export data','/admin/payments/export'])}),
   expenses:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
   'provider-mappings':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['provider-mappings','Provider mappings','/admin/provider-mappings'])}),
-  'legacy-paid-import':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['legacy-paid-import','Migrate paid users','/admin/payments/legacy-import'])}),
-  'payment-history':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-history','Import history','/admin/payments/history'])}),
   'payment-risk-policy':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
 
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Customer moves','/admin/provisioning/migrations'])}),
