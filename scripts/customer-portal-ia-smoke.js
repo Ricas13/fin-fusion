@@ -29,7 +29,8 @@ const history=read('src/platform/customer-history.js');
 const activity=read('src/platform/customer-activity.js');
 const customerPortalCss=read('public/css/customer-portal.css');
 
-for(const label of ['Home','Setup','Plan &amp; billing','Activity','Support','Guides','Payments','Account'])assert(nav.includes(label),`customer navigation missing ${label}`);
+for(const label of ['Home','Activity','Support','Help','Payments','Account'])assert(nav.includes(label),`customer navigation missing ${label}`);
+assert(!nav.includes('>Setup</a>')&&!nav.includes('Plan &amp; billing'),'customer navigation must not restore the redundant Setup or Plan & billing destinations');
 assert(nav.includes('navBenefits')&&nav.includes('navOverseerrUrl'),'customer navigation must keep Benefits and Request content conditional');
 assert(nav.includes('/account/history')&&nav.includes("active==='history'"),'Payments must link to billing history and preserve active highlighting');
 assert(nav.includes('Request content ↗'),'configured content requests must be part of the canonical customer navigation');
@@ -40,7 +41,7 @@ assert(dashboard.includes("include('_nav',{active:'overview'})"),'dashboard must
 assert(!dashboard.includes('customerNavLink\" href=\"<%= overseerrUrl %>\"'),'dashboard must not hardcode a second sidebar Request content link');
 assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
-assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Guides must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
+assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Help must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
 assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
 
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
@@ -53,9 +54,10 @@ assert(onboarding.includes('choiceGrid--<%= Math.min(group.plans.length,4) %>'),
 assert(onboarding.includes("'One-off payment'")&&onboarding.includes("'Subscription'"),'payment buttons must explicitly distinguish one-off payment from subscription checkout');
 assert(onboarding.includes("paymentButton('paypal',opt)")&&onboarding.includes("paymentButton('stripe',opt)"),'provider buttons must include both provider and payment mode');
 
-for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans','Other Plans'])assert(dashboard.includes(group),`dashboard Plan & billing grouping missing ${group}`);
-assert(dashboard.includes("accessGroups.forEach(function(group)")&&dashboard.includes('group.plans.forEach(function(p)'),'dashboard Plan & billing must render each family as its own group without changing per-plan card actions');
-assert(dashboard.includes('lane=laneEntitlement(p)')&&dashboard.includes('hideFreeOrTrial=Boolean(lane&&!lane.is_free_tier&&Number(p.price_minor)===0&&!isCurrent)'),'free and trial visibility must be scoped to the overlapping service lane');
+for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans','Other Plans'])assert(dashboard.includes(group),`dashboard Plans & payments grouping missing ${group}`);
+assert(dashboard.includes("accessGroups.forEach(function(group)")&&dashboard.includes('group.plans.forEach(function(p)'),'dashboard Plans & payments must render each family as its own group without changing per-plan card actions');
+assert(dashboard.includes('lane=laneEntitlement(p)')&&dashboard.includes('isCurrent=Boolean(lane&&String(lane.plan_id||lane.id)===String(p.id))'),'plan-current state must remain scoped to the overlapping service lane');
+assert(dashboard.includes('without giving up your Free Server access'),'paid and Stremio acquisition must explicitly preserve simultaneous Free Server access');
 assert(stremio.includes('!currentPlan.is_free_tier'),'Stremio-only dashboard must preserve the same paid-vs-free trial visibility rule');
 assert(dashboard.includes('Upgrade: changes immediately')&&dashboard.includes('scheduled for your next renewal'),'dashboard must disclose Stripe plan-change timing before checkout');
 assert(dashboard.includes('Stop PayPal renewal first'),'dashboard must disclose active recurring PayPal plan-change constraint');
