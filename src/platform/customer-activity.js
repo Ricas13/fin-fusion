@@ -9,7 +9,7 @@ function requireCustomer(req,res,next){return req.session?.customerId?next():res
 async function data(customerId){
   const [activityRows,eventRows,freeUsage,portal]=await Promise.all([
     query(`SELECT ph.started_at,ph.ended_at,ph.last_seen_at,ph.item_name,ph.client_name,ph.device_name,ph.playback_method,js.name server_name FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id WHERE ph.customer_id=$1 ORDER BY COALESCE(ph.last_seen_at,ph.started_at) DESC LIMIT 100`,[customerId]),
-    query(`SELECT created_at,decision,reason,stream_limit,observed_streams FROM playback_policy_events WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]),
+    query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]),
     inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
     customers.getCustomerPortal(customerId)
   ]);
