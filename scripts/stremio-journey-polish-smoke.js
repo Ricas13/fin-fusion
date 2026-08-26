@@ -7,7 +7,7 @@ const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const customer=read('src/platform/customer-stremio.js');
-const customerView=read('views/customer/stremio.ejs');
+const dashboard=read('views/customer/dashboard.ejs');
 const components=read('src/access/plan-components.js');
 const household=read('src/stremio/household-access.js');
 const adminJourney=read('public/js/admin-stremio-journey.js');
@@ -16,12 +16,15 @@ const capabilityCss=read('public/css/admin-capability.css');
 const adminShell=read('src/platform/admin-html-core.js');
 
 // Customer language describes the commercial model without exposing IP-family,
-// token/credential, lease, or addon implementation terms.
+// token/credential, lease, or addon implementation terms. Stremio management is
+// consolidated on Account Home; the historical standalone view stays retired.
 assert(customer.includes('household connection')&&!customer.includes('household IP'),'customer Stremio status must use household-connection language');
 assert(customer.includes('new Stremio installation link is ready')&&!customer.includes('installation credential has been rotated'),'customer link rotation must be explained as a normal replacement');
-for(const copy of ['Set up Stremio','Your Stremio link','Use a different household connection','More installation options','Three steps to watch'])assert(customerView.includes(copy),`customer Stremio page missing task-focused copy: ${copy}`);
-for(const jargon of ['Replace household IP','installation credential','addon URL','/64'])assert(!customerView.includes(jargon),`customer Stremio page exposes implementation wording: ${jargon}`);
-assert(customerView.includes('action="/account/stremio/install"')&&customerView.includes('action="/account/stremio/reset-household"')&&customerView.includes('action="/account/stremio/revoke"'),'customer Stremio actions must keep their existing server routes');
+assert(customer.includes("r.get('/account/stremio',(req,res)=>res.redirect(302,'/account#stremio-access'))"),'legacy Stremio URL must redirect to the Account Home Stremio section');
+for(const copy of ['Install your private Stremio access','Household access','Use a different household connection','Installation manifest'])assert(dashboard.includes(copy),`Account Home Stremio section missing task-focused copy: ${copy}`);
+for(const jargon of ['Replace household IP','installation credential','addon URL','/64'])assert(!dashboard.includes(jargon),`Account Home Stremio section exposes implementation wording: ${jargon}`);
+assert(dashboard.includes('action="/account/stremio/install"')&&dashboard.includes('action="/account/stremio/reset-household"')&&dashboard.includes('action="/account/stremio/revoke"'),'Account Home Stremio actions must keep their existing server routes');
+assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired standalone Stremio setup view must stay removed');
 
 // Shared labels and blocked-playback guidance use the same plain-language model
 // while all persisted compatibility field names stay unchanged.

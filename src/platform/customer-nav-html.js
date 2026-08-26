@@ -23,7 +23,8 @@ async function optionsForCustomer(customerId){
 }
 
 function nav(active='',options={}){
-  return renderNav({active,...options});
+  const signedInAccountSurface=['account','security'].includes(String(active||''))&&Object.prototype.hasOwnProperty.call(options||{},'showBenefits');
+  return renderNav({active,...options,standaloneHeader:signedInAccountSurface,siteName:runtimeSettings.siteName()});
 }
 
 module.exports={nav,optionsFromPortal,optionsForCustomer};

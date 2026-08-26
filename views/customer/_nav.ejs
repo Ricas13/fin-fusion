@@ -1,14 +1,18 @@
-<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); %>
+<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); const navStandalone=typeof standaloneHeader!=='undefined'&&Boolean(standaloneHeader); const navSiteName=typeof siteName!=='undefined'?String(siteName||''):''; %>
+<% if(navStandalone){ %>
+<header class="customerStandaloneHeader"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= navSiteName %></div><div class="brandMeta">My account</div></div></a><a class="button ghost small" href="/account">Home</a></header>
+<% } %>
 <nav class="customerPortalNav" aria-label="Customer navigation">
   <a class="customerPortalNavLink <%= active==='overview'?'active':'' %>" href="/account">Home</a>
   <a class="customerPortalNavLink <%= active==='activity'?'active':'' %>" href="/account/activity">Activity</a>
+  <a class="customerPortalNavLink <%= active==='history'?'active':'' %>" href="/account/history">Payments</a>
+  <% if (navBenefits) { %>
+    <a class="customerPortalNavLink <%= active==='benefits'||active==='affiliate'?'active':'' %>" href="/account/affiliate">Affiliate</a>
+  <% } %>
   <a class="customerPortalNavLink <%= active==='support'?'active':'' %>" href="/account/support">Support</a>
   <a class="customerPortalNavLink <%= active==='docs'?'active':'' %>" href="/account/docs">Help</a>
-  <a class="customerPortalNavLink <%= active==='history'?'active':'' %>" href="/account/history">Payments</a>
-  <a class="customerPortalNavLink <%= active==='account' || active==='notifications' || active==='security' ?'active':'' %>" href="/account/security">Account</a>
-  <% if (navBenefits) { %>
-    <a class="customerPortalNavLink <%= active==='benefits'?'active':'' %>" href="/account/affiliate">Benefits</a>
-  <% } %>
+  <a class="customerPortalNavLink <%= active==='account'||active==='security'?'active':'' %>" href="/account/security">Account</a>
+  <a class="customerPortalNavLink <%= active==='notifications'?'active':'' %>" href="/account/communications">Notifications</a>
   <% if (navOverseerrUrl) { %>
     <a class="customerPortalNavLink" href="<%= navOverseerrUrl %>" target="_blank" rel="noreferrer">Request content ↗</a>
   <% } %>
