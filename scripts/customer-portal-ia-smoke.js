@@ -59,6 +59,7 @@ assert(docsRender.includes('customerTopbar(site)'),'customer Help must retain th
 assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
 
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
+assert(onboarding.includes('<div class="brandMeta">My account</div>')&&onboarding.includes('href="/account/security">Account</a>')&&!onboarding.includes('>Account security</a>')&&!onboarding.includes('<div class="brandMeta">Getting started</div>'),'onboarding must use the same My account / Account terminology as the signed-in portal');
 for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans'])assert(onboarding.includes(group),`customer access catalogue must preserve the admin plan family ${group}`);
 assert(onboarding.includes('.choiceGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))'),'four-card onboarding groups must use four equal desktop columns');
 assert(onboarding.includes('.choiceGrid.choiceGrid--1{grid-template-columns:minmax(260px,320px)}'),'single-card onboarding groups must remain compact on desktop');
