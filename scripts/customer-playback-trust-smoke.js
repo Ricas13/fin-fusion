@@ -8,7 +8,10 @@ function expect(v,m){if(!v)throw new Error(m);}
 const inactivity=source('src/automation/customer-inactivity.js');
 expect(inactivity.includes("worker_key='activity'"),'Inactivity enforcement must require the activity worker heartbeat.');
 expect(inactivity.includes("health_status='offline'")&&inactivity.includes("last_health_check<NOW()-INTERVAL '10 minutes'"),'Inactivity enforcement must reject stale/unhealthy Jellyfin telemetry.');
-expect(inactivity.includes("if(!telemetry.ready)return{processed:0,eligible:0,enforced:0,dryRun:true,skipped:'telemetry_not_trustworthy'"),'Free Server inactivity enforcement must fail closed when telemetry is untrustworthy.');
+const telemetryGate=inactivity.indexOf("if(!telemetry.ready)return{processed:0,eligible:0,enforced:0,wouldDisable:0,released,dryRun:true,skipped:'telemetry_not_trustworthy'");
+const candidateRun=inactivity.indexOf('const rows=await candidates(globalCfg)');
+expect(telemetryGate>=0&&candidateRun>telemetryGate,'Free Server inactivity must fail closed before evaluating or enforcing new disables when telemetry is untrustworthy.');
+expect(inactivity.indexOf('const globalCfg=await lifecyclePolicy.get(),released=await releaseObsoletePlanHolds')<telemetryGate,'Obsolete policy holds may be released before the telemetry gate so disabling a rule cannot strand Jellyfin access.');
 expect(inactivity.includes("account_purpose='jellyfin'")&&!inactivity.includes("account_purpose='stremio_internal') first_account_at"),'Free Server inactivity age must use normal customer Jellyfin accounts, not hidden Stremio identities.');
 expect(inactivity.includes('!row.currently_playing'),'A currently-playing customer must never become inactivity-eligible.');
 
