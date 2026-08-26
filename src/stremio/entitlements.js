@@ -24,7 +24,7 @@ function clientAuthorization(){return 'MediaBrowser Client="CAPTAiNFiN Stremio",
 
 async function entitledSubscription(customerId){
   const addons=await subscriptionState.effectiveAddons(customerId),addon=addons.find(row=>['stremio','bundle'].includes(serviceType(row)));if(addon)return addon;
-  const primary=await provisioning.currentEntitlement(customerId);return primary&&['stremio','bundle'].includes(serviceType(primary))?primary:null;
+  return subscriptionState.effectiveStremioSubscription(customerId);
 }
 async function explicitSourceCount(subscriptionId,{readyOnly=false}={}){
   const conditions=readyOnly?`AND src.enabled=TRUE AND src.auth_state='connected' AND idx.status='ready' AND idx.item_count>0`:'';
@@ -97,7 +97,12 @@ async function revoke(customerId){
 }
 async function findByInstallToken(raw){
   const token=String(raw||'');if(token.length<32)return null;const hash=foundation.hashInstallCredential(token);
-  const r=await query(`WITH effective AS (SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_customer_entitlements UNION ALL SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_customer_addons)
+  const r=await query(`WITH effective AS (
+      SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
+      UNION ALL
+      SELECT a.customer_id,a.subscription_id,a.access_expires_at,public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+      FROM effective_customer_addons a JOIN subscriptions s ON s.id=a.subscription_id
+    )
     SELECT e.*,s.plan_id,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.is_addon,ee.access_expires_at,ee.blocked,
       ja.jellyfin_user_id,ja.jellyfin_username,ja.disabled account_disabled,js.base_url,js.public_url,js.name server_name,js.enabled server_enabled,js.stremio_enabled,
       EXISTS(SELECT 1 FROM plan_stremio_sources ps WHERE ps.plan_id=s.plan_id AND ps.enabled=TRUE) has_shared_sources

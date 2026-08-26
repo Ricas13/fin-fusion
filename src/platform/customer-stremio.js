@@ -7,7 +7,6 @@ const routeRateLimit=require('../security/route-rate-limit');
 const operations=require('./operations-settings');
 const runtimeSettings=require('./runtime-settings');
 const customerNav=require('./customer-nav-html');
-const provisioning=require('../jellyfin/provisioning');
 const foundation=require('../stremio/foundation');
 const stremio=require('../stremio/entitlements');
 const managedEntitlements=require('../stremio/managed-entitlements');
@@ -22,7 +21,7 @@ function stremioDeepLink(manifestUrl){const url=new URL(manifestUrl);return `str
 function householdLabel(limit){const value=Math.max(1,Number(limit||1));return `Unlimited streams · Unlimited devices · ${value} household connection${value===1?'':'s'}`;}
 async function model(req,{credential=null,message=null,error=null}={}){
   await runtimeSettings.ensureLoaded();
-  const [sub,row,navOptions]=await Promise.all([provisioning.currentEntitlement(req.session.customerId),stremio.current(req.session.customerId),customerNav.optionsForCustomer(req.session.customerId)]),eligible=Boolean(sub&&['stremio','bundle'].includes(typeOf(sub)));
+  const [sub,row,navOptions]=await Promise.all([stremio.entitledSubscription(req.session.customerId),stremio.current(req.session.customerId),customerNav.optionsForCustomer(req.session.customerId)]),eligible=Boolean(sub&&['stremio','bundle'].includes(typeOf(sub)));
   let effectiveCredential=credential;
   if(!effectiveCredential){const recovered=await installRecovery.current(req.session.customerId).catch(()=>null);effectiveCredential=recovered?.credential||null;}
   let manifestUrl=null,stremioUrl=null;
@@ -30,7 +29,7 @@ async function model(req,{credential=null,message=null,error=null}={}){
   const status=String(row?.status||'pending');
   let accessModel='Unlimited streams · Unlimited devices · 1 household connection',replacementState=null;
   if(eligible){
-    const entitlement=row||{plan_id:sub.plan_id,subscription_id:sub.id,customer_id:req.session.customerId};
+    const entitlement=row||{plan_id:sub.plan_id,subscription_id:sub.subscription_id||sub.id,customer_id:req.session.customerId};
     const configured=await householdAccess.configForEntitlement(entitlement).catch(()=>null);
     if(configured)accessModel=householdLabel(configured.component.config.networkLimit);
     if(row&&status==='active')replacementState=await householdAccess.replacementState(row).catch(()=>null);
