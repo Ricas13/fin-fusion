@@ -1,6 +1,7 @@
 User-agent: *
-Disallow: /
+Disallow:
 
-# CAPTAiNFiN is a private customer/admin portal and is intentionally excluded
-# from public search indexing. All HTTP responses also send X-Robots-Tag:
+# CAPTAiNFiN is intentionally excluded from public search indexing.
+# Crawling remains allowed so search engines can fetch known URLs and receive
+# the site-wide X-Robots-Tag response header:
 # noindex, nofollow, noarchive, nosnippet, noimageindex.
