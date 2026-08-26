@@ -11,6 +11,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const { createAdminActionsRouter } = require('./admin-actions');
 const runtimeSettings = require('./runtime-settings');
 
+const librarySelectionLimit = routeRateLimit.middleware({scope:'customer-library-selection',max:20,windowSeconds:300});
 const requestPasswordSyncLimit = routeRateLimit.middleware({scope:'customer-request-password-sync',max:5,windowSeconds:900});
 function requireCustomer(req, res, next) { if (req.session?.customerId && req.session?.customerUserId) return next(); return res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account')); }
 
@@ -42,8 +43,8 @@ function createRuntimeLegacyRouter() {
     const router = express.Router();
     router.use(createAdminActionsRouter());
 
-    router.post('/account/libraries', requireCustomer, (req,res)=>saveLibraries(req,res,null));
-    router.post('/account/libraries/:accountId', requireCustomer, (req,res)=>saveLibraries(req,res,req.params.accountId));
+    router.post('/account/libraries', requireCustomer, librarySelectionLimit, (req,res)=>saveLibraries(req,res,null));
+    router.post('/account/libraries/:accountId', requireCustomer, librarySelectionLimit, (req,res)=>saveLibraries(req,res,req.params.accountId));
 
     router.post('/account/requests/password', requireCustomer, async (req, res) => {
         if (!csrf.verify(req)) return res.redirect('/account?error=' + encodeURIComponent('Invalid or expired security token'));
