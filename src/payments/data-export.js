@@ -9,8 +9,10 @@ const UTF8_BOM = '\uFEFF';
 function text(value) { return String(value == null ? '' : value); }
 function excelSafe(value) {
     const raw = text(value);
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(raw)) return raw;
     return /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
 }
+
 function csvCell(value) {
     const raw = excelSafe(value);
     return /[",\r\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;

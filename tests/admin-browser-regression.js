@@ -209,10 +209,28 @@ async function main(){
     await assertWorkflow(page,'/admin/configuration',backupTabs,'Configuration Transfer');
 
     await page.setViewportSize({width:390,height:844});
-    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups','/admin/billing','/admin/payments/transactions']){
+    for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups','/admin/billing','/admin/payments/transactions','/admin/payments/export']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
+    // Export endpoints are POST + CSRF downloads. Exercise all four against the
+    // real clean-install schema so SQL drift cannot hide behind static tests.
+    await page.setViewportSize({width:1440,height:1000});
+    await page.goto(`${BASE}/admin/payments/export`,{waitUntil:'domcontentloaded'});
+    for(const [action,suffix] of [
+      ['/admin/payments/export/users','.csv'],
+      ['/admin/payments/export/payments','.csv'],
+      ['/admin/payments/export/transactions','.csv'],
+      ['/admin/payments/export/bundle','.zip']
+    ]){
+      const form=page.locator(`form[action="${action}"]`);
+      assert.equal(await form.count(),1,`${action} export form must exist`);
+      const [download]=await Promise.all([page.waitForEvent('download'),form.locator('button[type="submit"]').click()]);
+      assert(download.suggestedFilename().endsWith(suffix),`${action} must download ${suffix}`);
+      const stream=await download.createReadStream();
+      let bytes=0; for await(const chunk of stream)bytes+=chunk.length;
+      assert(bytes>0,`${action} download must not be empty`);
+    }
     inventory.summary={desktopPages:inventory.desktop.length,mobilePages:inventory.mobile.length,uniqueForms:unique(inventory.desktop.flatMap(x=>(x.forms||[]).map(f=>`${f.method} ${f.action}`))).length,uniqueButtons:unique(inventory.desktop.flatMap(x=>x.buttons||[])).length};
     fs.writeFileSync(path.join(OUT,'inventory.json'),JSON.stringify(inventory,null,2));
     console.log(`admin browser regression: ok — ${inventory.summary.desktopPages} desktop pages, ${inventory.summary.mobilePages} mobile pages, ${inventory.summary.uniqueForms} form targets, ${inventory.summary.uniqueButtons} visible button labels`);

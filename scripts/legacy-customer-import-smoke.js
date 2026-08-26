@@ -101,4 +101,38 @@ assert(uploadSource.includes('multiple') || adminSource.includes('multiple'), 'o
 assert(uploadSource.includes('650 * 1024'), 'browser upload must remain safely below the application request-body ceiling');
 assert(mappingSource.includes('Use Migrate paid users'), 'Provider mappings must redirect confused migration operators to the correct workflow');
 
+
+// Export must be a real round trip into the existing migration parser.
+const portableExport = require('../src/payments/data-export');
+const exportedUsers = portableExport.usersCsv([{
+  customer_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', export_name:'Portable User', email:'portable@example.com',
+  expiration:new Date('2027-08-26T00:00:00Z'), portal_username:'portable', display_name:'Portable User',
+  jellyfin_usernames:'portable-jf', created_at:new Date('2026-01-01T00:00:00Z')
+}]);
+const exportedPayments = portableExport.paymentsCsv([{
+  subscription_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email:'portable@example.com', plan_name:'Yearly', plan_code:'yearly', plan_streams:6,
+  status:'active', source:'stripe', provider_subscription_id:'sub_real_exported_metadata', provider_customer_id:'cus_real', provider_price_id:'price_real',
+  starts_at:new Date('2026-08-26T00:00:00Z'), current_period_end:new Date('2027-08-26T00:00:00Z'), commercial_snapshot:{streams:6},
+  amount_minor:6000, currency:'USD', legacy_provider:null, legacy_transaction_id:null, legacy_payment_id:null
+}]);
+const roundTrip = legacy.normalizedInputs([{name:'Users.csv',text:exportedUsers},{name:'Payments.csv',text:exportedPayments}]);
+assert.strictEqual(roundTrip.users.size,1,'exported Users.csv must be accepted by the migration parser');
+assert.strictEqual(roundTrip.payments.length,1,'exported Payments.csv must be accepted by the migration parser');
+assert.strictEqual(roundTrip.payments[0].email,'portable@example.com');
+assert.strictEqual(roundTrip.payments[0].plan.interval,'year');
+assert.strictEqual(roundTrip.payments[0].plan.streams,6,'portable export must preserve grandfathered stream allowance');
+assert.strictEqual(roundTrip.payments[0].money.minor,6000);
+assert.strictEqual(roundTrip.payments[0].provider,'manual','synthetic CAPTAiNFiN migration references must never masquerade as Stripe/PayPal transactions');
+assert.strictEqual(roundTrip.payments[0].transactionId,'captainfin-sub-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+const zip = portableExport.zipStore([{name:'Users.csv',data:exportedUsers},{name:'Payments.csv',data:exportedPayments}],new Date('2026-08-26T00:00:00Z'));
+assert.strictEqual(zip.readUInt32LE(0),0x04034b50,'migration bundle must be a valid ZIP local-header stream');
+assert(zip.includes(Buffer.from('Users.csv'))&&zip.includes(Buffer.from('Payments.csv')),'migration bundle must contain the round-trip CSV files');
+const exportServiceSource=fs.readFileSync(path.join(root,'src/payments/data-export.js'),'utf8');
+const exportAdminSource=fs.readFileSync(path.join(root,'src/platform/admin-data-export.js'),'utf8');
+for(const forbidden of ['password_hash','api_key_encrypted','client_secret_encrypted','access_token_encrypted','totp_secret'])assert(!exportServiceSource.includes(forbidden),`portable export query must never select ${forbidden}`);
+assert(exportAdminSource.includes("csrf.verify(req)"),'every export download must be CSRF protected');
+assert(exportAdminSource.includes("'admin.data_export.download'")||exportServiceSource.includes("'admin.data_export.download'"),'sensitive export downloads must be audit logged');
+assert(exportAdminSource.includes('Passwords, sessions, API keys')||exportAdminSource.includes('passwords, password hashes'),'export UI must explicitly disclose excluded secrets');
+assert(exportAdminSource.includes('@media(max-width:760px)'),'Export data cards/actions must have a phone layout');
+
 console.log('legacy customer import smoke: ok');

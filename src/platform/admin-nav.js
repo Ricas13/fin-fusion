@@ -38,6 +38,7 @@ const hiddenPages=Object.freeze({
   'plan-access-rules':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
   transactions:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['transactions','Transactions','/admin/payments/transactions'])}),
+  'data-export':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['data-export','Export data','/admin/payments/export'])}),
   expenses:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
   'provider-mappings':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['provider-mappings','Provider mappings','/admin/provider-mappings'])}),
   'legacy-paid-import':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['legacy-paid-import','Migrate paid users','/admin/payments/legacy-import'])}),
