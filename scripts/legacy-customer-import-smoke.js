@@ -74,11 +74,16 @@ assert(!serviceSource.includes('activatePurchase('), 'legacy CSV rows must never
 assert(!/provider_subscription_id\s*=/.test(serviceSource), 'payment transaction IDs must never be faked into recurring provider subscription IDs');
 assert(serviceSource.includes('cancel_at_period_end') && serviceSource.includes('TRUE'), 'restored terms must end on their exported To date until verified live recurring state is linked');
 assert(serviceSource.includes('legacy_subscription_imports') && serviceSource.includes('provider_transaction_id'), 'migration must be idempotent on original provider transaction identity');
+assert(serviceSource.includes('customersByJellyfinName') && serviceSource.includes('jellyfin_username'), 'legacy Users names must be able to match an already-managed Jellyfin customer');
+assert(serviceSource.includes("COALESCE(ja.account_purpose,'jellyfin')='jellyfin'"), 'identity matching must only use customer-facing Jellyfin identities');
+assert(serviceSource.includes('needsJellyfinLink') && serviceSource.includes('managedAccount'), 'unlinked CSV-only customers must not be blindly provisioned into duplicate Jellyfin accounts');
+assert(!serviceSource.includes('if (candidate.start <= now) customerIds.add(String(customer.row.id));'), 'current imports must only reconcile after confirming a managed Jellyfin account');
 assert(migrationSource.includes('UNIQUE(source_system, provider, provider_transaction_id)'), 'database must enforce legacy import idempotency');
 assert(migrationSource.includes('never represents a new provider charge'), 'migration ledger must document the no-charge boundary');
 assert(adminSource.includes('csrf.verify(req)'), 'preview/apply must be CSRF protected');
 assert(adminSource.includes("req.body?.confirm !== '1'"), 'apply must require explicit operator confirmation');
 assert(adminSource.includes('It does not charge customers'), 'admin UI must state that migration does not create a provider charge');
+assert(adminSource.includes('Matched existing managed Jellyfin user') && adminSource.includes('deliberately did not create a duplicate Jellyfin user'), 'admin preview/result must explain managed-identity matching and safe unlinked handling');
 assert(uploadSource.includes('multiple') || adminSource.includes('multiple'), 'operator must be able to select all Users/Payments CSVs together');
 assert(uploadSource.includes('650 * 1024'), 'browser upload must remain safely below the application request-body ceiling');
 assert(mappingSource.includes('Use Migrate paid users'), 'Provider mappings must redirect confused migration operators to the correct workflow');

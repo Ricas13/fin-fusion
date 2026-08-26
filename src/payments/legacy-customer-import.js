@@ -154,27 +154,32 @@ function choosePlan(legacy, plans) {
 
 function overlaps(aStart, aEnd, bStart, bEnd) { return aStart < bEnd && bStart < aEnd; }
 
-async function loadContext(emails, transactionKeys) {
+async function loadContext(emails, transactionKeys, legacyNames = []) {
     const normalizedEmails = Array.from(new Set(emails.filter(Boolean)));
-    const [plansResult, customersResult, orphanUsersResult, importedResult] = await Promise.all([
+    const normalizedNames = Array.from(new Set((legacyNames || []).map(value => clean(value, 100).toLowerCase()).filter(Boolean)));
+    const [plansResult, customersResult, orphanUsersResult, importedResult, jellyfinResult] = await Promise.all([
         query(`SELECT id,name,code,billing_interval,duration_days,price_minor,currency,streams,service_type,server_class,is_free_tier FROM plans WHERE active=TRUE AND visible=TRUE AND archived_at IS NULL AND COALESCE(is_addon,FALSE)=FALSE AND audience='direct' AND service_type IN ('jellyfin','bundle') AND billing_interval IN ('month','6_months','year') ORDER BY sort_order,price_minor,name`),
         normalizedEmails.length ? query(`SELECT c.id,c.user_id,c.display_name,COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) email FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=ANY($1::text[])`, [normalizedEmails]) : { rows: [] },
         normalizedEmails.length ? query(`SELECT u.id,u.username,u.email FROM app_users u LEFT JOIN customers c ON c.user_id=u.id WHERE u.role='customer' AND c.id IS NULL AND lower(COALESCE(u.email,''))=ANY($1::text[])`, [normalizedEmails]) : { rows: [] },
-        transactionKeys.length ? query(`SELECT provider,provider_transaction_id,customer_id,subscription_id FROM legacy_subscription_imports WHERE (provider || ':' || provider_transaction_id)=ANY($1::text[])`, [transactionKeys]) : { rows: [] }
+        transactionKeys.length ? query(`SELECT provider,provider_transaction_id,customer_id,subscription_id FROM legacy_subscription_imports WHERE (provider || ':' || provider_transaction_id)=ANY($1::text[])`, [transactionKeys]) : { rows: [] },
+        normalizedNames.length ? query(`SELECT DISTINCT c.id,c.user_id,c.display_name,COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) email,lower(ja.jellyfin_username) jellyfin_username FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id LEFT JOIN app_users u ON u.id=c.user_id WHERE COALESCE(ja.account_purpose,'jellyfin')='jellyfin' AND lower(ja.jellyfin_username)=ANY($1::text[])`, [normalizedNames]) : { rows: [] }
     ]);
-    const customersByEmail = new Map(), orphanUsersByEmail = new Map(), imported = new Map();
+    const customersByEmail = new Map(), customersByJellyfinName = new Map(), orphanUsersByEmail = new Map(), imported = new Map();
     for (const row of customersResult.rows) {
         const key = emailKey(row.email); if (!customersByEmail.has(key)) customersByEmail.set(key, []); customersByEmail.get(key).push(row);
     }
     for (const row of orphanUsersResult.rows) {
         const key = emailKey(row.email); if (!orphanUsersByEmail.has(key)) orphanUsersByEmail.set(key, []); orphanUsersByEmail.get(key).push(row);
     }
+    for (const row of jellyfinResult.rows) {
+        const key = clean(row.jellyfin_username, 100).toLowerCase(); if (!customersByJellyfinName.has(key)) customersByJellyfinName.set(key, []); customersByJellyfinName.get(key).push(row);
+    }
     for (const row of importedResult.rows) imported.set(`${row.provider}:${row.provider_transaction_id}`, row);
-    const customerIds = customersResult.rows.map(row => row.id);
+    const customerIds = Array.from(new Set([...customersResult.rows, ...jellyfinResult.rows].map(row => row.id)));
     const subscriptions = customerIds.length ? (await query(`SELECT s.*,p.is_free_tier,COALESCE(s.price_minor_snapshot,p.price_minor,0) effective_price_minor FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=ANY($1::uuid[]) AND s.superseded_by IS NULL AND s.current_period_end>NOW() ORDER BY s.starts_at,s.current_period_end`, [customerIds])).rows : [];
     const subscriptionsByCustomer = new Map();
     for (const row of subscriptions) { const key = String(row.customer_id); if (!subscriptionsByCustomer.has(key)) subscriptionsByCustomer.set(key, []); subscriptionsByCustomer.get(key).push(row); }
-    return { plans: plansResult.rows, customersByEmail, orphanUsersByEmail, imported, subscriptionsByCustomer };
+    return { plans: plansResult.rows, customersByEmail, customersByJellyfinName, orphanUsersByEmail, imported, subscriptionsByCustomer };
 }
 
 function basicCandidate(payment, now) {
@@ -192,12 +197,12 @@ function basicCandidate(payment, now) {
 async function preview(files, { now = new Date() } = {}) {
     const input = normalizedInputs(files);
     const keys = input.payments.map(row => `${row.provider || 'invalid'}:${row.transactionId || ''}`).filter(key => !key.endsWith(':'));
-    const context = await loadContext(input.payments.map(row => row.email), keys);
+    const context = await loadContext(input.payments.map(row => row.email), keys, [...input.users.values()].map(row => row.name).filter(Boolean));
     const candidates = [];
     for (const payment of input.payments) {
         const base = basicCandidate(payment, now);
         const match = choosePlan(payment.plan, context.plans);
-        const row = { ...payment, ...base, planMatch: match.plan || null, streamOverride: Boolean(match.streamOverride), customer: null, createCustomer: false, linkUserId: null };
+        const row = { ...payment, ...base, planMatch: match.plan || null, streamOverride: Boolean(match.streamOverride), customer: null, customerMatch: null, createCustomer: false, linkUserId: null, needsJellyfinLink: false };
         if (['ready_current','ready_future'].includes(row.state)) {
             if (!match.plan) { row.state = 'review'; row.reason = match.reason; }
             const imported = context.imported.get(`${payment.provider}:${payment.transactionId}`);
@@ -206,10 +211,21 @@ async function preview(files, { now = new Date() } = {}) {
         if (['ready_current','ready_future'].includes(row.state)) {
             const matches = context.customersByEmail.get(payment.email) || [];
             const orphanUsers = context.orphanUsersByEmail.get(payment.email) || [];
+            const jellyfinKey = clean(payment.user?.name, 100).toLowerCase();
+            const jellyfinMatches = jellyfinKey ? (context.customersByJellyfinName.get(jellyfinKey) || []) : [];
             if (matches.length > 1) { row.state = 'review'; row.reason = 'More than one portal customer has this email.'; }
-            else if (matches.length === 1) row.customer = matches[0];
+            else if (matches.length === 1) {
+                const conflict = jellyfinMatches.find(item => String(item.id) !== String(matches[0].id));
+                if (conflict) { row.state = 'review'; row.reason = 'Legacy email and Jellyfin username point to different CAPTAiNFiN customers.'; }
+                else { row.customer = matches[0]; row.customerMatch = 'email'; }
+            }
+            else if (jellyfinMatches.length > 1) { row.state = 'review'; row.reason = 'More than one managed Jellyfin identity matches the legacy username.'; }
+            else if (jellyfinMatches.length === 1) { row.customer = jellyfinMatches[0]; row.customerMatch = 'jellyfin_username'; row.reason = 'Matched the existing managed Jellyfin user from the legacy Users export.'; }
             else if (orphanUsers.length > 1) { row.state = 'review'; row.reason = 'More than one unlinked portal login has this email.'; }
-            else { row.createCustomer = true; row.linkUserId = orphanUsers[0]?.id || null; }
+            else {
+                row.createCustomer = true; row.linkUserId = orphanUsers[0]?.id || null; row.needsJellyfinLink = true;
+                row.reason = row.state === 'ready_future' ? 'Prepaid future term will be scheduled; link the existing Jellyfin identity before it starts.' : 'Paid term can be restored locally; link the existing Jellyfin identity before CAPTAiNFiN provisioning.';
+            }
         }
         if (['ready_current','ready_future'].includes(row.state) && row.customer) {
             const subscriptions = context.subscriptionsByCustomer.get(String(row.customer.id)) || [];
@@ -254,14 +270,19 @@ async function preview(files, { now = new Date() } = {}) {
 }
 
 async function resolveCustomerTx(client, candidate) {
+    if (candidate.customerMatch === 'jellyfin_username' && candidate.customer?.id && candidate.user?.name) {
+        const linked = await client.query(`SELECT c.id,c.user_id FROM customers c JOIN jellyfin_accounts ja ON ja.customer_id=c.id WHERE c.id=$1 AND COALESCE(ja.account_purpose,'jellyfin')='jellyfin' AND lower(ja.jellyfin_username)=lower($2) LIMIT 1 FOR UPDATE OF c`, [candidate.customer.id, clean(candidate.user.name, 100)]);
+        if (!linked.rowCount) throw new Error(`Managed Jellyfin identity changed for ${candidate.email} after preview; import stopped for review.`);
+        return { row: linked.rows[0], created: false, matchedByJellyfin: true };
+    }
     const found = await client.query(`SELECT c.id,c.user_id FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE lower(COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')))=lower($1) FOR UPDATE OF c`, [candidate.email]);
     if (found.rowCount > 1) throw new Error(`Multiple customers now match ${candidate.email}.`);
-    if (found.rowCount === 1) return { row: found.rows[0], created: false };
+    if (found.rowCount === 1) return { row: found.rows[0], created: false, matchedByJellyfin: false };
     const orphan = await client.query(`SELECT u.id,u.username FROM app_users u LEFT JOIN customers c ON c.user_id=u.id WHERE u.role='customer' AND c.id IS NULL AND lower(COALESCE(u.email,''))=lower($1) FOR UPDATE OF u`, [candidate.email]);
     if (orphan.rowCount > 1) throw new Error(`Multiple portal logins now match ${candidate.email}.`);
     const displayName = clean(candidate.user?.name || orphan.rows[0]?.username, 100) || null;
     const inserted = await client.query(`INSERT INTO customers(user_id,display_name,email,note) VALUES($1,$2,$3,$4) RETURNING id,user_id`, [orphan.rows[0]?.id || null, displayName, candidate.email, 'Imported from legacy paid-user CSV migration']);
-    return { row: inserted.rows[0], created: true };
+    return { row: inserted.rows[0], created: true, matchedByJellyfin: false };
 }
 
 function commercialSnapshot(candidate, plan) {
@@ -314,14 +335,19 @@ async function importSafe(files, actorUserId, { now = new Date() } = {}) {
             }
             await client.query(`INSERT INTO legacy_subscription_imports(source_system,provider,provider_transaction_id,legacy_payment_id,legacy_user_id,email,legacy_plan_name,plan_id,customer_id,subscription_id,amount_minor,currency,period_start,period_end,metadata,requested_by) VALUES('legacy_csv',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)`, [candidate.provider, candidate.transactionId, candidate.legacyPaymentId, candidate.user?.legacyUserId || null, candidate.email, candidate.plan.name, plan.id, customer.row.id, subscription.id, candidate.money.minor, candidate.money.currency, candidate.start, candidate.end, JSON.stringify({ file: candidate.file, streamOverride: candidate.streamOverride, legacyStreams: candidate.plan.streams, currentPlanStreams: plan.streams }), actorUserId || null]);
             await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.legacy_subscription.import','subscription',$2,$3::jsonb)`, [actorUserId || null, subscription.id, JSON.stringify({ customerId: customer.row.id, provider: candidate.provider, transactionId: candidate.transactionId, legacyPlanName: candidate.plan.name, periodStart: candidate.start, periodEnd: candidate.end, amountMinor: candidate.money.minor, currency: candidate.money.currency, noProviderCharge: true })]);
-            imported.push({ customerId: customer.row.id, subscriptionId: subscription.id, email: candidate.email, future: candidate.start > now });
-            if (candidate.start <= now) customerIds.add(String(customer.row.id));
+            let linkedJellyfin = false;
+            if (candidate.start <= now) {
+                const managedAccount = await client.query(`SELECT 1 FROM jellyfin_accounts WHERE customer_id=$1 AND COALESCE(account_purpose,'jellyfin')='jellyfin' LIMIT 1`, [customer.row.id]);
+                linkedJellyfin = managedAccount.rowCount > 0;
+                if (linkedJellyfin) customerIds.add(String(customer.row.id));
+            }
+            imported.push({ customerId: customer.row.id, subscriptionId: subscription.id, email: candidate.email, future: candidate.start > now, needsJellyfinLink: candidate.start <= now && !linkedJellyfin });
         }
         await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.legacy_subscription.batch_import','legacy_subscription_import','legacy_csv',$2::jsonb)`, [actorUserId || null, JSON.stringify({ candidates: ready.length, imported: imported.length, createdCustomers, currentCustomersToReconcile: customerIds.size })]);
         return { imported, createdCustomers, customerIds: [...customerIds] };
     });
     for (const customerId of result.customerIds) await lifecyclePrimitives.reconcileCommittedCustomer(customerId, 'Legacy paid-user migration');
-    return { ...checked, imported: result.imported, createdCustomers: result.createdCustomers, provisionedCustomers: result.customerIds.length };
+    return { ...checked, imported: result.imported, createdCustomers: result.createdCustomers, provisionedCustomers: result.customerIds.length, pendingJellyfinLinks: result.imported.filter(row => row.needsJellyfinLink).length };
 }
 
 module.exports = {
