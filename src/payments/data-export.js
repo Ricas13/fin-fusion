@@ -28,7 +28,7 @@ function iso(value) {
     return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 function currencyDigits(currency) {
-    try { return new Intl.NumberFormat('en', { style: 'currency', currency: String(currency || 'USD').toUpperCase() }).resolvedOptions().maximumFractionDigits; }
+    try { return new Intl.NumberFormat('en', { style: 'currency', currency: String(currency || 'USD').toUpperCase(), currencyDisplay: 'narrowSymbol' }).resolvedOptions().maximumFractionDigits; }
     catch (_) { return 2; }
 }
 function major(minor, currency) {
