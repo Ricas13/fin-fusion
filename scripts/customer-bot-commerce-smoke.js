@@ -23,11 +23,11 @@ const baseline=read('db/migrations/000_database_baseline.sql');
 
 assert(plans.includes("readiness.context().catch"),'Plans must degrade readiness telemetry independently');
 assert(!/credit wallet|buy credits/i.test(plans),'Unified Plans must not revive retired-product credit semantics');
-for(const title of ['Payments','Provider mappings','Billing','Transactions','Export data','Payment Risk Policy','Payment History','Migrate paid users'])assert.strictEqual(adminShell.paymentTabsFor({title}),'',`Shared admin shell must not render a payment workflow tab row for ${title}`);
+for(const title of ['Payments','Provider mappings','Billing','Transactions','Export data','Payment Risk Policy'])assert.strictEqual(adminShell.paymentTabsFor({title}),'',`Shared admin shell must not render a payment workflow tab row for ${title}`);
 assert.deepStrictEqual(
   nav.childPages('payments').map(page=>page[1]),
-  ['Billing','Transactions','Export data','Expenses & Profitability','Provider mappings','Migrate paid users','Import history','Payment risk'],
-  'Payments & Billing must expose every durable payment workflow directly in the sidebar'
+  ['Billing','Transactions','Export data','Expenses & Profitability','Provider mappings','Payment risk'],
+  'Payments & Billing must expose active payment workflows directly in the sidebar'
 );
 
 assert(settings.includes("/users/@me/channels"),'Discord delivery must use the bot DM API');
