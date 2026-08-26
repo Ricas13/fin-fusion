@@ -7,7 +7,7 @@ const runtimeSettings=require('./runtime-settings');
 const customerNav=require('./customer-nav-html');
 
 const BASE_PATH='/account/docs';
-const SECTION_TITLES=['Start here','Customers','Help'];
+const SECTION_TITLES=['Customers','Help'];
 
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||BASE_PATH));}
 
@@ -24,8 +24,8 @@ function createCustomerDocsRouter(){
         basePath:BASE_PATH,
         backHref:'/account',
         backLabel:'Back to your account',
-        brandLabel:'Guides',
-        description:'How to get set up and manage your account: connecting Jellyfin and Stremio, your plan and billing, streaming limits, and security.',
+        brandLabel:'Help',
+        description:'Customer help for Jellyfin, Stremio, plans, billing, playback limits, account security and support.',
         sections:guideSource.loadSections(SECTION_TITLES),
         accountNavHtml
       });
@@ -42,13 +42,13 @@ function createCustomerDocsRouter(){
         basePath:BASE_PATH,
         backHref:'/account',
         backLabel:'Back to your account',
-        brandLabel:'Guides',
+        brandLabel:'Help',
         sections:guideSource.loadSections(SECTION_TITLES),
         sectionSlug:req.params.section,
         pageSlug:req.params.page,
         accountNavHtml
       });
-      if(!html)return res.status(404).send('Guide page not found');
+      if(!html)return res.status(404).send('Help page not found');
       return res.send(html);
     }catch(error){return next(error);}
   });
