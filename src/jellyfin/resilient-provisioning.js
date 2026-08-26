@@ -93,10 +93,10 @@ async function reconcileLane(customerId,entitlement,lane,accounts,{makePrimary=f
 }
 
 async function recordRun(customerId,subscriptionId,fn){
-    const started=await query(`INSERT INTO provisioning_runs(customer_id,subscription_id,action,status) VALUES($1,$2,'reconcile_multi_access','started') RETURNING id`,[customerId,subscriptionId||null]);
+    const started=await query(`INSERT INTO provisioning_runs(customer_id,subscription_id,action,status,detail) VALUES($1,$2,'reconcile','started',$3::jsonb) RETURNING id`,[customerId,subscriptionId||null,JSON.stringify({mode:'multi_access'})]);
     const id=started.rows[0].id;
     try{const value=await fn();await query(`UPDATE provisioning_runs SET status='succeeded',completed_at=NOW() WHERE id=$1`,[id]);return value;}
-    catch(error){await query(`UPDATE provisioning_runs SET status='failed',detail=$2::jsonb,completed_at=NOW() WHERE id=$1`,[id,JSON.stringify({error:error.message})]);throw error;}
+    catch(error){await query(`UPDATE provisioning_runs SET status='failed',detail=COALESCE(detail,'{}'::jsonb)||$2::jsonb,completed_at=NOW() WHERE id=$1`,[id,JSON.stringify({error:error.message})]);throw error;}
 }
 
 async function reconcileCustomer(customerId) {
