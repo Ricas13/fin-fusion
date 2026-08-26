@@ -7,7 +7,7 @@
   <a class="customerPortalNavLink <%= active==='history'?'active':'' %>" href="/account/history">Payments</a>
   <a class="customerPortalNavLink <%= active==='account' || active==='notifications' || active==='security' ?'active':'' %>" href="/account/security">Account</a>
   <% if (navBenefits) { %>
-    <a class="customerPortalNavLink <%= active==='benefits'?'active':'' %>" href="/account/affiliate">Benefits</a>
+    <a class="customerPortalNavLink <%= active==='benefits'||active==='affiliate'?'active':'' %>" href="/account/affiliate">Affiliate</a>
   <% } %>
   <% if (navOverseerrUrl) { %>
     <a class="customerPortalNavLink" href="<%= navOverseerrUrl %>" target="_blank" rel="noreferrer">Request content ↗</a>
