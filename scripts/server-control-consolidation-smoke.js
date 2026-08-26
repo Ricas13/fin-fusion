@@ -27,8 +27,9 @@ assert(operations.includes('/admin/servers?message=') && operations.includes('#c
 assert(libraries.includes('/admin/servers?message=') && libraries.includes('#server-'), 'library scans must return to the originating server row');
 
 assert(!serverTabs.includes("['libraries','Libraries'"), 'per-server tabs must not expose a separate Libraries workflow');
-assert(navModel.hiddenPages['fleet-operations']?.parentKey==='servers' && navModel.hiddenPages.libraries?.parentKey==='servers', 'Placement and Libraries must remain nested beneath the consolidated Servers control surface');
-assert.deepStrictEqual(navModel.childPages('servers').map(page=>page[1]), ['Fleet dashboard','Placement & capacity','Libraries'], 'durable Servers tools must be discoverable as nested sidebar destinations');
+assert(navModel.hiddenPages['fleet-operations']?.parentKey==='servers' && navModel.hiddenPages.libraries?.parentKey==='servers', 'Placement and Libraries compatibility routes must remain owned by the consolidated Servers control surface');
+assert.deepStrictEqual(navModel.childPages('servers').map(page=>page[1]), ['Fleet dashboard','Placement & capacity'], 'durable Servers tools must be discoverable as nested sidebar destinations without the scan-only Libraries utility');
+assert(navModel.SIDEBAR_EXCLUDED_CHILDREN.has('libraries'), 'Libraries must remain a direct compatibility utility without occupying permanent sidebar navigation');
 assert(navModel.aliases.operations==='servers' && !navModel.aliases['fleet-operations'] && !navModel.aliases.libraries, 'legacy Operations may resolve to Servers while nested Placement/Libraries retain exact active identity');
 
 assert(capability.includes("@import url('/css/admin-server-control.css')"), 'shared admin shell must load server control styling');
