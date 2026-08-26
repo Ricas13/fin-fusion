@@ -20,7 +20,7 @@ const usdBalance=balances.get('USD')||{available_minor:0,pending_minor:0};
 const paidPlans=plans.filter(p=>Number(p.price_minor)>0);
 %>
 <body><div class="portalShell">
-<header class="portalTopbar"><div class="portalTopbarInner"><div class="brandLockup"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">Affiliate</div></div></div><div class="portalActions"><a class="button ghost small" href="/account">Back to account</a></div></div></header>
+<header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
 <div class="customerLayout"><aside class="customerSidebar" aria-label="Customer navigation"><div class="customerNavTitle">My account</div><%- include('_nav',{active:'affiliate'}) %></aside><main class="portalMain affiliatePage">
 <% if(message){ %><div class="notice success"><%= message %></div><% } %>
 <% if(error){ %><div class="notice error"><%= error %></div><% } %>
