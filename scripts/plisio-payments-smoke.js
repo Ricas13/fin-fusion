@@ -51,7 +51,10 @@ const migration=source('db/migrations/035_plisio_only_payment_provider.sql');
 for(const constraint of ['payment_provider_credentials_provider_check','billing_checkout_intents_provider_check','payment_events_provider_check','payment_incidents_provider_check','subscriptions_source_check'])expect(migration.includes(constraint),`Plisio migration is missing ${constraint}.`);
 expect(migration.includes("'plisio'::text")&&migration.includes("'legacy_crypto'::text"),'Migration must keep Plisio active while neutralising unsupported historical crypto records.');
 
-for(const view of ['views/customer/onboarding.ejs','views/customer/dashboard.ejs','views/customer/stremio-dashboard.ejs']){const html=source(view);expect(html.includes('/account/checkout/plisio'),`${view} does not expose Plisio checkout.`);}
+// Plisio checkout is exposed on the two live customer plan surfaces. The old
+// standalone Stremio dashboard was retired when Stremio management moved Home.
+for(const view of ['views/customer/onboarding.ejs','views/customer/dashboard.ejs']){const html=source(view);expect(html.includes('/account/checkout/plisio'),`${view} does not expose Plisio checkout.`);}
+expect(!fs.existsSync(path.join(__dirname,'..','views/customer/stremio-dashboard.ejs')),'Retired standalone Stremio dashboard must stay removed.');
 const admin=source('src/platform/admin-payment-settings.js');
 expect(admin.includes('Plisio merchant API settings')&&admin.includes('SECRET_KEY'),'Admin Payments must explain Plisio setup.');
 expect(admin.includes('Legacy crypto'),'Admin Payments must present unsupported historical crypto records neutrally.');
