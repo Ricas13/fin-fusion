@@ -2,7 +2,8 @@
 
 // Canonical provider-ledger classification. Every accounting surface must use
 // this module so the same provider transaction can never be revenue in one
-// screen and ignored/refunded in another.
+// screen and ignored/refunded in another. Transactions/export consumers reach
+// this contract through history-accounting, keeping every reporting surface aligned.
 const STRIPE_PAYMENT_CATEGORIES = new Set(['charge']);
 const STRIPE_REFUND_CATEGORIES = new Set(['refund', 'partial_capture_reversal']);
 const PAYPAL_PAYMENT_CODES = new Set([
