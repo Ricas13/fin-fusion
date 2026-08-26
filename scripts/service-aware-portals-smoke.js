@@ -23,9 +23,9 @@ const migration=read('db/migrations/044_multi_service_subscriptions.sql');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
 
-assert(/!currentPlan&&stremioPlan/.test(customerDashboard)&&/stremio-dashboard/.test(customerDashboard),'Stremio-only customers must use a service-specific dashboard');
+assert(/stremioEntitlements\.entitledSubscription\(customerId\)/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use the unified multi-access Home');
 assert(/sellablePlans/.test(customerDashboard)&&/productReadiness\.evaluate/.test(customerDashboard),'customer acquisition catalogue must hide undeliverable products');
-assert(/Create your private installation link/.test(stremioDashboard)&&/does not contain your portal password or Jellyfin administrator credentials/.test(stremioDashboard),'Stremio-only dashboard must explain the private installation delivery model safely');
+assert(/Create your private installation link/.test(stremioDashboard)&&/does not contain your portal password or Jellyfin administrator credentials/.test(stremioDashboard),'Stremio setup surface must explain the private installation delivery model safely');
 assert(/admin\/plans\/:id\/delivery/.test(planDelivery)&&/snapshots were preserved/.test(planDelivery),'plan delivery editor must preserve existing subscription snapshots');
 assert(/admin\.plan\.delivery\.update/.test(planDelivery)&&/mutationLimit/.test(planDelivery),'plan delivery mutation must be audited and rate limited');
 assert(/createAdminPlanDeliveryRouter/.test(router),'plan delivery router must be mounted');

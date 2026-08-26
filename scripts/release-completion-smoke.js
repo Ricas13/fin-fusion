@@ -10,11 +10,15 @@ function lacks(source,fragment,message){assert(!source.includes(fragment),messag
 
 const customerDashboard=read('views/customer/dashboard.ejs');
 const customerNav=read('views/customer/_nav.ejs');
-has(customerNav,'showHelp','customer portal Help tab must be available only when support is configured');
-lacks(customerNav,'Help &amp; support','unconfigured support must not be a permanent customer portal tab');
-has(customerDashboard,"We're creating your Jellyfin account",'action-first pending state must work for paid and free Jellyfin access');
-has(customerDashboard,'We are setting up your streaming access','welcome overlay must make pending access obvious after activation');
-lacks(customerDashboard,'Your Free Access entitlement is active, but Jellyfin provisioning has not completed yet.','welcome copy must not incorrectly label paid users as Free Access');
+has(customerNav,'href="/account/docs"','customer Help guide must always be available');
+has(customerNav,'>Help</a>','customer Help guide label must remain distinct');
+has(customerNav,'href="/account/support"','customer Support must remain a separate destination from Help');
+lacks(customerNav,'Help &amp; support','customer Help guide and Support must not collapse back into one ambiguous tab');
+has(customerDashboard,'Everything you have, in one place.','customer Home must summarize simultaneous active access');
+has(customerDashboard,'provisioningState&&provisioningState.last_error','pending Jellyfin setup must surface the provisioning reason');
+has(customerDashboard,'Retry setup','pending Jellyfin setup must expose a retry action');
+has(customerDashboard,'without giving up your Free Server access','paid and Stremio changes must preserve simultaneous Free Server access');
+lacks(customerDashboard,'Your Free Access entitlement is active, but Jellyfin provisioning has not completed yet.','pending setup copy must not incorrectly label paid users as Free Access');
 
 const adminPassword=read('src/platform/admin-customer-jellyfin-password.js');
 has(adminPassword,"router.get('/admin/customer-jellyfin-password'",'admin Jellyfin password support page must be mounted');
