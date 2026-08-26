@@ -1,0 +1,55 @@
+name: Apply data export wiring
+
+on:
+  push:
+    branches:
+      - feature/data-export-bundle
+    paths:
+      - .github/workflows/apply-data-export.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: feature/data-export-bundle
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Apply guarded wiring patch
+        run: python3 scripts/apply_data_export_wiring.py
+      - name: Install dependencies
+        run: npm ci
+      - name: Run focused regressions
+        run: |
+          node scripts/legacy-customer-import-smoke.js
+          node scripts/admin-navigation-coherence-smoke.js
+          node scripts/customer-bot-commerce-smoke.js
+          node scripts/admin-accessibility-mobile-smoke.js
+      - name: Run syntax checks
+        run: npm run syntax
+      - name: Commit production changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            src/payments/data-export.js \
+            src/platform/admin-data-export.js \
+            src/platform/admin-nav.js \
+            src/platform/admin-route-composition.js \
+            src/platform/admin-legacy-customer-import.js \
+            scripts/legacy-customer-import-smoke.js \
+            scripts/admin-navigation-coherence-smoke.js \
+            scripts/customer-bot-commerce-smoke.js \
+            tests/admin-browser-regression.js
+          git diff --cached --check
+          git commit -m 'Add portable customer and payment exports'
+          git push origin HEAD:feature/data-export-bundle
