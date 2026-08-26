@@ -3,7 +3,7 @@
 const { query } = require('../db');
 const incidents = require('../payments/incidents');
 const dashboardLedger = require('../payments/dashboard-ledger');
-const { dashboardRange, fillSeries, revenueFromEvent } = require('./admin-dashboard-analytics');
+const { dashboardRange, fillSeries } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
 const subscriptionAnalytics = require('./subscription-analytics');
 const { mrrByCurrency, primaryMrr, revenueMixByService, revenueByPlan, revenueByBillingInterval } = require('./admin-dashboard-main');
@@ -12,72 +12,47 @@ const widgets = require('./admin-dashboard-widgets');
 const { number, money } = require('./admin-dashboard-format');
 const { esc } = require('./admin-html');
 
-function refundFromEvent(row) {
-    const payload = row.payload || {};
-    if (row.provider === 'stripe' && row.event_type === 'charge.refunded') {
-        const object = payload?.data?.object;
-        const amount = Number(object?.amount_refunded);
-        if (!object || !Number.isFinite(amount) || amount <= 0) return null;
-        return { minor: amount, currency: String(object.currency || 'USD').toUpperCase() };
-    }
-    if (row.provider === 'paypal' && row.event_type === 'PAYMENT.SALE.REFUNDED') {
-        const resource = payload.resource || {};
-        const text = String(resource.amount?.total ?? '').trim();
-        if (!/^\d+(?:\.\d+)?$/.test(text)) return null;
-        const [whole, fraction = ''] = text.split('.');
-        const minor = Number(whole) * 100 + Number((fraction + '00').slice(0, 2));
-        if (minor <= 0) return null;
-        return { minor, currency: String(resource.amount?.currency || 'USD').toUpperCase() };
-    }
-    return null;
+// Compatibility exports retained for older smoke tests/internal callers. The
+// implementation is deliberately delegated to dashboard-ledger so Commerce
+// cannot grow a second webhook accounting definition again.
+function refundFromEvent(row, state = new Map(), warnings = []) {
+    return dashboardLedger.refundFromEvent(row, state, warnings);
 }
-
-async function paymentEventsInRange(range) {
-    const result = await query(`
-        SELECT provider,provider_event_id,event_type,payload,created_at
-        FROM payment_events
-        WHERE provider IN ('stripe','paypal')
-          AND processed_at IS NOT NULL AND processing_error IS NULL
-          AND created_at >= $1 AND created_at < $2
-        ORDER BY created_at DESC
-        LIMIT 25000
-    `, [range.previousStart, range.end]);
-    return result.rows;
-}
+async function paymentEventsInRange(range) { return dashboardLedger.paymentEventsInRange(range); }
 
 function summarizeEvents(events, range, reporting) {
     const target = reportingCurrency.cleanCurrency(reporting?.currency || 'GBP');
     let grossMinor = 0, previousGrossMinor = 0, refundMinor = 0, refundCount = 0, previousRefundMinor = 0;
-    const payingEmails = new Set(), byBucketCurrency = new Map();
+    const payingKeys = new Set(), byBucketCurrency = new Map(), warnings = [], refundState = new Map();
     const convert = item => reportingCurrency.convertMinor(Number(item.minor || 0), item.currency || target, target, reporting);
-    for (const row of events) {
+    const chronological = (events || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    for (const row of chronological) {
         const at = new Date(row.created_at), inCurrent = at >= range.start && at < range.end, inPrevious = at >= range.previousStart && at < range.previousEnd;
         if (!inCurrent && !inPrevious) continue;
-        const payment = revenueFromEvent(row);
-        if (payment) {
-            const amount = convert(payment);
-            if (inCurrent) {
-                grossMinor += amount;
-                if (payment.email) payingEmails.add(payment.email.toLowerCase());
-                const bucket = ['day', 'week', 'month'].includes(range.bucket) ? range.bucket : 'day', d = new Date(at), bucketDate = bucket === 'month' ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)) : d, key = bucketDate.toISOString().slice(0, bucket === 'month' ? 7 : 10);
-                if (!byBucketCurrency.has(key)) byBucketCurrency.set(key, new Map());
-                const m = byBucketCurrency.get(key);m.set(target, (m.get(target) || 0) + amount);
-            } else previousGrossMinor += amount;
-        }
-        const refund = refundFromEvent(row);
-        if (refund) {
-            const amount = convert(refund);
-            if (inCurrent) { refundMinor += amount; refundCount++; }
-            else previousRefundMinor += amount;
+        for (const record of dashboardLedger.eventRecords(row, refundState, warnings)) {
+            const amount = convert(record);
+            if (record.kind === 'payment') {
+                if (inCurrent) {
+                    grossMinor += amount;
+                    if (record.payerKey) payingKeys.add(record.payerKey);
+                    const key = require('./admin-dashboard-analytics').bucketKey(at, range.bucket);
+                    if (!byBucketCurrency.has(key)) byBucketCurrency.set(key, new Map());
+                    const bucket = byBucketCurrency.get(key);
+                    bucket.set(target, (bucket.get(target) || 0) + amount);
+                } else previousGrossMinor += amount;
+            } else if (record.kind === 'refund') {
+                if (inCurrent) { refundMinor += amount; refundCount += 1; }
+                else previousRefundMinor += amount;
+            }
         }
     }
     return {
         primaryCurrency: target, grossMinor, previousGrossMinor,
         netMinor: grossMinor - refundMinor, previousNetMinor: previousGrossMinor - previousRefundMinor,
         refundMinor, refundCount, previousRefundMinor,
-        payingCustomers: payingEmails.size,
-        arpuMinor: payingEmails.size ? Math.round(grossMinor / payingEmails.size) : 0,
-        currencies: [target], byBucketCurrency
+        payingCustomers: payingKeys.size,
+        arpuMinor: payingKeys.size ? Math.round(grossMinor / payingKeys.size) : 0,
+        currencies: [target], byBucketCurrency, warnings
     };
 }
 
@@ -92,35 +67,20 @@ async function refundAndFailureSeries(range) {
     return r.map((row, i) => ({ label: row.label, key: row.key, refunds: row.n, failed: f[i]?.n || 0 }));
 }
 
-async function renewalVsChurn(range) {
-    return subscriptionAnalytics.movementSummary(range);
-}
-
+async function renewalVsChurn(range) { return subscriptionAnalytics.movementSummary(range); }
 async function checkoutFunnel(range) {
-    const result = await query(`
-        SELECT COUNT(*)::int created,COUNT(*) FILTER(WHERE state='completed')::int completed
-        FROM billing_checkout_intents WHERE created_at>=$1 AND created_at<$2
-    `, [range.start, range.end]);
+    const result = await query(`SELECT COUNT(*)::int created,COUNT(*) FILTER(WHERE state='completed')::int completed FROM billing_checkout_intents WHERE created_at>=$1 AND created_at<$2`, [range.start, range.end]);
     const row = result.rows[0] || { created: 0, completed: 0 };
-    return [
-        { label: 'Checkout started', count: Number(row.created || 0) },
-        { label: 'Checkout completed', count: Number(row.completed || 0) }
-    ];
+    return [{ label: 'Checkout started', count: Number(row.created || 0) }, { label: 'Checkout completed', count: Number(row.completed || 0) }];
 }
-
 async function topPlansBySubscribers(limit = 10) {
     const summary = await subscriptionAnalytics.effectivePrimarySummary(new Date(), { limit });
     return summary.planMix.map(row => ({ ...row, subscribers: Number(row.count || 0) }));
 }
-
 async function paymentStateBreakdown() {
     const rows = await incidents.recent(100);
     let open = 0, acknowledged = 0, resolved = 0;
-    for (const row of rows) {
-        if (row.resolved_at) resolved++;
-        else if (row.acknowledged_at) acknowledged++;
-        else open++;
-    }
+    for (const row of rows) { if (row.resolved_at) resolved++; else if (row.acknowledged_at) acknowledged++; else open++; }
     return { open, acknowledged, resolved, total: rows.length };
 }
 
@@ -130,9 +90,7 @@ async function buildContext(req) {
         mrrByCurrency(range.end), mrrByCurrency(range.previousEnd), dashboardLedger.commerceRevenue(range, reporting, reportingCurrency), refundAndFailureSeries(range), renewalVsChurn(range), checkoutFunnel(range), topPlansBySubscribers(10), paymentStateBreakdown()
     ]);
     const mrr = primaryMrr(mrrRows, reporting.currency, reporting), previousMrr = primaryMrr(previousMrrRows, reporting.currency, reporting);
-    const [revenueMix, billingInterval, planRevenue] = await Promise.all([
-        revenueMixByService(reporting), revenueByBillingInterval(reporting), revenueByPlan(reporting)
-    ]);
+    const [revenueMix, billingInterval, planRevenue] = await Promise.all([revenueMixByService(reporting), revenueByBillingInterval(reporting), revenueByPlan(reporting)]);
     return { range, reporting, data: { mrr, previousMrr, revenue, refundFailureSeries, renewal, funnel, topPlans, paymentStates, revenueMix, billingInterval, planRevenue } };
 }
 registry.registerContextBuilder('commerce', buildContext);
@@ -152,4 +110,4 @@ registry.register('commerce','checkoutFunnel',{title:'Checkout funnel',subtitle:
 registry.register('commerce','refundFailedTrend',{title:'Refunds & failed payments',defaultOrder:12,defaultSpan:8,lazy:true,render:async ctx=>ctx.data.refundFailureSeries.some(row=>row.refunds||row.failed)?widgets.stackedAreaChart(ctx.data.refundFailureSeries,['refunds','failed']):widgets.emptyState('No refunds or failed payment events in this period.')});
 registry.register('commerce','topPlans',{title:'Top primary plans by active customers',subtitle:'Effective primary access, not raw billing status.',defaultOrder:13,defaultSpan:4,lazy:true,render:async ctx=>{if(!ctx.data.topPlans.length)return widgets.emptyState('No customers currently have effective primary access.');return widgets.statusTable(ctx.data.topPlans,[{key:'name',label:'Plan',render:row=>esc(row.name)},{key:'service_type',label:'Service',render:row=>esc(row.service_type)},{key:'subscribers',label:'Active customers',align:'numeric',render:row=>esc(row.subscribers)}]);}});
 
-module.exports = { buildContext, refundFromEvent, summarizeEvents };
+module.exports = { buildContext, refundFromEvent, summarizeEvents, paymentEventsInRange };

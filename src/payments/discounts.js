@@ -10,12 +10,24 @@ function computeDiscountedMinor(baseMinor,discount){const base=Number(baseMinor)
 async function reserveForIntent({code,planCode,customerId,checkoutIntentId,baseMinor=0,ttlMinutes=30}){
     if(!code)return null;return transaction(async client=>{
         await client.query(`UPDATE discount_checkout_reservations SET state='expired',updated_at=NOW() WHERE state='reserved' AND expires_at<=NOW()`);
+        const intentResult=await client.query(`SELECT id,customer_id,state,expires_at FROM billing_checkout_intents WHERE id=$1 FOR SHARE`,[checkoutIntentId]);
+        if(!intentResult.rowCount)throw new Error('Checkout intent was not found for this discount reservation');
+        const intent=intentResult.rows[0];
+        if(String(intent.customer_id)!==String(customerId))throw new Error('Discount reservation customer does not match the checkout intent');
+        if(intent.state!=='open')throw new Error('Discounts can only be reserved for an open checkout intent');
+        const parentExpiry=new Date(intent.expires_at);
+        if(Number.isNaN(parentExpiry.getTime())||parentExpiry<=new Date())throw new Error('Checkout intent has already expired');
+
         const found=await client.query(`SELECT * FROM discount_codes WHERE code=$1 AND active=TRUE AND (starts_at IS NULL OR starts_at<=NOW()) AND (expires_at IS NULL OR expires_at>NOW()) FOR UPDATE`,[normalizeCode(code)]);if(!found.rowCount)throw new Error('That discount code is not valid or has expired');const d=found.rows[0];
         if(Array.isArray(d.plan_codes)&&d.plan_codes.length&&!d.plan_codes.includes(planCode))throw new Error('That discount code does not apply to this plan');
         const reserved=await client.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE customer_id=$2)::int customer_total FROM discount_checkout_reservations WHERE discount_code_id=$1 AND state='reserved' AND expires_at>NOW()`,[d.id,customerId]);const totals=reserved.rows[0];
         if(d.max_redemptions!==null&&Number(d.redemption_count||0)+Number(totals.total||0)>=Number(d.max_redemptions))throw new Error('That discount code has reached its redemption limit');
         const used=await client.query(`SELECT COUNT(*)::int n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2`,[d.id,customerId]);if(Number(used.rows[0].n||0)+Number(totals.customer_total||0)>=Number(d.per_customer_limit||1))throw new Error('You have already used or reserved that discount code');
-        const discounted=computeDiscountedMinor(baseMinor,d),applied=Math.max(0,Number(baseMinor||0)-discounted),expiresAt=new Date(Date.now()+Math.max(5,Math.min(180,Number(ttlMinutes)||30))*60000);
+        const discounted=computeDiscountedMinor(baseMinor,d),applied=Math.max(0,Number(baseMinor||0)-discounted);
+        const requestedExpiry=new Date(Date.now()+Math.max(5,Math.min(180,Number(ttlMinutes)||30))*60000);
+        // Reservation coverage is an invariant: a still-valid checkout may never
+        // outlive the limited-code capacity it froze into commercial_snapshot.
+        const expiresAt=new Date(Math.max(requestedExpiry.getTime(),parentExpiry.getTime()));
         const row=await client.query(`INSERT INTO discount_checkout_reservations(discount_code_id,customer_id,checkout_intent_id,amount_applied_minor,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING *`,[d.id,customerId,checkoutIntentId,applied,expiresAt]);return{discount:d,reservation:row.rows[0],discountedMinor:discounted};
     });
 }

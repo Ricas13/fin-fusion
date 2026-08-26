@@ -43,13 +43,14 @@ async function normalizedDashboardMoney(range,seriesSkeleton,reporting){
   const renewalMinor=convertedRenewals.reduce((sum,row)=>sum+Number(row.price_minor||0),0);
 
   return{
-    revenue:{primaryCurrency:target,totalMinor,previousMinor,currencies:[{currency:target,minor:totalMinor}],sourceCurrencies:[...sourceTotals.entries()].map(([currency,minor])=>({currency,minor})),series,recent:current.sort((a,b)=>b.createdAt-a.createdAt).slice(0,12),coverage:accounting.coverage},
+    revenue:{primaryCurrency:target,totalMinor,previousMinor,currencies:[{currency:target,minor:totalMinor}],sourceCurrencies:[...sourceTotals.entries()].map(([currency,minor])=>({currency,minor})),series,recent:current.sort((a,b)=>b.createdAt-a.createdAt).slice(0,12),coverage:accounting.coverage,warnings:accounting.warnings||[]},
     revenueDelta:delta(totalMinor,previousMinor),
     renewals:convertedRenewals.slice(0,12),
     renewalCount:convertedRenewals.length,
     renewalTotals:renewalMinor?[{currency:target,minor:renewalMinor}]:[],
     forecastDays:range.days,
-    reportingCurrency:target
+    reportingCurrency:target,
+    financialWarnings:accounting.warnings||[]
   };
 }
 

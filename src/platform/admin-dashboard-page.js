@@ -6,6 +6,17 @@ const registry = require('./admin-dashboard-registry');
 const layoutModule = require('./admin-dashboard-layout');
 const widgets = require('./admin-dashboard-widgets');
 
+function financialWarningBanner(ctx) {
+    const warnings = Array.from(new Set([
+        ...(Array.isArray(ctx?.financialWarnings) ? ctx.financialWarnings : []),
+        ...(Array.isArray(ctx?.reporting?.financialWarnings) ? ctx.reporting.financialWarnings : []),
+        ...(Array.isArray(ctx?.data?.financialWarnings) ? ctx.data.financialWarnings : []),
+        ...(Array.isArray(ctx?.data?.revenue?.warnings) ? ctx.data.revenue.warnings : [])
+    ].map(value => String(value || '').trim()).filter(Boolean)));
+    if (!warnings.length) return '';
+    return `<div class="notice warn financialDataWarning" role="alert"><strong>Financial data warning:</strong><ul>${warnings.map(message => `<li>${esc(message)}</li>`).join('')}</ul><div class="subText">Do not treat affected revenue/refund totals as complete until the warning is resolved.</div></div>`;
+}
+
 // Shared body for every widget-driven dashboard: loads the admin's saved
 // layout, merges it with the registry, and renders EVERY registered widget
 // -- not just the visible ones. Hidden widgets still get a DOM card (with
@@ -46,10 +57,11 @@ async function renderWidgetGrid(dashboardKey, req, ctx) {
         <link rel="stylesheet" href="/css/admin-dashboard-widget-layout.css">
         <div class="dashboardCustomizeBar"><button type="button" class="button secondary btn-sm" data-dashboard-customize-toggle>Customize dashboard</button></div>
         <div class="notice error widgetHidden" data-dashboard-layout-error role="alert"></div>
+        ${financialWarningBanner(ctx)}
         <div class="widgetPicker widgetHidden" data-widget-picker><h3>Show/hide widgets</h3><div class="widgetPickerList">${picker}</div><div class="buttonRow" style="margin-top:10px"><button type="button" class="button secondary btn-sm" data-dashboard-reset>Restore defaults</button></div></div>
         <div class="analyticsGrid" data-dashboard-key="${esc(dashboardKey)}" data-csrf-token="${esc(csrf.token(req))}">${body}</div>
         <script src="/js/admin-dashboard-widgets.js" defer></script>
     `;
 }
 
-module.exports = { renderWidgetGrid };
+module.exports = { renderWidgetGrid, financialWarningBanner };

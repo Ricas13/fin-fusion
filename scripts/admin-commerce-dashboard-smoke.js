@@ -39,7 +39,7 @@ async function seedCommerceData(suffix) {
     await query(`
         INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processed_at,created_at)
         VALUES($1,$2,'charge.refunded',$3::jsonb,NOW(),NOW()-INTERVAL '1 day')
-    `, ['stripe', `evt_refund_${suffix}`, JSON.stringify({ data: { object: { amount_refunded: 500, currency: 'usd' } } })]);
+    `, ['stripe', `evt_refund_${suffix}`, JSON.stringify({ data: { object: { id: `ch_refund_${suffix}`, amount_refunded: 500, currency: 'usd' }, previous_attributes: { amount_refunded: 0 } } })]);
     await query(`
         INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processing_error,created_at)
         VALUES($1,$2,'invoice.payment_failed',$3::jsonb,'card_declined',NOW()-INTERVAL '1 day')
@@ -82,7 +82,7 @@ async function seedImportedOverlap(suffix) {
         `evt_history_paid_${suffix}`,
         JSON.stringify({ data: { object: { amount_paid: 1500, currency: 'usd', customer_email: `history-${suffix}@example.invalid` } } }),
         `evt_history_refund_${suffix}`,
-        JSON.stringify({ data: { object: { amount_refunded: 500, currency: 'usd' } } })
+        JSON.stringify({ data: { object: { id: `ch_history_${suffix}`, amount_refunded: 500, currency: 'usd' }, previous_attributes: { amount_refunded: 0 } } })
     ]);
 }
 
@@ -98,7 +98,6 @@ async function main() {
         assert(typeof html === 'string' && html.length > 0, `widget ${spec.key} must render non-empty HTML`);
     }
 
-    // Gross/net revenue must reflect the seeded payment and refund after dashboard currency normalization.
     const expectedGrossMinor = reportingCurrency.convertMinor(1500, 'USD', ctx.data.revenue.primaryCurrency, ctx.reporting);
     const expectedRefundMinor = reportingCurrency.convertMinor(500, 'USD', ctx.data.revenue.primaryCurrency, ctx.reporting);
     assert(ctx.data.revenue.grossMinor >= expectedGrossMinor, 'gross revenue must include the seeded payment');
@@ -106,22 +105,23 @@ async function main() {
     assert.strictEqual(ctx.data.revenue.netMinor, ctx.data.revenue.grossMinor - ctx.data.revenue.refundMinor, 'net revenue must equal gross minus refunds');
     assert(ctx.data.revenue.payingCustomers >= 1, 'paying-customer count must include the seeded payer email');
 
-    // refundFromEvent must parse both provider payload shapes and ignore unrelated event types.
-    assert.strictEqual(refundFromEvent({ provider: 'stripe', event_type: 'charge.refunded', payload: { data: { object: { amount_refunded: 500, currency: 'usd' } } } }).minor, 500);
+    // Stripe charge.amount_refunded is cumulative. Each charge.refunded event
+    // must contribute only its incremental delta (10.00, then another 20.00).
+    const refundState = new Map(), warnings = [];
+    const firstRefund = refundFromEvent({ provider: 'stripe', event_type: 'charge.refunded', payload: { data: { object: { id: 'ch_partial', amount_refunded: 1000, currency: 'usd' }, previous_attributes: { amount_refunded: 0 } } } }, refundState, warnings);
+    const secondRefund = refundFromEvent({ provider: 'stripe', event_type: 'charge.refunded', payload: { data: { object: { id: 'ch_partial', amount_refunded: 3000, currency: 'usd' }, previous_attributes: { amount_refunded: 1000 } } } }, refundState, warnings);
+    assert.strictEqual(firstRefund.minor, 1000);
+    assert.strictEqual(secondRefund.minor, 2000);
+    assert.strictEqual(firstRefund.minor + secondRefund.minor, 3000, 'repeated partial refunds must equal the actual cumulative refund, not 10 + 30');
+    assert.strictEqual(warnings.length, 0);
     assert.strictEqual(refundFromEvent({ provider: 'paypal', event_type: 'PAYMENT.SALE.REFUNDED', payload: { resource: { amount: { total: '5.00', currency: 'USD' } } } }).minor, 500);
     assert.strictEqual(refundFromEvent({ provider: 'stripe', event_type: 'invoice.paid', payload: {} }), null);
 
-    // Checkout funnel must reflect the real created-vs-completed intent counts.
     assert.strictEqual(ctx.data.funnel[0].label, 'Checkout started');
     assert(ctx.data.funnel[0].count >= 2, 'checkout funnel must count both seeded intents as started');
     assert(ctx.data.funnel[1].count >= 1, 'checkout funnel must count the completed intent');
-
-    // Payment incident states must reflect the seeded open incident.
     assert(ctx.data.paymentStates.open >= 1, 'payment state breakdown must include the seeded open incident');
 
-    // Imported provider history is authoritative inside its imported date coverage.
-    // The matching webhook rows below deliberately describe the same money movement;
-    // both Commerce and Main dashboard accounting must still count each movement once.
     await seedImportedOverlap(suffix);
     const historyReq = fakeReq(adminId, { range: 'custom', from: '2099-01-01', to: '2099-01-01' });
     const historyCtx = await buildContext(historyReq);
@@ -137,7 +137,6 @@ async function main() {
     assert.strictEqual(normalized.revenue.recent.length, 1, 'Main dashboard recent payments must expose the imported payment exactly once');
     assert.strictEqual(normalized.revenue.recent[0].source, 'history', 'Main dashboard should identify imported history as the accounting source inside covered dates');
 
-    // No secret-shaped strings should ever end up in dashboard HTML output.
     for (const spec of registry.listWidgets('commerce')) {
         const html = (await spec.render(ctx)).toLowerCase();
         for (const banned of ['api_key', 'apikey', 'password_hash', 'session_secret', 'nonce_hash']) {
@@ -145,12 +144,9 @@ async function main() {
         }
     }
 
-    // Rendering against a fresh (empty) database window must not crash.
     const emptyRange = dashboardRange({ range: '7d' }, new Date('2000-01-01T00:00:00.000Z'));
     const emptyCtx = { ...ctx, range: emptyRange };
-    for (const spec of registry.listWidgets('commerce')) {
-        await spec.render(emptyCtx);
-    }
+    for (const spec of registry.listWidgets('commerce')) await spec.render(emptyCtx);
 
     console.log('admin commerce dashboard smoke: ok');
 }
