@@ -6,6 +6,7 @@ const path=require('path');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
+const inactivityRuntime=require('../src/automation/customer-inactivity');
 
 const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
@@ -51,6 +52,20 @@ assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean
 assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity must apply to the canonical Free entitlement regardless of acquisition source');
 assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor plan-scoped inactivity holds independently of subscription source');
 assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptionState.includes("ja.access_lane='free'"),'Dormant cleanup blocking must remain scoped to the Free Jellyfin lane');
+assert(inactivity.includes('observation_started_at')&&inactivity.includes('observationStartedAt'),'Inactivity audit evidence must record the effective observation start');
+
+// A recently imported mapping may already carry trustworthy historical Jellyfin
+// activity. That history should satisfy the observation window, while a genuinely
+// new mapping with no prior evidence must retain the full grace period.
+const now=Date.UTC(2026,7,27,9,0,0),day=86400000;
+const usagePolicy={enabled:true,dryRun:true,noPlaybackDays:7,playbackWindowDays:7,minimumPlaybackMinutes:null,minimumObservationHours:24};
+const importedAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(importedAssessment.noPlaybackEligible,true,'Historical Jellyfin activity older than the threshold must make a recently imported Free mapping eligible');
+assert.strictEqual(importedAssessment.observationStartedAt.getTime(),now-10*day,'Historical activity must extend the observation window back before local import');
+const newAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:null,last_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(newAssessment.noPlaybackEligible,false,'A genuinely new Free mapping with no historical activity must retain the observation grace period');
+const recentPlaybackAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:new Date(now-2*day),playback_seconds:60},usagePolicy,now);
+assert.strictEqual(recentPlaybackAssessment.noPlaybackEligible,false,'Recent Free-server playback must prevent inactivity even when older account history exists');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
