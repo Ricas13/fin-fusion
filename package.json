@@ -21,6 +21,7 @@
     "auth:migrate-legacy": "node scripts/migrate-staff-auth.js",
     "auth:smoke": "node scripts/auth-smoke.js",
     "setup:claim": "node scripts/rotate-first-run-claim.js",
+    "jellyfin:backfill-subtitle-management": "node scripts/backfill-subtitle-management-reconcile.js",
     "server:add": "node scripts/add-jellyfin-server.js",
     "payments:map": "node scripts/map-provider-price.js",
     "payments:plisio-smoke": "node scripts/plisio-payments-smoke.js",
