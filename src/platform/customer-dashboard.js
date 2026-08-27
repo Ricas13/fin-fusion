@@ -54,5 +54,54 @@ async function libraryProfilesForPortal(customerId,portal){
   return profiles;
 }
 async function discountPreview(customerId,rawCode){const code=discounts.normalizeCode(rawCode);if(!code)return{code:'',valid:false,plans:{},message:null};const plans=await sellablePlans(),out={},errors=[];for(const plan of plans.filter(plan=>Number(plan.price_minor||0)>0)){try{const discount=await discounts.validateForCheckout({code,planId:plan.id,planCode:plan.code,customerId}),baseMinor=Number(plan.price_minor||0),finalMinor=discounts.computeDiscountedMinor(baseMinor,discount);out[plan.code]={valid:true,baseMinor,finalMinor,currency:plan.currency||'USD',discountType:discount?.discount_type||null,percentOff:Number(discount?.percent_off||0),fixedOffMinor:Number(discount?.fixed_off_minor||0)};}catch(error){out[plan.code]={valid:false};errors.push(error.message);}}const valid=Object.values(out).some(row=>row.valid);return{code,valid,plans:out,message:valid?'Promo applied to eligible plan prices below. Stripe subscription promos reduce the first payment; PayPal recurring plans cannot be dynamically repriced, so a promo uses PayPal one-time checkout.':errors[0]||'That promo code is not valid for the available plans.'};}
-function createCustomerDashboardRouter(){const r=express.Router();r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){return res.status(400).json({valid:false,plans:{},message:error.message||'Promo code could not be checked.'});}});r.get('/account',requireCustomer,async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer}).catch(error=>({restored:false,error:error.message})),currency=await planPricing.platformDefaultCurrency(),[portalRaw,plans,currentPlan,freePlan,stremioPlan,requestAccess,requestConfig,rawProvisioningState]=await Promise.all([customers.getCustomerPortal(customerId),sellablePlans(),provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}),stremioEntitlements.entitledSubscription(customerId),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null)]),portal=await hideInternalAccounts(customerId,portalRaw),navOptions=customerNav.optionsFromPortal(portal),restoreMessage=restored.restored?'Your previous inactive Jellyfin profile was cleaned up. Because you returned, CAPTAiNFiN has prepared fresh access for you.':null,paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()};if(!currentPlan&&!freePlan&&!stremioPlan){const openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||restoreMessage||null,error:req.query.error||restored.error||null});}const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage(portal,jellyfinPlan),message=req.query.message||restoreMessage||welcome||null;return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||restored.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl});}catch(error){return next(error);}});r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const outcome=await provisioning.reconcileCustomer(req.session.customerId);if(outcome?.active&&outcome?.account?.id)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been refreshed.'));const state=await provisioning.control.getCustomerState(req.session.customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your Jellyfin access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your Jellyfin access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});return r;}
+
+function createCustomerDashboardRouter(){
+  const r=express.Router();
+  r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){return res.status(400).json({valid:false,plans:{},message:error.message||'Promo code could not be checked.'});}});
+  r.get('/account',requireCustomer,async(req,res,next)=>{
+    try{
+      await runtimeSettings.ensureLoaded();
+      const customerId=req.session.customerId;
+      // Page rendering may inspect whether a previously-cleaned entitlement can
+      // be restored, but GET /account must never release holds or contact a
+      // remote Jellyfin server. Restoration belongs to the CSRF-protected POST
+      // retry action below.
+      const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
+      const currency=await planPricing.platformDefaultCurrency();
+      const [portalRaw,plans,currentPlan,freePlan,stremioPlan,requestAccess,requestConfig,rawProvisioningState]=await Promise.all([
+        customers.getCustomerPortal(customerId),
+        sellablePlans(),
+        provisioning.currentEntitlement(customerId),
+        subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}),
+        stremioEntitlements.entitledSubscription(customerId),
+        requestUserSync.requestAccessForCustomer(customerId),
+        requestUserSync.configuration(),
+        provisioning.control.getCustomerState(customerId).catch(()=>null)
+      ]);
+      const portal=await hideInternalAccounts(customerId,portalRaw),navOptions=customerNav.optionsFromPortal(portal),paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()};
+      if(!currentPlan&&!freePlan&&!stremioPlan){
+        const openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
+        return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null});
+      }
+      const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage(portal,jellyfinPlan),message=req.query.message||welcome||null;
+      return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,restorePending:Boolean(returnStatus.eligible),csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl});
+    }catch(error){return next(error);}
+  });
+  r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
+    if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));
+    try{
+      const customerId=req.session.customerId;
+      const restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});
+      if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));
+      const outcome=await provisioning.reconcileCustomer(customerId);
+      if(outcome?.active&&outcome?.account?.id)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been refreshed.'));
+      const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your Jellyfin access has not completed yet. We will keep retrying automatically.';
+      return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));
+    }catch(error){
+      const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your Jellyfin access has not completed yet. We will keep retrying automatically.';
+      return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));
+    }
+  });
+  return r;
+}
 module.exports={createCustomerDashboardRouter,hideInternalAccounts,deliveryType,sellablePlans,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview};
