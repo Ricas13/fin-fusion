@@ -45,7 +45,9 @@ expect(webhook.includes("'/webhooks/plisio'"),'Plisio webhook route is missing.'
 expect((webhook.match(/router\.post\('\/webhooks\//g)||[]).length===3,'Only Stripe, PayPal and Plisio webhook routes may be mounted.');
 const returns=source('src/platform/customer-payment-return.js');
 expect(returns.includes("'/account/plisio/return'"),'Plisio browser return handler is missing.');
-expect((returns.match(/\/account\/[^'\"]+\/return/g)||[]).length===2,'Only PayPal and Plisio browser payment returns may be mounted.');
+const returnRoutes=returns.match(/\/account\/[^'\"]+\/return/g)||[];
+expect(returnRoutes.length===3,'Only Stripe, PayPal and Plisio browser payment returns may be mounted.');
+expect(returnRoutes.some(route=>route.includes('/stripe/return'))&&returns.includes('providerCheckoutId:sessionId')&&returns.includes('stripe.confirmCheckout(sessionId,row)'),'Stripe browser return must remain provider-confirmed and bound to the local Checkout Session.');
 
 const migration=source('db/migrations/035_plisio_only_payment_provider.sql');
 for(const constraint of ['payment_provider_credentials_provider_check','billing_checkout_intents_provider_check','payment_events_provider_check','payment_incidents_provider_check','subscriptions_source_check'])expect(migration.includes(constraint),`Plisio migration is missing ${constraint}.`);
