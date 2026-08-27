@@ -41,14 +41,13 @@ const hiddenPages=Object.freeze({
   'data-export':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['data-export','Export data','/admin/payments/export'])}),
   expenses:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
   'provider-mappings':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['provider-mappings','Provider mappings','/admin/provider-mappings'])}),
-  'legacy-paid-import':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['legacy-paid-import','Migrate paid users','/admin/payments/legacy-import'])}),
-  'payment-history':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-history','Import history','/admin/payments/history'])}),
   'payment-risk-policy':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
 
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Customer moves','/admin/provisioning/migrations'])}),
   'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Access consistency','/admin/provisioning/drift'])}),
   events:Object.freeze({groupKey:'automation',parentKey:'automation-jobs',page:Object.freeze(['events','Audit log','/admin/events'])}),
   'configuration-transfer':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['configuration-transfer','Configuration Transfer','/admin/configuration'])}),
+  'legacy-paid-import':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['legacy-paid-import','Migrate paid users','/admin/payments/legacy-import'])}),
 
   branding:Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['branding','Branding','/admin/settings/branding'])}),
   'support-policy':Object.freeze({groupKey:'settings',parentKey:'settings-general',page:Object.freeze(['support-policy','Support & legal','/admin/settings/support'])}),
@@ -77,7 +76,10 @@ const aliases=Object.freeze({
 // Search already has a persistent command-palette launcher, while personal
 // account pages have their own fixed My account block. Everything else that is
 // a durable admin destination is allowed to appear as a nested sidebar item.
-const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','libraries','my-profile','my-notifications','my-security']);
+// server-migrations is reached from Customer 360's own move-to-another-server
+// action, so it keeps its hiddenPages entry (for breadcrumb/group identity)
+// without a second, redundant sidebar link.
+const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','libraries','my-profile','my-notifications','my-security','server-migrations']);
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
