@@ -102,17 +102,21 @@ async function grantActivity(client) {
         to_regclass('public.jellyfin_server_metrics') AS metrics,
         to_regclass('public.access_network_leases') AS network_leases,
         to_regclass('public.access_network_events') AS network_events,
+        to_regclass('public.customer_lane_policy_overrides') AS lane_overrides,
+        to_regclass('public.customer_entitlement_overrides') AS entitlement_overrides,
         to_regprocedure('public.record_activity_worker_heartbeat(text,text,text,boolean,jsonb)') AS heartbeat_function`);
-    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].heartbeat_function) {
+    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].lane_overrides || !required.rows[0].entitlement_overrides || !required.rows[0].heartbeat_function) {
         throw new Error('Run database migrations before configuring the activity role');
     }
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
     await client.query(`GRANT SELECT(id,name,slug,server_class,base_url,public_url,enabled,priority,max_users,health_status,last_health_check,api_key_encrypted) ON jellyfin_servers TO ${role}`);
-    await client.query(`GRANT SELECT(id,customer_id,server_id,jellyfin_user_id,disabled,account_purpose,last_activity_at) ON jellyfin_accounts TO ${role}`);
+    await client.query(`GRANT SELECT(id,customer_id,server_id,jellyfin_user_id,disabled,account_purpose,access_lane,last_activity_at) ON jellyfin_accounts TO ${role}`);
     await client.query(`GRANT UPDATE(last_activity_at,updated_at) ON jellyfin_accounts TO ${role}`);
-    await client.query(`GRANT SELECT(id,customer_id,plan_id,status,current_period_end,created_at,starts_at,superseded_by,service_extension_days) ON subscriptions TO ${role}`);
-    await client.query(`GRANT SELECT(id,code,streams,active,service_type,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes) ON plans TO ${role}`);
+    await client.query(`GRANT SELECT(id,customer_id,plan_id,status,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot) ON subscriptions TO ${role}`);
+    await client.query(`GRANT SELECT(id,code,streams,active,service_type,is_free_tier,is_addon,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes) ON plans TO ${role}`);
     await client.query(`GRANT SELECT(id,access_paused_at) ON customers TO ${role}`);
+    await client.query(`GRANT SELECT(customer_id,access_lane,streams) ON customer_lane_policy_overrides TO ${role}`);
+    await client.query(`GRANT SELECT(customer_id,subscription_id,permanent_access,revoked_at) ON customer_entitlement_overrides TO ${role}`);
     await client.query(`GRANT SELECT(setting_key,setting_value) ON platform_settings TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON active_playback_sessions TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON playback_history TO ${role}`);
