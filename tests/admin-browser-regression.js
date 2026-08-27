@@ -203,7 +203,7 @@ async function main(){
     assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');
     assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Plans & Storefront','legacy Request limits must land in Plans & Storefront');
     assert(!(await page.locator('.operatorTabs').allTextContents()).join(' ').includes('Request limits'),'Request limits must not remain as a duplicate Plans workflow card');
-    const backupTabs=['Backups & Recovery','Configuration Transfer'];
+    const backupTabs=['Backups & Recovery','Configuration Transfer','Migrate paid users'];
     await assertWorkflow(page,'/admin/backups',backupTabs,'Backups & Recovery');
     await assertWorkflow(page,'/admin/configuration',backupTabs,'Configuration Transfer');
 
