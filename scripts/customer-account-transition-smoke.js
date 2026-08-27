@@ -91,10 +91,10 @@ assert.match(publicAuth,/Customer password reset failed/,'password-reset failure
 assert.doesNotMatch(publicAuth,/registrationLocals\(req,error\.message|error:error\.message|Verification failed',error\.message/,'public auth responses must not render raw exception messages');
 assert.match(publicAuth,/Customer password-reset request failed[\s\S]*?return message\(res,200,'Check your email','If a matching customer account with an email address exists/,'forgot-password infrastructure failures must preserve the neutral anti-enumeration response');
 
-assert.match(login,/const publicError=require\('\.\/public-error'\)/,'customer login/profile routes must use the shared public error presenter');
+assert.match(login,/const publicError=require\('\.\/public-error'\)/,'customer login routes must use the shared public error presenter');
 assert.match(login,/Customer login failed/,'customer login failures must use the public error boundary');
-assert.match(login,/Customer profile update failed/,'customer profile failures must use the public error boundary');
-assert.doesNotMatch(login,/render\('customer\/login',\{error:error\.message|confirmationPage\([^\n]*error:error\.message|encodeURIComponent\(error\.message\)|twoFactorPasswordPage\(req,error\.message/,'customer login/profile responses must not expose raw exception messages');
+assert.doesNotMatch(login,/\/account\/security\/profile|\/account\/security\/2fa\/start|Customer profile update failed|Customer 2FA password confirmation failed/,'customer-login must not intercept customer security transitions');
+assert.doesNotMatch(login,/render\('customer\/login',\{error:error\.message|encodeURIComponent\(error\.message\)/,'customer login responses must not expose raw exception messages');
 
 assert.match(security,/const publicError=require\('\.\/public-error'\)/,'customer security routes must use the shared public error presenter');
 assert.match(security,/function securityError\(res,error,context/,'customer security redirects must share one error boundary');
@@ -102,5 +102,17 @@ assert.doesNotMatch(security,/encodeURIComponent\(error\.message\)|esc\(error\.m
 assert.match(security,/Customer email-change verification failed/,'email-change confirmation failures must use the public error boundary');
 assert.match(security,/Customer password change failed/,'password-change failures must use the public error boundary');
 assert.match(security,/Customer 2FA enrollment confirmation failed/,'2FA enrollment failures must use the public error boundary');
+
+const profileRoute=security.match(/router\.post\('\/account\/security\/profile'[\s\S]*?router\.post\('\/account\/security\/password'/)?.[0]||'';
+assert(profileRoute,'customer-security must explicitly own profile updates');
+assert.match(profileRoute,/emailChange\.identity\(req\.session\.customerId,req\.session\.customerUserId\)[\s\S]*?emailChanged=/,'profile owner must compare against the authoritative current email before deciding security requirements');
+assert.match(profileRoute,/if\(emailChanged&&!String\(req\.body\.currentPassword\|\|''\)\)[\s\S]*?profilePasswordPage/,'email changes must prompt for the current password before mutation');
+assert.match(profileRoute,/if\(emailChanged&&verify\)[\s\S]*?emailSettings\.status\(\)/,'transactional email availability must be required only when the email actually changes');
+assert.match(profileRoute,/emailChange\.begin\(\{customerId:req\.session\.customerId,userId:req\.session\.customerUserId/,'profile mutation must use the staged email-change service');
+
+const twoFactorStart=security.match(/router\.post\('\/account\/security\/2fa\/start'[\s\S]*?router\.post\('\/account\/security\/2fa\/confirm'/)?.[0]||'';
+assert(twoFactorStart,'customer-security must explicitly own 2FA enrollment start');
+assert.match(twoFactorStart,/if\(!String\(req\.body\.currentPassword\|\|''\)\)[\s\S]*?twoFactorPasswordPage/,'2FA enrollment must prompt for the current password');
+assert.match(twoFactorStart,/emailChange\.assertPassword\(req\.session\.customerUserId,req\.body\.currentPassword\)[\s\S]*?beginEnrollment\(req\.session\.customerUserId\)/,'current password must be verified before any authenticator enrollment secret is generated or stored');
 
 console.log('customer account transition smoke: ok');
