@@ -2,10 +2,11 @@
 require('dotenv').config();
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 const { spawnSync } = require('child_process');
 const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
-const historicalAuth = require('../src/auth/service-core');
 const totp = require('../src/auth/totp');
 const serverAdmin = require('../src/platform/admin-servers');
 const adminDashboard = require('../src/platform/admin-dashboard');
@@ -32,7 +33,7 @@ function assertAdminErrorRedaction(){
 async function cleanup(userId=null){ if(userId) await query('DELETE FROM auth_events WHERE user_id=$1',[userId]); await query('DELETE FROM auth_events WHERE identity_hint=$1',[USERNAME]); await query('DELETE FROM app_users WHERE username=$1',[USERNAME]); }
 async function main(){
   assertStartupPolicy(); assertAdminErrorRedaction();
-  if(historicalAuth!==auth) throw new Error('Historical auth import does not resolve to canonical auth service');
+  if(fs.existsSync(path.join(__dirname,'..','src','auth','service-core.js'))) throw new Error('Retired historical auth facade must stay removed');
   const dash = await adminDashboard.dashboardData();
   for (const key of ['customers','activeSubscriptions','activeStreams','transcodes','servers','healthyServers','offlineServers','wouldStop24h','safetySkips24h']) {
     if (!Number.isFinite(dash[key])) throw new Error(`Admin dashboard metric invalid: ${key}`);
@@ -48,7 +49,6 @@ async function main(){
     if(!(await auth.verifySecondFactor(userId,codes[0],mockReq()))) throw new Error('Recovery verification failed'); if(await auth.verifySecondFactor(userId,codes[0],mockReq())) throw new Error('Recovery code reused');
     const established=mockReq('ci-auth-step-up-session'); established.session={authUserId:userId,authRole:'admin'};
     if(await auth.verifySecondFactor(userId,'definitely-not-a-valid-factor',established)) throw new Error('Explicit second-factor verification auto-passed an established admin session');
-    if(await historicalAuth.verifySecondFactor(userId,'definitely-not-a-valid-factor',established)) throw new Error('Historical auth import bypassed canonical step-up enforcement');
     const refreshed=await auth.getStaffById(userId); await auth.registerSession(mockReq(),refreshed); const session=await query('SELECT 1 FROM auth_sessions WHERE session_id=$1 AND user_id=$2',['ci-auth-smoke-session',userId]); if(!session.rowCount) throw new Error('Staff session registration failed');
     console.log('Auth and admin dashboard smoke tests passed');
   }finally{ await cleanup(userId); await getPool().end(); }
