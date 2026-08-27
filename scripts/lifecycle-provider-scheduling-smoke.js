@@ -12,6 +12,12 @@ assert(/idempotencyKey/.test(customer),'customer Stripe schedule mutations must 
 assert(/subscriptionSchedules\.release\(schedule\.id\)/.test(customer),'cancelling a customer Stripe change must release the provider schedule');
 assert(/providerOps\.providerApplied/.test(customer)&&/providerOps\.reconciled/.test(customer),'customer provider scheduling must record provider and local reconciliation states');
 assert(/PayPal cannot replace an active billing agreement in place/.test(customer),'PayPal plan selection must not silently cancel an active agreement');
+const jobs=read('src/automation/jobs.js'),notificationDispatch=read('src/integrations/notification-dispatch.js'),migrationExpiry=read('db/migrations/102_paypal_plan_change_checkout_expiry.sql');
+assert(/async function expireDuePaypal\(\)/.test(customer)&&/state='awaiting_checkout'/.test(customer),'PayPal plan changes past their effective date must transition out of pending instead of sitting inert forever');
+assert(/notificationDispatch\.dispatch\(\{eventType:'subscription\.plan_change\.requires_checkout'/.test(customer),'a PayPal plan change reaching its effective date must notify the customer they need to check out again');
+assert(/customerPlanChange\.expireDuePaypal\(\)/.test(jobs),'the plan_changes automation job must also process due PayPal plan changes, not just Stripe');
+assert(/'subscription\.plan_change\.requires_checkout'/.test(notificationDispatch),'the PayPal checkout-required reminder must always email the customer, not depend on opt-in preferences alone');
+assert(/awaiting_checkout/.test(migrationExpiry)&&/subscription\.plan_change\.requires_checkout/.test(migrationExpiry),'a migration must extend the plan-change state machine and seed the reminder notification preference');
 assert(/return subscriptionState\.effectiveSubscription\(customerId\)/.test(provisioning),'provisioning must use canonical entitlement resolution');
 assert(/effective_customer_entitlements/.test(entitlement),'application entitlement service must consume the canonical database view');
 assert(/CREATE VIEW public\.effective_customer_entitlements/.test(canonical),'canonical entitlement view must be defined in migrations');
