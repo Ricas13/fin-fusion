@@ -17,11 +17,6 @@ function jsFiles(dir){
 }
 function relative(file){return path.relative(root,file).replace(/\\/g,'/');}
 function importers(fragment){return jsFiles(path.join(root,'src')).filter(file=>read(relative(file)).includes(fragment)).map(relative).sort();}
-function alias(file,target){
-  const source=read(file);
-  assert.match(source,new RegExp(`module\\.exports\\s*=\\s*require\\(['\"]${target.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}['\"]\\)`),`${file} must delegate to ${target}`);
-  assert(!/\basync\s+function\b/.test(source),`${file} must not contain a second implementation`);
-}
 
 // Authentication: one public facade owns explicit step-up semantics. The old
 // service-core compatibility path is intentionally gone now that nothing calls it.
@@ -40,11 +35,13 @@ assert(adminSecurity.includes('createAdminStepUpRouter')&&adminSecurity.includes
 assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/platform/admin-security.js'],'only the canonical admin security facade may import internal security routes');
 
 // Jellyfin provisioning: all public calls pass through the entitlement/lifecycle facade.
-alias('src/jellyfin/provisioning-core.js','./provisioning');
+// The historical provisioning-core alias is intentionally gone; no runtime caller
+// should be able to bypass the canonical facade through an old import path.
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning compatibility facade must stay removed');
 const provisioning=read('src/jellyfin/provisioning.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
-assert(provisioning.includes("require('./provisioning-engine')"),'canonical provisioning facade must use internal engine');
+assert(provisioning.includes("require('./provisioning-engine')"),'canonical provisioning facade must use the internal engine');
 assert(!provisioning.includes("require('./provisioning-core')"),'canonical provisioning facade must not depend on its historical alias');
 assert(provisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical provisioning must retain inactivity-hold reconciliation');
 assert(provisioning.includes('markPasswordSetupRequired'),'canonical provisioning must retain password-setup state');
@@ -77,7 +74,7 @@ assert(!external.includes('controlPlaybackUrl')&&external.includes('directPlayba
 assert(managed.includes("url.searchParams.set('Static','true')")&&managed.includes("url.searchParams.set('api_key',token)"),'managed playback must return its restricted hidden Jellyfin user raw-file URL directly');
 assert(!managed.includes('/PlaybackInfo')&&!stremioRuntime.includes("require('./managed-playback-lifecycle')"),'managed Stremio delivery must not negotiate or report a Jellyfin playback session');
 assert(stremioRuntime.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'direct stream results must claim household access before authenticated Jellyfin URLs leave CAPTAiNFiN');
-assert(!external.includes('pipe(res)')&&!stremioRuntime.includes('pipe(res)'),'Stremio media bytes must never be relayed through CAPTAiNFiN');
+assert(!external.includes('pipe(res)')&&!stremioRuntime.includes('pipe(res)'),'Stremio media bytes must never be relayed through CAPTaINFiN');
 assert(stremioEntitlements.includes('persistEntitlementRecord')&&stremioEntitlements.includes('managedAccountOwned'),'install-link reconciliation must not own or reset the managed hidden-user identity');
 assert(managedEntitlements.includes('MaxActiveSessions:0'),'hidden managed Jellyfin users must remain unlimited at Jellyfin session-policy level');
 assert(!fs.existsSync(path.join(root,'src/stremio/source-admission.js')),'retired Stremio commercial admission module must remain absent');
