@@ -79,7 +79,7 @@ for(const [name,command] of Object.entries(packageJson.scripts||{})){
 const infraFiles=[
   ...walk('.github').filter(file=>/\.ya?ml$/.test(file)),
   ...walk('scripts').filter(file=>/\.sh$/.test(file)),
-  'Dockerfile','docker-compose.yml','docker-compose.yaml'
+  'install.sh','update.sh','Dockerfile','docker-compose.yml','docker-compose.yaml'
 ].filter(file=>exists(file));
 const infraEntries=new Set();
 for(const file of infraFiles){
