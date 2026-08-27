@@ -35,11 +35,27 @@ const originalRequest = registry.request;
         userId = user.rows[0].id;
         const customer = await query(`INSERT INTO customers(user_id,display_name,automation_protected) VALUES($1,$2,FALSE) RETURNING id`, [userId, `Free lifecycle ${suffix}`]);
         customerId = customer.rows[0].id;
-        const plan = await query(`
-            INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,service_type,is_free_tier,active,visible,inactivity_policy)
-            VALUES($1,$2,'direct','custom',3650,0,'USD',1,'free','jellyfin',TRUE,TRUE,TRUE,'{}'::jsonb) RETURNING id
-        `, [`free-lifecycle-${suffix}`, `Free lifecycle ${suffix}`]);
-        planId = plan.rows[0].id;
+
+        // Clean-install migrations intentionally seed exactly one canonical Free
+        // tier plan and enforce that invariant with plans_single_free_tier_idx.
+        // Reuse that product instead of fabricating a second Free tier in this
+        // lifecycle integration fixture.
+        const freePlan = await query(`
+            SELECT id,code,billing_interval
+            FROM plans
+            WHERE is_free_tier=TRUE AND COALESCE(is_addon,FALSE)=FALSE
+            ORDER BY created_at,id
+            LIMIT 1
+        `);
+        assert.strictEqual(freePlan.rowCount, 1, 'clean install must contain one canonical Free tier plan');
+        assert.notStrictEqual(String(freePlan.rows[0].billing_interval || '').toLowerCase(), 'trial', 'canonical Free tier must not be a trial');
+        planId = freePlan.rows[0].id;
+        await query(`
+            UPDATE plans
+            SET active=TRUE,visible=TRUE,price_minor=0,server_class='free',service_type='jellyfin',inactivity_policy='{}'::jsonb,updated_at=NOW()
+            WHERE id=$1
+        `, [planId]);
+
         const server = await query(`
             INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled,allow_new_users,paid_enabled,priority,max_users,health_status,last_health_check)
             VALUES($1,$2,'free','https://free-lifecycle.example.test','key',TRUE,TRUE,TRUE,10,100,'healthy',NOW()) RETURNING id
@@ -104,7 +120,6 @@ const originalRequest = registry.request;
     } finally {
         registry.request = originalRequest;
         if (customerId) await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
-        if (planId) await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
         if (serverId) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
         if (userId) await query('DELETE FROM app_users WHERE id=$1', [userId]).catch(() => {});
     }
