@@ -16,6 +16,7 @@ const POLICY_KEYS = [
     'EnableContentDownloading', 'EnableSyncTranscoding', 'EnableMediaConversion',
     'EnableContentDeletion', 'EnableRemoteControlOfOtherUsers',
     'EnableSharedDeviceControl', 'EnableLiveTvManagement', 'EnableLiveTvAccess',
+    'EnableSubtitleManagement',
     'EnableUserPreferenceAccess', 'AuthenticationProviderId',
     'PasswordResetProviderId', 'SyncPlayAccess'
 ];
