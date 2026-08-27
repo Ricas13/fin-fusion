@@ -17,7 +17,6 @@ const bulkOperations=read('src/platform/bulk-operations.js');
 const lifecycle=read('src/payments/lifecycle.js');
 const subscriptionState=read('src/entitlements/subscription-state.js');
 const stremioEntitlements=read('src/stremio/entitlements.js');
-const customerStremio=read('src/platform/customer-stremio.js');
 const checkout=read('src/platform/flexible-checkout.js');
 const migration=read('db/migrations/044_multi_service_subscriptions.sql');
 
@@ -36,7 +35,7 @@ assert(/registerHandler\('retry_failed'.*provisioning\.reconcileCustomer\(item\.
 assert(/serviceScope\.overlaps/.test(lifecycle)&&/!serviceScope\.isFreeTier/.test(lifecycle),'trial eligibility must be scoped by overlapping service and ignore permanent Free Server fallback');
 assert(/effectiveStremioSubscription/.test(subscriptionState),'subscription state must expose a dedicated Stremio primary entitlement');
 assert(/effectiveStremioSubscription\(customerId\)/.test(stremioEntitlements),'Stremio entitlement resolution must not depend on the Jellyfin primary entitlement');
-assert(/stremio\.entitledSubscription/.test(customerStremio),'customer Stremio portal must use the Stremio-specific entitlement lane');
+assert(/stremioEntitlements\.entitledSubscription\(customerId\)/.test(customerDashboard),'unified Account Home must use the Stremio-specific entitlement lane');
 assert(/overlappingRecurring/.test(checkout)&&/serviceScope\.overlaps/.test(checkout),'recurring checkout must only treat overlapping services as plan changes');
 assert(/effective_stremio_entitlements/.test(migration),'database must expose an independent Stremio primary entitlement view');
 assert(/COALESCE\(p\.is_free_tier,FALSE\) ASC/.test(migration),'paid or trial Jellyfin access must overlay the permanent Free Server fallback');
