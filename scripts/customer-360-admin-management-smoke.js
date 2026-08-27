@@ -7,10 +7,13 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 
 const migration=read('db/migrations/017_stremio_install_credential_recovery.sql');
+const deletionMigration=read('db/migrations/100_customer_deletion_saga.sql');
 const recovery=read('src/stremio/install-credential-recovery.js');
 const customerStremio=read('src/platform/customer-stremio.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
+const deletion=read('src/platform/customer-deletion.js');
+const automationJobs=read('src/automation/jobs.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
 const customerView=read('src/platform/customer-360-view.js');
@@ -50,6 +53,22 @@ assert(management.includes('activeSubscriptions(detail)')&&management.includes("
 assert(management.includes('stremio.entitledSubscription(req.params.customerId)')&&management.includes('stremio.reconcileForCustomer(req.params.customerId,stremioEntitlement)'),'service reconciliation must preserve and reconcile active Stremio add-ons');
 assert(management.includes("serviceType:type")&&management.includes('hasJellyfinAccount'),'Customer 360 must expose service-aware action context');
 assert(management.includes('data-native-submit="true"'),'single-customer plan/expiry actions must bypass inline AJAX form handling');
+
+// Hard deletion is a cross-system saga: keep the customer/access inventory until
+// every remote Jellyfin identity has been confirmed deleted or already missing,
+// then perform the irreversible local cleanup through one constrained DB finalizer.
+assert(deletionMigration.includes('CREATE TABLE IF NOT EXISTS public.customer_deletion_jobs'),'hard deletion must have durable operation state');
+assert(deletionMigration.includes("WHERE status IN ('pending','running','failed')")&&deletionMigration.includes('customer_deletion_jobs_one_active_customer_idx'),'only one unfinished hard deletion may own a customer');
+assert(deletion.includes('enqueueHardDelete(customerId')&&deletion.includes('processDeletionJob(job.id)'),'admin hard delete must enqueue durably before attempting destructive work');
+assert(deletion.includes('holdAccess:false,removeLocal:false,continueOnMissing:true'),'hard deletion remote phase must retain every local Jellyfin row for retry');
+assert(deletion.includes("Number(error?.status)===404")&&deletion.includes("status:'already_missing'"),'remote 404 must be a successful resumable deletion outcome');
+assert(deletion.includes("CUSTOMER_DELETION_PENDING")&&deletion.includes("status='failed'")&&deletion.includes('next_attempt_at=NOW()+make_interval'),'failed deletion must persist a retryable state with backoff');
+assert(deletion.includes("SELECT public.finalize_customer_deletion($1) AS result"),'portal cleanup must cross the constrained privileged finalization boundary only after remote confirmation is persisted');
+const confirmationGuard=deletionMigration.indexOf('COALESCE(confirmed_accounts,0) <> expected_accounts');
+const localDelete=deletionMigration.indexOf('DELETE FROM public.jellyfin_accounts WHERE customer_id=j.customer_id;');
+assert(confirmationGuard>=0&&localDelete>confirmationGuard,'local Jellyfin rows must not be removed until the finalizer verifies all remote identities');
+assert(deletionMigration.includes("UPDATE public.customer_deletion_jobs\n    SET status='succeeded'")&&deletionMigration.includes("'admin.customer.hard_delete'"),'portal cleanup, deletion completion and audit must share the final database transaction');
+assert(automationJobs.includes("async customer_deletions(){return customerDeletion.processDue({limit:10})}"),'automation worker must retry due/stale customer deletion jobs');
 
 assert(composition.indexOf('createAdminCustomerManagementRouter()')<composition.indexOf('createAdminCustomer360Router()'),'customer management routes must mount before the wildcard Customer 360 route');
 assert(operator.includes("appendTopAction('Manage customer'"),'legacy operator enrichment must remain compatible until the customer-specific stabilizer runs');
