@@ -71,19 +71,29 @@ assert(/name="accessLane" value="\$\{esc\(accessLane\)\}"/.test(adminLane), 'pol
 assert(/setPolicyOverrideField\(req\.params\.customerId,\s*accessLane/.test(adminLane), 'admin override writes must be lane scoped');
 const lanePos = composition.indexOf('app.use(createAdminLanePolicyRouter())');
 const customer360Pos = composition.indexOf('app.use(createAdminCustomer360Router())');
+const impersonationCompositionPos = composition.indexOf('app.use(createAdminImpersonationRouter())');
+const usersDashboardPos = composition.indexOf('app.use(createAdminUsersDashboardRouter())');
 assert(lanePos >= 0 && customer360Pos >= 0 && lanePos < customer360Pos, 'lane policy middleware must wrap Customer 360 before it owns the response');
+assert(impersonationCompositionPos >= 0 && usersDashboardPos >= 0 && customer360Pos >= 0
+    && usersDashboardPos < impersonationCompositionPos && impersonationCompositionPos < customer360Pos,
+    'the impersonate/exit routes and Customer 360 button-injection wildcard must stay after the specific /admin/users/dashboard route (so they never shadow it) and before Customer 360');
 
 // Impersonation's audit-and-banner middleware must run before ANY /account
 // router that can terminate the response itself -- otherwise customer
 // mutations made while impersonating (checkout, password change, plan
-// actions) never reach the audit pass at all.
-const impersonationAppPos = application.indexOf('app.use(createAdminImpersonationRouter())');
+// actions) never reach the audit pass at all. This is a separate, path-less
+// router (createImpersonationAuditRouter) so it can be mounted this early
+// without ever shadowing a more specific route -- unlike
+// createAdminImpersonationRouter's /admin/users/:customerId wildcard above,
+// which must stay after /admin/users/dashboard.
+const impersonationAppPos = application.indexOf('app.use(createImpersonationAuditRouter())');
 const passwordSyncPos = application.indexOf('app.use(createCustomerPasswordSyncRouter())');
 const subscriptionActionsPos = application.indexOf('app.use(createCustomerSubscriptionActionsRouter())');
 const checkoutPos = application.indexOf('app.use(createFlexibleCheckoutRouter())');
 assert(impersonationAppPos >= 0 && passwordSyncPos >= 0 && subscriptionActionsPos >= 0 && checkoutPos >= 0
     && impersonationAppPos < passwordSyncPos && impersonationAppPos < subscriptionActionsPos && impersonationAppPos < checkoutPos,
     'impersonation audit/banner middleware must be mounted before every /account router so it can see all customer mutations made while impersonating');
+assert(!application.includes('createAdminImpersonationRouter'), 'application.js must only mount the path-less impersonation audit router directly, not the one owning /admin/users/:customerId routes');
 
 // Imported-user onboarding can deliberately create an email-less portal identity.
 assert(/Email <span class="help">\(optional\)<\/span>/.test(customerClaim), 'imported claim page must present email as optional');

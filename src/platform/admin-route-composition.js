@@ -61,6 +61,7 @@ const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
 const { createAdminCustomerManagementRouter } = require('./admin-customer-management');
+const { createAdminImpersonationRouter } = require('./admin-impersonation');
 const { createAdminLanePolicyRouter } = require('./admin-lane-policy');
 const { createAdminCustomer360Router } = require('./admin-customer-360');
 const { createAdminUsersDashboardRouter } = require('./admin-users-dashboard');
@@ -159,12 +160,16 @@ function mountAdminRoutes(app) {
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
   app.use(createAdminCustomerManagementRouter());
-  // This middleware-owning router must precede Customer 360: it wraps the
-  // canonical page response and owns the lane-scoped mutation paths before the
-  // legacy customer-wide handlers can match them. Impersonation is mounted
-  // much earlier in application.js (before every /account router), since its
-  // audit-and-banner middleware needs to run before those routers can already
-  // terminate the response -- see the comment there.
+  // These middleware-owning routers must precede Customer 360. They wrap the
+  // canonical page response and own the lane-scoped mutation paths before the
+  // legacy customer-wide handlers can match them. Impersonation's own
+  // audit/banner catch-all middleware is mounted separately, much earlier in
+  // application.js (before every /account router) -- see the comment there.
+  // This router (the impersonate/exit routes plus the Customer 360
+  // button-injection middleware) stays here, after the more specific
+  // /admin/users/dashboard route above, so its /admin/users/:customerId
+  // wildcard never shadows it.
+  app.use(createAdminImpersonationRouter());
   app.use(createAdminLanePolicyRouter());
   app.use(createAdminCustomer360Router());
   app.use(createAdminUsersRouter());

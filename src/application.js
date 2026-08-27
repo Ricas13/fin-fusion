@@ -218,7 +218,7 @@ function mountPlatform(app) {
   const { createCustomerClaimRouter } = require('./platform/customer-claim');
   const { createBrandingRouter } = require('./platform/branding');
   const { createAdminPreviewRouter } = require('./platform/admin-preview');
-  const { createAdminImpersonationRouter } = require('./platform/admin-impersonation');
+  const { createImpersonationAuditRouter } = require('./platform/admin-impersonation');
 
   app.use(createHealthRouter());
   app.use(createWebhookRouter());
@@ -249,11 +249,16 @@ function mountPlatform(app) {
     }
   });
 
-  // Impersonation must be mounted before every /account router below: it owns
-  // the audit-and-banner middleware that has to see each customer mutation,
-  // and an earlier-mounted account router that sends its own response would
+  // The impersonation audit/banner middleware must be mounted before every
+  // /account router below: it has to see each customer mutation, and an
+  // earlier-mounted account router that sends its own response would
   // otherwise stop the request from ever reaching a later-mounted audit pass.
-  app.use(createAdminImpersonationRouter());
+  // This is only the catch-all audit/banner concern -- the impersonate/exit
+  // routes and the Customer 360 button-injection middleware stay owned by
+  // admin-route-composition.js, since the latter has to stay positioned
+  // after more specific /admin/users/* routes (e.g. /admin/users/dashboard)
+  // to avoid shadowing them with its /admin/users/:customerId wildcard.
+  app.use(createImpersonationAuditRouter());
   app.use(createBrandingRouter());
   app.use(createCustomerClaimRouter());
   app.use(createCustomerPasswordSyncRouter());
