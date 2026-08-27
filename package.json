@@ -1,6 +1,7 @@
 {
   "name": "steam-fusion",
   "version": "1.4.0",
+  "private": true,
   "description": "CAPTAiNFiN: Jellyfin customer, subscription, affiliate and fleet management platform",
   "license": "MIT",
   "main": "src/application.js",
@@ -8,7 +9,7 @@
     "start": "node src/application.js",
     "dev": "NODE_ENV=development node src/application.js",
     "db:migrate": "node scripts/migrate-db.js",
-    "db:import-json": "node scripts/migrate-json-to-postgres.js",
+    "legacy:import-json": "node scripts/migrate-json-to-postgres.js",
     "db:runtime-roles": "node scripts/configure-runtime-db-roles.js",
     "db:activity-role": "node scripts/configure-activity-db-role.js",
     "db:backup": "node scripts/backup-db.js",

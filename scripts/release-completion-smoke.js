@@ -50,4 +50,32 @@ const firstRun=read('views/auth/first-run-claim.ejs');
 has(firstRun,'docker compose exec app npm run setup:claim','first-run setup must show a direct setup-code retrieval command');
 has(firstRun,'You do not need to search application logs.','first-run setup must not require log archaeology');
 
+// Repository hygiene is part of release integrity: old migration tools must be
+// visibly legacy/fail-closed, and automated branch pruning must only delete
+// refs whose complete history is already contained in main.
+const packageJson=JSON.parse(read('package.json'));
+assert.strictEqual(packageJson.private,true,'CAPTAiNFiN must remain a private npm package');
+assert.strictEqual(packageJson.scripts['legacy:import-json'],'node scripts/migrate-json-to-postgres.js','legacy JSON import must be visibly namespaced as legacy tooling');
+assert(!Object.prototype.hasOwnProperty.call(packageJson.scripts,'db:import-json'),'legacy JSON import must not look like an ordinary production database command');
+
+const legacyImporter=read('scripts/migrate-json-to-postgres.js');
+has(legacyImporter,"const CONFIRM_FLAG = '--confirm-legacy-migration'",'legacy JSON import must require explicit operator confirmation');
+has(legacyImporter,"const NONEMPTY_OVERRIDE_FLAG = '--allow-nonempty-target'",'non-empty legacy import must require a separate dangerous override');
+has(legacyImporter,'(SELECT COUNT(*)::int FROM customers) AS customers','legacy importer must inspect existing customers before writing');
+has(legacyImporter,'(SELECT COUNT(*)::int FROM subscriptions) AS subscriptions','legacy importer must inspect existing subscriptions before writing');
+has(legacyImporter,'(SELECT COUNT(*)::int FROM jellyfin_accounts) AS jellyfin_accounts','legacy importer must inspect existing Jellyfin accounts before writing');
+has(legacyImporter,'Refusing legacy JSON import into a non-empty target','legacy importer must fail closed on a populated destination');
+
+const branchHygiene=read('.github/workflows/branch-hygiene.yml');
+has(branchHygiene,'contents: write','branch hygiene needs only repository-content write permission');
+has(branchHygiene,'git merge-base --is-ancestor "origin/$branch" origin/main','branch pruning must prove each branch tip is contained in main');
+has(branchHygiene,'git push origin --delete "$branch"','fully merged branches must be pruned');
+has(branchHygiene,'Keeping branch with commits not contained in main','branches with unique commits must be retained');
+has(branchHygiene,'if [[ "$branch" == "main" || "$branch" == "HEAD" ]]','main must be excluded explicitly from pruning');
+
+const readme=read('README.md');
+has(readme,'# CAPTAiNFiN','README must use the canonical public product name');
+has(readme,'| Plisio | Yes | No | No |','README must document Plisio as one-time-only crypto checkout');
+has(readme,'These `steam-fusion` / `steamfusion` names are **compatibility identifiers**','README must distinguish persistent compatibility identifiers from public branding');
+
 console.log('release completion smoke: ok');

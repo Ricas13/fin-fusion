@@ -7,6 +7,7 @@ const root = path.join(__dirname, '..');
 const workflowDir = path.join(root, '.github', 'workflows');
 const files = fs.readdirSync(workflowDir).filter(name => /\.ya?ml$/i.test(name)).sort();
 const expectedFiles = [
+  'branch-hygiene.yml',
   'browser.yml',
   'ci.yml',
   'integration.yml',
@@ -47,6 +48,20 @@ if (JSON.stringify(fastSuiteOwners) !== JSON.stringify(['ci.yml'])) {
 }
 if (releaseSuiteOwners.length) {
   throw new Error(`Workflows must not rerun check:fast transitively through check:release: ${releaseSuiteOwners.join(', ')}`);
+}
+
+const branchHygieneWorkflow = fs.readFileSync(path.join(workflowDir, 'branch-hygiene.yml'), 'utf8');
+if (/(^|\n)\s*pull_request\s*:/m.test(branchHygieneWorkflow)) {
+  throw new Error('Branch hygiene must never run from an untrusted pull_request context.');
+}
+if (!branchHygieneWorkflow.includes('contents: write')) {
+  throw new Error('Branch hygiene must declare the repository-content permission required to delete refs.');
+}
+if (branchHygieneWorkflow.includes('pull-requests: write') || branchHygieneWorkflow.includes('actions: write')) {
+  throw new Error('Branch hygiene must not request unrelated pull-request or Actions write permissions.');
+}
+if (!branchHygieneWorkflow.includes('git merge-base --is-ancestor "origin/$branch" origin/main')) {
+  throw new Error('Branch hygiene must prove a branch tip is fully contained in main before deletion.');
 }
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
