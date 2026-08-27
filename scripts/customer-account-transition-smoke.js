@@ -20,10 +20,11 @@ assert.match(session,/req\.session\.csrfToken=|req\.session\.csrfToken =/,'canon
 assert.match(claimRoute,/await customerSession\.establish\(req, redeemed\)/,'claim completion must use the canonical customer session helper');
 assert.doesNotMatch(claimRoute,/req\.session\.customerUserId\s*=|req\.session\.customerId\s*=|req\.session\.customerUsername\s*=/,'claim route must not hand-build an unregistered customer session');
 assert.match(claimRoute,/if \(redeemed\.verificationRequired\).*verificationPending/s,'email-verification claims must not establish an authenticated session before verification');
+assert.match(claimRoute,/Email <span class="help">\(optional\)<\/span>/,'imported users must retain username-only claim support');
 
 assert.match(claims,/await customers\.validateNewPassword\(password\)/,'claims must use the same breached-password policy as normal customer registration');
-assert.match(claims,/if\(!email\)throw new Error\('Email verification is required\./,'claims must require an email when verification is mandatory');
-assert.match(claims,/if\(verification\.required\)await queueVerificationTx\(client,user,verification\)/,'claim consumption and verification outbox creation must share one transaction');
+assert.match(claims,/if\(!email\)return\{required:false,emailLess:true\}/,'email-less imported claims must remain verification-satisfied by the schema contract');
+assert.match(claims,/if\(verification\.required\)await queueVerificationTx\(client,user,verification\)/,'claim consumption and verification outbox creation must share one transaction when an email requires verification');
 
 assert.match(pending,/await validatePassword\(password\)/,'pending registration must await the shared new-password policy');
 assert.match(pending,/customers\.validateNewPassword\(password\)/,'verified registration must use breached-password checking');
