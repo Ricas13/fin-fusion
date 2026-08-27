@@ -5,6 +5,10 @@ const fs=require('fs');
 const path=require('path');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
+const inactivityRuntime=require('../src/automation/customer-inactivity');
+const planLifecyclePage=require('../src/platform/admin-plan-lifecycle');
+const globalLifecyclePage=require('../src/platform/admin-jellyfin-lifecycle');
 
 const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
@@ -12,6 +16,7 @@ const composition=read('src/platform/admin-route-composition.js');
 const createPlan=read('src/platform/admin-plan-create-v2.js');
 const planPolicy=read('src/entitlements/plan-lifecycle-policy.js');
 const inactivity=read('src/automation/customer-inactivity.js');
+const subscriptionState=read('src/entitlements/subscription-state.js');
 const cleanupReturn=read('src/entitlements/jellyfin-cleanup-return.js');
 const provisioning=read('src/jellyfin/provisioning.js');
 const lifecycle=read('src/payments/lifecycle.js');
@@ -20,6 +25,8 @@ const serverUsers=read('src/platform/admin-server-users.js');
 const serverForm=read('views/admin/server-form.ejs');
 const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
 const plansList=read('src/platform/admin-plans-list.js');
+const planLifecycleSource=read('src/platform/admin-plan-lifecycle.js');
+const globalLifecycleSource=read('src/platform/admin-jellyfin-lifecycle.js');
 
 // Customers owns customer records and Jellyfin import/claim discovery. Invitation
 // onboarding is retired; imported-user claims remain a subordinate import flow.
@@ -35,6 +42,52 @@ assert(createPlan.includes('allow_4k'),'New Jellyfin plans must persist the exis
 assert(createPlan.includes('Subtitles:')&&createPlan.includes('does not expose a separate per-user subtitle permission'),'Plan UI must explain subtitle limitations instead of presenting a fake policy toggle');
 assert(createPlan.includes('inactivityEnabled')&&createPlan.includes('minimumPlaybackMinutes')&&createPlan.includes('noPlaybackDays'),'Free plan creation must include configurable Jellyfin usage rules');
 assert(planPolicy.includes("billing_interval||'')==='trial'"),'Plan usage disabling must explicitly exclude trial plans');
+const inheritedPolicy=planPolicyRuntime.effectiveForFreePlan({},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
+assert.strictEqual(inheritedPolicy.enabled,true,'Free plan with no lifecycle override must inherit globally enabled automation');
+assert.strictEqual(inheritedPolicy.dryRun,false,'Free plan with no lifecycle override must inherit global enforcement mode');
+assert.strictEqual(inheritedPolicy.noPlaybackDays,7,'Free plan with no lifecycle override must inherit global no-playback threshold');
+assert.strictEqual(planPolicyRuntime.hasUsageTrigger(inheritedPolicy),true,'Inherited Free rule must be an actionable usage policy');
+const explicitlyDisabled=planPolicyRuntime.effectiveForFreePlan({enabled:false,dryRun:false,noPlaybackDays:7},{enabled:true,dryRun:false,freeNoPlaybackDays:7});
+assert.strictEqual(explicitlyDisabled.enabled,false,'Explicit per-plan disable must override a globally enabled lifecycle');
+const globallyDry=planPolicyRuntime.effectiveForFreePlan({enabled:true,dryRun:false,noPlaybackDays:3},{enabled:true,dryRun:true,freeNoPlaybackDays:7});
+assert.strictEqual(globallyDry.dryRun,true,'Global dry-run must prevent a plan override from forcing enforcement');
+assert(inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')")&&inactivity.includes('planPolicy.effectiveForFreePlan'),'Free inactivity worker must resolve the effective global-plus-plan lifecycle policy');
+assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE"),'Free candidates must not be silently excluded just because their plan has no explicit enabled override');
+assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity must apply to the canonical Free entitlement regardless of acquisition source');
+assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor plan-scoped inactivity holds independently of subscription source');
+assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptionState.includes("ja.access_lane='free'"),'Dormant cleanup blocking must remain scoped to the Free Jellyfin lane');
+assert(inactivity.includes('observation_started_at')&&inactivity.includes('observationStartedAt'),'Inactivity audit evidence must record the effective observation start');
+
+// Browser checkbox semantics must not be confused with backend fail-safe defaults.
+assert(planLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&planLifecycleSource.includes('lifecycleFormInput(req.body)'),'Free-plan lifecycle form must explicitly mark browser checkbox submissions');
+assert(globalLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&globalLifecycleSource.includes('lifecycleFormInput(req.body)'),'Global lifecycle form must explicitly mark browser checkbox submissions');
+const planUnchecked=planLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',noPlaybackDays:'7'});
+assert.strictEqual(planUnchecked.enabled,'on');
+assert.strictEqual(planUnchecked.dryRun,false,'Unticking plan Dry run only must persist explicit false instead of falling back to safe true');
+const planChecked=planLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on',noPlaybackDays:'7'});
+assert.strictEqual(planChecked.dryRun,'on','Checked plan Dry run only must remain true-like for policy normalization');
+const planUnmarked=planLifecyclePage.lifecycleFormInput({enabled:'on',noPlaybackDays:'7'});
+assert.strictEqual(Object.prototype.hasOwnProperty.call(planUnmarked,'dryRun'),false,'Unmarked/internal plan input must not synthesize enforcement');
+assert.strictEqual(planPolicyRuntime.normalize(planUnmarked).dryRun,true,'Unmarked/internal plan input must retain the backend safe dry-run default');
+const globalUnchecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',freeNoPlaybackDays:'7'});
+assert.strictEqual(globalUnchecked.enabled,false,'Unticking global lifecycle automation must persist explicit false');
+assert.strictEqual(globalUnchecked.dryRun,false,'Unticking global dry run must persist explicit false');
+const globalChecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on',freeNoPlaybackDays:'7'});
+assert.strictEqual(globalChecked.enabled,'on');
+assert.strictEqual(globalChecked.dryRun,'on');
+
+// A recently imported mapping may already carry trustworthy historical Jellyfin
+// activity. That history should satisfy the observation window, while a genuinely
+// new mapping with no prior evidence must retain the full grace period.
+const now=Date.UTC(2026,7,27,9,0,0),day=86400000;
+const usagePolicy={enabled:true,dryRun:true,noPlaybackDays:7,playbackWindowDays:7,minimumPlaybackMinutes:null,minimumObservationHours:24};
+const importedAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(importedAssessment.noPlaybackEligible,true,'Historical Jellyfin activity older than the threshold must make a recently imported Free mapping eligible');
+assert.strictEqual(importedAssessment.observationStartedAt.getTime(),now-10*day,'Historical activity must extend the observation window back before local import');
+const newAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:null,last_playback_at:null,playback_seconds:0},usagePolicy,now);
+assert.strictEqual(newAssessment.noPlaybackEligible,false,'A genuinely new Free mapping with no historical activity must retain the observation grace period');
+const recentPlaybackAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:new Date(now-2*day),playback_seconds:60},usagePolicy,now);
+assert.strictEqual(recentPlaybackAssessment.noPlaybackEligible,false,'Recent Free-server playback must prevent inactivity even when older account history exists');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
