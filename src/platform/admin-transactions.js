@@ -32,8 +32,8 @@ function queryString(filters, page) {
     return params.toString();
 }
 function coverageHtml(rows) {
-    if (!rows.length) return `<div class="operatorCallout warn"><strong>No provider transaction history is stored yet.</strong> Run Import history first.</div>`;
-    return `<div class="operatorCallout"><strong>Imported coverage:</strong> ${rows.map(row => `${esc(providerLabel(row.provider))}: ${esc(dateTime(row.first_at))} → ${esc(dateTime(row.last_at))} · ${esc(row.transactions)} records`).join(' &nbsp; · &nbsp; ')}. <a href="/admin/payments/history">Import or refresh history</a> to extend this coverage.</div>`;
+    if (!rows.length) return `<div class="operatorCallout warn"><strong>No provider transaction history is stored yet.</strong></div>`;
+    return `<div class="operatorCallout"><strong>Imported coverage:</strong> ${rows.map(row => `${esc(providerLabel(row.provider))}: ${esc(dateTime(row.first_at))} → ${esc(dateTime(row.last_at))} · ${esc(row.transactions)} records`).join(' &nbsp; · &nbsp; ')}.</div>`;
 }
 function filterForm(filters) {
     const option=(value,label,current)=>`<option value="${esc(value)}" ${current===value?'selected':''}>${esc(label)}</option>`;
@@ -45,7 +45,7 @@ function filterForm(filters) {
       <div class="formGroup"><label>From</label><input class="input" type="date" name="startDate" value="${esc(filters.startDate)}"></div>
       <div class="formGroup"><label>To</label><input class="input" type="date" name="endDate" value="${esc(filters.endDate)}"></div>
       <div class="formGroup transactionSearch"><label>Customer / transaction / reference</label><input class="input" name="q" maxlength="200" placeholder="Email, username, txn ID…" value="${esc(filters.q)}"></div>
-    </div><div class="buttonRow"><button class="button" type="submit">Apply filters</button><a class="button secondary" href="/admin/payments/transactions">Clear</a><a class="button secondary" href="/admin/payments/history">Import / refresh history</a></div></form>`;
+    </div><div class="buttonRow"><button class="button" type="submit">Apply filters</button><a class="button secondary" href="/admin/payments/transactions">Clear</a></div></form>`;
 }
 function transactionRow(row, currencyState) {
     const reportCode = currencyState.currency;

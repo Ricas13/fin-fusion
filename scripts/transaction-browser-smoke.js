@@ -21,7 +21,8 @@ assert(service.includes('MAX_CLASSIFIED_SCAN')&&service.includes('truncated'),'L
 const admin=read('src/platform/admin-transactions.js');
 assert(admin.includes("/admin/payments/transactions")&&admin.includes("active:'transactions'"),'Transactions must be a first-class Payments destination');
 assert(admin.includes('reportingCurrency.convertMinor'),'Visible transaction amounts must normalize into the configured portal currency');
-assert(admin.includes('Original')&&admin.includes('/admin/payments/history'),'Original currency must remain visible and history coverage must be refreshable');
+assert(admin.includes('Original'),'Original currency must remain visible');
+assert(!admin.includes('/admin/payments/history'),'Import history was removed; Transactions must not link to a deleted page');
 const routes=read('src/platform/admin-route-composition.js');
 assert(routes.includes('createAdminTransactionsRouter')&&routes.includes('app.use(createAdminTransactionsRouter())'),'Transactions router must be mounted canonically');
 const nav=require('../src/platform/admin-nav');
