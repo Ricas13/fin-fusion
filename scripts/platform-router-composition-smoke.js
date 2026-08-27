@@ -3,8 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 
+const root = path.join(__dirname, '..');
 function read(relativePath) {
-    return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
+    return fs.readFileSync(path.join(root, relativePath), 'utf8');
 }
 
 function assert(condition, message) {
@@ -21,33 +22,37 @@ function explicitRoutes(source) {
 
 function main() {
     const platformRouter = read('src/platform/router.js');
-    const runtimeLegacy = read('src/platform/router-runtime-legacy.js');
     const routerCore = read('src/platform/router-core.js');
+    const librarySelection = read('src/platform/customer-library-selection.js');
+    const passwordSync = read('src/platform/customer-password-sync.js');
+    const publicPages = read('src/platform/public-pages.js');
+    const adminComposition = read('src/platform/admin-route-composition.js');
+    const retiredLegacyPath = path.join(root, 'src/platform/router-runtime-legacy.js');
 
     assert(!platformRouter.includes('pruneRoutes'), 'platform router must not prune Express route stacks at runtime');
     assert(!/\.stack\s*=/.test(platformRouter), 'platform router must not mutate Express private .stack internals');
     assert(!platformRouter.includes('core.createRouter()'), 'production must not construct the obsolete router-core route set');
-    assert(platformRouter.includes('createRuntimeLegacyRouter()'), 'production must mount the explicit runtime compatibility router');
+    assert(!platformRouter.includes('createRuntimeLegacyRouter'), 'production must not reconstruct the retired runtime legacy router');
+    assert(!fs.existsSync(retiredLegacyPath), 'router-runtime-legacy.js must remain deleted once all production routes have canonical owners');
+    assert(platformRouter.includes('createCustomerLibrarySelectionRouter()'), 'customer library selection must have a named canonical router owner');
     assert(
         platformRouter.includes("onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter)"),
-        'global notification compatibility router must be constrained to its canonical URL prefix'
+        'global notification compatibility router must remain constrained to its canonical URL prefix until its separate ownership cleanup lands'
     );
 
-    const expected = [
-        'GET /api/platform/plans',
-        'POST /account/libraries',
-        'POST /account/libraries/:accountId',
-        'POST /account/requests/password',
-        'POST /account/requests/password/sync'
-    ].sort();
-    const actual = explicitRoutes(runtimeLegacy);
-    assert(
-        JSON.stringify(actual) === JSON.stringify(expected),
-        `runtime legacy route set changed: expected ${expected.join(', ')}; got ${actual.join(', ')}`
-    );
-    assert(runtimeLegacy.includes('createAdminActionsRouter()'), 'runtime compatibility router must retain canonical admin actions');
+    const libraryRoutes = explicitRoutes(librarySelection);
+    for (const expected of ['POST /account/libraries', 'POST /account/libraries/:accountId']) {
+        assert(libraryRoutes.includes(expected), `customer library owner is missing ${expected}`);
+    }
+    const passwordRoutes = explicitRoutes(passwordSync);
+    for (const expected of ['POST /account/requests/password', 'POST /account/requests/password/sync']) {
+        assert(passwordRoutes.includes(expected), `customer password owner is missing ${expected}`);
+    }
+    assert(explicitRoutes(publicPages).includes('GET /api/platform/plans'), 'public pages must own GET /api/platform/plans');
+    assert(adminComposition.includes("require('./admin-actions')") && adminComposition.includes('app.use(createAdminActionsRouter());'), 'admin route composition must own canonical admin actions');
 
-    assert(routerCore.includes('createRuntimeLegacyRouter'), 'router-core compatibility constructor must delegate to the explicit runtime legacy router');
+    assert(routerCore.includes('retiredRouterCore'), 'router-core compatibility constructor must be an explicit empty pass-through');
+    assert(!routerCore.includes('createRuntimeLegacyRouter'), 'router-core must not delegate to the retired runtime legacy router');
     assert(!routerCore.includes("require('express')"), 'router-core must not construct an independent Express route generation');
     assert(!/\brouter\.(get|post|put|patch|delete)\(/.test(routerCore), 'router-core must not own HTTP handlers');
     for (const obsoleteDependency of [
@@ -74,11 +79,10 @@ function main() {
         '/account/trial/start',
         '/account/claim-free/:planCode'
     ]) {
-        assert(!runtimeLegacy.includes(retiredPath), `replaced route leaked into runtime legacy router: ${retiredPath}`);
         assert(!routerCore.includes(retiredPath), `replaced route remains in router-core: ${retiredPath}`);
     }
 
-    console.log('platform router composition: ok (no private stack pruning; dead router-core generation retired; compatibility routes explicit)');
+    console.log('platform router composition: ok (legacy runtime router retired; remaining routes have named canonical owners)');
 }
 
 try {
