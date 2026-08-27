@@ -20,20 +20,22 @@ concurrency:
 jobs:
   prune-merged-branches:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout repository history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
-      - name: Delete branches fully contained in main
+      - name: Delete branches already represented in main
         shell: bash
         run: |
           set -Eeuo pipefail
 
           git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
 
-          deleted=0
+          deleted_ancestor=0
+          deleted_equivalent=0
           kept=0
           while IFS= read -r ref; do
             branch="${ref#refs/remotes/origin/}"
@@ -44,17 +46,33 @@ jobs:
             if git merge-base --is-ancestor "origin/$branch" origin/main; then
               echo "Deleting fully merged branch: $branch"
               git push origin --delete "$branch"
-              deleted=$((deleted + 1))
-            else
-              echo "Keeping branch with commits not contained in main: $branch"
-              kept=$((kept + 1))
+              deleted_ancestor=$((deleted_ancestor + 1))
+              continue
             fi
+
+            # Rebased/cherry-picked PR branches can contain different commit SHAs
+            # even though every actual patch already exists in main. `git cherry`
+            # marks such commits with `-`. We only use this proof when the branch
+            # has no merge commits outside main, because merge-resolution changes
+            # are not represented safely by patch-id comparison.
+            unique_merges="$(git rev-list --merges "origin/main..origin/$branch")"
+            cherry="$(git cherry origin/main "origin/$branch")"
+            if [[ -z "$unique_merges" && -n "$cherry" ]] && ! grep -q '^+' <<<"$cherry"; then
+              echo "Deleting patch-equivalent rebased/cherry-picked branch: $branch"
+              git push origin --delete "$branch"
+              deleted_equivalent=$((deleted_equivalent + 1))
+              continue
+            fi
+
+            echo "Keeping branch with unique work: $branch"
+            kept=$((kept + 1))
           done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 
           {
             echo '## Branch hygiene'
             echo
-            echo "- Deleted fully merged branches: $deleted"
-            echo "- Kept branches with unique commits: $kept"
+            echo "- Deleted fully merged branches: $deleted_ancestor"
+            echo "- Deleted patch-equivalent rebased/cherry-picked branches: $deleted_equivalent"
+            echo "- Kept branches with unique work: $kept"
             echo '- Protected branch: main'
           } >> "$GITHUB_STEP_SUMMARY"

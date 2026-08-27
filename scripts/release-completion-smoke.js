@@ -51,8 +51,8 @@ has(firstRun,'docker compose exec app npm run setup:claim','first-run setup must
 has(firstRun,'You do not need to search application logs.','first-run setup must not require log archaeology');
 
 // Repository hygiene is part of release integrity: old migration tools must be
-// visibly legacy/fail-closed, and automated branch pruning must only delete
-// refs whose complete history is already contained in main.
+// visibly legacy/fail-closed, and automated branch pruning must delete only
+// work already represented by main (identical ancestry or equivalent patches).
 const packageJson=JSON.parse(read('package.json'));
 assert.strictEqual(packageJson.private,true,'CAPTAiNFiN must remain a private npm package');
 assert.strictEqual(packageJson.scripts['legacy:import-json'],'node scripts/migrate-json-to-postgres.js','legacy JSON import must be visibly namespaced as legacy tooling');
@@ -68,9 +68,12 @@ has(legacyImporter,'Refusing legacy JSON import into a non-empty target','legacy
 
 const branchHygiene=read('.github/workflows/branch-hygiene.yml');
 has(branchHygiene,'contents: write','branch hygiene needs only repository-content write permission');
-has(branchHygiene,'git merge-base --is-ancestor "origin/$branch" origin/main','branch pruning must prove each branch tip is contained in main');
-has(branchHygiene,'git push origin --delete "$branch"','fully merged branches must be pruned');
-has(branchHygiene,'Keeping branch with commits not contained in main','branches with unique commits must be retained');
+has(branchHygiene,'git merge-base --is-ancestor "origin/$branch" origin/main','branch pruning must retain the direct ancestry proof');
+has(branchHygiene,'git rev-list --merges "origin/main..origin/$branch"','patch-equivalence pruning must refuse branches with unique merge commits');
+has(branchHygiene,'git cherry origin/main "origin/$branch"','rebased/cherry-picked pruning must use Git patch equivalence');
+has(branchHygiene,'! grep -q \'^+\' <<<"$cherry"','a patch-equivalent branch must have no patch absent from main');
+has(branchHygiene,'git push origin --delete "$branch"','branches proven redundant must be pruned');
+has(branchHygiene,'Keeping branch with unique work','branches with unique work must be retained');
 has(branchHygiene,'if [[ "$branch" == "main" || "$branch" == "HEAD" ]]','main must be excluded explicitly from pruning');
 
 const readme=read('README.md');
