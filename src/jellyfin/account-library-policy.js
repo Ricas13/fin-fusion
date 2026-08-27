@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const policy = require('./policy');
 const provisioning = require('./provisioning');
+const laneOverrides = require('./lane-policy-overrides');
 
 async function scopedSelection(customerId, accountId) {
     if (accountId) {
@@ -41,8 +42,9 @@ async function effectiveForAccount(customerId, plan, account) {
     if (!plan) return null;
     const serverId = account?.server_id || null;
     const accountId = account?.id || null;
+    const accessLane = account?.access_lane || (plan?.is_free_tier ? 'free' : 'primary');
     const [override, libOverrides, selection] = await Promise.all([
-        provisioning.getPolicyOverride(customerId),
+        laneOverrides.getPolicyOverride(customerId, accessLane),
         provisioning.getLibraryOverrides(customerId),
         scopedSelection(customerId, accountId)
     ]);
@@ -63,6 +65,7 @@ async function effectiveForAccount(customerId, plan, account) {
     const mode = ['all', 'exclude', 'include'].includes(plan?.library_access_mode) ? plan.library_access_mode : 'all';
     const unrestricted = mode === 'all' && libOverrides.length === 0 && !selection;
     return {
+        accessLane,
         override,
         libOverrides,
         selection,

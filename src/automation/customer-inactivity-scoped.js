@@ -234,7 +234,20 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     if (!globalCfg.enabled) return { processed: 0, eligible: 0, enforced: 0, wouldDisable: 0, released, dryRun: true, skipped: 'lifecycle_disabled' };
 
     const worker = await activityWorkerTelemetry();
-    if (!worker.ready) return { processed: 0, eligible: 0, enforced: 0, wouldDisable: 0, released, dryRun: true, skipped: 'telemetry_not_trustworthy', telemetry: telemetrySummary(worker, {}) };
+    if (!worker.ready) {
+        // Unlike `lifecycle_disabled` above (a deliberate admin choice), a stale
+        // activity-worker heartbeat is an operational fault: it silently blocks
+        // every Free Server inactivity disable until the worker recovers, with
+        // no other signal in the admin UI. Report it as a failed run (not a
+        // quiet 0-processed success) so it surfaces on the automation dashboard
+        // and retries sooner than the normal schedule.
+        return {
+            processed: 0, eligible: 0, enforced: 0, wouldDisable: 0, failed: 1, released, dryRun: true,
+            skipped: 'telemetry_not_trustworthy',
+            warning: `Free Server inactivity checks are paused: activity worker heartbeat is ${worker.activityWorkerAgeSeconds == null ? 'missing' : `${worker.activityWorkerAgeSeconds}s old`}. No customer will be disabled for inactivity until it recovers.`,
+            telemetry: telemetrySummary(worker, {})
+        };
+    }
 
     const discovered = await base.candidates(globalCfg);
     let serverTelemetry = await refreshCandidateServers(discovered);
@@ -282,6 +295,7 @@ async function run(options = {}) {
     return {
         processed: Number(planRules.processed || 0) + Number(deletions.processed || 0),
         failed: Number(planRules.failed || 0) + Number(planRules.serverFailures || 0) + Number(deletions.failed || 0) + Number(deletions.serverFailures || 0),
+        warning: planRules.warning || deletions.warning || undefined,
         planRules,
         deletions
     };

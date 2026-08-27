@@ -13,7 +13,7 @@ process.env.ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN = 'false';
 
 const { query, getPool } = require('../src/db');
 const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock');
-const activity = require('../src/jellyfin/activity');
+const activity = require('../src/jellyfin/lane-stream-policy');
 const householdNetworkPolicy = require('../src/jellyfin/household-network-policy');
 const fleetMetrics = require('../src/jellyfin/fleet-metrics');
 const streamPolicy = require('../src/jellyfin/stream-policy-settings');

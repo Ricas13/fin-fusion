@@ -27,6 +27,23 @@
     el.querySelectorAll('input,select,textarea').forEach(control=>{control.disabled=!visible;});
   }
   function toggleAll(nodes,visible){nodes.forEach(el=>setVisible(el,visible));}
+  function checkbox(name){return form.querySelector(`input[type="checkbox"][name="${name}"]`);}
+  function setChecked(name,value){const control=checkbox(name);if(control)control.checked=Boolean(value);}
+  function applyRecommendedJellyfinPolicy(){
+    const kind=selectedKind();
+    if(kind==='stremio')return;
+    const paidRecurring=kind==='paid_jellyfin'&&frequency?.value!=='trial';
+    // Product defaults are intentionally conservative. Paid recurring Jellyfin
+    // includes downloads; Free and Trial do not. Conversion and Live TV stay
+    // opt-in so creating a plan cannot silently grant expensive capabilities.
+    setChecked('allowDownloads',paidRecurring);
+    setChecked('allowVideoTranscoding',false);
+    setChecked('allowAudioTranscoding',false);
+    setChecked('allowRemuxing',false);
+    setChecked('allowLiveTv',false);
+    setChecked('allowLiveTvManagement',false);
+    setChecked('allowRemoteAccess',true);
+  }
   function syncDuration(){
     if(!frequency||!duration)return;
     const option=frequency.selectedOptions?.[0],days=option?.dataset?.days;
@@ -53,7 +70,9 @@
     if(!free)syncDuration();
   }
 
-  kinds.forEach(el=>el.addEventListener('change',sync));
-  [frequency,accessModel,replacement].filter(Boolean).forEach(el=>{el.addEventListener('change',sync);el.addEventListener('input',sync);});
+  kinds.forEach(el=>el.addEventListener('change',()=>{applyRecommendedJellyfinPolicy();sync();}));
+  if(frequency)frequency.addEventListener('change',()=>{applyRecommendedJellyfinPolicy();sync();});
+  [accessModel,replacement].filter(Boolean).forEach(el=>{el.addEventListener('change',sync);el.addEventListener('input',sync);});
+  applyRecommendedJellyfinPolicy();
   sync();
 })();
