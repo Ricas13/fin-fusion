@@ -9,6 +9,7 @@ const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 const migration=read('db/migrations/017_stremio_install_credential_recovery.sql');
 const recovery=read('src/stremio/install-credential-recovery.js');
 const customerStremio=read('src/platform/customer-stremio.js');
+const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
@@ -21,7 +22,7 @@ assert(migration.includes('credential_encrypted text NOT NULL'),'recoverable ins
 assert(!migration.includes('credential text NOT NULL'),'raw Stremio credentials must never be stored as plaintext');
 assert(recovery.includes("encryptWithEnv(String(credential),KEY_ENV,PREFIX)"),'Stremio recovery must encrypt credentials before persistence');
 assert(recovery.includes('current_token_version')&&recovery.includes("row.status!=='active'"),'recovered credentials must be rejected when the live entitlement/token version no longer matches');
-assert(customerStremio.includes('installRecovery.save(')&&customerStremio.includes('installRecovery.current('),'customer-issued Stremio URLs must remain recoverable after page reload');
+assert(customerStremio.includes('installRecovery.save(')&&customerDashboard.includes('installRecovery.current('),'customer-issued Stremio URLs must remain recoverable after page reload through Account Home');
 assert(customerStremio.includes('installRecovery.clear('),'revoking Stremio must delete the recoverable credential');
 
 for(const route of [
