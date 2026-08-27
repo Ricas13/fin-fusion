@@ -37,6 +37,7 @@ const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings
 const { createAdminBillingRouter } = require('./admin-billing');
 const { createAdminExpensesRouter } = require('./admin-expenses');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
+const { createAdminActionsRouter } = require('./admin-actions');
 const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-dispatch');
 const { createAdminJellyfinPlanEditorRouter } = require('./admin-jellyfin-plan-editor');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
@@ -126,6 +127,10 @@ function mountAdminRoutes(app) {
   app.use(createAdminBillingRouter());
   app.use(createAdminExpensesRouter());
   app.use(createAdminCustomerCreateRouter());
+  // These three remaining administrative mutations used to arrive indirectly
+  // through the runtime compatibility router. They are real admin routes, so
+  // keep them in the canonical admin composition instead of a legacy tail.
+  app.use(createAdminActionsRouter());
   // Stremio keeps its dedicated adaptive editor. Jellyfin/free plans are then
   // dispatched into the unified control room before legacy configuration
   // routes, which remain available as compatibility/save backstops.

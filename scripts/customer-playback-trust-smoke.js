@@ -40,11 +40,11 @@ const dashboard=source('views/customer/dashboard.ejs');
 expect(dashboard.includes('/account/activity')&&dashboard.includes('View playback activity'),'Dashboard must provide a direct playback-activity shortcut.');
 expect(dashboard.includes('/account/requests/password/sync')&&dashboard.includes('currentPortalPassword'),'Dashboard must expose explicit portal-password sync to Seerr.');
 expect(dashboard.includes('plaintext password is not stored'),'Password-sync copy must explain the secret boundary.');
-const legacy=source('src/platform/router-runtime-legacy.js');
-expect(legacy.includes("scope:'customer-request-password-sync',max:5,windowSeconds:900"),'Seerr password sync must be separately rate limited.');
-expect(legacy.includes('bcrypt.compare(password,row.rows[0].password_hash)'),'Seerr sync must verify the current portal password before sending it to Seerr.');
-expect(legacy.indexOf('verifyPortalPassword(req.session.customerUserId,portalPassword)')<legacy.indexOf('requestUserSync.setCustomerPassword(req.session.customerId,portalPassword)'),'Portal password verification must happen before Seerr mutation.');
-expect(legacy.includes("'customer.request_password.sync_from_portal'"),'Successful password sync must be audited without logging the password.');
-expect(!legacy.includes('metadata:{password'),'Password sync audit must never include plaintext secrets.');
+const passwordSync=source('src/platform/customer-password-sync.js');
+expect(passwordSync.includes("scope:'customer-request-password-sync',max:5,windowSeconds:900"),'Seerr password sync must be separately rate limited.');
+expect(passwordSync.includes('bcrypt.compare(password,row.rows[0].password_hash)'),'Seerr sync must verify the current portal password before sending it to Seerr.');
+expect(passwordSync.indexOf('verifyPortalPassword(req.session.customerUserId,portalPassword)')<passwordSync.indexOf('requestUsers.setCustomerPassword(req.session.customerId,portalPassword)'),'Portal password verification must happen before Seerr mutation.');
+expect(passwordSync.includes("'customer.request_password.sync_from_portal'"),'Successful password sync must be audited without logging the password.');
+expect(!passwordSync.includes('metadata:{password'),'Password sync audit must never include plaintext secrets.');
 
 console.log('Customer playback trust and Seerr password sync smoke: ok');
