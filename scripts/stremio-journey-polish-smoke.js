@@ -21,6 +21,8 @@ const adminShell=read('src/platform/admin-html-core.js');
 assert(customer.includes('household connection')&&!customer.includes('household IP'),'customer Stremio status must use household-connection language');
 assert(customer.includes('new Stremio installation link is ready')&&!customer.includes('installation credential has been rotated'),'customer link rotation must be explained as a normal replacement');
 assert(customer.includes("r.get('/account/stremio',(req,res)=>res.redirect(302,'/account#stremio-access'))"),'legacy Stremio URL must redirect to the Account Home Stremio section');
+for(const retired of ['operations-settings','runtime-settings','customer-nav-html','stremio/foundation','async function model(','function stremioDeepLink(','function householdLabel('])assert(!customer.includes(retired),`retired standalone Stremio model code returned: ${retired}`);
+assert(customer.includes('module.exports={createCustomerStremioRouter};'),'customer Stremio module must expose only the mounted router after standalone model retirement');
 for(const copy of ['Install your private Stremio access','Household access','Use a different household connection','Installation manifest'])assert(dashboard.includes(copy),`Account Home Stremio section missing task-focused copy: ${copy}`);
 for(const jargon of ['Replace household IP','installation credential','addon URL','/64'])assert(!dashboard.includes(jargon),`Account Home Stremio section exposes implementation wording: ${jargon}`);
 assert(dashboard.includes('action="/account/stremio/install"')&&dashboard.includes('action="/account/stremio/reset-household"')&&dashboard.includes('action="/account/stremio/revoke"'),'Account Home Stremio actions must keep their existing server routes');
