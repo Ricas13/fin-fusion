@@ -67,8 +67,8 @@ assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account secur
 assert(security.includes("const navigation=active?customerNav.nav(active,navOptions):''"),'security frames must be able to suppress account navigation for pre-login and verification-only pages');
 assert(security.includes("'Two-factor authentication',`${error}")&&security.includes('`,null));});'),'pre-login 2FA must use the minimal auth shell rather than exposing signed-in navigation');
 assert(security.includes("navOptions=await customerNav.optionsForCustomer(req.session.customerId)")&&security.includes("recoveryPage(runtimeSettings.siteName(),codes,navOptions)"),'signed-in 2FA setup and recovery pages must use the complete Account navigation options');
-assert(customerLogin.includes("customerNav.nav('account',await customerNav.optionsForCustomer(req.session.customerId))"),'signed-in security confirmation pages must use the complete Account navigation');
-assert(customerLogin.includes('confirmationPage(req,{displayName,email},await accountNavHtml(req))')&&customerLogin.includes('twoFactorPasswordPage(req,null,await accountNavHtml(req))'),'email-change and 2FA password confirmations must stay inside the Account shell');
+assert(security.includes('profilePasswordPage')&&security.includes('twoFactorPasswordPage')&&security.includes('customerNav.optionsForCustomer(req.session.customerId)'),'signed-in security confirmation pages must use the complete Account navigation');
+assert(security.includes("profilePasswordPage(req,{displayName,email})")&&security.includes('twoFactorPasswordPage(req)'),'email-change and 2FA password confirmations must stay inside the Account shell');
 assert(customerNavigationCss.includes('.customerStandaloneHeader'),'signed-in Account must style the restored account header explicitly');
 assert(communications.includes("include('_nav',{active:'notifications'})"),'Notifications page must highlight Notifications rather than making Account look active');
 assert(communications.includes('class=\"portalTopbar\"'),'Notifications page must retain the customer account header');
