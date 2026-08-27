@@ -21,6 +21,72 @@ function playbackMethod(session) {
     return 'unknown';
 }
 
+function parseJellyfinDate(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function userActivityDate(user) {
+    return parseJellyfinDate(user?.LastActivityDate) || parseJellyfinDate(user?.LastLoginDate);
+}
+
+function isNewerActivity(currentValue, incomingValue) {
+    const incoming = parseJellyfinDate(incomingValue);
+    if (!incoming) return false;
+    const current = parseJellyfinDate(currentValue);
+    return !current || incoming.getTime() > current.getTime();
+}
+
+function activityRows(users) {
+    const byUser = new Map();
+    for (const user of Array.isArray(users) ? users : []) {
+        if (!user?.Id) continue;
+        const activityAt = userActivityDate(user);
+        if (!activityAt) continue;
+        const key = String(user.Id).toLowerCase();
+        const previous = byUser.get(key);
+        if (!previous || activityAt.getTime() > previous.activityAt.getTime()) {
+            byUser.set(key, { userId: String(user.Id), activityAt });
+        }
+    }
+    return [...byUser.values()];
+}
+
+async function persistUserActivity(serverId, users) {
+    const incoming = activityRows(users);
+    if (!incoming.length) return { observed: 0, updated: 0 };
+
+    const params = [serverId];
+    const values = incoming.map(row => {
+        params.push(row.userId, row.activityAt.toISOString());
+        const userIndex = params.length - 1;
+        const activityIndex = params.length;
+        return `($${userIndex}::text,$${activityIndex}::timestamptz)`;
+    });
+    const result = await query(`
+        WITH incoming(jellyfin_user_id,activity_at) AS (
+            VALUES ${values.join(',')}
+        )
+        UPDATE jellyfin_accounts ja
+        SET last_activity_at=incoming.activity_at,
+            updated_at=NOW()
+        FROM incoming
+        WHERE ja.server_id=$1
+          AND LOWER(ja.jellyfin_user_id::text)=LOWER(incoming.jellyfin_user_id)
+          AND (ja.last_activity_at IS NULL OR incoming.activity_at > ja.last_activity_at)
+        RETURNING ja.id
+    `, params);
+    return { observed: incoming.length, updated: Number(result.rowCount || 0) };
+}
+
+async function refreshServerUserActivity(serverId) {
+    const users = await registry.request(serverId, '/Users', { timeoutMs: 10000 });
+    if (!Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
+    const activity = await persistUserActivity(serverId, users);
+    return { totalUsers: users.length, observedActivity: activity.observed, updatedAccounts: activity.updated };
+}
+
 async function inventory() {
     const [servers, accounts] = await Promise.all([
         query(`SELECT id FROM jellyfin_servers WHERE enabled=TRUE ORDER BY priority,name`),
@@ -88,6 +154,7 @@ async function pollServer(serverId, managedUserIds) {
     if (!Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
     if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
 
+    const activity = await persistUserActivity(serverId, users);
     const playing = sessions.filter(session => session?.Id && session?.UserId && session?.NowPlayingItem);
     let managedStreams = 0;
     let transcodeStreams = 0;
@@ -111,7 +178,8 @@ async function pollServer(serverId, managedUserIds) {
         transcodeStreams,
         directStreamStreams,
         directPlayStreams,
-        pausedStreams
+        pausedStreams,
+        activityUpdates: activity.updated
     };
     await persistSuccess(serverId, metrics);
     return metrics;
@@ -159,6 +227,12 @@ async function listCached() {
 module.exports = {
     activeWindowSeconds,
     playbackMethod,
+    parseJellyfinDate,
+    userActivityDate,
+    isNewerActivity,
+    activityRows,
+    persistUserActivity,
+    refreshServerUserActivity,
     inventory,
     pollServer,
     refreshAll,
