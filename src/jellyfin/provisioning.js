@@ -1,6 +1,7 @@
 'use strict';
 
 const core=require('./provisioning-engine');
+const reconciliationLock=require('./reconciliation-lock');
 const {query}=require('../db');
 const subscriptionState=require('../entitlements/subscription-state');
 const subscriptionExpiry=require('../entitlements/subscription-expiry');
@@ -28,7 +29,7 @@ async function notifyNewJellyfinAccess(customerId,account){
     await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,customerId,subject:`Your ${site} Jellyfin access is ready`,text:steps,adminSubject:`${site}: Jellyfin access provisioned`,adminText:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
   }catch(error){console.warn('Jellyfin onboarding notification failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});}
 }
-async function reconcileCustomer(customerId){
+async function reconcileCustomerUnlocked(customerId){
   // A plan-specific inactivity hold belongs only to the free plan that created
   // it. Release it before policy calculation if the customer has since moved
   // to a different/free-disabled/paid entitlement. Manual and cleanup holds are
@@ -51,7 +52,8 @@ async function reconcileCustomer(customerId){
   }
   return outcome;
 }
-async function reconcileAccount(accountId){const account=await query('SELECT customer_id FROM jellyfin_accounts WHERE id=$1',[accountId]);if(account.rowCount)await syncAccess(account.rows[0].customer_id);return core.reconcileAccount(accountId)}
+async function reconcileCustomer(customerId){return reconciliationLock.withCustomerReconciliationLock(customerId,()=>reconcileCustomerUnlocked(customerId));}
+async function reconcileAccount(accountId){const account=await query('SELECT customer_id FROM jellyfin_accounts WHERE id=$1',[accountId]);if(!account.rowCount)return core.reconcileAccount(accountId);const customerId=account.rows[0].customer_id;return reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);});}
 async function createJellyfinAccount(customerId,server,effective,options={}){const account=await core.createJellyfinAccount(customerId,server,effective,options);if(options.passwordSetupRequired!==false){await markPasswordSetupRequired(account.id);account.password_setup_required=true;account.password_reset_required=true;}return account;}
 async function setJellyfinPassword(customerId,accountId,newPassword){const result=await core.setJellyfinPassword(customerId,accountId,newPassword);await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[accountId,customerId]);return result;}
 function adminHoldType(reason){if(reason==='disabled')return'admin_disabled';if(reason==='suspended')return'admin_suspended';return'admin_hold'}
@@ -60,4 +62,4 @@ async function releaseAccess(customerId,actorUserId=null){await accessHolds.rele
 async function maybeAutoDowngrade(customerId){const lifecycle=require('../payments/lifecycle');try{return await lifecycle.autoDowngradeEligibleCustomer(customerId)}catch(error){console.error('Automatic free-tier downgrade failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});return null}}
 async function notifyExpiringSubscriptions(){return subscriptionExpiry.notifyExpiringSubscriptions()}
 async function expireSubscriptionsAndReconcile(){return subscriptionExpiry.expireAndReconcile({reconcileCustomer,autoDowngrade:maybeAutoDowngrade,onReconcileError:(customerId,error)=>console.error('Entitlement reconcile failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)})})}
-module.exports={...core,currentEntitlement,reconcileCustomer,reconcileAccount,createJellyfinAccount,setJellyfinPassword,holdAccess,releaseAccess,notifyExpiringSubscriptions,expireSubscriptionsAndReconcile,notifyNewJellyfinAccess};
+module.exports={...core,currentEntitlement,reconcileCustomer,reconcileAccount,createJellyfinAccount,setJellyfinPassword,holdAccess,releaseAccess,notifyExpiringSubscriptions,expireSubscriptionsAndReconcile,notifyNewJellyfinAccess,reconciliationLock};
