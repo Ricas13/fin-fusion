@@ -1,7 +1,7 @@
 'use strict';
 
 // One-time operator script: run once after deploying the "allow subtitle
-// editing" plan permission (migration 100) so already-provisioned Jellyfin
+// editing" plan permission (migration 101) so already-provisioned Jellyfin
 // customers get the new default pushed to their live Jellyfin account,
 // instead of waiting for an admin to re-save each plan's Access policy by
 // hand. Safe to run more than once -- it only queues the same bounded,
