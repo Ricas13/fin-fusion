@@ -18,7 +18,6 @@ const { createAdminStremioRouter } = require('./admin-stremio');
 const { createAdminStremioSourcesRouter } = require('./admin-stremio-sources');
 const { createAdminPlanDeliveryRouter } = require('./admin-plan-delivery');
 const { createAdminFleetOperationsRouter } = require('./admin-fleet-operations');
-const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPersonalNotificationPreferencesRouter } = require('./admin-personal-notification-preferences-v2');
 const { createAdminPersonalNotificationTestsRouter } = require('./admin-personal-notification-tests');
 const { createAdminProfileAccountRouter } = require('./admin-profile-account');
@@ -59,15 +58,6 @@ function requireCustomer(req, res, next) {
         : res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account'));
 }
 
-function onlyPathPrefix(prefix, childRouter) {
-    const normalized = String(prefix || '').replace(/\/$/, '');
-    return function pathScopedRouter(req, res, next) {
-        const requestPath = req.path || '';
-        if (requestPath !== normalized && !requestPath.startsWith(normalized + '/')) return next();
-        return childRouter(req, res, next);
-    };
-}
-
 function createRouter() {
     ensureFleetSnapshot();
     const router = express.Router();
@@ -105,10 +95,6 @@ function createRouter() {
     router.use(createAdminProfileAccountRouter());
     router.use(createAdminPersonalNotificationTestsRouter());
     router.use(createAdminPersonalNotificationPreferencesRouter());
-
-    const globalNotificationRouter = createAdminNotificationPreferencesRouter();
-    router.use(onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter));
-
     router.use(createAdminAbuseProtectionRouter());
     router.use(createCustomerActivityRouter());
     router.use(createCustomerHistoryRouter());
@@ -136,4 +122,4 @@ function createRouter() {
     return router;
 }
 
-module.exports = { ...core, createRouter, ensureFleetSnapshot, onlyPathPrefix };
+module.exports = { ...core, createRouter, ensureFleetSnapshot };
