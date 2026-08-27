@@ -32,7 +32,16 @@ async function saveLibraries(req,res,accountId){
         }
         const submitted=Array.isArray(req.body.library)?req.body.library:(req.body.library!==undefined?[req.body.library]:[]);
         const chosen=await provisioning.setLibrarySelectionForAccount(req.session.customerId,target,submitted);
-        try { await provisioning.reconcileCustomer(req.session.customerId); } catch (_) {}
+        try {
+            await provisioning.reconcileCustomer(req.session.customerId);
+        } catch (reconcileError) {
+            console.warn('Customer library selection saved but Jellyfin reconciliation failed:', {
+                customerId:req.session.customerId,
+                accountId:target,
+                error:reconcileError.message
+            });
+            return res.redirect('/account?error=' + encodeURIComponent('Library selection was saved, but Jellyfin could not be updated right now. Use Retry setup or try again later.') + '#jellyfin-access');
+        }
         return res.redirect('/account?message=' + encodeURIComponent(`Library visibility updated for this Jellyfin server (${chosen.length} selected).`) + '#jellyfin-access');
     } catch (error) {
         return res.redirect('/account?error=' + encodeURIComponent(error.message || 'Library visibility could not be updated safely.') + '#jellyfin-access');
