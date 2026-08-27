@@ -71,13 +71,13 @@ function deletionPolicy(globalCfg, inactivityPolicy) {
 
 async function recordDisabledLifecycle(row, evidence, globalCfg) {
     const deletion = deletionPolicy(globalCfg, row.inactivity_policy);
-    const result = await query('SELECT disabled FROM jellyfin_accounts WHERE id=$1 AND access_lane=\'free\' AND account_purpose=\'jellyfin\'', [row.account_id]);
-    if (!result.rowCount || result.rows[0].disabled !== true) {
+    const state = await query('SELECT disabled FROM jellyfin_accounts WHERE id=$1 AND access_lane=\'free\' AND account_purpose=\'jellyfin\'', [row.account_id]);
+    if (!state.rowCount || state.rows[0].disabled !== true) {
         throw new Error('Free Server account did not reach disabled state; lifecycle deletion was not scheduled');
     }
     const now = new Date();
     const deleteAfter = new Date(now.getTime() + deletion.days * 86400000);
-    await query(`
+    const ledger = await query(`
         INSERT INTO jellyfin_account_lifecycle(
             account_id,customer_id,server_id,jellyfin_user_id,jellyfin_username,
             category,reason,policy_source,disabled_at,delete_after,metadata
@@ -107,7 +107,7 @@ async function recordDisabledLifecycle(row, evidence, globalCfg) {
         JSON.stringify({ ...evidence, deleteAfterDisableDays: deletion.days, deletePolicySource: deletion.source }),
         deletion.days
     ]);
-    return result.rows[0];
+    return ledger.rows[0];
 }
 
 async function pendingFreeLifecycle() {
@@ -149,12 +149,25 @@ async function markLifecycleRestored(row, reason, actorUserId = null) {
     });
 }
 
+function activityAfterDisable(row) {
+    if (!row.last_activity_at || !row.disabled_at) return false;
+    const activity = new Date(row.last_activity_at).getTime();
+    const disabled = new Date(row.disabled_at).getTime();
+    return Number.isFinite(activity) && Number.isFinite(disabled) && activity > disabled;
+}
+
 async function processPendingDeletions(globalCfg, { actorUserId = null, forceDryRun = null } = {}) {
     let rows = await pendingFreeLifecycle();
     if (!rows.length) return { processed: 0, deleted: 0, restored: 0, failed: 0, deferred: 0, serverFailures: 0 };
 
+    const worker = await activityWorkerTelemetry();
+    if (!worker.ready) {
+        return { processed: rows.length, deleted: 0, restored: 0, failed: 0, deferred: rows.length, serverFailures: 0, skipped: 'telemetry_not_trustworthy', telemetry: telemetrySummary(worker, {}) };
+    }
+
     const serverTelemetry = await refreshCandidateServers(rows, {});
-    // Re-read after /Users refresh so safety decisions use the latest activity.
+    // Re-read after /Users refresh so the final delete decision uses the latest
+    // authoritative Jellyfin activity timestamp plus the live playback tracker.
     rows = await pendingFreeLifecycle();
     let deleted = 0, restored = 0, failed = 0, deferred = 0;
 
@@ -168,6 +181,11 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
                 continue;
             }
             if (row.currently_playing) { deferred += 1; continue; }
+            if (activityAfterDisable(row)) {
+                await markLifecycleRestored(row, 'activity_after_disable', actorUserId);
+                restored += 1;
+                continue;
+            }
 
             const effective = planPolicy.effectiveForFreePlan(row.inactivity_policy || {}, globalCfg);
             if (!planPolicy.hasUsageTrigger(effective)) {
@@ -204,7 +222,7 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
             console.error('Free Server lifecycle deletion failed:', { accountId: row.account_id, error: String(error?.message || error).slice(0, 500) });
         }
     }
-    return { processed: rows.length, deleted, restored, failed, deferred, serverFailures: Object.values(serverTelemetry).filter(value => !value.ready).length, serverTelemetry };
+    return { processed: rows.length, deleted, restored, failed, deferred, serverFailures: Object.values(serverTelemetry).filter(value => !value.ready).length, serverTelemetry, telemetry: telemetrySummary(worker, serverTelemetry) };
 }
 
 async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
@@ -234,9 +252,6 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
                 await recordDisabledLifecycle(row, evidence, globalCfg);
                 enforced += 1;
             } catch (error) {
-                // If disabling failed, remove the new hold so a later retry starts
-                // from a coherent state rather than showing blocked while Jellyfin
-                // may still be enabled.
                 await accessHolds.releaseHold({ customerId: row.customer_id, type: base.HOLD_TYPE, sourceKey: `plan:${row.plan_id}`, actorUserId }).catch(() => {});
                 throw error;
             }
@@ -253,9 +268,6 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
 async function run(options = {}) {
     const globalCfg = await lifecyclePolicy.get();
     const planRules = await runPlanRules(options);
-    // Even when there are no newly-inactive users, existing staged deletions must
-    // continue progressing. If lifecycle is globally disabled runPlanRules first
-    // releases obsolete holds, then pending rows are restored rather than deleted.
     const deletions = await processPendingDeletions(globalCfg, options);
     return {
         processed: Number(planRules.processed || 0) + Number(deletions.processed || 0),
@@ -274,6 +286,7 @@ module.exports = {
     deletionPolicy,
     recordDisabledLifecycle,
     pendingFreeLifecycle,
+    activityAfterDisable,
     processPendingDeletions,
     runPlanRules,
     run,
