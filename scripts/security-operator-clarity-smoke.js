@@ -63,9 +63,12 @@ assert(/Always protected while enabled/.test(abuseAdmin)&&!/name:'protectRegistr
 
 const pending=text('src/security/pending-registration.js');
 const publicAuth=text('src/platform/customer-public-auth.js');
+const customerCore=text('src/customers.js');
 const jobs=text('src/automation/jobs.js');
 assert(/pending_registrations/.test(pending)&&/password_hash/.test(pending)&&/token_hash/.test(pending),'Verified public registrations must be staged with hashed credentials/tokens.');
 assert(/pendingRegistrations\.begin/.test(publicAuth)&&/verify-registration/.test(publicAuth)&&/pendingRegistrations\.consume/.test(publicAuth),'Public verification must create the real customer only after consuming a pending registration.');
+assert(/assertNoUnclaimedJellyfinUsername/.test(customerCore)&&/jellyfin_accounts ja JOIN customers c/.test(customerCore)&&/c\.user_id IS NULL/.test(customerCore),'Immediate public registration must not take an unclaimed imported Jellyfin username.');
+assert((pending.match(/assertNoUnclaimedJellyfinUsername/g)||[]).length>=3&&/Use the existing-account claim link/.test(pending),'Verified public registration must block unclaimed imported Jellyfin usernames before and after email verification.');
 assert(/pending_registration_cleanup/.test(jobs),'Expired pending registrations must be an automation job.');
 
 const emailChange=text('src/security/customer-email-change.js');
