@@ -103,13 +103,7 @@ function manifest() {
 }
 
 async function publicOrigin(req) {
-  try {
-    const cfg = await operations.get();
-    if (cfg.publicBaseUrl) return String(cfg.publicBaseUrl).replace(/\/$/, '');
-  } catch (_error) {}
-  const host = req.get('x-forwarded-host') || req.get('host');
-  const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
-  return `${proto}://${host}`.replace(/\/$/, '');
+  return new URL(await operations.absoluteUrl(req, '/')).origin;
 }
 
 async function hasExplicitSources(entitlement) {
