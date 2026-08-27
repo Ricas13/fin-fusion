@@ -65,6 +65,7 @@ async function main() {
   const root = path.resolve(__dirname, '..');
   const router = fs.readFileSync(path.join(root, 'src/platform/router.js'), 'utf8');
   const customerLogin = fs.readFileSync(path.join(root, 'src/platform/customer-login.js'), 'utf8');
+  const customerSecurity = fs.readFileSync(path.join(root, 'src/platform/customer-security.js'), 'utf8');
   const customerRateLimit = fs.readFileSync(path.join(root, 'src/security/customer-rate-limit.js'), 'utf8');
   const customers = fs.readFileSync(path.join(root, 'src/customers.js'), 'utf8');
   const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
@@ -76,6 +77,12 @@ async function main() {
   const identityLimitOrder = customerLogin.indexOf("r.use('/account/login',identityLoginRateLimit)");
   const passwordAuthOrder = customerLogin.indexOf('customers.authenticateCustomer(req.body.identity,req.body.password)');
   assert(identityLimitOrder >= 0 && passwordAuthOrder > identityLimitOrder, 'identity throttle must run before password authentication');
+  assert.match(customerLogin,/r\.post\('\/account\/login'/,'customer-login must explicitly own POST /account/login');
+  assert.match(customerLogin,/r\.post\('\/account\/2fa'/,'customer-login must explicitly own POST /account/2fa');
+  assert.doesNotMatch(customerLogin,/r\.use\('\/account\/login',async\(req,res,next\)=>\{if\(req\.method!==\'POST\'/,'customer login must not hide the POST owner inside generic middleware');
+  assert.doesNotMatch(customerLogin,/r\.use\('\/account\/2fa',async\(req,res,next\)=>\{if\(req\.method!==\'POST\'/,'customer 2FA challenge must not hide the POST owner inside generic middleware');
+  assert.doesNotMatch(customerSecurity,/router\.post\('\/account\/login'/,'customer-security must not register a second POST /account/login owner');
+  assert.doesNotMatch(customerSecurity,/router\.post\('\/account\/2fa'/,'customer-security must not register a second POST /account/2fa owner');
   assert(customerLogin.includes('customer-login-identity:${identity}'), 'identity-specific login bucket must be explicit');
   assert(customerLogin.includes('limit:30,windowMs:15*60*1000'), 'identity throttle should use the higher anti-DoS threshold');
   assert(customerRateLimit.includes("crypto.createHmac('sha256'"), 'raw login identities must remain HMAC-pseudonymized before persistence');
