@@ -70,8 +70,11 @@ const suites = [
     commands: [['node', ['scripts/configuration-transfer-smoke.js']]],
   },
   {
-    name: 'Customer claim',
-    commands: [['node', ['scripts/customer-claim-smoke.js']]],
+    name: 'Customer claim and account tokens',
+    commands: [
+      ['node', ['scripts/customer-claim-smoke.js']],
+      ['node', ['scripts/account-token-atomicity-smoke.js']],
+    ],
   },
   {
     name: 'Fleet-aware placement',

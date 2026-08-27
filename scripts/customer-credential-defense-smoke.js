@@ -84,6 +84,12 @@ async function main() {
   const validationCalls = customers.match(/await validateNewPassword\(/g) || [];
   assert(validationCalls.length >= 3, 'registration, password change and password reset must all screen new passwords');
   assert(customers.includes('async function registerCustomer') && customers.includes('async function changePortalPassword') && customers.includes('async function resetSitePassword'), 'customer password write paths must remain present');
+  assert(!customers.includes('async function consumeAccountToken'), 'account tokens must not be consumed by a standalone transaction before their account mutation');
+  assert.match(customers,/async function accountTokenForUpdate\(client,rawToken,tokenType\)/,'account-token lookup must require the caller transaction client');
+  const verifyEmail=customers.match(/async function verifyEmail\(rawToken\)[\s\S]*?\}\)\}/)?.[0]||'';
+  assert.match(verifyEmail,/transaction\(async client=>[\s\S]*?accountTokenForUpdate\(client,rawToken,'email_verify'\)[\s\S]*?UPDATE app_users[\s\S]*?UPDATE account_tokens SET consumed_at=NOW\(\)/,'email verification must mutate the account and consume its token in one transaction');
+  const resetSitePassword=customers.match(/async function resetSitePassword\(rawToken,newPassword\)[\s\S]*?return true\}\)\}/)?.[0]||'';
+  assert.match(resetSitePassword,/transaction\(async client=>[\s\S]*?accountTokenForUpdate\(client,rawToken,'password_reset'\)[\s\S]*?UPDATE app_users SET password_hash[\s\S]*?UPDATE auth_sessions[\s\S]*?customer\.password\.reset[\s\S]*?UPDATE account_tokens SET consumed_at=NOW\(\)/,'password reset must keep password, session, audit and token consumption in one transaction');
   assert(compose.includes('PASSWORD_BREACH_CHECK_MODE: ${PASSWORD_BREACH_CHECK_MODE:-required}'), 'production Compose should default breach screening to required');
 
   console.log('customer credential defense smoke passed');
