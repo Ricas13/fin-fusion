@@ -26,7 +26,7 @@ function hours(seconds) {
     return `${number(value, value < 10 ? 1 : 0)}h`;
 }
 
-function rangeControls(range) {
+function rangeControls(range, basePath = '/admin') {
     const presets = [
         ['today', 'Today'], ['7d', '7 days'], ['30d', '30 days'],
         ['90d', '90 days'], ['180d', '6 months'], ['365d', '12 months']
@@ -34,8 +34,8 @@ function rangeControls(range) {
     return `<section class="dashboardRangeBar">
         <div class="rangeMeta"><strong>${esc(range.label)}</strong><span>Every historical KPI and chart below uses this same period. Live cards are marked separately.</span></div>
         <div class="rangeControls">
-            <div class="rangePresets">${presets.map(([key, label]) => `<a class="rangePreset ${range.key === key ? 'active' : ''}" href="/admin?range=${esc(key)}">${esc(label)}</a>`).join('')}</div>
-            <form class="rangeCustom" method="get" action="/admin">
+            <div class="rangePresets">${presets.map(([key, label]) => `<a class="rangePreset ${range.key === key ? 'active' : ''}" href="${esc(basePath)}?range=${esc(key)}">${esc(label)}</a>`).join('')}</div>
+            <form class="rangeCustom" method="get" action="${esc(basePath)}">
                 <input type="hidden" name="range" value="custom">
                 <label>From<input type="date" name="from" value="${esc(range.from)}" required></label>
                 <label>To<input type="date" name="to" value="${esc(range.to)}" required></label>

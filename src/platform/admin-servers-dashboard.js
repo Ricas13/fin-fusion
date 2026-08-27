@@ -239,7 +239,7 @@ function fleetHero(rows) {
 async function renderPage(req) {
     const ctx = await buildContext(req);
     const widgetGrid = await renderWidgetGrid('servers', req, ctx);
-    const body_html = `${selectedServerResolution(req, ctx.data.rows)}${fleetHero(ctx.data.rows)}${rangeControls(ctx.range)}${widgetGrid}`;
+    const body_html = `${selectedServerResolution(req, ctx.data.rows)}${fleetHero(ctx.data.rows)}${rangeControls(ctx.range,'/admin/servers/dashboard')}${widgetGrid}`;
     return layout({ siteName: runtimeSettings.siteName(), active: 'servers-dashboard', title: 'Servers dashboard', subtitle: `Fleet health first, then playback and library analytics · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/servers">Server list</a>' });
 }
 

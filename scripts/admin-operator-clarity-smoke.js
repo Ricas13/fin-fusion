@@ -72,7 +72,7 @@ assert(servers.includes('Open ${esc(server.name)} settings'), 'unhealthy server 
 assert(servers.includes('fleetSummary'), 'fleet state must summarize health, streams, users and capacity from canonical fleet rows');
 
 assert(customers.includes('Customer control room') && customers.includes('customerHero(ctx)'), 'Customers dashboard must retain canonical customer-health calculation');
-assert(customers.indexOf('customerHero(ctx)') < customers.indexOf('rangeControls(ctx.range)'), 'Customer health calculation must remain before analytics controls in composition');
+assert(customers.indexOf('customerHero(ctx)') < customers.indexOf("rangeControls(ctx.range,'/admin/users/dashboard')"), 'Customer health calculation must remain before analytics controls in composition');
 assert(customers.includes('ctx.data.needsAttention'), 'Customer health must reuse canonical Needs Attention data instead of creating a second exception model');
 
 assert(automation.includes('Automation control room') && automation.includes('automationHero(jobs,worker,workerAlive)'), 'Automation must retain worker/job health calculation');
@@ -90,7 +90,7 @@ assert(payments.includes("providerEvents=(events||[]).filter(event=>event.provid
 assert(payments.includes("latestSuccessful=providerEvents.find(event=>!event.failed&&event.processed_at)"), 'Payment provider evidence must remain based on successfully processed events');
 
 assert(commerce.includes('Commerce control room') && commerce.includes('Payment incidents to resolve'), 'Commerce must retain customer-impacting payment state before revenue analytics');
-assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf('rangeControls(dashboardCtx.range)'), 'Commerce state calculation must remain before analytics controls in composition');
+assert(commerce.indexOf('commerceHero(d,dashboardCtx)') < commerce.indexOf("rangeControls(dashboardCtx.range,'/admin/commerce')"), 'Commerce state calculation must remain before analytics controls in composition');
 assert(commerce.includes("d.paymentIncidents.filter(row=>!row.resolved_at)"), 'Commerce clarity must reuse canonical payment incidents');
 assert(commerce.includes("ui.detailDisclosure({title:'Commercial policies & detailed payment state'"), 'Routine commercial policy/state detail must be progressively disclosed');
 
