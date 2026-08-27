@@ -66,6 +66,13 @@ async function ensureRole(client, spec, credential) {
     await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${role}`);
 }
 
+async function grantDeletionFinalizer(client, role) {
+    const exists = await client.query("SELECT to_regprocedure('public.finalize_customer_deletion(uuid)') AS function_name");
+    if (exists.rows[0]?.function_name) {
+        await client.query(`GRANT EXECUTE ON FUNCTION public.finalize_customer_deletion(uuid) TO ${role}`);
+    }
+}
+
 async function grantApp(client) {
     const role = ROLE_SPECS.app.role;
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
@@ -74,6 +81,7 @@ async function grantApp(client) {
     await client.query(`REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM ${role}`);
     await client.query(`GRANT SELECT ON schema_migrations TO ${role}`);
     await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
+    await grantDeletionFinalizer(client, role);
 }
 
 async function grantAutomation(client) {
@@ -91,6 +99,7 @@ async function grantAutomation(client) {
         await client.query(`REVOKE INSERT,UPDATE,DELETE ON app_users FROM ${role}`);
         await client.query(`GRANT SELECT ON app_users TO ${role}`);
     }
+    await grantDeletionFinalizer(client, role);
 }
 
 async function grantActivity(client) {
