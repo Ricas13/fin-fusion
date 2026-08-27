@@ -2,7 +2,7 @@
 
 const crypto=require('crypto');
 const {query}=require('../db');
-const provisioning=require('../jellyfin/provisioning-core');
+const provisioning=require('../jellyfin/provisioning');
 const registry=require('../jellyfin/registry');
 const {encryptWithEnv,decryptWithEnv}=require('../security/purpose-crypto');
 const managedSources=require('./managed-sources');
