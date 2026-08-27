@@ -6,6 +6,7 @@ const registry = require('./registry');
 const policy = require('./policy');
 const placement = require('./placement');
 const planServers = require('./plan-servers');
+const compensation = require('./provisioning-compensation');
 const subscriptionState = require('../entitlements/subscription-state');
 
 function randomPassword() {
@@ -346,15 +347,29 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
             body: policyBody(effective.technical, false, libraryAccess)
         });
     } catch (error) {
-        try { await registry.request(server.id, `/Users/${created.Id}`, { method: 'DELETE' }); } catch (_) {}
-        throw error;
+        await compensation.removeCreatedUser({ customerId, serverId: server.id, userId: created.Id, stage: 'policy_apply', originalError: error });
+        throw compensation.rolledBackError(
+            'Jellyfin account creation could not be completed while applying access policy. The remote account was rolled back.',
+            'JELLYFIN_POLICY_APPLY_FAILED',
+            error
+        );
     }
 
-    const stored = await query(`
-        INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync,is_primary)
-        VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE)
-        RETURNING *
-    `, [customerId, server.id, created.Id, username]);
+    let stored;
+    try {
+        stored = await query(`
+            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_policy_sync,is_primary)
+            VALUES($1,$2,$3,$4,FALSE,NOW(),FALSE)
+            RETURNING *
+        `, [customerId, server.id, created.Id, username]);
+    } catch (error) {
+        await compensation.removeCreatedUser({ customerId, serverId: server.id, userId: created.Id, stage: 'database_persist', originalError: error });
+        throw compensation.rolledBackError(
+            'Jellyfin account creation could not be persisted. The remote account was rolled back.',
+            'JELLYFIN_ACCOUNT_PERSIST_FAILED',
+            error
+        );
+    }
     const account = stored.rows[0];
     if (libraryAccess.missing.length) {
         const message = `Missing on server: ${libraryAccess.missing.join(', ')}`;
