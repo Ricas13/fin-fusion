@@ -20,7 +20,7 @@ const LABELS = {
 };
 
 function esc(value) {
-    return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;' }[c]));
+    return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 function gate(req,res,next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -53,7 +53,7 @@ async function lanePanel(req, customerId, accessLane, plan) {
         return `<tr><td>${esc(LABELS[field] || field)}</td><td>${fieldValue(field,row.plan)}</td><td>${fieldValue(field,row.override)}</td><td><strong>${fieldValue(field,row.effective)}</strong></td><td>${fieldControl(field,row)}</td></tr>`;
     }).join('');
     const planName = plan.contract_plan_name || plan.name || plan.code || accessLane;
-    return `<section class="section"><div class="sectionHead"><div><h2>${title}</h2><div class="muted">${esc(planName)} · overrides affect only this Jellyfin identity/lane.</div></div><span class="pill ${plan.blocked?'warn':'good'}">${plan.blocked?'Blocked':'Active'}</span></div><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(customerId)}/policy-overrides"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="accessLane" value="${esc(accessLane)}"><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Field</th><th>Plan</th><th>Override</th><th>Effective</th><th>Set override</th></tr></thead><tbody>${rows}</tbody></table></div><div class="buttonRow"><button class="button">Save ${accessLane === 'free' ? 'Free' : 'Premium'} overrides</button></div></form><form class="formPanel compactAction" method="post" action="/admin/users/${encodeURIComponent(customerId)}/policy-overrides/reset-all"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="accessLane" value="${esc(accessLane)}"><button class="button secondary">Reset this lane to plan</button></form></section>`;
+    return `<section class="section"><div class="sectionHead"><div><h2>${title}</h2><div class="muted">${esc(planName)} · overrides affect only this Jellyfin identity/lane.</div></div><span class="pill ${plan.blocked?'warn':'good'}">${plan.blocked?'Blocked':'Active'}</span></div><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(customerId)}/lane-policy-overrides"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="accessLane" value="${esc(accessLane)}"><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Field</th><th>Plan</th><th>Override</th><th>Effective</th><th>Set override</th></tr></thead><tbody>${rows}</tbody></table></div><div class="buttonRow"><button class="button">Save ${accessLane === 'free' ? 'Free' : 'Premium'} overrides</button></div></form><form class="formPanel compactAction" method="post" action="/admin/users/${encodeURIComponent(customerId)}/lane-policy-overrides/reset-all"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="accessLane" value="${esc(accessLane)}"><button class="button secondary">Reset this lane to plan</button></form></section>`;
 }
 async function laneSections(req, customerId) {
     const entitlements = await laneEntitlements(customerId);
@@ -70,7 +70,7 @@ function replaceLegacyEffectivePolicy(html, replacement) {
 function createAdminLanePolicyRouter() {
     const router = express.Router();
 
-    router.post('/admin/users/:customerId/policy-overrides', gate, async (req,res) => {
+    router.post('/admin/users/:customerId/lane-policy-overrides', gate, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const accessLane = targetLane(req.body.accessLane);
         try {
@@ -95,7 +95,7 @@ function createAdminLanePolicyRouter() {
         }
     });
 
-    router.post('/admin/users/:customerId/policy-overrides/reset-all', gate, async (req,res) => {
+    router.post('/admin/users/:customerId/lane-policy-overrides/reset-all', gate, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const accessLane = targetLane(req.body.accessLane);
         try {
