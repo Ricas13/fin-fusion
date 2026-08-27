@@ -30,6 +30,7 @@ const customerCore=read('src/customers.js');
 const customerPasswordSync=read('src/platform/customer-password-sync.js');
 const customerCommunications=read('src/platform/customer-communications.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
+const application=read('src/application.js');
 const capacity=read('src/entitlements/plan-capacity.js');
 const storefront=read('src/platform/storefront.js');
 const paymentReturn=read('src/platform/customer-payment-return.js');
@@ -56,9 +57,11 @@ assert(!dashboard.includes('customerNavLink\" href=\"<%= overseerrUrl %>\"'),'da
 assert(dashboard.includes('href="/account/security">Account</a>')&&!dashboard.includes('href="/account/security">Security</a>'),'Home account shortcuts must use the same Account name as the canonical navigation');
 assert(customerCore.includes('ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username'),'Jellyfin username rename eligibility must be limited to accounts created before today.');
 assert(customerPasswordSync.includes("'/account/jellyfin/:accountId/username'")&&customerPasswordSync.includes('renameJellyfinAccount(req.session.customerId'),'customer portal must expose a CSRF-protected Jellyfin username rename route.');
-assert(provisioningEngine.includes('async function renameJellyfinAccount')&&provisioningEngine.includes('created_at')&&provisioningEngine.includes("method: 'POST'")&&provisioningEngine.includes('Name: username'),'Jellyfin username rename must update the existing remote user rather than recreating it.');
+assert(customerPasswordSync.includes("const target=req.body.setup==='1'?'/account/jellyfin/setup':'/account'")&&customerPasswordSync.includes("return res.redirect(target+'?error='+encodeURIComponent('Jellyfin passwords do not match."),'dashboard Jellyfin password validation errors must return to Home rather than setup-only onboarding.');
+assert(provisioningEngine.includes('async function renameJellyfinAccount')&&provisioningEngine.includes('ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username')&&provisioningEngine.includes('!account.can_rename_jellyfin_username')&&provisioningEngine.includes("method: 'POST'")&&provisioningEngine.includes('Name: username'),'Jellyfin username rename must enforce the legacy-account rule in SQL and update the existing remote user rather than recreating it.');
 assert(dashboard.includes('can_rename_jellyfin_username')&&dashboard.includes('Change username')&&dashboard.includes('/account/jellyfin/${esc(a.id)}/username'),'dashboard must render username rename only for eligible older Jellyfin accounts.');
 assert(!/redirect\(['"]\/account\/communications\?welcome=1/.test(customerCommunications),'customer Home must not be intercepted by notification-channel onboarding.');
+assert(application.indexOf('app.use(createCustomerPasswordSyncRouter())')>=0&&application.indexOf('app.use(createCustomerPasswordSyncRouter())')<application.indexOf('app.use(createRouter())'),'customer Jellyfin account mutation routes must mount before the general platform router.');
 assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
 assert(security.includes("const navigation=active?customerNav.nav(active,navOptions):''"),'security frames must be able to suppress account navigation for pre-login and verification-only pages');
@@ -78,6 +81,8 @@ assert(supportThread.includes('class=\"portalTopbar\"')&&supportThread.includes(
 assert(supportRoute.includes("res.redirect('/account/support?error='+encodeURIComponent('This support ticket does not exist or is not linked to your account.'))"),'missing or foreign support tickets must return to Support rather than dropping into a nav-less generic page');
 assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Help must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
 assert(docsRender.includes('customerTopbar(site)'),'customer Help must retain the account header above the documentation reading shell');
+assert(customerNavigationCss.includes('--customer-nav-width:230px')&&customerNavigationCss.includes('.customerLayout,.customerPortalPage,.securityMain')&&customerNavigationCss.includes('grid-template-columns:var(--customer-nav-width) minmax(0,1fr)'),'customer pages must reserve the same left navigation column across old and new account shells');
+assert(customerNavigationCss.includes('top:88px'),'desktop customer navigation must stick below the account topbar consistently');
 assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
 
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
