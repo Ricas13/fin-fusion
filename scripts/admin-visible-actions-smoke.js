@@ -17,6 +17,7 @@ const notificationWorkflow=require('../src/platform/notification-workflow-tabs')
 const provisioningTabs=fs.readFileSync(path.join(platformDir,'provisioning-workflow-tabs.js'),'utf8');
 const html=fs.readFileSync(path.join(platformDir,'admin-html.js'),'utf8');
 const customerDeletion=fs.readFileSync(path.join(platformDir,'customer-deletion.js'),'utf8');
+const customerDeletionFinalizer=fs.readFileSync(path.join(root,'db','migrations','100_customer_deletion_saga.sql'),'utf8');
 
 function jsFiles(dir){
   return fs.readdirSync(dir,{withFileTypes:true}).flatMap(entry=>{
@@ -52,9 +53,9 @@ assert(!publicFeedback.includes('submitter?.formAction || form.action'),'Reflect
 assert(publicFeedback.includes("explicitSubmitterAttribute(submitter, 'formmethod')"),'Enhanced forms must only honor explicit formmethod overrides');
 assert(publicFeedback.includes('async function renderHtmlResponse(response)'),'Enhanced forms must display successful POST-rendered HTML pages');
 assert(!publicFeedback.includes('finalUrl.href !== window.location.href'),'Enhanced forms must not turn successful POST-rendered pages into GET navigations');
-assert(!/DELETE\s+FROM\s+audit_log/i.test(customerDeletion),'Permanent customer deletion must preserve append-only audit history');
-assert(customerDeletion.includes("set_config('steamfusion.allow_audit_mutation','on',true)")&&customerDeletion.includes("set_config('steamfusion.allow_audit_mutation','off',true)"),'Portal-user deletion must narrowly allow audit actor FK nulling without deleting audit events');
-assert(customerDeletion.includes("'admin.customer.hard_delete'"),'Permanent customer deletion must append a deletion tombstone audit event');
+assert(!/DELETE\s+FROM\s+(?:public\.)?audit_log/i.test(customerDeletion)&&!/DELETE\s+FROM\s+(?:public\.)?audit_log/i.test(customerDeletionFinalizer),'Permanent customer deletion must preserve append-only audit history');
+assert(customerDeletionFinalizer.includes("set_config('steamfusion.allow_audit_mutation','on',true)")&&customerDeletionFinalizer.includes("set_config('steamfusion.allow_audit_mutation','off',true)"),'Portal-user deletion finalizer must narrowly allow audit actor FK nulling without deleting audit events');
+assert(customerDeletionFinalizer.includes("'admin.customer.hard_delete'"),'Permanent customer deletion finalizer must append a deletion tombstone audit event');
 
 const settings=navModel.groups.find(group=>group.key==='settings'),automation=navModel.groups.find(group=>group.key==='automation'),dashboard=navModel.groups.find(group=>group.key==='dashboard');
 assert(settings&&automation&&dashboard,'Core navigation groups must exist');
