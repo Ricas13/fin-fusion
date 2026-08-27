@@ -1,10 +1,13 @@
 'use strict';
 
-const { query } = require('../db');
+const { getPool, query } = require('../db');
 const registry = require('./registry');
 const legacyActivity = require('./activity');
-const subscriptionState = require('../entitlements/subscription-state');
-const laneOverrides = require('./lane-policy-overrides');
+
+// The legacy observer owns the playback/history collector lock. This second
+// lock serialises the full collect -> counter restore -> lane decision phase so
+// multiple activity workers can never enforce the same lane concurrently.
+const LANE_ADVISORY_LOCK_ID = 637441014;
 
 function sessionKey(row) {
     return `${row.server_id}:${row.jellyfin_session_id}`;
@@ -14,28 +17,85 @@ function isCountable(row, cfg) {
     return cfg.countPaused || !row.is_paused;
 }
 
-async function entitlementFor(customerId, accessLane, cache) {
-    const key = `${customerId}:${accessLane}`;
-    if (cache.has(key)) return cache.get(key);
-    let entitlement;
-    if (accessLane === 'free') {
-        entitlement = await subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true });
-    } else {
-        entitlement = await subscriptionState.effectiveSubscription(customerId, { includeBlocked: true });
-        if (entitlement?.is_free_tier) entitlement = null;
-    }
-    if (entitlement?.blocked) entitlement = null;
-    cache.set(key, entitlement || null);
-    return entitlement || null;
+function lane(value) {
+    return String(value || '') === 'free' ? 'free' : 'primary';
 }
 
-async function effectiveStreamLimit(row, cache) {
-    const accessLane = row.access_lane === 'free' ? 'free' : 'primary';
-    const entitlement = await entitlementFor(row.customer_id, accessLane, cache);
+function overflowRows(group, streamLimit, cfg = { countPaused: false }) {
+    const countable = group.filter(row => isCountable(row, cfg));
+    const limit = Math.max(1, Number(streamLimit) || 1);
+    if (countable.length <= limit) return [];
+    return [...countable]
+        .sort((a, b) => new Date(b.first_seen_at || 0) - new Date(a.first_seen_at || 0))
+        .slice(0, countable.length - limit);
+}
+
+async function laneEntitlements(customerIds) {
+    const ids = [...new Set((customerIds || []).filter(Boolean).map(String))];
+    if (!ids.length) return new Map();
+    const result = await query(`
+        SELECT s.customer_id,
+               CASE WHEN p.is_free_tier THEN 'free' ELSE 'primary' END AS access_lane,
+               COALESCE(
+                 CASE WHEN (s.commercial_snapshot->>'streams') ~ '^[0-9]+$'
+                      THEN (s.commercial_snapshot->>'streams')::int END,
+                 p.streams
+               ) AS streams,
+               p.jellyfin_access_model,
+               s.created_at,
+               CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
+                    THEN 'infinity'::timestamptz
+                    ELSE s.current_period_end + ((COALESCE(s.service_extension_days,0)||' days')::interval)
+               END AS access_expires_at
+        FROM subscriptions s
+        JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id
+        LEFT JOIN customer_entitlement_overrides o
+               ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+        WHERE s.customer_id=ANY($1::uuid[])
+          AND c.access_paused_at IS NULL
+          AND COALESCE(p.is_addon,FALSE)=FALSE
+          AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
+          AND s.superseded_by IS NULL
+          AND s.starts_at<=NOW()
+          AND (
+              (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+              OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+              OR (COALESCE(s.service_extension_days,0)>0
+                  AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
+                  AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW())
+          )
+        ORDER BY s.customer_id,
+                 CASE WHEN p.is_free_tier THEN 1 ELSE 0 END,
+                 access_expires_at DESC,
+                 s.created_at DESC
+    `, [ids]);
+    const map = new Map();
+    for (const row of result.rows) {
+        const key = `${row.customer_id}:${lane(row.access_lane)}`;
+        if (!map.has(key)) map.set(key, row);
+    }
+    return map;
+}
+
+async function laneStreamOverrides(customerIds) {
+    const ids = [...new Set((customerIds || []).filter(Boolean).map(String))];
+    if (!ids.length) return new Map();
+    const result = await query(`
+        SELECT customer_id,access_lane,streams
+        FROM customer_lane_policy_overrides
+        WHERE customer_id=ANY($1::uuid[])
+    `, [ids]);
+    return new Map(result.rows.map(row => [`${row.customer_id}:${lane(row.access_lane)}`, row.streams]));
+}
+
+function effectiveStreamLimit(row, entitlements, overrideMap) {
+    const accessLane = lane(row.access_lane);
+    const entitlement = entitlements.get(`${row.customer_id}:${accessLane}`) || null;
     if (!entitlement) return null;
     if (entitlement.jellyfin_access_model === 'household_network') return null;
-    const override = await laneOverrides.getPolicyOverride(row.customer_id, accessLane);
-    const raw = override?.streams ?? entitlement.streams;
+    const override = overrideMap.get(`${row.customer_id}:${accessLane}`);
+    const raw = override === null || override === undefined ? entitlement.streams : override;
     const limit = Number(raw);
     return Number.isInteger(limit) && limit > 0 ? limit : 1;
 }
@@ -50,21 +110,59 @@ async function observedSessionsWithLaneLimits() {
         JOIN jellyfin_accounts ja ON ja.id=aps.jellyfin_account_id
         WHERE ja.account_purpose='jellyfin'
     `);
-    const cache = new Map();
+    const customerIds = result.rows.map(row => row.customer_id);
+    const [entitlements, overrideMap] = await Promise.all([
+        laneEntitlements(customerIds),
+        laneStreamOverrides(customerIds)
+    ]);
     const rows = [];
     for (const row of result.rows) {
         if (row.disabled) continue;
-        const streamLimit = await effectiveStreamLimit(row, cache);
-        row.streamLimit = streamLimit;
-        if (streamLimit !== null) {
-            await query(`
-                UPDATE active_playback_sessions SET stream_limit=$3
-                WHERE server_id=$1 AND jellyfin_session_id=$2
-            `, [row.server_id, row.jellyfin_session_id, streamLimit]);
-        }
+        row.access_lane = lane(row.access_lane);
+        row.streamLimit = effectiveStreamLimit(row, entitlements, overrideMap);
+        await query(`
+            UPDATE active_playback_sessions SET stream_limit=$3
+            WHERE server_id=$1 AND jellyfin_session_id=$2
+        `, [row.server_id, row.jellyfin_session_id, row.streamLimit]);
         rows.push(row);
     }
     return rows;
+}
+
+async function confirmationSnapshot() {
+    const result = await query(`
+        SELECT server_id,jellyfin_session_id,playback_key,over_limit_confirmations
+        FROM active_playback_sessions
+    `);
+    return result.rows;
+}
+
+async function restoreLaneConfirmations(snapshot) {
+    // The legacy observer still calculates its retired customer-wide policy in
+    // observe mode. Restore counters around that collector so those decisions
+    // can never influence the authoritative per-account confirmation state.
+    await query('UPDATE active_playback_sessions SET over_limit_confirmations=0 WHERE over_limit_confirmations<>0');
+    for (const row of snapshot || []) {
+        const confirmations = Math.max(0, Number(row.over_limit_confirmations || 0));
+        if (!confirmations) continue;
+        await query(`
+            UPDATE active_playback_sessions
+            SET over_limit_confirmations=$4
+            WHERE server_id=$1 AND jellyfin_session_id=$2 AND playback_key=$3
+        `, [row.server_id,row.jellyfin_session_id,row.playback_key,confirmations]);
+    }
+}
+
+async function removeLegacyDecisionEvents(startedAt) {
+    await query(`
+        DELETE FROM stream_policy_events
+        WHERE created_at >= $1
+          AND mode='observe'
+          AND reason IN (
+              'grace_period','confirmation_threshold','incomplete_server_snapshot',
+              'enforcement_ack_missing','observe_only'
+          )
+    `, [startedAt]);
 }
 
 async function policyEvent(row, cfg, decision, streamCount, streamLimit, reason, detail = {}) {
@@ -168,8 +266,7 @@ async function evaluateLanePolicies(rows, failedServerIds, cfg) {
             continue;
         }
         summary.violations += 1;
-        const overflowCount = countable.length - streamLimit;
-        const overflow = [...countable].sort((a,b) => new Date(b.first_seen_at) - new Date(a.first_seen_at)).slice(0, overflowCount);
+        const overflow = overflowRows(group, streamLimit, cfg);
         const overflowKeys = new Set(overflow.map(sessionKey));
         for (const row of group) {
             if (!overflowKeys.has(sessionKey(row))) {
@@ -206,39 +303,57 @@ async function evaluateLanePolicies(rows, failedServerIds, cfg) {
 }
 
 async function runActivityPolicyCycle() {
-    const cfg = legacyActivity.config();
-    const startedAt = new Date();
-    const previousMode = process.env.STREAM_POLICY_MODE;
-    process.env.STREAM_POLICY_MODE = 'observe';
-    let observed;
+    const pool = getPool();
+    const lockClient = await pool.connect();
+    let locked = false;
     try {
-        observed = await legacyActivity.runActivityPolicyCycle();
+        const lock = await lockClient.query('SELECT pg_try_advisory_lock($1) AS locked', [LANE_ADVISORY_LOCK_ID]);
+        locked = Boolean(lock.rows[0]?.locked);
+        if (!locked) return { skipped: true, reason: 'another_lane_monitor_is_running' };
+
+        const cfg = legacyActivity.config();
+        const startedAt = new Date();
+        const before = await confirmationSnapshot();
+        const previousMode = process.env.STREAM_POLICY_MODE;
+        process.env.STREAM_POLICY_MODE = 'observe';
+        let observed;
+        try {
+            observed = await legacyActivity.runActivityPolicyCycle();
+        } finally {
+            if (previousMode === undefined) delete process.env.STREAM_POLICY_MODE;
+            else process.env.STREAM_POLICY_MODE = previousMode;
+        }
+        if (observed?.skipped) return observed;
+
+        await restoreLaneConfirmations(before);
+        await removeLegacyDecisionEvents(startedAt);
+
+        const rows = await observedSessionsWithLaneLimits();
+        const failedServerIds = new Set((observed.serverFailures || []).map(item => String(item.serverId)));
+        const lanePolicy = await evaluateLanePolicies(rows, failedServerIds, cfg);
+        return {
+            ...observed,
+            mode: cfg.effectiveMode,
+            requestedMode: cfg.requestedMode,
+            ...lanePolicy
+        };
     } finally {
-        if (previousMode === undefined) delete process.env.STREAM_POLICY_MODE;
-        else process.env.STREAM_POLICY_MODE = previousMode;
+        if (locked) {
+            try { await lockClient.query('SELECT pg_advisory_unlock($1)', [LANE_ADVISORY_LOCK_ID]); } catch (_) {}
+        }
+        lockClient.release();
     }
-    if (observed?.skipped) return observed;
-
-    // The legacy observer is retained for telemetry/history collection only.
-    // Remove decisions it made with the retired customer-wide grouping before
-    // writing the authoritative account/lane decisions below.
-    await query('DELETE FROM stream_policy_events WHERE created_at >= $1', [startedAt]);
-
-    const rows = await observedSessionsWithLaneLimits();
-    const failedServerIds = new Set((observed.serverFailures || []).map(item => String(item.serverId)));
-    const lanePolicy = await evaluateLanePolicies(rows, failedServerIds, cfg);
-    return {
-        ...observed,
-        mode: cfg.effectiveMode,
-        requestedMode: cfg.requestedMode,
-        ...lanePolicy
-    };
 }
 
 module.exports = {
+    LANE_ADVISORY_LOCK_ID,
     runActivityPolicyCycle,
     evaluateLanePolicies,
     effectiveStreamLimit,
     observedSessionsWithLaneLimits,
-    freshAccountSnapshot
+    freshAccountSnapshot,
+    overflowRows,
+    laneEntitlements,
+    laneStreamOverrides,
+    restoreLaneConfirmations
 };
