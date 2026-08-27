@@ -32,13 +32,18 @@ async function main() {
                 add('runtime settings', false, error.message);
             }
 
-            const worker = (await query(`
-                SELECT instance_id,last_heartbeat_at,
+            const workers = await query(`
+                SELECT worker_key,instance_id,last_heartbeat_at,
                        EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))::int AS age
-                FROM operational_worker_state WHERE worker_key='automation'
-            `)).rows[0];
-            add('automation worker', worker && Number(worker.age) < 90,
-                worker ? `instance=${worker.instance_id} heartbeat_age=${worker.age}s` : 'no heartbeat');
+                FROM operational_worker_state WHERE worker_key IN ('automation','activity')
+            `);
+            const byKey = new Map(workers.rows.map(row => [row.worker_key, row]));
+            const automationWorker = byKey.get('automation');
+            add('automation worker', automationWorker && Number(automationWorker.age) < 90,
+                automationWorker ? `instance=${automationWorker.instance_id} heartbeat_age=${automationWorker.age}s` : 'no heartbeat');
+            const activityWorker = byKey.get('activity');
+            add('activity worker', activityWorker && Number(activityWorker.age) < 120,
+                activityWorker ? `instance=${activityWorker.instance_id} heartbeat_age=${activityWorker.age}s` : 'no heartbeat');
 
             const backupWorker = (await query(`
                 SELECT instance_id,last_heartbeat_at,last_success_at,last_error,next_run_at,
@@ -54,9 +59,14 @@ async function main() {
                     : 'no heartbeat');
 
             const jobs = await jobHealth.list();
-            const critical = new Set(['billing', 'entitlements', 'plan_changes']);
+            const critical = new Set(['billing', 'entitlements', 'plan_changes', 'customer_inactivity']);
             const bad = jobs.filter(job => critical.has(job.job_key) && ['failed', 'stale', 'missing'].includes(jobHealth.healthState(job)));
+            const inactivityJob = jobs.find(job => job.job_key === 'customer_inactivity');
+            add('Free Server lifecycle job', Boolean(inactivityJob?.enabled), inactivityJob ? `state=${jobHealth.healthState(inactivityJob)} next=${inactivityJob.next_run_at || 'pending'}` : 'job row missing');
             add('critical automation jobs', bad.length === 0, bad.map(job => `${job.job_key}:${jobHealth.healthState(job)}`).join(', '));
+
+            const lifecycleTable = (await query(`SELECT to_regclass('public.jellyfin_account_lifecycle') AS table_name`)).rows[0]?.table_name;
+            add('Free Server lifecycle ledger', Boolean(lifecycleTable), lifecycleTable || 'table missing');
 
             const fleet = await query(`
                 SELECT COUNT(*)::int AS enabled,
@@ -70,16 +80,12 @@ async function main() {
                 `${fleet.rows[0].placement_ready}/${fleet.rows[0].enabled} placement-ready`);
         }
 
-        for (const check of checks) {
-            console.log(`${check.ok ? 'PASS' : 'FAIL'}  ${check.name}${check.detail ? ` — ${check.detail}` : ''}`);
-        }
+        for (const check of checks) console.log(`${check.ok ? 'PASS' : 'FAIL'}  ${check.name}${check.detail ? ` — ${check.detail}` : ''}`);
         const failed = checks.filter(check => !check.ok);
         if (failed.length) {
             process.exitCode = 1;
             console.error(`Deployment verification failed: ${failed.length} blocker(s).`);
-        } else {
-            console.log('Deployment verification passed.');
-        }
+        } else console.log('Deployment verification passed.');
     } finally {
         await getPool().end().catch(() => {});
     }
