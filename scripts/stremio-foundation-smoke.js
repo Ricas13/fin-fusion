@@ -1,7 +1,16 @@
 'use strict';
 
 const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
 const foundation=require('../src/stremio/foundation');
+
+const runtimeSource=fs.readFileSync(path.resolve(__dirname,'../src/stremio/runtime.js'),'utf8');
+const originBlock=runtimeSource.match(/async function publicOrigin\(req\) \{[\s\S]*?\n\}/)?.[0]||'';
+assert(originBlock,'Stremio publicOrigin helper must exist');
+assert.match(originBlock,/operations\.absoluteUrl\(req, '\/'\)/,'Stremio public URLs must delegate to the canonical platform origin policy');
+assert.doesNotMatch(originBlock,/x-forwarded-host|x-forwarded-proto|req\.get\(['"]host['"]\)|req\.headers\.host/i,'Stremio must not maintain a route-local forwarded Host/Proto origin policy');
+assert.doesNotMatch(runtimeSource,/x-forwarded-host|x-forwarded-proto/i,'Stremio runtime must not construct public URLs directly from forwarded headers');
 
 assert.deepStrictEqual(foundation.SERVICE_TYPES,['jellyfin','stremio','bundle']);
 assert.strictEqual(foundation.allowsJellyfin('jellyfin'),true);
