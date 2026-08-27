@@ -34,9 +34,40 @@ SELECT customer_id,'primary',streams,allow_downloads,allow_video_transcoding,
 FROM customer_policy_overrides
 ON CONFLICT (customer_id,access_lane) DO NOTHING;
 
--- Imported portal users are allowed to exist without an email. They have no
--- email address to verify, so treat that state as verification-complete while
--- keeping normal email registration/verification unchanged.
+-- Historically the schema defaulted audio transcoding and Live TV to enabled.
+-- New Jellyfin plans should be conservative unless the operator deliberately
+-- grants those capabilities.
+ALTER TABLE plans ALTER COLUMN allow_audio_transcoding SET DEFAULT FALSE;
+ALTER TABLE plans ALTER COLUMN allow_live_tv SET DEFAULT FALSE;
+
+-- Bring the direct Jellyfin catalogue back to the intended product contract:
+-- Free and Trial do not download; paid recurring access does. Live TV and all
+-- server-side media conversion are opt-in rather than silently inherited from
+-- the old permissive defaults. Existing stream counts are preserved except for
+-- Free Access, which is canonically one concurrent stream.
+UPDATE plans
+SET streams=CASE WHEN is_free_tier=TRUE THEN 1 ELSE streams END,
+    allow_downloads=CASE
+        WHEN is_free_tier=TRUE OR billing_interval='trial' THEN FALSE
+        WHEN price_minor>0 THEN TRUE
+        ELSE allow_downloads
+    END,
+    allow_video_transcoding=FALSE,
+    allow_audio_transcoding=FALSE,
+    allow_remuxing=FALSE,
+    allow_live_tv=FALSE,
+    allow_live_tv_management=FALSE,
+    allow_remote_access=TRUE,
+    updated_at=NOW()
+WHERE COALESCE(is_addon,FALSE)=FALSE
+  AND service_type='jellyfin'
+  AND audience IN ('direct','both');
+
+-- Imported portal users are allowed to exist without an email. There is no
+-- mailbox to verify in that state, so the verification gate is satisfied for
+-- email-less customer identities while normal public registration still
+-- requires a real email address. Adding/changing an email later follows the
+-- normal staged email-verification workflow.
 UPDATE app_users
 SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW()
 WHERE role='customer' AND email IS NULL;
