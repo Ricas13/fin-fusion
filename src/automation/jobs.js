@@ -19,6 +19,7 @@ const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
 const stremioExternalTokens=require('../stremio/external-token-maintenance');
 const stremioManagedEntitlements=require('../stremio/managed-entitlements');
+const customerDeletion=require('../platform/customer-deletion');
 require('../platform/bulk-operations');
 require('../platform/bulk-server-migration');
 require('../platform/operator-bulk-operations');
@@ -27,6 +28,7 @@ const jobs={
  async entitlements(){const warnings=await notifyExpiringSubscriptions(),expired=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements();return{...active,expired,warnings,processed:Number(expired||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(warnings.failed||0)}},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
+ async customer_deletions(){return customerDeletion.processDue({limit:10})},
  async notification_lifecycle(){return notificationLifecycle.run()},
  async bulk_jobs(){return bulkWorker.processBatch()},
  async stale_reclaim(){const reclaimed=await bulkWorker.reclaimStaleRunningItems();return{processed:Number(reclaimed||0),reclaimed:Number(reclaimed||0)}},
