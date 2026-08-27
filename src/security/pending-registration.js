@@ -27,6 +27,7 @@ function cleanCommunicationPreferences(value={}){
     };
 }
 async function serialize(client){await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:pending-registration',$1::bigint))`,[LOCK_SEED]);}
+async function assertNoUnclaimedJellyfinUsername(client,username){const conflict=await client.query(`SELECT 1 FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id WHERE c.user_id IS NULL AND lower(ja.jellyfin_username)=lower($1) LIMIT 1`,[username]);if(conflict.rowCount)throw new Error('That username belongs to an existing Jellyfin account. Use the existing-account claim link instead of creating a new account.');}
 async function terminalize(client,pendingId,message){
     await client.query(`UPDATE pending_registrations SET consumed_at=COALESCE(consumed_at,NOW()),updated_at=NOW() WHERE id=$1`,[pendingId]);
     await client.query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()) WHERE pending_registration_id=$1 AND consumed_at IS NULL AND released_at IS NULL`,[pendingId]);
@@ -47,6 +48,7 @@ async function begin({email,username,password,referralCode=null,communicationPre
         if(banned.rowCount)throw new Error('Registration is not available for this email address');
         const exists=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) OR lower(username)=lower($2) LIMIT 1`,[email,username]);
         if(exists.rowCount)throw new Error('An account already exists with that email or username');
+        await assertNoUnclaimedJellyfinUsername(client,username);
         await client.query(`DELETE FROM pending_registrations WHERE consumed_at IS NULL AND (expires_at<=NOW() OR lower(email)=lower($1) OR lower(username)=lower($2))`,[email,username]);
         const created=await client.query(`INSERT INTO pending_registrations(email,username,password_hash,referral_code,token_hash,expires_at,communication_preferences,free_access_requested) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) RETURNING id,email,username,expires_at,created_at,free_access_requested`,[email,username,passwordHash,ref,hash,expiresAt,JSON.stringify(prefs),Boolean(freeAccess)]);
         let freeReservation=null;
@@ -76,6 +78,7 @@ async function consume(rawToken){
         if(banned.rowCount)return terminalize(client,pending.id,'Registration is not available for this email address');
         const exists=await client.query(`SELECT 1 FROM app_users WHERE lower(COALESCE(email,''))=lower($1) OR lower(username)=lower($2) LIMIT 1`,[pending.email,pending.username]);
         if(exists.rowCount)return terminalize(client,pending.id,'An account already exists with that email or username');
+        try{await assertNoUnclaimedJellyfinUsername(client,pending.username);}catch(error){return terminalize(client,pending.id,error.message);}
         const user=(await client.query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',NOW()) RETURNING id,email,username,role,active,email_verified_at,created_at,session_version`,[pending.email,pending.username,pending.password_hash])).rows[0];
         const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
         await client.query(`INSERT INTO customer_communication_preferences(customer_id,phone_e164,whatsapp_opt_in,whatsapp_opted_in_at,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,CASE WHEN $3 THEN NOW() ELSE NULL END,$4,$5,$6,$7) ON CONFLICT(customer_id) DO UPDATE SET phone_e164=EXCLUDED.phone_e164,whatsapp_opt_in=EXCLUDED.whatsapp_opt_in,whatsapp_opted_in_at=EXCLUDED.whatsapp_opted_in_at,telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.phone_e164,prefs.whatsapp_opt_in,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
@@ -92,4 +95,4 @@ async function consume(rawToken){
 async function cleanupExpired(limit=500){const max=Math.max(1,Math.min(5000,Number(limit)||500)),result=await query(`WITH doomed AS (SELECT id FROM pending_registrations WHERE consumed_at IS NULL AND expires_at<=NOW() ORDER BY expires_at LIMIT $1) DELETE FROM pending_registrations p USING doomed d WHERE p.id=d.id RETURNING p.id`,[max]);return{processed:result.rowCount,removed:result.rowCount};}
 async function recent(limit=50){const result=await query(`SELECT id,email,username,expires_at,consumed_at,free_access_requested,created_at FROM pending_registrations ORDER BY created_at DESC LIMIT $1`,[Math.max(1,Math.min(200,Number(limit)||50))]);return result.rows;}
 async function stats(){const result=await query(`SELECT COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at>NOW())::int pending,COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at<=NOW())::int expired FROM pending_registrations`);return result.rows[0]||{pending:0,expired:0};}
-module.exports={FREE_HOLD_MINUTES,begin,consume,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,cleanCommunicationPreferences,canonicalFreePlan};
+module.exports={FREE_HOLD_MINUTES,begin,consume,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername};

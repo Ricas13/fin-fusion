@@ -57,6 +57,16 @@ function createCustomerPasswordSyncRouter() {
         }
     });
 
+    router.post('/account/jellyfin/:accountId/username', requireCustomer, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            await provisioning.renameJellyfinAccount(req.session.customerId, req.params.accountId, req.body.username, { actorUserId: req.session.customerUserId });
+            return res.redirect('/account?message=' + encodeURIComponent('Jellyfin username updated. Your watched history and profile stay with the same Jellyfin user.'));
+        } catch (error) {
+            return res.redirect('/account?error=' + encodeURIComponent(error.message || 'Jellyfin username could not be updated.'));
+        }
+    });
+
     return router;
 }
 

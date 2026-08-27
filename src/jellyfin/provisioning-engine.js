@@ -296,6 +296,7 @@ async function usernameAvailable(serverId, preferred) {
     const names = new Set((Array.isArray(users) ? users : []).map(u => String(u.Name || '').toLowerCase()));
     return !names.has(String(preferred || '').toLowerCase());
 }
+function cleanJellyfinUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._@+-]{3,80}$/.test(username))throw new Error('Jellyfin username must be 3-80 characters using letters, numbers, dot, underscore, dash, plus or @.');return username;}
 
 async function uniqueUsername(serverId, preferred) {
     const users = await registry.request(serverId, '/Users');
@@ -525,6 +526,27 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
     });
 }
 
+async function renameJellyfinAccount(customerId, accountId, newUsername, { actorUserId = null } = {}) {
+    const username = cleanJellyfinUsername(newUsername);
+    const result = await query(`SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'`, [accountId, customerId]);
+    if (!result.rowCount) throw new Error('Jellyfin account not found');
+    const account = result.rows[0];
+    if (new Date(account.created_at).getTime() >= new Date().setHours(0,0,0,0)) throw new Error('Jellyfin username changes are only available for accounts created before today.');
+    if (String(account.jellyfin_username || '').toLowerCase() === username.toLowerCase()) return account;
+    const local = await query(`SELECT 1 FROM jellyfin_accounts WHERE server_id=$1 AND lower(jellyfin_username)=lower($2) AND id<>$3 LIMIT 1`, [account.server_id, username, account.id]);
+    if (local.rowCount) throw new Error('That Jellyfin username is already used on this server.');
+    if (!(await usernameAvailable(account.server_id, username))) throw new Error('That Jellyfin username is already used on this server.');
+    return recordRun(customerId, null, 'username_change', async () => {
+        await registry.request(account.server_id, `/Users/${account.jellyfin_user_id}`, {
+            method: 'POST',
+            body: { Id: account.jellyfin_user_id, Name: username }
+        });
+        const updated = await query(`UPDATE jellyfin_accounts SET jellyfin_username=$3,updated_at=NOW() WHERE id=$1 AND customer_id=$2 RETURNING *`, [accountId, customerId, username]);
+        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.jellyfin.username_change','jellyfin_account',$2,$3::jsonb)`, [actorUserId, accountId, JSON.stringify({ previousUsername: account.jellyfin_username, newUsername: username, serverId: account.server_id, jellyfinUserId: account.jellyfin_user_id })]);
+        return updated.rows[0];
+    });
+}
+
 // Compatibility exports only. The public provisioning facade owns typed
 // access holds and subscription expiry semantics.
 async function holdAccess(customerId, reason) {
@@ -588,5 +610,6 @@ module.exports = {
     holdAccess,
     releaseAccess,
     setJellyfinPassword,
+    renameJellyfinAccount,
     expireSubscriptionsAndReconcile
 };
