@@ -19,6 +19,12 @@ function canonical(href){
     if(!u.pathname.startsWith('/admin'))return null;
     if(u.pathname.startsWith('/admin/api/'))return null;
     if(u.pathname.includes(':'))return null;
+    // The crawler inventories route surfaces, not every presentation-filter
+    // permutation. Range controls can expose many links to the same page and
+    // exhaust legitimate route/resource limits during one synthetic crawl.
+    // Explicitly-seeded query-dependent workflows remain covered separately.
+    const searchKeys=[...u.searchParams.keys()];
+    if(searchKeys.length&&searchKeys.every(key=>['range','from','to'].includes(key)))return u.pathname;
     return `${u.pathname}${u.search}`;
   }catch{return null}
 }
