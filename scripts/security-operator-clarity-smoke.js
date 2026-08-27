@@ -77,8 +77,8 @@ assert(/include\('_nav',\{siteName,activeNav:'servers'\}\)/.test(serverForm),'Se
 const csp=text('scripts/csp-inline-audit.js');
 assert(/Scan the complete source/.test(csp)&&!/lines\.forEach/.test(csp),'CSP static audit must remain multiline-aware.');
 
-const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js');
-assert(/docsUrl/.test(support)&&/Help & guides/.test(help),'Managed documentation URL must be discoverable from public Help.');
+const support=text('src/platform/support-policy.js'),help=text('src/platform/public-help.js'),publicPages=text('src/platform/public-pages.js');
+assert(/docsUrl/.test(support)&&/docsUrl/.test(publicPages)&&/link\('Contact','\/contact'\)/.test(help),'Managed documentation URL must remain discoverable from public pages: pre-signup Help links to Contact, which publishes the configured docs URL.');
 const navModel=require('../src/platform/admin-nav'),settings=text('src/platform/admin-original-settings.js'),fleet=text('src/platform/admin-fleet-operations.js'),serverControl=text('src/platform/admin-server-fleet-dashboard.js'),adminShell=text('src/platform/admin-html-core-base.js'),operatorExperience=text('public/js/operator-experience.js');
 const settingsGroup=navModel.groups.find(group=>group.key==='settings');
 assert(Boolean(settingsGroup),'Settings navigation group must exist.');
