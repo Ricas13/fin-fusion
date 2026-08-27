@@ -86,9 +86,14 @@ assert(adminSource.includes('bash recovery.sh drill'), 'admin must point to the 
 assert(!adminSource.includes("router.post('/admin/backups/restore'"), 'browser must not own a destructive restore endpoint');
 assert(!adminSource.includes("require('child_process')"), 'admin route must not gain host command execution');
 
-const recoverySource = fs.readFileSync(path.join(root, 'recovery.sh'), 'utf8');
+const recoverySource = fs.readFileSync(path.join(root, 'recovery.sh'), 'utf8').replace(/\r\n/g, '\n');
 const shellCheck = spawnSync('bash', ['-n', path.join(root, 'recovery.sh')], { encoding: 'utf8' });
-assert.strictEqual(shellCheck.status, 0, `recovery.sh syntax failed: ${shellCheck.stderr}`);
+if (shellCheck.error && shellCheck.error.code === 'ENOENT') {
+  console.log('backup recovery readiness smoke: skipped recovery.sh bash syntax check (bash not found).');
+} else {
+  if (shellCheck.error) throw shellCheck.error;
+  assert.strictEqual(shellCheck.status, 0, `recovery.sh syntax failed: ${shellCheck.stderr || shellCheck.signal || shellCheck.status}`);
+}
 assert(recoverySource.includes('bash recovery.sh check <backup-path>'));
 assert(recoverySource.includes('bash recovery.sh drill <backup-path>'));
 assert(recoverySource.includes('RESTORE_CONFIRM=RESTORE_CAPTAINFIN_DATABASE'));
