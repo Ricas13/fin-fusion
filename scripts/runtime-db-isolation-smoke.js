@@ -62,6 +62,8 @@ assert(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO \$\{role\}/.test(roleScri
 assert(/GRANT INSERT,UPDATE ON \$\{table\} TO \$\{role\}/.test(roleScript), 'backup role must write only its bookkeeping tables');
 assert(/backupVerify:\s*\{[^}]*createdb:\s*true/.test(roleScript) && /async function grantBackupVerify[\s\S]*?REVOKE ALL ON SCHEMA public FROM \$\{role\}[\s\S]*?REVOKE ALL ON ALL TABLES IN SCHEMA public FROM \$\{role\}[\s\S]*?REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM \$\{role\}/.test(roleScript), 'restore verifier must use a CREATEDB-only identity with no production schema/table/sequence grants');
 assert(/auth_totp_enrollments/.test(roleScript) && /auth_sessions/.test(roleScript), 'automation role must explicitly exclude authentication secrets');
+assert(/GRANT UPDATE\(last_activity_at,updated_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must be able to advance only Jellyfin activity bookkeeping columns');
+assert(/GRANT SELECT\(id,customer_id,server_id,jellyfin_user_id,disabled,account_purpose,last_activity_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must be able to compare managed Jellyfin activity without broad table access');
 
 assert(/CREATE TABLE IF NOT EXISTS user_sessions/.test(sessionMigration), 'runtime session table must be migration-owned');
 for (const column of ['sid VARCHAR','sess JSON','expire TIMESTAMP']) assert(sessionMigration.includes(column), `session migration is missing ${column}`);
