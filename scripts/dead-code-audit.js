@@ -101,6 +101,19 @@ const strongSourceOrphans=sourceFiles.filter(file=>!repositoryReachable.has(file
 const testOnlySource=sourceFiles.filter(file=>repositoryReachable.has(file)&&!productionReachable.has(file));
 const strongScriptOrphans=scriptFiles.filter(file=>!repositoryReachable.has(file));
 
+function countWord(text,word){
+  const escaped=word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return (text.match(new RegExp(`\\b${escaped}\\b`,'g'))||[]).length;
+}
+const unreferencedFunctionDeclarations=[];
+for(const file of jsFiles){
+  const text=contents.get(file)||'';
+  for(const match of text.matchAll(/^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm)){
+    const name=match[1];
+    if(countWord(text,name)===1)unreferencedFunctionDeclarations.push(`${file}:${name}`);
+  }
+}
+
 const referenceTextFiles=[
   ...sourceFiles,
   ...scriptFiles,
@@ -139,6 +152,7 @@ const report={
   strongSourceOrphans:strongSourceOrphans.sort(),
   testOnlySource:testOnlySource.sort(),
   strongScriptOrphans:strongScriptOrphans.sort(),
+  unreferencedFunctionDeclarations:unreferencedFunctionDeclarations.sort(),
   orphanPublicJs:orphanPublicJs.sort(),
   orphanViews:orphanViews.sort(),
   duplicateJsBasenames:duplicateBasenames(jsFiles).sort((a,b)=>a[0].localeCompare(b[0]))
@@ -151,6 +165,7 @@ for(const [label,items] of [
   ['strong source orphans',report.strongSourceOrphans],
   ['production-unreachable/test-only source',report.testOnlySource],
   ['strong script orphans',report.strongScriptOrphans],
+  ['unreferenced function declarations',report.unreferencedFunctionDeclarations],
   ['unreferenced public JS candidates',report.orphanPublicJs],
   ['unreferenced view candidates',report.orphanViews]
 ]){
