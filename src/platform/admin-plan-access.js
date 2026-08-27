@@ -82,7 +82,8 @@ function values(plan, body = null) {
     allowLiveTv: body ? b(source.allowLiveTv) : Boolean(plan.allow_live_tv),
     allowLiveTvManagement: body ? b(source.allowLiveTvManagement) : Boolean(plan.allow_live_tv_management),
     allowRemoteAccess: body ? b(source.allowRemoteAccess) : Boolean(plan.allow_remote_access),
-    allow4k: body ? b(source.allow4k) : Boolean(plan.allow_4k)
+    allow4k: body ? b(source.allow4k) : Boolean(plan.allow_4k),
+    allowSubtitleEditing: body ? b(source.allowSubtitleEditing) : Boolean(plan.allow_subtitle_editing)
   };
 }
 function toggle(name, label, value) {
@@ -100,7 +101,7 @@ async function page(plan, req, error = '', body = null) {
   <section class="section"><div class="sectionHead"><div><h2>Access & playback</h2><div class="muted">Each product component keeps its own enforcement driver and household lease settings.</div></div><span class="muted">${affected} live entitlement${affected === 1 ? '' : 's'}</span></div>
   <form class="formPanel" method="post" action="/admin/plans/${esc(plan.id)}/access" data-plan-access-editor><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">
   ${v.jellyfin ? `<h3>Jellyfin access</h3><div class="formGrid"><div class="formGroup"><label for="jellyfin-access-model">Playback enforcement</label><select id="jellyfin-access-model" class="input" name="jellyfinAccessModel" data-jellyfin-access-model><option value="concurrent_streams" ${selected('concurrent_streams', v.accessModel)}>Concurrent streams</option><option value="household_network" ${selected('household_network', v.accessModel)}>Household network / IP lease</option></select><div class="inlineHelp">The policy driver can change without changing the rest of the Jellyfin provisioning policy.</div></div><div class="formGroup" data-jellyfin-stream-fields ${household ? 'hidden' : ''}><label for="jellyfin-concurrent-streams">Concurrent streams</label><input id="jellyfin-concurrent-streams" class="input" type="number" min="1" max="50" name="streams" value="${esc(v.streams)}"><div class="inlineHelp">The existing stream monitor enforces this limit.</div></div><div class="formGroup" data-jellyfin-household-fields ${household ? '' : 'hidden'}><label for="jellyfin-household-network-limit">Simultaneous household networks</label><input id="jellyfin-household-network-limit" class="input" type="number" min="1" max="10" name="jellyfinHouseholdNetworkLimit" value="${esc(v.jellyfinHouseholdNetworkLimit)}"><label for="jellyfin-household-lease-minutes">Network lease</label><div class="inputUnit"><input id="jellyfin-household-lease-minutes" class="input" type="number" min="15" max="1440" name="jellyfinHouseholdLeaseMinutes" value="${esc(v.jellyfinHouseholdLeaseMinutes)}"><span>minutes</span></div><div class="inlineHelp">Same-network playback refreshes the lease. IPv6 devices sharing a /64 count as one network.</div></div></div>
-  <h3>Jellyfin user policy</h3><div class="toggleGrid">${toggle('allowDownloads','Downloads',v.allowDownloads)}${toggle('allowVideoTranscoding','Video transcoding',v.allowVideoTranscoding)}${toggle('allowAudioTranscoding','Audio transcoding',v.allowAudioTranscoding)}${toggle('allowRemuxing','Remuxing',v.allowRemuxing)}${toggle('allowLiveTv','Live TV',v.allowLiveTv)}${toggle('allowLiveTvManagement','Live TV management',v.allowLiveTvManagement)}${toggle('allowRemoteAccess','Remote access',v.allowRemoteAccess)}${toggle('allow4k','4K catalogue flag',v.allow4k)}</div>` : ''}
+  <h3>Jellyfin user policy</h3><div class="toggleGrid">${toggle('allowDownloads','Downloads',v.allowDownloads)}${toggle('allowVideoTranscoding','Video transcoding',v.allowVideoTranscoding)}${toggle('allowAudioTranscoding','Audio transcoding',v.allowAudioTranscoding)}${toggle('allowRemuxing','Remuxing',v.allowRemuxing)}${toggle('allowLiveTv','Live TV',v.allowLiveTv)}${toggle('allowLiveTvManagement','Live TV management',v.allowLiveTvManagement)}${toggle('allowRemoteAccess','Remote access',v.allowRemoteAccess)}${toggle('allow4k','4K catalogue flag',v.allow4k)}${toggle('allowSubtitleEditing','Edit subtitles',v.allowSubtitleEditing)}</div>` : ''}
   ${v.stremio ? `<h3>Stremio household</h3><div class="securityNote standalone"><strong>1 household slot (IPv4 + IPv6 /64)</strong><div class="subText">Unlimited Stremio playback inside the household slot: one IPv4 address and one IPv6 /64 prefix are allowed before another same-family network is rejected.</div></div><div class="formGroup narrow"><label for="stremio-household-lease-minutes">Stremio network lease</label><div class="inputUnit"><input id="stremio-household-lease-minutes" class="input" type="number" min="15" max="1440" name="stremioHouseholdLeaseMinutes" value="${esc(v.stremioHouseholdLeaseMinutes)}"><span>minutes</span></div><div class="inlineHelp">This lease refreshes on playback and can be reset from the customer or admin Stremio controls.</div></div>` : ''}
   <div class="operatorCallout statusInfo"><strong>Policy changes:</strong> saving clears active household leases for subscriptions on this plan so the new policy applies immediately. Jellyfin customers are reconciled through the existing bounded background-job queue.</div>
   ${impactConfirmation(plan, affected, body)}
@@ -126,7 +127,8 @@ function parse(plan, body) {
     allowLiveTv: jellyfin ? b(body.allowLiveTv) : Boolean(plan.allow_live_tv),
     allowLiveTvManagement: jellyfin ? b(body.allowLiveTvManagement) : Boolean(plan.allow_live_tv_management),
     allowRemoteAccess: jellyfin ? b(body.allowRemoteAccess) : Boolean(plan.allow_remote_access),
-    allow4k: jellyfin ? b(body.allow4k) : Boolean(plan.allow_4k)
+    allow4k: jellyfin ? b(body.allow4k) : Boolean(plan.allow_4k),
+    allowSubtitleEditing: jellyfin ? b(body.allowSubtitleEditing) : Boolean(plan.allow_subtitle_editing)
   };
 }
 async function clearPlanLeases(client, planId) {
@@ -145,10 +147,12 @@ async function save(plan, input, actorUserId) {
          jellyfin_access_model=$2,jellyfin_household_network_limit=$3,jellyfin_household_lease_minutes=$4,
          stremio_household_lease_minutes=$5,streams=$6,
          allow_downloads=$7,allow_video_transcoding=$8,allow_audio_transcoding=$9,allow_remuxing=$10,
-         allow_live_tv=$11,allow_live_tv_management=$12,allow_remote_access=$13,allow_4k=$14,updated_at=NOW()
+         allow_live_tv=$11,allow_live_tv_management=$12,allow_remote_access=$13,allow_4k=$14,
+         allow_subtitle_editing=$15,updated_at=NOW()
        WHERE id=$1`,
       [plan.id, input.accessModel, input.jellyfinHouseholdNetworkLimit, input.jellyfinHouseholdLeaseMinutes, input.stremioHouseholdLeaseMinutes, input.streams,
-       input.allowDownloads, input.allowVideoTranscoding, input.allowAudioTranscoding, input.allowRemuxing, input.allowLiveTv, input.allowLiveTvManagement, input.allowRemoteAccess, input.allow4k]
+       input.allowDownloads, input.allowVideoTranscoding, input.allowAudioTranscoding, input.allowRemuxing, input.allowLiveTv, input.allowLiveTvManagement, input.allowRemoteAccess, input.allow4k,
+       input.allowSubtitleEditing]
     );
     await clearPlanLeases(client, plan.id);
     await client.query(

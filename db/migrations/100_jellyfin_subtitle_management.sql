@@ -1,0 +1,5 @@
+BEGIN;
+
+ALTER TABLE plans ADD COLUMN IF NOT EXISTS allow_subtitle_editing boolean NOT NULL DEFAULT TRUE;
+
+COMMIT;

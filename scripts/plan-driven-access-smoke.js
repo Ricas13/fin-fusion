@@ -39,7 +39,7 @@ assert(nav.includes("referrals:Object.freeze")&&nav.includes("['referrals','Affi
 // New customer plans are inventory-controlled and Jellyfin plans expose the real policy surface.
 for(const token of ['capacityLimit','streams','allowDownloads','allowVideoTranscoding','allowAudioTranscoding','allowRemuxing','allowLiveTv','allowLiveTvManagement','allowRemoteAccess','libraryAccessMode','libraryNames'])assert(createPlan.includes(token),`New plan is missing ${token}`);
 assert(createPlan.includes('allow_4k'),'New Jellyfin plans must persist the existing 4K catalogue flag');
-assert(createPlan.includes('Subtitles:')&&createPlan.includes('does not expose a separate per-user subtitle permission'),'Plan UI must explain subtitle limitations instead of presenting a fake policy toggle');
+assert(createPlan.includes('allowSubtitleEditing')&&createPlan.includes("'Edit subtitles'"),'New Jellyfin plans must expose the real Jellyfin subtitle-management permission');
 assert(createPlan.includes('inactivityEnabled')&&createPlan.includes('minimumPlaybackMinutes')&&createPlan.includes('noPlaybackDays'),'Free plan creation must include configurable Jellyfin usage rules');
 assert(planPolicy.includes("billing_interval||'')==='trial'"),'Plan usage disabling must explicitly exclude trial plans');
 const inheritedPolicy=planPolicyRuntime.effectiveForFreePlan({},{enabled:true,dryRun:false,freeNoPlaybackDays:7});

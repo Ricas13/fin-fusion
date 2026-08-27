@@ -213,6 +213,7 @@ function policyBody(effectiveTechnical, disabled, libraryAccess) {
         EnableSharedDeviceControl: false,
         EnableLiveTvManagement: enabled && Boolean(effectiveTechnical.allow_live_tv_management),
         EnableLiveTvAccess: enabled && Boolean(effectiveTechnical.allow_live_tv),
+        EnableSubtitleManagement: enabled && Boolean(effectiveTechnical.allow_subtitle_editing),
         EnableUserPreferenceAccess: enabled,
         AuthenticationProviderId: 'Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider',
         PasswordResetProviderId: 'Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider',

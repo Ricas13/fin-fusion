@@ -15,7 +15,8 @@ const TECHNICAL_FIELDS = [
     'allow_remuxing',
     'allow_live_tv',
     'allow_live_tv_management',
-    'allow_remote_access'
+    'allow_remote_access',
+    'allow_subtitle_editing'
 ];
 
 const DEFAULT_PLAN_VALUES = {
@@ -26,7 +27,8 @@ const DEFAULT_PLAN_VALUES = {
     allow_remuxing: false,
     allow_live_tv: false,
     allow_live_tv_management: false,
-    allow_remote_access: false
+    allow_remote_access: false,
+    allow_subtitle_editing: true
 };
 
 function hasValue(v) {
