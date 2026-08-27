@@ -2,7 +2,6 @@
 
 const express = require('express');
 const core = require('./router-core');
-const { createRuntimeLegacyRouter } = require('./router-runtime-legacy');
 const placement = require('../jellyfin/placement');
 const lifecycle = require('../payments/lifecycle');
 const publicAbuseProtection = require('../security/public-abuse-protection');
@@ -36,10 +35,11 @@ const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerActivityRouter } = require('./customer-activity');
 const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
+const { createCustomerAffiliateRouter } = require('./customer-affiliate');
+const { createCustomerLibrarySelectionRouter } = require('./customer-library-selection');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerSupportRouter } = require('./customer-support');
 const { createCustomerDocsRouter } = require('./customer-docs');
-const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerCommunicationsRouter, createMessagingBotWebhookRouter } = require('./customer-communications');
 const { createCustomerPaymentReturnRouter, mutationGuard } = require('./customer-payment-return');
 
@@ -83,6 +83,7 @@ function createRouter() {
     router.use(createCustomerCommunicationsRouter());
     router.use(createCustomerStremioRouter());
     router.use(createCustomerAffiliateRouter());
+    router.use(createCustomerLibrarySelectionRouter());
     router.use(createCustomerDashboardRouter());
     router.use(createCustomerSupportRouter());
     router.use(createCustomerDocsRouter());
@@ -132,7 +133,6 @@ function createRouter() {
         }
     });
 
-    router.use(createRuntimeLegacyRouter());
     return router;
 }
 
