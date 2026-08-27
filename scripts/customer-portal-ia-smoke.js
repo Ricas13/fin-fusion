@@ -124,7 +124,7 @@ assert(activity.includes('WHERE ph.customer_id=$1')&&activity.includes('WHERE cu
 assert(/\/account\/trial\/start[\s\S]*welcome=1/.test(router),'trial completion must enter welcome flow');
 assert(/\/account\/claim-free\/:planCode[\s\S]*welcome=1/.test(router),'Free Access completion must enter welcome flow');
 assert(paymentReturn.includes('/account?welcome=1'),'PayPal completion must enter welcome flow');
-assert(checkout.includes('/account?welcome=1&message=Payment%20received.'),'Stripe completion must enter welcome flow');
+assert(paymentReturn.includes("'/account/stripe/return'")&&paymentReturn.includes('stripe.confirmCheckout(sessionId,row)')&&paymentReturn.includes("completedRedirect(res,'Stripe payment confirmed."),'Stripe completion must enter welcome flow only after provider confirmation');
 assert(storefront.includes('/account/register?intent=free'),'public Free Access CTA must carry explicit free intent into registration');
 assert(pending.includes('FREE_HOLD_MINUTES=20')&&pending.includes('free_access_registration_reservations'),'verified Free Access registration must create a real expiring capacity hold');
 assert(capacity.includes('free_access_registration_reservations')&&capacity.includes('reserved'),'plan capacity must count live registration holds');
