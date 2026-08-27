@@ -174,4 +174,5 @@ for(const [label,items] of [
 }
 
 if(process.argv.includes('--json'))console.log(`\n${JSON.stringify(report,null,2)}`);
-if(process.argv.includes('--strict')&&(strongSourceOrphans.length||strongScriptOrphans.length))process.exitCode=1;
+const strictFailures=[strongSourceOrphans,testOnlySource,strongScriptOrphans,unreferencedFunctionDeclarations,orphanPublicJs,orphanViews].reduce((sum,items)=>sum+items.length,0);
+if(process.argv.includes('--strict')&&strictFailures)process.exitCode=1;
