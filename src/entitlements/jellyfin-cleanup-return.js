@@ -31,12 +31,25 @@ async function restoreReturningCustomer(customerId,{reconcile}={}){
   for(const row of cleanupHolds.rows)await accessHolds.releaseHold({customerId,type:CLEANUP_HOLD_TYPE,sourceKey:row.source_key});
   if(canRestoreDeletedFree)await accessHolds.releaseHold({customerId,type:INACTIVITY_HOLD_TYPE,sourceKey:inactivitySource});
 
-  if(typeof reconcile==='function')await reconcile(customerId);
+  // The inactivity episode ends when the returning entitled customer releases
+  // the hold. Close the durable lifecycle row before reprovisioning so a
+  // temporary Jellyfin outage cannot leave a stale "deleted" episode forever.
+  // Resilient provisioning records its own retry state if the rebuild fails.
+  if(canRestoreDeletedFree){
+    await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),metadata=metadata||$2::jsonb,updated_at=NOW() WHERE customer_id=$1 AND category='free' AND deleted_at IS NOT NULL AND restored_at IS NULL`,[customerId,JSON.stringify({portalReturn:true,reprovisionRequestedAfterDeletion:true})]);
+  }
+
+  try{
+    if(typeof reconcile==='function')await reconcile(customerId);
+  }catch(error){
+    await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({releasedCleanupHolds:cleanupHolds.rowCount,releasedInactivityHold:canRestoreDeletedFree,portalReturn:true,freePlanId:freeEntitlement?.plan_id||null,reprovisionPending:true,error:String(error?.message||error).slice(0,500)})]).catch(()=>{});
+    throw error;
+  }
 
   if(canRestoreDeletedFree){
-    await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),metadata=metadata||$2::jsonb,updated_at=NOW() WHERE customer_id=$1 AND category='free' AND deleted_at IS NOT NULL AND restored_at IS NULL`,[customerId,JSON.stringify({portalReturn:true,reprovisionedAfterDeletion:true})]);
+    await query(`UPDATE jellyfin_account_lifecycle SET metadata=metadata||$2::jsonb,updated_at=NOW() WHERE customer_id=$1 AND category='free' AND restored_at IS NOT NULL`,[customerId,JSON.stringify({reprovisionedAfterDeletion:true})]);
   }
-  await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({releasedCleanupHolds:cleanupHolds.rowCount,releasedInactivityHold:canRestoreDeletedFree,portalReturn:true,freePlanId:freeEntitlement?.plan_id||null})]);
+  await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('jellyfin.cleanup.restore_on_portal_return','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({releasedCleanupHolds:cleanupHolds.rowCount,releasedInactivityHold:canRestoreDeletedFree,portalReturn:true,freePlanId:freeEntitlement?.plan_id||null,reprovisionPending:false})]);
   return{restored:true,released:Number(cleanupHolds.rowCount)+Number(canRestoreDeletedFree),freeLifecycleRestored:canRestoreDeletedFree};
 }
 module.exports={CLEANUP_HOLD_TYPE,INACTIVITY_HOLD_TYPE,restoreReturningCustomer};
