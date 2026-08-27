@@ -36,7 +36,7 @@ function assessUsage(row,policy,now=Date.now()){
 
 async function telemetryReady(){const[worker,servers]=await Promise.all([query(`SELECT EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age_seconds FROM operational_worker_state WHERE worker_key='activity'`),query(`SELECT COUNT(*)::int enabled,COUNT(*) FILTER(WHERE health_status='offline' OR last_health_check IS NULL OR last_health_check<NOW()-INTERVAL '10 minutes')::int unsafe FROM jellyfin_servers WHERE enabled=TRUE`)]);const age=Number(worker.rows[0]?.age_seconds??Infinity),enabled=Number(servers.rows[0]?.enabled||0),unsafe=Number(servers.rows[0]?.unsafe||0);return{ready:Number.isFinite(age)&&age<120&&enabled>0&&unsafe===0,activityWorkerAgeSeconds:Number.isFinite(age)?Math.round(age):null,enabledServers:enabled,unsafeServers:unsafe};}
 
-async function candidates(globalCfg=null){
+async function candidates(globalCfg=null,{customerId=null}={}){
   globalCfg=globalCfg||await lifecyclePolicy.get();
   if(!globalCfg.enabled)return[];
   const result=await query(`
@@ -48,6 +48,7 @@ async function candidates(globalCfg=null){
         AND s.starts_at<=NOW() AND s.current_period_end>NOW()
         AND p.is_free_tier=TRUE AND p.price_minor=0
         AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
+        AND ($2::uuid IS NULL OR s.customer_id=$2::uuid)
       ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
     )
     SELECT fa.*,ja.id account_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,ja.created_at account_created_at,ja.last_activity_at,js.name server_name,
@@ -68,12 +69,12 @@ async function candidates(globalCfg=null){
     ) us ON TRUE
     WHERE NOT EXISTS(SELECT 1 FROM customer_bans b WHERE b.customer_id=fa.customer_id AND b.revoked_at IS NULL AND b.blocks_service_access=TRUE)
     ORDER BY COALESCE(us.last_playback_at,ja.last_activity_at,ja.created_at),customer_name
-  `,[HOLD_TYPE]);
+  `,[HOLD_TYPE,customerId||null]);
   return result.rows.map(row=>{
-    const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg),assessment=assessUsage(row,policy),usageTriggered=assessment.noPlaybackEligible||assessment.usageEligible,eligible=policy.enabled&&!row.automation_protected&&!row.currently_playing&&usageTriggered,triggers=[];
+    const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg),assessment=assessUsage(row,policy),usageTriggered=planPolicy.usageTriggered(assessment,policy),eligible=policy.enabled&&!row.automation_protected&&!row.currently_playing&&usageTriggered,triggers=[];
     if(assessment.noPlaybackEligible)triggers.push(`no Free Server playback for ${policy.noPlaybackDays} day(s)`);
     if(assessment.usageEligible)triggers.push(`${Math.round(assessment.seconds/60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`);
-    return{...row,policy,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?'Free Server usage requirements currently satisfied':null].filter(Boolean)};
+    return{...row,policy,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?'Free Server removal requires all configured usage rules to be met':null].filter(Boolean)};
   }).filter(row=>planPolicy.hasUsageTrigger(row.policy));
 }
 
