@@ -35,7 +35,7 @@ const PROVIDER_MUTATION_OWNERS = new Set([
 const MANUAL_SUBSCRIPTION_OWNER = 'src/entitlements/manual-subscriptions.js';
 
 const ENTITLEMENT_CONSUMERS = [
-    /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-core|provisioning-engine|placement|placement-preview|plan-servers)\.js$/,
+    /^src\/jellyfin\/(?:activity|policy|provisioning|provisioning-engine|placement|placement-preview|plan-servers)\.js$/,
     /^src\/integrations\/.+\.js$/
 ];
 
@@ -75,14 +75,11 @@ for (const file of sourceFiles) {
 
 if (!manualOwnerHasInsert) failures.push(`${MANUAL_SUBSCRIPTION_OWNER}: canonical manual subscription INSERT is missing`);
 
-const lifecycleCore = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle-core.js'), 'utf8');
+const lifecycleCorePath = path.join(SRC, 'payments', 'lifecycle-core.js');
 const lifecycle = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle.js'), 'utf8');
 const primitives = fs.readFileSync(path.join(SRC, 'payments', 'lifecycle-primitives.js'), 'utf8');
-if (!/module\.exports\s*=\s*require\(['"]\.\/lifecycle['"]\)/.test(lifecycleCore)) {
-    failures.push('src/payments/lifecycle-core.js: historical path must delegate directly to lifecycle.js');
-}
-if (/\basync\s+function\b|\bfunction\s+(?:startFreeTrial|claimFreePlan|getProviderPlan)\b/.test(lifecycleCore)) {
-    failures.push('src/payments/lifecycle-core.js: duplicate lifecycle implementation detected');
+if (fs.existsSync(lifecycleCorePath)) {
+    failures.push('src/payments/lifecycle-core.js: retired historical lifecycle facade must stay removed');
 }
 if (/require\(['"]\.\/lifecycle-core['"]\)/.test(lifecycle)) {
     failures.push('src/payments/lifecycle.js: canonical lifecycle must depend on primitives, not lifecycle-core');
