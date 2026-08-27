@@ -193,12 +193,11 @@ async function main(){
       ['/admin/request-users','Request service']
     ]) await assertWorkflow(page,url,connectionTabs,active);
 
-    const provisioningTabs=['Provisioning','Customer moves','Access consistency'];
-    for(const [url,active] of [
-      ['/admin/provisioning','Provisioning'],
-      ['/admin/provisioning/migrations','Customer moves'],
-      ['/admin/provisioning/drift','Access consistency']
-    ]) await assertWorkflow(page,url,provisioningTabs,active);
+    const provisioningTabs=['Provisioning','Access consistency'];
+    await assertWorkflow(page,'/admin/provisioning',provisioningTabs,'Provisioning');
+    await assertWorkflow(page,'/admin/provisioning/drift',provisioningTabs,'Access consistency');
+    await assertWorkflow(page,'/admin/provisioning/migrations',provisioningTabs);
+    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Customer moves','Customer moves must remain reachable from Customer 360 without reappearing in the Provisioning sidebar');
     const legacyRequestResponse=await page.goto(`${BASE}/admin/request-plan-policy`,{waitUntil:'domcontentloaded',timeout:20000});
     assert(legacyRequestResponse&&legacyRequestResponse.status()<400,'legacy Request limits URL must remain a safe compatibility redirect');
     assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');
