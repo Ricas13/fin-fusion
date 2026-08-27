@@ -116,6 +116,25 @@ async function main() {
         application.includes("res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet, noimageindex');"),
         'every CAPTAiNFiN response must carry the global no-index header'
     );
+
+    // GET /logout is retained only as a compatibility/confirmation URL. It must
+    // never revoke or destroy a session; the actual mutation is POST + CSRF.
+    const staffController = read('src/auth/staff-controller.js');
+    const logoutFlow = read('src/platform/logout.js');
+    assert(
+        staffController.includes('async function logout(req,res,next){return logoutFlow.confirmation(req,res,next)}'),
+        'legacy GET /logout wiring must delegate only to the non-mutating confirmation page'
+    );
+    assert(staffController.includes("router.post('/logout',logoutFlow.logout)"), 'logout mutation must have an explicit POST owner');
+    assert(logoutFlow.includes('if(!csrf.verify(req))'), 'logout POST must verify the session CSRF token before mutation');
+    assert(logoutFlow.includes('staffAuth.markSessionLoggedOut'), 'staff logout must revoke the authoritative staff auth session');
+    assert(logoutFlow.includes("UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW())"), 'customer logout must revoke its auth_sessions row before destroying the browser session');
+    const confirmationStart = logoutFlow.indexOf('async function confirmation(');
+    const confirmationEnd = logoutFlow.indexOf('\nasync function logout(', confirmationStart);
+    const confirmationSource = logoutFlow.slice(confirmationStart, confirmationEnd);
+    assert(!confirmationSource.includes('destroy(req)')&&!confirmationSource.includes('markSessionLoggedOut')&&!confirmationSource.includes('revoked_at'), 'GET logout confirmation must remain side-effect free');
+    assert(logoutFlow.includes("res.clearCookie(process.env.SESSION_COOKIE_NAME||'steamfusion.sid',{path:'/'})"), 'logout must clear the browser session cookie after revocation');
+
     const robots = read('public/robots.txt');
     assert(/User-agent:\s*\*/i.test(robots), 'robots.txt must target all crawlers');
     assert(/^Disallow:\s*$/im.test(robots), 'robots.txt must allow crawling so known URLs can receive the noindex response header');
