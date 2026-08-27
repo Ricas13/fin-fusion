@@ -21,6 +21,7 @@ function explicitRoutes(source) {
 
 function main() {
     const platformRouter = read('src/platform/router.js');
+    const adminComposition = read('src/platform/admin-route-composition.js');
     const runtimeLegacy = read('src/platform/router-runtime-legacy.js');
     const routerCore = read('src/platform/router-core.js');
 
@@ -28,10 +29,9 @@ function main() {
     assert(!/\.stack\s*=/.test(platformRouter), 'platform router must not mutate Express private .stack internals');
     assert(!platformRouter.includes('core.createRouter()'), 'production must not construct the obsolete router-core route set');
     assert(platformRouter.includes('createRuntimeLegacyRouter()'), 'production must mount the explicit runtime compatibility router');
-    assert(
-        platformRouter.includes("onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter)"),
-        'global notification compatibility router must be constrained to its canonical URL prefix'
-    );
+    assert(!platformRouter.includes('onlyPathPrefix'), 'platform router must not hide child routers behind opaque path-prefix middleware');
+    assert(!platformRouter.includes('createAdminNotificationPreferencesRouter'), 'global admin notification preferences must not have a second owner in the platform router');
+    assert(adminComposition.includes('app.use(createAdminNotificationPreferencesRouter());'), 'global admin notification preferences must be owned by canonical admin route composition');
 
     const expected = [
         'GET /api/platform/plans',
@@ -78,7 +78,7 @@ function main() {
         assert(!routerCore.includes(retiredPath), `replaced route remains in router-core: ${retiredPath}`);
     }
 
-    console.log('platform router composition: ok (no private stack pruning; dead router-core generation retired; compatibility routes explicit)');
+    console.log('platform router composition: ok (admin ownership explicit; no opaque prefix routers; runtime compatibility routes explicit)');
 }
 
 try {
