@@ -258,7 +258,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
 
     for (const row of eligible) {
         const dryRun = forceDryRun === null ? row.policy.dryRun : Boolean(forceDryRun);
-        const evidence = { planId: row.plan_id, planCode: row.plan_code, accessLane: 'free', accountId: row.account_id, serverId: row.server_id, lastPlaybackAt: row.last_playback_at || null, inactiveReferenceAt: row.inactive_reference_at, observationStartedAt: row.observation_started_at, playbackMinutes: Math.round(row.playback_seconds / 60), triggers: row.triggers, dryRun, policyInherited: row.policy.inherited, portalAccountPreserved: true, activityRefreshedImmediatelyBeforeDecision: true };
+        const evidence = { planId: row.plan_id, planCode: row.plan_code, accessLane: 'free', accountId: row.account_id, serverId: row.server_id, lastPlaybackAt: row.last_playback_at || null, inactiveReferenceAt: row.inactive_reference_at, observationStartedAt: row.observation_started_at, playbackMinutes: Math.round(row.playback_seconds / 60), triggers: row.triggers, dryRun, policyInherited: row.policy.inherited, repairExistingHold: Boolean(row.repairExistingHold), portalAccountPreserved: true, activityRefreshedImmediatelyBeforeDecision: true };
         try {
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`, [actorUserId,dryRun?'customer.inactivity.would_disable_jellyfin':'customer.inactivity.disable_jellyfin',row.customer_id,JSON.stringify(evidence)]);
             if (dryRun) { wouldDisable += 1; continue; }

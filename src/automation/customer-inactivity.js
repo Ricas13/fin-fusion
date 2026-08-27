@@ -70,10 +70,10 @@ async function candidates(globalCfg=null){
     ORDER BY COALESCE(us.last_playback_at,ja.last_activity_at,ja.created_at),customer_name
   `,[HOLD_TYPE]);
   return result.rows.map(row=>{
-    const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg),assessment=assessUsage(row,policy),eligible=policy.enabled&&!row.automation_protected&&!row.currently_playing&&!row.already_held&&(assessment.noPlaybackEligible||assessment.usageEligible),triggers=[];
+    const policy=planPolicy.effectiveForFreePlan(row.inactivity_policy||{},globalCfg),assessment=assessUsage(row,policy),usageTriggered=assessment.noPlaybackEligible||assessment.usageEligible,eligible=policy.enabled&&!row.automation_protected&&!row.currently_playing&&usageTriggered,triggers=[];
     if(assessment.noPlaybackEligible)triggers.push(`no Free Server playback for ${policy.noPlaybackDays} day(s)`);
     if(assessment.usageEligible)triggers.push(`${Math.round(assessment.seconds/60)} min played on Free Server in ${policy.playbackWindowDays} day(s), below ${policy.minimumPlaybackMinutes} min`);
-    return{...row,policy,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,eligible,triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!assessment.noPlaybackEligible&&!assessment.usageEligible?'Free Server usage requirements currently satisfied':null].filter(Boolean)};
+    return{...row,policy,playback_seconds:assessment.seconds,inactive_reference_at:assessment.referenceAt,observation_started_at:assessment.observationStartedAt,eligible,repairExistingHold:Boolean(row.already_held&&eligible),triggers,reasons:eligible?triggers:[!policy.enabled?'Free Server usage rules disabled for this plan':null,row.automation_protected?'admin protected':null,row.currently_playing?'currently playing on Free Server':null,row.already_held?'already held':null,policy.enabled&&!usageTriggered?'Free Server usage requirements currently satisfied':null].filter(Boolean)};
   }).filter(row=>planPolicy.hasUsageTrigger(row.policy));
 }
 
