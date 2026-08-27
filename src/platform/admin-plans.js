@@ -20,7 +20,7 @@ function requireImpact(plan,count,value){if(Number(count)>0&&String(value||'').t
 function serviceKind(value){const v=String(value||'jellyfin').toLowerCase();return v==='stremio'||v==='bundle'?v:'jellyfin'}
 function planSubnav(planId,active,serviceType='jellyfin'){
   const service=serviceKind(serviceType),items=[['overview','Overview',`/admin/plans/${planId}/edit`]];
-  if(service==='jellyfin'||service==='bundle')items.push(['jellyfin','Jellyfin',`/admin/plans/${planId}/jellyfin`],['libraries','Libraries',`/admin/plans/${planId}/libraries`],['placement','Servers',`/admin/plans/${planId}/placement`]);
+  if(service==='jellyfin'||service==='bundle')items.push(['jellyfin','Jellyfin',`/admin/plans/${planId}/jellyfin`],['libraries','Libraries',`/admin/plans/${planId}/libraries`],['placement','Servers',`/admin/plans/${planId}/placement`],['lifecycle','Lifecycle',`/admin/plans/${planId}/lifecycle`]);
   if(service==='stremio'||service==='bundle')items.push(['stremio','Stremio',`/admin/plans/${planId}/stremio`]);
   items.push(['commerce','Pricing',`/admin/plans/${planId}/commerce`]);
   return `<div class="buttonRow planSubnav" data-plan-service="${esc(service)}">${items.map(([key,label,url])=>`<a class="button ${active===key?'':'secondary'}" href="${url}">${label}</a>`).join('')}</div>`;
