@@ -2,7 +2,11 @@
 
 const referrals = require('../referrals');
 const runtimeSettings = require('./runtime-settings');
-const { createRuntimeLegacyRouter, requireCustomer } = require('./router-runtime-legacy');
+
+function requireCustomer(req, res, next) {
+    if (req.session?.customerId && req.session?.customerUserId) return next();
+    return res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account'));
+}
 
 async function registrationLocals(req, error = null, rawReferralCode = '') {
     await runtimeSettings.ensureLoaded();
@@ -16,13 +20,11 @@ async function registrationLocals(req, error = null, rawReferralCode = '') {
     };
 }
 
-// Compatibility constructor for any older direct import of router-core. The
-// historical module no longer owns customer auth, payment, trial or account
-// routes; those workflows have dedicated canonical routers. Returning the
-// explicit runtime compatibility surface preserves the module API without
-// keeping a second route implementation alive.
+// Compatibility constructor for older direct imports only. Production routes
+// now all have named canonical owners, so router-core deliberately returns an
+// empty pass-through middleware instead of reconstructing a second route tree.
 function createRouter() {
-    return createRuntimeLegacyRouter();
+    return function retiredRouterCore(_req, _res, next) { return next(); };
 }
 
 module.exports = { createRouter, requireCustomer, registrationLocals };
