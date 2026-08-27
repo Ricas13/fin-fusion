@@ -2,6 +2,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
+require('./free-access-inactivity-consistency-smoke');
 
 const provision = fs.readFileSync('src/jellyfin/provisioning-engine.js', 'utf8');
 const dash = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
