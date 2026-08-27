@@ -7,6 +7,9 @@ const runtimeSettings = require('./runtime-settings');
 const { esc, layout } = require('./admin-html');
 const campaigns = require('../marketing/campaigns');
 const customerFilters = require('../platform/customer-filters');
+const routeRateLimit = require('../security/route-rate-limit');
+
+const marketingWriteLimit = routeRateLimit.middleware({ scope: 'admin-marketing-write', max: 30, windowSeconds: 60, reason: 'admin_marketing_write' });
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -135,7 +138,7 @@ async function detailPage(req, data) {
             : '';
 
     const queueForm = ['draft', 'scheduled', 'queued'].includes(campaign.status)
-        ? `<form method="post" action="/admin/marketing/${esc(campaign.id)}/queue" onsubmit="return confirm('Send this campaign to its current eligible audience now?')">${csrfInput(req)}<button class="button">Queue now</button></form>`
+        ? `<form method="post" action="/admin/marketing/${esc(campaign.id)}/queue" data-confirm="Send this campaign to its current eligible audience now?">${csrfInput(req)}<button class="button">Queue now</button></form>`
         : '';
 
     const body = `${notice(req)}
@@ -168,7 +171,7 @@ function createAdminMarketingRouter() {
         try { return res.send(await listPage(req)); } catch (error) { return next(error); }
     });
 
-    router.post('/admin/marketing', async (req, res) => {
+    router.post('/admin/marketing', marketingWriteLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             const audienceFilters = parseAudienceFilters(req.body);
@@ -194,7 +197,7 @@ function createAdminMarketingRouter() {
         } catch (error) { return next(error); }
     });
 
-    router.post('/admin/marketing/:id/queue', async (req, res) => {
+    router.post('/admin/marketing/:id/queue', marketingWriteLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             const result = await campaigns.queue({ campaignId: req.params.id, adminUserId: req.session.authUserId });
@@ -204,7 +207,7 @@ function createAdminMarketingRouter() {
         }
     });
 
-    router.post('/admin/marketing/:id/schedule', async (req, res) => {
+    router.post('/admin/marketing/:id/schedule', marketingWriteLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             const scheduledFor = req.body.scheduledFor ? new Date(req.body.scheduledFor) : null;
@@ -216,7 +219,7 @@ function createAdminMarketingRouter() {
         }
     });
 
-    router.post('/admin/marketing/:id/unschedule', async (req, res) => {
+    router.post('/admin/marketing/:id/unschedule', marketingWriteLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         try {
             await campaigns.unschedule(req.params.id, req.session.authUserId);
