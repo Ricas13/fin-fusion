@@ -61,7 +61,16 @@ if (branchHygieneWorkflow.includes('pull-requests: write') || branchHygieneWorkf
   throw new Error('Branch hygiene must not request unrelated pull-request or Actions write permissions.');
 }
 if (!branchHygieneWorkflow.includes('git merge-base --is-ancestor "origin/$branch" origin/main')) {
-  throw new Error('Branch hygiene must prove a branch tip is fully contained in main before deletion.');
+  throw new Error('Branch hygiene must retain direct-ancestor proof before that deletion path.');
+}
+if (!branchHygieneWorkflow.includes('git rev-list --merges "origin/main..origin/$branch"')) {
+  throw new Error('Patch-equivalence pruning must reject branches with merge commits outside main.');
+}
+if (!branchHygieneWorkflow.includes('git cherry origin/main "origin/$branch"')) {
+  throw new Error('Patch-equivalence pruning must use Git patch IDs rather than names/PR state.');
+}
+if (!branchHygieneWorkflow.includes('! grep -q \'^+\' <<<"$cherry"')) {
+  throw new Error('Patch-equivalence pruning must retain any branch with a patch not represented in main.');
 }
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
