@@ -60,14 +60,14 @@ assert.strictEqual(overflowRows([...premiumThree, row('premium-account', 4)], 3)
 // coexisting for the same portal customer without a synthetic global quota.
 
 // Provisioning uses the account lane's technical policy.
-assert(/laneOverrides\.getPolicyOverride\(customerId, accessLane\)/.test(accountPolicy), 'Jellyfin account policy must resolve the matching lane override');
+assert(/laneOverrides\.getPolicyOverride\(customerId,\s*accessLane\)/.test(accountPolicy), 'Jellyfin account policy must resolve the matching lane override');
 assert(/access_lane/.test(accountPolicy), 'account policy must use Jellyfin access_lane');
 assert(/getPolicyOverride/.test(laneOverrides)&&/setPolicyOverrideField/.test(laneOverrides)&&/resetAllPolicyOverrides/.test(laneOverrides), 'lane override service must expose scoped lifecycle operations');
 
 // Customer 360 shows and mutates Free and Premium policy independently.
 assert(/Premium Jellyfin policy/.test(adminLane)&&/Free Access policy/.test(adminLane), 'Customer 360 must show separate Premium and Free policy sections');
 assert(/name="accessLane" value="\$\{esc\(accessLane\)\}"/.test(adminLane), 'policy mutation forms must submit the lane explicitly');
-assert(/setPolicyOverrideField\(req\.params\.customerId, accessLane/.test(adminLane), 'admin override writes must be lane scoped');
+assert(/setPolicyOverrideField\(req\.params\.customerId,\s*accessLane/.test(adminLane), 'admin override writes must be lane scoped');
 const impersonationPos = composition.indexOf('app.use(createAdminImpersonationRouter())');
 const lanePos = composition.indexOf('app.use(createAdminLanePolicyRouter())');
 const customer360Pos = composition.indexOf('app.use(createAdminCustomer360Router())');
