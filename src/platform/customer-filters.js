@@ -129,6 +129,8 @@ function buildWhere(filters, scope) {
     if (filters.hasOverride === true) where.push('ovr.has_override=TRUE');
     else if (filters.hasOverride === false) where.push('(ovr.has_override IS NOT TRUE)');
 
+    if (filters.isFreeTier === true) where.push('COALESCE(p.is_free_tier,FALSE)=TRUE');
+
     if (filters.library) {
         const name = p(String(filters.library).trim().slice(0, 200));
         where.push(`(
