@@ -12,6 +12,8 @@ const claims=read('src/customer-claims.js');
 const pending=read('src/security/pending-registration.js');
 const publicAuth=read('src/platform/customer-public-auth.js');
 const security=read('src/platform/customer-security.js');
+const publicErrorSource=read('src/platform/public-error.js');
+const publicErrors=require(path.join(root,'src/platform/public-error.js'));
 
 assert.match(session,/await customers\.registerCustomerSession\(req, identity\)/,'canonical customer session helper must register the persisted session');
 assert.match(session,/await regenerate\(req\)/,'canonical customer session helper must regenerate the browser session');
@@ -44,5 +46,21 @@ assert(emailChangeGet,'email-change verification GET route missing');
 assert.doesNotMatch(emailChangeGet,/emailChange\.complete/,'GET email-change verification must not mutate account state');
 assert.match(security,/router\.post\('\/account\/verify-email-change'[\s\S]*?emailChange\.complete\(req\.body\.token\)/,'email change must complete only on POST');
 assert.doesNotMatch(security,/createCustomerSecurityRouter\(\)\{const router=express\.Router\(\);router\.use\(noStore\)/,'customer security noStore middleware must not leak to unrelated downstream routers');
+
+assert.equal(publicErrors.isSafe({message:'This claim link is invalid or expired.'}),true,'known claim validation errors should remain customer-visible');
+assert.equal(publicErrors.isSafe({code:'PASSWORD_BREACHED',message:'password rejected'}),true,'known safe customer error codes should remain customer-visible');
+assert.equal(publicErrors.isSafe({message:'duplicate key value violates unique constraint "app_users_email_key"'}),false,'database errors must fail closed at the public boundary');
+assert.match(publicErrorSource,/crypto\.randomBytes\(6\)/,'unexpected public errors must receive a short reference id');
+assert.match(publicErrorSource,/status:\s*500/,'unexpected public errors must be reported as server failures');
+assert.match(publicErrorSource,/console\.error\(`\$\{context\} \[\$\{reference\}\]`, error\)/,'unexpected public errors must be logged server-side with their reference');
+assert.match(claimRoute,/const publicError = require\('\.\/public-error'\)/,'public claim route must use the shared public error presenter');
+const redeemCatch=claimRoute.match(/redeemed = await claims\.redeemClaim[\s\S]*?if \(redeemed\.verificationRequired\)/)?.[0]||'';
+assert(redeemCatch,'public claim redemption block missing');
+assert.match(redeemCatch,/publicError\.present\(error/,'public claim redemption failures must pass through the shared presenter');
+assert.doesNotMatch(redeemCatch,/publicForm\([^\n]*error\.message/,'public claim form must not render raw redemption exception messages');
+const claimErrorMiddleware=claimRoute.match(/router\.use\('\/claim', \(error,[\s\S]*?return router;/)?.[0]||'';
+assert(claimErrorMiddleware,'public claim error middleware missing');
+assert.match(claimErrorMiddleware,/publicError\.present\(error/,'outer public claim failures must pass through the shared presenter');
+assert.doesNotMatch(claimErrorMiddleware,/unavailable\(error\.message/,'outer public claim failures must not render raw exception messages');
 
 console.log('customer account transition smoke: ok');
