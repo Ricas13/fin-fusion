@@ -6,6 +6,7 @@ const customerSession = require('../auth/customer-session');
 const claims = require('../customer-claims');
 const runtimeSettings = require('./runtime-settings');
 const operations = require('./operations-settings');
+const publicError = require('./public-error');
 const branding = require('./branding');
 const { esc, layout } = require('./admin-html');
 
@@ -156,7 +157,11 @@ function createCustomerClaimRouter() {
             } catch (error) {
                 const refreshed = await claims.lookupClaim(req.params.token);
                 if (refreshed && refreshed.status !== 'active') return res.status(410).send(unavailable(statusMessage(refreshed)));
-                return res.status(400).send(publicForm(req, claim, req.body, error.message));
+                const failure = publicError.present(error, {
+                    context: 'Customer claim redemption failed',
+                    fallback: 'The claim could not be completed right now. Please try again later.'
+                });
+                return res.status(failure.status).send(publicForm(req, claim, req.body, failure.message));
             }
             if (redeemed.verificationRequired) return res.status(200).send(verificationPending(redeemed.user.email));
             await customerSession.establish(req, redeemed);
@@ -194,8 +199,11 @@ function createCustomerClaimRouter() {
     });
 
     router.use('/claim', (error, _req, res, _next) => {
-        console.error('Customer claim error:', error.message);
-        return res.status(500).send(unavailable('The claim could not be processed right now. Please try again later.'));
+        const failure = publicError.present(error, {
+            context: 'Customer claim request failed',
+            fallback: 'The claim could not be processed right now. Please try again later.'
+        });
+        return res.status(failure.status).send(unavailable(failure.message));
     });
     return router;
 }
