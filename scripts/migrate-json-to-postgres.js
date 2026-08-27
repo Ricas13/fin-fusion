@@ -56,7 +56,6 @@ async function main() {
         await assertTargetIsSafe(client);
         await client.query('BEGIN');
 
-        const adminMap = new Map();
         for (const admin of data.admins || []) {
             const result = await client.query(`
                 INSERT INTO app_users(
@@ -70,7 +69,6 @@ async function main() {
                 RETURNING id
             `, [admin.username, admin.password, Number(admin.id), admin.passwordChangedAt || null, admin.createdAt || null]);
             if (!result.rowCount) throw new Error(`Role mismatch for existing admin ${admin.username}`);
-            adminMap.set(admin.id, result.rows[0].id);
         }
 
         let defaultServerId = null;
