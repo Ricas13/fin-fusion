@@ -14,6 +14,9 @@ const requestPlanPolicy = require('./admin-request-plan-policy');
 const placement = require('../jellyfin/placement');
 const { queuePlanReconciliation } = require('./bulk-jobs');
 const { esc, layout } = require('./admin-html');
+const planPolicy = require('../entitlements/plan-lifecycle-policy');
+const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
+const checkboxForm = require('./admin-checkbox-form');
 
 const writeLimit = routeRateLimit.middleware({ scope: 'admin-jellyfin-plan-editor', max: 40, windowSeconds: 60, reason: 'admin_jellyfin_plan_editor' });
 const BILLING = new Set(['trial', 'month', '6_months', 'year', 'custom']);
@@ -81,14 +84,15 @@ async function serverChoices(plan) {
 }
 async function loadData(plan) {
   const free = freePlan(plan);
-  const [affected, usage, payment, servers, libraries] = await Promise.all([
+  const [affected, usage, payment, servers, libraries, lifecycleGlobal] = await Promise.all([
     accessEditor.subscriberCount(plan.id),
     capacity.usage(plan.id),
     free ? Promise.resolve(null) : paymentOptions.mappings(plan.id),
     serverChoices(plan),
-    libraryEditor.discoverLibraries(plan).catch(error => ({ servers: [], catalog: [], failed: [], error: error.message }))
+    libraryEditor.discoverLibraries(plan).catch(error => ({ servers: [], catalog: [], failed: [], error: error.message })),
+    lifecyclePolicy.get()
   ]);
-  return { plan, free, affected, usage, payment, servers, libraries, access: accessEditor.values(plan) };
+  return { plan, free, affected, usage, payment, servers, libraries, access: accessEditor.values(plan), lifecycleGlobal };
 }
 
 function productCard(data, req) {
@@ -140,6 +144,26 @@ function librariesCard(data, req) {
   return `<section class="planConfigCard span2" id="libraries"><div class="planConfigHead"><div><h2>Library access</h2><p>What this plan can see after it is placed on an eligible server.</p></div><span class="pill">${esc(mode)}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-libraries">${token(req)}${warning}<div class="formGroup"><label>Access mode</label><select class="input" name="libraryAccessMode"><option value="all" ${selected(mode, 'all')}>All libraries</option><option value="exclude" ${selected(mode, 'exclude')}>All except selected</option><option value="include" ${selected(mode, 'include')}>Only selected libraries</option></select></div><details class="planCardDetails" ${mode === 'all' ? '' : 'open'}><summary>Choose libraries</summary><div class="planDetailsBody"><div class="planLibraryChoices">${rows || '<div class="empty">No libraries were discovered from the current eligible server pool.</div>'}</div></div></details>${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit" ${discovery.error ? 'disabled' : ''}>Save libraries</button></div></form></section>`;
 }
 
+function lifecycleFormInput(body = {}) {
+  return checkboxForm.explicitCheckboxes(body, '_lifecycleCheckboxes', ['enabled', 'dryRun']);
+}
+function lifecycleCard(data, req) {
+  const p = data.plan, global = data.lifecycleGlobal, raw = p.inactivity_policy || {};
+  const eff = planPolicy.effectiveForFreePlan(raw, global);
+  const category = lifecyclePolicy.categoryFor({ billingInterval: p.billing_interval, priceMinor: p.price_minor });
+  const inheritedDelete = lifecyclePolicy.deleteDays(global, category, { inactivity_policy: {} }).days;
+  const triggers = [];
+  if (eff.noPlaybackDays != null) triggers.push(`No playback for ${eff.noPlaybackDays} day${eff.noPlaybackDays === 1 ? '' : 's'}`);
+  if (eff.minimumPlaybackMinutes != null) triggers.push(`Under ${eff.minimumPlaybackMinutes} minute${eff.minimumPlaybackMinutes === 1 ? '' : 's'} in ${eff.playbackWindowDays} day${eff.playbackWindowDays === 1 ? '' : 's'}`);
+  const inheritsAll = Boolean(eff.inherited && eff.inherited.enabled && eff.inherited.dryRun && eff.inherited.noPlaybackDays);
+  const triggerText = data.free
+    ? (eff.enabled ? (triggers.length ? triggers.join(' · ') : 'Enabled, but no usage trigger is configured yet') : 'Usage rules disabled')
+    : (category === 'trial' ? 'Trial entitlement expires' : 'Paid entitlement is no longer valid');
+  const sourceText = inheritsAll ? 'Using global Free Server defaults' : 'Plan-specific lifecycle settings';
+  const usageFields = data.free ? `<input type="hidden" name="_lifecycleCheckboxes" value="1"><div class="operatorCallout"><strong>Free Server Plan rules:</strong> current effective source: ${esc(sourceText)}. Saving this card creates a plan-specific override.</div><div class="planPermissionGrid">${toggle('enabled', 'Enable usage rules', eff.enabled, 'Uncheck to explicitly exempt this plan from the global Free Server inactivity rule.')}${toggle('dryRun', 'Dry run only', eff.dryRun, 'Global dry-run always wins; a plan cannot force enforcement while the global policy is dry-run.')}</div><div class="formGrid"><div class="formGroup"><label>No playback for</label><div class="inputUnit"><input class="input" type="number" name="noPlaybackDays" min="1" max="3650" value="${esc(eff.noPlaybackDays ?? '')}"><span>days</span></div><div class="inlineHelp">${eff.inherited?.noPlaybackDays ? `Currently inherited from the global Free Server default (${esc(global.freeNoPlaybackDays)} days).` : 'Blank = disable the no-playback trigger for this plan.'}</div></div><div class="formGroup"><label>Minimum playback</label><div class="inputUnit"><input class="input" type="number" name="minimumPlaybackMinutes" min="1" max="1000000" value="${esc(eff.minimumPlaybackMinutes ?? '')}" placeholder="30"><span>minutes</span></div></div><div class="formGroup"><label>Within</label><div class="inputUnit"><input class="input" type="number" name="playbackWindowDays" min="1" max="365" value="${esc(eff.playbackWindowDays)}"><span>days</span></div><div class="inlineHelp">Blank minimum = do not use the minimum-playback trigger.</div></div><div class="formGroup"><label>Minimum observation</label><div class="inputUnit"><input class="input" type="number" name="minimumObservationHours" min="1" max="2160" value="${esc(eff.minimumObservationHours)}"><span>hours</span></div><div class="inlineHelp">Prevents brand-new free users from being disabled before enough evidence exists.</div></div></div>` : '';
+  return `<section class="planConfigCard span2" id="lifecycle"><div class="planConfigHead"><div><h2>Jellyfin lifecycle</h2><p>${data.free ? 'Free plans inherit the global inactivity rule until you save a plan-specific override.' : 'This plan is disabled when its entitlement lapses; you can override the post-disable deletion grace.'}</p></div>${data.free ? `<span class="pill ${inheritsAll ? 'good' : 'accent'}">${inheritsAll ? 'Inherited' : 'Override'}</span>` : ''}</div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-lifecycle">${token(req)}<div class="operatorCallout statusInfo"><strong>Portal identity is never automated away.</strong> These settings affect the Jellyfin user only. CAPTAiNFiN portal access remains until an administrator bans or deletes the portal account.</div>${usageFields}<div class="formGroup"><label>Delete Jellyfin user after being disabled</label><div class="inputUnit"><input class="input" type="number" name="deleteAfterDisableDays" min="1" max="3650" value="${esc(eff.deleteAfterDisableDays ?? '')}" placeholder="${esc(inheritedDelete)}"><span>days</span></div><div class="inlineHelp">Blank = inherit global ${esc(inheritedDelete)} days for ${esc(category)} access.</div></div><div class="buttonRow"><button class="button" type="submit">Save lifecycle</button><a class="button secondary" href="/admin/settings/jellyfin-lifecycle">Global defaults</a></div></form><div class="planConfigFacts"><div class="planConfigFact"><span>Disable trigger</span><strong>${esc(triggerText)}</strong></div>${data.free ? `<div class="planConfigFact"><span>Enforcement</span><strong>${eff.dryRun ? 'Dry run' : 'Enforce'}</strong></div>` : ''}<div class="planConfigFact"><span>Delete trigger</span><strong>${esc(eff.deleteAfterDisableDays ?? inheritedDelete)}d after disable</strong></div></div></section>`;
+}
+
 function verification(row) {
   if (!row) return '<span class="pill">Not configured</span>';
   const status = row.verification_status || 'unverified';
@@ -164,7 +188,7 @@ function page(data, req) {
   const open = data.usage.remaining == null ? null : Number(data.usage.remaining);
   const availabilityBadge = open == null ? 'No slot limit' : `${open} slots open`;
   const header = `<div class="planControlHeader"><div class="planControlIdentity"><strong>${esc(p.name)}</strong><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free Jellyfin' : 'Paid Jellyfin'}</span><span class="muted">${esc(data.affected)} live entitlement${data.affected === 1 ? '' : 's'}</span></div><div class="planControlIdentity"><span class="pill ${open == null || open > 0 ? 'good' : 'warn'}">${esc(availabilityBadge)}</span>${p.archived_at ? '<span class="pill warn">Archived</span>' : ''}</div></div>`;
-  const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${requestPlanPolicy.planCard(req, p)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition is controlled only by its own availability, access and delivery policy.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
+  const body = `${notices(req)}<div class="planControlRoom">${header}<div class="planControlGrid">${productCard(data, req)}${accessCard(data, req)}${availabilityCard(data, req)}${deliveryCard(data, req)}${librariesCard(data, req)}${lifecycleCard(data, req)}${requestPlanPolicy.planCard(req, p)}${commerceCard(data, req)}</div>${data.free ? '<div class="securityNote standalone"><strong>Free plan independence:</strong> no price, payment mapping or billing interval is configured here. Free acquisition is controlled only by its own availability, access and delivery policy.</div>' : ''}</div><script src="/js/admin-plan-access.js" defer></script>`;
   return layout({ siteName: runtimeSettings.siteName(), active: 'plans', title: p.name, subtitle: data.free ? 'Free Access · independent product configuration' : 'Paid Jellyfin · unified product configuration', body, action: '<a class="button secondary" href="/admin/plans">Back to Plans</a>' });
 }
 
@@ -249,6 +273,9 @@ async function saveCommerce(req, plan, data) {
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.commerce.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ currency, priceMinor, billingInterval: billing, durationDays: duration })]);
   });
 }
+async function saveLifecycle(req, plan) {
+  await planPolicy.save(plan.id, lifecycleFormInput(req.body), req.session.authUserId);
+}
 async function savePayments(req, plan, data) {
   if (data.free) throw new Error('Free plans do not use payment mappings.');
   const currency = await planPricing.platformDefaultCurrency();
@@ -309,6 +336,7 @@ function createAdminJellyfinPlanEditorRouter() {
       [/^\/admin\/plans\/([^/]+)\/inventory$/, 'availability'],
       [/^\/admin\/plans\/([^/]+)\/placement$/, 'delivery'],
       [/^\/admin\/plans\/([^/]+)\/libraries$/, 'libraries'],
+      [/^\/admin\/plans\/([^/]+)\/lifecycle$/, 'lifecycle'],
       [/^\/admin\/plans\/([^/]+)\/commerce$/, 'commerce']
     ];
     for (const [pattern, anchor] of legacy) {
@@ -327,9 +355,20 @@ function createAdminJellyfinPlanEditorRouter() {
   router.post('/admin/plans/:id/editor-availability', ...post(saveAvailability, 'Availability saved.', 'availability'));
   router.post('/admin/plans/:id/editor-delivery', ...post(saveDelivery, 'Delivery and placement saved.', 'delivery'));
   router.post('/admin/plans/:id/editor-libraries', ...post(saveLibraries, 'Library access saved.', 'libraries'));
+  router.post('/admin/plans/:id/editor-lifecycle', ...post(saveLifecycle, 'Jellyfin lifecycle override saved.', 'lifecycle'));
   router.post('/admin/plans/:id/editor-commerce', ...post(saveCommerce, 'Commercial schedule saved. Re-verify payment options if it changed.', 'commerce'));
   router.post('/admin/plans/:id/editor-payments', ...post(savePayments, 'Payment options verified and saved.', 'commerce'));
+  router.get('/admin/plans/:id/stremio', async (req, res) => {
+    try {
+      const plan = await loadPlan(req.params.id);
+      if (!plan) return res.status(404).send('Plan not found');
+      if (!['stremio', 'bundle'].includes(String(plan.service_type || ''))) return res.redirect(`/admin/plans/${encodeURIComponent(plan.id)}/edit?error=${encodeURIComponent('This plan does not include Stremio.')}`);
+      return res.redirect(`/admin/servers/stremio?plan=${encodeURIComponent(plan.id)}&message=${encodeURIComponent(`${plan.name}: Stremio sources, libraries and runtime are managed in the Stremio control centre.`)}`);
+    } catch (error) {
+      return res.redirect(`/admin/plans/${encodeURIComponent(req.params.id)}/edit?error=${encodeURIComponent(error.message || 'Stremio settings could not be opened.')}`);
+    }
+  });
   return router;
 }
 
-module.exports = { createAdminJellyfinPlanEditorRouter, loadData, page, freePlan, jellyfinPlan };
+module.exports = { createAdminJellyfinPlanEditorRouter, loadData, page, freePlan, jellyfinPlan, lifecycleFormInput };

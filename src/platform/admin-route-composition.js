@@ -41,7 +41,6 @@ const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-d
 const { createAdminJellyfinPlanEditorRouter } = require('./admin-jellyfin-plan-editor');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
 const { createAdminPlanAccessRouter } = require('./admin-plan-access');
-const { createAdminPlanLifecycleRouter } = require('./admin-plan-lifecycle');
 const { createAdminPlanInventoryRouter } = require('./admin-plan-inventory');
 const { createAdminPlansListRouter } = require('./admin-plans-list');
 const { createAdminPlanStreamVariantsRouter } = require('./admin-plan-stream-variants');
@@ -137,7 +136,6 @@ function mountAdminRoutes(app) {
   // established /admin/plans/:id/jellyfin URL gains household-aware semantics
   // without duplicating or weakening the older plan-management routes.
   app.use(createAdminPlanAccessRouter());
-  app.use(createAdminPlanLifecycleRouter());
   app.use(createAdminPlanInventoryRouter());
   app.use(createAdminPlansListRouter());
   app.use(createAdminPlanStreamVariantsRouter());

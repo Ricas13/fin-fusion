@@ -9,7 +9,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const plansList = read('src/platform/admin-plans-list.js');
 const createPlan = read('src/platform/admin-plan-create-v2.js');
 const delivery = read('src/platform/admin-plan-delivery.js');
-const lifecycle = read('src/platform/admin-plan-lifecycle.js');
+const lifecycle = read('src/platform/admin-jellyfin-plan-editor.js');
 const jobs = read('src/automation/jobs.js');
 const storefront = read('src/platform/storefront.js');
 const operatorExperience = read('public/js/operator-experience.js');
