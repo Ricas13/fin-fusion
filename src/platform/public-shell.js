@@ -25,6 +25,7 @@ function navItems(nav={}){
     nav.stremio&&['stremio','Stremio','/#stremio'],
     ['about','About','/about'],
     ['faq','FAQ','/faq'],
+    ['help','Help','/help'],
     ['contact','Contact','/contact'],
     ['trust','Trust','/trust']
   ].filter(Boolean);
@@ -52,7 +53,7 @@ function supportLinks(policy={}){
 
 function publicFooter({site,support={},registrationOpen=false}={}){
   const supportEmail=String(support.supportEmail||'').trim();
-  return `<footer class="storeFooter"><div class="storeWrap footerGrid"><div><a class="storeBrand footerBrand" href="/"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></a><p>Simple access, managed from one place.</p></div><div class="footerLinks"><div><strong>Account</strong><a href="/account/login">Customer sign in</a>${registrationOpen?'<a href="/account/register">Create account</a>':''}</div><div><strong>Help</strong><a href="/faq">FAQ</a><a href="/contact">Contact</a><a href="/trust">Trust & security</a>${supportEmail?`<a href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>`:'<span>Contact your service administrator</span>'}</div></div></div>${supportLinks(support)}<div class="storeWrap footerBottom"><span>© ${new Date().getFullYear()} ${esc(site)}</span><a href="/login">Administration</a></div></footer>`;
+  return `<footer class="storeFooter"><div class="storeWrap footerGrid"><div><a class="storeBrand footerBrand" href="/"><img src="${esc(branding.assetUrl('logo'))}" alt=""><span>${esc(site)}</span></a><p>Simple access, managed from one place.</p></div><div class="footerLinks"><div><strong>Account</strong><a href="/account/login">Customer sign in</a>${registrationOpen?'<a href="/account/register">Create account</a>':''}</div><div><strong>Help</strong><a href="/help">Help centre</a><a href="/faq">FAQ</a><a href="/contact">Contact</a><a href="/trust">Trust & security</a>${supportEmail?`<a href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>`:'<span>Contact your service administrator</span>'}</div></div></div>${supportLinks(support)}<div class="storeWrap footerBottom"><span>© ${new Date().getFullYear()} ${esc(site)}</span><a href="/login">Administration</a></div></footer>`;
 }
 
 module.exports={navFromPlans,navItems,publicHeader,publicFooter,supportLinks};
