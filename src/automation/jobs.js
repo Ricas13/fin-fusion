@@ -36,6 +36,7 @@ const jobs={
  async billing(){return billingControl.syncDue({all:false,limit:100})},
  async plan_changes(){return customerPlanChange.applyDueStripe()},
  async referral_rewards(){return referrals.processDueRewards({limit:100})},
+ async marketing_campaigns(){return require('../marketing/campaigns').runDue({limit:20})},
  async activation_cleanup(){return activationCleanup.process()},
  async pending_registration_cleanup(){return pendingRegistrations.cleanupExpired(500)},
  async stremio_managed_accounts(){return stremioManagedEntitlements.syncActive()},

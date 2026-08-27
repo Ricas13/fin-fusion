@@ -21,8 +21,8 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   labels(nav.childPages('orders')),
-  ['Analytics','Discounts','Affiliates'],
-  'Orders & Growth must expose analytics, discounts and affiliates in the sidebar'
+  ['Analytics','Discounts','Affiliates','Marketing'],
+  'Orders & Growth must expose analytics, discounts, affiliates and marketing in the sidebar'
 );
 assert.deepStrictEqual(
   labels(nav.childPages('payments')),

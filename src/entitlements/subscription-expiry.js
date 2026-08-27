@@ -24,9 +24,11 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
     const result = await query(`
         SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,
                COALESCE(s.plan_name_snapshot,p.name,'Your subscription') AS plan_name,
-               s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at
+               s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at,
+               COALESCE(c.display_name,au.username,c.email,'Customer') AS customer_name
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
         WHERE s.superseded_by IS NULL
           AND s.status IN('active','trialing','past_due','paused','cancelled')
           AND s.current_period_end IS NOT NULL
@@ -56,6 +58,7 @@ async function notifyExpiringSubscriptions({ days = DEFAULT_WARNING_DAYS, dispat
                 customerId: row.customer_id,
                 subject: `${planName} expires soon`,
                 text: `Your ${planName} access is due to expire on ${expiryDate(row.access_expires_at)}. Renew or choose a plan before then to avoid interruption.`,
+                adminText: `${String(row.customer_name || 'Customer').trim()}'s ${planName} access is due to expire on ${expiryDate(row.access_expires_at)}.`,
                 dedupeKey: `subscription-expiring:${row.id}:${endKey}`
             });
             if (delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp)) result.queued += 1;

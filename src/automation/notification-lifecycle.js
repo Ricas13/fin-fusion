@@ -69,8 +69,10 @@ async function emit(summary, input) {
 async function subscriptionEvents(since, until, summary) {
     const activated = await query(`
         SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,s.created_at,s.current_period_end,
-               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name
+               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name,
+               COALESCE(c.display_name,au.username,c.email,'Customer') customer_name
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
         WHERE s.created_at>$1 AND s.created_at<=$2 AND s.status IN('active','trialing')
         ORDER BY s.created_at,s.id
     `, [since, until]);
@@ -81,19 +83,23 @@ async function subscriptionEvents(since, until, summary) {
             customerId: row.customer_id,
             subject: `${plan} activated`,
             text: `Your ${plan} subscription is active.`,
+            adminText: `${clean(row.customer_name, 200)} activated ${plan}.`,
             dedupeKey: `subscription-activated:${row.id}`
         });
     }
 
     const terminal = await query(`
         SELECT s.id,s.customer_id,s.status,s.current_period_end,s.updated_at,
-               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name
+               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name,
+               COALESCE(c.display_name,au.username,c.email,'Customer') customer_name
         FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
         WHERE s.updated_at>$1 AND s.updated_at<=$2 AND s.status IN('cancelled','expired')
         ORDER BY s.updated_at,s.id
     `, [since, until]);
     for (const row of terminal.rows) {
         const plan = clean(row.plan_name, 200) || 'Subscription';
+        const name = clean(row.customer_name, 200);
         const period = dateKey(row.current_period_end);
         if (row.status === 'cancelled') {
             await emit(summary, {
@@ -101,6 +107,7 @@ async function subscriptionEvents(since, until, summary) {
                 customerId: row.customer_id,
                 subject: `${plan} cancelled`,
                 text: `Your ${plan} subscription has been cancelled. Existing paid-through access remains governed by its recorded end date.`,
+                adminText: `${name}'s ${plan} subscription was cancelled. Existing paid-through access remains governed by its recorded end date.`,
                 dedupeKey: `subscription-cancelled:${row.id}:${period}`
             });
         } else {
@@ -109,6 +116,7 @@ async function subscriptionEvents(since, until, summary) {
                 customerId: row.customer_id,
                 subject: 'Customer service expired',
                 text: `${plan} access reached its recorded expiry for customer ${row.customer_id}.`,
+                adminText: `${plan} access reached its recorded expiry for ${name}.`,
                 dedupeKey: `customer-service-expired:${row.id}:${period}`
             });
         }
@@ -123,10 +131,12 @@ function paymentReceiptKey(row) {
 async function paymentReceiptEvents(since, until, summary) {
     const activations = await query(`
         SELECT a.id audit_id,a.created_at,s.id subscription_id,s.customer_id,s.source,s.provider_subscription_id,s.current_period_end,
-               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name
+               COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name,
+               COALESCE(c.display_name,au.username,c.email,'Customer') customer_name
         FROM audit_log a
         JOIN subscriptions s ON s.id::text=a.entity_id
         JOIN plans p ON p.id=s.plan_id
+        JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
         WHERE a.action='payment.subscription.activate' AND a.created_at>$1 AND a.created_at<=$2
         ORDER BY a.created_at,a.id
     `, [since, until]);
@@ -137,6 +147,7 @@ async function paymentReceiptEvents(since, until, summary) {
             customerId: row.customer_id,
             subject: 'Payment received',
             text: `Payment was confirmed for ${plan} via ${clean(row.source, 40) || 'the payment provider'}.`,
+            adminText: `Payment confirmed for ${clean(row.customer_name, 200)} — ${plan} via ${clean(row.source, 40) || 'the payment provider'}.`,
             dedupeKey: paymentReceiptKey(row)
         });
     }
@@ -156,8 +167,10 @@ async function paymentReceiptEvents(since, until, summary) {
         if (!providerSubscriptionId) continue;
         const subscription = await query(`
             SELECT s.id subscription_id,s.customer_id,s.source,s.provider_subscription_id,s.current_period_end,
-                   COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name
+                   COALESCE(s.plan_name_snapshot,p.name,'Subscription') plan_name,
+                   COALESCE(c.display_name,au.username,c.email,'Customer') customer_name
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+            JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users au ON au.id=c.user_id
             WHERE s.source='stripe' AND s.provider_subscription_id=$1
             ORDER BY s.created_at DESC LIMIT 1
         `, [providerSubscriptionId]);
@@ -169,6 +182,7 @@ async function paymentReceiptEvents(since, until, summary) {
             customerId: row.customer_id,
             subject: 'Payment received',
             text: `Stripe confirmed payment for ${plan}.`,
+            adminText: `Stripe confirmed payment for ${clean(row.customer_name, 200)} — ${plan}.`,
             dedupeKey: paymentReceiptKey(row)
         });
     }
