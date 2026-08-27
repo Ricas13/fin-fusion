@@ -11,6 +11,7 @@ const claimRoute=read('src/platform/customer-claim.js');
 const claims=read('src/customer-claims.js');
 const pending=read('src/security/pending-registration.js');
 const publicAuth=read('src/platform/customer-public-auth.js');
+const login=read('src/platform/customer-login.js');
 const security=read('src/platform/customer-security.js');
 const publicErrorSource=read('src/platform/public-error.js');
 const publicErrors=require(path.join(root,'src/platform/public-error.js'));
@@ -49,6 +50,7 @@ assert.doesNotMatch(security,/createCustomerSecurityRouter\(\)\{const router=exp
 
 assert.equal(publicErrors.isSafe({message:'This claim link is invalid or expired.'}),true,'known claim validation errors should remain customer-visible');
 assert.equal(publicErrors.isSafe({code:'PASSWORD_BREACHED',message:'password rejected'}),true,'known safe customer error codes should remain customer-visible');
+assert.equal(publicErrors.isSafe({message:'Plan is not available or is currently sold out.'}),true,'known Free Access availability feedback should remain customer-visible');
 assert.equal(publicErrors.isSafe({message:'duplicate key value violates unique constraint "app_users_email_key"'}),false,'database errors must fail closed at the public boundary');
 assert.match(publicErrorSource,/crypto\.randomBytes\(6\)/,'unexpected public errors must receive a short reference id');
 assert.match(publicErrorSource,/status:\s*500/,'unexpected public errors must be reported as server failures');
@@ -62,5 +64,24 @@ const claimErrorMiddleware=claimRoute.match(/router\.use\('\/claim', \(error,[\s
 assert(claimErrorMiddleware,'public claim error middleware missing');
 assert.match(claimErrorMiddleware,/publicError\.present\(error/,'outer public claim failures must pass through the shared presenter');
 assert.doesNotMatch(claimErrorMiddleware,/unavailable\(error\.message/,'outer public claim failures must not render raw exception messages');
+
+assert.match(publicAuth,/const publicError=require\('\.\/public-error'\)/,'public registration/reset routes must use the shared public error presenter');
+assert.match(publicAuth,/Customer registration failed/,'registration failures must use the public error boundary');
+assert.match(publicAuth,/Verified registration completion failed/,'verified-registration failures must use the public error boundary');
+assert.match(publicAuth,/Customer password reset failed/,'password-reset failures must use the public error boundary');
+assert.doesNotMatch(publicAuth,/registrationLocals\(req,error\.message|error:error\.message|Verification failed',error\.message/,'public auth responses must not render raw exception messages');
+assert.match(publicAuth,/Customer password-reset request failed[\s\S]*?return message\(res,200,'Check your email','If a matching customer account with an email address exists/,'forgot-password infrastructure failures must preserve the neutral anti-enumeration response');
+
+assert.match(login,/const publicError=require\('\.\/public-error'\)/,'customer login/profile routes must use the shared public error presenter');
+assert.match(login,/Customer login failed/,'customer login failures must use the public error boundary');
+assert.match(login,/Customer profile update failed/,'customer profile failures must use the public error boundary');
+assert.doesNotMatch(login,/render\('customer\/login',\{error:error\.message|confirmationPage\([^\n]*error:error\.message|encodeURIComponent\(error\.message\)|twoFactorPasswordPage\(req,error\.message/,'customer login/profile responses must not expose raw exception messages');
+
+assert.match(security,/const publicError=require\('\.\/public-error'\)/,'customer security routes must use the shared public error presenter');
+assert.match(security,/function securityError\(res,error,context/,'customer security redirects must share one error boundary');
+assert.doesNotMatch(security,/encodeURIComponent\(error\.message\)|esc\(error\.message\)|error:error\.message/,'customer security responses must not expose raw exception messages');
+assert.match(security,/Customer email-change verification failed/,'email-change confirmation failures must use the public error boundary');
+assert.match(security,/Customer password change failed/,'password-change failures must use the public error boundary');
+assert.match(security,/Customer 2FA enrollment confirmation failed/,'2FA enrollment failures must use the public error boundary');
 
 console.log('customer account transition smoke: ok');
