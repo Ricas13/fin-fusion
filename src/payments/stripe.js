@@ -100,6 +100,13 @@ async function activateCheckoutSession(session) {
     const activated=await lifecycle.activatePurchase({customerId,planId,provider:'stripe',providerCustomerId,providerSubscriptionId:paymentId,providerStatus:'active',commercialSnapshot:contract.snapshot});
     await checkoutIntents.completeVerifiedProvider('stripe',verified.id,'completed');return activated;
 }
+async function confirmCheckout(sessionId){
+    const stripe=await getStripe(),session=await stripe.checkout.sessions.retrieve(String(sessionId||''));
+    if(!session?.id)throw new Error('Stripe Checkout session was not found.');
+    if(['paid','no_payment_required'].includes(String(session.payment_status||''))){const subscription=await activateCheckoutSession(session);return{completed:true,waiting:false,status:'completed',sessionId:session.id,subscription};}
+    if(String(session.status||'').toLowerCase()==='expired'){await checkoutIntents.completeVerifiedProvider('stripe',session.id,'cancelled');return{completed:false,waiting:false,status:'expired',sessionId:session.id};}
+    return{completed:false,waiting:true,status:String(session.payment_status||session.status||'processing').toLowerCase(),sessionId:session.id};
+}
 async function syncSubscription(subscriptionId,statusOverride=null) {
     const stripe=await getStripe(),subscription=await stripe.subscriptions.retrieve(subscriptionId,{expand:['items.data.price']}),period=subscriptionPeriod(subscription);
     const effectiveStatus=effectiveSyncStatus(subscription.status,statusOverride);
@@ -138,6 +145,7 @@ async function processWebhook(rawBody,signature) {
         const object=event.data?.object;
         switch(event.type){
             case 'checkout.session.completed': await activateCheckoutSession(object); break;
+            case 'checkout.session.expired': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'cancelled'); break;
             case 'customer.subscription.updated': {
                 const synced=await syncSubscription(object.id);
                 if(synced.row&&['active','trialing'].includes(synced.effectiveStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:object.id,note:'Stripe subscription recovered and is active again.'});
@@ -177,4 +185,4 @@ async function processWebhook(rawBody,signature) {
         await lifecycle.finishPaymentEvent(eventRow);return{duplicate:false,type:event.type};
     }catch(error){await lifecycle.finishPaymentEvent(eventRow,error);throw error;}
 }
-module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus};
+module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus};

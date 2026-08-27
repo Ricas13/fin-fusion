@@ -31,10 +31,13 @@ const adminNav=read('src/platform/admin-nav.js');
 has(adminNav,"'customer-jellyfin-password':Object.freeze({groupKey:'people',parentKey:'users'",'admin password support must remain discoverable from the customer workflow without becoming permanent People navigation');
 lacks(adminNav,"['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password']",'Jellyfin password support must not return as a permanent People sidebar item');
 
-const paypalReturn=read('src/platform/customer-payment-return.js');
-has(paypalReturn,"/account?welcome=1&message=",'PayPal completion must enter the access welcome flow');
+const paymentReturn=read('src/platform/customer-payment-return.js');
+has(paymentReturn,"/account?welcome=1&message=",'successful payment returns must enter the access welcome flow');
+has(paymentReturn,"r.get('/account/stripe/return',paymentReturnLimit,requireCustomer,stripeReturnHandler)",'Stripe completion must use the authenticated confirmed-return handler');
+has(paymentReturn,"intents.verify({intentId,nonce:state,providerCheckoutId:sessionId,scope:'customer',provider:'stripe',ownerId:req.session.customerId})",'Stripe return must verify the exact local checkout intent, session and customer before reporting success');
+has(paymentReturn,"stripe.confirmCheckout(sessionId,row)",'Stripe return must confirm provider state before reporting payment success');
 const checkout=read('src/platform/flexible-checkout.js');
-has(checkout,"/account?welcome=1&message=Payment%20received.",'Stripe completion must enter the access welcome flow');
+lacks(checkout,"/account?welcome=1&message=Payment%20received.",'Stripe checkout creation must not optimistically report success before the provider return is verified');
 const activation=read('src/platform/account-activation-router.js');
 has(activation,"'/account?welcome=1'",'customer activation must carry the user into the access welcome flow');
 
