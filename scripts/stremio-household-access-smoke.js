@@ -107,7 +107,7 @@ assert(stremioPlanEditor.includes("updateTrackingSnapshots(client,data.plan,inpu
 assert(stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must reset current Stremio leases so the new allowance takes effect');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
-assert(customerStremio.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'customer Stremio routes must keep unlimited playback copy and server-enforced household replacement');
+assert(customerDashboard.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'Account Home must own unlimited playback copy while customer Stremio routes retain server-enforced household replacement');
 assert(customerDashboard.includes('stremioHouseholdForCustomer')&&customerDashboard.includes('householdAccess.replacementState'),'Account Home must load the current Stremio household state');
 assert(dashboard.includes('<%= stremioHousehold.accessModel %>')&&!dashboard.includes('/64')&&dashboard.includes('Use a different household connection'),'Account Home Stremio UI must show household access without exposing network implementation detail and retain the household replacement control');
 assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired standalone Stremio setup view must stay removed');
