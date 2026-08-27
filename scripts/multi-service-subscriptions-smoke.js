@@ -1,5 +1,8 @@
 'use strict';
 
+const { skipIfNoDatabase } = require('./smoke-db');
+if (skipIfNoDatabase('multi-service subscriptions smoke')) process.exit(0);
+
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
