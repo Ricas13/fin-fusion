@@ -7,6 +7,7 @@ const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const session=read('src/auth/customer-session.js');
+const customersSource=read('src/customers.js');
 const claimRoute=read('src/platform/customer-claim.js');
 const claims=read('src/customer-claims.js');
 const pending=read('src/security/pending-registration.js');
@@ -31,6 +32,14 @@ assert.match(claims,/if\(verification\.required\)await queueVerificationTx\(clie
 
 assert.match(pending,/await validatePassword\(password\)/,'pending registration must await the shared new-password policy');
 assert.match(pending,/customers\.validateNewPassword\(password\)/,'verified registration must use breached-password checking');
+
+assert.match(customersSource,/registerCustomer\(\{email,username,password,referralCode,communicationPreferences=null\}\)/,'direct registration must accept normalized communication preferences as part of the transition');
+const registrationTransaction=customersSource.match(/async function registerCustomer[\s\S]*?return created\}/)?.[0]||'';
+assert(registrationTransaction,'customer registration transaction missing');
+assert.match(registrationTransaction,/transaction\(async client=>[\s\S]*?client\.query\(`INSERT INTO customer_communication_preferences/,'direct registration must persist communication preferences through the registration transaction client');
+assert.match(registrationTransaction,/customer_communication_preferences[\s\S]*?audit_log[\s\S]*?return\{user,customer\}/,'communication preferences must be persisted before the registration transaction returns the identity');
+assert.match(publicAuth,/customers\.registerCustomer\(\{\.\.\.req\.body,referralCode:req\.body\.referralCode,communicationPreferences\}\)/,'the public registration route must hand preferences to the atomic customer registration transition');
+assert.doesNotMatch(publicAuth,/function saveCommunication|await saveCommunication\(/,'the public registration route must not perform a second communication-preferences write after identity creation');
 
 const verifyRegistrationGet=publicAuth.match(/r\.get\('\/account\/verify-registration'[\s\S]*?r\.post\('\/account\/verify-registration'/)?.[0]||'';
 assert(verifyRegistrationGet,'registration verification GET route missing');
