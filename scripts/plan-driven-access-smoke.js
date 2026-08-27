@@ -7,7 +7,7 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
 const inactivityRuntime=require('../src/automation/customer-inactivity');
-const planLifecyclePage=require('../src/platform/admin-plan-lifecycle');
+const planLifecyclePage=require('../src/platform/admin-jellyfin-plan-editor');
 const globalLifecyclePage=require('../src/platform/admin-jellyfin-lifecycle');
 
 const nav=read('src/platform/admin-nav.js');
@@ -25,7 +25,7 @@ const serverUsers=read('src/platform/admin-server-users.js');
 const serverForm=read('views/admin/server-form.ejs');
 const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
 const plansList=read('src/platform/admin-plans-list.js');
-const planLifecycleSource=read('src/platform/admin-plan-lifecycle.js');
+const planLifecycleSource=read('src/platform/admin-jellyfin-plan-editor.js');
 const globalLifecycleSource=read('src/platform/admin-jellyfin-lifecycle.js');
 
 // Customers owns customer records and Jellyfin import/claim discovery. Invitation
@@ -126,6 +126,6 @@ assert(composition.includes('createAdminPlanCreateV2Router()'),'Full-policy plan
 assert(!composition.includes('createAdminCatalogShellRouter'),'Legacy catalogue create routes must not be mounted alongside the V2 plan-create owner');
 assert(composition.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
 assert(composition.includes('createLegacyJellyfinImportRedirectRouter()')&&!composition.includes('createAdminJellyfinImportRouter'),'Only the server-guidance landing route may own the legacy Jellyfin Import URL');
-assert(composition.includes('createAdminServerUsersRouter()')&&composition.includes('createAdminPlanLifecycleRouter()')&&composition.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle/inventory and server import routes must be mounted');
+assert(composition.includes('createAdminServerUsersRouter()')&&composition.includes('createAdminJellyfinPlanEditorRouter()')&&composition.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle (now part of the unified Jellyfin plan editor)/inventory and server import routes must be mounted');
 
 console.log('plan-driven access lifecycle smoke: ok');
