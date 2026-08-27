@@ -8,6 +8,9 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const adminProvisioning=read('src/platform/admin-provisioning.js');
 const stremioRequeue=read('db/migrations/031_requeue_legacy_stremio_provisioning.sql');
+const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
+const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
+const provisioningFacade=read('src/jellyfin/provisioning.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
 
@@ -58,6 +61,13 @@ assert.strictEqual(control.classifyError(new Error('Jellyfin returned HTTP 503')
 const now = Date.now();
 assert.strictEqual(control.verificationFresh(new Date(now - 1000), now), true);
 assert.strictEqual(control.verificationFresh(new Date(now - control.VERIFY_INTERVAL_MS - 1), now), false);
+
+assert(reconciliationLock.includes('pg_try_advisory_lock')&&reconciliationLock.includes('pg_advisory_unlock'),'customer reconciliation must use a PostgreSQL advisory lock that works across app and automation processes');
+assert(reconciliationLock.includes('Do not coalesce concurrent calls.')&&reconciliationLock.includes('must run after the first reconcile completes')&&!reconciliationLock.includes('const inFlight = new Map()'),'queued reconciliation calls must run again after prior state-changing work instead of coalescing onto a stale result');
+assert(reconciliationLock.includes("CUSTOMER_RECONCILIATION_LOCK_TIMEOUT"),'reconciliation lock contention must fail with an explicit retryable error');
+assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
+assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(provisioningFacade),'legacy provisioning facade must serialize direct reconciliation callers too');
+assert(provisioningFacade.includes('reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);})'),'account-scoped reconciliation must share the same customer lock');
 
 assert(provisioningEngine.includes("const compensation = require('./provisioning-compensation')"),'provisioning engine must use the shared remote-user compensation helper');
 assert(provisioningEngine.includes("stage: 'policy_apply'")&&provisioningEngine.includes("stage: 'database_persist'"),'both remote policy failure and local persistence failure must invoke provisioning compensation');
