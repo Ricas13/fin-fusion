@@ -8,6 +8,7 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 
 const session=read('src/auth/customer-session.js');
 const customersSource=read('src/customers.js');
+const referralsSource=read('src/referrals.js');
 const claimRoute=read('src/platform/customer-claim.js');
 const claims=read('src/customer-claims.js');
 const pending=read('src/security/pending-registration.js');
@@ -37,9 +38,18 @@ assert.match(customersSource,/registerCustomer\(\{email,username,password,referr
 const registrationTransaction=customersSource.match(/async function registerCustomer[\s\S]*?return created\}/)?.[0]||'';
 assert(registrationTransaction,'customer registration transaction missing');
 assert.match(registrationTransaction,/transaction\(async client=>[\s\S]*?client\.query\(`INSERT INTO customer_communication_preferences/,'direct registration must persist communication preferences through the registration transaction client');
-assert.match(registrationTransaction,/customer_communication_preferences[\s\S]*?audit_log[\s\S]*?return\{user,customer\}/,'communication preferences must be persisted before the registration transaction returns the identity');
+assert.match(registrationTransaction,/customer_communication_preferences[\s\S]*?audit_log[\s\S]*?return\{user,customer,referralCodeId\}/,'communication preferences and referral attribution must be persisted before the registration transaction returns the identity');
+assert.match(registrationTransaction,/referrals\.attributionEnabled\(client\)[\s\S]*?referrals\.attributeReferral\(customer\.id,referralCode,client\)/,'direct registration referral attribution must use the same transaction client as customer creation');
+assert.doesNotMatch(registrationTransaction,/Referral attribution failed|referrals\.attributeReferral\(created\.customer\.id/,'direct registration must not defer referral attribution until after commit');
 assert.match(publicAuth,/customers\.registerCustomer\(\{\.\.\.req\.body,referralCode:req\.body\.referralCode,communicationPreferences\}\)/,'the public registration route must hand preferences to the atomic customer registration transition');
 assert.doesNotMatch(publicAuth,/function saveCommunication|await saveCommunication\(/,'the public registration route must not perform a second communication-preferences write after identity creation');
+
+const pendingConsume=pending.match(/async function consume\(rawToken\)[\s\S]*?return created;\n\}/)?.[0]||'';
+assert(pendingConsume,'verified registration consume transition missing');
+assert.match(pendingConsume,/referrals\.attributionEnabled\(client\)[\s\S]*?referrals\.attributeReferral\(customer\.id,pending\.referral_code,client\)/,'verified registration referral attribution must use the same transaction client as account creation and token consumption');
+assert.doesNotMatch(pendingConsume,/Verified registration referral attribution failed|referrals\.attributeReferral\(created\.customer\.id/,'verified registration must not defer referral attribution until after commit');
+assert.match(referralsSource,/async function attributeReferral\(referredCustomerId,rawCode,client=null\)/,'referral attribution must accept an explicit transaction client');
+assert.match(referralsSource,/ON CONFLICT\(referred_customer_id\) DO NOTHING RETURNING referral_code_id/,'referral conflict handling must report the persisted attribution instead of the attempted code');
 
 const verifyRegistrationGet=publicAuth.match(/r\.get\('\/account\/verify-registration'[\s\S]*?r\.post\('\/account\/verify-registration'/)?.[0]||'';
 assert(verifyRegistrationGet,'registration verification GET route missing');

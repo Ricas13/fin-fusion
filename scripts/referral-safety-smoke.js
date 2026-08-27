@@ -3,7 +3,7 @@
 require('dotenv').config();
 const assert=require('assert');
 const crypto=require('crypto');
-const {query,getPool}=require('../src/db');
+const {query,transaction,getPool}=require('../src/db');
 const referrals=require('../src/referrals');
 const incidents=require('../src/payments/incidents');
 const credits=require('../src/affiliate-credits');
@@ -18,6 +18,25 @@ async function main(){
   try{
     await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('affiliate_program',$1::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[JSON.stringify({enabled:true,rewardPercent:50,qualificationDelayDays:0,refundWindowDays:0})]);
     const paidPlan=await plan('paid');
+
+    // A transaction-aware attribution must roll back with the caller rather than
+    // escaping through the global pool and leaving a redemption behind.
+    const txReferrer=await customer('tx-referrer'),txReferred=await customer('tx-referred');
+    const txCode=await referrals.ensureReferralCode(txReferrer.id);
+    await assert.rejects(transaction(async client=>{
+      assert(await referrals.attributeReferral(txReferred.id,txCode,client),'Transactional referral was not attributed inside the transaction');
+      throw new Error('rollback referral attribution');
+    }),/rollback referral attribution/);
+    assert.strictEqual(Number((await query(`SELECT COUNT(*) n FROM referral_redemptions WHERE referred_customer_id=$1`,[txReferred.id])).rows[0].n),0,'Rolled-back referral attribution escaped its caller transaction');
+
+    // Re-attribution must report the persisted referral, not the second code that
+    // lost the referred-customer uniqueness conflict.
+    const firstReferrer=await customer('first-referrer'),secondReferrer=await customer('second-referrer'),oneReferred=await customer('one-referred');
+    const firstCode=await referrals.ensureReferralCode(firstReferrer.id),secondCode=await referrals.ensureReferralCode(secondReferrer.id);
+    const firstReferralId=await referrals.attributeReferral(oneReferred.id,firstCode);
+    const secondAttemptId=await referrals.attributeReferral(oneReferred.id,secondCode);
+    assert.strictEqual(String(secondAttemptId),String(firstReferralId),'Referral conflict returned the attempted code instead of the persisted attribution');
+    assert.strictEqual(Number((await query(`SELECT COUNT(*) n FROM referral_redemptions WHERE referred_customer_id=$1`,[oneReferred.id])).rows[0].n),1,'Re-attribution created more than one redemption');
 
     // Same normalized identity cannot self-refer through a second customer row.
     const shared=email('shared'),sameReferrer=await customer('same-referrer',shared),sameReferred=await customer('same-referred',shared);

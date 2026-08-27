@@ -26,15 +26,23 @@ async function sameIdentity(referrerId,referredId,client=null){
   const shared=await db.query(`SELECT 1 FROM payment_customers a JOIN payment_customers b ON b.provider=a.provider AND b.provider_customer_id=a.provider_customer_id WHERE a.customer_id=$1 AND b.customer_id=$2 LIMIT 1`,[referrerId,referredId]);
   return shared.rowCount>0;
 }
-async function attributeReferral(referredCustomerId,rawCode){
+async function attributeReferral(referredCustomerId,rawCode,client=null){
+  const db=client||{query};
   const code=String(rawCode||'').trim().toUpperCase();if(!code)return null;
-  const referral=await query(`SELECT rc.id,rc.customer_id FROM referral_codes rc WHERE rc.code=$1`,[code]);
+  const referral=await db.query(`SELECT rc.id,rc.customer_id FROM referral_codes rc WHERE rc.code=$1`,[code]);
   if(!referral.rowCount||String(referral.rows[0].customer_id)===String(referredCustomerId))return null;
-  if(await sameIdentity(referral.rows[0].customer_id,referredCustomerId))return null;
-  await query(`INSERT INTO referral_redemptions(referral_code_id,referred_customer_id,status) VALUES($1,$2,'pending') ON CONFLICT(referred_customer_id) DO NOTHING`,[referral.rows[0].id,referredCustomerId]);
-  return referral.rows[0].id;
+  if(await sameIdentity(referral.rows[0].customer_id,referredCustomerId,client))return null;
+  const inserted=await db.query(`INSERT INTO referral_redemptions(referral_code_id,referred_customer_id,status) VALUES($1,$2,'pending') ON CONFLICT(referred_customer_id) DO NOTHING RETURNING referral_code_id`,[referral.rows[0].id,referredCustomerId]);
+  if(inserted.rowCount)return inserted.rows[0].referral_code_id;
+  const existing=await db.query(`SELECT referral_code_id FROM referral_redemptions WHERE referred_customer_id=$1 LIMIT 1`,[referredCustomerId]);
+  return existing.rows[0]?.referral_code_id||null;
 }
 async function loadSettings(){return affiliateCredits.loadSettings();}
+async function attributionEnabled(client=null){
+  if(!client)return(await loadSettings()).enabled;
+  const settings=await client.query("SELECT setting_value FROM platform_settings WHERE setting_key='affiliate_program'");
+  return settings.rows[0]?.setting_value?.enabled===true;
+}
 
 async function rewardIfQualifying(referredCustomerId){
   const settings=await loadSettings();if(!settings.enabled)return null;
@@ -96,4 +104,4 @@ async function processDueRewards({limit=100}={}){
   return{processed:rows.rowCount,rewarded,pending,failed};
 }
 
-module.exports={ensureReferralCode,attributeReferral,rewardIfQualifying,revisitRewardAfterAdversePayment,unusedExtensionDays,processDueRewards,loadSettings,sameIdentity};
+module.exports={ensureReferralCode,attributeReferral,rewardIfQualifying,revisitRewardAfterAdversePayment,unusedExtensionDays,processDueRewards,loadSettings,attributionEnabled,sameIdentity};
