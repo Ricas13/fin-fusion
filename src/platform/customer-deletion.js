@@ -1,6 +1,6 @@
 'use strict';
 
-const {query,transaction}=require('../db');
+const {query}=require('../db');
 const registry=require('../jellyfin/registry');
 const provisioning=require('../jellyfin/provisioning');
 
@@ -106,39 +106,12 @@ async function ensureDeletionHold(job){
 }
 
 async function finalizePortalDeletion(job,jellyfin){
-  return transaction(async client=>{
-    const existing=await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[job.customer_id]);
-    if(!existing.rowCount)throw new Error('Customer disappeared before the deletion job could finish safely.');
-
-    // Local Jellyfin identity rows are deliberately retained until every remote
-    // user has been confirmed deleted/missing. If this transaction rolls back,
-    // the next attempt sees those rows again and remote 404s make it resumable.
-    await client.query('DELETE FROM jellyfin_accounts WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM content_requests WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM customer_bans WHERE customer_id=$1 OR ($2::text IS NOT NULL AND normalized_email=LOWER(BTRIM($2::text)))',[job.customer_id,job.customer_email||null]);
-    await client.query('DELETE FROM customer_download_events WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM free_access_registration_reservations WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM payment_incidents WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM playback_history WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM stream_policy_events WHERE customer_id=$1',[job.customer_id]);
-    await client.query('DELETE FROM affiliate_credit_ledger WHERE referred_customer_id=$1',[job.customer_id]);
-    // Audit history remains append-only. PostgreSQL may clear actor_user_id when
-    // the deleted portal user itself was an audit actor via ON DELETE SET NULL.
-    await client.query('DELETE FROM customers WHERE id=$1',[job.customer_id]);
-    if(job.user_id){
-      await client.query('DELETE FROM auth_events WHERE user_id=$1',[job.user_id]);
-      await client.query("SELECT set_config('steamfusion.allow_audit_mutation','on',true)");
-      try{
-        await client.query(`DELETE FROM app_users WHERE id=$1 AND role='customer' AND NOT EXISTS(SELECT 1 FROM customers WHERE user_id=$1)`,[job.user_id]);
-      }finally{
-        await client.query("SELECT set_config('steamfusion.allow_audit_mutation','off',true)");
-      }
-    }
-    const result={customerId:job.customer_id,name:job.customer_name,email:job.customer_email,jellyfin,deleted:true,jobId:job.id};
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.hard_delete','customer_deleted',$2,$3::jsonb)`,[job.actor_user_id||null,String(job.customer_id),JSON.stringify({reason:job.reason,deletionJobId:job.id,jellyfin:{total:jellyfin.total,deleted:jellyfin.deleted,alreadyMissing:jellyfin.alreadyMissing}})]);
-    await client.query(`UPDATE customer_deletion_jobs SET status='succeeded',completed_at=NOW(),last_error=NULL,jellyfin_results=$2::jsonb,result=$3::jsonb,updated_at=NOW() WHERE id=$1`,[job.id,JSON.stringify(jellyfin.results||[]),JSON.stringify(result)]);
-    return result;
-  });
+  // The SECURITY DEFINER function validates that this running job contains a
+  // successful remote outcome for every local Jellyfin identity before it can
+  // delete portal/user records. This lets the restricted automation role retry
+  // deletion without receiving generic DELETE rights on app_users/auth_events.
+  const finalized=await query('SELECT public.finalize_customer_deletion($1) AS result',[job.id]);
+  return finalized.rows[0]?.result||{customerId:job.customer_id,name:job.customer_name,email:job.customer_email,jellyfin,deleted:true,jobId:job.id};
 }
 
 async function processDeletionJob(jobId){
@@ -155,6 +128,9 @@ async function processDeletionJob(jobId){
       await markDeletionFailed(job,error,error.deletionResults||null);
       throw pendingError(job,error);
     }
+    // Persist remote confirmation before crossing the privileged finalization
+    // boundary. A crash from here onwards is safe: retrying DELETE receives 404,
+    // which is deliberately treated as a confirmed already-missing identity.
     await query('UPDATE customer_deletion_jobs SET jellyfin_results=$2::jsonb,updated_at=NOW() WHERE id=$1',[job.id,JSON.stringify(jellyfin.results||[])]);
     try{
       return await finalizePortalDeletion(job,jellyfin);
