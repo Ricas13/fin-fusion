@@ -65,10 +65,25 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
       OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
       OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
    )
-   AND ($2::boolean OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
  ORDER BY s.created_at DESC
  LIMIT 1
- `,[customerId,Boolean(includeBlocked)]);return result.rows[0]||null}
+ `,[customerId]);
+ const row=result.rows[0]||null;if(!row)return null;
+ const laneHold=await db.query(`SELECT EXISTS(
+   SELECT 1 FROM customer_access_holds h
+   WHERE h.customer_id=$1 AND h.released_at IS NULL AND (
+     (h.hold_type='inactivity_policy' AND h.source_key=('plan:'||$2::text))
+     OR (h.hold_type='jellyfin_cleanup' AND EXISTS(
+       SELECT 1 FROM jellyfin_accounts ja
+       WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' AND ja.access_lane='free'
+         AND h.source_key=('server:'||ja.server_id::text)
+     ))
+   )
+ ) AS blocked`,[customerId,row.plan_id]);
+ row.blocked=Boolean(row.blocked||laneHold.rows[0]?.blocked);
+ if(!includeBlocked&&row.blocked)return null;
+ return row;
+}
 async function effectiveAddons(customerId,{client=null,includeBlocked=false}={}){const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
         COALESCE(s.plan_name_snapshot,p.name) AS contract_plan_name,
