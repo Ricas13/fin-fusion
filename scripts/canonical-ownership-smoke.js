@@ -23,8 +23,9 @@ function alias(file,target){
   assert(!/\basync\s+function\b/.test(source),`${file} must not contain a second implementation`);
 }
 
-// Authentication: one public facade owns explicit step-up semantics.
-alias('src/auth/service-core.js','./service');
+// Authentication: one public facade owns explicit step-up semantics. The old
+// service-core compatibility path is intentionally gone now that nothing calls it.
+assert(!fs.existsSync(path.join(root,'src/auth/service-core.js')),'retired auth compatibility facade must stay removed');
 const auth=read('src/auth/service.js');
 assert(auth.includes("require('./service-engine')"),'canonical auth service must use the internal engine');
 assert(!auth.includes("require('./service-core')"),'canonical auth service must not depend on its historical alias');
@@ -32,7 +33,7 @@ assert(auth.includes('pendingStaffAuth=prior||{stepUp:true'),'canonical auth ser
 assert.deepStrictEqual(importers("require('./service-engine')"),['src/auth/service.js'],'only the canonical auth facade may import service-engine');
 
 // Admin security: only the canonical facade may compose step-up and mutation guards.
-alias('src/platform/admin-security-core.js','./admin-security');
+assert(!fs.existsSync(path.join(root,'src/platform/admin-security-core.js')),'retired admin-security compatibility facade must stay removed');
 const adminSecurity=read('src/platform/admin-security.js');
 assert(adminSecurity.includes("require('./admin-security-routes')"),'canonical admin security facade must use internal routes');
 assert(adminSecurity.includes('createAdminStepUpRouter')&&adminSecurity.includes('sensitiveMutationGuard'),'canonical admin security facade must retain step-up and sensitive mutation guards');
