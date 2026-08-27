@@ -23,13 +23,14 @@ const LABELS = {
     referral_rewards: ['Affiliate rewards', 'Qualifies pending referrals and matures eligible service credit.'],
     activation_cleanup: ['Activation cleanup', 'Cleans abandoned customer activation state.'],
     pending_registration_cleanup: ['Registration cleanup', 'Removes expired staged public registrations.'],
-    stremio_media_index: ['Stremio media index', 'Refreshes managed and external Stremio catalogue indexes.']
+    stremio_media_index: ['Stremio media index', 'Refreshes managed and external Stremio catalogue indexes.'],
+    notification_lifecycle: ['Admin notification scanner', 'Scans subscription, payment and operational events to raise admin-facing notifications.']
 };
 const CORE_JOBS=new Set(['health','entitlements','billing','plan_changes','stale_reclaim']);
 const GROUPS=[
     ['Access & servers','Core jobs that keep customer access, Jellyfin health and policy reconciliation moving.',new Set(['health','entitlements','policy_drift','customer_inactivity','stremio_media_index'])],
     ['Commerce','Billing, plan transitions and affiliate-credit background work.',new Set(['billing','plan_changes','referral_rewards'])],
-    ['Messaging & onboarding','Activation cleanup, public registration cleanup, transactional email, notifications and request-service sync.',new Set(['activation_cleanup','pending_registration_cleanup','email_outbox','notification_outbox','request_users'])],
+    ['Messaging & onboarding','Activation cleanup, public registration cleanup, transactional email, notifications and request-service sync.',new Set(['activation_cleanup','pending_registration_cleanup','email_outbox','notification_outbox','request_users','notification_lifecycle'])],
     ['Operations','Bulk work queues and stale-job recovery.',new Set(['bulk_jobs','stale_reclaim'])]
 ];
 const PRESETS=[60,300,900,1800,3600,10800,21600,43200,86400];

@@ -26,9 +26,6 @@ function paragraphHtml(text) {
 
 function eventLabel(eventType) {
     const labels = {
-        'customer.subscription.requested': 'Subscription update',
-        'customer.trial.requested': 'Trial update',
-        'customer.stremio.requested': 'Stremio update',
         'customer.service.provisioned': 'Service ready',
         'payment.failed': 'Payment attention required',
         'payment.received': 'Payment confirmation',

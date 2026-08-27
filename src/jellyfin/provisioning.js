@@ -25,9 +25,7 @@ async function notifyNewJellyfinAccess(customerId,account){
       : personalAdmin
         ? `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. You can manage your Jellyfin password under Settings > My Profile in ${site} administration.`
         : `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. The same instructions are shown in your ${site} portal.`;
-    await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,subject:`Your ${site} Jellyfin access is ready`,text:steps,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
-    const admin=String(process.env.ADMIN_NOTIFICATION_EMAIL||'').trim();
-    if(admin)await notifications.dispatch({eventType:'customer.service.provisioned',to:admin,subject:`${site}: Jellyfin access provisioned`,text:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,dedupeKey:`admin-jellyfin-provisioned:${account.id}`,forceEmail:true});
+    await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,customerId,subject:`Your ${site} Jellyfin access is ready`,text:steps,adminSubject:`${site}: Jellyfin access provisioned`,adminText:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
   }catch(error){console.warn('Jellyfin onboarding notification failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});}
 }
 async function reconcileCustomer(customerId){
