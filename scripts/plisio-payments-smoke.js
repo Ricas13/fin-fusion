@@ -61,4 +61,8 @@ const admin=source('src/platform/admin-payment-settings.js');
 expect(admin.includes('Plisio merchant API settings')&&admin.includes('SECRET_KEY'),'Admin Payments must explain Plisio setup.');
 expect(admin.includes('Legacy crypto'),'Admin Payments must present unsupported historical crypto records neutrally.');
 
+const history=source('src/platform/customer-history.js');
+expect(/billingLabel\(value\)\{return\(\{[^}]*plisio:'Plisio'/.test(history),'Customer billing history must label Plisio payments instead of showing the raw provider key.');
+expect(/providerLabel\(value\)\{return value==='stripe'\?'Stripe':value==='paypal'\?'PayPal':value==='plisio'\?'Plisio'/.test(history),'Customer transaction history must label Plisio transactions instead of showing the raw provider key.');
+
 console.log('Plisio payment integration smoke test passed.');
