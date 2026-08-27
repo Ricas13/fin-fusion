@@ -11,6 +11,8 @@ const stremioRequeue=read('db/migrations/031_requeue_legacy_stremio_provisioning
 const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const provisioningFacade=read('src/jellyfin/provisioning.js');
+const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
+const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
 
 const desired = {
     IsAdministrator: false,
@@ -66,6 +68,14 @@ assert(reconciliationLock.includes("CUSTOMER_RECONCILIATION_LOCK_TIMEOUT"),'reco
 assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
 assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(provisioningFacade),'legacy provisioning facade must serialize direct reconciliation callers too');
 assert(provisioningFacade.includes('reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);})'),'account-scoped reconciliation must share the same customer lock');
+
+assert(provisioningEngine.includes("const compensation = require('./provisioning-compensation')"),'provisioning engine must use the shared remote-user compensation helper');
+assert(provisioningEngine.includes("stage: 'policy_apply'")&&provisioningEngine.includes("stage: 'database_persist'"),'both remote policy failure and local persistence failure must invoke provisioning compensation');
+assert(/let stored;[\s\S]*?try \{[\s\S]*?INSERT INTO jellyfin_accounts[\s\S]*?\} catch \(error\) \{[\s\S]*?compensation\.removeCreatedUser/.test(provisioningEngine),'local Jellyfin account persistence must be inside a compensating try/catch');
+assert(provisioningEngine.includes("'JELLYFIN_ACCOUNT_PERSIST_FAILED'")&&provisioningEngine.includes("'JELLYFIN_POLICY_APPLY_FAILED'"),'rolled-back provisioning failures must have stable error codes');
+assert(provisioningCompensation.includes("method: 'DELETE'")&&provisioningCompensation.includes('encodeURIComponent(userId)'),'compensation must delete exactly the just-created remote Jellyfin user');
+assert(provisioningCompensation.includes("'JELLYFIN_PROVISIONING_COMPENSATION_FAILED'")&&provisioningCompensation.includes("'jellyfin.provisioning.compensation_failed'"),'failed rollback must surface operator attention and leave a best-effort audit record');
+assert(provisioningCompensation.includes('alreadyAbsent(cleanupError)'),'a remote user already absent during rollback must be treated as successfully compensated');
 
 assert(adminProvisioning.includes('p.service_type'),'provisioning control room must load the effective plan service type');
 assert(adminProvisioning.includes("serviceType(row)==='stremio'?'Stremio':'Jellyfin'"),'provisioning labels must distinguish Stremio from Jellyfin');
