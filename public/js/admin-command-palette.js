@@ -134,9 +134,6 @@
     const target=returnFocus?.isConnected?returnFocus:trigger;
     target?.focus?.();
   }
-  function isTypingTarget(target){
-    return target instanceof HTMLElement&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'));
-  }
 
   trigger.addEventListener('click',openPalette);
   closeButton?.addEventListener('click',closePalette);
