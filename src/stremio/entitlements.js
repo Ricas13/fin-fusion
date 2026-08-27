@@ -2,7 +2,7 @@
 
 const crypto=require('crypto');
 const {query,transaction}=require('../db');
-const provisioning=require('../jellyfin/provisioning-core');
+const provisioning=require('../jellyfin/provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const registry=require('../jellyfin/registry');
 const planServers=require('../jellyfin/plan-servers');
