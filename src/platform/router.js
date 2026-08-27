@@ -29,8 +29,6 @@ const { createAdminServersDashboardRouter } = require('./admin-servers-dashboard
 const { createAdminJellyfinLifecycleRouter } = require('./admin-jellyfin-lifecycle');
 const { createAdminCustomerJellyfinPasswordRouter } = require('./admin-customer-jellyfin-password');
 const { createAdminDocsRouter } = require('./admin-docs');
-const { createAdminImpersonationRouter } = require('./admin-impersonation');
-const { createAdminLanePolicyRouter } = require('./admin-lane-policy');
 const { createAccountActivationRouter } = require('./account-activation-router');
 const { createCustomerPublicAuthRouter } = require('./customer-public-auth');
 const { createCustomerLoginRouter } = require('./customer-login');
@@ -79,13 +77,6 @@ function createRouter() {
     router.use(createPublicPagesRouter());
     router.use(createPublicHelpRouter());
     router.use(createAccountActivationRouter());
-
-    // Must run before customer/admin page owners: these routers preserve the
-    // administrator identity while applying a customer view and replace the
-    // old customer-wide Jellyfin policy editor with independent lane controls.
-    router.use(createAdminImpersonationRouter());
-    router.use(createAdminLanePolicyRouter());
-
     router.use(createCustomerPublicAuthRouter());
     router.use(createCustomerLoginRouter());
     router.use(createCustomerSecurityRouter());
