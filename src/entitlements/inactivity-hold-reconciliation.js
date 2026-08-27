@@ -8,7 +8,7 @@ const HOLD_TYPE='inactivity_policy';
 
 async function releaseObsoleteForCustomer(customerId,actorUserId=null){
   const holds=await query(`
-    SELECT h.source_key,p.id plan_id,p.price_minor,p.billing_interval,p.service_type,p.inactivity_policy,
+    SELECT h.source_key,p.id plan_id,p.is_free_tier,p.price_minor,p.billing_interval,p.service_type,p.inactivity_policy,
            EXISTS(
              SELECT 1 FROM subscriptions s
              WHERE s.customer_id=h.customer_id AND s.plan_id=p.id AND s.superseded_by IS NULL
@@ -25,7 +25,7 @@ async function releaseObsoleteForCustomer(customerId,actorUserId=null){
   for(const hold of holds.rows){
     const effective=planPolicy.effectiveForFreePlan(hold.inactivity_policy||{},globalCfg);
     const applies=Boolean(
-      hold.plan_id&&hold.active_subscription&&Number(hold.price_minor||0)===0&&
+      hold.plan_id&&hold.active_subscription&&hold.is_free_tier===true&&Number(hold.price_minor||0)===0&&
       String(hold.billing_interval||'')!=='trial'&&
       ['jellyfin','bundle'].includes(String(hold.service_type||'jellyfin'))&&
       planPolicy.hasUsageTrigger(effective)
