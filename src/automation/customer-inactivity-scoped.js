@@ -71,7 +71,7 @@ function deletionPolicy(globalCfg, inactivityPolicy) {
 
 async function recordDisabledLifecycle(row, evidence, globalCfg) {
     const deletion = deletionPolicy(globalCfg, row.inactivity_policy);
-    const state = await query('SELECT disabled FROM jellyfin_accounts WHERE id=$1 AND access_lane=\'free\' AND account_purpose=\'jellyfin\'', [row.account_id]);
+    const state = await query("SELECT disabled FROM jellyfin_accounts WHERE id=$1 AND access_lane='free' AND account_purpose='jellyfin'", [row.account_id]);
     if (!state.rowCount || state.rows[0].disabled !== true) {
         throw new Error('Free Server account did not reach disabled state; lifecycle deletion was not scheduled');
     }
@@ -139,7 +139,10 @@ async function pendingFreeLifecycle() {
 
 async function markLifecycleRestored(row, reason, actorUserId = null) {
     if (row.plan_id) {
-        await accessHolds.releaseHold({ customerId: row.customer_id, type: base.HOLD_TYPE, sourceKey: `plan:${row.plan_id}`, actorUserId }).catch(() => {});
+        // Do not close the durable lifecycle episode unless the hold that caused
+        // the Free lane disable has actually been released. A transient DB error
+        // must leave this row retryable rather than stranded disabled forever.
+        await accessHolds.releaseHold({ customerId: row.customer_id, type: base.HOLD_TYPE, sourceKey: `plan:${row.plan_id}`, actorUserId });
     }
     await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),metadata=metadata||$2::jsonb,updated_at=NOW() WHERE id=$1`, [
         row.lifecycle_id, JSON.stringify({ restoredReason: reason })
@@ -253,6 +256,13 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
                 enforced += 1;
             } catch (error) {
                 await accessHolds.releaseHold({ customerId: row.customer_id, type: base.HOLD_TYPE, sourceKey: `plan:${row.plan_id}`, actorUserId }).catch(() => {});
+                // A failed disable/ledger write must not leave the Free user
+                // disabled without a deletion state. Reconcile immediately after
+                // rolling the hold back; resilient provisioning will also retain
+                // retry state if Jellyfin is still unavailable.
+                await provisioning.reconcileCustomer(row.customer_id).catch(recoveryError => {
+                    console.warn('Free Server inactivity rollback reconciliation pending:', { customerId: row.customer_id, error: recoveryError.message });
+                });
                 throw error;
             }
         } catch (error) {
