@@ -4,7 +4,7 @@ const {query,transaction}=require('../db');
 const accessHolds=require('../entitlements/access-holds');
 const planPolicy=require('../entitlements/plan-lifecycle-policy');
 const lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy');
-const provisioning=require('../jellyfin/provisioning');
+const provisioning=require('../jellyfin/resilient-provisioning');
 const registry=require('../jellyfin/registry');
 
 const KEY='customer_inactivity_policy_v1';
@@ -25,9 +25,6 @@ function assessUsage(row,policy,now=Date.now()){
   const lastPlaybackAt=asDate(row.last_playback_at),lastActivityAt=asDate(row.last_activity_at),accountCreatedAt=asDate(row.account_created_at),startsAt=asDate(row.starts_at);
   const referenceAt=lastPlaybackAt||lastActivityAt||accountCreatedAt||startsAt;
   const mappedAt=accountCreatedAt||startsAt;
-  // Imported accounts may have been mapped into CAPTAiNFiN recently even though the
-  // Jellyfin server has trustworthy historical activity. That history proves the
-  // remote Free account was already under observation before the local mapping.
   const historicalEvidenceAt=earliestDate([lastPlaybackAt,lastActivityAt]);
   const observationStartedAt=earliestDate([mappedAt,historicalEvidenceAt])||referenceAt;
   const ageHours=observationStartedAt?Math.max(0,(now-observationStartedAt.getTime())/3600000):0;
@@ -53,7 +50,7 @@ async function candidates(globalCfg=null){
         AND COALESCE(p.service_type,'jellyfin') IN('jellyfin','bundle')
       ORDER BY s.customer_id,s.current_period_end DESC,s.created_at DESC
     )
-    SELECT fa.*,ja.id account_id,ja.server_id,ja.created_at account_created_at,ja.last_activity_at,js.name server_name,
+    SELECT fa.*,ja.id account_id,ja.server_id,ja.jellyfin_user_id,ja.jellyfin_username,ja.created_at account_created_at,ja.last_activity_at,js.name server_name,
       COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,COALESCE(c.email,u.email) email,c.automation_protected,
       us.last_playback_at,COALESCE(us.playback_seconds,0)::bigint playback_seconds,
       EXISTS(SELECT 1 FROM active_playback_sessions aps WHERE aps.customer_id=fa.customer_id AND aps.server_id=ja.server_id) currently_playing,

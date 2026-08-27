@@ -83,6 +83,10 @@ const suites = [
     commands: [['node', ['scripts/fleet-live-metrics-smoke.js']]],
   },
   {
+    name: 'Free Server lifecycle end to end',
+    commands: [['node', ['scripts/free-server-lifecycle-smoke.js']]],
+  },
+  {
     name: 'Jellyfin user import',
     commands: [['node', ['scripts/jellyfin-user-import-smoke.js']]],
   },
