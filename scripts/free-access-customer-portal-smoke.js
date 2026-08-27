@@ -11,7 +11,7 @@ const nav = fs.readFileSync('views/customer/_nav.ejs', 'utf8');
 
 assert(/accessKind\s*=\s*isTrial\s*\?\s*['"]trial['"]/.test(provision), 'placement must classify trial/free/paid');
 assert(/\$2::text='free'\s+THEN TRUE/.test(provision), 'free access must not require paid_enabled');
-assert(/getCustomerState\(req\.session\.customerId\)/.test(dash), 'customer dashboard must expose provisioning state');
+assert(/getCustomerState\(customerId\)/.test(dash), 'customer dashboard must expose provisioning state through the canonical customerId');
 assert(/\/account\/provisioning\/retry/.test(dash), 'customer must have provisioning retry route');
 assert(/include\('_nav'/.test(view), 'customer dashboard must use the shared left navigation');
 for(const label of ['Home','Activity','Support','Help','Payments','Account'])assert(nav.includes(label),`customer left navigation missing ${label}`);
