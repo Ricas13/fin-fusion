@@ -10,6 +10,7 @@ const compose = read('docker-compose.yml');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
 const verifyBackup = read('scripts/verify-backup.js');
 const sessionMigration = read('db/migrations/002_add_runtime_session_store.sql');
+const deletionMigration = read('db/migrations/100_customer_deletion_saga.sql');
 
 function service(name) {
     const match = new RegExp(`(^|\\r?\\n)  ${name}:\\r?\\n`).exec(compose);
@@ -62,6 +63,10 @@ assert(/GRANT SELECT ON ALL TABLES IN SCHEMA public TO \$\{role\}/.test(roleScri
 assert(/GRANT INSERT,UPDATE ON \$\{table\} TO \$\{role\}/.test(roleScript), 'backup role must write only its bookkeeping tables');
 assert(/backupVerify:\s*\{[^}]*createdb:\s*true/.test(roleScript) && /async function grantBackupVerify[\s\S]*?REVOKE ALL ON SCHEMA public FROM \$\{role\}[\s\S]*?REVOKE ALL ON ALL TABLES IN SCHEMA public FROM \$\{role\}[\s\S]*?REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM \$\{role\}/.test(roleScript), 'restore verifier must use a CREATEDB-only identity with no production schema/table/sequence grants');
 assert(/auth_totp_enrollments/.test(roleScript) && /auth_sessions/.test(roleScript), 'automation role must explicitly exclude authentication secrets');
+assert(/REVOKE INSERT,UPDATE,DELETE ON app_users FROM \$\{role\}/.test(roleScript)&&/'auth_sessions','auth_events'/.test(roleScript),'automation must remain unable to mutate portal users or authentication history directly');
+assert(roleScript.includes('grantDeletionFinalizer(client, role)')&&roleScript.includes('GRANT EXECUTE ON FUNCTION public.finalize_customer_deletion(uuid) TO ${role}'),'app and automation may finalize deletion only through the constrained function');
+assert(deletionMigration.includes('SECURITY DEFINER')&&deletionMigration.includes("REVOKE ALL ON FUNCTION public.finalize_customer_deletion(uuid) FROM PUBLIC"),'customer deletion finalizer must be security-definer and unavailable to PUBLIC');
+assert(deletionMigration.includes("j.status <> 'running'")&&deletionMigration.includes('COALESCE(confirmed_accounts,0) <> expected_accounts'),'privileged deletion finalizer must reject non-running or incompletely confirmed remote deletion jobs');
 assert(/GRANT UPDATE\(last_activity_at,updated_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must be able to advance only Jellyfin activity bookkeeping columns');
 assert(/GRANT SELECT\(id,customer_id,server_id,jellyfin_user_id,disabled,account_purpose,access_lane,last_activity_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must read the lane on managed Jellyfin accounts without broad table access');
 assert(/GRANT SELECT\(id,customer_id,plan_id,status,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot\) ON subscriptions TO \$\{role\}/.test(roleScript), 'activity role must read only subscription fields needed to reconstruct contractual lane limits');
