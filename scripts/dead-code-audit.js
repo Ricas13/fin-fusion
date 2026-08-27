@@ -37,6 +37,7 @@ function resolveLocal(fromFile,specifier){
 
 function localDependencies(file){
   const text=contents.get(file)||'';
+  const dependencies=[];
   const specs=[];
   const patterns=[
     /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
@@ -48,7 +49,9 @@ function localDependencies(file){
     let match;
     while((match=pattern.exec(text)))specs.push(match[1]);
   }
-  return [...new Set(specs.map(spec=>resolveLocal(file,spec)).filter(Boolean))];
+  dependencies.push(...specs.map(spec=>resolveLocal(file,spec)).filter(Boolean));
+  for(const match of text.matchAll(/['"`]((?:src|scripts)\/[A-Za-z0-9._/-]+\.js)['"`]/g))if(jsSet.has(match[1]))dependencies.push(match[1]);
+  return [...new Set(dependencies)];
 }
 
 const graph=new Map(jsFiles.map(file=>[file,localDependencies(file)]));
