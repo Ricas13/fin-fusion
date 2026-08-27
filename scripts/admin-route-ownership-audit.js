@@ -27,13 +27,19 @@ function assertCompositionBoundary() {
   }
 
   // admin-nav is application metadata; admin-security and admin-preview are
-  // deliberately mounted before the main admin route group. The composition
-  // module itself is the single boundary for the remaining top-level routers.
+  // deliberately mounted before the main admin route group. admin-impersonation
+  // must be mounted before every /account router in this file too: its
+  // audit-and-banner middleware needs to see each customer mutation, and an
+  // earlier-mounted account router that sends its own response would
+  // otherwise stop the request from ever reaching a later-mounted audit pass.
+  // The composition module itself is the single boundary for the remaining
+  // top-level routers.
   const directAdminModuleImports = applicationSource.match(/require\('\.\/platform\/admin-[^']+'\)/g) || [];
   const allowedDirectImports = new Set([
     "require('./platform/admin-nav')",
     "require('./platform/admin-route-composition')",
     "require('./platform/admin-security')",
+    "require('./platform/admin-impersonation')",
     "require('./platform/admin-preview')"
   ]);
   const unexpected = directAdminModuleImports.filter(value => !allowedDirectImports.has(value));

@@ -218,6 +218,7 @@ function mountPlatform(app) {
   const { createCustomerClaimRouter } = require('./platform/customer-claim');
   const { createBrandingRouter } = require('./platform/branding');
   const { createAdminPreviewRouter } = require('./platform/admin-preview');
+  const { createAdminImpersonationRouter } = require('./platform/admin-impersonation');
 
   app.use(createHealthRouter());
   app.use(createWebhookRouter());
@@ -248,6 +249,11 @@ function mountPlatform(app) {
     }
   });
 
+  // Impersonation must be mounted before every /account router below: it owns
+  // the audit-and-banner middleware that has to see each customer mutation,
+  // and an earlier-mounted account router that sends its own response would
+  // otherwise stop the request from ever reaching a later-mounted audit pass.
+  app.use(createAdminImpersonationRouter());
   app.use(createBrandingRouter());
   app.use(createCustomerClaimRouter());
   app.use(createCustomerPasswordSyncRouter());

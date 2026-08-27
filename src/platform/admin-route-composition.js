@@ -61,7 +61,6 @@ const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
 const { createAdminCustomerManagementRouter } = require('./admin-customer-management');
-const { createAdminImpersonationRouter } = require('./admin-impersonation');
 const { createAdminLanePolicyRouter } = require('./admin-lane-policy');
 const { createAdminCustomer360Router } = require('./admin-customer-360');
 const { createAdminUsersDashboardRouter } = require('./admin-users-dashboard');
@@ -160,12 +159,12 @@ function mountAdminRoutes(app) {
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
   app.use(createAdminCustomerManagementRouter());
-  // These middleware-owning routers must precede Customer 360. They wrap the
-  // canonical page response and own the lane-scoped mutation paths before the
-  // legacy customer-wide handlers can match them. Impersonation also runs for
-  // later /account routes so the sticky banner/audit layer reaches the real
-  // customer portal while the staff identity remains authoritative.
-  app.use(createAdminImpersonationRouter());
+  // This middleware-owning router must precede Customer 360: it wraps the
+  // canonical page response and owns the lane-scoped mutation paths before the
+  // legacy customer-wide handlers can match them. Impersonation is mounted
+  // much earlier in application.js (before every /account router), since its
+  // audit-and-banner middleware needs to run before those routers can already
+  // terminate the response -- see the comment there.
   app.use(createAdminLanePolicyRouter());
   app.use(createAdminCustomer360Router());
   app.use(createAdminUsersRouter());

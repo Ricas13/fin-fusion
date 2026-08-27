@@ -14,6 +14,7 @@ const accountPolicy = read('src/jellyfin/account-library-policy.js');
 const laneOverrides = read('src/jellyfin/lane-policy-overrides.js');
 const adminLane = read('src/platform/admin-lane-policy.js');
 const composition = read('src/platform/admin-route-composition.js');
+const application = read('src/application.js');
 const customerClaim = read('src/platform/customer-claim.js');
 const claims = read('src/customer-claims.js');
 const customers = read('src/customers.js');
@@ -68,10 +69,21 @@ assert(/getPolicyOverride/.test(laneOverrides)&&/setPolicyOverrideField/.test(la
 assert(/Premium Jellyfin policy/.test(adminLane)&&/Free Access policy/.test(adminLane), 'Customer 360 must show separate Premium and Free policy sections');
 assert(/name="accessLane" value="\$\{esc\(accessLane\)\}"/.test(adminLane), 'policy mutation forms must submit the lane explicitly');
 assert(/setPolicyOverrideField\(req\.params\.customerId,\s*accessLane/.test(adminLane), 'admin override writes must be lane scoped');
-const impersonationPos = composition.indexOf('app.use(createAdminImpersonationRouter())');
 const lanePos = composition.indexOf('app.use(createAdminLanePolicyRouter())');
 const customer360Pos = composition.indexOf('app.use(createAdminCustomer360Router())');
-assert(impersonationPos >= 0 && lanePos >= 0 && customer360Pos >= 0 && impersonationPos < customer360Pos && lanePos < customer360Pos, 'impersonation and lane policy middleware must wrap Customer 360 before it owns the response');
+assert(lanePos >= 0 && customer360Pos >= 0 && lanePos < customer360Pos, 'lane policy middleware must wrap Customer 360 before it owns the response');
+
+// Impersonation's audit-and-banner middleware must run before ANY /account
+// router that can terminate the response itself -- otherwise customer
+// mutations made while impersonating (checkout, password change, plan
+// actions) never reach the audit pass at all.
+const impersonationAppPos = application.indexOf('app.use(createAdminImpersonationRouter())');
+const passwordSyncPos = application.indexOf('app.use(createCustomerPasswordSyncRouter())');
+const subscriptionActionsPos = application.indexOf('app.use(createCustomerSubscriptionActionsRouter())');
+const checkoutPos = application.indexOf('app.use(createFlexibleCheckoutRouter())');
+assert(impersonationAppPos >= 0 && passwordSyncPos >= 0 && subscriptionActionsPos >= 0 && checkoutPos >= 0
+    && impersonationAppPos < passwordSyncPos && impersonationAppPos < subscriptionActionsPos && impersonationAppPos < checkoutPos,
+    'impersonation audit/banner middleware must be mounted before every /account router so it can see all customer mutations made while impersonating');
 
 // Imported-user onboarding can deliberately create an email-less portal identity.
 assert(/Email <span class="help">\(optional\)<\/span>/.test(customerClaim), 'imported claim page must present email as optional');
