@@ -15,11 +15,9 @@ const networkLeases=read('src/access/network-leases.js');
 const planComponentsSource=read('src/access/plan-components.js');
 const entitlements=read('src/stremio/entitlements.js');
 const managedRuntime=read('src/stremio/managed-runtime.js');
-const lifecycle=read('src/stremio/managed-playback-lifecycle.js');
 const managedEntitlements=read('src/stremio/managed-entitlements.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const jellyfinActivity=read('src/jellyfin/activity.js');
-const stremioPlanCreate=read('src/platform/admin-stremio-plan-create.js');
 const stremioPlanEditor=read('src/platform/admin-stremio-plan-editor.js');
 const plansList=read('src/platform/admin-plans-list.js');
 const storefront=read('src/platform/storefront-core.js');
@@ -46,6 +44,7 @@ assert(runtime.includes("require('./blocked-media')")&&runtime.includes('blocked
 assert(runtime.includes('never receives or relays the media bytes'),'runtime must remain control-plane only');
 assert(!externalRuntime.includes('pipe(res)')&&!runtime.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
 assert(!runtime.includes("require('./managed-playback-lifecycle')")&&!managedRuntime.includes('/PlaybackInfo'),'raw Stremio delivery must not create a Jellyfin playback-session lifecycle');
+assert(!fs.existsSync(path.join(root,'src/stremio/managed-playback-lifecycle.js')),'retired managed playback lifecycle module must stay removed');
 assert(runtime.indexOf("householdAccess.preview(entitlement, req, { kind: 'stream_results' })")<runtime.indexOf('Promise.allSettled(['),'outside-household checks must happen before any source search/result resolution');
 assert(runtime.includes('if (preview && preview.allowed === false) return res.json(await deniedStreamResponse'),'a denied household search must return a Stremio result payload instead of an empty stream list');
 
@@ -78,7 +77,7 @@ assert(blockedMedia.MEDIA_SIZE>10000,'block-media asset must remain present');
 // identities remain unlimited at Jellyfin policy level.
 assert(entitlements.includes('function streamLimit(_row){return 1;}'),'stream_limit must remain a compatibility sentinel only');
 assert(migration.includes('SET stream_limit=1'),'existing Stremio entitlement rows must remain normalized to the sentinel');
-assert(!managedRuntime.includes("require('./source-admission')")&&!lifecycle.includes('stream_limit'),'managed playback must not enforce a commercial stream allowance');
+assert(!managedRuntime.includes("require('./source-admission')"),'managed playback must not enforce a commercial stream allowance');
 assert(managedEntitlements.includes('MaxActiveSessions:0'),'hidden Stremio Jellyfin identities must remain unlimited');
 const hiddenScope=(jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length;
 assert(hiddenScope>=2,'generic Jellyfin activity paths must keep excluding internal Stremio identities');
@@ -100,14 +99,13 @@ assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&pol
 // Admin/customer UX must describe the product in customer terms, not delivery
 // architecture or IPv6 implementation details. Plan edits are authoritative for
 // every current plan member; stale/new-purchases-only grandfathering is retired.
-assert(stremioPlanCreate.includes('const cards=[1,2,3]')&&stremioPlanCreate.includes('Household${n===1?')&&stremioPlanCreate.includes('Create custom'),'Stremio creation must expose generated 1/2/3-household presets plus custom');
-assert(stremioPlanCreate.includes('Unlimited streams')&&stremioPlanCreate.includes('Unlimited devices'),'Stremio creation must make unlimited playback explicit');
+assert(!fs.existsSync(path.join(root,'src/platform/admin-stremio-plan-create.js')),'retired standalone Stremio plan creator must stay removed; adaptive plan creation owns this flow');
 assert(!stremioPlanEditor.includes('New purchases only')&&!stremioPlanEditor.includes('Existing customers too'),'Stremio plan edits must not offer stale-policy grandfathering for current members');
 assert(stremioPlanEditor.includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must update all current household snapshots and queue current members for request-policy reconciliation');
 assert(stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must reset current Stremio leases so the new allowance takes effect');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
-assert(customerStremio.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'customer Stremio routes must keep unlimited playback copy and server-enforced household replacement');
+assert(customerDashboard.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'Account Home must own unlimited playback copy while customer Stremio routes retain server-enforced household replacement');
 assert(customerDashboard.includes('stremioHouseholdForCustomer')&&customerDashboard.includes('householdAccess.replacementState'),'Account Home must load the current Stremio household state');
 assert(dashboard.includes('<%= stremioHousehold.accessModel %>')&&!dashboard.includes('/64')&&dashboard.includes('Use a different household connection'),'Account Home Stremio UI must show household access without exposing network implementation detail and retain the household replacement control');
 assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired standalone Stremio setup view must stay removed');

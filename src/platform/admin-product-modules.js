@@ -73,29 +73,6 @@ async function stremioPlaybackData(){
   return{summary:summary.rows[0]||{},recent:recent.rows,leases:leases.rows};
 }
 
-async function jellyfinPage(){
-  await runtimeSettings.ensureLoaded();const d=await jellyfinData(),attention=Number(d.offline_servers||0)+Number(d.provisioning_attention||0);
-  const body=`<div class="metrics">${metric('Active customers',d.customers,'Jellyfin access','/admin/users?service=jellyfin')}${metric('Servers',d.enabled_servers,`${number(d.offline_servers)} offline`,'/admin/servers')}${metric('Plans',d.plans,'Standalone Jellyfin products','/admin/plans?type=jellyfin')}${metric('Playing now',d.active_streams,'Jellyfin sessions','/admin/activity')}</div>${attention?`<div class="notice warning"><strong>${number(attention)} Jellyfin item${attention===1?'':'s'} need attention.</strong> Review offline servers and provisioning problems before changing commercial settings.</div>`:''}${actions([
-    {title:'Servers',text:'Fleet health, credentials, capacity and libraries',href:'/admin/servers'},
-    {title:'Plans',text:'Jellyfin product rules, pricing and availability',href:'/admin/plans?type=jellyfin'},
-    {title:'Customers',text:'Open the shared customer system filtered to Jellyfin',href:'/admin/users?service=jellyfin'},
-    {title:'Playback',text:'Live sessions, transcodes and stream policy',href:'/admin/activity'}
-  ])}`;
-  return layout({siteName:runtimeSettings.siteName(),active:'jellyfin-overview',title:'Jellyfin',subtitle:'Fleet, products, customers and playback in one product workspace',body});
-}
-
-async function stremioPage(){
-  await runtimeSettings.ensureLoaded();const d=await stremioData();
-  const sourceCount=Number(d.managed_sources||0)+Number(d.external_sources||0);
-  const body=`<div class="metrics">${metric('Runtime',d.runtime_enabled?1:0,d.runtime_enabled?'Active':'Paused','/admin/servers/stremio')}${metric('Sources',sourceCount,`${number(d.managed_sources)} managed · ${number(d.external_sources)} external`,'/admin/servers/stremio')}${metric('Plans',d.plans,'Standalone Stremio products','/admin/plans?type=stremio')}${metric('Active customers',d.active_entitlements,`${number(d.active_24h)} searched in 24h`,'/admin/users?service=stremio')}</div><div class="securityNote standalone"><strong>${esc(d.ready_indexes)} ready index${Number(d.ready_indexes)===1?'':'es'} across ${esc(d.eligible_sources)} eligible source${Number(d.eligible_sources)===1?'':'s'}</strong><div class="subText">Managed sources remain primary; external Jellyfin sources complement results independently.</div></div>${actions([
-    {title:'Sources',text:'Managed Jellyfin and external fallback sources',href:'/admin/servers/stremio'},
-    {title:'Plans',text:'Standalone Stremio products and source assignment',href:'/admin/plans?type=stremio'},
-    {title:'Customers',text:'Open the shared customer system filtered to Stremio',href:'/admin/users?service=stremio'},
-    {title:'Household leases',text:'Current user and IPv4/IPv6 household lease windows',href:'/admin/stremio/playback'}
-  ])}`;
-  return layout({siteName:runtimeSettings.siteName(),active:'stremio-overview',title:'Stremio',subtitle:'Runtime, sources, products and managed activity in one product workspace',body});
-}
-
 async function stremioPlaybackPage(req){
   await runtimeSettings.ensureLoaded();const d=await stremioPlaybackData(),s=d.summary,resetToken=csrf.token(req);
   const rows=d.recent.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Hidden user</th><th>Server</th><th>State</th><th>Last managed playback</th></tr></thead><tbody>${d.recent.map(row=>`<tr><td><a href="/admin/users/${esc(row.customer_id)}"><strong>${esc(row.customer_name)}</strong></a><div class="subText">${esc(row.customer_email||'')}</div></td><td>${esc(row.hidden_username||'—')}</td><td>${esc(row.server_name)}</td><td><span class="pill ${row.status==='active'&&!row.last_error?'good':row.status==='error'?'bad':'warn'}">${esc(row.status)}</span>${row.last_error?`<div class="subText">${esc(row.last_error)}</div>`:''}</td><td>${esc(date(row.last_playback_info_at||row.updated_at))}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No managed Stremio accounts have been created yet.</div>';

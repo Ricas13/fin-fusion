@@ -1,12 +1,13 @@
 'use strict';
 
 const fs=require('fs');
+const path=require('path');
 const assert=require('assert');
-const read=file=>fs.readFileSync(file,'utf8');
+const root=path.resolve(__dirname,'..');
+const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const migration=read('db/migrations/000_database_baseline.sql');
 const sourceMigration=migration;
 const deliveryContract=read('db/migrations/038_retire_stremio_delivery_identity_requirement.sql');
-const lifecycle=read('src/automation/jellyfin-lifecycle.js');
 const policy=read('src/entitlements/jellyfin-lifecycle-policy.js');
 const jobs=read('src/automation/jobs.js');
 const inactivity=read('src/automation/customer-inactivity.js');
@@ -18,10 +19,11 @@ const entitlements=read('src/stremio/entitlements.js');
 const admin=read('src/platform/admin-stremio-sources.js');
 
 for(const expected of ['freeNoPlaybackDays:7','freeDeleteAfterDisableDays:7','trialDeleteAfterDisableDays:30','paidDeleteAfterDisableDays:30'])assert(policy.includes(expected),`missing default ${expected}`);
-assert(lifecycle.includes('provisioning.disableJellyfinAccount(row)'),'lifecycle must disable the Jellyfin account directly');
-assert(!lifecycle.includes('accessHolds'),'lifecycle must not create portal/customer access holds');
-assert(!/UPDATE\s+customers|DELETE\s+FROM\s+customers/i.test(lifecycle),'lifecycle must never update/delete portal customers');
-assert(jobs.includes('async customer_inactivity(){return customerInactivity.run()}')&&inactivity.includes('minimumPlaybackMinutes'),'customer inactivity job must use the plan-aware lifecycle worker');
+assert(!fs.existsSync(path.join(root,'src/automation/jellyfin-lifecycle.js')),'superseded standalone Jellyfin lifecycle worker must stay removed');
+assert(jobs.includes('async customer_inactivity(){return customerInactivity.run()}'),'automation must route customer inactivity through the current plan-aware owner');
+assert(inactivity.includes('minimumPlaybackMinutes')&&inactivity.includes('telemetryReady()'),'current inactivity owner must keep plan-aware playback and telemetry safety checks');
+assert(inactivity.includes('portalAccountPreserved:true'),'current inactivity cleanup must record portal-account preservation');
+assert(!/UPDATE\s+customers|DELETE\s+FROM\s+customers/i.test(inactivity),'current inactivity lifecycle must never update/delete portal customers');
 assert(policy.includes('portalAccountPreserved:true'),'policy audit must record portal preservation');
 assert(/source_kind = 'owned'::text\) OR \(authorization_confirmed = true/.test(migration),'external Stremio sources must require authorization');
 assert(pool.includes('Confirm that you are authorized'),'external source connection must enforce authorization');

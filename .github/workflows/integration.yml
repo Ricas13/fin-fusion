@@ -57,6 +57,7 @@ jobs:
 
       - name: Specialist static contracts
         run: |
+          node scripts/dead-code-audit.js --strict --json
           node scripts/csp-inline-audit.js
           node scripts/payment-incident-safety-smoke.js
           node scripts/customer-portal-view-smoke.js

@@ -2,7 +2,7 @@
 
 const crypto=require('crypto');
 const {query,transaction}=require('../db');
-const provisioning=require('../jellyfin/provisioning-core');
+const provisioning=require('../jellyfin/provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const registry=require('../jellyfin/registry');
 const planServers=require('../jellyfin/plan-servers');
@@ -17,7 +17,6 @@ function serviceType(row){return String(row?.service_type_snapshot||row?.service
 // entitlement schema. Household access no longer derives any runtime or
 // commercial concurrency allowance from the plan's Jellyfin stream count.
 function streamLimit(_row){return 1;}
-function internalUsername(customerId){return `cf_stremio_${String(customerId).replace(/-/g,'').slice(0,12)}`;}
 function randomPassword(){return crypto.randomBytes(32).toString('base64url');}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin user token');return `MediaBrowser Token="${token}"`;}
 function clientAuthorization(){return 'MediaBrowser Client="CAPTAiNFiN Stremio", Device="CAPTAiNFiN", DeviceId="captainfin-stremio", Version="1.0"';}
@@ -33,10 +32,9 @@ async function explicitSourceCount(subscriptionId,{readyOnly=false}={}){
 }
 async function usesSharedSources(subscriptionId){return(await explicitSourceCount(subscriptionId))>0;}
 
-// Authentication helpers are shared with managed-entitlements. The legacy
-// single-server preparation helpers below remain compatibility-only; normal
-// entitlement/install reconciliation no longer calls them or changes the
-// hidden Jellyfin password.
+// Restricted-user authentication helpers remain shared with managed-entitlements
+// and with legacy-token retirement. Entitlement reconciliation itself no longer
+// creates or prepares a hidden Jellyfin account.
 async function selectServer(plan){
   const servers=(await planServers.eligibleServersForPlan(plan,{enabledOnly:true,forPlacement:true})).filter(server=>server.stremio_enabled===true&&server.allow_new_users!==false&&server.public_url);
   if(!servers.length)throw new Error('No healthy Stremio-enabled Jellyfin server with a public URL is available for this plan.');return servers[0];
@@ -49,14 +47,6 @@ async function authenticateRestrictedUser(serverId,username,password){
 }
 async function logoutRestrictedToken(server,encryptedToken){if(!encryptedToken)return false;try{const token=decryptWithEnv(encryptedToken,TOKEN_ENV,TOKEN_PREFIX),url=new URL('/Sessions/Logout',`${server.base_url}/`),response=await outbound.safeFetch(url,{purpose:`Stremio restricted logout on ${server.name}`,method:'POST',timeoutMs:8000,headers:{Authorization:jellyfinAuthHeader(token),Accept:'application/json'}});return response.ok;}catch(_error){console.warn('Stremio restricted Jellyfin logout failed.');return false;}}
 async function refreshRestrictedAccess(account,server,priorEncryptedToken=null){await logoutRestrictedToken(server,priorEncryptedToken);const password=randomPassword();await registry.request(server.id,`/Users/${account.jellyfin_user_id}/Password`,{method:'POST',body:{Id:account.jellyfin_user_id,NewPw:password}});const auth=await authenticateRestrictedUser(server.id,account.jellyfin_username,password);if(auth.userId!==String(account.jellyfin_user_id))throw new Error('Restricted Jellyfin authentication returned the wrong user identity.');await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,updated_at=NOW() WHERE id=$1`,[account.id]);return{encryptedToken:encryptWithEnv(auth.accessToken,TOKEN_ENV,TOKEN_PREFIX),issuedAt:new Date()};}
-async function setInternalPolicy(account,plan,effective,limit,disabled=false){const access=await provisioning.resolveLibraryAccessForServer(account.server_id,effective.unrestricted,effective.visibleNames,disabled),body={...provisioning.policyBody(effective.technical,disabled,access),EnableRemoteAccess:!disabled,MaxActiveSessions:0,EnableContentDownloading:false,EnableSyncTranscoding:false,EnableMediaConversion:false,EnableLiveTvManagement:false,EnableUserPreferenceAccess:false};await registry.request(account.server_id,`/Users/${account.jellyfin_user_id}/Policy`,{method:'POST',body});return access;}
-async function findInternalAccount(customerId,serverId){const r=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND account_purpose='stremio_internal' ORDER BY created_at LIMIT 1`,[customerId,serverId]);return r.rows[0]||null;}
-async function prepareInternalAccount(customerId,plan,limit,{forceTokenRefresh=false}={}){
-  const server=await selectServer(plan),effective=await provisioning.effectivePolicyForCustomer(customerId,plan);let account=await findInternalAccount(customerId,server.id),encryptedToken=null,issuedAt=null,priorEncryptedToken=null;
-  if(!account){const password=randomPassword();account=await provisioning.createJellyfinAccount(customerId,server,effective,{preferredUsername:internalUsername(customerId),bootstrapPassword:password,makePrimary:false});await query(`UPDATE jellyfin_accounts SET account_purpose='stremio_internal',is_primary=FALSE,password_setup_required=FALSE,updated_at=NOW() WHERE id=$1`,[account.id]);account.account_purpose='stremio_internal';await setInternalPolicy(account,plan,effective,limit,false);const auth=await authenticateRestrictedUser(server.id,account.jellyfin_username,password);if(auth.userId!==String(account.jellyfin_user_id))throw new Error('Restricted Jellyfin authentication returned the wrong user identity.');encryptedToken=encryptWithEnv(auth.accessToken,TOKEN_ENV,TOKEN_PREFIX);issuedAt=new Date();}
-  else{const current=await query(`SELECT jellyfin_access_token_encrypted FROM stremio_entitlements WHERE jellyfin_account_id=$1 ORDER BY updated_at DESC LIMIT 1`,[account.id]);priorEncryptedToken=current.rows[0]?.jellyfin_access_token_encrypted||null;await setInternalPolicy(account,plan,effective,limit,false);await query(`UPDATE jellyfin_accounts SET disabled=FALSE,is_primary=FALSE,password_setup_required=FALSE,updated_at=NOW() WHERE id=$1`,[account.id]);if(forceTokenRefresh||!priorEncryptedToken){const rotated=await refreshRestrictedAccess(account,server,priorEncryptedToken);encryptedToken=rotated.encryptedToken;issuedAt=rotated.issuedAt;}}
-  return{server,account,encryptedToken,issuedAt};
-}
 
 async function managedAccountOwned(accountId){if(!accountId)return false;const r=await query(`SELECT EXISTS(SELECT 1 FROM stremio_managed_accounts WHERE jellyfin_account_id=$1 AND status='active') yes`,[accountId]);return r.rows[0]?.yes===true;}
 async function disableLegacyAccountIfUnowned(accountId){if(!accountId||await managedAccountOwned(accountId))return false;const a=await query(`SELECT * FROM jellyfin_accounts WHERE id=$1 AND account_purpose='stremio_internal'`,[accountId]);if(!a.rowCount)return false;await provisioning.disableJellyfinAccount(a.rows[0]).catch(error=>console.warn(`Unable to disable legacy Stremio Jellyfin account ${accountId}:`,error.message));return true;}

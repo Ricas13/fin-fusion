@@ -17,14 +17,10 @@ function jsFiles(dir){
 }
 function relative(file){return path.relative(root,file).replace(/\\/g,'/');}
 function importers(fragment){return jsFiles(path.join(root,'src')).filter(file=>read(relative(file)).includes(fragment)).map(relative).sort();}
-function alias(file,target){
-  const source=read(file);
-  assert.match(source,new RegExp(`module\\.exports\\s*=\\s*require\\(['\"]${target.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}['\"]\\)`),`${file} must delegate to ${target}`);
-  assert(!/\basync\s+function\b/.test(source),`${file} must not contain a second implementation`);
-}
 
-// Authentication: one public facade owns explicit step-up semantics.
-alias('src/auth/service-core.js','./service');
+// Authentication: one public facade owns explicit step-up semantics. The old
+// service-core compatibility path is intentionally gone now that nothing calls it.
+assert(!fs.existsSync(path.join(root,'src/auth/service-core.js')),'retired auth compatibility facade must stay removed');
 const auth=read('src/auth/service.js');
 assert(auth.includes("require('./service-engine')"),'canonical auth service must use the internal engine');
 assert(!auth.includes("require('./service-core')"),'canonical auth service must not depend on its historical alias');
@@ -32,18 +28,20 @@ assert(auth.includes('pendingStaffAuth=prior||{stepUp:true'),'canonical auth ser
 assert.deepStrictEqual(importers("require('./service-engine')"),['src/auth/service.js'],'only the canonical auth facade may import service-engine');
 
 // Admin security: only the canonical facade may compose step-up and mutation guards.
-alias('src/platform/admin-security-core.js','./admin-security');
+assert(!fs.existsSync(path.join(root,'src/platform/admin-security-core.js')),'retired admin-security compatibility facade must stay removed');
 const adminSecurity=read('src/platform/admin-security.js');
 assert(adminSecurity.includes("require('./admin-security-routes')"),'canonical admin security facade must use internal routes');
 assert(adminSecurity.includes('createAdminStepUpRouter')&&adminSecurity.includes('sensitiveMutationGuard'),'canonical admin security facade must retain step-up and sensitive mutation guards');
 assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/platform/admin-security.js'],'only the canonical admin security facade may import internal security routes');
 
 // Jellyfin provisioning: all public calls pass through the entitlement/lifecycle facade.
-alias('src/jellyfin/provisioning-core.js','./provisioning');
+// The historical provisioning-core alias is intentionally gone; no runtime caller
+// should be able to bypass the canonical facade through an old import path.
+assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning compatibility facade must stay removed');
 const provisioning=read('src/jellyfin/provisioning.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
-assert(provisioning.includes("require('./provisioning-engine')"),'canonical provisioning facade must use internal engine');
+assert(provisioning.includes("require('./provisioning-engine')"),'canonical provisioning facade must use the internal engine');
 assert(!provisioning.includes("require('./provisioning-core')"),'canonical provisioning facade must not depend on its historical alias');
 assert(provisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical provisioning must retain inactivity-hold reconciliation');
 assert(provisioning.includes('markPasswordSetupRequired'),'canonical provisioning must retain password-setup state');
