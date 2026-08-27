@@ -528,10 +528,10 @@ async function setJellyfinPassword(customerId, accountId, newPassword) {
 
 async function renameJellyfinAccount(customerId, accountId, newUsername, { actorUserId = null } = {}) {
     const username = cleanJellyfinUsername(newUsername);
-    const result = await query(`SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'`, [accountId, customerId]);
+    const result = await query(`SELECT ja.*,ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username FROM jellyfin_accounts ja WHERE ja.id=$1 AND ja.customer_id=$2 AND ja.account_purpose='jellyfin'`, [accountId, customerId]);
     if (!result.rowCount) throw new Error('Jellyfin account not found');
     const account = result.rows[0];
-    if (new Date(account.created_at).getTime() >= new Date().setHours(0,0,0,0)) throw new Error('Jellyfin username changes are only available for accounts created before today.');
+    if (!account.can_rename_jellyfin_username) throw new Error('Jellyfin username changes are only available for accounts created before today.');
     if (String(account.jellyfin_username || '').toLowerCase() === username.toLowerCase()) return account;
     const local = await query(`SELECT 1 FROM jellyfin_accounts WHERE server_id=$1 AND lower(jellyfin_username)=lower($2) AND id<>$3 LIMIT 1`, [account.server_id, username, account.id]);
     if (local.rowCount) throw new Error('That Jellyfin username is already used on this server.');

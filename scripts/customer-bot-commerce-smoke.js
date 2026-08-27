@@ -41,6 +41,7 @@ assert(communications.includes("r.post('/account/communications/discord/start'")
 assert(communicationView.includes('method="post" action="/account/communications/telegram/start"'),'Telegram connect UI must submit a POST');
 assert(communicationView.includes('method="post" action="/account/communications/discord/start"'),'Discord connect UI must submit a POST');
 assert(communications.includes("scope','identify"),'Discord customer linking must request only identify');
+assert(communications.includes('req.query.error')&&communications.includes("links.inspect(state,'discord'")&&communications.includes('belongs to another signed-in account'),'Discord customer callback must handle provider errors and validate the pending one-time state before exchanging the OAuth code');
 assert(communications.includes("x-telegram-bot-api-secret-token"),'Telegram bot update endpoint must verify the Bot API secret token');
 assert(dispatch.includes('telegram_chat_id'),'Customer Telegram delivery must use the verified chat id');
 assert(dispatch.includes('discord_user_id'),'Customer Discord delivery must use the verified user id');
@@ -55,6 +56,7 @@ assert(adminNotifications.includes('Notification control room')&&adminNotificati
 assert(adminNotifications.includes('/admin/profile/notifications'),'Global Notifications must link to each admin profile notification matrix');
 assert(adminNotifications.includes('customer_opt_in_allowed'),'Global Notifications must control which customer events may be exposed');
 assert(adminLinks.includes('admin_channel_link_tokens')&&adminLinks.includes('admin_communication_preferences'),'Admin Telegram/Discord linking must use each admin identity, not a global destination');
+assert(read('src/integrations/customer-channel-links.js').includes('async function inspect'),'Customer channel link tokens must be inspectable before Discord OAuth code exchange');
 assert(operations.includes('canonical=production||Boolean(requireCanonical)'),'Production external URLs must always use the canonical configured origin');
 
 assert(orders.includes('LEFT JOIN app_users u ON u.id=c.user_id'),'Orders must resolve customer identity through the canonical app-user relation');

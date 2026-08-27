@@ -14,6 +14,11 @@ async function issue(customerId,channel,{ttlMinutes=15}={}){
   });
   return{token,expiresAt:expires};
 }
+async function inspect(raw,channel){
+  channel=cleanChannel(channel);const tokenHash=hash(raw),found=await query(`SELECT customer_id,expires_at FROM customer_channel_link_tokens WHERE channel=$1 AND token_hash=$2 AND used_at IS NULL AND expires_at>NOW() LIMIT 1`,[channel,tokenHash]);
+  if(!found.rowCount)return null;
+  return{customerId:found.rows[0].customer_id,expiresAt:found.rows[0].expires_at};
+}
 async function consume(raw,channel,linker){
   channel=cleanChannel(channel);const tokenHash=hash(raw);
   return transaction(async client=>{
@@ -42,4 +47,4 @@ async function unlink(customerId,channel){
   if(channel==='telegram')await query(`UPDATE customer_communication_preferences SET telegram_chat_id=NULL,telegram_linked_at=NULL,telegram_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
   else await query(`UPDATE customer_communication_preferences SET discord_user_id=NULL,discord_linked_at=NULL,discord_opt_in=FALSE,updated_at=NOW() WHERE customer_id=$1`,[customerId]);
 }
-module.exports={issue,consume,linkTelegram,linkDiscord,unlink,hash};
+module.exports={issue,inspect,consume,linkTelegram,linkDiscord,unlink,hash};
