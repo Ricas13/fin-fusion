@@ -88,6 +88,12 @@ const newAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(n
 assert.strictEqual(newAssessment.noPlaybackEligible,false,'A genuinely new Free mapping with no historical activity must retain the observation grace period');
 const recentPlaybackAssessment=inactivityRuntime.assessUsage({account_created_at:new Date(now-5*day),starts_at:new Date(now-5*day),last_activity_at:new Date(now-10*day),last_playback_at:new Date(now-2*day),playback_seconds:60},usagePolicy,now);
 assert.strictEqual(recentPlaybackAssessment.noPlaybackEligible,false,'Recent Free-server playback must prevent inactivity even when older account history exists');
+const strandedHeldFreeAccount={inactivity_policy:{},account_created_at:new Date(now-10*day),starts_at:new Date(now-10*day),last_activity_at:new Date(now-10*day),last_playback_at:null,playback_seconds:0,already_held:true,automation_protected:false,currently_playing:false};
+const strandedPolicy=planPolicyRuntime.effectiveForFreePlan(strandedHeldFreeAccount.inactivity_policy,{enabled:true,dryRun:false,freeNoPlaybackDays:7});
+const strandedAssessment=inactivityRuntime.assessUsage(strandedHeldFreeAccount,strandedPolicy,now);
+const strandedEligible=strandedPolicy.enabled&&!strandedHeldFreeAccount.automation_protected&&!strandedHeldFreeAccount.currently_playing&&(strandedAssessment.noPlaybackEligible||strandedAssessment.usageEligible);
+assert.strictEqual(strandedEligible,true,'An existing inactivity hold on an enabled Free account must retry disable/reconcile instead of being skipped forever');
+assert(inactivity.includes('repairExistingHold:Boolean(row.already_held&&eligible)'),'Inactivity candidates must flag held-but-enabled Free accounts for repair visibility');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
