@@ -2,6 +2,7 @@
 const express=require('express');
 const crypto=require('crypto');
 const customers=require('../customers');
+const customerSession=require('../auth/customer-session');
 const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const customerNav=require('./customer-nav-html');
@@ -11,11 +12,12 @@ const emailChange=require('../security/customer-email-change');
 const twoFactor=require('../security/customer-two-factor');
 const customerRateLimit=require('../security/customer-rate-limit');
 const csrf=require('../auth/csrf');
+const save=customerSession.save;
+const regenerate=customerSession.regenerate;
+const destroy=customerSession.destroy;
+const establish=customerSession.establish;
 function safeNext(value){const next=String(value||'');return next.startsWith('/')&&!next.startsWith('//')?next:'/account'}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function save(req){return new Promise((resolve,reject)=>req.session.save(e=>e?reject(e):resolve()));}
-function regenerate(req){return new Promise((resolve,reject)=>req.session.regenerate(e=>e?reject(e):resolve()));}
-function destroy(req){return new Promise(resolve=>req.session?req.session.destroy(()=>resolve()):resolve());}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'))}
 function normalizeLoginIdentity(value){return String(value||'').trim().toLowerCase().slice(0,254)}
 async function identityLoginRateLimit(req,res,next){
@@ -38,7 +40,6 @@ async function identityLoginRateLimit(req,res,next){
   return res.status(503).send('Authentication temporarily unavailable.');
  }
 }
-async function establish(req,account){await regenerate(req);req.session.customerUserId=account.userId;req.session.customerId=account.customerId;req.session.customerUsername=account.username;req.session.csrfToken=crypto.randomBytes(32).toString('base64url');await customers.registerCustomerSession(req,account);await save(req);}
 function accountTransitionPage(site,title,body,navHtml=''){return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${esc(title)} · ${esc(site)}</title><link rel="stylesheet" href="/css/customer-portal.css"><link rel="stylesheet" href="/css/customer-navigation.css"><style>.securityMain{max-width:1050px;margin:auto;padding:24px}.panel{padding:20px}.field{margin:14px 0}</style></head><body><main class="securityMain">${navHtml}<div class="customerPortalPageHeader"><div><h1>${esc(title)}</h1></div></div>${body}</main></body></html>`;}
 async function accountNavHtml(req){return customerNav.nav('account',await customerNav.optionsForCustomer(req.session.customerId));}
 function confirmationPage(req,{displayName,email,error=null},navHtml=''){const site=runtimeSettings.siteName();return accountTransitionPage(site,'Confirm email change',`<section class="panel"><p>Changing the account email also changes where password-reset messages are delivered. Enter your current portal password to approve the change to <strong>${esc(email)}</strong>.</p>${error?`<div class="notice error">${esc(error)}</div>`:''}<form method="post" action="/account/security/profile"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="displayName" value="${esc(displayName)}"><input type="hidden" name="email" value="${esc(email)}"><div class="field"><label>Current portal password</label><input class="input" type="password" name="currentPassword" autocomplete="current-password" required autofocus></div><button class="button primary">Confirm email change</button></form></section>`,navHtml);}

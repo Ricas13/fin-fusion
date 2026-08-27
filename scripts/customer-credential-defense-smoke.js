@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const breach = require('../src/security/password-breach');
+require('./customer-account-transition-smoke');
 
 async function main() {
   const password = 'correct horse battery staple unique fixture';

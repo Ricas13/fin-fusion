@@ -2,6 +2,7 @@
 const crypto=require('crypto');
 const bcrypt=require('bcryptjs');
 const {query,transaction}=require('../db');
+const customers=require('../customers');
 const referrals=require('../referrals');
 const planCapacity=require('../entitlements/plan-capacity');
 
@@ -9,7 +10,7 @@ const LOCK_SEED=761931;
 const FREE_HOLD_MINUTES=20;
 function cleanEmail(value){const email=String(value||'').trim().toLowerCase();if(!email||!email.includes('@')||email.length>254||/[\r\n<>]/.test(email))throw new Error('A valid email address is required');return email;}
 function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');return username;}
-function validatePassword(password){if(typeof password!=='string'||password.length<12||password.length>200)throw new Error('Password must be between 12 and 200 characters');}
+async function validatePassword(password){return customers.validateNewPassword(password);}
 function tokenHash(raw){return crypto.createHash('sha256').update(String(raw||''),'utf8').digest('hex');}
 function cleanCommunicationPreferences(value={}){
     const phone=String(value.phone_e164||value.phone||'').trim().slice(0,32);
@@ -39,7 +40,7 @@ async function canonicalFreePlan(client){
 }
 
 async function begin({email,username,password,referralCode=null,communicationPreferences={},ttlMinutes=60,freeAccess=false}){
-    email=cleanEmail(email);username=cleanUsername(username);validatePassword(password);
+    email=cleanEmail(email);username=cleanUsername(username);await validatePassword(password);
     const prefs=cleanCommunicationPreferences(communicationPreferences);
     const passwordHash=await bcrypt.hash(password,12),raw=crypto.randomBytes(32).toString('base64url'),hash=tokenHash(raw),minutes=Math.max(10,Math.min(24*60,Number(ttlMinutes)||60)),expiresAt=new Date(Date.now()+minutes*60000),ref=String(referralCode||'').trim().toUpperCase().slice(0,20)||null;
     const row=await transaction(async client=>{

@@ -2,8 +2,10 @@
 
 const express = require('express');
 const csrf = require('../auth/csrf');
+const customerSession = require('../auth/customer-session');
 const claims = require('../customer-claims');
 const runtimeSettings = require('./runtime-settings');
+const operations = require('./operations-settings');
 const branding = require('./branding');
 const { esc, layout } = require('./admin-html');
 
@@ -15,12 +17,6 @@ function noStore(_req, res, next) {
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
     res.setHeader('Pragma', 'no-cache');
     next();
-}
-function absoluteUrl(req, path) {
-    const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
-    const proto = forwardedProto || req.protocol;
-    const host = req.get('x-forwarded-host') || req.get('host');
-    return `${proto}://${host}${path}`;
 }
 function date(value) {
     if (!value) return '—';
@@ -112,12 +108,17 @@ function unavailable(message) {
     return publicShell('Claim unavailable', `<section class="card"><h1>Claim link unavailable</h1><p class="lead">${esc(message)}</p><a href="/account/login" style="color:#72cce7">Customer sign in</a></section>`);
 }
 
+function verificationPending(email) {
+    return publicShell('Verify your email', `<section class="card"><h1>Check your email</h1><p class="lead">Your portal account has been created, but it is not signed in yet. Verify <strong>${esc(email || 'your email address')}</strong> using the link we queued, then sign in with your new portal username and password.</p><div class="notice safe">Your existing Jellyfin login and password are unchanged.</div><a href="/account/login" style="color:#72cce7">Customer sign in</a></section>`);
+}
+
 function publicForm(req, claim, values = {}, error = null) {
     const suggested = values.username || claim.suggested_username || '';
+    const verificationRequired = runtimeSettings.requireEmailVerification();
     const emailField = claim.email_lock
         ? `<div class="field"><label>Email</label><input class="input" type="email" name="email" value="${esc(claim.email_lock)}" readonly><div class="help">This claim was locked to this email by the administrator.</div></div>`
-        : `<div class="field"><label>Email <span class="help">(optional)</span></label><input class="input" type="email" name="email" maxlength="254" autocomplete="email" value="${esc(values.email || claim.customer_email || '')}"><div class="help">Optional. You can sign in with the portal username even without an email.</div></div>`;
-    return publicShell('Claim your account', `<section class="card"><h1>Claim your account</h1><p class="lead">Your existing Jellyfin account is already connected to ${esc(runtimeSettings.siteName())}. Create the portal login you will use to manage it.</p>${error ? `<div class="notice">${esc(error)}</div>` : ''}<div class="identity"><strong>${esc(claim.jellyfin_usernames || claim.display_name || 'Existing Jellyfin account')}</strong><small>${esc(claim.server_names || '')} · claim expires ${esc(date(claim.expires_at))}</small></div><div class="notice safe">Your current Jellyfin password will not be changed by this claim. This password is for the CAPTAiNFiN portal.</div><form method="post" action="/claim/${encodeURIComponent(req.params.token)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">${emailField}<div class="field"><label>Portal username</label><input class="input" name="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" autocomplete="username" required value="${esc(suggested)}"><div class="help">You can keep the same username as Jellyfin or choose another portal username.</div></div><div class="field"><label>Portal password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required><div class="help">At least 12 characters. This does not replace your existing Jellyfin password.</div></div><div class="field"><label>Confirm portal password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button" type="submit">Claim account</button></form></section>`);
+        : `<div class="field"><label>Email <span class="help">(optional)</span></label><input class="input" type="email" name="email" maxlength="254" autocomplete="email" value="${esc(values.email || claim.customer_email || '')}"><div class="help">Optional. You can sign in with the portal username even without an email.${verificationRequired?' If you add an email, it must be verified before email-based sign-in or recovery is available.':''}</div></div>`;
+    return publicShell('Claim your account', `<section class="card"><h1>Claim your account</h1><p class="lead">Your existing Jellyfin account is already connected to ${esc(runtimeSettings.siteName())}. Create the portal login you will use to manage it.</p>${error ? `<div class="notice">${esc(error)}</div>` : ''}<div class="identity"><strong>${esc(claim.jellyfin_usernames || claim.display_name || 'Existing Jellyfin account')}</strong><small>${esc(claim.server_names || '')} · claim expires ${esc(date(claim.expires_at))}</small></div><div class="notice safe">Your current Jellyfin password will not be changed by this claim. This password is for the CAPTAiNFiN portal.</div><form method="post" action="/claim/${encodeURIComponent(req.params.token)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">${emailField}<div class="field"><label>Portal username</label><input class="input" name="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" autocomplete="username" required value="${esc(suggested)}"><div class="help">You can keep the same username as Jellyfin or choose another portal username.</div></div><div class="field"><label>Portal password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required><div class="help">At least 12 characters and checked against known breach data. This does not replace your existing Jellyfin password.</div></div><div class="field"><label>Confirm portal password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button" type="submit">Claim account</button></form></section>`);
 }
 
 function statusMessage(claim) {
@@ -157,9 +158,8 @@ function createCustomerClaimRouter() {
                 if (refreshed && refreshed.status !== 'active') return res.status(410).send(unavailable(statusMessage(refreshed)));
                 return res.status(400).send(publicForm(req, claim, req.body, error.message));
             }
-            req.session.customerUserId = redeemed.user.id;
-            req.session.customerId = redeemed.customer.id;
-            req.session.customerUsername = redeemed.user.username;
+            if (redeemed.verificationRequired) return res.status(200).send(verificationPending(redeemed.user.email));
+            await customerSession.establish(req, redeemed);
             return res.redirect('/account?message=' + encodeURIComponent('Account claimed. Your existing Jellyfin login and password are unchanged.'));
         } catch (error) { return next(error); }
     });
@@ -175,7 +175,7 @@ function createCustomerClaimRouter() {
             req.session.customerClaimFlash = {
                 claimId: String(created.claim.id),
                 customerId: String(req.params.customerId),
-                url: absoluteUrl(req, `/claim/${encodeURIComponent(created.token)}`)
+                url: await operations.absoluteUrl(req, `/claim/${encodeURIComponent(created.token)}`)
             };
             return res.redirect('/admin/customer-claims?message=' + encodeURIComponent('Claim link created. Copy it now; it will not be shown again.'));
         } catch (error) {
@@ -200,4 +200,4 @@ function createCustomerClaimRouter() {
     return router;
 }
 
-module.exports = { createCustomerClaimRouter, adminPage, publicForm, unavailable, statusMessage, takeClaimFlash, claimFlashPanel };
+module.exports = { createCustomerClaimRouter, adminPage, publicForm, unavailable, verificationPending, statusMessage, takeClaimFlash, claimFlashPanel };
