@@ -13,6 +13,7 @@ const composition=read('src/platform/admin-route-composition.js');
 const createPlan=read('src/platform/admin-plan-create-v2.js');
 const planPolicy=read('src/entitlements/plan-lifecycle-policy.js');
 const inactivity=read('src/automation/customer-inactivity.js');
+const subscriptionState=read('src/entitlements/subscription-state.js');
 const cleanupReturn=read('src/entitlements/jellyfin-cleanup-return.js');
 const provisioning=read('src/jellyfin/provisioning.js');
 const lifecycle=read('src/payments/lifecycle.js');
@@ -47,6 +48,9 @@ const globallyDry=planPolicyRuntime.effectiveForFreePlan({enabled:true,dryRun:fa
 assert.strictEqual(globallyDry.dryRun,true,'Global dry-run must prevent a plan override from forcing enforcement');
 assert(inactivity.includes("lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy')")&&inactivity.includes('planPolicy.effectiveForFreePlan'),'Free inactivity worker must resolve the effective global-plus-plan lifecycle policy');
 assert(!inactivity.includes("COALESCE((p.inactivity_policy->>'enabled')::boolean,FALSE)=TRUE"),'Free candidates must not be silently excluded just because their plan has no explicit enabled override');
+assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity must apply to the canonical Free entitlement regardless of whether it was claimed or migrated');
+assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor plan-scoped inactivity holds independently of subscription source');
+assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptionState.includes("ja.access_lane='free'"),'Dormant cleanup blocking must remain scoped to the Free Jellyfin lane');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
 assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
