@@ -7,6 +7,8 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
 const inactivityRuntime=require('../src/automation/customer-inactivity');
+const planLifecyclePage=require('../src/platform/admin-plan-lifecycle');
+const globalLifecyclePage=require('../src/platform/admin-jellyfin-lifecycle');
 
 const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
@@ -23,6 +25,8 @@ const serverUsers=read('src/platform/admin-server-users.js');
 const serverForm=read('views/admin/server-form.ejs');
 const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
 const plansList=read('src/platform/admin-plans-list.js');
+const planLifecycleSource=read('src/platform/admin-plan-lifecycle.js');
+const globalLifecycleSource=read('src/platform/admin-jellyfin-lifecycle.js');
 
 // Customers owns customer records and Jellyfin import/claim discovery. Invitation
 // onboarding is retired; imported-user claims remain a subordinate import flow.
@@ -53,6 +57,24 @@ assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity must apply
 assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("h.source_key=('plan:'||$2::text)"),'Free entitlement lookup must honor plan-scoped inactivity holds independently of subscription source');
 assert(subscriptionState.includes("h.hold_type='jellyfin_cleanup'")&&subscriptionState.includes("ja.access_lane='free'"),'Dormant cleanup blocking must remain scoped to the Free Jellyfin lane');
 assert(inactivity.includes('observation_started_at')&&inactivity.includes('observationStartedAt'),'Inactivity audit evidence must record the effective observation start');
+
+// Browser checkbox semantics must not be confused with backend fail-safe defaults.
+assert(planLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&planLifecycleSource.includes('lifecycleFormInput(req.body)'),'Free-plan lifecycle form must explicitly mark browser checkbox submissions');
+assert(globalLifecycleSource.includes('name="_lifecycleCheckboxes" value="1"')&&globalLifecycleSource.includes('lifecycleFormInput(req.body)'),'Global lifecycle form must explicitly mark browser checkbox submissions');
+const planUnchecked=planLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',noPlaybackDays:'7'});
+assert.strictEqual(planUnchecked.enabled,'on');
+assert.strictEqual(planUnchecked.dryRun,false,'Unticking plan Dry run only must persist explicit false instead of falling back to safe true');
+const planChecked=planLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on',noPlaybackDays:'7'});
+assert.strictEqual(planChecked.dryRun,'on','Checked plan Dry run only must remain true-like for policy normalization');
+const planUnmarked=planLifecyclePage.lifecycleFormInput({enabled:'on',noPlaybackDays:'7'});
+assert.strictEqual(Object.prototype.hasOwnProperty.call(planUnmarked,'dryRun'),false,'Unmarked/internal plan input must not synthesize enforcement');
+assert.strictEqual(planPolicyRuntime.normalize(planUnmarked).dryRun,true,'Unmarked/internal plan input must retain the backend safe dry-run default');
+const globalUnchecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',freeNoPlaybackDays:'7'});
+assert.strictEqual(globalUnchecked.enabled,false,'Unticking global lifecycle automation must persist explicit false');
+assert.strictEqual(globalUnchecked.dryRun,false,'Unticking global dry run must persist explicit false');
+const globalChecked=globalLifecyclePage.lifecycleFormInput({_lifecycleCheckboxes:'1',enabled:'on',dryRun:'on',freeNoPlaybackDays:'7'});
+assert.strictEqual(globalChecked.enabled,'on');
+assert.strictEqual(globalChecked.dryRun,'on');
 
 // A recently imported mapping may already carry trustworthy historical Jellyfin
 // activity. That history should satisfy the observation window, while a genuinely
