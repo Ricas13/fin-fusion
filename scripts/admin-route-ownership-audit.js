@@ -17,6 +17,7 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 function assertCompositionBoundary() {
   const applicationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'application.js'), 'utf8');
   const compositionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-route-composition.js'), 'utf8');
+  const platformRouterSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'router.js'), 'utf8');
 
   if (!applicationSource.includes("require('./platform/admin-route-composition')")) {
     throw new Error('application.js must delegate top-level admin route composition to admin-route-composition.js');
@@ -40,12 +41,23 @@ function assertCompositionBoundary() {
     throw new Error(`application.js bypasses canonical admin route composition: ${unexpected.join(', ')}`);
   }
 
+  // Express route traversal can see ordinary child routers via layer.handle.stack.
+  // A custom path-prefix middleware hides that child stack, which would let a
+  // duplicate admin owner escape the audit entirely. Do not allow that pattern.
+  if (/onlyPathPrefix\(\s*['"]\/admin/.test(platformRouterSource)) {
+    throw new Error('platform router hides an admin child router behind opaque path-prefix middleware');
+  }
+  if (platformRouterSource.includes('createAdminNotificationPreferencesRouter')) {
+    throw new Error('global admin notification preferences must be owned only by admin-route-composition.js');
+  }
+
   for (const requiredFactory of [
     'createAdminAttentionRouter',
     'createAdminPlansRouter',
     'createAdminServersRouter',
     'createAdminCustomer360Router',
-    'createAdminUsersRouter'
+    'createAdminUsersRouter',
+    'createAdminNotificationPreferencesRouter'
   ]) {
     if (!compositionSource.includes(requiredFactory)) {
       throw new Error(`admin route composition is missing expected owner: ${requiredFactory}`);

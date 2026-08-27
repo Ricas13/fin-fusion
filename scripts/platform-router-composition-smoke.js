@@ -35,10 +35,9 @@ function main() {
     assert(!platformRouter.includes('createRuntimeLegacyRouter'), 'production must not reconstruct the retired runtime legacy router');
     assert(!fs.existsSync(retiredLegacyPath), 'router-runtime-legacy.js must remain deleted once all production routes have canonical owners');
     assert(platformRouter.includes('createCustomerLibrarySelectionRouter()'), 'customer library selection must have a named canonical router owner');
-    assert(
-        platformRouter.includes("onlyPathPrefix('/admin/notifications/preferences', globalNotificationRouter)"),
-        'global notification compatibility router must remain constrained to its canonical URL prefix until its separate ownership cleanup lands'
-    );
+    assert(!platformRouter.includes('onlyPathPrefix'), 'platform router must not hide child routers behind opaque path-prefix middleware');
+    assert(!platformRouter.includes('createAdminNotificationPreferencesRouter'), 'global admin notification preferences must not have a second owner in the platform router');
+    assert(adminComposition.includes('app.use(createAdminNotificationPreferencesRouter());'), 'global admin notification preferences must be owned by canonical admin route composition');
 
     const libraryRoutes = explicitRoutes(librarySelection);
     for (const expected of ['POST /account/libraries', 'POST /account/libraries/:accountId']) {
@@ -82,7 +81,7 @@ function main() {
         assert(!routerCore.includes(retiredPath), `replaced route remains in router-core: ${retiredPath}`);
     }
 
-    console.log('platform router composition: ok (legacy runtime router retired; remaining routes have named canonical owners)');
+    console.log('platform router composition: ok (legacy router retired; admin ownership explicit; no opaque prefix routers)');
 }
 
 try {
