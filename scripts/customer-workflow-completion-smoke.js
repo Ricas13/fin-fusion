@@ -1,0 +1,69 @@
+'use strict';
+
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const ejs=require('ejs');
+const adminNav=require('../src/platform/admin-nav');
+const adminHtml=require('../src/platform/admin-html-core');
+const {restrictedImpersonationAction}=require('../src/platform/admin-impersonation');
+
+const root=path.join(__dirname,'..');
+const dashboardPath=path.join(root,'views/customer/dashboard.ejs');
+const dashboardTemplate=fs.readFileSync(dashboardPath,'utf8');
+
+function subscription(cancelAtPeriodEnd=false){
+  return{
+    id:'sub-current',subscription_id:'sub-current',plan_id:'plan-current',status:'active',source:'paypal',
+    provider_subscription_id:'I-SMOKE-PAYPAL',cancel_at_period_end:cancelAtPeriodEnd,
+    current_period_end:'2099-09-30T12:00:00.000Z',service_type:'jellyfin',service_type_snapshot:'jellyfin',
+    plan_name:'Current PayPal',plan_code:'current-paypal',billing_interval:'month',billing_interval_snapshot:'month',
+    duration_days:30,duration_days_snapshot:30,streams:3,is_free_tier:false
+  };
+}
+function plan(id,code,name,priceMinor){
+  return{id,code,name,description:'Smoke plan',audience:'direct',service_type:'jellyfin',billing_interval:'month',duration_days:30,price_minor:priceMinor,currency:'GBP',streams:3,allow_downloads:true,payment_options:[{provider:'paypal'}]};
+}
+function renderDashboard(cancelAtPeriodEnd=false,openPlanChange={state:'pending',target_plan_name:'Next PayPal',target_plan_code:'next-paypal',effective_at:'2099-09-30T12:00:00.000Z'}){
+  const recurring=subscription(cancelAtPeriodEnd);
+  const current=plan('plan-current','current-paypal','Current PayPal',600);
+  const next=plan('plan-next','next-paypal','Next PayPal',900);
+  return ejs.render(dashboardTemplate,{
+    siteName:'CAPTAiNFiN',
+    portal:{customer:{login_username:'workflow-smoke'},subscriptions:[recurring],accounts:[],providers:[{provider:'paypal'}],referralsEnabled:false,referralCode:null},
+    plans:[current,next],
+    currentPlan:{...recurring,subscription_id:'sub-current',plan_id:'plan-current'},
+    freePlan:null,stremioPlan:null,renewalSubscription:recurring,openPlanChange,
+    stripeEnabled:false,paypalEnabled:true,plisioEnabled:false,currency:'GBP',navOptions:{},overseerrUrl:null,
+    requestAccess:null,requestSyncConfigured:false,libraryProfiles:[],provisioningState:null,csrfToken:'csrf-smoke',
+    message:null,error:null,welcome:false,hasJellyfin:true,hasStremio:false,stremioHousehold:null,
+    stremioInstallUrl:null,stremioManifestUrl:null
+  },{filename:dashboardPath});
+}
+
+const renewalOn=renderDashboard(false);
+assert(renewalOn.includes('action="/account/subscription/renewal"'),'account home must render the existing renewal mutation form');
+assert(renewalOn.includes('name="action" value="stop"')&&renewalOn.includes('Stop automatic renewal'),'active automatic renewal must expose a Stop action');
+assert(renewalOn.includes('href="#renewal-control"')&&renewalOn.includes('Stop PayPal renewal first'),'blocked PayPal plan cards must point to the real renewal control');
+assert(!renewalOn.includes('aria-disabled="true">Stop PayPal renewal first'),'PayPal plan-change guidance must not remain a dead disabled control');
+assert(renewalOn.includes('action="/account/plan-change/cancel"'),'open plan changes must expose the existing cancellation mutation on account home');
+assert(renewalOn.includes('Next PayPal')&&renewalOn.includes('Scheduled')&&renewalOn.includes('Cancel plan change'),'open plan-change target, state and cancellation must render together');
+
+const renewalStopped=renderDashboard(true,null);
+assert(renewalStopped.includes('name="action" value="resume"')&&renewalStopped.includes('Resume automatic renewal'),'stopped automatic renewal must expose Resume on the current plan');
+assert(renewalStopped.includes('action="/account/checkout/paypal"')&&renewalStopped.includes('Continue with PayPal'),'after PayPal renewal is stopped another PayPal plan must be actionable from the same page');
+
+const loginPath=path.join(root,'views/customer/login.ejs');
+const login=ejs.render(fs.readFileSync(loginPath,'utf8'),{siteName:'CAPTAiNFiN',turnstileEnabled:false,message:null,error:null,csrfToken:'csrf',next:'/account'},{filename:loginPath});
+assert(login.includes('claim link')&&login.includes('instead of registering again'),'login must direct imported Jellyfin customers back to their emailed claim link');
+const registerPath=path.join(root,'views/customer/register.ejs');
+const register=ejs.render(fs.readFileSync(registerPath,'utf8'),{siteName:'CAPTAiNFiN',turnstileEnabled:false,freeIntent:false,registrationOpen:true,verificationRequired:false,freeHoldMinutes:20,error:null,csrfToken:'csrf',referralsEnabled:false,referralCode:''},{filename:registerPath});
+assert(register.includes('claim link')&&register.includes('do not register again'),'registration must warn imported Jellyfin customers not to create a duplicate portal account');
+
+assert(!adminNav.groups.some(group=>group.key==='resellers'),'reserved reseller routes must not appear as a shipped module in the default admin sidebar');
+assert.strictEqual(adminHtml.clarifyManualEntitlementLabels('<button>Change plan</button>'),'<button>Manual entitlement edit</button>','admin plan-change controls must identify themselves as manual entitlement edits');
+const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route});
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal')),'automatic renewal changes','restricted support view must block automatic renewal changes');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'checkout','restricted support view must keep checkout blocked');
+
+console.log('customer/admin workflow completion smoke: ok');
