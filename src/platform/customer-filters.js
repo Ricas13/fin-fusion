@@ -151,7 +151,12 @@ function buildWhere(filters, scope) {
 
     const inactivePlaybackDays = boundedInt(filters.inactivePlaybackDays, 1, 3650);
     if (inactivePlaybackDays !== null) {
-        where.push(`COALESCE(acc.last_activity_at,c.created_at)<=NOW()-(${p(inactivePlaybackDays)}::int*INTERVAL '1 day')`);
+        const days = p(inactivePlaybackDays);
+        where.push(`c.created_at<=NOW()-(${days}::int*INTERVAL '1 day') AND NOT EXISTS (
+            SELECT 1 FROM playback_history ph_segment
+            WHERE ph_segment.customer_id=c.id
+              AND COALESCE(ph_segment.last_seen_at,ph_segment.started_at)>=NOW()-(${days}::int*INTERVAL '1 day')
+        )`);
     }
 
     if (filters.accountStatus === 'portal_disabled') where.push('au.active=FALSE');
