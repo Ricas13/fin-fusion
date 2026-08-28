@@ -7,6 +7,7 @@ const discounts = require('./discounts');
 const referrals = require('../referrals');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
+const PAYMENT_EVENT_RETRY_MINUTES = 5;
 const PAYMENT_DELINQUENCY_HOLD_TYPE = 'payment_delinquency';
 
 function addCalendarMonths(from, months) {
@@ -51,7 +52,7 @@ function mapProviderStatus(provider, status) {
         if (['cancelled', 'cancelled duplicate', 'error', 'mismatch'].includes(value)) return 'cancelled';
         if (value === 'expired') return 'expired';
     }
-    return 'past_due';
+    return null;
 }
 
 function paymentDelinquencySourceKey(provider, providerSubscriptionId) {
@@ -63,7 +64,7 @@ function paymentDelinquencySourceKey(provider, providerSubscriptionId) {
 
 async function syncProviderAccessState({ customerId, provider, providerSubscriptionId, status }, client = null) {
     const sourceKey = paymentDelinquencySourceKey(provider, providerSubscriptionId);
-    if (!customerId || !sourceKey) return null;
+    if (!customerId || !sourceKey || !status) return null;
 
     if (['past_due', 'paused'].includes(status)) {
         return accessHolds.addHold({
@@ -102,14 +103,41 @@ async function findPaymentCustomer(customerId, provider) {
 }
 
 async function beginPaymentEvent({ provider, eventId, eventType, payload }) {
-    const result = await query(`INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processing_started_at,processing_token) VALUES($1,$2,$3,$4::jsonb,NOW(),gen_random_uuid()) ON CONFLICT(provider,provider_event_id) DO UPDATE SET event_type=EXCLUDED.event_type,payload=EXCLUDED.payload,processing_error=NULL,processing_started_at=NOW(),processing_token=gen_random_uuid() WHERE payment_events.processed_at IS NULL AND (payment_events.processing_started_at IS NULL OR payment_events.processing_started_at < NOW() - ($5::int * INTERVAL '1 minute')) RETURNING id,processing_token,processing_started_at`, [provider, eventId, eventType, JSON.stringify(payload), PAYMENT_EVENT_LEASE_MINUTES]);
+    const result = await query(`INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processing_started_at,processing_token) VALUES($1,$2,$3,$4::jsonb,NOW(),gen_random_uuid()) ON CONFLICT(provider,provider_event_id) DO UPDATE SET event_type=EXCLUDED.event_type,payload=EXCLUDED.payload,processing_error=NULL,processing_started_at=NOW(),processing_token=gen_random_uuid() WHERE payment_events.processed_at IS NULL AND (payment_events.processing_started_at IS NULL OR payment_events.processing_started_at < NOW() - ($5::int * INTERVAL '1 minute')) RETURNING id,provider,provider_event_id,event_type,payload,processing_token,processing_started_at`, [provider, eventId, eventType, JSON.stringify(payload), PAYMENT_EVENT_LEASE_MINUTES]);
     return result.rows[0] || null;
 }
 
 async function finishPaymentEvent(eventRow, error = null) {
     if (!eventRow?.id || !eventRow?.processing_token) return false;
-    const result = await query(`UPDATE payment_events SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,processing_error=$3,processing_started_at=NULL,processing_token=NULL WHERE id=$1 AND processing_token=$2 RETURNING id`, [eventRow.id, eventRow.processing_token, error ? String(error.message || error).slice(0, 4000) : null]);
+    const failure = error ? String(error.message || error).slice(0, 4000) : null;
+    const result = await query(`UPDATE payment_events SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,processing_error=$3,processing_started_at=NULL,processing_token=NULL WHERE id=$1 AND processing_token=$2 RETURNING id`, [eventRow.id, eventRow.processing_token, failure]);
     return result.rowCount === 1;
+}
+
+async function claimRetryablePaymentEvents({ limit = 25 } = {}) {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 25));
+    const result = await query(`
+        WITH candidates AS (
+            SELECT id
+            FROM payment_events
+            WHERE processed_at IS NULL
+              AND (
+                (processing_error IS NOT NULL AND processing_token IS NULL
+                 AND (processing_started_at IS NULL OR processing_started_at < NOW() - ($2::int * INTERVAL '1 minute')))
+                OR
+                (processing_token IS NOT NULL AND processing_started_at < NOW() - ($3::int * INTERVAL '1 minute'))
+              )
+            ORDER BY created_at,id
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE payment_events p
+           SET processing_started_at=NOW(),processing_token=gen_random_uuid()
+          FROM candidates c
+         WHERE p.id=c.id
+         RETURNING p.id,p.provider,p.provider_event_id,p.event_type,p.payload,p.processing_error,p.processing_started_at,p.processing_token
+    `, [safeLimit, PAYMENT_EVENT_RETRY_MINUTES, PAYMENT_EVENT_LEASE_MINUTES]);
+    return result.rows;
 }
 
 function purchaseSnapshot(snapshot, { provider, planId }) {
@@ -139,6 +167,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         const startsAt = periodStart ? new Date(periodStart) : new Date();
         const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(contract || plan, startsAt);
         const status = mapProviderStatus(provider, providerStatus);
+        if (!status) throw new Error(`Unsupported ${provider} subscription status: ${String(providerStatus || 'unknown').slice(0, 120)}`);
         const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
         const snapshotJson = contract ? JSON.stringify(contract) : null;
         const planNameSnapshot = contract?.planName || plan.name;
@@ -180,10 +209,11 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
 
 async function updateProviderSubscription({ provider, providerSubscriptionId, providerStatus, periodEnd = null, cancelAtPeriodEnd = null }) {
     const status = mapProviderStatus(provider, providerStatus);
+    if (!status) console.warn(`Ignoring unknown ${provider} subscription status without changing access state:`, String(providerStatus || 'unknown').slice(0, 120));
     const row = await transaction(async client => {
-        const result = await client.query(`UPDATE subscriptions SET status=$1,current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
+        const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
-        await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status }, client);
+        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status }, client);
         return result.rows[0];
     });
     if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');
@@ -192,6 +222,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
 
 module.exports = {
     PAYMENT_EVENT_LEASE_MINUTES,
+    PAYMENT_EVENT_RETRY_MINUTES,
     PAYMENT_DELINQUENCY_HOLD_TYPE,
     addPlanDuration,
     mapProviderStatus,
@@ -202,6 +233,7 @@ module.exports = {
     findPaymentCustomer,
     beginPaymentEvent,
     finishPaymentEvent,
+    claimRetryablePaymentEvents,
     purchaseSnapshot,
     activatePurchase,
     updateProviderSubscription

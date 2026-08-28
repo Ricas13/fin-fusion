@@ -21,28 +21,21 @@ async function createManualSubscription({ customerId, planId, startsAt, endsAt, 
     });
 }
 
-// Legacy compatibility entry point. Provider-backed subscription state is no
-// longer mutated here; it delegates to the canonical payment lifecycle owner so
-// duplicate event leasing, reconciliation and provider-state mapping stay in
-// one place.
-async function applyProviderState({ provider, providerEventId, eventType, payload, providerSubscriptionId, status, periodEnd }) {
-    if (!['stripe', 'paypal'].includes(provider)) throw new Error('Unsupported provider');
+// Legacy compatibility entry point. Webhook adapters own event verification and
+// durable payment-event leasing. This helper only synchronizes an already-known
+// recurring provider subscription, so callers cannot accidentally open a second
+// payment_events lease for the same provider notification.
+async function applyProviderState({ provider, providerSubscriptionId, status, periodEnd = null, cancelAtPeriodEnd = null }) {
+    if (!['stripe', 'paypal'].includes(provider)) throw new Error('Provider state sync supports recurring Stripe or PayPal subscriptions only.');
     const lifecycle = require('./payments/lifecycle');
-    const event = await lifecycle.beginPaymentEvent({ provider, eventId: providerEventId, eventType, payload });
-    if (!event) return { duplicate: true };
-    try {
-        const subscription = await lifecycle.updateProviderSubscription({
-            provider,
-            providerSubscriptionId,
-            providerStatus: status,
-            periodEnd: periodEnd || null
-        });
-        await lifecycle.finishPaymentEvent(event);
-        return { duplicate: false, subscription };
-    } catch (error) {
-        await lifecycle.finishPaymentEvent(event, error);
-        throw error;
-    }
+    const subscription = await lifecycle.updateProviderSubscription({
+        provider,
+        providerSubscriptionId,
+        providerStatus: status,
+        periodEnd,
+        cancelAtPeriodEnd
+    });
+    return { duplicate: false, subscription };
 }
 
 module.exports = { getPlanByCode, createManualSubscription, applyProviderState };

@@ -177,22 +177,47 @@ async function applyRemoteOperation(remote, intent) {
     return { status: fields.status || 'unknown', completed: false };
 }
 
-async function processWebhook(rawBody, contentType = '') {
-    const payload = parseCallback(rawBody, contentType);
-    const { intent, providerId } = await authenticateCallback(payload);
-    const { remote, fields } = await verifiedRemoteOperation(providerId, intent);
-    const marker = String(remote?.updated_at || remote?.created_at || payload?.date || '').slice(0, 80);
-    const eventId = `operation:${providerId}:${fields.status || 'unknown'}:${marker}`;
-    const eventRow = await lifecycle.beginPaymentEvent({ provider: 'plisio', eventId, eventType: `operation.${fields.status || 'unknown'}`, payload });
-    if (!eventRow) return { duplicate: true, status: fields.status };
+async function processClaimedCallback(eventRow, payload) {
     try {
+        const { intent, providerId } = await authenticateCallback(payload);
+        const { remote } = await verifiedRemoteOperation(providerId, intent);
         const result = await applyRemoteOperation(remote, intent);
         await lifecycle.finishPaymentEvent(eventRow);
-        return { duplicate: false, ...result };
+        return { processed: true, ...result };
     } catch (error) {
         await lifecycle.finishPaymentEvent(eventRow, error);
-        throw error;
+        console.error('Plisio webhook processing deferred to internal retry:', error.message);
+        return { processed: false, error };
     }
+}
+
+async function processWebhook(rawBody, contentType = '') {
+    const payload = parseCallback(rawBody, contentType);
+    const { providerId } = await authenticateCallback(payload);
+    const callbackFields = operationFields(payload);
+    const marker = String(payload?.updated_at || payload?.created_at || payload?.date || '').slice(0, 80);
+    const eventId = `operation:${providerId}:${callbackFields.status || 'unknown'}:${marker}`;
+    const eventRow = await lifecycle.beginPaymentEvent({
+        provider: 'plisio',
+        eventId,
+        eventType: `operation.${callbackFields.status || 'unknown'}`,
+        payload
+    });
+    if (!eventRow) return { duplicate: true, status: callbackFields.status };
+    const result = await processClaimedCallback(eventRow, payload);
+    return {
+        duplicate: false,
+        status: result.status || callbackFields.status,
+        ...result,
+        processingError: result.processed ? null : String(result.error?.message || result.error || 'processing failed')
+    };
+}
+
+async function retryPaymentEvent(eventRow) {
+    if (!eventRow || eventRow.provider !== 'plisio') throw new Error('Plisio retry received the wrong payment event.');
+    const payload = eventRow.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Stored Plisio payment event payload is invalid.');
+    return processClaimedCallback(eventRow, payload);
 }
 
 async function confirmCheckout(providerTxnId, intent) {
@@ -200,4 +225,4 @@ async function confirmCheckout(providerTxnId, intent) {
     return applyRemoteOperation(remote, intent);
 }
 
-module.exports = { API_BASE, enabled, api, createCheckout, getOperation, parseCallback, callbackDigest, moneyMinor, operationFields, processWebhook, confirmCheckout, applyRemoteOperation, authenticateCallback, verifiedRemoteOperation, safeEqual };
+module.exports = { API_BASE, enabled, api, createCheckout, getOperation, parseCallback, callbackDigest, moneyMinor, operationFields, processWebhook, retryPaymentEvent, confirmCheckout, applyRemoteOperation, authenticateCallback, verifiedRemoteOperation, safeEqual };
