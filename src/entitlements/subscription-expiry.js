@@ -59,6 +59,13 @@ async function notifyExpiringSubscriptions({ days = DEFAULT_WARNING_DAYS, dispat
                 subject: `${planName} expires soon`,
                 text: `Your ${planName} access is due to expire on ${expiryDate(row.access_expires_at)}. Renew or choose a plan before then to avoid interruption.`,
                 adminText: `${String(row.customer_name || 'Customer').trim()}'s ${planName} access is due to expire on ${expiryDate(row.access_expires_at)}.`,
+                templatePayload: {
+                    customerName: String(row.customer_name || 'Customer').trim(),
+                    planName,
+                    expiresOn: row.access_expires_at,
+                    provider: row.source,
+                    autoRenewal: recurringAutoRenewal(row)
+                },
                 dedupeKey: `subscription-expiring:${row.id}:${endKey}`
             });
             if (delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp)) result.queued += 1;
