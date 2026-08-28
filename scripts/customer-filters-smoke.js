@@ -34,6 +34,31 @@ function main() {
         assert.deepStrictEqual(stremio.params,['stremio'],'service context must stay parameterized');
     }
 
+    // Marketing saved segments deliberately reuse this same engine. Richer
+    // business filters must stay bounded/allowlisted and their numeric or enum
+    // values must remain positional parameters rather than SQL fragments.
+    {
+        const built=buildWhere({
+            priceType:'paid',
+            billingInterval:'year',
+            accountAgeDays:30,
+            lapsedDays:14,
+            expiresWithinDays:7,
+            inactivePlaybackDays:60
+        },null);
+        assert.ok(built.whereSql.includes('COALESCE(p.price_minor,0)>0'),'paid audiences must use the canonical plan price');
+        assert.ok(built.whereSql.includes('p.billing_interval=$1'),'billing interval must be bound');
+        assert.ok(built.whereSql.includes("c.created_at<=NOW()-($2::int*INTERVAL '1 day')"),'account age must be parameterized');
+        assert.ok(built.whereSql.includes('NOT EXISTS (')&&built.whereSql.includes('hist_lapsed'),'lapsed audiences must exclude currently live subscriptions and inspect subscription history');
+        assert.ok(built.whereSql.includes("cur.current_period_end<=NOW()+($4::int*INTERVAL '1 day')"),'expiry-window targeting must be parameterized');
+        assert.ok(built.whereSql.includes('FROM playback_history ph_segment'),'playback inactivity must use the canonical playback ledger');
+        assert.ok(built.whereSql.includes("COALESCE(ph_segment.last_seen_at,ph_segment.started_at)>=NOW()-($5::int*INTERVAL '1 day')"),'playback inactivity must reject customers with recent playback using a bound duration');
+        assert.deepStrictEqual(built.params,['year',30,14,7,60],'rich audience values must be carried only as positional parameters');
+
+        const hostile=buildWhere({billingInterval:"year'); DROP TABLE plans; --",priceType:'paid;drop',accountAgeDays:'30); DELETE FROM customers; --'},null);
+        assert.ok(!hostile.whereSql.includes('DROP TABLE')&&!hostile.whereSql.includes('DELETE FROM'),'invalid marketing filter input must never become SQL text');
+    }
+
     // #17 reauthorizeCustomerIds (used when confirming a bulk action with
     // explicit checkbox selections) is built on the exact same buildWhere as
     // the list/select-all path -- verify the WHERE clause is deterministic

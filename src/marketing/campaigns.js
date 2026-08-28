@@ -1,6 +1,7 @@
 'use strict';
 const {query}=require('../db');
 const customerFilters=require('../platform/customer-filters');
+const segments=require('./segments');
 const emailOutbox=require('../integrations/email-outbox');
 const notificationOutbox=require('../integrations/notification-outbox');
 
@@ -26,18 +27,33 @@ async function eligibleCustomers(audienceFilters){
   `,[ids])).rows;
   return rows;
 }
-async function preview(audienceFilters){const rows=await eligibleCustomers(audienceFilters);return{count:rows.length,sample:rows.slice(0,25)};}
+async function preview(audienceFilters){
+  const ids=await customerFilters.matchingCustomerIds(audienceFilters,null);
+  if(!ids.length)return{count:0};
+  const row=(await query(`SELECT COUNT(*)::int count FROM customers WHERE id=ANY($1::uuid[]) AND marketing_opt_in=TRUE`,[ids])).rows[0];
+  return{count:Number(row?.count||0)};
+}
 
-async function create({name,subject,bodyText,discountCodeId,audienceFilters,adminUserId}){
+async function create({name,subject,bodyText,discountCodeId,audienceFilters,segmentId=null,adminUserId}){
   const discountId=await validateDiscount(discountCodeId);
-  const row=(await query(`INSERT INTO marketing_campaigns(name,subject,body_text,discount_code_id,audience_filters,created_by_user_id) VALUES($1,$2,$3,$4,$5::jsonb,$6) RETURNING *`,
-    [clean(name,3,160,'Name'),clean(subject,3,300,'Subject'),clean(bodyText,1,100000,'Body'),discountId,JSON.stringify(audienceFilters||{}),adminUserId])).rows[0];
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'marketing.campaign.create','marketing_campaign',$2,$3::jsonb)`,[adminUserId,row.id,JSON.stringify({name:row.name})]);
+  let savedSegment=null;
+  let filters;
+  if(segmentId){
+    savedSegment=await segments.get(segmentId);
+    if(!savedSegment)throw new Error('The selected saved segment no longer exists.');
+    filters=segments.normalizeFilters(savedSegment.audience_filters||{});
+  }else{
+    filters=segments.normalizeFilters(audienceFilters||{});
+  }
+  await segments.validatePlan(filters);
+  const row=(await query(`INSERT INTO marketing_campaigns(name,subject,body_text,discount_code_id,audience_filters,segment_id,created_by_user_id) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING *`,
+    [clean(name,3,160,'Name'),clean(subject,3,300,'Subject'),clean(bodyText,1,100000,'Body'),discountId,JSON.stringify(filters),savedSegment?.id||null,adminUserId])).rows[0];
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'marketing.campaign.create','marketing_campaign',$2,$3::jsonb)`,[adminUserId,row.id,JSON.stringify({name:row.name,segmentId:savedSegment?.id||null,audienceFilters:filters})]);
   return row;
 }
-async function list(){return(await query(`SELECT * FROM marketing_campaigns ORDER BY created_at DESC`)).rows;}
+async function list(){return(await query(`SELECT mc.*,ms.name segment_name FROM marketing_campaigns mc LEFT JOIN marketing_segments ms ON ms.id=mc.segment_id ORDER BY mc.created_at DESC`)).rows;}
 async function get(id){
-  const campaign=(await query(`SELECT * FROM marketing_campaigns WHERE id=$1`,[id])).rows[0];
+  const campaign=(await query(`SELECT mc.*,ms.name segment_name FROM marketing_campaigns mc LEFT JOIN marketing_segments ms ON ms.id=mc.segment_id WHERE mc.id=$1`,[id])).rows[0];
   if(!campaign)return null;
   const recipients=(await query(`SELECT * FROM marketing_campaign_recipients WHERE campaign_id=$1`,[id])).rows;
   const deliveries=(await query(`SELECT * FROM marketing_campaign_deliveries WHERE campaign_id=$1`,[id])).rows;
