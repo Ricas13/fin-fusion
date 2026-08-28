@@ -61,6 +61,10 @@ function main() {
         assert.deepStrictEqual(nameDesc,{key:'name',direction:'desc'});
         assert.strictEqual(tableSort.nextDirection(nameDesc,'name',CUSTOMER_SORTS),'asc','clicking an active heading must reverse direction');
         assert.strictEqual(tableSort.nextDirection(nameDesc,'expiring',CUSTOMER_SORTS),'asc','a newly selected heading must use its configured default direction');
+
+        const registered=normalizeCustomerSort({sort:'registered'});
+        assert.deepStrictEqual(registered,{key:'registered',direction:'desc'},'registration sorting must default to newest customers first');
+        assert.ok(tableSort.orderBy(registered,CUSTOMER_SORTS,'c.id ASC').includes('c.created_at DESC'),'registration sorting must use the canonical customer creation timestamp');
     }
 
     // The shared Customers/Jellyfin/Stremio table must render sort links and
@@ -70,6 +74,8 @@ function main() {
         assert.ok(source.includes('tableSort.nextDirection'),'customer headings must use the shared sorting helper');
         assert.ok(source.includes("{...state,page:page+1}")&&source.includes("{...state,page:page-1}"),'pagination must preserve sort and direction');
         assert.ok(source.includes("sortHeader(filters,sortState,'Expires','expiring')"),'customer expiry heading must expose server-side sorting');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Registered','registered')"),'customer registration heading must expose server-side sorting');
+        assert.ok(source.includes('data-label="Registered">${esc(date(x.created_at))}'),'customer rows must show the portal registration date from customers.created_at');
         assert.ok(source.includes('aria-sort='),'the active sortable heading must expose its direction accessibly');
     }
 
