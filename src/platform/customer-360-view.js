@@ -23,12 +23,11 @@ function jellyfinPasswordSupport(detail){
 }
 function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
 function body(detail,tab,token,accessDetail){
-  const safe=customerFacingDetail(detail),type=serviceType(detail),html=v2.body(safe,tab,token,accessDetail);
+  const safe=customerFacingDetail(detail),type=serviceType(detail);
+  if(tab==='access'&&type==='stremio')return v2.body(safe,tab,token,accessDetail,{skipAccessSections:true})+stremioAccessPanel(detail);
+  const html=v2.body(safe,tab,token,accessDetail);
   if(tab!=='access')return html;
-  if(type!=='stremio')return jellyfinPasswordSupport(safe)+html;
-  const marker='<section class="section"><div class="sectionHead"><h2>Jellyfin access</h2>';
-  const at=html.indexOf(marker);
-  return at<0?html:html.slice(0,at)+stremioAccessPanel(detail);
+  return jellyfinPasswordSupport(safe)+html;
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,journey,activeSubscription};
