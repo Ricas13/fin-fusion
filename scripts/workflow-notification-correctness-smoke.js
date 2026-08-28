@@ -7,6 +7,8 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const expiry = require('../src/entitlements/subscription-expiry');
+const notificationTemplates = require('../src/integrations/notification-templates');
+const { renderProfessionalEmail, eventLabel } = require('../src/integrations/email-template');
 
 const expirySource = read('src/entitlements/subscription-expiry.js');
 const jobs = read('src/automation/jobs.js');
@@ -37,6 +39,73 @@ assert(provisioning.includes('async function notifyExpiringSubscriptions(){retur
 assert(jobs.includes('const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require(\'../jellyfin/provisioning\')'), 'automation must consume expiry behavior through the canonical provisioning facade');
 assert(jobs.includes('const warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
 assert(jobs.indexOf('notifyExpiringSubscriptions()') < jobs.indexOf('expireSubscriptionsAndReconcile()'), 'warnings must be checked before due subscriptions are expired');
+
+// Transactional rendering stays code-owned. The catalogue must preserve richer
+// facts for existing producers while chat remains short and email CTAs are
+// explicit account actions rather than whichever URL happened to appear first.
+const jellyfin = notificationTemplates.renderNotification({
+    eventType: 'customer.service.provisioned',
+    subject: 'Your CAPTAiNFiN Jellyfin access is ready',
+    text: 'Your Jellyfin access has been created. Open the server at https://media.example.test and sign in as maria. Sign in to your portal first and choose your Jellyfin password.',
+    payload: { accountUrl: 'https://captainfin.example.test/account' }
+});
+assert.strictEqual(jellyfin.discord, '✅ Your Jellyfin access is ready — https://media.example.test · user maria · https://captainfin.example.test/account', 'Jellyfin chat must expose the exact service-ready recovery facts');
+assert(jellyfin.email.facts.some(row => row.label === 'Server' && row.value === 'https://media.example.test'), 'Jellyfin email must expose the exact server fact');
+assert(jellyfin.email.facts.some(row => row.label === 'Username' && row.value === 'maria'), 'Jellyfin email must expose the username fact');
+
+const stremio = notificationTemplates.renderNotification({
+    eventType: 'customer.service.provisioned',
+    subject: 'Your CAPTAiNFiN Stremio access is ready',
+    text: 'Your Stremio access has been created.',
+    payload: { service: 'Stremio', accountUrl: 'https://captainfin.example.test/account' }
+});
+assert.strictEqual(stremio.email.actionLabel, 'Open Stremio setup', 'Stremio email must name the setup action precisely');
+assert.strictEqual(stremio.email.actionUrl, 'https://captainfin.example.test/account#stremio-access', 'Stremio email must target the canonical Account Home Stremio section');
+assert.strictEqual(stremio.discord, '✅ Your Stremio access is ready — https://captainfin.example.test/account#stremio-access', 'Stremio chat must target the canonical Account Home Stremio section');
+
+const expiryNotice = notificationTemplates.renderNotification({
+    eventType: 'subscription.expiring',
+    subject: 'Premium expires soon',
+    text: 'Legacy expiry copy',
+    payload: { planName: 'Premium', expiresOn: '2026-09-01T00:00:00Z', autoRenewal: false, accountUrl: 'https://captainfin.example.test/account' }
+});
+assert(expiryNotice.telegram.includes('Premium expires 1 Sept 2026'), 'expiry chat must contain plan and date');
+assert(expiryNotice.telegram.includes('Auto-renew is off.'), 'expiry chat must state the renewal state');
+assert(expiryNotice.email.facts.some(row => row.label === 'Next step'), 'expiry email must contain a next-step fact');
+
+const failedPayment = notificationTemplates.renderNotification({
+    eventType: 'payment.failed',
+    subject: 'Payment failed',
+    text: 'Your Stripe renewal payment could not be confirmed (GBP 9.99).',
+    payload: { planName: 'Premium', accountUrl: 'https://captainfin.example.test/account' }
+});
+assert(failedPayment.discord.includes('£9.99'), 'payment chat must carry amount and currency');
+assert(failedPayment.discord.includes('Premium'), 'payment chat must carry the plan');
+assert(failedPayment.email.facts.some(row => row.label === 'Amount' && row.value.includes('9.99')), 'payment email must expose the amount fact');
+
+const removedAdmin = notificationTemplates.renderNotification({
+    eventType: 'customer.access.removed',
+    subject: 'Access removed',
+    text: 'Fallback copy',
+    audience: 'admin',
+    payload: { customerName: 'Maria', planName: 'Free Server', service: 'Jellyfin', serverName: 'UK-4K-1', reason: 'inactivity (14 days)', adminUrl: 'https://captainfin.example.test/admin/users/c-1' }
+});
+assert.strictEqual(removedAdmin.discord, 'Maria removed from UK-4K-1 — inactivity (14 days) (Free Server). https://captainfin.example.test/admin/users/c-1', 'admin access chat must be one precise recovery line');
+
+const emailHtml = renderProfessionalEmail({
+    eventType: 'subscription.expiring',
+    subject: 'Premium expires soon',
+    text: 'Reference: https://unrelated.example.test/path',
+    payload: { planName: 'Premium', expiresOn: '2026-09-01T00:00:00Z', accountUrl: 'https://captainfin.example.test/account' },
+    nextStep: 'Review renewal options',
+    siteName: 'CAPTAiNFiN',
+    publicBaseUrl: 'https://captainfin.example.test'
+});
+assert(emailHtml.includes('href="https://captainfin.example.test/account"'), 'transactional CTA must use the account URL');
+assert(!emailHtml.includes('href="https://unrelated.example.test/path"'), 'transactional CTA must never use the first random body URL');
+assert(emailHtml.includes('>Plan</td>') && emailHtml.includes('>Date</td>') && emailHtml.includes('>Next step</td>'), 'structured email must render the fact table');
+assert.strictEqual(eventLabel('customer.claim.completed'), 'Claim completed');
+assert.strictEqual(eventLabel('some.future.event'), 'Some · Future · Event', 'unknown real events must still have a useful label');
 
 // Every other durable lifecycle notification is reconciled from committed DB
 // state. The automation worker discovers the job automatically from jobs.names().
