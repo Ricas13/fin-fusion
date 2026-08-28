@@ -138,51 +138,53 @@ async function recordStripeDispute(event,stripe,dispute) {
     if(lost)await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:chargeback:${event.id}`,{amountMinor:dispute?.amount,fullLoss:true});return recorded;
 }
 
+async function handleWebhookEvent(event) {
+    const stripe=await getStripe(),object=event.data?.object;
+    switch(event.type){
+        case 'checkout.session.completed': await activateCheckoutSession(object); break;
+        case 'checkout.session.expired': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'cancelled'); break;
+        case 'customer.subscription.updated': {
+            const synced=await syncSubscription(object.id);
+            if(synced.row&&['active','trialing'].includes(synced.effectiveStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:object.id,note:'Stripe subscription recovered and is active again.'});
+            break;
+        }
+        case 'customer.subscription.deleted': {
+            await syncSubscription(object.id);
+            await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:object.id,note:'Stripe subscription ended; the failed renewal is no longer an operator action.'});
+            break;
+        }
+        case 'invoice.paid': {
+            const subscriptionId=extractInvoiceSubscriptionId(object);
+            if(subscriptionId){
+                const synced=await syncSubscription(subscriptionId,'active');
+                if(synced.row&&['active','trialing'].includes(synced.effectiveStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe invoice was paid and the subscription recovered.'});
+                else if(terminalStripeStatus(synced.providerStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe subscription is already terminal; this invoice event cannot restore it.'});
+            }
+            break;
+        }
+        case 'invoice.payment_failed': {
+            const subscriptionId=extractInvoiceSubscriptionId(object);
+            if(subscriptionId){
+                const synced=await syncSubscription(subscriptionId,'past_due');
+                if(terminalStripeStatus(synced.providerStatus)){
+                    await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe subscription is already cancelled; this late failed-invoice retry is historical only.'});
+                }else{
+                    await failedRenewals.record({provider:'stripe',eventId:event.id,caseId:object.id,providerSubscriptionId:subscriptionId,amountMinor:object.amount_due,currency:object.currency,metadata:{invoiceId:object.id}});
+                }
+            }
+            break;
+        }
+        case 'charge.refunded': await recordStripeRefund(event,stripe,object); break;
+        case 'charge.dispute.created': await recordStripeDispute(event,stripe,object); break;
+        case 'charge.dispute.closed': await recordStripeDispute(event,stripe,object); break;
+        default: break;
+    }
+}
+async function processClaimedEvent(eventRow,event){try{await handleWebhookEvent(event);await lifecycle.finishPaymentEvent(eventRow);return{processed:true};}catch(error){await lifecycle.finishPaymentEvent(eventRow,error);console.error('Stripe webhook processing deferred to internal retry:',error.message);return{processed:false,error};}}
 async function processWebhook(rawBody,signature) {
     const config=await providerSettings.get('stripe'),secret=config.webhookSecret;if(!secret)throw new Error('Stripe webhook secret is not configured');
     const stripe=await getStripe(),event=stripe.webhooks.constructEvent(rawBody,signature,secret),eventRow=await lifecycle.beginPaymentEvent({provider:'stripe',eventId:event.id,eventType:event.type,payload:event});if(!eventRow)return{duplicate:true};
-    try{
-        const object=event.data?.object;
-        switch(event.type){
-            case 'checkout.session.completed': await activateCheckoutSession(object); break;
-            case 'checkout.session.expired': if(object?.id)await checkoutIntents.completeVerifiedProvider('stripe',object.id,'cancelled'); break;
-            case 'customer.subscription.updated': {
-                const synced=await syncSubscription(object.id);
-                if(synced.row&&['active','trialing'].includes(synced.effectiveStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:object.id,note:'Stripe subscription recovered and is active again.'});
-                break;
-            }
-            case 'customer.subscription.deleted': {
-                await syncSubscription(object.id);
-                await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:object.id,note:'Stripe subscription ended; the failed renewal is no longer an operator action.'});
-                break;
-            }
-            case 'invoice.paid': {
-                const subscriptionId=extractInvoiceSubscriptionId(object);
-                if(subscriptionId){
-                    const synced=await syncSubscription(subscriptionId,'active');
-                    if(synced.row&&['active','trialing'].includes(synced.effectiveStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe invoice was paid and the subscription recovered.'});
-                    else if(terminalStripeStatus(synced.providerStatus))await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe subscription is already terminal; this invoice event cannot restore it.'});
-                }
-                break;
-            }
-            case 'invoice.payment_failed': {
-                const subscriptionId=extractInvoiceSubscriptionId(object);
-                if(subscriptionId){
-                    const synced=await syncSubscription(subscriptionId,'past_due');
-                    if(terminalStripeStatus(synced.providerStatus)){
-                        await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe subscription is already cancelled; this late failed-invoice retry is historical only.'});
-                    }else{
-                        await failedRenewals.record({provider:'stripe',eventId:event.id,caseId:object.id,providerSubscriptionId:subscriptionId,amountMinor:object.amount_due,currency:object.currency,metadata:{invoiceId:object.id}});
-                    }
-                }
-                break;
-            }
-            case 'charge.refunded': await recordStripeRefund(event,stripe,object); break;
-            case 'charge.dispute.created': await recordStripeDispute(event,stripe,object); break;
-            case 'charge.dispute.closed': await recordStripeDispute(event,stripe,object); break;
-            default: break;
-        }
-        await lifecycle.finishPaymentEvent(eventRow);return{duplicate:false,type:event.type};
-    }catch(error){await lifecycle.finishPaymentEvent(eventRow,error);throw error;}
+    const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:event.type,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};
 }
-module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus};
+async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='stripe')throw new Error('Stripe retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored Stripe payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
+module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus};
