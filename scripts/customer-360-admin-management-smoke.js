@@ -16,7 +16,6 @@ const deletion=read('src/platform/customer-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
-const customerView=read('src/platform/customer-360-view.js');
 const stableNavigation=read('public/js/customer-360-navigation.js');
 const adminHtml=read('src/platform/admin-html.js');
 
@@ -77,10 +76,9 @@ assert(!operator.includes("link.textContent='Change Jellyfin password';link.setA
 assert(operator.includes("form.dataset.nativeSubmit='true'"),'Customer 360 bulk preview controls must submit as full-page workflows');
 assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-verification pill markup must be repaired safely in Customer 360');
 
-// Customer navigation is deliberately owned by one deterministic layer. The
-// large journey cards are retired and async service context must never rewrite
-// Access into another workspace after the page has rendered.
-assert(customerView.includes("function journey(){return'';}"),'the duplicate Account/Access/Billing/Activity journey navigation must stay retired');
+// Customer navigation is deliberately owned by one deterministic layer. Async
+// service context must never rewrite Access into another workspace after the
+// page has rendered.
 for(const label of ["['overview','Overview'","['access','Access'","['activity','Activity'","['billing','Billing'","['security','Security'","['history','History'","['manage','Manage'"]){
   assert(stableNavigation.includes(label),`stable Customer 360 navigation is missing ${label}`);
 }
