@@ -12,7 +12,7 @@ const expensePage=read('src/platform/admin-expenses.js');
 
 assert(source.includes('function relocatePageActions()'), 'admin header must keep relocating page actions into the CURRENT/RELATED row');
 assert(source.includes(".topStatusWrap,.topHelpLink,[data-operator-header-metrics]"), 'status, help and shared metrics must stay in the global header');
-assert(source.includes("data-operator-signal=\"new\"")&&source.includes("data-operator-signal=\"alerts\"")&&source.includes("data-operator-signal=\"inbox\""),'operator header must expose separate New, Alerts and Inbox signals');
+assert(source.includes('data-operator-signal="new"')&&source.includes("signalMenuMarkup({key:'alerts',tone:'alert'")&&source.includes("signalMenuMarkup({key:'inbox',tone:'inbox'"),'operator header must expose separate New, Alerts and Inbox signals');
 assert(source.includes("primaryHref:'/admin/attention'")&&source.includes("href:'/admin/payments'")&&source.includes("href:'/admin/commerce/orders'")&&source.includes("href:'/admin/tickets'"),'alert and inbox menus must lead to their canonical operator queues');
 assert(source.includes("tone:'alert'")&&source.includes("tone:'inbox'")&&source.includes('operatorSignal--new'),'header signals must retain distinct semantic tones');
 assert(!source.includes("count.textContent=total>0?(total>99?'99+':String(total)):'Clear'"),'split header signals must not render Clear into every zero state');
