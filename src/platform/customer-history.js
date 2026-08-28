@@ -11,9 +11,9 @@ function noStore(_q,res,next){res.setHeader('Cache-Control','no-store, private, 
 function dt(v){return v?new Date(v).toLocaleString('en-GB'):'—'}
 function money(minor,currency='GBP'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),currencyDisplay:'narrowSymbol',minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`}}
 function statusLabel(value){return({active:'Active',trialing:'Trial',past_due:'Payment needs attention',paused:'Paused',cancelled:'Cancelled',expired:'Ended',pending:'Pending',applied:'Completed',failed:'Needs attention',cancelled_change:'Cancelled',awaiting_checkout:'Action needed'})[String(value||'')]||String(value||'Unknown').replaceAll('_',' ')}
-function billingLabel(value){return({stripe:'Stripe',paypal:'PayPal',manual:'Manual',service_credit:'Service credit',trial:'Trial',free:'Free Access',migration:'Imported history',admin:'Administrator'})[String(value||'')]||String(value||'Account')}
+function billingLabel(value){return({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio',manual:'Manual',service_credit:'Service credit',trial:'Trial',free:'Free Access',migration:'Imported history',admin:'Administrator'})[String(value||'')]||String(value||'Account')}
 function changeMode(value){return String(value)==='period_end'?'Next renewal':String(value)==='immediate'?'Immediate':'Scheduled'}
-function providerLabel(value){return value==='stripe'?'Stripe':value==='paypal'?'PayPal':String(value||'Provider')}
+function providerLabel(value){return value==='stripe'?'Stripe':value==='paypal'?'PayPal':value==='plisio'?'Plisio':String(value||'Provider')}
 function transactionsCard(result){
   if(!result.rows.length)return'<div class="empty">No individual payment transactions have been imported for your account yet.</div>';
   const rows=result.rows.map(t=>`<tr><td>${esc(dt(t.occurred_at))}</td><td><strong>${t.kind==='refund'?'Refund':'Payment'}</strong><div class="accessMeta">${esc(providerLabel(t.provider))}</div></td><td><span class="pill ${t.kind==='refund'?'warn':'good'}">${esc(t.transaction_status||(t.kind==='refund'?'Refunded':'Completed'))}</span></td><td>${esc(money(t.gross_amount_minor,t.currency))}</td></tr>`).join('');
