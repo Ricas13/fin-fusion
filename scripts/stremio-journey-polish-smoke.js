@@ -28,6 +28,13 @@ for(const jargon of ['Replace household IP','installation credential','addon URL
 assert(dashboard.includes('action="/account/stremio/install"')&&dashboard.includes('action="/account/stremio/reset-household"')&&dashboard.includes('action="/account/stremio/revoke"'),'Account Home Stremio actions must keep their existing server routes');
 assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired standalone Stremio setup view must stay removed');
 
+// The install link route must not claim success when managed-account
+// provisioning underneath actually failed -- it has to check the outcome
+// instead of always redirecting to the success message.
+assert(/const provisioned\s*=\s*await preprovisionManaged/.test(customer),'install route must capture the managed-provisioning outcome instead of discarding it');
+assert(/homeRedirect\(provisioned\s*\?\s*'message'\s*:\s*'error'/.test(customer),'install route must show an error state when managed provisioning did not complete');
+assert(customer.includes('automatic access setup is still finishing'),'a failed managed-provisioning attempt must tell the customer setup is still in progress rather than silently claiming success');
+
 // Shared labels and blocked-playback guidance use the same plain-language model
 // while all persisted compatibility field names stay unchanged.
 assert(components.includes('household connection${households === 1 ?')&&!components.includes('household IP${households === 1 ?'),'shared Stremio plan labels must use household connections');
