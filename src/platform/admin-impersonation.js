@@ -59,6 +59,24 @@ async function auditImpersonatedMutation(req,res) {
     });
 }
 
+// Mounted very early in application.js, before every /account router: an
+// earlier-mounted account router that sends its own response would otherwise
+// stop the request from ever reaching a later-mounted audit/banner pass. This
+// router owns only that catch-all concern, not any specific route, so it
+// can never shadow a more specific route mounted later (e.g. /admin/users/dashboard).
+function createImpersonationAuditRouter() {
+    const router = express.Router();
+    router.use(async (req,res,next) => {
+        await auditImpersonatedMutation(req,res);
+        if (req.session?.impersonation && req.path.startsWith('/account')) {
+            const send = res.send.bind(res);
+            res.send = body => send(injectBanner(body,req));
+        }
+        return next();
+    });
+    return router;
+}
+
 function createAdminImpersonationRouter() {
     const router = express.Router();
 
@@ -106,19 +124,9 @@ function createAdminImpersonationRouter() {
         return res.redirect(`/admin/users/${encodeURIComponent(customerId)}`);
     });
 
-    // This middleware is intentionally before all customer routers. It keeps
-    // the real admin identity in the same staff session while presenting the
-    // actual customer pages and recording successful customer mutations.
-    router.use(async (req,res,next) => {
-        await auditImpersonatedMutation(req,res);
-        if (req.session?.impersonation && req.path.startsWith('/account')) {
-            const send = res.send.bind(res);
-            res.send = body => send(injectBanner(body,req));
-        }
-        return next();
-    });
-
     // Add the action to Customer 360 without creating a second preview page.
+    // This must stay mounted after the more specific /admin/users/* routes
+    // (e.g. /admin/users/dashboard) so this wildcard never shadows them.
     router.use('/admin/users/:customerId', gate, async (req,res,next) => {
         if (req.method !== 'GET') return next();
         try {
@@ -135,4 +143,4 @@ function createAdminImpersonationRouter() {
     return router;
 }
 
-module.exports = { createAdminImpersonationRouter, targetCustomer, eligibleTarget, injectBanner, injectAdminButton };
+module.exports = { createAdminImpersonationRouter, createImpersonationAuditRouter, targetCustomer, eligibleTarget, injectBanner, injectAdminButton };

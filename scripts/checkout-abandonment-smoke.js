@@ -52,6 +52,11 @@ async function main() {
     const stripeWebhook = webhookSource.match(/router\.post\('\/webhooks\/stripe'[\s\S]*?router\.post\('\/webhooks\/paypal'/)?.[0] || '';
     expect(stripeWebhook.includes('stripe.processWebhook(req.body,signature)'), 'Stripe webhook must delegate fulfillment to the Stripe adapter.');
     expect(!stripeWebhook.includes('completeCheckoutOrIncident'), 'Stripe webhook must not run a second local checkout-completion pass.');
+    const paypalWebhook = webhookSource.match(/router\.post\('\/webhooks\/paypal'[\s\S]*?router\.post\('\/webhooks\/plisio'/)?.[0] || '';
+    expect(paypalWebhook.includes('paypal.processWebhook(req.body,req.headers)'), 'PayPal webhook must delegate fulfillment to the PayPal adapter.');
+    expect(!paypalWebhook.includes('completeCheckoutOrIncident'), 'PayPal webhook must not run a second local checkout-completion pass.');
+    const paypalSource = fs.readFileSync(path.join(root, 'src', 'payments', 'paypal.js'), 'utf8');
+    expect(paypalSource.includes("checkoutIntents.completeVerifiedProvider('paypal',subscription.id,'completed')"), 'PayPal subscription activation must self-complete its own checkout intent.');
     const onboardingSource = fs.readFileSync(path.join(root, 'views', 'customer', 'onboarding.ejs'), 'utf8');
     expect(onboardingSource.includes('openCheckout'), 'the onboarding page must surface a stuck open checkout to the customer.');
 

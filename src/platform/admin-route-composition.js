@@ -162,9 +162,13 @@ function mountAdminRoutes(app) {
   app.use(createAdminCustomerManagementRouter());
   // These middleware-owning routers must precede Customer 360. They wrap the
   // canonical page response and own the lane-scoped mutation paths before the
-  // legacy customer-wide handlers can match them. Impersonation also runs for
-  // later /account routes so the sticky banner/audit layer reaches the real
-  // customer portal while the staff identity remains authoritative.
+  // legacy customer-wide handlers can match them. Impersonation's own
+  // audit/banner catch-all middleware is mounted separately, much earlier in
+  // application.js (before every /account router) -- see the comment there.
+  // This router (the impersonate/exit routes plus the Customer 360
+  // button-injection middleware) stays here, after the more specific
+  // /admin/users/dashboard route above, so its /admin/users/:customerId
+  // wildcard never shadows it.
   app.use(createAdminImpersonationRouter());
   app.use(createAdminLanePolicyRouter());
   app.use(createAdminCustomer360Router());
