@@ -36,7 +36,7 @@ const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.m
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard'],'Dashboard must expose one primary operator starting point');
 assert.deepStrictEqual(pageKeys.jellyfin,['servers','activity'],'Jellyfin must keep Servers and Playback as its primary destinations');
 assert.deepStrictEqual(pageKeys.stremio,['stremio-sources'],'Stremio must expose one primary control room');
-assert.deepStrictEqual(pageKeys.resellers,['reseller-overview'],'Resellers must expose one primary control room');
+assert.strictEqual(pageKeys.resellers,undefined,'Reserved reseller routes must not appear as a shipped primary sidebar module');
 assert.deepStrictEqual(pageKeys.people,['users','tickets'],'Customers must expose customer management and Support as primary destinations');
 assert.deepStrictEqual(pageKeys.commerce,['plans','orders','payments'],'Commerce must keep Plans & Storefront, Orders & Growth, and Payments & Billing as its primary destinations');
 assert.deepStrictEqual(pageKeys.automation,['provisioning','automation-jobs','backups'],'Operations must keep Provisioning, Automation, and Backups & Recovery as its primary destinations');
