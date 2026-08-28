@@ -38,6 +38,7 @@ async function main(){
   const dashboardSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard.js'),'utf8');
   const publicAuthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/customer-public-auth.js'),'utf8');
   assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardProfitability'),'home dashboard profit must use the shared profitability owner');
+  assert(mainSource.includes('FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id')&&mainSource.includes('e.blocked=FALSE AND e.access_expires_at>NOW()'),'service mix must use canonical effective access rather than raw billing status');
   assert(mainSource.includes("registry.register('main','cashFlow'")&&mainSource.includes("registry.register('main','newVsCancelled'")&&mainSource.includes("registry.register('main','serviceMix'"),'home dashboard must register only cash flow, growth and service mix content');
   for(const retired of ["registry.register('main', 'mrr'","registry.register('main', 'revenueTrend'","registry.register('main', 'revenueMix'","registry.register('main', 'planDistribution'"])assert(!mainSource.includes(retired),`${retired} must not remain on the home dashboard`);
   assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('used / sellable stream capacity')&&dashboardSource.includes('Needs attention'),'dashboard hero must contain the four requested signals');
