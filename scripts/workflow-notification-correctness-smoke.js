@@ -56,6 +56,16 @@ assert(jellyfin.discord.includes('https://captainfin.example.test/account'), 'Je
 assert(jellyfin.email.facts.some(row => row.label === 'Server' && row.value.includes('media.example.test')), 'Jellyfin email must expose the server fact');
 assert(jellyfin.email.facts.some(row => row.label === 'Username' && row.value === 'maria'), 'Jellyfin email must expose the username fact');
 
+const stremio = notificationTemplates.renderNotification({
+    eventType: 'customer.service.provisioned',
+    subject: 'Your CAPTAiNFiN Stremio access is ready',
+    text: 'Your Stremio access has been created.',
+    payload: { service: 'Stremio', accountUrl: 'https://captainfin.example.test/account' }
+});
+assert.strictEqual(stremio.email.actionLabel, 'Open Stremio setup', 'Stremio email must name the setup action precisely');
+assert.strictEqual(stremio.email.actionUrl, 'https://captainfin.example.test/account#stremio-access', 'Stremio email must target the canonical Account Home Stremio section');
+assert(stremio.discord.includes('https://captainfin.example.test/account#stremio-access'), 'Stremio chat must target the canonical Account Home Stremio section');
+
 const expiryNotice = notificationTemplates.renderNotification({
     eventType: 'subscription.expiring',
     subject: 'Premium expires soon',
