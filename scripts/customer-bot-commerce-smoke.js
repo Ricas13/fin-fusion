@@ -75,12 +75,12 @@ const managedRoleId='500000000000000005';
 const highRoleId='600000000000000006';
 const baseRoles=[
   {id:guildId,name:'@everyone',position:0,managed:false,permissions:'0'},
-  {id:botRoleId,name:'CAPTaINFiN',position:10,managed:false,permissions:String(discordRoles.DISCORD_MANAGE_ROLES)},
+  {id:botRoleId,name:'CAPTAiNFiN',position:10,managed:false,permissions:String(discordRoles.DISCORD_MANAGE_ROLES)},
   {id:customerRoleId,name:'Premium',position:5,managed:false,permissions:'0'},
   {id:managedRoleId,name:'Integration role',position:4,managed:true,permissions:'0'},
   {id:highRoleId,name:'Staff',position:11,managed:false,permissions:'0'}
 ];
-const analysed=discordRoles.analyzeGuildRoles({guildId,bot:{id:botId,username:'CaptainFin'},member:{roles:[botRoleId]},roles:baseRoles});
+const analysed=discordRoles.analyzeGuildRoles({guildId,bot:{id:botId,username:'CAPTAiNFiN'},member:{roles:[botRoleId]},roles:baseRoles});
 assert.strictEqual(analysed.ready,true,'A bot with Manage Roles and a higher role must be ready for plan-role assignment');
 assert.deepStrictEqual(analysed.assignableRoles.map(role=>role.id),[customerRoleId],'Only unmanaged roles below the bot hierarchy may be offered as plan roles');
 assert.strictEqual(analysed.roles.find(role=>role.id===managedRoleId).reason,'managed_by_discord','Discord-managed roles must never be offered for plan assignment');
