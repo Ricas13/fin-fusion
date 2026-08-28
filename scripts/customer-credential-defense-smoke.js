@@ -66,6 +66,7 @@ async function main() {
   const router = fs.readFileSync(path.join(root, 'src/platform/router.js'), 'utf8');
   const customerLogin = fs.readFileSync(path.join(root, 'src/platform/customer-login.js'), 'utf8');
   const customerSecurity = fs.readFileSync(path.join(root, 'src/platform/customer-security.js'), 'utf8');
+  const routeRateLimit = fs.readFileSync(path.join(root, 'src/security/route-rate-limit.js'), 'utf8');
   const customerRateLimit = fs.readFileSync(path.join(root, 'src/security/customer-rate-limit.js'), 'utf8');
   const customers = fs.readFileSync(path.join(root, 'src/customers.js'), 'utf8');
   const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
@@ -74,20 +75,24 @@ async function main() {
   const loginRouterOrder = router.indexOf('router.use(createCustomerLoginRouter())');
   assert(turnstileOrder >= 0 && loginRouterOrder > turnstileOrder, 'customer login router must remain downstream of Turnstile');
 
-  const identityLimitOrder = customerLogin.indexOf("r.post('/account/login',identityLoginRateLimit");
+  assert(customerLogin.includes("const routeRateLimit=require('../security/route-rate-limit');"), 'customer auth must use the canonical shared route limiter');
+  assert(customerLogin.includes("scope:'customer-login-password'"), 'password authentication must have a coarse canonical route bucket');
+  assert(customerLogin.includes("scope:'customer-login-2fa'"), '2FA authentication must have a coarse canonical route bucket');
+  const identityLimitOrder = customerLogin.indexOf("r.post('/account/login',passwordRouteLimit,identityLoginRateLimit");
   const passwordAuthOrder = customerLogin.indexOf('customers.authenticateCustomer(req.body.identity,req.body.password)');
-  assert(identityLimitOrder >= 0 && passwordAuthOrder > identityLimitOrder, 'identity throttle must be attached directly before password authentication');
-  const twoFactorLimitOrder = customerLogin.indexOf("r.post('/account/2fa',twoFactorLoginRateLimit");
+  assert(identityLimitOrder >= 0 && passwordAuthOrder > identityLimitOrder, 'route and identity throttles must run before password authentication');
+  const twoFactorLimitOrder = customerLogin.indexOf("r.post('/account/2fa',twoFactorRouteLimit,twoFactorLoginRateLimit");
   const twoFactorVerifyOrder = customerLogin.indexOf('twoFactor.verify(pending.account.userId,req.body.code)');
-  assert(twoFactorLimitOrder >= 0 && twoFactorVerifyOrder > twoFactorLimitOrder, '2FA throttle must be attached directly before code verification');
-  assert.match(customerLogin,/r\.post\('\/account\/login',identityLoginRateLimit/,'customer-login must explicitly own and rate-limit POST /account/login');
-  assert.match(customerLogin,/r\.post\('\/account\/2fa',twoFactorLoginRateLimit/,'customer-login must explicitly own and rate-limit POST /account/2fa');
+  assert(twoFactorLimitOrder >= 0 && twoFactorVerifyOrder > twoFactorLimitOrder, 'route and account throttles must run before 2FA verification');
+  assert.match(customerLogin,/r\.post\('\/account\/login',passwordRouteLimit,identityLoginRateLimit/,'customer-login must explicitly own and rate-limit POST /account/login');
+  assert.match(customerLogin,/r\.post\('\/account\/2fa',twoFactorRouteLimit,twoFactorLoginRateLimit/,'customer-login must explicitly own and rate-limit POST /account/2fa');
   assert.doesNotMatch(customerSecurity,/router\.post\('\/account\/login'/,'customer-security must not register a second POST /account/login owner');
   assert.doesNotMatch(customerSecurity,/router\.post\('\/account\/2fa'/,'customer-security must not register a second POST /account/2fa owner');
   assert(customerLogin.includes('customer-login-identity:${identity}'), 'identity-specific login bucket must be explicit');
   assert(customerLogin.includes('limit:30,windowMs:15*60*1000'), 'identity throttle should use the higher anti-DoS threshold');
   assert(customerLogin.includes('customer-login-2fa:${userId}'), '2FA attempts must use a per-account pseudonymous bucket');
   assert(customerLogin.includes('limit:12,windowMs:10*60*1000'), '2FA throttle must bound challenge attempts independently of account lockout');
+  assert(routeRateLimit.includes('return res.status(429)'), 'canonical route limiter must actively reject exhausted buckets');
   assert(customerLogin.includes("new URL(raw,'https://customer-portal.invalid')"), 'post-login redirect sanitizer must parse against a fixed internal origin');
   assert(customerLogin.includes("url.origin!=='https://customer-portal.invalid'"), 'post-login redirect sanitizer must reject cross-origin URLs');
   assert(customerLogin.includes("raw.includes('\\\\')"), 'post-login redirect sanitizer must reject browser-normalized backslashes');
