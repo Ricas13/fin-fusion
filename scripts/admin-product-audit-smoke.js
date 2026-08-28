@@ -106,9 +106,9 @@ assert(householdMigration.includes('stremio_household_network_limit')&&household
 assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&householdMigration.includes('snapshot_subscription_stremio_household_policy'),'subscription policy snapshots must persist the effective household policy for current contracts');
 
 const mainWidgets=registry.listWidgets('main');
-assert(mainWidgets.length>=10,'Main dashboard must register a meaningful set of widgets, not a stub');
-for(const key of ['mrr','revenueTrend','customerGrowth','planDistribution','platformHealth'])assert(mainWidgets.some(w=>w.key===key),`Main dashboard is missing the ${key} widget`);
-assert(mainWidgets.every(w=>[3,4,6,8,9,12].includes(w.defaultSpan)),'every Main dashboard widget must declare a valid default grid span');
+assert.deepStrictEqual(mainWidgets.map(w=>w.key),['cashFlow','newVsCancelled','serviceMix'],'Main dashboard must deliberately stay focused on cash flow, growth and service mix');
+assert.deepStrictEqual(mainWidgets.map(w=>w.defaultSpan),[12,8,4],'Main dashboard widget spans must preserve the intended one-full-width plus two-column visual hierarchy');
+assert(mainWidgets.every(w=>w.title&&w.render),'every focused Main dashboard widget must retain a named renderer rather than becoming a stub');
 assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Payments, and Operations'),'Existing Settings directory guidance must remain available until its copy is refreshed separately');
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
 for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
