@@ -6,6 +6,13 @@ const placement = require('../jellyfin/placement');
 const lifecycle = require('../payments/lifecycle');
 const publicAbuseProtection = require('../security/public-abuse-protection');
 const routeRateLimit = require('../security/route-rate-limit');
+const publicError = require('./public-error');
+const TRIAL_CLAIM_SAFE = [
+    'This trial is not available.', 'This trial has already been used.', 'Trial access must use a primary plan, not an add-on.',
+    /^A .+ trial has already been used on this account\.$/,
+    /^.+ trials are only available before the first paid subscription for that service\.$/,
+    /^You already have active .+ access\. Change or cancel that service before starting another overlapping trial\.$/
+];
 const { createPublicHelpRouter } = require('./public-help');
 const { createPublicPagesRouter } = require('./public-pages');
 const { createAdminAutomationRouter } = require('./admin-automation');
@@ -106,7 +113,8 @@ function createRouter() {
             await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null);
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Your access details are below.'));
         } catch (error) {
-            return res.redirect('/account?error=' + encodeURIComponent(error.message));
+            const { message } = publicError.present(error, { context: 'Free trial start failed', fallback: 'Your trial could not be started.', safe: TRIAL_CLAIM_SAFE });
+            return res.redirect('/account?error=' + encodeURIComponent(message));
         }
     });
 
@@ -115,11 +123,12 @@ function createRouter() {
             await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your access details are below.'));
         } catch (error) {
-            return res.redirect('/account?error=' + encodeURIComponent(error.message));
+            const { message } = publicError.present(error, { context: 'Free plan claim failed', fallback: 'Free Access could not be claimed.', safe: TRIAL_CLAIM_SAFE });
+            return res.redirect('/account?error=' + encodeURIComponent(message));
         }
     });
 
     return router;
 }
 
-module.exports = { ...core, createRouter, ensureFleetSnapshot };
+module.exports = { ...core, createRouter, ensureFleetSnapshot, TRIAL_CLAIM_SAFE };
