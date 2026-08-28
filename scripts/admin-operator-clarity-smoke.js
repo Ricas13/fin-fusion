@@ -49,10 +49,10 @@ for (const tone of ['operatorHero-good', 'operatorHero-warn', 'operatorHero-bad'
 assert(css.includes('.operatorHeroActions-compact{margin:0 0 12px}'), 'retired status heroes must leave only a compact action row when actions are needed');
 assert(capability.includes("@import url('/css/admin-operator-clarity.css')"), 'operator clarity CSS must load through canonical admin capability bundle');
 
-assert(dashboard.includes('Operator control room') && dashboard.includes('ui.operatorHero({') && dashboard.includes('next,'), 'dashboard status calculation must remain available even though the page-level hero renderer is retired');
-for (const label of ['Open backup recovery', 'Open server recovery', 'Open automation', 'Review payment case', 'Open delivery failures', 'Review access retry']) {
-  assert(dashboard.includes(label), `dashboard attention rows must use explicit intervention language: ${label}`);
-}
+assert(dashboard.includes('function dashboardHero(ctx)') && dashboard.includes('Profit this month') && dashboard.includes('Profit YTD'), 'Home must retain an explicit profit-first business hero');
+assert(dashboard.includes('used / sellable stream capacity') && dashboard.includes('Needs attention'), 'Home hero must pair live stream capacity with the canonical intervention count');
+assert(dashboard.indexOf('dashboardHero(ctx)') < dashboard.indexOf('rangeControls(ctx.range)'), 'Home hero must remain before analytics controls in composition');
+assert(!dashboard.includes('function attentionOverview') && !dashboard.includes('setupCompact'), 'Home must not reintroduce a second attention list or setup tile outside the focused hero');
 assert(attention.includes('Current problem & next step') && attention.includes('actionLabel'), 'Needs Attention must present the current problem and the concrete recovery action separately from workflow controls');
 assert(attention.includes('Automatic retries and recovery history remain elsewhere.'), 'Needs Attention must keep self-healing and historical failures out of the intervention queue');
 assert(attentionSource.includes('/admin/servers/dashboard?server='), 'single-server attention items must preserve server context when opening the fleet control room');
