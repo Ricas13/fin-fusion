@@ -177,6 +177,20 @@ async function applyRemoteOperation(remote, intent) {
     return { status: fields.status || 'unknown', completed: false };
 }
 
+async function processClaimedCallback(eventRow, payload) {
+    try {
+        const { intent, providerId } = await authenticateCallback(payload);
+        const { remote } = await verifiedRemoteOperation(providerId, intent);
+        const result = await applyRemoteOperation(remote, intent);
+        await lifecycle.finishPaymentEvent(eventRow);
+        return { processed: true, ...result };
+    } catch (error) {
+        await lifecycle.finishPaymentEvent(eventRow, error);
+        console.error('Plisio webhook processing deferred to internal retry:', error.message);
+        return { processed: false, error };
+    }
+}
+
 async function processWebhook(rawBody, contentType = '') {
     const payload = parseCallback(rawBody, contentType);
     const { intent, providerId } = await authenticateCallback(payload);
@@ -191,8 +205,16 @@ async function processWebhook(rawBody, contentType = '') {
         return { duplicate: false, ...result };
     } catch (error) {
         await lifecycle.finishPaymentEvent(eventRow, error);
-        throw error;
+        console.error('Plisio webhook processing deferred to internal retry:', error.message);
+        return { duplicate: false, status: fields.status, processingError: String(error.message || error) };
     }
+}
+
+async function retryPaymentEvent(eventRow) {
+    if (!eventRow || eventRow.provider !== 'plisio') throw new Error('Plisio retry received the wrong payment event.');
+    const payload = eventRow.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Stored Plisio payment event payload is invalid.');
+    return processClaimedCallback(eventRow, payload);
 }
 
 async function confirmCheckout(providerTxnId, intent) {
@@ -200,4 +222,4 @@ async function confirmCheckout(providerTxnId, intent) {
     return applyRemoteOperation(remote, intent);
 }
 
-module.exports = { API_BASE, enabled, api, createCheckout, getOperation, parseCallback, callbackDigest, moneyMinor, operationFields, processWebhook, confirmCheckout, applyRemoteOperation, authenticateCallback, verifiedRemoteOperation, safeEqual };
+module.exports = { API_BASE, enabled, api, createCheckout, getOperation, parseCallback, callbackDigest, moneyMinor, operationFields, processWebhook, retryPaymentEvent, confirmCheckout, applyRemoteOperation, authenticateCallback, verifiedRemoteOperation, safeEqual };
