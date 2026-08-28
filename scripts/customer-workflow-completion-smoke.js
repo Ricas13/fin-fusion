@@ -11,6 +11,9 @@ const {restrictedImpersonationAction}=require('../src/platform/admin-impersonati
 const root=path.join(__dirname,'..');
 const dashboardPath=path.join(root,'views/customer/dashboard.ejs');
 const dashboardTemplate=fs.readFileSync(dashboardPath,'utf8');
+const customer360Source=fs.readFileSync(path.join(root,'src/platform/admin-customer-360.js'),'utf8');
+const customerManagementSource=fs.readFileSync(path.join(root,'src/platform/admin-customer-management.js'),'utf8');
+const impersonationSource=fs.readFileSync(path.join(root,'src/platform/admin-impersonation.js'),'utf8');
 
 function subscription(cancelAtPeriodEnd=false){
   return{
@@ -62,8 +65,12 @@ assert(register.includes('claim link')&&register.includes('do not register again
 
 assert(!adminNav.groups.some(group=>group.key==='resellers'),'reserved reseller routes must not appear as a shipped module in the default admin sidebar');
 assert.strictEqual(adminHtml.clarifyManualEntitlementLabels('<button>Change plan</button>'),'<button>Manual entitlement edit</button>','admin plan-change controls must identify themselves as manual entitlement edits');
+assert(customer360Source.includes("bulkActionForm(token,c.id,'plan_change','Manual entitlement edit')"),'Customer 360 must label plan_change as a manual entitlement edit at the source door');
+assert(customerManagementSource.includes("bulkPreview(req,id,'plan_change','Manual entitlement edit')"),'customer management must label plan_change as a manual entitlement edit at the source door');
 const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route});
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal')),'automatic renewal changes','restricted support view must block automatic renewal changes');
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'checkout','restricted support view must keep checkout blocked');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/plan-change/cancel')),null,'restricted support view must keep scheduled plan-change cancellation available for support');
+assert(impersonationSource.includes('Scheduled plan-change cancellation remains available for support.'),'impersonation banner must document the allowed plan-change cancellation action');
 
 console.log('customer/admin workflow completion smoke: ok');
