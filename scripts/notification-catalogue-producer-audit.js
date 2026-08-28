@@ -113,6 +113,13 @@ for (const eventType of ['payment.chargeback','commercial.discount.redeemed','cu
 }
 if (adminPolicy.defaultEnabled('login.customer.succeeded')) throw new Error('Customer login activity must default off as Noise.');
 
+const jobsSource = fs.readFileSync(path.join(root, 'src/automation/jobs.js'), 'utf8');
+if (!jobsSource.includes("const adminActivityNotifications=require('./admin-activity-notifications');")) throw new Error('Admin activity notification reconciler is not imported by the automation registry.');
+if (!jobsSource.includes('async admin_activity_notifications(){return adminActivityNotifications.run()}')) throw new Error('Admin activity notification reconciler is not scheduled by the automation registry.');
+const loginSource = fs.readFileSync(path.join(root, 'src/platform/customer-login.js'), 'utf8');
+if (!loginSource.includes("'customer.login.success'")) throw new Error('Completed customer login audit event is missing.');
+if (!loginSource.includes('await recordCompletedLogin(account,true)')) throw new Error('2FA customer logins must be audited after session establishment.');
+
 console.log(`summary: direct=${rows.length} retired=${retired.size} invalid=0`);
 
 module.exports = { inserted, catalogue, retired, rows };
