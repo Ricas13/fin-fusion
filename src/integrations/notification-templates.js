@@ -97,8 +97,8 @@ function enrichLegacyPayload(eventType, payload, fallback) {
 function accountSectionUrl(payload, fragment = '') {
     const accountUrl = clean(payload.accountUrl, 1000);
     if (!accountUrl) return '';
-    const base = accountUrl.replace(/#.*$/, '');
-    return fragment ? `${base}#${fragment}` : base;
+    if (!fragment) return accountUrl;
+    return `${accountUrl.replace(/#.*$/, '')}#${fragment}`;
 }
 
 function accountAction(payload, { actionLabel = 'Open your account', fragment = '' } = {}) {
