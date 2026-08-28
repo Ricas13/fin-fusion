@@ -40,3 +40,4 @@ assert(!inspectBlock.includes('INSERT INTO audit_log'),'read-only restoration in
 assert(cleanup.slice(mutateStart).includes('await returningCustomerStatus(customerId)'),'restoration mutation must re-check eligibility instead of trusting stale GET state');
 
 console.log('customer dashboard read-only GET smoke: ok');
+require('./customer-workflow-completion-smoke');
