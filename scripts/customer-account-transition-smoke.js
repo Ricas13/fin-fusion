@@ -41,7 +41,8 @@ assert.match(registrationTransaction,/transaction\(async client=>[\s\S]*?client\
 assert.match(registrationTransaction,/customer_communication_preferences[\s\S]*?audit_log[\s\S]*?return\{user,customer,referralCodeId\}/,'communication preferences and referral attribution must be persisted before the registration transaction returns the identity');
 assert.match(registrationTransaction,/referrals\.attributionEnabled\(client\)[\s\S]*?referrals\.attributeReferral\(customer\.id,referralCode,client\)/,'direct registration referral attribution must use the same transaction client as customer creation');
 assert.doesNotMatch(registrationTransaction,/Referral attribution failed|referrals\.attributeReferral\(created\.customer\.id/,'direct registration must not defer referral attribution until after commit');
-assert.match(publicAuth,/customers\.registerCustomer\(\{\.\.\.req\.body,referralCode:req\.body\.referralCode,communicationPreferences\}\)/,'the public registration route must hand preferences to the atomic customer registration transition');
+assert.match(publicAuth,/pendingRegistrations\.begin\(\{[\s\S]*?communicationPreferences,[\s\S]*?freeAccess:wantsFree\}\)/,'public registration must persist communication preferences in the pending verification transition');
+assert.doesNotMatch(publicAuth,/customers\.registerCustomer\(/,'public registration must not create a customer before email verification completes');
 assert.doesNotMatch(publicAuth,/function saveCommunication|await saveCommunication\(/,'the public registration route must not perform a second communication-preferences write after identity creation');
 
 const pendingConsume=pending.match(/async function consume\(rawToken\)[\s\S]*?return created;\n\}/)?.[0]||'';
