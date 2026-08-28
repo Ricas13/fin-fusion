@@ -42,6 +42,58 @@ function formatAmount(amount, currency) {
     }
 }
 
+function firstHttpUrl(text) {
+    const match = clean(text, 12000).match(/https?:\/\/[^\s<>]+/i);
+    return match ? match[0].replace(/[),.;]+$/, '') : '';
+}
+
+function enrichLegacyPayload(eventType, payload, fallback) {
+    const enriched = { ...(payload || {}) };
+    const subject = clean(fallback.subject, 500);
+    const text = clean(fallback.text, 12000);
+    const combined = `${subject} ${text}`;
+
+    if (eventType === 'customer.service.provisioned') {
+        if (!enriched.service) {
+            if (/jellyfin/i.test(combined)) enriched.service = 'Jellyfin';
+            else if (/stremio/i.test(combined)) enriched.service = 'Stremio';
+        }
+        if (!enriched.serverUrl && String(enriched.service || '').toLowerCase() === 'jellyfin') enriched.serverUrl = firstHttpUrl(text);
+        if (!enriched.jellyfinUsername) {
+            const username = text.match(/sign in as\s+([^.,]+?)(?:\.|,| and |$)/i);
+            if (username) enriched.jellyfinUsername = clean(username[1], 160);
+        }
+        if (enriched.passwordSetupRequired === undefined && /choose your jellyfin password|set your jellyfin password/i.test(text)) enriched.passwordSetupRequired = true;
+    }
+
+    if (eventType === 'payment.received' || eventType === 'payment.failed') {
+        if (enriched.amount === undefined || !enriched.currency) {
+            const amount = text.match(/\b([A-Z]{3})\s+([0-9]+(?:[.,][0-9]{1,2})?)\b/);
+            if (amount) {
+                if (!enriched.currency) enriched.currency = amount[1];
+                if (enriched.amount === undefined) enriched.amount = Number(amount[2].replace(',', '.'));
+            }
+        }
+        if (!enriched.planName && eventType === 'payment.received') {
+            const plan = text.match(/(?:payment (?:was )?confirmed|confirmed payment) for\s+(.+?)(?:\s+via\s+|\.|$)/i);
+            if (plan) enriched.planName = clean(plan[1], 200);
+        }
+        if (!enriched.provider) {
+            const provider = text.match(/\bvia\s+([A-Za-z0-9_-]+)/i) || text.match(/Your\s+([A-Za-z0-9_-]+)\s+renewal payment/i);
+            if (provider) enriched.provider = clean(provider[1], 80);
+        }
+    }
+
+    if (eventType === 'customer.service.inactive') {
+        if (!enriched.reason) enriched.reason = 'inactivity';
+        if (!enriched.service && /jellyfin/i.test(combined)) enriched.service = 'Jellyfin';
+    } else if (eventType === 'customer.service.expired') {
+        if (!enriched.reason) enriched.reason = 'expired';
+    }
+
+    return enriched;
+}
+
 function accountAction(payload) {
     const accountUrl = clean(payload.accountUrl, 1000);
     return accountUrl ? { actionLabel: 'Open your account', actionUrl: accountUrl } : {};
@@ -83,6 +135,9 @@ function customerProvisioned(payload, fallback) {
     const nextStep = jellyfin && payload.passwordSetupRequired
         ? 'Set or view your password in your account portal'
         : stremio ? 'Install Stremio from your account portal' : 'Open your account portal';
+    const provisionFacts = facts(payload, nextStep);
+    if (payload.serverUrl) provisionFacts.unshift({ label: 'Server', value: compact([payload.serverName, payload.serverUrl]).join(' · ') });
+    if (payload.jellyfinUsername) provisionFacts.splice(payload.serverUrl ? 1 : 0, 0, { label: 'Username', value: payload.jellyfinUsername });
     return {
         email: {
             subject: clean(fallback.subject, 300) || title,
@@ -90,7 +145,7 @@ function customerProvisioned(payload, fallback) {
             text: body,
             eventLabel: 'Service ready',
             tone: 'default',
-            facts: facts(payload, nextStep),
+            facts: provisionFacts,
             ...accountAction(payload)
         },
         chat
@@ -106,7 +161,7 @@ function subscriptionExpiring(payload, fallback) {
         autoRenew,
         payload.autoRenewal === true ? 'No action is needed if your renewal completes normally.' : 'Open your account to review renewal or access options.'
     ]).join('\n\n');
-    const chat = `⚠️ ${payload.planName || 'Access'} expires${date ? ` ${date}` : ' soon'}${autoRenew ? ` · ${autoRenew}` : ''}${payload.accountUrl ? ` ${payload.accountUrl}` : ''}`;
+    const chat = `⚠️ ${payload.planName || 'Access'} expires${date ? ` ${date}` : ' soon'}${autoRenew ? ` · ${autoRenew}` : ''}${payload.accountUrl ? ` · ${payload.accountUrl}` : ''}`;
     const nextStep = payload.autoRenewal === true ? 'No action unless your renewal fails' : 'Review renewal or access options';
     return {
         email: {
@@ -212,10 +267,14 @@ function genericTemplate(eventType, payload, fallback) {
     };
 }
 
+function isAccessRemoval(eventType) {
+    return /access\.(removed|disabled)|service\.(disabled|inactive|expired)|subscription\.disabled/i.test(eventType);
+}
+
 function adminLine(eventType, payload, fallback) {
     const who = clean(payload.customerName || payload.email || 'Customer', 160);
     const link = clean(payload.adminUrl, 1000);
-    if (/access\.(removed|disabled)|service\.disabled|subscription\.disabled/i.test(eventType)) {
+    if (isAccessRemoval(eventType)) {
         const object = clean(payload.service || payload.planName || 'access', 120);
         const where = clean(payload.serverName, 160);
         const because = clean(payload.reason, 180);
@@ -247,20 +306,22 @@ function resolveTemplate(eventType, payload, fallback) {
     if (eventType === 'subscription.expiring') return subscriptionExpiring(payload, fallback);
     if (eventType === 'payment.received') return paymentReceived(payload, fallback);
     if (eventType === 'payment.failed') return paymentFailed(payload, fallback);
-    if (/access\.(removed|disabled)|service\.disabled|subscription\.disabled/i.test(eventType)) return accessRemoved(payload, fallback);
+    if (isAccessRemoval(eventType)) return accessRemoved(payload, fallback);
     return genericTemplate(eventType, payload, fallback);
 }
 
 function renderNotification({ eventType, payload = {}, subject = '', text = '', audience = 'customer' } = {}) {
+    const safeEventType = clean(eventType, 160);
     const fallback = { subject, text };
-    const resolved = resolveTemplate(clean(eventType, 160), payload || {}, fallback);
+    const enrichedPayload = enrichLegacyPayload(safeEventType, payload || {}, fallback);
+    const resolved = resolveTemplate(safeEventType, enrichedPayload, fallback);
     const customerChat = clean(resolved.chat, 3500);
-    const adminChat = clean(adminLine(eventType, payload || {}, fallback), 3500);
+    const adminChat = clean(adminLine(safeEventType, enrichedPayload, fallback), 3500);
     const chat = audience === 'admin' ? adminChat : customerChat;
     return {
         email: {
             ...resolved.email,
-            payload: payload || {}
+            payload: enrichedPayload
         },
         discord: chat,
         telegram: chat,
@@ -270,6 +331,7 @@ function renderNotification({ eventType, payload = {}, subject = '', text = '', 
 
 module.exports = {
     renderNotification,
+    enrichLegacyPayload,
     humanizeEventType,
     formatDate,
     formatAmount
