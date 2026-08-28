@@ -77,8 +77,8 @@ assert(provisioning.includes('Needs intervention')||provisioning.includes('Inter
 
 assert(admin.includes('item?.actionLabel'),'attention inbox must prefer source-specific next-step labels');
 assert(admin.includes('Only current, persistent and operator-actionable conditions appear here.'),'attention inbox must explicitly define its low-noise contract');
-assert(dashboard.includes('Transient timeouts, automatic retries and recovered failures remain in diagnostics/history'),'dashboard must explain why self-healing failures are absent');
-assert(dashboard.includes('Review ${count}'),'dashboard hero must frame the queue as review/intervention rather than pretending a generic Resolve button fixes everything');
+assert(dashboard.includes('href="/admin/attention"')&&dashboard.includes('require review'),'dashboard hero must link its compact attention count to the canonical intervention queue without duplicating its explanatory copy');
+assert(!dashboard.includes('Transient timeouts, automatic retries and recovered failures remain in diagnostics/history'),'focused Home must not reintroduce the retired standalone attention explanation');
 assert(operator.includes('attention.openSummary()'),'Unread operator state must count the filtered live intervention queue');
 
 console.log('attention workflow smoke: ok');

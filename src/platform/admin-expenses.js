@@ -5,9 +5,8 @@ const csrf=require('../auth/csrf');
 const {query}=require('../db');
 const expenses=require('./business-expenses');
 const reportingCurrency=require('./reporting-currency');
+const profitability=require('./business-profitability');
 const runtimeSettings=require('./runtime-settings');
-const {revenueFromEvent}=require('./admin-dashboard-analytics');
-const {refundFromEvent}=require('./admin-commerce-dashboard');
 const {layout,esc}=require('./admin-html');
 const ui=require('./admin-ui');
 const {sendCsv}=require('./export');
@@ -27,12 +26,7 @@ function date(value){if(!value)return'—';const d=value instanceof Date?value:n
 function recurrenceLabel(value){return({one_time:'One-off',monthly:'Monthly',quarterly:'Quarterly',yearly:'Yearly'})[value]||value;}
 async function audit(req,action,id,metadata={}){await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'business_expense',$3,$4::jsonb)`,[req.session.authUserId,action,String(id),JSON.stringify(metadata)]).catch(()=>{});}
 
-async function revenueSummary(start,end,reporting){
-  const result=await query(`SELECT provider,event_type,payload,created_at FROM payment_events WHERE provider IN('stripe','paypal') AND processed_at IS NOT NULL AND processing_error IS NULL AND created_at >= $1 AND created_at < $2 ORDER BY created_at`,[start,end]);
-  let grossMinor=0,refundMinor=0;const target=reporting.currency;
-  for(const row of result.rows){const payment=revenueFromEvent(row);if(payment)grossMinor+=reportingCurrency.convertMinor(Number(payment.minor||0),payment.currency||target,target,reporting);const refund=refundFromEvent(row);if(refund)refundMinor+=reportingCurrency.convertMinor(Number(refund.minor||0),refund.currency||target,target,reporting);}
-  return{grossMinor,refundMinor,netMinor:grossMinor-refundMinor};
-}
+async function revenueSummary(start,end,reporting){return profitability.revenueSummary(start,end,reporting);}
 async function pageData(year){
   const reporting=await reportingCurrency.get(),rows=await expenses.list();const now=new Date(),currentYear=now.getUTCFullYear(),requested=Number(year),selected=Number.isInteger(requested)&&requested>=currentYear-20&&requested<=currentYear+1?requested:currentYear,window=expenses.annualWindow(selected),isCurrent=selected===currentYear,actualEnd=isCurrent?new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1)):window.end;
   const convert=(minor,from,to)=>reportingCurrency.convertMinor(minor,from,to,reporting),actual=expenses.summarize(rows,window.start,actualEnd,convert,reporting.currency),fullYear=expenses.summarize(rows,window.start,window.end,convert,reporting.currency),revenue=await revenueSummary(window.start,actualEnd,reporting);

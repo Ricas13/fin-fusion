@@ -49,6 +49,9 @@ assert(enhancer.includes('compactPaymentProviders')&&enhancer.includes('settingP
 assert(enhancer.includes('compactRequestService')&&enhancer.includes('request-service-config'),'Request Service setup must collapse to a status/configure row ahead of daily operations');
 
 assert(settings.includes('class="toggleRow"'),'general/security settings must remain discoverable by the compatibility upgrader while migration is in progress');
+assert(!settings.includes('name="requireEmailVerification"'),'public registration email verification is mandatory and must not be exposed as a dead checkbox');
+assert(settings.includes('Public registration · verified email required')&&settings.includes('Email verification is mandatory for public registration.'),'registration settings must describe the mandatory verification contract directly');
+assert(settings.includes("if(publicRegistration){const mail=await emailSettings.status()")&&settings.includes("saveSetting('platform',{publicRegistration,requireEmailVerification:true}"),'enabling public registration must require transactional email and persist the compatibility flag as true');
 assert(plans.includes('class="toggleGrid"')&&plans.includes('class="toggleRow"'),'existing plan boolean policy must feed the canonical toggle grid');
 assert(/class="[^"]*\btoggleGrid\b[^"]*"/.test(planCreate)&&planCreate.includes('class="toggleRow"'),'new-plan boolean policy must use the same canonical toggle grid, with optional layout modifiers');
 assert(abuse.includes("require('./admin-setting-controls')")&&abuse.includes('settingControls.grid'),'Abuse Protection must be a direct consumer of the canonical server-rendered setting controls');

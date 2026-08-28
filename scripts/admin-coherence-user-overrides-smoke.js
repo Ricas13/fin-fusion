@@ -12,7 +12,7 @@ assert(/Stream-limit decisions/.test(view)&&/e\.reason/.test(view),'stream stop 
 assert(/attention\/bulk/.test(attention)&&/data-attention-select-all/.test(attention),'Needs Attention bulk edit missing');
 assert(/async function openSummary\(\)/.test(attentionSource)&&/count:sources\.length/.test(attentionSource),'Needs Attention must expose a global open-item summary');
 assert(/attention\.openSummary\(\)/.test(operatorState)&&/attention:\{n:attentionSummary\.count,updated:attentionSummary\.updatedAt\}/.test(operatorState),'Operator unread snapshot must include Needs Attention');
-assert(/\/admin\/api\/operator-state\/unread/.test(operatorBusiness)&&/attention:\['Needs Attention','Open operational issues','\/admin\/attention'\]/.test(operatorBusiness),'Admin shell must fetch the unread snapshot and badge Needs Attention globally');
+assert(/\/admin\/api\/operator-state\/unread/.test(operatorBusiness)&&/signalMenuMarkup\(\{key:'alerts',tone:'alert',label:'Alerts',primaryHref:'\/admin\/attention'/.test(operatorBusiness)&&/key:'attention',label:'Attention',meta:'Open operational issues',href:'\/admin\/attention'/.test(operatorBusiness),'Admin shell must fetch the unread snapshot and surface Needs Attention in the global red Alerts signal');
 assert(/marketing_features/.test(migration)&&/automation_protected/.test(migration),'migration missing coherence columns');
 assert(/Where settings live/.test(settings)&&/settings-registry/.test(settings),'settings directory must use canonical registry');
 assert(/Find a setting/.test(settings)&&/settingsLookupPage/.test(settings),'settings lookup missing');

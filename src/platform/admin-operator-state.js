@@ -10,7 +10,7 @@ const readCursors=require('./operator-read-cursors');
 const tickets=require('../support/tickets');
 const routeRateLimit=require('../security/route-rate-limit');
 const fleetDashboard=require('./admin-server-fleet-dashboard');
-const {revenueFromEvent}=require('./admin-dashboard-analytics');
+const profitability=require('./business-profitability');
 
 function gate(req,res,next){
   if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId){
@@ -23,9 +23,6 @@ function epoch(value){return value?new Date(value).getTime():0;}
 function operatorKey(req){return req.session?.authUserId?`admin:${req.session.authUserId}`:`ip:${ipKeyGenerator(req.ip)}`;}
 function metricNumber(server,key,fallback=0){return server?.fleet_metrics?.[key]==null?Number(fallback||0):Number(server.fleet_metrics[key]||0);}
 
-// This endpoint is a lightweight authenticated read used on every admin page
-// and by the live header poll. Allow full-page navigation/crawls to burst while
-// retaining both the in-process and persistent per-operator limits.
 const unreadBurstLimit=rateLimit({windowMs:60_000,limit:240,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const readBurstLimit=rateLimit({windowMs:60_000,limit:60,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
 const reportingCurrencyBurstLimit=rateLimit({windowMs:60_000,limit:20,keyGenerator:operatorKey,standardHeaders:false,legacyHeaders:false});
@@ -34,34 +31,15 @@ const readPersistentLimit=routeRateLimit.middleware({scope:'admin-operator-read'
 const reportingCurrencyPersistentLimit=routeRateLimit.middleware({scope:'admin-reporting-currency',max:20,windowSeconds:60});
 
 async function headerMetrics(){
-  const [fleet,reportingState,paymentRows]=await Promise.all([
-    fleetDashboard.dashboardRows(),
-    reporting.get(),
-    query(`SELECT provider,provider_event_id,event_type,payload,created_at,
-                  created_at>=date_trunc('month',NOW()) AS in_current_month
-             FROM payment_events
-            WHERE provider IN ('stripe','paypal')
-              AND event_type IN ('invoice.paid','checkout.session.completed','PAYMENT.CAPTURE.COMPLETED')
-              AND processed_at IS NOT NULL AND processing_error IS NULL
-              AND created_at>=date_trunc('year',NOW())
-              AND created_at<date_trunc('year',NOW())+INTERVAL '1 year'`)
-  ]);
+  const [fleet,reportingState]=await Promise.all([fleetDashboard.dashboardRows(),reporting.get()]);
   const enabled=fleet.filter(row=>row.enabled!==false);
   const activeStreams=enabled.reduce((sum,row)=>sum+metricNumber(row,'active_streams',row.active_streams),0);
   const totalStreams=enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0);
-  const currency=reporting.cleanCurrency(reportingState.currency);
-  let monthlyRevenueMinor=0,yearlyRevenueMinor=0;
-  for(const row of paymentRows.rows){
-    const payment=revenueFromEvent(row);
-    if(!payment)continue;
-    const converted=reporting.convertMinor(Number(payment.minor||0),payment.currency||currency,currency,reportingState);
-    yearlyRevenueMinor+=converted;
-    if(row.in_current_month)monthlyRevenueMinor+=converted;
-  }
+  const currency=reporting.cleanCurrency(reportingState.currency),profit=await profitability.headerProfitability({...reportingState,currency});
   return {
     streams:{active:activeStreams,total:totalStreams},
-    monthlyRevenue:{minor:monthlyRevenueMinor,currency},
-    yearlyRevenue:{minor:yearlyRevenueMinor,currency}
+    monthlyProfit:{minor:profit.current.profitMinor,currency},
+    yearlyProfit:{minor:profit.ytd.profitMinor,currency}
   };
 }
 

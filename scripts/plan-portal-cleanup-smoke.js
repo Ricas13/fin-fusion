@@ -32,7 +32,7 @@ assert(lifecycle.includes('minimumPlaybackMinutes') && lifecycle.includes('playb
 assert(jobs.includes('customerInactivity.run()'), 'scheduled inactivity job must use the plan-aware worker');
 assert(storefront.includes("serviceType(p)==='stremio'&&!p.is_addon") && storefront.includes('Standalone Stremio access.'), 'storefront must hide add-ons and render standalone Stremio sections');
 assert(operatorBusiness.includes('markAreaRead(area,data)') && operatorBusiness.includes('markAreaReadWithRetry') && operatorBusiness.includes('return await fetchSnapshot()') && operatorBusiness.includes('.then(fresh=>apply(fresh||data))'), 'business unread badges must persist the current-area acknowledgement, retry transient failures and repaint from a fresh server snapshot');
-assert(operatorBusiness.includes("row.count>0&&row.key!==areaForCurrentPage"), 'the open business workspace must not keep presenting its own unread notification');
+assert(operatorBusiness.includes("setSignal('new',areaForCurrentPage==='customers'?0:customers)") && operatorBusiness.includes("areaForCurrentPage==='tickets'?0:tickets") && operatorBusiness.includes("areaForCurrentPage==='orders'?0:orders"), 'the open business workspace must not keep presenting its own split unread signal');
 assert(!operatorBusiness.includes('data.counts[areaForCurrentPage]=0'), 'business unread badges must remain server-authoritative rather than mutating the returned snapshot');
 assert(!adminShell.includes('<summary class="navSectionLabel"><a class="navSectionHome"'), 'sidebar summary must not contain a nested link');
 assert(nav.includes("['stremio-playback','IP access','/admin/stremio/playback']"), 'Stremio household controls must remain available through the plain-language IP access workspace');
