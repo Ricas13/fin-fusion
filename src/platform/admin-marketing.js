@@ -119,11 +119,28 @@ function segmentEditForm(req, segment, plans) {
     </form></details>`;
 }
 
+async function segmentsWithCounts(rows) {
+    if (!rows.length) return [];
+    const output = new Array(rows.length);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(4, rows.length) }, async () => {
+        while (true) {
+            const index = cursor++;
+            if (index >= rows.length) break;
+            const row = rows[index];
+            output[index] = { ...row, currentCount: (await campaigns.preview(row.audience_filters || {})).count };
+        }
+    });
+    await Promise.all(workers);
+    return output;
+}
+
 async function listPage(req) {
     await runtimeSettings.ensureLoaded();
     const [rows, plans, discounts, segmentRows] = await Promise.all([campaigns.list(), selectablePlans(), selectableDiscounts(), marketingSegments.list()]);
-    const savedSegments = await Promise.all(segmentRows.map(async row => ({ ...row, currentCount: (await campaigns.preview(row.audience_filters || {})).count })));
-    const requestedSegment = marketingSegments.optionalUuid(req.query.segment, 'saved segment');
+    const savedSegments = await segmentsWithCounts(segmentRows);
+    let requestedSegment = null;
+    try { requestedSegment = marketingSegments.optionalUuid(req.query.segment, 'saved segment'); } catch (_) { requestedSegment = null; }
 
     const body = `${notice(req)}
         <div class="metrics">
@@ -312,4 +329,4 @@ function createAdminMarketingRouter() {
     return router;
 }
 
-module.exports = { createAdminMarketingRouter, parseAudienceFilters, audienceSummary, audienceFields };
+module.exports = { createAdminMarketingRouter, parseAudienceFilters, audienceSummary, audienceFields, segmentsWithCounts };
