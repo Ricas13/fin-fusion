@@ -12,6 +12,8 @@ const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
 const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
 const SERVICE_VALUES = ['jellyfin', 'stremio'];
+const PRICE_TYPES = ['free', 'paid'];
+const BILLING_INTERVALS = ['trial', 'month', '6_months', 'year', 'custom'];
 const MAX_MATCHING = 5000;
 const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
 const CUSTOMER_SORTS = Object.freeze({
@@ -29,6 +31,12 @@ const CUSTOMER_SORTS = Object.freeze({
 
 function isUuid(v) {
     return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+
+function boundedInt(value, min, max) {
+    if (value === undefined || value === null || String(value).trim() === '') return null;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : null;
 }
 
 function baseJoins() {
@@ -104,6 +112,46 @@ function buildWhere(filters, scope) {
     if (filters.status) {
         if (filters.status === 'none') where.push('cur.id IS NULL');
         else if (STATUS_VALUES.includes(filters.status)) where.push(`cur.status=${p(filters.status)}`);
+    }
+
+    if (filters.priceType === 'free') where.push(`cur.id IS NOT NULL AND (COALESCE(p.is_free_tier,FALSE)=TRUE OR COALESCE(p.price_minor,0)=0)`);
+    else if (filters.priceType === 'paid') where.push(`cur.id IS NOT NULL AND COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(p.price_minor,0)>0`);
+
+    if (filters.billingInterval && BILLING_INTERVALS.includes(filters.billingInterval)) {
+        where.push(`p.billing_interval=${p(filters.billingInterval)}`);
+    }
+
+    const accountAgeDays = boundedInt(filters.accountAgeDays, 0, 3650);
+    if (accountAgeDays !== null) where.push(`c.created_at<=NOW()-(${p(accountAgeDays)}::int*INTERVAL '1 day')`);
+
+    const lapsedDays = boundedInt(filters.lapsedDays, 0, 3650);
+    if (lapsedDays !== null) {
+        const days = p(lapsedDays);
+        where.push(`NOT EXISTS (
+            SELECT 1 FROM subscriptions live
+            WHERE live.customer_id=c.id
+              AND live.superseded_by IS NULL
+              AND live.status IN ('active','trialing','past_due','paused')
+              AND (live.current_period_end IS NULL OR live.current_period_end>NOW())
+        ) AND EXISTS (
+            SELECT 1 FROM subscriptions hist_lapsed
+            WHERE hist_lapsed.customer_id=c.id
+            GROUP BY hist_lapsed.customer_id
+            HAVING MAX(COALESCE(hist_lapsed.current_period_end,hist_lapsed.created_at))<=NOW()-(${days}::int*INTERVAL '1 day')
+        )`);
+    }
+
+    const expiresWithinDays = boundedInt(filters.expiresWithinDays, 1, 365);
+    if (expiresWithinDays !== null) {
+        where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE
+            AND cur.status IN ('active','trialing','past_due','paused')
+            AND cur.current_period_end>=NOW()
+            AND cur.current_period_end<=NOW()+(${p(expiresWithinDays)}::int*INTERVAL '1 day')`);
+    }
+
+    const inactivePlaybackDays = boundedInt(filters.inactivePlaybackDays, 1, 3650);
+    if (inactivePlaybackDays !== null) {
+        where.push(`COALESCE(acc.last_activity_at,c.created_at)<=NOW()-(${p(inactivePlaybackDays)}::int*INTERVAL '1 day')`);
     }
 
     if (filters.accountStatus === 'portal_disabled') where.push('au.active=FALSE');
@@ -211,8 +259,11 @@ module.exports = {
     RECON_VALUES,
     PAYMENT_PROVIDERS,
     SERVICE_VALUES,
+    PRICE_TYPES,
+    BILLING_INTERVALS,
     CUSTOMER_SORTS,
     isUuid,
+    boundedInt,
     buildWhere,
     normalizeCustomerSort,
     listCustomers,
