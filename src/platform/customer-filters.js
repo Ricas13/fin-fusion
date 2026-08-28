@@ -16,6 +16,7 @@ const MAX_MATCHING = 5000;
 const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
 const CUSTOMER_SORTS = Object.freeze({
     recent: { expression: 'COALESCE(acc.last_activity_at,c.created_at)', defaultDirection: 'desc', nulls: 'last' },
+    registered: { expression: 'c.created_at', defaultDirection: 'desc', nulls: 'last' },
     name: { expression: CUSTOMER_NAME_SORT, defaultDirection: 'asc', nulls: 'last' },
     plan: { expression: "COALESCE(p.name,'')", defaultDirection: 'asc' },
     status: { expression: "COALESCE(cur.status,'')", defaultDirection: 'asc' },
