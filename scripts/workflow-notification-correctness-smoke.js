@@ -7,6 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const expiry = require('../src/entitlements/subscription-expiry');
+const expiryPolicy = require('../src/integrations/notification-expiry-policy');
 const notificationTemplates = require('../src/integrations/notification-templates');
 const { renderProfessionalEmail, eventLabel } = require('../src/integrations/email-template');
 
@@ -27,11 +28,33 @@ assert.strictEqual(expiry.recurringAutoRenewal({ status: 'cancelled', source: 's
 assert.strictEqual(expiry.recurringAutoRenewal({ status: 'past_due', source: 'paypal', provider_subscription_id: 'I-ABC123' }), false);
 assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'service_credit', provider_subscription_id: null }), false);
 assert(expiry.DEFAULT_WARNING_DAYS >= 1 && expiry.DEFAULT_WARNING_DAYS <= 30, 'expiry warning window must stay bounded');
+assert.deepStrictEqual(expiryPolicy.DEFAULT_POLICY.milestones, [7, 3, 1, 0], 'default expiry cadence must cover 7/3/1/0');
+assert.deepStrictEqual(expiryPolicy.normalizeMilestones([1, '7', 3, 7, 0, 31, -1]), [7, 3, 1, 0], 'expiry milestones must be unique, bounded, ordered and allow day zero');
+
+const milestoneNow = new Date('2026-09-01T12:00:00Z');
+const afterHours = hours => new Date(milestoneNow.getTime() + hours * 60 * 60 * 1000);
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(7 * 24 + 12), [7, 3, 1, 0], milestoneNow), 7, 'seven-day milestone must cover its 24-hour window');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(6 * 24 + 12), [7, 3, 1, 0], milestoneNow), null, 'unselected intervening days must not duplicate a prior milestone');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(3 * 24 + 12), [7, 3, 1, 0], milestoneNow), 3, 'three-day milestone must be independent');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(1 * 24 + 12), [7, 3, 1, 0], milestoneNow), 1, 'one-day milestone must be independent');
+assert.strictEqual(expiry.selectExpiryMilestone(afterHours(12), [7, 3, 1, 0], milestoneNow), 0, 'final 24 hours must map to the zero-day milestone');
+assert.strictEqual(expiry.selectExpiryMilestone(milestoneNow, [7, 3, 1, 0], milestoneNow), null, 'already expired access must not receive an expiry reminder');
+const expiryAt = '2026-09-08T12:00:00.000Z';
+assert.strictEqual(
+    expiry.expiryDedupeKey({ subscriptionId: 'sub-row-1', accessExpiresAt: expiryAt, milestone: 7 }),
+    'subscription-expiring:sub-row-1:2026-09-08T12:00:00.000Z:7',
+    'expiry dedupe must include subscription, period end and milestone exactly'
+);
+assert.notStrictEqual(
+    expiry.expiryDedupeKey({ subscriptionId: 'sub-row-1', accessExpiresAt: expiryAt, milestone: 7 }),
+    expiry.expiryDedupeKey({ subscriptionId: 'sub-row-1', accessExpiresAt: expiryAt, milestone: 3 }),
+    'one expiry milestone must never swallow another'
+);
 
 // Warning discovery must not repeat a fixed first page forever. Dedupe happens
 // at the durable outbox; the scan itself deliberately has no LIMIT starvation.
 assert(expirySource.includes("eventType: 'subscription.expiring'"), 'subscription expiry must produce the configured notification event');
-assert(expirySource.includes('subscription-expiring:${row.id}:${endKey}'), 'expiry warnings must have a stable subscription/period dedupe key');
+assert(!expirySource.includes('SUBSCRIPTION_EXPIRY_WARNING_DAYS'), 'expiry cadence must no longer be owned by one environment warning-day value');
 assert(!/async function expiringSubscriptions[\s\S]*?LIMIT\s+\$\d/i.test(expirySource), 'expiry warning discovery must not use a fixed SQL LIMIT');
 assert(expirySource.includes("COALESCE(p.is_free_tier,FALSE)=FALSE"), 'non-expiring Free Access must not receive expiry warnings');
 assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.includes('o.permanent_access=TRUE AND o.revoked_at IS NULL'), 'active Permanent Access must suppress expiry warnings for its pinned subscription');
