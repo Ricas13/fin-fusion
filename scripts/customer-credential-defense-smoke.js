@@ -74,17 +74,23 @@ async function main() {
   const loginRouterOrder = router.indexOf('router.use(createCustomerLoginRouter())');
   assert(turnstileOrder >= 0 && loginRouterOrder > turnstileOrder, 'customer login router must remain downstream of Turnstile');
 
-  const identityLimitOrder = customerLogin.indexOf("r.use('/account/login',identityLoginRateLimit)");
+  const identityLimitOrder = customerLogin.indexOf("r.post('/account/login',identityLoginRateLimit");
   const passwordAuthOrder = customerLogin.indexOf('customers.authenticateCustomer(req.body.identity,req.body.password)');
-  assert(identityLimitOrder >= 0 && passwordAuthOrder > identityLimitOrder, 'identity throttle must run before password authentication');
-  assert.match(customerLogin,/r\.post\('\/account\/login'/,'customer-login must explicitly own POST /account/login');
-  assert.match(customerLogin,/r\.post\('\/account\/2fa'/,'customer-login must explicitly own POST /account/2fa');
-  assert.doesNotMatch(customerLogin,/r\.use\('\/account\/login',async\(req,res,next\)=>\{if\(req\.method!==\'POST\'/,'customer login must not hide the POST owner inside generic middleware');
-  assert.doesNotMatch(customerLogin,/r\.use\('\/account\/2fa',async\(req,res,next\)=>\{if\(req\.method!==\'POST\'/,'customer 2FA challenge must not hide the POST owner inside generic middleware');
+  assert(identityLimitOrder >= 0 && passwordAuthOrder > identityLimitOrder, 'identity throttle must be attached directly before password authentication');
+  const twoFactorLimitOrder = customerLogin.indexOf("r.post('/account/2fa',twoFactorLoginRateLimit");
+  const twoFactorVerifyOrder = customerLogin.indexOf('twoFactor.verify(pending.account.userId,req.body.code)');
+  assert(twoFactorLimitOrder >= 0 && twoFactorVerifyOrder > twoFactorLimitOrder, '2FA throttle must be attached directly before code verification');
+  assert.match(customerLogin,/r\.post\('\/account\/login',identityLoginRateLimit/,'customer-login must explicitly own and rate-limit POST /account/login');
+  assert.match(customerLogin,/r\.post\('\/account\/2fa',twoFactorLoginRateLimit/,'customer-login must explicitly own and rate-limit POST /account/2fa');
   assert.doesNotMatch(customerSecurity,/router\.post\('\/account\/login'/,'customer-security must not register a second POST /account/login owner');
   assert.doesNotMatch(customerSecurity,/router\.post\('\/account\/2fa'/,'customer-security must not register a second POST /account/2fa owner');
   assert(customerLogin.includes('customer-login-identity:${identity}'), 'identity-specific login bucket must be explicit');
   assert(customerLogin.includes('limit:30,windowMs:15*60*1000'), 'identity throttle should use the higher anti-DoS threshold');
+  assert(customerLogin.includes('customer-login-2fa:${userId}'), '2FA attempts must use a per-account pseudonymous bucket');
+  assert(customerLogin.includes('limit:12,windowMs:10*60*1000'), '2FA throttle must bound challenge attempts independently of account lockout');
+  assert(customerLogin.includes("new URL(raw,'https://customer-portal.invalid')"), 'post-login redirect sanitizer must parse against a fixed internal origin');
+  assert(customerLogin.includes("url.origin!=='https://customer-portal.invalid'"), 'post-login redirect sanitizer must reject cross-origin URLs');
+  assert(customerLogin.includes("raw.includes('\\\\')"), 'post-login redirect sanitizer must reject browser-normalized backslashes');
   assert(customerRateLimit.includes("crypto.createHmac('sha256'"), 'raw login identities must remain HMAC-pseudonymized before persistence');
   assert(customerRateLimit.includes('const storageKey = bucketStorageKey(bucketKey)'), 'database writes must use the pseudonymous storage key');
 
