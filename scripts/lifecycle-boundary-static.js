@@ -62,7 +62,7 @@ for (const file of sourceFiles) {
 
     const insertsSubscription = statements.some(sql => /\bINSERT\s+INTO\s+subscriptions\b/i.test(sql));
     if (name === MANUAL_SUBSCRIPTION_OWNER) manualOwnerHasInsert = insertsSubscription;
-    if (['src/subscriptions.js', 'src/subscriptions-core.js'].includes(name) && insertsSubscription) {
+    if (name === 'src/subscriptions.js' && insertsSubscription) {
         failures.push(`${name}: manual subscription INSERT must delegate to ${MANUAL_SUBSCRIPTION_OWNER}`);
     }
 
@@ -94,12 +94,9 @@ for (const highLevel of ['startFreeTrial', 'claimFreePlan', 'getProviderPlan', '
 }
 
 const subscriptions = fs.readFileSync(path.join(SRC, 'subscriptions.js'), 'utf8');
-const subscriptionsCore = fs.readFileSync(path.join(SRC, 'subscriptions-core.js'), 'utf8');
-if (!/module\.exports\s*=\s*require\(['"]\.\/subscriptions['"]\)/.test(subscriptionsCore)) {
-    failures.push('src/subscriptions-core.js: historical path must delegate directly to subscriptions.js');
-}
-if (/\basync\s+function\b|\bINSERT\s+INTO\s+subscriptions\b/i.test(subscriptionsCore)) {
-    failures.push('src/subscriptions-core.js: duplicate subscriptions implementation detected');
+const subscriptionsCorePath = path.join(SRC, 'subscriptions-core.js');
+if (fs.existsSync(subscriptionsCorePath)) {
+    failures.push('src/subscriptions-core.js: retired historical subscriptions facade must stay removed');
 }
 for (const exported of ['getPlanByCode', 'createManualSubscription', 'applyProviderState']) {
     if (!new RegExp(`\\b(?:async\\s+)?function\\s+${exported}\\b`).test(subscriptions)) {
