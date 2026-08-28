@@ -45,27 +45,33 @@
       <p><button class="button primary">Save preference</button></p>
     </form>
   </section>
+  <% if(channels.length){ %>
   <div class="notifyGrid sectionBlock">
+    <% if(channels.includes('telegram')){ %>
     <section class="panel"><h2>Telegram</h2>
       <% if(prefs.telegram_chat_id){ %>
         <span class="pill good">Connected<%= prefs.telegram_handle?` · @${prefs.telegram_handle}`:'' %></span>
         <p class="accessMeta">Private bot chat verified.</p>
         <form method="post" action="/account/communications/telegram/unlink"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary">Disconnect</button></form>
       <% } else { %>
-        <span class="pill warn"><%= status.telegramConfigured?'Not connected':'Unavailable' %></span>
-        <% if(status.telegramConfigured){ %><p><form method="post" action="/account/communications/telegram/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary">Connect Telegram</button></form></p><% } %>
+        <span class="pill warn">Not connected</span>
+        <p><form method="post" action="/account/communications/telegram/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary">Connect Telegram</button></form></p>
       <% } %>
     </section>
+    <% } %>
+    <% if(channels.includes('discord')){ %>
     <section class="panel"><h2>Discord</h2>
       <% if(prefs.discord_user_id){ %>
         <span class="pill good">Connected<%= prefs.discord_handle?` · ${prefs.discord_handle}`:'' %></span>
         <p class="accessMeta">Verified Discord identity linked for private messages.</p>
         <form method="post" action="/account/communications/discord/unlink"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary">Disconnect</button></form>
       <% } else { %>
-        <span class="pill warn"><%= status.discordConfigured?'Not connected':'Unavailable' %></span>
-        <% if(status.discordConfigured){ %><p><form method="post" action="/account/communications/discord/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary">Connect Discord</button></form></p><% } %>
+        <span class="pill warn">Not connected</span>
+        <p><form method="post" action="/account/communications/discord/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary">Connect Discord</button></form></p>
       <% } %>
     </section>
+    <% } %>
+    <% if(channels.includes('whatsapp')){ %>
     <section class="panel"><h2>WhatsApp</h2>
       <span class="pill <%= prefs.whatsapp_opt_in?'good':'warn' %>"><%= prefs.whatsapp_opt_in?'Enabled':'Off' %></span>
       <form method="post" action="/account/communications/whatsapp">
@@ -75,19 +81,25 @@
         <p><button class="button primary">Save WhatsApp</button></p>
       </form>
     </section>
+    <% } %>
   </div>
   <section class="panel sectionBlock">
     <div class="sectionHead"><div><h2>What should I be notified about?</h2><p>Only customer-facing events enabled by CAPTAiNFiN appear here.</p></div></div>
     <form method="post" action="/account/communications/events">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <div class="tableWrap"><table class="notifyEvents"><thead><tr><th>Event</th><th>Telegram</th><th>Discord</th><th>WhatsApp</th></tr></thead><tbody>
+      <div class="tableWrap"><table class="notifyEvents"><thead><tr><th>Event</th><% channels.forEach(function(channel){ %><th><%= channel.charAt(0).toUpperCase()+channel.slice(1) %></th><% }) %></tr></thead><tbody>
       <% events.forEach(function(event){const selected=eventPreferences[event.event_type]||{}; %>
-        <tr><td><strong><%= event.display_name %></strong><div class="accessMeta"><%= event.description %></div></td><td class="<%= event.telegram_enabled?'':'notifyDisabled' %>"><input aria-label="Telegram for <%= event.display_name %>" type="checkbox" name="telegram__<%= event.event_type %>" <%= selected.telegram?'checked':'' %> <%= event.telegram_enabled?'':'disabled' %>></td><td class="<%= event.discord_enabled?'':'notifyDisabled' %>"><input aria-label="Discord for <%= event.display_name %>" type="checkbox" name="discord__<%= event.event_type %>" <%= selected.discord?'checked':'' %> <%= event.discord_enabled?'':'disabled' %>></td><td class="<%= event.whatsapp_enabled?'':'notifyDisabled' %>"><input aria-label="WhatsApp for <%= event.display_name %>" type="checkbox" name="whatsapp__<%= event.event_type %>" <%= selected.whatsapp?'checked':'' %> <%= event.whatsapp_enabled?'':'disabled' %>></td></tr>
+        <tr><td><strong><%= event.display_name %></strong><div class="accessMeta"><%= event.description %></div></td><% channels.forEach(function(channel){const eventEnabled=Boolean(event[channel+'_enabled']); %><td class="<%= eventEnabled?'':'notifyDisabled' %>"><input aria-label="<%= channel.charAt(0).toUpperCase()+channel.slice(1) %> for <%= event.display_name %>" type="checkbox" name="<%= channel %>__<%= event.event_type %>" <%= selected[channel]?'checked':'' %> <%= eventEnabled?'':'disabled' %>></td><% }) %></tr>
       <% }) %>
       </tbody></table></div>
       <p><button class="button primary">Save notification choices</button></p>
     </form>
   </section>
+  <% } else { %>
+  <section class="panel sectionBlock">
+    <div class="sectionHead"><div><h2>Optional notification channels</h2><p>No optional notification channels are currently enabled.</p></div></div>
+  </section>
+  <% } %>
 </main>
 </div></body>
 </html>
