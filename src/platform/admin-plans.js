@@ -4,6 +4,7 @@ const express=require('express');
 const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const runtimeSettings=require('./runtime-settings');
+const discordRoles=require('../integrations/discord-roles');
 const {esc,layout}=require('./admin-html');
 const {sendCsv}=require('./export');
 
@@ -36,13 +37,40 @@ function overviewInput(body,plan){
   if(!name)throw new Error('Enter a plan name.');
   if(plan.is_free_tier&&billing==='trial')throw new Error('The Free Access plan cannot be converted into a trial.');
   const features=[body.feature1,body.feature2,body.feature3,body.feature4].map(v=>t(v,90)).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).slice(0,4);
-  const discordRoleIdRaw=t(body.discordRoleId,40),discordRoleId=/^\d{15,24}$/.test(discordRoleIdRaw)?discordRoleIdRaw:null;
+  const discordRoleIdRaw=t(body.discordRoleId,40),discordRoleId=discordRoleIdRaw?discordRoles.snowflake(discordRoleIdRaw):null;
+  if(discordRoleIdRaw&&!discordRoleId)throw new Error('Choose a Discord role or enter a valid Discord role ID.');
   return{name,description,audience:plan.audience,billing,duration:n(body.durationDays,1,3650,30),serverClass:serviceKind(plan.service_type)==='stremio'?plan.server_class:(['premium','free','custom'].includes(body.serverClass)?body.serverClass:'premium'),visible:plan.is_free_tier?true:b(body.visible),active:plan.is_free_tier?true:b(body.active),sort:plan.is_free_tier?0:Number(plan.sort_order||100),features,discordRoleId};
 }
 function jellyfinInput(body){return{streams:n(body.streams,1,50,1),downloads:b(body.allowDownloads),video:b(body.allowVideoTranscoding),audio:b(body.allowAudioTranscoding),remux:b(body.allowRemuxing),live:b(body.allowLiveTv),liveManagement:b(body.allowLiveTvManagement),remoteAccess:b(body.allowRemoteAccess),fourk:b(body.allow4k)}}
 
+function discordRoleReason(reason){
+  return({
+    bot_not_configured:'Configure and enable the Discord bot first.',
+    guild_not_configured:'Add the Discord server (guild) ID in Notification settings.',
+    discord_unavailable:'CAPTaINFiN could not read roles from Discord right now.',
+    missing_manage_roles:'The Discord bot is connected, but it does not have Manage Roles.',
+    bot_role_hierarchy:'Move the CAPTaINFiN bot role above the customer roles you want it to manage.',
+    no_assignable_roles:'No assignable server roles are currently below the CAPTaINFiN bot role.'
+  })[reason]||'Discord role assignment is not ready.';
+}
+function discordRoleControl(plan,catalogue={}){
+  const current=discordRoles.snowflake(plan.discord_role_id)||'';
+  const allRoles=Array.isArray(catalogue.roles)?catalogue.roles:[];
+  const assignable=Array.isArray(catalogue.assignableRoles)?catalogue.assignableRoles:[];
+  const currentRole=allRoles.find(role=>String(role.id)===current)||null;
+  const currentAssignable=assignable.some(role=>String(role.id)===current);
+  if(catalogue.ready){
+    const preserved=current&&!currentAssignable?`<option value="${esc(current)}" selected>Current mapping — ${esc(currentRole?.name||current)} · unavailable</option>`:'';
+    const options=assignable.map(role=>`<option value="${esc(role.id)}" ${String(role.id)===current?'selected':''}>${esc(role.name)}</option>`).join('');
+    const warning=current&&!currentAssignable?`<div class="notice warn"><strong>Current mapping needs attention.</strong> ${currentRole?`${esc(currentRole.name)} cannot currently be assigned by the bot (${esc(currentRole.reason||'role hierarchy')}).`:`Role ${esc(current)} was not returned by this Discord server.`} Saving another role replaces it; leaving it selected preserves the existing mapping.</div>`:'';
+    return `<div class="formGroup"><label>Discord plan role</label><select class="input" name="discordRoleId"><option value="" ${current?'':'selected'}>No automatic Discord role</option>${preserved}${options}</select><div class="inlineHelp"><span class="pill good">Discord roles ready</span> ${assignable.length} assignable role${assignable.length===1?'':'s'} from the configured server. CAPTaINFiN only adds/removes roles that are mapped to plans.</div>${warning}</div>`;
+  }
+  const detail=catalogue.error?` ${esc(catalogue.error)}`:'';
+  return `<div class="formGroup"><label>Discord plan role</label><div class="notice warn"><strong>Role names unavailable.</strong> ${esc(discordRoleReason(catalogue.reason))}${detail}</div><label class="subText" for="discordRoleId">Manual role ID fallback</label><input id="discordRoleId" class="input" name="discordRoleId" maxlength="40" value="${esc(current)}" placeholder="Discord role snowflake ID"><div class="inlineHelp">The existing mapping is preserved while Discord is unavailable. You can also enter a valid role ID manually. <a href="/admin/notifications/preferences#messaging-settings">Open Discord settings</a>.</div></div>`;
+}
+
 async function overviewPage(req,plan){
-  const impact=await planImpact(plan.id),free=Boolean(plan.is_free_tier),service=serviceKind(plan.service_type),archiveState=plan.archived_at?`<div class="notice warn"><strong>Archived.</strong> This catalogue product is retired from new sales. Existing subscription contracts remain valid until their own paid-through dates.</div>`:'';
+  const [impact,discordCatalogue]=await Promise.all([planImpact(plan.id),discordRoles.roleCatalogue()]),free=Boolean(plan.is_free_tier),service=serviceKind(plan.service_type),archiveState=plan.archived_at?`<div class="notice warn"><strong>Archived.</strong> This catalogue product is retired from new sales. Existing subscription contracts remain valid until their own paid-through dates.</div>`:'';
   const audienceNote=plan.audience==='direct'
     ? `<div class="securityNote standalone"><strong>Direct customer plan</strong><div class="subText">This is a direct customer plan. Configure what customers see and receive here.</div></div>`
     : `<div class="notice warn"><strong>Legacy audience:</strong> this historical plan is marked “${esc(plan.audience)}”. Saving this page preserves that historical audience; create a new direct customer plan for new business.</div>`;
@@ -56,7 +84,7 @@ async function overviewPage(req,plan){
     ? `<div class="formGroup"><label>Delivery</label><div class="securityNote standalone"><strong>Stremio sources</strong><div class="subText">This plan does not use Jellyfin customer placement. Choose its delivery sources from the Stremio tab.</div></div></div>`
     : `<div class="formGroup"><label>Jellyfin server class</label><select class="input" name="serverClass">${['premium','free','custom'].map(x=>`<option value="${x}" ${plan.server_class===x?'selected':''}>${x}</option>`).join('')}</select><div class="inlineHelp">Premium plans target Premium servers, Free plans target Free servers, and Custom uses explicit placement rules.</div></div>`;
   const archiveAction=free?'':plan.archived_at?`<form method="post" action="/admin/plans/${esc(plan.id)}/unarchive">${csrfInput(req)}<button class="button secondary" type="submit">Restore to catalogue</button></form>`:`<a class="button secondary" href="/admin/plans/${esc(plan.id)}/archive-confirm">Archive plan</a>`;
-  const body=`${notice(req)}${archiveState}${planSubnav(plan.id,'overview',service)}<section class="section"><div class="sectionHead"><div><h2>Product & commercial schedule</h2><div class="muted">${impact.live} live · ${impact.historical} historical customer entitlements</div></div>${free?'<span class="pill good">Free tier</span>':`<span class="pill accent">${esc(service==='bundle'?'Jellyfin + Stremio':service==='stremio'?'Stremio':'Jellyfin')}</span>`}</div><form class="formPanel" method="post" action="/admin/plans/${esc(plan.id)}">${csrfInput(req)}${audienceNote}<div class="formGroup"><label>Name</label><input class="input" name="name" maxlength="80" value="${esc(plan.name)}" required></div><div class="formGroup"><label>Description</label><textarea class="input" name="description" maxlength="500">${esc(plan.description||'')}</textarea></div><div class="formGroup"><label>Homepage features <span class="muted">(up to 4)</span></label><div class="inlineHelp">Write simple customer-facing benefits. Leave them empty to use automatic plan features.</div><div class="formGrid">${[0,1,2,3].map(i=>`<div class="formGroup"><label class="srOnly" for="plan-feature-${i+1}">Homepage feature ${i+1}</label><input id="plan-feature-${i+1}" class="input" name="feature${i+1}" maxlength="90" value="${esc((plan.marketing_features||[])[i]||'')}" placeholder="Feature ${i+1}"></div>`).join('')}</div></div><div class="formGroup"><label>Discord role ID</label><input class="input" name="discordRoleId" maxlength="40" value="${esc(plan.discord_role_id||'')}" placeholder="Discord role snowflake ID"><div class="inlineHelp">Customers on this plan are automatically granted this Discord server role (and it's removed if they leave the plan). Leave blank for no role mapping.</div></div><div class="formGrid"><div class="formGroup"><label>Billing interval</label><select class="input" name="billingInterval">${['trial','month','6_months','year','custom'].filter(x=>!free||x!=='trial').map(x=>`<option value="${x}" ${plan.billing_interval===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="formGroup"><label>Duration (days)</label><input class="input" type="number" name="durationDays" min="1" max="3650" value="${esc(plan.duration_days||30)}"></div>${deliveryControl}${sortControl}</div>${catalogueControls}${confirmField(plan,impact.live)}<div class="buttonRow"><button class="button">Save overview</button><a class="button secondary" href="/admin/plans/${esc(plan.id)}/inventory">Availability</a><a class="button secondary" href="/admin/plans/order">Storefront order</a></div></form>${archiveAction?`<div class="buttonRow">${archiveAction}</div>`:''}</section>`;
+  const body=`${notice(req)}${archiveState}${planSubnav(plan.id,'overview',service)}<section class="section"><div class="sectionHead"><div><h2>Product & commercial schedule</h2><div class="muted">${impact.live} live · ${impact.historical} historical customer entitlements</div></div>${free?'<span class="pill good">Free tier</span>':`<span class="pill accent">${esc(service==='bundle'?'Jellyfin + Stremio':service==='stremio'?'Stremio':'Jellyfin')}</span>`}</div><form class="formPanel" method="post" action="/admin/plans/${esc(plan.id)}">${csrfInput(req)}${audienceNote}<div class="formGroup"><label>Name</label><input class="input" name="name" maxlength="80" value="${esc(plan.name)}" required></div><div class="formGroup"><label>Description</label><textarea class="input" name="description" maxlength="500">${esc(plan.description||'')}</textarea></div><div class="formGroup"><label>Homepage features <span class="muted">(up to 4)</span></label><div class="inlineHelp">Write simple customer-facing benefits. Leave them empty to use automatic plan features.</div><div class="formGrid">${[0,1,2,3].map(i=>`<div class="formGroup"><label class="srOnly" for="plan-feature-${i+1}">Homepage feature ${i+1}</label><input id="plan-feature-${i+1}" class="input" name="feature${i+1}" maxlength="90" value="${esc((plan.marketing_features||[])[i]||'')}" placeholder="Feature ${i+1}"></div>`).join('')}</div></div>${discordRoleControl(plan,discordCatalogue)}<div class="formGrid"><div class="formGroup"><label>Billing interval</label><select class="input" name="billingInterval">${['trial','month','6_months','year','custom'].filter(x=>!free||x!=='trial').map(x=>`<option value="${x}" ${plan.billing_interval===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="formGroup"><label>Duration (days)</label><input class="input" type="number" name="durationDays" min="1" max="3650" value="${esc(plan.duration_days||30)}"></div>${deliveryControl}${sortControl}</div>${catalogueControls}${confirmField(plan,impact.live)}<div class="buttonRow"><button class="button">Save overview</button><a class="button secondary" href="/admin/plans/${esc(plan.id)}/inventory">Availability</a><a class="button secondary" href="/admin/plans/order">Storefront order</a></div></form>${archiveAction?`<div class="buttonRow">${archiveAction}</div>`:''}</section>`;
   return layout({siteName:runtimeSettings.siteName(),active:'plans',title:plan.name,subtitle:free?'Free Access · product and policy':'Customer plan overview and impact',body});
 }
 
@@ -132,4 +160,4 @@ function createAdminPlansRouter(){
   return r;
 }
 
-module.exports={createAdminPlansRouter,listData,planSubnav,planById,activeSubscriberCount,planImpact,overviewPage,jellyfinPage,overviewInput,jellyfinInput,serviceKind};
+module.exports={createAdminPlansRouter,listData,planSubnav,planById,activeSubscriberCount,planImpact,overviewPage,jellyfinPage,overviewInput,jellyfinInput,serviceKind,discordRoleControl,discordRoleReason};
