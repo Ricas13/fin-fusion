@@ -94,9 +94,16 @@ function enrichLegacyPayload(eventType, payload, fallback) {
     return enriched;
 }
 
-function accountAction(payload) {
+function accountSectionUrl(payload, fragment = '') {
     const accountUrl = clean(payload.accountUrl, 1000);
-    return accountUrl ? { actionLabel: 'Open your account', actionUrl: accountUrl } : {};
+    if (!accountUrl) return '';
+    const base = accountUrl.replace(/#.*$/, '');
+    return fragment ? `${base}#${fragment}` : base;
+}
+
+function accountAction(payload, { actionLabel = 'Open your account', fragment = '' } = {}) {
+    const actionUrl = accountSectionUrl(payload, fragment);
+    return actionUrl ? { actionLabel, actionUrl } : {};
 }
 
 function facts(payload, nextStep = '') {
@@ -126,10 +133,11 @@ function customerProvisioned(payload, fallback) {
             ? 'Install or reconnect Stremio from the Stremio section of your account portal.'
             : clean(fallback.text, 12000) || 'Your service access is ready.';
     const server = compact([payload.serverName, payload.serverUrl]).join(' · ');
+    const actionUrl = stremio ? accountSectionUrl(payload, 'stremio-access') : accountSectionUrl(payload);
     const chatFacts = compact([
         server,
         payload.jellyfinUsername ? `user ${payload.jellyfinUsername}` : '',
-        payload.accountUrl
+        actionUrl
     ]);
     const chat = `✅ ${title}${chatFacts.length ? ` — ${chatFacts.join(' · ')}` : ''}`;
     const nextStep = jellyfin && payload.passwordSetupRequired
@@ -146,7 +154,7 @@ function customerProvisioned(payload, fallback) {
             eventLabel: 'Service ready',
             tone: 'default',
             facts: provisionFacts,
-            ...accountAction(payload)
+            ...accountAction(payload, stremio ? { actionLabel: 'Open Stremio setup', fragment: 'stremio-access' } : {})
         },
         chat
     };
