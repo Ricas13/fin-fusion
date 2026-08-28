@@ -111,7 +111,7 @@ function createRouter() {
     router.post('/account/trial/start', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
             await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null);
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Your access details are below.'));
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Access is being prepared; each service will show as ready as soon as setup finishes.'));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free trial start failed', fallback: 'Your trial could not be started.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));
@@ -121,7 +121,7 @@ function createRouter() {
     router.post('/account/claim-free/:planCode', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
             await lifecycle.claimFreePlan(req.session.customerId, req.params.planCode);
-            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Your access details are below.'));
+            return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Free Access claimed. Access is being prepared; each service will show as ready as soon as setup finishes.'));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free plan claim failed', fallback: 'Free Access could not be claimed.', safe: TRIAL_CLAIM_SAFE });
             return res.redirect('/account?error=' + encodeURIComponent(message));

@@ -6,23 +6,19 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
 const dashboard=read('src/platform/admin-dashboard.js');
-const view=read('src/platform/admin-dashboard-view-v2.js');
-const legacyView=read('src/platform/admin-dashboard-view.js');
+const view=read('src/platform/admin-dashboard-view.js');
 const viewUtils=read('src/platform/admin-dashboard-view-utils.js');
 const main=read('src/platform/admin-dashboard-main.js');
 const money=read('src/platform/admin-dashboard-money.js');
 const reporting=read('src/platform/reporting-currency.js');
 
-// /admin itself now renders through the widget registry, not the legacy
-// admin-dashboard-view-v2 renderer -- that renderer is retained only as
-// main's own compatibility facade (still exercised by its own tests) and is
-// not wired into any live route from this branch.
+// /admin renders through the widget registry. The reusable dashboard renderer
+// now lives at its canonical path; the historical -v2 compatibility file is gone.
 assert(dashboard.includes("require('./admin-dashboard-main')"),'Dashboard must use the widget-registry-based renderer');
-assert(!dashboard.includes("require('./admin-dashboard-view-v2')"),'Dashboard must not depend on the legacy compatibility renderer');
-assert(view.includes("require('./admin-dashboard-view-utils')"),'Legacy compatibility renderer must use the dedicated view utility module');
-assert(!view.includes("require('./admin-dashboard-view')"),'Legacy compatibility renderer must not depend on the superseded renderer facade');
-assert(legacyView.includes("require('./admin-dashboard-view-v2')")&&legacyView.includes("require('./admin-dashboard-view-utils')"),'Legacy dashboard view path must remain a thin compatibility facade only');
-assert(!legacyView.includes('function revenueCard')&&!legacyView.includes('function renderDashboard'),'Legacy dashboard view must not retain a second dashboard renderer implementation');
+assert(!dashboard.includes("require('./admin-dashboard-view-v2')"),'Dashboard must not depend on the retired dashboard renderer path');
+assert(!fs.existsSync(path.join(__dirname,'..','src/platform/admin-dashboard-view-v2.js')),'retired admin-dashboard-view-v2 compatibility path must stay removed');
+assert(view.includes("require('./admin-dashboard-view-utils')"),'Canonical dashboard renderer must use the dedicated view utility module');
+assert(view.includes('function renderDashboard'),'Canonical dashboard view must own the reusable renderer implementation');
 assert(viewUtils.includes('function barChart')&&viewUtils.includes('function areaChart')&&viewUtils.includes('function rangeControls'),'Dashboard chart and range primitives must have one dedicated owner');
 assert(!dashboard.includes('weeks:12'),'Dashboard must not hard-code the old 12-week prospective-income forecast');
 assert(!dashboard.includes('admin-revenue-forecast'),'Dashboard must not depend on the prospective-income forecast path');

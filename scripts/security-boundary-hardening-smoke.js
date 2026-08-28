@@ -7,7 +7,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
-const transfer = require('../src/platform/configuration-transfer-v2-core');
+const transfer = require('../src/platform/configuration-transfer');
 const activity = require('../src/jellyfin/activity');
 const outbound = require('../src/security/outbound-url-policy');
 const adminStepUp = require('../src/auth/admin-step-up');

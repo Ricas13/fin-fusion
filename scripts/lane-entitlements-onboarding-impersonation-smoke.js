@@ -23,6 +23,7 @@ const impersonation = read('src/platform/admin-impersonation.js');
 const planCreateClient = read('public/js/admin-plan-create-v2.js');
 const runtimeRoles = read('scripts/configure-runtime-db-roles.js');
 const { overflowRows } = require('../src/jellyfin/lane-stream-policy');
+const { restrictedImpersonationAction } = require('../src/platform/admin-impersonation');
 
 // Lane-scoped policy storage and migration safety.
 assert(/CREATE TABLE IF NOT EXISTS customer_lane_policy_overrides/.test(migration), 'lane policy table migration missing');
@@ -80,19 +81,14 @@ assert(impersonationCompositionPos >= 0 && usersDashboardPos >= 0 && customer360
 
 // Impersonation's audit-and-banner middleware must run before ANY /account
 // router that can terminate the response itself -- otherwise customer
-// mutations made while impersonating (checkout, password change, plan
-// actions) never reach the audit pass at all. This is a separate, path-less
-// router (createImpersonationAuditRouter) so it can be mounted this early
-// without ever shadowing a more specific route -- unlike
-// createAdminImpersonationRouter's /admin/users/:customerId wildcard above,
-// which must stay after /admin/users/dashboard.
+// mutations made while impersonating never reach the policy/audit pass.
 const impersonationAppPos = application.indexOf('app.use(createImpersonationAuditRouter())');
 const passwordSyncPos = application.indexOf('app.use(createCustomerPasswordSyncRouter())');
 const subscriptionActionsPos = application.indexOf('app.use(createCustomerSubscriptionActionsRouter())');
 const checkoutPos = application.indexOf('app.use(createFlexibleCheckoutRouter())');
 assert(impersonationAppPos >= 0 && passwordSyncPos >= 0 && subscriptionActionsPos >= 0 && checkoutPos >= 0
     && impersonationAppPos < passwordSyncPos && impersonationAppPos < subscriptionActionsPos && impersonationAppPos < checkoutPos,
-    'impersonation audit/banner middleware must be mounted before every /account router so it can see all customer mutations made while impersonating');
+    'impersonation audit/policy middleware must be mounted before every /account router so it can restrict and observe customer mutations');
 assert(!application.includes('createAdminImpersonationRouter'), 'application.js must only mount the path-less impersonation audit router directly, not the one owning /admin/users/:customerId routes');
 
 // Imported-user onboarding can deliberately create an email-less portal identity.
@@ -105,15 +101,23 @@ assert(/async function changePortalPassword/.test(customers)&&/password_hash/.te
 assert(/\/account\/security\/password/.test(security), 'Account Security must expose portal password change');
 assert(/customer_no_email_verification_state/.test(migration), 'email-less imported users must not be trapped by the email-verification gate');
 
-// Admin impersonation uses the real portal while preserving privileged identity.
-assert(/View portal as customer/.test(impersonation), 'Customer 360 impersonation action missing');
+// Admin impersonation uses the real portal with an explicit restricted support policy.
+assert(/View portal \(restricted\)/.test(impersonation), 'Customer 360 must label impersonation as a restricted portal view');
 assert(/Nested impersonation is not allowed/.test(impersonation), 'nested impersonation must be blocked');
 assert(/row\?\.role === 'customer'/.test(impersonation), 'privileged/admin targets must not be impersonable');
 assert(/req\.session\.impersonation = \{/.test(impersonation)&&/actorUserId: req\.session\.authUserId/.test(impersonation), 'real admin actor identity must remain attached to impersonation');
 assert(/req\.session\.customerId = target\.customer_id/.test(impersonation)&&/return res\.redirect\('\/account'\)/.test(impersonation), 'impersonation must enter the real customer portal');
-assert(/Impersonating \$\{esc\(label\)\}/.test(impersonation)&&/Exit impersonation/.test(impersonation), 'persistent impersonation banner/exit control missing');
-assert(/admin\.impersonation\.start/.test(impersonation)&&/admin\.impersonation\.end/.test(impersonation)&&/admin\.impersonation\.customer_action/.test(impersonation), 'impersonation lifecycle and mutations must be audited');
+assert(/Restricted support view: \$\{esc\(label\)\}/.test(impersonation)&&/Exit impersonation/.test(impersonation), 'persistent restricted-support banner/exit control missing');
+assert(/admin\.impersonation\.start/.test(impersonation)&&/admin\.impersonation\.end/.test(impersonation)&&/admin\.impersonation\.customer_action/.test(impersonation), 'impersonation lifecycle and allowed mutations must be audited');
 assert(!/password_hash|currentPassword|setJellyfinPassword/.test(impersonation), 'impersonation must never read or bypass customer passwords');
+const impersonatedPost=path=>({session:{impersonation:{id:'test'}},method:'POST',path});
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/stripe')),'checkout','impersonation must block provider checkout');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/security/password')),'portal password changes','impersonation must block portal password changes');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/jellyfin/account-1/password')),'Jellyfin password changes','impersonation must block Jellyfin password changes');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/requests/password')),'request-site password changes','impersonation must block request-site password changes');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/affiliate/credit-to-service')),'service-credit redemption','impersonation must block service-credit redemption');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/support/tickets')),null,'restricted support view must keep non-sensitive customer actions available and audited');
+assert.strictEqual(restrictedImpersonationAction({session:{},method:'POST',path:'/account/checkout/stripe'}),null,'normal customer sessions must not be affected by impersonation policy');
 
 // New plan UI must not silently re-enable the permissions that triggered this audit.
 assert(/setChecked\('allowDownloads',paidRecurring\)/.test(planCreateClient), 'paid recurring plan creator must recommend downloads');

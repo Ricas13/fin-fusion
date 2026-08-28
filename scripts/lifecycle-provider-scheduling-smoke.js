@@ -56,4 +56,38 @@ assert(!/p\.active\b/.test(canonical.match(/CREATE VIEW public\.effective_custom
 assert(/service_extension_days/.test(canonical)&&/customer_access_holds/.test(canonical),'canonical entitlement view must include extensions and typed holds');
 assert(/createHealthRouter/.test(app)&&/Content-Security-Policy/.test(app)&&/\/health\/ready/.test(health),'assembled app must mount the readiness router and CSP');
 assert(/healthcheck:[\s\S]*\/health\/ready/.test(compose),'web container must have a readiness healthcheck');
-console.log('provider scheduling and lifecycle static contract OK');
+
+async function subscriptionOwnershipBehavior(){
+  const stub=(request,exports)=>{const filename=require.resolve(request);require.cache[filename]={id:filename,filename,loaded:true,exports};};
+  const existing={id:'subscription-row',customer_id:'customer-a',plan_id:'plan-a',source:'plisio',provider_subscription_id:'invoice-1'};
+  let calls=[];
+  const client={query:async(sql,params=[])=>{
+    calls.push({sql,params});
+    if(sql==='SELECT * FROM plans WHERE id=$1')return{rowCount:1,rows:[{id:'plan-a',name:'Plan A',code:'plan-a',billing_interval:'month',duration_days:30,price_minor:600,currency:'GBP'}]};
+    if(sql.startsWith('SELECT external_id FROM plan_provider_prices'))return{rowCount:0,rows:[]};
+    if(sql.startsWith('SELECT * FROM subscriptions WHERE source='))return{rowCount:1,rows:[existing]};
+    if(sql.startsWith('UPDATE subscriptions SET'))return{rowCount:1,rows:[{...existing,status:'active'}]};
+    if(sql.startsWith('INSERT INTO audit_log'))return{rowCount:1,rows:[]};
+    throw new Error(`Unexpected lifecycle ownership SQL: ${sql}`);
+  }};
+  stub('../src/db',{query:async()=>({rowCount:0,rows:[]}),transaction:async work=>work(client)});
+  stub('../src/jellyfin/resilient-provisioning',{reconcileCustomer:async()=>null});
+  stub('../src/entitlements/access-holds',{addHold:async()=>null,releaseHold:async()=>null});
+  stub('../src/payments/discounts',{redeemForSubscriptionTx:async()=>null});
+  stub('../src/referrals',{rewardIfQualifying:async()=>null});
+  delete require.cache[require.resolve('../src/payments/lifecycle-primitives')];
+  const primitives=require('../src/payments/lifecycle-primitives');
+  const activate=customerId=>primitives.activatePurchase({customerId,planId:'plan-a',provider:'plisio',providerSubscriptionId:'invoice-1',providerStatus:'completed'});
+
+  await assert.rejects(activate('customer-b'),error=>error?.code==='PROVIDER_SUBSCRIPTION_CUSTOMER_MISMATCH','activatePurchase must reject a provider subscription already owned by another customer');
+  assert(!calls.some(call=>call.sql.startsWith('UPDATE subscriptions SET')),'cross-customer activation must fail before updating the subscription');
+
+  calls=[];
+  const row=await activate('customer-a');
+  const update=calls.find(call=>call.sql.startsWith('UPDATE subscriptions SET'));
+  assert(update,'same-customer activation must still refresh the subscription');
+  assert(!/SET\s+customer_id\s*=/.test(update.sql),'existing provider subscriptions must never update customer_id');
+  assert.strictEqual(row.customer_id,'customer-a','same-customer activation must preserve subscription ownership');
+}
+
+subscriptionOwnershipBehavior().then(()=>console.log('provider scheduling and lifecycle contract OK')).catch(error=>{console.error(error);process.exitCode=1;});

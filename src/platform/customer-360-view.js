@@ -6,12 +6,6 @@ function serviceType(detail){return String(detail?.primaryEntitlement?.service_t
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
 function activeSubscription(detail){return (detail.subscriptions||[]).find(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()))||detail.subscriptions?.[0]||null;}
 
-// Kept as a compatibility export for older smoke tests/extensions. Customer 360
-// already has a compact persistent tab bar and summary metrics; the former
-// Account → Access → Billing → Activity journey duplicated that navigation and
-// made the page change shape as operators moved between sections.
-function journey(){return'';}
-
 function stremioAccessPanel(detail){
   const entitlement=detail.primaryEntitlement||detail.subscriptions?.[0]||{},name=entitlement.name||entitlement.plan_name||entitlement.plan_name_snapshot||'Stremio access';
   return `<section class="section"><div class="sectionHead"><div><h2>Stremio access</h2><div class="muted">This customer has a Stremio-only primary plan, so Jellyfin customer policy, library and server-placement overrides do not apply here.</div></div><span class="pill good">${String(entitlement.status||'active')==='past_due'?'Payment attention':'Included'}</span></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Current delivery</h2></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Plan</div><div class="kvValue">${escapeHtml(name)}</div></div><div class="kvRow"><div class="kvLabel">Service</div><div class="kvValue">Stremio</div></div><div class="kvRow"><div class="kvLabel">Customer Jellyfin account</div><div class="kvValue">Not required</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Manage Stremio</h2></div><div class="profileCardBody"><p class="subText">Source connections, library indexing and Stremio runtime are managed in the Stremio control centre. Customer-specific service reconciliation remains available from this customer's Manage tab.</p><a class="button secondary" href="/admin/servers/stremio">Open Stremio control centre</a></div></section></div></section>`;
@@ -30,4 +24,4 @@ function body(detail,tab,token,accessDetail){
   return jellyfinPasswordSupport(safe)+html;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,journey,activeSubscription};
+module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription};

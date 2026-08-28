@@ -20,7 +20,6 @@ const notifications = read('src/platform/admin-notification-preferences.js');
 const payments = read('src/platform/admin-payment-settings.js');
 const commerce = read('src/platform/admin-commerce.js');
 const plans = read('src/platform/admin-plans-list.js');
-const customer360 = read('src/platform/customer-360-view.js');
 const stableCustomerNav = read('public/js/customer-360-navigation.js');
 const orders = read('src/platform/admin-orders.js');
 const billing = read('src/platform/admin-billing.js');
@@ -100,7 +99,6 @@ assert(!plans.includes('Plan policies & storefront tools') && plans.includes('/a
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search'), 'Plans must not render filters for the deliberately small catalogue');
 assert(plans.includes('archived=1') && plans.includes('Retired catalogue versions'), 'Archived plan versions must remain reachable without cluttering the active catalogue');
 
-assert(customer360.includes("function journey(){return'';}"), 'Customer 360 must keep the duplicate journey navigation retired');
 assert(stableCustomerNav.includes("['overview','Overview'") && stableCustomerNav.includes("['manage','Manage'"), 'Customer 360 must expose one stable customer-scoped navigation from Overview through Manage');
 assert(stableCustomerNav.includes("link.setAttribute('href',href)") && stableCustomerNav.includes('MutationObserver'), 'late service-aware enrichment must not mutate Customer 360 navigation after render');
 
