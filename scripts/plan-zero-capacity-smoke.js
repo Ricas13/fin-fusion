@@ -35,7 +35,7 @@ assert(onboarding.includes('scarcityBadge')&&onboarding.includes('sharedCapacity
 assert(onboarding.includes("if(sold)")&&onboarding.includes('No new place can be activated until capacity becomes available.'),'sold-out plans must disable acquisition actions in the customer portal');
 assert(storefront.includes('sectionAvailability')&&storefront.includes('state?.label'),'public storefront must use the real capacity scarcity label rather than synthetic inventory copy');
 assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative recheck');
-assert(plansList.includes('${active} active + ${held} held / ${limit} stream slots'),'admin plan capacity must distinguish active stream use from temporary holds');
+assert(plansList.includes('Active ${active} · held ${held}')&&plansList.includes('stream entitlements allocated or held'),'admin plan capacity must distinguish active stream use from temporary holds while preserving stream-entitlement semantics');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must admit explicit zero capacity');
 
 (async()=>{
