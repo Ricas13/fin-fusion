@@ -18,7 +18,7 @@ assert(/notificationDispatch\.dispatch\(\{eventType:'subscription\.plan_change\.
 assert(/customerPlanChange\.expireDuePaypal\(\)/.test(jobs),'the plan_changes automation job must also process due PayPal plan changes, not just Stripe');
 assert(/'subscription\.plan_change\.requires_checkout'/.test(notificationDispatch),'the PayPal checkout-required reminder must always email the customer, not depend on opt-in preferences alone');
 assert(/awaiting_checkout/.test(migrationExpiry)&&/subscription\.plan_change\.requires_checkout/.test(migrationExpiry),'a migration must extend the plan-change state machine and seed the reminder notification preference');
-assert(/state IN \('pending','awaiting_checkout'\)/.test(customer),'pendingForCustomer/createLocalChange must treat awaiting_checkout as an open plan change');
+assert(/state IN \('pending','awaiting_checkout'\)/.test(customer),'open plan-change queries must include awaiting_checkout');
 assert(/customer_plan_changes_one_open/.test(migrationOpen)&&/WHERE state IN \('pending','awaiting_checkout'\)/.test(migrationOpen),'database uniqueness must allow only one open plan change across pending and awaiting_checkout states');
 assert(/state='applied'/.test(resolution)&&/target_plan_id=\$2/.test(resolution)&&/state='awaiting_checkout'/.test(resolution),'a successful matching checkout must resolve an awaiting PayPal plan change to applied');
 assert(/previousState:pending\.state/.test(customer),'cancelling an open plan change must audit whether it was pending or awaiting checkout');
@@ -26,7 +26,7 @@ assert(!/processed:Number\(stripe\.succeeded\|\|0\)\+Number\(stripe\.pending\|\|
 assert(/waiting:Number\(stripe\.pending\|\|0\)/.test(jobs),'Stripe plan changes still waiting at the provider must be reported separately');
 
 const paypal=read('src/payments/paypal.js'),stripe=read('src/payments/stripe.js'),plisio=read('src/payments/plisio.js'),lifecycle=read('src/payments/lifecycle-primitives.js'),paymentRetry=read('src/payments/payment-event-retry.js'),returns=read('src/platform/customer-payment-return.js'),checkout=read('src/platform/flexible-checkout.js'),subscriptions=read('src/subscriptions.js');
-assert(/case 'BILLING\.SUBSCRIPTION\.ACTIVATED':await activateSubscription/.test(paypal),'PayPal activation events must use the purchase activation path');
+assert(/case 'BILLING\.SUBSCRIPTION\.ACTIVATED':await activateSubscription/.test(paypal),'PayPal activation events must use the first-purchase activation path');
 assert(/case 'BILLING\.SUBSCRIPTION\.UPDATED':await syncSubscription/.test(paypal),'PayPal subscription updates must sync existing provider state instead of replaying purchase activation');
 assert(/case 'PAYMENT\.SALE\.COMPLETED'[\s\S]*await syncSubscription\(subscriptionId\)/.test(paypal),'PayPal renewal sales must sync the existing subscription instead of replaying purchase activation');
 assert(/if\(intent\)return activateSubscription\(subscription\.id\)/.test(paypal),'an out-of-order first PayPal update may activate only when a matching local checkout intent exists');
@@ -37,12 +37,13 @@ assert(/async payment_events\(\)/.test(jobs)&&/paymentEventRetry\.run/.test(jobs
 assert(/const PROVIDERS = \{ stripe, paypal, plisio \}/.test(paymentRetry),'internal payment-event retry must cover every supported payment gateway');
 assert(/return null;\n\}/.test(lifecycle.match(/function mapProviderStatus[\s\S]*?\n\}/)?.[0]||''),'unknown provider statuses must not default to past_due');
 assert(/status=COALESCE\(\$1,status\)/.test(lifecycle),'unknown provider updates must preserve the last known local subscription status');
+const plisioWebhook=plisio.match(/async function processWebhook[\s\S]*?\n\}/)?.[0]||'';
+assert(plisioWebhook&&plisioWebhook.indexOf('beginPaymentEvent')>=0&&plisioWebhook.indexOf('processClaimedCallback')>plisioWebhook.indexOf('beginPaymentEvent'),'Plisio must durably accept an authenticated callback before remote provider processing');
 assert(!returns.includes('Your access details are below.'),'payment returns must not claim service delivery is ready immediately after commercial confirmation');
 assert(returns.includes('Each service will show as ready as soon as setup finishes.'),'payment confirmation copy must distinguish payment success from delivery readiness');
 assert(!returns.includes('function sameOrigin(){return false}'),'dead hardcoded sameOrigin helper must stay removed');
-assert(!/encodeURIComponent\(error\.message\)/.test(returns),'payment return routes must not expose raw internal error messages to customers');
-assert(!/encodeURIComponent\(error\.message\)/.test(checkout),'checkout start/cancel routes must not expose raw internal error messages to customers');
-assert(/checkoutErrorMessage/.test(checkout)&&/checkout could not be started/.test(checkout),'checkout start failures must use a customer-safe error mapper');
+assert(/publicError\.present/.test(returns)&&!/encodeURIComponent\(error\.message\)/.test(returns),'payment return routes must preserve the public-error sanitizer');
+assert(/publicError\.present/.test(checkout)&&/CHECKOUT_SAFE/.test(checkout)&&!/encodeURIComponent\(error\.message\)/.test(checkout),'checkout routes must preserve the #375 public-error sanitizer and local safe-message allowlist');
 const legacyProviderState=subscriptions.match(/async function applyProviderState[\s\S]*?\n\}/)?.[0]||'';
 assert(legacyProviderState&&!/beginPaymentEvent/.test(legacyProviderState),'legacy applyProviderState must not open a second payment_events lease');
 assert(/updateProviderSubscription/.test(legacyProviderState),'legacy applyProviderState must delegate provider state to the canonical lifecycle');
