@@ -51,7 +51,8 @@ function main() {
         assert.ok(built.whereSql.includes("c.created_at<=NOW()-($2::int*INTERVAL '1 day')"),'account age must be parameterized');
         assert.ok(built.whereSql.includes('NOT EXISTS (')&&built.whereSql.includes('hist_lapsed'),'lapsed audiences must exclude currently live subscriptions and inspect subscription history');
         assert.ok(built.whereSql.includes("cur.current_period_end<=NOW()+($4::int*INTERVAL '1 day')"),'expiry-window targeting must be parameterized');
-        assert.ok(built.whereSql.includes("COALESCE(acc.last_activity_at,c.created_at)<=NOW()-($5::int*INTERVAL '1 day')"),'playback inactivity must use shared account activity and a bound duration');
+        assert.ok(built.whereSql.includes('FROM playback_history ph_segment'),'playback inactivity must use the canonical playback ledger');
+        assert.ok(built.whereSql.includes("COALESCE(ph_segment.last_seen_at,ph_segment.started_at)>=NOW()-($5::int*INTERVAL '1 day')"),'playback inactivity must reject customers with recent playback using a bound duration');
         assert.deepStrictEqual(built.params,['year',30,14,7,60],'rich audience values must be carried only as positional parameters');
 
         const hostile=buildWhere({billingInterval:"year'); DROP TABLE plans; --",priceType:'paid;drop',accountAgeDays:'30); DELETE FROM customers; --'},null);
