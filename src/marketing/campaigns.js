@@ -27,7 +27,12 @@ async function eligibleCustomers(audienceFilters){
   `,[ids])).rows;
   return rows;
 }
-async function preview(audienceFilters){const rows=await eligibleCustomers(audienceFilters);return{count:rows.length};}
+async function preview(audienceFilters){
+  const ids=await customerFilters.matchingCustomerIds(audienceFilters,null);
+  if(!ids.length)return{count:0};
+  const row=(await query(`SELECT COUNT(*)::int count FROM customers WHERE id=ANY($1::uuid[]) AND marketing_opt_in=TRUE`,[ids])).rows[0];
+  return{count:Number(row?.count||0)};
+}
 
 async function create({name,subject,bodyText,discountCodeId,audienceFilters,segmentId=null,adminUserId}){
   const discountId=await validateDiscount(discountCodeId);
