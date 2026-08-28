@@ -74,7 +74,7 @@ function formatAmount(amount, currency) {
     const code = String(currency || 'GBP').trim().toUpperCase();
     if (!Number.isFinite(numeric)) return `${amount} ${code}`.trim();
     try {
-        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: code }).format(numeric);
+        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol' }).format(numeric);
     } catch (_) {
         return `${numeric.toFixed(2)} ${code}`;
     }
