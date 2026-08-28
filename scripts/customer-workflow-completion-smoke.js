@@ -6,14 +6,13 @@ const path=require('path');
 const ejs=require('ejs');
 const adminNav=require('../src/platform/admin-nav');
 const adminHtml=require('../src/platform/admin-html-core');
-const {restrictedImpersonationAction}=require('../src/platform/admin-impersonation');
+const {restrictedImpersonationAction,injectBanner}=require('../src/platform/admin-impersonation');
 
 const root=path.join(__dirname,'..');
 const dashboardPath=path.join(root,'views/customer/dashboard.ejs');
 const dashboardTemplate=fs.readFileSync(dashboardPath,'utf8');
 const customer360Source=fs.readFileSync(path.join(root,'src/platform/admin-customer-360.js'),'utf8');
 const customerManagementSource=fs.readFileSync(path.join(root,'src/platform/admin-customer-management.js'),'utf8');
-const impersonationSource=fs.readFileSync(path.join(root,'src/platform/admin-impersonation.js'),'utf8');
 
 function subscription(cancelAtPeriodEnd=false){
   return{
@@ -71,6 +70,7 @@ const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},me
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal')),'automatic renewal changes','restricted support view must block automatic renewal changes');
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'checkout','restricted support view must keep checkout blocked');
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/plan-change/cancel')),null,'restricted support view must keep scheduled plan-change cancellation available for support');
-assert(impersonationSource.includes('Scheduled plan-change cancellation remains available for support.'),'impersonation banner must document the allowed plan-change cancellation action');
+const bannerHtml=injectBanner('<html><body><main>customer</main></body></html>',{session:{impersonation:{id:'workflow-smoke',displayName:'Smoke Customer'},csrfToken:'csrf-smoke'}});
+assert(bannerHtml.includes('Scheduled plan-change cancellation remains available for support.'),'impersonation banner must document the allowed plan-change cancellation action');
 
 console.log('customer/admin workflow completion smoke: ok');
