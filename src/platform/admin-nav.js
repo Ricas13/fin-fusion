@@ -13,6 +13,7 @@ const groups=Object.freeze([
   {key:'automation',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Automation','/admin/automation'],['backups','Backups & Recovery','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings/integrations'],['settings-commerce','Commerce','/admin/settings/commerce'],['system','System','/admin/system']]}
 ]);
+const visibleGroups=Object.freeze(groups.filter(group=>group.key!=='resellers'));
 
 const hiddenPages=Object.freeze({
   search:Object.freeze({groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
@@ -104,4 +105,4 @@ function workflowPages(active){
 }
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
 for(const group of groups){for(const page of group.pages){if(!Object.prototype.hasOwnProperty.call(page,'children'))Object.defineProperty(page,'children',{value:Object.freeze(childPages(page[0])),enumerable:false});}}
-module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,childPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};
+module.exports={groups:visibleGroups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,childPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};
