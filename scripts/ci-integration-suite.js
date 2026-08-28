@@ -67,7 +67,10 @@ const suites = [
   },
   {
     name: 'Configuration transfer',
-    commands: [['node', ['scripts/configuration-transfer-smoke.js']]],
+    commands: [
+      ['node', ['scripts/configuration-transfer-v1-compat-smoke.js']],
+      ['node', ['scripts/configuration-transfer-smoke.js']],
+    ],
   },
   {
     name: 'Customer claim and account tokens',
