@@ -25,10 +25,11 @@ assert(/previousState:pending\.state/.test(customer),'cancelling an open plan ch
 assert(!/processed:Number\(stripe\.succeeded\|\|0\)\+Number\(stripe\.pending\|\|0\)/.test(jobs),'Stripe provider-waiting plan changes must not be counted as completed processed work');
 assert(/waiting:Number\(stripe\.pending\|\|0\)/.test(jobs),'Stripe plan changes still waiting at the provider must be reported separately');
 
-const paypal=read('src/payments/paypal.js'),stripe=read('src/payments/stripe.js'),plisio=read('src/payments/plisio.js'),lifecycle=read('src/payments/lifecycle-primitives.js'),paymentRetry=read('src/payments/payment-event-retry.js'),returns=read('src/platform/customer-payment-return.js');
+const paypal=read('src/payments/paypal.js'),stripe=read('src/payments/stripe.js'),plisio=read('src/payments/plisio.js'),lifecycle=read('src/payments/lifecycle-primitives.js'),paymentRetry=read('src/payments/payment-event-retry.js'),returns=read('src/platform/customer-payment-return.js'),checkout=read('src/platform/flexible-checkout.js'),subscriptions=read('src/subscriptions.js');
 assert(/case 'BILLING\.SUBSCRIPTION\.ACTIVATED':await activateSubscription/.test(paypal),'PayPal activation events must use the purchase activation path');
 assert(/case 'BILLING\.SUBSCRIPTION\.UPDATED':await syncSubscription/.test(paypal),'PayPal subscription updates must sync existing provider state instead of replaying purchase activation');
 assert(/case 'PAYMENT\.SALE\.COMPLETED'[\s\S]*await syncSubscription\(subscriptionId\)/.test(paypal),'PayPal renewal sales must sync the existing subscription instead of replaying purchase activation');
+assert(/if\(intent\)return activateSubscription\(subscription\.id\)/.test(paypal),'an out-of-order first PayPal update may activate only when a matching local checkout intent exists');
 assert(/resolveRecordedPlanChange/.test(paypal)&&/resolveAwaitingCheckout/.test(resolution),'fresh PayPal checkout completion must resolve its recorded awaiting plan change');
 for(const [name,source] of [['Stripe',stripe],['PayPal',paypal],['Plisio',plisio]])assert(/retryPaymentEvent/.test(source)&&/processing deferred to internal retry/.test(source),`${name} must retain verified processing failures for internal retry instead of throwing them back to the provider`);
 assert(/claimRetryablePaymentEvents/.test(lifecycle)&&/FOR UPDATE SKIP LOCKED/.test(lifecycle),'payment-event retries must claim durable failed rows without duplicate workers');
@@ -40,6 +41,11 @@ assert(!returns.includes('Your access details are below.'),'payment returns must
 assert(returns.includes('Each service will show as ready as soon as setup finishes.'),'payment confirmation copy must distinguish payment success from delivery readiness');
 assert(!returns.includes('function sameOrigin(){return false}'),'dead hardcoded sameOrigin helper must stay removed');
 assert(!/encodeURIComponent\(error\.message\)/.test(returns),'payment return routes must not expose raw internal error messages to customers');
+assert(!/encodeURIComponent\(error\.message\)/.test(checkout),'checkout start/cancel routes must not expose raw internal error messages to customers');
+assert(/checkoutErrorMessage/.test(checkout)&&/checkout could not be started/.test(checkout),'checkout start failures must use a customer-safe error mapper');
+const legacyProviderState=subscriptions.match(/async function applyProviderState[\s\S]*?\n\}/)?.[0]||'';
+assert(legacyProviderState&&!/beginPaymentEvent/.test(legacyProviderState),'legacy applyProviderState must not open a second payment_events lease');
+assert(/updateProviderSubscription/.test(legacyProviderState),'legacy applyProviderState must delegate provider state to the canonical lifecycle');
 
 assert(/return subscriptionState\.effectiveSubscription\(customerId\)/.test(provisioning),'provisioning must use canonical entitlement resolution');
 assert(/effective_customer_entitlements/.test(entitlement),'application entitlement service must consume the canonical database view');
