@@ -46,7 +46,7 @@ function analyzeGuildRoles({guildId,bot,member,roles}={}){
   const assignableRoles=normalized.filter(role=>role.assignable);
   const reason=!hasManageRoles?'missing_manage_roles':botHighestPosition<=0?'bot_role_hierarchy':assignableRoles.length?'ready':'no_assignable_roles';
   return{
-    ready:hasManageRoles&&botHighestPosition>0,
+    ready:reason==='ready',
     reason,
     guildId:guild,
     botId,
