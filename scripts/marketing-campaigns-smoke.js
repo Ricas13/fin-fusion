@@ -66,7 +66,8 @@ assert(segmentMigration.includes('segment_id uuid REFERENCES marketing_segments(
 assert(campaigns.includes("savedSegment=await segments.get(segmentId)"),'campaign creation must resolve the selected saved segment');
 assert(campaigns.includes('filters=segments.normalizeFilters(savedSegment.audience_filters||{})'),'campaign creation must normalize the selected segment');
 assert(campaigns.includes('JSON.stringify(filters),savedSegment?.id||null'),'campaign creation must copy filters and retain only a nullable source reference');
-assert(campaigns.includes('async function preview(audienceFilters){const rows=await eligibleCustomers(audienceFilters);return{count:rows.length};}'),'marketing audience preview must be aggregate-only');
+assert(campaigns.includes('SELECT COUNT(*)::int count FROM customers WHERE id=ANY($1::uuid[]) AND marketing_opt_in=TRUE'),'marketing audience preview must run a true aggregate-only query after shared audience resolution');
+assert(campaigns.includes('return{count:Number(row?.count||0)}'),'marketing audience preview must return only an aggregate count');
 assert(!campaigns.includes('sample:rows.slice'),'marketing audience preview must never expose recipient samples');
 
 for(const rule of ['service','planId','status','priceType','billingInterval','accountAgeDays','lapsedDays','expiresWithinDays','inactivePlaybackDays']){
