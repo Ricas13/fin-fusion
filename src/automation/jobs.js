@@ -36,7 +36,7 @@ const jobs={
  async notification_outbox(){return notificationOutbox.deliverDue({limit:50})},
  async request_users(){await requestServiceSettings.ensureLoaded();const config=await requestUserSync.configuration();if(!config.configured)return{processed:0,skipped:'request_service_not_configured'};const result=await requestUserSync.syncAll();return{...result,processed:Number(result.total||0)}},
  async billing(){return billingControl.syncDue({all:false,limit:100})},
- async plan_changes(){return customerPlanChange.applyDueStripe()},
+ async plan_changes(){const stripe=await customerPlanChange.applyDueStripe(),paypalExpiry=await customerPlanChange.expireDuePaypal();return{...stripe,paypalExpiry,processed:Number(stripe.succeeded||0)+Number(stripe.pending||0)+Number(paypalExpiry.notified||0),failed:Number(stripe.failed||0)+Number(paypalExpiry.failed||0)}},
  async referral_rewards(){return referrals.processDueRewards({limit:100})},
  async marketing_campaigns(){return require('../marketing/campaigns').runDue({limit:20})},
  async activation_cleanup(){return activationCleanup.process()},
