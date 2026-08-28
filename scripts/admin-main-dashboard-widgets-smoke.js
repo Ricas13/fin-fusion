@@ -20,6 +20,15 @@ async function seedBusinessData(suffix){
   const customer=(await query(`INSERT INTO customers(display_name,email,created_at) VALUES('Widget Customer',$1,NOW()) RETURNING id`,[`widget-${suffix}@example.invalid`])).rows[0];
   await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe',NOW()-INTERVAL '5 days',NOW()+INTERVAL '25 days',$3,'jellyfin')`,[customer.id,plan.id,`sub_smoke_${suffix}`]);
   await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,updated_at) VALUES($1,$2,'cancelled','manual',NOW()-INTERVAL '20 days',NOW()-INTERVAL '1 days',NOW()-INTERVAL '1 days')`,[customer.id,plan.id]);
+
+  const stremioPlan=(await query(`INSERT INTO plans(code,name,audience,service_type,billing_interval,duration_days,price_minor,currency,streams,active,visible,sort_order) VALUES($1,'Stremio Dashboard Smoke','direct','stremio','month',30,699,'USD',2,TRUE,TRUE,998) RETURNING id`,[`stremio-dashboard-smoke-${suffix}`])).rows[0];
+  const stremioCustomer=(await query(`INSERT INTO customers(display_name,email,created_at) VALUES('Stremio Widget Customer',$1,NOW()) RETURNING id`,[`stremio-widget-${suffix}@example.invalid`])).rows[0];
+  await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot) VALUES($1,$2,'active','manual',NOW()-INTERVAL '2 days',NOW()+INTERVAL '28 days','stremio')`,[stremioCustomer.id,stremioPlan.id]);
+
+  const freePlan=(await query(`SELECT id FROM plans WHERE is_free_tier=TRUE ORDER BY created_at NULLS LAST LIMIT 1`)).rows[0];
+  assert(freePlan,'clean install must provide the canonical free tier for dashboard service-mix coverage');
+  const freeCustomer=(await query(`INSERT INTO customers(display_name,email,created_at) VALUES('Free Widget Customer',$1,NOW()) RETURNING id`,[`free-widget-${suffix}@example.invalid`])).rows[0];
+  await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot) VALUES($1,$2,'active','manual',NOW()-INTERVAL '1 day',NOW()+INTERVAL '1 day','jellyfin')`,[freeCustomer.id,freePlan.id]);
 }
 
 async function main(){
@@ -32,13 +41,16 @@ async function main(){
   assert(Array.isArray(ctx.data.profitability.weekly)&&ctx.data.profitability.weekly.length>0,'dashboard must expose weekly receipts and expenses');
   assert(ctx.data.streamGauge&&Number.isFinite(Number(ctx.data.streamGauge.active))&&Number.isFinite(Number(ctx.data.streamGauge.capacity)),'dashboard must expose live streams over sellable capacity');
   assert(ctx.data.serviceMix&&['jellyfin','stremio','free'].every(key=>Number.isFinite(Number(ctx.data.serviceMix[key]))),'dashboard must expose Jellyfin/Stremio/free service mix');
+  assert(Number(ctx.data.serviceMix.jellyfin)>=1,'service mix must count current Jellyfin-lane paid access');
+  assert(Number(ctx.data.serviceMix.stremio)>=1,'service mix must count current standalone Stremio access from the Stremio entitlement lane');
+  assert(Number(ctx.data.serviceMix.free)>=1,'service mix must count current Free Access from the Jellyfin entitlement lane');
   assert(Array.isArray(ctx.data.newVsCancelled),'dashboard must reuse the new-vs-cancelled series');
 
   const mainSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard-main.js'),'utf8');
   const dashboardSource=fs.readFileSync(path.join(__dirname,'..','src/platform/admin-dashboard.js'),'utf8');
   const publicAuthSource=fs.readFileSync(path.join(__dirname,'..','src/platform/customer-public-auth.js'),'utf8');
   assert(mainSource.includes("require('./business-profitability')")&&mainSource.includes('profitability.dashboardProfitability'),'home dashboard profit must use the shared profitability owner');
-  assert(mainSource.includes('FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id')&&mainSource.includes('e.blocked=FALSE AND e.access_expires_at>NOW()'),'service mix must use canonical effective access rather than raw billing status');
+  assert(mainSource.includes('FROM effective_customer_entitlements')&&mainSource.includes('FROM effective_stremio_entitlements')&&mainSource.includes('blocked=FALSE AND access_expires_at>NOW()'),'service mix must use the separate canonical Jellyfin and Stremio effective-access lanes rather than raw billing status');
   assert(mainSource.includes("registry.register('main','cashFlow'")&&mainSource.includes("registry.register('main','newVsCancelled'")&&mainSource.includes("registry.register('main','serviceMix'"),'home dashboard must register only cash flow, growth and service mix content');
   for(const retired of ["registry.register('main', 'mrr'","registry.register('main', 'revenueTrend'","registry.register('main', 'revenueMix'","registry.register('main', 'planDistribution'"])assert(!mainSource.includes(retired),`${retired} must not remain on the home dashboard`);
   assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('used / sellable stream capacity')&&dashboardSource.includes('Needs attention'),'dashboard hero must contain the four requested signals');
