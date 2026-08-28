@@ -12,6 +12,8 @@ const onboarding=read('views/customer/onboarding.ejs');
 const storefront=read('src/platform/storefront.js');
 const checkoutIntents=read('src/payments/checkout-intents.js');
 const capacitySource=read('src/entitlements/plan-capacity.js');
+const plansList=read('src/platform/admin-plans-list.js');
+const lifecycle=read('src/payments/lifecycle.js');
 const migration=read('db/migrations/000_database_baseline.sql');
 
 assert(/capacityLimit\s*=\s*int\(body\.capacityLimit,\s*0,\s*1000000,\s*'Available slots'\)/.test(create),'new-plan backend must accept zero available slots');
@@ -32,6 +34,8 @@ assert(checkoutIntents.includes("capacity.lockAndAssert(client,planId")&&checkou
 assert(onboarding.includes('scarcityBadge')&&onboarding.includes('sharedCapacity'),'customer onboarding must surface shared fleet scarcity at the plan-family level');
 assert(onboarding.includes("if(sold)")&&onboarding.includes('No new place can be activated until capacity becomes available.'),'sold-out plans must disable acquisition actions in the customer portal');
 assert(storefront.includes('sectionAvailability')&&storefront.includes('state?.label'),'public storefront must use the real capacity scarcity label rather than synthetic inventory copy');
+assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative recheck');
+assert(plansList.includes('Active ${active} · held ${held}')&&plansList.includes('stream entitlements allocated or held'),'admin plan capacity must distinguish active stream use from temporary holds while preserving stream-entitlement semantics');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must admit explicit zero capacity');
 
 (async()=>{
@@ -41,7 +45,14 @@ assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit I
   assert.strictEqual(state.remaining,0,'zero-capacity plan must report zero remaining');
   assert.strictEqual(state.soldOut,true,'zero-capacity plan must be sold out before any acquisition');
   await assert.rejects(()=>capacity.assertAvailable('zero-plan',{db:fakeDb}),/sold out/i,'zero-capacity plan must reject new acquisition');
-  assert(capacity.acquisitionSql('p').includes('p.capacity_limit IS NULL OR p.capacity_limit >'),'SQL acquisition guard must preserve legacy/manual zero-capacity behavior');
+  const acquisition=capacity.acquisitionSql('p');
+  assert(acquisition.includes('p.capacity_limit IS NULL OR p.capacity_limit >'),'SQL acquisition guard must preserve legacy/manual zero-capacity behavior');
+  assert(acquisition.includes('SUM(capacity_server.max_users)')&&acquisition.includes("active_subscription.commercial_snapshot->'streams'")&&acquisition.includes("capacity_checkout.commercial_snapshot->'streams'"),'fleet SQL acquisition must compare eligible stream capacity with active and checkout stream units');
+  assert(acquisition.includes('capacity_free_hold.consumed_at IS NULL')&&acquisition.includes('capacity_free_hold.released_at IS NULL'),'fleet SQL acquisition must count pending Free Access holds');
+  assert(acquisition.includes('GREATEST(1,COALESCE(p.streams,1))'),'fleet SQL acquisition must reserve enough room for the next plan-sized stream entitlement');
+  assert(acquisition.includes('plan_server_eligibility capacity_restriction')&&acquisition.includes('plan_server_eligibility capacity_match'),'fleet SQL acquisition must honor plan-specific server eligibility when detecting/configuring capacity');
+  assert(acquisition.includes("setting_value->>'placementHealthMode'")&&acquisition.includes("capacity_server.placement_mode,'active'"),'fleet SQL acquisition must use the same health and placement admission signals as runtime capacity');
+  assert(acquisition.includes("p.billing_interval<>'trial' OR")&&acquisition.includes('NOT (p.service_type=\'jellyfin\''),'fleet SQL acquisition must retain manual trial/fallback capacity instead of replacing it');
   assert.deepStrictEqual(capacity.scarcity({remaining:2,soldOut:false,pool:'premium',plan:{billing_interval:'month',service_type:'jellyfin'}}),{label:'🔥 Only 2 Premium places left',kind:'urgent'},'real Premium scarcity must use exact low inventory');
   assert.deepStrictEqual(capacity.scarcity({remaining:8,soldOut:false,pool:'free',plan:{billing_interval:'month',service_type:'jellyfin'}}),{label:'Only 8 Free places left',kind:'limited'},'real Free scarcity must expose exact inventory below ten');
   assert.deepStrictEqual(capacity.scarcity({remaining:42,soldOut:false,pool:'premium',plan:{billing_interval:'month',service_type:'jellyfin'}}),{label:'Available',kind:'available'},'large capacity must not expose unnecessary inventory numbers');
