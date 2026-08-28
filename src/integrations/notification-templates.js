@@ -36,7 +36,7 @@ function formatAmount(amount, currency) {
     const code = clean(currency || 'GBP', 8).toUpperCase();
     if (!Number.isFinite(numeric)) return compact([clean(amount, 60), code]).join(' ');
     try {
-        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: code }).format(numeric);
+        return new Intl.NumberFormat('en-GB', { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol' }).format(numeric);
     } catch (_) {
         return `${numeric.toFixed(2)} ${code}`;
     }
