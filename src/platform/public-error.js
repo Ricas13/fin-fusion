@@ -66,12 +66,18 @@ function safeStatus(value, fallback) {
     return fallback;
 }
 
+function matchesSafe(error, patterns) {
+    if (!error || typeof error.message !== 'string' || !patterns || !patterns.length) return false;
+    return patterns.some(pattern => pattern instanceof RegExp ? pattern.test(error.message) : pattern === error.message);
+}
+
 function present(error, {
     context = 'Customer request failed',
     fallback = 'Something went wrong. Please try again.',
-    status = 400
+    status = 400,
+    safe = []
 } = {}) {
-    if (isSafe(error)) {
+    if (isSafe(error) || matchesSafe(error, safe)) {
         return {
             exposed: true,
             message: error.message,
@@ -90,4 +96,4 @@ function present(error, {
     };
 }
 
-module.exports = { SAFE_CODES, SAFE_MESSAGES, isSafe, present };
+module.exports = { SAFE_CODES, SAFE_MESSAGES, isSafe, present, matchesSafe };

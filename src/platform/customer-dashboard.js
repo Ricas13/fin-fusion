@@ -6,6 +6,7 @@ const stripe=require('../payments/stripe');
 const paypal=require('../payments/paypal');
 const plisio=require('../payments/plisio');
 const discounts=require('../payments/discounts');
+const publicError=require('./public-error');
 const planPricing=require('../payments/plan-pricing');
 const accessVariants=require('../payments/stream-variants');
 const provisioning=require('../jellyfin/resilient-provisioning');
@@ -59,7 +60,7 @@ function returningAccessPage(req,status){const site=runtimeSettings.siteName(),c
 
 function createCustomerDashboardRouter(){
   const r=express.Router();
-  r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){return res.status(400).json({valid:false,plans:{},message:error.message||'Promo code could not be checked.'});}});
+  r.get('/account/discount-preview',requireCustomer,async(req,res)=>{try{return res.json(await discountPreview(req.session.customerId,req.query.code));}catch(error){const{message,status}=publicError.present(error,{context:'Discount preview failed',fallback:'Promo code could not be checked.'});return res.status(status).json({valid:false,plans:{},message});}});
   r.get('/account',requireCustomer,async(req,res,next)=>{
     try{
       await runtimeSettings.ensureLoaded();
