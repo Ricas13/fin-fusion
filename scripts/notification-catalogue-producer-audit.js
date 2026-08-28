@@ -2,12 +2,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const adminPolicy = require('../src/integrations/notification-admin-policy');
 
 const root = path.resolve(__dirname, '..');
 const sourceRoot = path.join(root, 'src');
 const cataloguePaths = [
     'db/migrations/000_database_baseline.sql',
-    'db/migrations/014_support_ticket_notification_events.sql'
+    'db/migrations/014_support_ticket_notification_events.sql',
+    'db/migrations/104_admin_activity_notification_catalogue.sql'
 ];
 const retirementPath = 'db/migrations/037_notification_catalogue_runtime.sql';
 const infrastructureOnly = new Set([
@@ -59,7 +61,7 @@ function escapeRegex(value) {
 }
 
 const inserted = [...new Set(cataloguePaths.flatMap(file => catalogueFromSql(fs.readFileSync(path.join(root, file), 'utf8'))))].sort();
-if (inserted.length !== 30) throw new Error(`Notification catalogue contract expected 30 historical entries; found ${inserted.length}.`);
+if (inserted.length !== 34) throw new Error(`Notification catalogue contract expected 34 historical entries; found ${inserted.length}.`);
 
 const retirementSql = fs.readFileSync(path.join(root, retirementPath), 'utf8');
 for (const eventType of retired) {
@@ -67,7 +69,7 @@ for (const eventType of retired) {
 }
 
 const catalogue = inserted.filter(eventType => !retired.has(eventType));
-if (catalogue.length !== 21) throw new Error(`Notification catalogue contract expected 21 live entries; found ${catalogue.length}.`);
+if (catalogue.length !== 25) throw new Error(`Notification catalogue contract expected 25 live entries; found ${catalogue.length}.`);
 
 const sources = walk(sourceRoot)
     .map(file => ({ file: relative(file), text: fs.readFileSync(file, 'utf8') }))
@@ -92,6 +94,31 @@ const invalid = rows.filter(row => row.status !== 'DIRECT');
 if (invalid.length) {
     throw new Error(`Live notification events without direct runtime producers: ${invalid.map(row => `${row.eventType} (${row.status})`).join(', ')}`);
 }
+
+const expectedGroups = {
+    'payment.chargeback': 'Money',
+    'commercial.discount.redeemed': 'Money',
+    'customer.registered': 'Access',
+    'customer.claimed': 'Access',
+    'customer.access.suspended': 'Access',
+    'request.available': 'Growth',
+    'login.customer.succeeded': 'Noise'
+};
+for (const [eventType, expected] of Object.entries(expectedGroups)) {
+    const actual = adminPolicy.group(eventType);
+    if (actual !== expected) throw new Error(`Admin notification group mismatch for ${eventType}: expected ${expected}, got ${actual}`);
+}
+for (const eventType of ['payment.chargeback','commercial.discount.redeemed','customer.registered','customer.claimed','customer.access.suspended']) {
+    if (!adminPolicy.defaultEnabled(eventType)) throw new Error(`Admin notification should default on: ${eventType}`);
+}
+if (adminPolicy.defaultEnabled('login.customer.succeeded')) throw new Error('Customer login activity must default off as Noise.');
+
+const jobsSource = fs.readFileSync(path.join(root, 'src/automation/jobs.js'), 'utf8');
+if (!jobsSource.includes("const adminActivityNotifications=require('./admin-activity-notifications');")) throw new Error('Admin activity notification reconciler is not imported by the automation registry.');
+if (!jobsSource.includes('async admin_activity_notifications(){return adminActivityNotifications.run()}')) throw new Error('Admin activity notification reconciler is not scheduled by the automation registry.');
+const loginSource = fs.readFileSync(path.join(root, 'src/platform/customer-login.js'), 'utf8');
+if (!loginSource.includes("'customer.login.success'")) throw new Error('Completed customer login audit event is missing.');
+if (!loginSource.includes('await recordCompletedLogin(account,true)')) throw new Error('2FA customer logins must be audited after session establishment.');
 
 console.log(`summary: direct=${rows.length} retired=${retired.size} invalid=0`);
 

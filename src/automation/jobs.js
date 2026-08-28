@@ -15,6 +15,7 @@ const referrals=require('../referrals');
 const activationCleanup=require('./activation-cleanup');
 const customerInactivity=require('./customer-inactivity-scoped');
 const notificationLifecycle=require('./notification-lifecycle');
+const adminActivityNotifications=require('./admin-activity-notifications');
 const pendingRegistrations=require('../security/pending-registration');
 const stremioMediaIndex=require('../stremio/media-index');
 const stremioSourceIndex=require('../stremio/source-index');
@@ -31,6 +32,7 @@ const jobs={
  async customer_inactivity(){return customerInactivity.run()},
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
  async notification_lifecycle(){return notificationLifecycle.run()},
+ async admin_activity_notifications(){return adminActivityNotifications.run()},
  async bulk_jobs(){return bulkWorker.processBatch()},
  async stale_reclaim(){const reclaimed=await bulkWorker.reclaimStaleRunningItems();return{processed:Number(reclaimed||0),reclaimed:Number(reclaimed||0)}},
  async email_outbox(){const status=await emailSettings.status();if(!status.configured)return{processed:0,skipped:'email_not_configured'};return emailOutbox.deliverDue({limit:50})},
