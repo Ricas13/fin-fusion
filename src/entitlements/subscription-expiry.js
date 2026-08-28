@@ -2,8 +2,10 @@
 
 const { query, transaction } = require('../db');
 const notificationDispatch = require('../integrations/notification-dispatch');
+const expiryPolicy = require('../integrations/notification-expiry-policy');
 
-const DEFAULT_WARNING_DAYS = Math.max(1, Math.min(30, Number(process.env.SUBSCRIPTION_EXPIRY_WARNING_DAYS || 7)));
+const DEFAULT_WARNING_DAYS = expiryPolicy.LEGACY_WARNING_DAYS;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function recurringAutoRenewal(row) {
     if (String(row?.status || '').toLowerCase() !== 'active') return false;
@@ -17,6 +19,26 @@ function expiryDate(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return 'soon';
     return date.toLocaleDateString('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
+}
+
+function daysUntilExpiry(value, now = new Date()) {
+    const end = new Date(value);
+    const current = new Date(now);
+    if (Number.isNaN(end.getTime()) || Number.isNaN(current.getTime()) || end <= current) return null;
+    return Math.max(1, Math.ceil((end.getTime() - current.getTime()) / MS_PER_DAY));
+}
+
+function selectExpiryMilestone(value, milestones, now = new Date()) {
+    const daysLeft = daysUntilExpiry(value, now);
+    if (daysLeft == null) return null;
+    const eligible = expiryPolicy.normalizeMilestones(milestones, { fallback: [] }).filter(day => daysLeft <= day);
+    return eligible.length ? Math.min(...eligible) : null;
+}
+
+function expiryDedupeKey({ subscriptionId, accessExpiresAt, milestone }) {
+    const end = new Date(accessExpiresAt);
+    const endKey = Number.isNaN(end.getTime()) ? String(accessExpiresAt || 'unknown') : end.toISOString();
+    return `subscription-expiring:${subscriptionId}:${endKey}:milestone-${milestone}`;
 }
 
 async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
@@ -45,12 +67,18 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
     return result.rows.filter(row => !recurringAutoRenewal(row));
 }
 
-async function notifyExpiringSubscriptions({ days = DEFAULT_WARNING_DAYS, dispatch = notificationDispatch.dispatch } = {}) {
-    const rows = await expiringSubscriptions({ days });
+async function notifyExpiringSubscriptions({ days = null, milestones = null, dispatch = notificationDispatch.dispatch, now = new Date(), loadPolicy = expiryPolicy.load } = {}) {
+    let reminderMilestones;
+    if (milestones != null) reminderMilestones = expiryPolicy.normalizeMilestones(milestones, { fallback: [] });
+    else if (days != null) reminderMilestones = expiryPolicy.normalizeMilestones([days], { fallback: [DEFAULT_WARNING_DAYS] });
+    else reminderMilestones = expiryPolicy.normalizePolicy(await loadPolicy()).milestones;
+    if (!reminderMilestones.length) return { candidates: 0, queued: 0, failed: 0 };
+
+    const rows = await expiringSubscriptions({ days: Math.max(...reminderMilestones) });
     const result = { candidates: rows.length, queued: 0, failed: 0 };
     for (const row of rows) {
-        const end = new Date(row.access_expires_at);
-        const endKey = Number.isNaN(end.getTime()) ? String(row.access_expires_at || 'unknown') : end.toISOString();
+        const milestone = selectExpiryMilestone(row.access_expires_at, reminderMilestones, now);
+        if (milestone == null) continue;
         const planName = String(row.plan_name || 'Your subscription').trim() || 'Your subscription';
         try {
             const delivery = await dispatch({
@@ -64,15 +92,16 @@ async function notifyExpiringSubscriptions({ days = DEFAULT_WARNING_DAYS, dispat
                     planName,
                     expiresOn: row.access_expires_at,
                     provider: row.source,
-                    autoRenewal: recurringAutoRenewal(row)
+                    autoRenewal: recurringAutoRenewal(row),
+                    reminderDays: milestone
                 },
-                dedupeKey: `subscription-expiring:${row.id}:${endKey}`
+                dedupeKey: expiryDedupeKey({ subscriptionId: row.id, accessExpiresAt: row.access_expires_at, milestone })
             });
             if (delivery && (delivery.email || delivery.telegram || delivery.discord || delivery.whatsapp)) result.queued += 1;
             if (Array.isArray(delivery?.errors) && delivery.errors.length) result.failed += 1;
         } catch (error) {
             result.failed += 1;
-            console.warn('Subscription expiry warning failed:', { subscriptionId: row.id, customerId: row.customer_id, error: String(error?.message || error).slice(0, 300) });
+            console.warn('Subscription expiry warning failed:', { subscriptionId: row.id, customerId: row.customer_id, milestone, error: String(error?.message || error).slice(0, 300) });
         }
     }
     return result;
@@ -119,4 +148,4 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onR
     return expired.length;
 }
 
-module.exports = { DEFAULT_WARNING_DAYS, recurringAutoRenewal, expiryDate, expiringSubscriptions, notifyExpiringSubscriptions, expireDueSubscriptions, expireAndReconcile };
+module.exports = { DEFAULT_WARNING_DAYS, recurringAutoRenewal, expiryDate, daysUntilExpiry, selectExpiryMilestone, expiryDedupeKey, expiringSubscriptions, notifyExpiringSubscriptions, expireDueSubscriptions, expireAndReconcile };
