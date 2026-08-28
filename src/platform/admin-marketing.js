@@ -6,6 +6,7 @@ const csrf = require('../auth/csrf');
 const runtimeSettings = require('./runtime-settings');
 const { esc, layout } = require('./admin-html');
 const campaigns = require('../marketing/campaigns');
+const marketingSegments = require('../marketing/segments');
 const customerFilters = require('../platform/customer-filters');
 const routeRateLimit = require('../security/route-rate-limit');
 
@@ -49,19 +50,49 @@ async function selectableDiscounts() {
 }
 
 function parseAudienceFilters(body) {
-    const filters = {};
-    if (body.planId && customerFilters.isUuid(body.planId)) filters.planId = body.planId;
-    if (customerFilters.STATUS_VALUES.includes(body.status) || body.status === 'none') filters.status = body.status;
-    if (body.isFreeTier === '1') filters.isFreeTier = true;
-    return filters;
+    return marketingSegments.normalizeFilters({
+        service: body.service,
+        planId: body.planId,
+        status: body.status,
+        priceType: body.priceType,
+        billingInterval: body.billingInterval,
+        accountAgeDays: body.accountAgeDays,
+        lapsedDays: body.lapsedDays,
+        expiresWithinDays: body.expiresWithinDays,
+        inactivePlaybackDays: body.inactivePlaybackDays,
+        isFreeTier: body.isFreeTier
+    });
 }
 
-function audienceSummary(filters) {
+function audienceSummary(filters, plans = []) {
     const parts = [];
-    if (filters.planId) parts.push(`plan ${filters.planId}`);
-    if (filters.status) parts.push(`status ${filters.status}`);
-    if (filters.isFreeTier) parts.push('free tier');
-    return parts.length ? parts.join(', ') : 'All customers';
+    const plan = filters.planId ? plans.find(row => String(row.id) === String(filters.planId)) : null;
+    if (filters.service) parts.push(filters.service === 'jellyfin' ? 'Jellyfin' : 'Stremio');
+    if (filters.planId) parts.push(plan ? `plan ${plan.name}` : 'specific plan');
+    if (filters.status) parts.push(filters.status === 'none' ? 'no subscription' : `status ${filters.status}`);
+    if (filters.priceType) parts.push(filters.priceType === 'free' ? 'free' : 'paid');
+    else if (filters.isFreeTier) parts.push('free tier');
+    if (filters.billingInterval) parts.push(`billing ${filters.billingInterval.replace('_', ' ')}`);
+    if (filters.accountAgeDays !== undefined) parts.push(`account ≥ ${filters.accountAgeDays}d`);
+    if (filters.lapsedDays !== undefined) parts.push(`lapsed ≥ ${filters.lapsedDays}d`);
+    if (filters.expiresWithinDays !== undefined) parts.push(`expires ≤ ${filters.expiresWithinDays}d`);
+    if (filters.inactivePlaybackDays !== undefined) parts.push(`inactive ≥ ${filters.inactivePlaybackDays}d`);
+    return parts.length ? parts.join(' · ') : 'All customers';
+}
+
+function audienceFields(plans, filters = {}) {
+    const value = key => filters[key] === undefined || filters[key] === null ? '' : filters[key];
+    return `<div class="formGrid">
+        <div class="formGroup"><label>Service</label><select class="input" name="service"><option value="">Any service</option>${customerFilters.SERVICE_VALUES.map(service => `<option value="${esc(service)}" ${value('service') === service ? 'selected' : ''}>${esc(service === 'jellyfin' ? 'Jellyfin' : 'Stremio')}</option>`).join('')}</select></div>
+        <div class="formGroup"><label>Plan</label><select class="input" name="planId"><option value="">Any plan</option>${plans.map(p => `<option value="${esc(p.id)}" ${String(value('planId')) === String(p.id) ? 'selected' : ''}>${esc(p.name)}${p.code ? ` · ${esc(p.code)}` : ''}</option>`).join('')}</select></div>
+        <div class="formGroup"><label>Subscription status</label><select class="input" name="status"><option value="">Any status</option>${customerFilters.STATUS_VALUES.map(s => `<option value="${esc(s)}" ${value('status') === s ? 'selected' : ''}>${esc(s.replace('_', ' '))}</option>`).join('')}<option value="none" ${value('status') === 'none' ? 'selected' : ''}>No subscription</option></select></div>
+        <div class="formGroup"><label>Price type</label><select class="input" name="priceType"><option value="">Free or paid</option><option value="free" ${value('priceType') === 'free' || filters.isFreeTier ? 'selected' : ''}>Free</option><option value="paid" ${value('priceType') === 'paid' ? 'selected' : ''}>Paid</option></select></div>
+        <div class="formGroup"><label>Billing interval</label><select class="input" name="billingInterval"><option value="">Any interval</option>${customerFilters.BILLING_INTERVALS.map(interval => `<option value="${esc(interval)}" ${value('billingInterval') === interval ? 'selected' : ''}>${esc(interval.replace('_', ' '))}</option>`).join('')}</select></div>
+        <div class="formGroup"><label>Account age at least <span class="muted">days</span></label><input class="input" type="number" min="0" max="3650" name="accountAgeDays" value="${esc(value('accountAgeDays'))}" placeholder="e.g. 30"></div>
+        <div class="formGroup"><label>Lapsed for at least <span class="muted">days</span></label><input class="input" type="number" min="0" max="3650" name="lapsedDays" value="${esc(value('lapsedDays'))}" placeholder="e.g. 14"></div>
+        <div class="formGroup"><label>Expires within <span class="muted">days</span></label><input class="input" type="number" min="1" max="365" name="expiresWithinDays" value="${esc(value('expiresWithinDays'))}" placeholder="e.g. 7"></div>
+        <div class="formGroup"><label>No playback for <span class="muted">days</span></label><input class="input" type="number" min="1" max="3650" name="inactivePlaybackDays" value="${esc(value('inactivePlaybackDays'))}" placeholder="e.g. 30"></div>
+    </div>`;
 }
 
 function statusPill(status) {
@@ -71,7 +102,7 @@ function statusPill(status) {
 
 function campaignRow(row) {
     return `<tr>
-        <td><a href="/admin/marketing/${esc(row.id)}"><strong>${esc(row.name)}</strong></a><div class="muted">${esc(row.subject)}</div></td>
+        <td><a href="/admin/marketing/${esc(row.id)}"><strong>${esc(row.name)}</strong></a><div class="muted">${esc(row.subject)}</div>${row.segment_name ? `<div class="subText">Saved segment: ${esc(row.segment_name)}</div>` : ''}</td>
         <td>${statusPill(row.status)}</td>
         <td>${esc(row.recipient_count)}</td>
         <td>${esc(row.queued_count)}</td>
@@ -80,18 +111,29 @@ function campaignRow(row) {
     </tr>`;
 }
 
+function segmentEditForm(req, segment, plans) {
+    return `<details class="detailsBox"><summary>Edit</summary><form class="formPanel" method="post" action="/admin/marketing/segments/${esc(segment.id)}">${csrfInput(req)}
+        <div class="formGroup"><label>Segment name</label><input class="input" name="name" required minlength="3" maxlength="160" value="${esc(segment.name)}"></div>
+        ${audienceFields(plans, segment.audience_filters || {})}
+        <div class="buttonRow"><button class="button secondary btn-sm">Save changes</button></div>
+    </form></details>`;
+}
+
 async function listPage(req) {
     await runtimeSettings.ensureLoaded();
-    const [rows, plans, discounts] = await Promise.all([campaigns.list(), selectablePlans(), selectableDiscounts()]);
+    const [rows, plans, discounts, segmentRows] = await Promise.all([campaigns.list(), selectablePlans(), selectableDiscounts(), marketingSegments.list()]);
+    const savedSegments = await Promise.all(segmentRows.map(async row => ({ ...row, currentCount: (await campaigns.preview(row.audience_filters || {})).count })));
+    const requestedSegment = marketingSegments.optionalUuid(req.query.segment, 'saved segment');
 
     const body = `${notice(req)}
         <div class="metrics">
             <div class="metric"><div class="metricLabel">Campaigns</div><div class="metricValue">${rows.length}</div></div>
+            <div class="metric"><div class="metricLabel">Saved segments</div><div class="metricValue">${savedSegments.length}</div></div>
             <div class="metric"><div class="metricLabel">Queued</div><div class="metricValue">${rows.filter(r => r.status === 'queued').length}</div></div>
             <div class="metric"><div class="metricLabel">Scheduled</div><div class="metricValue">${rows.filter(r => r.status === 'scheduled').length}</div></div>
         </div>
-        <section class="section">
-            <div class="sectionHead"><h2>New campaign</h2><span class="muted">Reaches only customers who have opted in to marketing messages, across whichever channels they've linked.</span></div>
+        <section class="section" id="new-campaign">
+            <div class="sectionHead"><h2>New campaign</h2><span class="muted">Only opted-in customers are eligible; consent is checked again when the campaign is queued.</span></div>
             <form class="formPanel" method="post" action="/admin/marketing">
                 ${csrfInput(req)}
                 <div class="formGrid">
@@ -100,14 +142,21 @@ async function listPage(req) {
                 </div>
                 <div class="formGroup"><label>Subject</label><input class="input" name="subject" required minlength="3" maxlength="300" placeholder="A discount just for you"></div>
                 <div class="formGroup"><label>Message</label><textarea class="input" name="bodyText" required maxlength="100000" rows="6" placeholder="Write the message body. The discount code, if chosen, is appended automatically."></textarea></div>
-                <div class="sectionHead"><h3>Audience</h3></div>
-                <div class="formGrid">
-                    <div class="formGroup"><label>Plan</label><select class="input" name="planId"><option value="">Any plan</option>${plans.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></div>
-                    <div class="formGroup"><label>Subscription status</label><select class="input" name="status"><option value="">Any status</option>${customerFilters.STATUS_VALUES.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}<option value="none">No subscription</option></select></div>
-                    <div class="formGroup"><label class="toggleRow"><input type="checkbox" name="isFreeTier" value="1"><span>Free tier only</span></label></div>
-                </div>
+                <div class="sectionHead"><div><h3>Audience</h3><div class="muted">Choose a saved segment or build a one-off audience. A selected saved segment overrides the one-off fields below and is copied into the campaign as a snapshot.</div></div></div>
+                <div class="formGroup"><label>Saved segment</label><select class="input" name="segmentId"><option value="">Custom one-off audience</option>${savedSegments.map(segment => `<option value="${esc(segment.id)}" ${requestedSegment === String(segment.id) ? 'selected' : ''}>${esc(segment.name)} · ${segment.currentCount} opted in now</option>`).join('')}</select></div>
+                ${audienceFields(plans)}
                 <button class="button">Create draft campaign</button>
             </form>
+        </section>
+        <section class="section" id="segments">
+            <div class="sectionHead"><div><h2>Saved segments</h2><div class="muted">Reusable dynamic audiences. Counts are live and aggregate-only; no recipient list is exposed here.</div></div><span class="pill">${savedSegments.length} saved</span></div>
+            <form class="formPanel" method="post" action="/admin/marketing/segments">
+                ${csrfInput(req)}
+                <div class="formGroup"><label>Segment name</label><input class="input" name="name" required minlength="3" maxlength="160" placeholder="Lapsed paid users · 30 days"></div>
+                ${audienceFields(plans)}
+                <button class="button secondary">Save segment</button>
+            </form>
+            ${savedSegments.length ? `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Segment</th><th>Current opted-in audience</th><th>Filters</th><th>Actions</th></tr></thead><tbody>${savedSegments.map(segment => `<tr><td><strong>${esc(segment.name)}</strong><div class="subText">Updated ${new Date(segment.updated_at).toLocaleString('en-GB')}</div></td><td>${segment.currentCount}</td><td>${esc(audienceSummary(segment.audience_filters || {}, plans))}</td><td><div class="buttonRow"><a class="button secondary btn-sm" href="/admin/marketing?segment=${encodeURIComponent(segment.id)}#new-campaign">Use</a><form method="post" action="/admin/marketing/segments/${esc(segment.id)}/delete" data-confirm="Delete this saved segment? Existing campaigns keep their snapshotted audience filters.">${csrfInput(req)}<button class="button secondary btn-sm">Delete</button></form></div>${segmentEditForm(req, segment, plans)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No saved segments yet.</div>'}
         </section>
         <section class="section">
             <div class="sectionHead"><h2>Campaigns</h2><span class="muted">${rows.length} total</span></div>
@@ -118,7 +167,7 @@ async function listPage(req) {
         siteName: runtimeSettings.siteName(),
         active: 'marketing',
         title: 'Marketing campaigns',
-        subtitle: 'Discounts and offers for free and non-paying customers',
+        subtitle: 'Discounts, offers and reusable customer segments',
         body
     });
 }
@@ -127,7 +176,7 @@ async function detailPage(req, data) {
     await runtimeSettings.ensureLoaded();
     const { campaign, recipients, deliveries, discountCode } = data;
     const canEdit = ['draft', 'scheduled', 'queued'].includes(campaign.status);
-    const preview = canEdit ? await campaigns.preview(campaign.audience_filters || {}) : { count: recipients.length, sample: [] };
+    const [preview, plans] = await Promise.all([canEdit ? campaigns.preview(campaign.audience_filters || {}) : Promise.resolve({ count: recipients.length }), selectablePlans()]);
 
     const deliveryCounts = deliveries.reduce((acc, d) => { acc[d.channel] = acc[d.channel] || { queued: 0, suppressed: 0, failed: 0 }; if (acc[d.channel][d.status] !== undefined) acc[d.channel][d.status] += 1; return acc; }, {});
 
@@ -144,8 +193,8 @@ async function detailPage(req, data) {
     const body = `${notice(req)}
         <section class="section">
             <div class="sectionHead"><div><h2>${esc(campaign.name)}</h2><div class="muted">${esc(campaign.subject)}</div></div>${statusPill(campaign.status)}</div>
-            <div class="formPanel"><div class="subText">Discount code: ${discountCode ? esc(discountCode.code) : 'None'}</div><div class="subText">Audience: ${esc(audienceSummary(campaign.audience_filters || {}))}</div><div class="subText">Message:</div><p>${esc(campaign.body_text)}</p></div>
-            ${canEdit ? `<div class="notice">${preview.count} customer(s) currently eligible and opted in for this audience.</div>` : ''}
+            <div class="formPanel"><div class="subText">Discount code: ${discountCode ? esc(discountCode.code) : 'None'}</div><div class="subText">Audience source: ${campaign.segment_name ? `Saved segment ${esc(campaign.segment_name)} · snapshotted at campaign creation` : 'Custom one-off audience'}</div><div class="subText">Audience: ${esc(audienceSummary(campaign.audience_filters || {}, plans))}</div><div class="subText">Message:</div><p>${esc(campaign.body_text)}</p></div>
+            ${canEdit ? `<div class="notice">${preview.count} customer(s) are currently eligible and opted in for this snapshotted audience.</div>` : ''}
             <div class="buttonRow">${queueForm}${scheduleForm}</div>
         </section>
         <section class="section">
@@ -180,12 +229,43 @@ function createAdminMarketingRouter() {
                 subject: text(req.body.subject, 300),
                 bodyText: text(req.body.bodyText, 100000),
                 discountCodeId: req.body.discountCodeId || null,
+                segmentId: req.body.segmentId || null,
                 audienceFilters,
                 adminUserId: req.session.authUserId
             });
             return res.redirect(`/admin/marketing/${encodeURIComponent(created.id)}?message=${encodeURIComponent('Campaign created as a draft.')}`);
         } catch (error) {
             return res.redirect('/admin/marketing?error=' + encodeURIComponent(error.message));
+        }
+    });
+
+    router.post('/admin/marketing/segments', marketingWriteLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        try {
+            const created = await marketingSegments.save({ name: text(req.body.name, 160), audienceFilters: parseAudienceFilters(req.body), adminUserId: req.session.authUserId });
+            return res.redirect(`/admin/marketing?segment=${encodeURIComponent(created.id)}&message=${encodeURIComponent('Saved segment created.')}#segments`);
+        } catch (error) {
+            return res.redirect('/admin/marketing?error=' + encodeURIComponent(error.message) + '#segments');
+        }
+    });
+
+    router.post('/admin/marketing/segments/:id', marketingWriteLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        try {
+            await marketingSegments.save({ id: req.params.id, name: text(req.body.name, 160), audienceFilters: parseAudienceFilters(req.body), adminUserId: req.session.authUserId });
+            return res.redirect('/admin/marketing?message=' + encodeURIComponent('Saved segment updated.') + '#segments');
+        } catch (error) {
+            return res.redirect('/admin/marketing?error=' + encodeURIComponent(error.message) + '#segments');
+        }
+    });
+
+    router.post('/admin/marketing/segments/:id/delete', marketingWriteLimit, async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+        try {
+            await marketingSegments.remove({ id: req.params.id, adminUserId: req.session.authUserId });
+            return res.redirect('/admin/marketing?message=' + encodeURIComponent('Saved segment deleted. Existing campaigns kept their audience snapshot.') + '#segments');
+        } catch (error) {
+            return res.redirect('/admin/marketing?error=' + encodeURIComponent(error.message) + '#segments');
         }
     });
 
@@ -232,4 +312,4 @@ function createAdminMarketingRouter() {
     return router;
 }
 
-module.exports = { createAdminMarketingRouter };
+module.exports = { createAdminMarketingRouter, parseAudienceFilters, audienceSummary, audienceFields };
