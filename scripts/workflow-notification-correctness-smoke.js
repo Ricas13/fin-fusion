@@ -7,6 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const expiry = require('../src/entitlements/subscription-expiry');
+const expiryPolicy = require('../src/integrations/notification-expiry-policy');
 const notificationTemplates = require('../src/integrations/notification-templates');
 const { renderProfessionalEmail, eventLabel } = require('../src/integrations/email-template');
 
@@ -27,11 +28,30 @@ assert.strictEqual(expiry.recurringAutoRenewal({ status: 'cancelled', source: 's
 assert.strictEqual(expiry.recurringAutoRenewal({ status: 'past_due', source: 'paypal', provider_subscription_id: 'I-ABC123' }), false);
 assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'service_credit', provider_subscription_id: null }), false);
 assert(expiry.DEFAULT_WARNING_DAYS >= 1 && expiry.DEFAULT_WARNING_DAYS <= 30, 'expiry warning window must stay bounded');
+assert.deepStrictEqual(expiryPolicy.DEFAULT_POLICY.milestones, [expiry.DEFAULT_WARNING_DAYS], 'no saved policy must preserve the legacy expiry warning window');
+assert.deepStrictEqual(expiryPolicy.normalizeMilestones([1, '7', 3, 7, 0, 31]), [7, 3, 1], 'expiry milestones must be unique, bounded and ordered');
+
+const milestoneNow = new Date('2026-09-01T12:00:00Z');
+const afterDays = days => new Date(milestoneNow.getTime() + days * 24 * 60 * 60 * 1000);
+assert.strictEqual(expiry.selectExpiryMilestone(afterDays(8), [7, 3, 1], milestoneNow), null, 'subscriptions outside the maximum milestone must not be due');
+assert.strictEqual(expiry.selectExpiryMilestone(afterDays(6), [7, 3, 1], milestoneNow), 7, 'a missed seven-day boundary must catch up at the seven-day milestone');
+assert.strictEqual(expiry.selectExpiryMilestone(afterDays(2), [7, 3, 1], milestoneNow), 3, 'the nearest due milestone must win on catch-up');
+assert.strictEqual(expiry.selectExpiryMilestone(new Date(milestoneNow.getTime() + 12 * 60 * 60 * 1000), [7, 3, 1], milestoneNow), 1, 'partial final days must select the one-day milestone');
+const expiryAt = '2026-09-08T12:00:00.000Z';
+assert.notStrictEqual(
+    expiry.expiryDedupeKey({ subscriptionId: 'sub-row-1', accessExpiresAt: expiryAt, milestone: 7 }),
+    expiry.expiryDedupeKey({ subscriptionId: 'sub-row-1', accessExpiresAt: expiryAt, milestone: 3 }),
+    'each expiry milestone must have its own durable dedupe identity'
+);
+assert.strictEqual(
+    expiry.expiryDedupeKey({ subscriptionId: 'sub-row-1', accessExpiresAt: expiryAt, milestone: 7 }),
+    'subscription-expiring:sub-row-1:2026-09-08T12:00:00.000Z:milestone-7',
+    'expiry dedupe must be stable across repeated worker runs'
+);
 
 // Warning discovery must not repeat a fixed first page forever. Dedupe happens
 // at the durable outbox; the scan itself deliberately has no LIMIT starvation.
 assert(expirySource.includes("eventType: 'subscription.expiring'"), 'subscription expiry must produce the configured notification event');
-assert(expirySource.includes('subscription-expiring:${row.id}:${endKey}'), 'expiry warnings must have a stable subscription/period dedupe key');
 assert(!/async function expiringSubscriptions[\s\S]*?LIMIT\s+\$\d/i.test(expirySource), 'expiry warning discovery must not use a fixed SQL LIMIT');
 assert(expirySource.includes("COALESCE(p.is_free_tier,FALSE)=FALSE"), 'non-expiring Free Access must not receive expiry warnings');
 assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.includes('o.permanent_access=TRUE AND o.revoked_at IS NULL'), 'active Permanent Access must suppress expiry warnings for its pinned subscription');
