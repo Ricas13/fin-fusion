@@ -6,8 +6,10 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const nav=require('../src/platform/admin-nav');
 const adminShell=require('../src/platform/admin-html-core-base');
+const discordRoles=require('../src/integrations/discord-roles');
 
 const plans=read('src/platform/admin-plans-list.js');
+const adminPlans=read('src/platform/admin-plans.js');
 const settings=read('src/integrations/notification-settings.js');
 const dispatch=read('src/integrations/notification-dispatch.js');
 const outbox=read('src/integrations/notification-outbox.js');
@@ -58,6 +60,41 @@ assert(adminNotifications.includes('customer_opt_in_allowed'),'Global Notificati
 assert(adminLinks.includes('admin_channel_link_tokens')&&adminLinks.includes('admin_communication_preferences'),'Admin Telegram/Discord linking must use each admin identity, not a global destination');
 assert(read('src/integrations/customer-channel-links.js').includes('async function inspect'),'Customer channel link tokens must be inspectable before Discord OAuth code exchange');
 assert(operations.includes('canonical=production||Boolean(requireCanonical)'),'Production external URLs must always use the canonical configured origin');
+
+assert(adminPlans.includes('discordRoleControl(plan,discordCatalogue)'),'Plan overview must render the shared Discord role selector/fallback control');
+assert(adminPlans.includes('Current mapping —')&&adminPlans.includes('Manual role ID fallback'),'Plan role UX must preserve an existing mapping when Discord cannot currently offer it');
+assert(adminPlans.includes("throw new Error('Choose a Discord role or enter a valid Discord role ID.')"),'Malformed Discord role IDs must fail visibly instead of silently clearing a plan mapping');
+assert(adminNotifications.includes('Plan role assignment')&&adminNotifications.includes('Validate Discord + roles'),'Global Notifications must distinguish Discord role-assignment readiness from basic bot connectivity');
+assert(adminNotifications.includes('discordRoles.roleCatalogue({force:true})'),'The explicit Discord validation action must refresh guild role readiness');
+
+const guildId='100000000000000001';
+const botId='200000000000000002';
+const botRoleId='300000000000000003';
+const customerRoleId='400000000000000004';
+const managedRoleId='500000000000000005';
+const highRoleId='600000000000000006';
+const baseRoles=[
+  {id:guildId,name:'@everyone',position:0,managed:false,permissions:'0'},
+  {id:botRoleId,name:'CAPTAiNFiN',position:10,managed:false,permissions:String(discordRoles.DISCORD_MANAGE_ROLES)},
+  {id:customerRoleId,name:'Premium',position:5,managed:false,permissions:'0'},
+  {id:managedRoleId,name:'Integration role',position:4,managed:true,permissions:'0'},
+  {id:highRoleId,name:'Staff',position:11,managed:false,permissions:'0'}
+];
+const analysed=discordRoles.analyzeGuildRoles({guildId,bot:{id:botId,username:'CAPTAiNFiN'},member:{roles:[botRoleId]},roles:baseRoles});
+assert.strictEqual(analysed.ready,true,'A bot with Manage Roles and a higher role must be ready for plan-role assignment');
+assert.deepStrictEqual(analysed.assignableRoles.map(role=>role.id),[customerRoleId],'Only unmanaged roles below the bot hierarchy may be offered as plan roles');
+assert.strictEqual(analysed.roles.find(role=>role.id===managedRoleId).reason,'managed_by_discord','Discord-managed roles must never be offered for plan assignment');
+assert.strictEqual(analysed.roles.find(role=>role.id===highRoleId).reason,'above_bot_role','Roles at or above the bot hierarchy must never be offered for plan assignment');
+
+const noPermission=discordRoles.analyzeGuildRoles({guildId,bot:{id:botId},member:{roles:[botRoleId]},roles:baseRoles.map(role=>role.id===botRoleId?{...role,permissions:'0'}:role)});
+assert.strictEqual(noPermission.ready,false,'Role assignment must not report ready without Manage Roles');
+assert.strictEqual(noPermission.reason,'missing_manage_roles','Missing Manage Roles must be diagnosed explicitly');
+assert.strictEqual(noPermission.assignableRoles.length,0,'No roles are assignable when the bot lacks Manage Roles');
+
+const administrator=discordRoles.analyzeGuildRoles({guildId,bot:{id:botId},member:{roles:[botRoleId]},roles:baseRoles.map(role=>role.id===botRoleId?{...role,permissions:String(discordRoles.DISCORD_ADMINISTRATOR)}:role)});
+assert.strictEqual(administrator.ready,true,'Administrator permission must satisfy Discord role-management readiness');
+assert.strictEqual(discordRoles.snowflake('123456789012345678'),'123456789012345678','Valid Discord snowflakes must be retained');
+assert.strictEqual(discordRoles.snowflake('not-a-role'),null,'Invalid Discord role identifiers must be rejected');
 
 assert(orders.includes('LEFT JOIN app_users u ON u.id=c.user_id'),'Orders must resolve customer identity through the canonical app-user relation');
 assert(orders.includes("COALESCE(NULLIF(c.email,''),NULLIF(u.email,'')) customer_email"),'Orders must use real customer/app-user email columns');
