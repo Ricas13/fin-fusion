@@ -193,21 +193,24 @@ async function processClaimedCallback(eventRow, payload) {
 
 async function processWebhook(rawBody, contentType = '') {
     const payload = parseCallback(rawBody, contentType);
-    const { intent, providerId } = await authenticateCallback(payload);
-    const { remote, fields } = await verifiedRemoteOperation(providerId, intent);
-    const marker = String(remote?.updated_at || remote?.created_at || payload?.date || '').slice(0, 80);
-    const eventId = `operation:${providerId}:${fields.status || 'unknown'}:${marker}`;
-    const eventRow = await lifecycle.beginPaymentEvent({ provider: 'plisio', eventId, eventType: `operation.${fields.status || 'unknown'}`, payload });
-    if (!eventRow) return { duplicate: true, status: fields.status };
-    try {
-        const result = await applyRemoteOperation(remote, intent);
-        await lifecycle.finishPaymentEvent(eventRow);
-        return { duplicate: false, ...result };
-    } catch (error) {
-        await lifecycle.finishPaymentEvent(eventRow, error);
-        console.error('Plisio webhook processing deferred to internal retry:', error.message);
-        return { duplicate: false, status: fields.status, processingError: String(error.message || error) };
-    }
+    const { providerId } = await authenticateCallback(payload);
+    const callbackFields = operationFields(payload);
+    const marker = String(payload?.updated_at || payload?.created_at || payload?.date || '').slice(0, 80);
+    const eventId = `operation:${providerId}:${callbackFields.status || 'unknown'}:${marker}`;
+    const eventRow = await lifecycle.beginPaymentEvent({
+        provider: 'plisio',
+        eventId,
+        eventType: `operation.${callbackFields.status || 'unknown'}`,
+        payload
+    });
+    if (!eventRow) return { duplicate: true, status: callbackFields.status };
+    const result = await processClaimedCallback(eventRow, payload);
+    return {
+        duplicate: false,
+        status: result.status || callbackFields.status,
+        ...result,
+        processingError: result.processed ? null : String(result.error?.message || result.error || 'processing failed')
+    };
 }
 
 async function retryPaymentEvent(eventRow) {
