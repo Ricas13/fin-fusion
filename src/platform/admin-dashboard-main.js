@@ -56,11 +56,11 @@ async function revenueByBillingInterval(reporting,asOf=new Date()){
 }
 async function serviceMix(){
     const result=await query(`SELECT
-      COUNT(DISTINCT s.customer_id) FILTER(WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(s.service_type_snapshot,p.service_type) IN('jellyfin','bundle'))::int jellyfin,
-      COUNT(DISTINCT s.customer_id) FILTER(WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(s.service_type_snapshot,p.service_type) IN('stremio','bundle'))::int stremio,
-      COUNT(DISTINCT s.customer_id) FILTER(WHERE COALESCE(p.is_free_tier,FALSE)=TRUE)::int free
-      FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-      WHERE s.superseded_by IS NULL AND s.status IN('active','trialing','past_due','paused') AND s.starts_at<=NOW() AND s.current_period_end>NOW()`);
+      COUNT(DISTINCT e.customer_id) FILTER(WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND p.service_type IN('jellyfin','bundle'))::int jellyfin,
+      COUNT(DISTINCT e.customer_id) FILTER(WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND p.service_type IN('stremio','bundle'))::int stremio,
+      COUNT(DISTINCT e.customer_id) FILTER(WHERE COALESCE(p.is_free_tier,FALSE)=TRUE)::int free
+      FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id
+      WHERE e.blocked=FALSE AND e.access_expires_at>NOW()`);
     const row=result.rows[0]||{};return{jellyfin:Number(row.jellyfin||0),stremio:Number(row.stremio||0),free:Number(row.free||0)};
 }
 function fleetCapacity(rows){const enabled=(rows||[]).filter(row=>row.enabled!==false);return{active:enabled.reduce((sum,row)=>sum+Number(row.fleet_metrics?.active_streams??row.active_streams??0),0),capacity:enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0)};}
