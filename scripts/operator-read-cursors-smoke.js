@@ -37,8 +37,9 @@ assert(client.includes('if(!response.ok)throw new Error(`Read acknowledgement fa
 assert(client.includes('markAreaReadWithRetry'),'browser must retry transient read acknowledgement failures instead of leaving a sticky badge');
 assert(client.includes('const delays=[0,200,500,1000,2000,4000]'),'read acknowledgement must retry across a meaningful transient-failure window');
 assert(client.includes('return await fetchSnapshot()'),'browser must refresh unread state from the server after a successful acknowledgement');
-assert(client.includes("row.count>0&&row.key!==areaForCurrentPage"),'the currently reviewed business workspace must never display its own stale unread alert');
-assert(client.includes('data-business-read'),'clicking a business alert must persist the review before navigation');
+assert(client.includes("setSignal('new',areaForCurrentPage==='customers'?0:customers)")&&client.includes("areaForCurrentPage==='tickets'?0:tickets")&&client.includes("areaForCurrentPage==='orders'?0:orders"),'the currently reviewed business workspace must never display its own stale split signal');
+assert(client.includes("business:true")&&client.includes("querySelectorAll('[data-business-read]')"),'New, Tickets and Orders signals must preserve click-time read acknowledgement before navigation');
+assert(client.includes('data-business-read'),'clicking a business signal must persist the review before navigation');
 assert(client.includes('clearSidebarBadge'),'fresh zero counts must actively remove previously rendered sidebar badges');
 assert(client.includes("cache:'no-store'"),'unread snapshots must bypass browser HTTP caching');
 assert(!client.includes('data.counts[areaForCurrentPage]=0'),'browser must not mutate the server snapshot to fake a cleared count');
