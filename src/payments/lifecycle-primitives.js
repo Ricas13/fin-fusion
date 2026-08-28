@@ -110,7 +110,7 @@ async function beginPaymentEvent({ provider, eventId, eventType, payload }) {
 async function finishPaymentEvent(eventRow, error = null) {
     if (!eventRow?.id || !eventRow?.processing_token) return false;
     const failure = error ? String(error.message || error).slice(0, 4000) : null;
-    const result = await query(`UPDATE payment_events SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,processing_error=$3,processing_started_at=CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END,processing_token=NULL WHERE id=$1 AND processing_token=$2 RETURNING id`, [eventRow.id, eventRow.processing_token, failure]);
+    const result = await query(`UPDATE payment_events SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,processing_error=$3,processing_started_at=NULL,processing_token=NULL WHERE id=$1 AND processing_token=$2 RETURNING id`, [eventRow.id, eventRow.processing_token, failure]);
     return result.rowCount === 1;
 }
 
