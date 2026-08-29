@@ -103,9 +103,28 @@ async function scenarioI(){
   assert.strictEqual(durable.get(row.id).state,'succeeded','I: restarted worker completes midway deletion');
 }
 
+async function scenarioJ(){
+  const requestUserSyncPath=require.resolve('../src/integrations/request-user-sync'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const saved=new Map([requestUserSyncPath,externalPath].map(key=>[key,require.cache[key]]));
+  try{
+    require.cache[requestUserSyncPath]={id:requestUserSyncPath,filename:requestUserSyncPath,loaded:true,exports:{externalUsers:async()=>[{id:999,email:'someone-else@example.com',username:'someone-else'}],permissionState:async()=>0,setPermissions:async()=>{}}};
+    delete require.cache[externalPath];
+    const fresh=require('../src/platform/customer-external-deletion');
+
+    const everProvisioned={id:'request_service-1',provider:'request_service',resource_type:'permissions',external_identifier:'identity:stale@example.com',metadata:{externalUserId:null,email:'stale@example.com',username:'stale',everProvisioned:true}};
+    await assert.rejects(fresh.executeTarget(everProvisioned),/could not be located/,'J: a previously-provisioned request-service account that cannot be matched must escalate, not silently succeed');
+
+    const neverProvisioned={id:'request_service-2',provider:'request_service',resource_type:'permissions',external_identifier:'identity:new@example.com',metadata:{externalUserId:null,email:'new@example.com',username:'new',everProvisioned:false}};
+    const result=await fresh.executeTarget(neverProvisioned);
+    assert.strictEqual(result.status,'already_missing','J: an account never provisioned on the request service is safely already-missing');
+  }finally{
+    for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
+  }
+}
+
 (async()=>{
-  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();
+  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();
   assert.strictEqual(externalDeletion.retryMinutes(1),1);
   assert.strictEqual(externalDeletion.retryMinutes(99),360,'retry backoff must be bounded');
-  console.log('customer deletion durable target runtime smoke passed (A-I)');
+  console.log('customer deletion durable target runtime smoke passed (A-J)');
 })().catch(error=>{console.error(error);process.exit(1);});

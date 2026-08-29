@@ -55,7 +55,7 @@ async function persistTargets(job){
     }
 
     const request=await client.query(`
-      SELECT external_user_id,external_email,external_username
+      SELECT external_user_id,external_email,external_username,status
       FROM request_user_sync WHERE customer_id=$1
     `,[job.customer_id]);
     for(const row of request.rows){
@@ -66,7 +66,7 @@ async function persistTargets(job){
       if(locator)await insertTarget(client,{
         jobId:job.id,customerId:job.customer_id,provider:'request_service',resourceType:'permissions',
         externalIdentifier:remoteId||`identity:${locator}`,desiredState:'permissions:0',
-        metadata:{externalUserId:remoteId,email,username}
+        metadata:{externalUserId:remoteId,email,username,everProvisioned:row.status==='synced'}
       });
     }
 
@@ -130,7 +130,12 @@ async function resolveRequestUser(target){
 
 async function revokeRequestTarget(target){
   const externalUserId=await resolveRequestUser(target);
-  if(!externalUserId)return{status:'already_missing',policy:'remote_account_retained_permissions_zero'};
+  if(!externalUserId){
+    if(target.metadata?.everProvisioned){
+      throw new Error(`Request-service account for target ${target.external_identifier} was previously provisioned (status=synced) but could not be located by id, email, or username in the current user list; permissions cannot be confirmed revoked.`);
+    }
+    return{status:'already_missing',policy:'remote_account_retained_permissions_zero'};
+  }
   try{
     let permissions=await requestUsers.permissionState(externalUserId);
     if(permissions!==0)await requestUsers.setPermissions(externalUserId,0);
