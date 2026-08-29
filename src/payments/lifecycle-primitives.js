@@ -166,70 +166,125 @@ async function assertSettlementCheckout(client, checkoutIntentId, { customerId, 
     return row;
 }
 
+async function recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId, error }) {
+    if (!checkoutIntentId) return null;
+    const eventId = `capacity:${String(checkoutIntentId)}`;
+    const result = await query(`
+        INSERT INTO payment_incidents(
+            provider,provider_event_id,provider_case_id,incident_type,incident_status,
+            scope,customer_id,provider_subscription_id,access_action,metadata
+        ) VALUES($1,$2,$3,'checkout_completion','open','direct',$4,$5,'preserve',$6::jsonb)
+        ON CONFLICT(provider,provider_event_id,incident_type) DO UPDATE SET
+            incident_status='open',resolved_at=NULL,resolution_note=NULL,updated_at=NOW(),
+            metadata=payment_incidents.metadata || EXCLUDED.metadata
+        RETURNING *
+    `, [provider, eventId, String(checkoutIntentId), customerId, String(providerSubscriptionId), JSON.stringify({
+        reason: 'capacity_exhausted_after_provider_settlement',
+        planId,
+        checkoutIntentId,
+        providerSubscriptionId,
+        paidButUnfulfilled: true,
+        lastError: String(error?.message || error || 'Plan capacity exhausted').slice(0, 1000),
+        lastSeenAt: new Date().toISOString()
+    })]);
+    return result.rows[0] || null;
+}
+
+async function resolveCapacitySettlementIncident({ provider, checkoutIntentId }) {
+    if (!checkoutIntentId) return 0;
+    const result = await query(`
+        UPDATE payment_incidents
+        SET incident_status='resolved',resolved_at=COALESCE(resolved_at,NOW()),
+            resolution_note=COALESCE(resolution_note,'Provider payment was applied after capacity became available.'),
+            updated_at=NOW()
+        WHERE provider=$1 AND provider_case_id=$2
+          AND incident_type='checkout_completion' AND incident_status='open'
+    `, [provider, String(checkoutIntentId)]);
+    return result.rowCount;
+}
+
 async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null, checkoutIntentId = null }) {
     if (!['stripe', 'paypal', 'plisio'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
     const contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
-    const subscription = await transaction(async client => {
-        const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
-        if (!customer.rowCount) throw new Error('Customer not found');
-        const planResult = await client.query('SELECT * FROM plans WHERE id=$1', [planId]);
-        if (!planResult.rowCount) throw new Error('Plan not found');
-        const plan = planResult.rows[0];
-        const priceMap = contract?.providerMappingId
-            ? { rows: [{ external_id: contract.providerMappingId }] }
-            : await client.query(`SELECT external_id FROM plan_provider_prices WHERE plan_id=$1 AND provider=$2 ORDER BY active DESC,updated_at DESC LIMIT 1`, [planId, provider]);
-        const providerPriceId = priceMap.rows[0]?.external_id || null;
-        const startsAt = periodStart ? new Date(periodStart) : new Date();
-        const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(contract || plan, startsAt);
-        const status = mapProviderStatus(provider, providerStatus);
-        if (!status) throw new Error(`Unsupported ${provider} subscription status: ${String(providerStatus || 'unknown').slice(0, 120)}`);
-        const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
-        if (!existing.rowCount) {
-            const settlementIntent = await assertSettlementCheckout(client, checkoutIntentId, { customerId, planId, provider });
-            await capacity.lockAndAssert(client, planId, plan.name || 'This plan', {
-                excludeCheckoutIntentId: settlementIntent?.id || null,
-                streams: contract?.streams,
-                households: contract?.stremioHouseholdNetworkLimit
-            });
-        }
-        const snapshotJson = contract ? JSON.stringify(contract) : null;
-        const planNameSnapshot = contract?.planName || plan.name;
-        const planCodeSnapshot = contract?.planCode || plan.code;
-        const priceMinorSnapshot = contract?.priceMinor ?? plan.price_minor;
-        const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
-        const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
-        const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
-        let row;
-        if (existing.rowCount) {
-            const existingSubscription = existing.rows[0];
-            if (String(existingSubscription.customer_id) !== String(customerId)) {
-                const error = new Error('Provider subscription is already attached to a different customer.');
-                error.code = 'PROVIDER_SUBSCRIPTION_CUSTOMER_MISMATCH';
-                throw error;
+    const settlementCheckoutIntentId = checkoutIntentId || contract?.checkoutIntentId || null;
+    let subscription;
+    try {
+        subscription = await transaction(async client => {
+            const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
+            if (!customer.rowCount) throw new Error('Customer not found');
+            const planResult = await client.query('SELECT * FROM plans WHERE id=$1', [planId]);
+            if (!planResult.rowCount) throw new Error('Plan not found');
+            const plan = planResult.rows[0];
+            const priceMap = contract?.providerMappingId
+                ? { rows: [{ external_id: contract.providerMappingId }] }
+                : await client.query(`SELECT external_id FROM plan_provider_prices WHERE plan_id=$1 AND provider=$2 ORDER BY active DESC,updated_at DESC LIMIT 1`, [planId, provider]);
+            const providerPriceId = priceMap.rows[0]?.external_id || null;
+            const startsAt = periodStart ? new Date(periodStart) : new Date();
+            const endsAt = periodEnd ? new Date(periodEnd) : addPlanDuration(contract || plan, startsAt);
+            const status = mapProviderStatus(provider, providerStatus);
+            if (!status) throw new Error(`Unsupported ${provider} subscription status: ${String(providerStatus || 'unknown').slice(0, 120)}`);
+            const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
+            if (!existing.rowCount) {
+                const settlementIntent = await assertSettlementCheckout(client, settlementCheckoutIntentId, { customerId, planId, provider });
+                await capacity.lockAndAssert(client, planId, plan.name || 'This plan', {
+                    excludeCheckoutIntentId: settlementIntent?.id || null,
+                    streams: contract?.streams,
+                    households: contract?.stremioHouseholdNetworkLimit
+                });
             }
-            const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,updated_at=NOW() WHERE id=$15 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, existingSubscription.id]);
-            row = updated.rows[0];
-        } else {
-            const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb)) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson]);
-            row = inserted.rows[0];
-        }
-        await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status }, client);
-        const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
-        const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
-        if (effectiveDiscountCodeId) {
-            await client.query('SAVEPOINT discount_redemption');
+            const snapshotJson = contract ? JSON.stringify(contract) : null;
+            const planNameSnapshot = contract?.planName || plan.name;
+            const planCodeSnapshot = contract?.planCode || plan.code;
+            const priceMinorSnapshot = contract?.priceMinor ?? plan.price_minor;
+            const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
+            const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
+            const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
+            let row;
+            if (existing.rowCount) {
+                const existingSubscription = existing.rows[0];
+                if (String(existingSubscription.customer_id) !== String(customerId)) {
+                    const mismatch = new Error('Provider subscription is already attached to a different customer.');
+                    mismatch.code = 'PROVIDER_SUBSCRIPTION_CUSTOMER_MISMATCH';
+                    throw mismatch;
+                }
+                const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,updated_at=NOW() WHERE id=$15 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, existingSubscription.id]);
+                row = updated.rows[0];
+            } else {
+                const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb)) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson]);
+                row = inserted.rows[0];
+            }
+            await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status }, client);
+            const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
+            const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
+            if (effectiveDiscountCodeId) {
+                await client.query('SAVEPOINT discount_redemption');
+                try {
+                    await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
+                    await client.query('RELEASE SAVEPOINT discount_redemption');
+                } catch (error) {
+                    console.error('Discount redemption bookkeeping failed; subscription is still being activated:', error.message);
+                    await client.query('ROLLBACK TO SAVEPOINT discount_redemption');
+                }
+            }
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId })]);
+            return row;
+        });
+    } catch (error) {
+        if (error?.code === 'PLAN_CAPACITY_EXHAUSTED' && settlementCheckoutIntentId) {
             try {
-                await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
-                await client.query('RELEASE SAVEPOINT discount_redemption');
-            } catch (error) {
-                console.error('Discount redemption bookkeeping failed; subscription is still being activated:', error.message);
-                await client.query('ROLLBACK TO SAVEPOINT discount_redemption');
+                await recordCapacitySettlementIncident({ customerId, planId, provider, providerSubscriptionId, checkoutIntentId: settlementCheckoutIntentId, error });
+                error.paidButUnfulfilled = true;
+            } catch (incidentError) {
+                console.error('Paid-but-unfulfilled capacity incident could not be recorded:', incidentError.message);
             }
         }
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status, checkoutContract: Boolean(contract), checkoutIntentId: checkoutIntentId || null })]);
-        return row;
-    });
+        throw error;
+    }
+    if (settlementCheckoutIntentId) {
+        try { await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }); }
+        catch (error) { console.error('Capacity settlement incident resolution deferred:', error.message); }
+    }
     if (providerCustomerId) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
     await reconcileCommittedCustomer(customerId, 'Paid subscription');
     try { await referrals.rewardIfQualifying(customerId); }
@@ -266,6 +321,8 @@ module.exports = {
     claimRetryablePaymentEvents,
     purchaseSnapshot,
     assertSettlementCheckout,
+    recordCapacitySettlementIncident,
+    resolveCapacitySettlementIncident,
     activatePurchase,
     updateProviderSubscription
 };
