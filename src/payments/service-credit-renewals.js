@@ -25,7 +25,9 @@ async function reservationForStripeInvoice(providerInvoiceId){
 }
 
 async function reserveStripeInvoice({providerInvoiceId,providerSubscriptionId,currency,maxAmountMinor}){
-  const invoiceId=String(providerInvoiceId||'').trim(),providerSubId=String(providerSubscriptionId||'').trim(),wanted=cleanCurrency(currency),maximum=Math.max(0,int(maxAmountMinor));
+  const invoiceId=String(providerInvoiceId||'').trim(),providerSubId=String(providerSubscriptionId||'').trim(),requested=String(currency||'').trim().toUpperCase(),maximum=Math.max(0,int(maxAmountMinor));
+  if(!planPricing.CURRENCIES.includes(requested))return{reserved:false,amountMinor:0,currency:requested||null,reason:'unsupported_currency'};
+  const wanted=requested;
   if(!invoiceId||!providerSubId||maximum<=0)return{reserved:false,amountMinor:0,currency:wanted,reason:'not_applicable'};
   return transaction(async client=>{
     const sub=(await client.query(`SELECT id,customer_id FROM subscriptions WHERE source='stripe' AND provider_subscription_id=$1 ORDER BY created_at DESC LIMIT 1`,[providerSubId])).rows[0];
