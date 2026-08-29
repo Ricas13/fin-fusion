@@ -78,7 +78,10 @@ has(branchHygiene,'if [[ "$branch" == "main" || "$branch" == "HEAD" ]]','main mu
 
 const readme=read('README.md');
 has(readme,'# CAPTAiNFiN','README must use the canonical public product name');
-has(readme,'| Plisio | Yes | No | No |','README must document Plisio as one-time-only crypto checkout');
-has(readme,'These `steam-fusion` / `steamfusion` names are **compatibility identifiers**','README must distinguish persistent compatibility identifiers from public branding');
+has(readme,'Personal self-hosted project.','README must remain intentionally minimal');
+lacks(readme,'| Plisio |','minimal README must not become a payment-provider capability matrix');
+lacks(readme,'Stripe','minimal README must not advertise payment-provider implementation details');
+lacks(readme,'PayPal','minimal README must not advertise payment-provider implementation details');
+lacks(readme,'steam-fusion','minimal README must not expose compatibility/deployment identifiers');
 
 console.log('release completion smoke: ok');

@@ -60,6 +60,22 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
             WHERE o.customer_id=s.customer_id AND o.subscription_id=s.id
               AND o.permanent_access=TRUE AND o.revoked_at IS NULL
           )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM subscriptions next_s
+            JOIN plans next_p ON next_p.id=next_s.plan_id
+            WHERE next_s.customer_id=s.customer_id
+              AND next_s.id<>s.id
+              AND next_s.superseded_by IS NULL
+              AND next_s.status IN('active','trialing','past_due','paused','cancelled')
+              AND next_s.starts_at>s.starts_at
+              AND next_s.starts_at<=s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval+INTERVAL '5 minutes'
+              AND (
+                COALESCE(next_s.service_type_snapshot,next_p.service_type,'jellyfin')='bundle'
+                OR COALESCE(s.service_type_snapshot,p.service_type,'jellyfin')='bundle'
+                OR COALESCE(next_s.service_type_snapshot,next_p.service_type,'jellyfin')=COALESCE(s.service_type_snapshot,p.service_type,'jellyfin')
+              )
+          )
           AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval>NOW()
           AND s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval<NOW()+(($1::int+1)*INTERVAL '1 day')
         ORDER BY access_expires_at,s.id
