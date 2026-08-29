@@ -7,6 +7,7 @@ const planComponents = require('../access/plan-components');
 const networkIdentity = require('../access/network-identity');
 const leases = require('../access/network-leases');
 const registry = require('./registry');
+const householdOverrides = require('../entitlements/household-overrides');
 
 async function activeSessions() {
   const result = await query(
@@ -56,6 +57,8 @@ async function effectiveHousehold(customerId) {
   );
   const entitlement = result.rows[0] || null;
   if (!entitlement) return null;
+  const override = await householdOverrides.get(customerId, 'jellyfin');
+  if (override && override.network_limit != null) entitlement.jellyfin_household_network_limit = override.network_limit;
   const component = planComponents.componentForPlan(entitlement, 'jellyfin');
   if (!component || component.driver !== 'household_network') return null;
   return { entitlement, component };

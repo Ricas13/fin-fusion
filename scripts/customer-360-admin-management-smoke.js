@@ -70,6 +70,15 @@ assert(deletionMigration.includes("UPDATE public.customer_deletion_jobs\n    SET
 assert(automationJobs.includes("async customer_deletions(){return customerDeletion.processDue({limit:10})}"),'automation worker must retry due/stale customer deletion jobs');
 
 assert(composition.indexOf('createAdminCustomerManagementRouter()')<composition.indexOf('createAdminCustomer360Router()'),'customer management routes must mount before the wildcard Customer 360 route');
+
+assert(management.includes('function accessPath(')&&management.includes('return res.redirect(accessPath(req.params.customerId,key,message))'),'GET /manage must redirect into the canonical Access tab and preserve feedback instead of rendering a second page');
+assert(management.includes('return res.redirect(accessPath(id,key,message,anchor))'),'folded /manage mutations must return directly to the Access tab with their success/error message');
+assert(!management.includes('function page(req)')&&!management.includes('function identitySection(')&&!management.includes('function serviceSection('),'the standalone /manage page renderer and its now-duplicated identity/service sections must be removed once folded into Access');
+assert(management.includes('module.exports=')&&management.includes('portalSection')&&management.includes('stremioSection')&&management.includes('activationState')&&management.includes('stremioState'),'portal and Stremio-install sections must be exported for reuse on the Customer 360 Access tab');
+const view360=read('src/platform/customer-360-view.js');
+assert(view360.includes("require('./admin-customer-management')")&&view360.includes('manage.portalSection(')&&view360.includes('manage.stremioSection('),'Customer 360 Access tab must render the folded-in portal/Stremio-install sections');
+assert(view360.includes('Access assignment & customer overrides')&&view360.includes("'reset_overrides','Reset all to plan'")&&view360.includes("'migrate_server','Move server'"),'Customer 360 Access must own plan-default overrides, reset-all and server movement instead of sending the admin to another console');
+assert(view360.includes('removeGlobalMigrationHop')&&view360.includes("'migrate_server','Move to another server'"),'the legacy global provisioning-migrations link must be replaced with the customer-scoped migrate-server preview');
 assert(operator.includes("appendTopAction('Manage customer'"),'legacy operator enrichment must remain compatible until the customer-specific stabilizer runs');
 assert(operator.includes('if(context.hasJellyfinAccount)appendTopAction(\'Change Jellyfin password\''),'Jellyfin password support context must remain available to the legacy enrichment layer');
 assert(!operator.includes("link.textContent='Change Jellyfin password';link.setAttribute('data-customer-password-support'"),'the old unconditional Jellyfin password action must not return');
@@ -78,10 +87,12 @@ assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-veri
 
 // Customer navigation is deliberately owned by one deterministic layer. Async
 // service context must never rewrite Access into another workspace after the
-// page has rendered.
-for(const label of ["['overview','Overview'","['access','Access'","['activity','Activity'","['billing','Billing'","['security','Security'","['history','History'","['manage','Manage'"]){
+// page has rendered. Security/history deep links can remain routable but are
+// no longer primary workspace tabs.
+for(const label of ["['overview','Overview'","['access','Access'","['billing','Billing'","['activity','Activity'"]){
   assert(stableNavigation.includes(label),`stable Customer 360 navigation is missing ${label}`);
 }
+assert(!stableNavigation.includes("['manage','Manage'")&&!stableNavigation.includes("['security','Security'")&&!stableNavigation.includes("['history','History'"),'the primary Customer 360 tab bar must be exactly Overview, Access, Billing and Activity');
 assert(stableNavigation.includes("href===`${base}?tab=activity`"),'Activity must be removed from duplicate top-bar navigation');
 assert(stableNavigation.includes('[data-customer-management],[data-customer-password-support]'),'legacy async customer top actions must be removed once represented in the stable customer workspace');
 assert(stableNavigation.includes("link.setAttribute('href',href)"),'async Stremio context must not be able to mutate the canonical Access tab destination');
