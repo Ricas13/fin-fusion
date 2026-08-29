@@ -83,6 +83,13 @@ function run(command, index, total) {
   });
 }
 
+function annotationEscape(value) {
+  return String(value || '')
+    .replace(/%/g, '%25')
+    .replace(/\r/g, '%0D')
+    .replace(/\n/g, '%0A');
+}
+
 async function main() {
   if (!scripts[scriptName]) throw new Error(`Unknown npm script: ${scriptName}`);
   try { fs.rmSync(failureFile, { force:true }); } catch (_) {}
@@ -99,6 +106,11 @@ main().catch(error => {
     `error=${String(error.message || error).replace(/\r?\n/g, ' ')}`
   ].join('\n') + '\n';
   try { fs.writeFileSync(failureFile, diagnostic, 'utf8'); } catch (_) {}
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    const title = `Check ${error.commandIndex || '?'} of ${error.commandTotal || '?'} failed`;
+    const message = `${error.failedCommand || scriptName}: ${error.message || error}`;
+    console.error(`::error title=${annotationEscape(title)}::${annotationEscape(message)}`);
+  }
   console.error(error.message || error);
   process.exit(1);
 });
