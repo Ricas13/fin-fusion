@@ -36,6 +36,9 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- Keep stacking safe even if two provider completions arrive together.
+  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.customer_id::text,0));
+
   SELECT MAX(s.current_period_end)
     INTO stack_end
     FROM subscriptions s
