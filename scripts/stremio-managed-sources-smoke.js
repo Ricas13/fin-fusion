@@ -8,6 +8,7 @@ const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 
 const migration=read('db/migrations/016_stremio_managed_source_foundation.sql');
 const managed=read('src/stremio/managed-sources.js');
+const managedEntitlements=read('src/stremio/managed-entitlements.js');
 const admin=read('src/platform/admin-stremio-managed-sources.js');
 const sources=read('src/platform/admin-stremio-sources.js');
 const externalConfig=read('src/stremio/source-admin-config.js');
@@ -24,6 +25,9 @@ assert(managed.includes('api_configured'),'managed source view may expose creden
 assert(managed.includes('public_url IS NOT NULL'),'managed direct playback sources must require a public URL');
 assert(managed.includes('ORDER BY stremio_priority,priority,name'),'managed sources must have explicit deterministic source ordering');
 assert(managed.includes('stremio_managed_accounts'),'managed runtime foundation must use a per-entitlement/server account mapping');
+assert((managedEntitlements.match(/effective_stremio_entitlements/g)||[]).length>=2,'managed Stremio revoke and sync must use the Stremio effective entitlement view');
+assert(!managedEntitlements.includes('effective_customer_entitlements'),'managed Stremio lifecycle must not use the Jellyfin-only primary entitlement view');
+assert(managedEntitlements.includes('effective_customer_addons'),'managed Stremio lifecycle must continue accepting add-on entitlements');
 
 assert(admin.includes("router.use('/admin/servers/stremio/managed',gate,noStore)"),'managed source compatibility route must stay authenticated and no-store');
 assert(admin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed page must redirect to the single Stremio control centre');
