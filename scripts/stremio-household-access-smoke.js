@@ -34,10 +34,11 @@ const blockedMedia=require('../src/stremio/blocked-media');
 const planComponents=require('../src/access/plan-components');
 
 // Unlimited playback remains the runtime contract. Household admission is the
-// only commercial Stremio access limit; protocol abuse controls stay separate.
+// only commercial Stremio access limit; normal Stremio protocol routes are not
+// request-rate limited because one household may legitimately use many devices.
 assert(!runtime.includes("require('./source-admission')"),'retired Stremio stream admission must stay removed');
 assert(!runtime.includes('managed-session-reconciler')&&!runtime.includes('X-CAPTAiNFiN-Stream-Limit'),'runtime must not reintroduce commercial stream counting');
-assert((runtime.match(/reason: 'protocol_rate_limit'/g)||[]).length>=3,'protocol abuse rate limits must remain enabled');
+assert(!runtime.includes("require('../security/route-rate-limit')")&&!runtime.includes("protocol_rate_limit"),'Stremio protocol routes must remain free of request rate limits');
 assert(runtime.includes("householdAccess.claim(entitlement, req")&&runtime.includes('householdAccess.preview(entitlement, req'),'Stremio playback must still claim and preview household access');
 assert(runtime.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household access must be claimed before direct authenticated Jellyfin URLs are returned');
 assert(runtime.includes("require('./blocked-media')")&&runtime.includes('blockedMedia.send(req, res)'),'household denial must retain the playable local block-media path added on main');
