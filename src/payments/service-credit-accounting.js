@@ -1,6 +1,7 @@
 'use strict';
 
 const planPricing=require('./plan-pricing');
+const refundPolicy=require('./refund-policy');
 
 function cleanCurrency(value){return planPricing.cleanCurrency(value,'GBP');}
 function int(value){const n=Number(value);return Number.isInteger(n)?n:0;}
@@ -116,4 +117,4 @@ async function recoverableMinorForClient(client,customerId,currency){
   return int(r.rows[0]?.n);
 }
 
-module.exports={cleanCurrency,lockCustomer,rawAvailableMinorForClient,ensureHistoricalAllocations,allocateOneDebit,allocationBreakdownForReward,allocatedFromReward,sourceCapacity,recoveryForReward,recordRecovery,recoverableMinorForClient};
+module.exports={cleanCurrency,lockCustomer,rawAvailableMinorForClient,ensureHistoricalAllocations,allocateOneDebit,allocationBreakdownForReward,allocatedFromReward,sourceCapacity,recoveryForReward,recordRecovery,recoverableMinorForClient,refundPolicy};
