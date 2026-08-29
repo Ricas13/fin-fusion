@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const lifecycle = require('./lifecycle');
 const providerSettings = require('./provider-settings');
+const providerOps = require('./provider-operations');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -54,11 +55,11 @@ async function stripeAdapter() {
                 cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end)
             };
         },
-        async stopRenewal(row) {
-            await stripeClient.subscriptions.update(row.provider_subscription_id, { cancel_at_period_end: true });
+        async stopRenewal(row, { idempotencyKey = null } = {}) {
+            await stripeClient.subscriptions.update(row.provider_subscription_id, { cancel_at_period_end: true }, idempotencyKey ? { idempotencyKey } : undefined);
         },
-        async resumeRenewal(row) {
-            await stripeClient.subscriptions.update(row.provider_subscription_id, { cancel_at_period_end: false });
+        async resumeRenewal(row, { idempotencyKey = null } = {}) {
+            await stripeClient.subscriptions.update(row.provider_subscription_id, { cancel_at_period_end: false }, idempotencyKey ? { idempotencyKey } : undefined);
         }
     };
 }
@@ -93,14 +94,15 @@ async function paypalAccessToken() {
     return { cfg, token: paypalToken };
 }
 
-async function paypalApi(path, { method = 'GET', body = null } = {}) {
+async function paypalApi(path, { method = 'GET', body = null, idempotencyKey = null } = {}) {
     const { cfg, token } = await paypalAccessToken();
     const response = await fetch(`${paypalBaseUrl(cfg)}${path}`, {
         method,
         headers: {
             Authorization: `Bearer ${token}`,
             Accept: 'application/json',
-            ...(body ? { 'Content-Type': 'application/json' } : {})
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+            ...(idempotencyKey ? { 'PayPal-Request-Id': String(idempotencyKey).slice(0, 108) } : {})
         },
         ...(body ? { body: JSON.stringify(body) } : {})
     });
@@ -110,7 +112,11 @@ async function paypalApi(path, { method = 'GET', body = null } = {}) {
         try { payload = JSON.parse(text); }
         catch { payload = { message: text }; }
     }
-    if (!response.ok) throw new Error(`PayPal HTTP ${response.status}: ${payload.message || payload.name || 'request failed'}`);
+    if (!response.ok) {
+        const error = new Error(`PayPal HTTP ${response.status}: ${payload.message || payload.name || 'request failed'}`);
+        error.status = response.status;
+        throw error;
+    }
     return payload;
 }
 
@@ -136,10 +142,11 @@ async function paypalAdapter() {
                 cancelAtPeriodEnd: status === 'CANCELLED'
             };
         },
-        async stopRenewal(row) {
+        async stopRenewal(row, { idempotencyKey = null } = {}) {
             await paypalApi(`/v1/billing/subscriptions/${encodeURIComponent(row.provider_subscription_id)}/cancel`, {
                 method: 'POST',
-                body: { reason: 'Renewal disabled by CAPTAiNFiN administrator' }
+                body: { reason: 'Renewal disabled by CAPTAiNFiN administrator' },
+                idempotencyKey
             });
         },
         async resumeRenewal() {
@@ -277,20 +284,69 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
     if (!['active', 'trialing', 'past_due', 'paused'].includes(row.status)) throw new Error('This subscription is no longer renewable.');
     if (row.source === 'paypal' && enabled) throw new Error('A cancelled PayPal subscription cannot be resumed. The customer must subscribe again.');
 
-    const remoteAdapter = adapter || await defaultAdapter(row.source);
-    if (enabled) await remoteAdapter.resumeRenewal(row);
-    else await remoteAdapter.stopRenewal(row);
+    const op = await providerOps.begin({
+        provider: row.source,
+        scope: 'customer',
+        ownerId: row.customer_id,
+        operationType: enabled ? 'renewal_resume' : 'renewal_stop',
+        localReference: row.id,
+        request: {
+            subscriptionId: row.id,
+            providerSubscriptionId: row.provider_subscription_id,
+            desiredCancelAtPeriodEnd: !enabled,
+            priorCancelAtPeriodEnd: Boolean(row.cancel_at_period_end)
+        }
+    });
 
-    if (row.source === 'paypal' && !enabled) {
-        await query(`UPDATE subscriptions SET cancel_at_period_end=TRUE,updated_at=NOW() WHERE id=$1`, [row.id]);
+    try {
+        const remoteAdapter = adapter || await defaultAdapter(row.source);
+        if (enabled) await remoteAdapter.resumeRenewal(row, { idempotencyKey: op.idempotency_key });
+        else await remoteAdapter.stopRenewal(row, { idempotencyKey: op.idempotency_key });
+        await providerOps.providerApplied(op.id, { providerReference: row.provider_subscription_id, result: { desiredCancelAtPeriodEnd: !enabled } });
+
+        const synced = await syncSubscription(row.id, { adapter: remoteAdapter });
+        if (!synced.ok) throw new Error(`Provider accepted the renewal change, but verification failed: ${synced.error}`);
+        await providerOps.localApplied(op.id, { localReference: row.id, result: { cancelAtPeriodEnd: synced.remote?.cancelAtPeriodEnd ?? null } });
+        await query(`
+            INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+            VALUES($1,$2,'subscription',$3,$4::jsonb)
+        `, [actorUserId, enabled ? 'billing.renewal.resume' : 'billing.renewal.stop', row.id, JSON.stringify({ provider: row.source, providerSubscriptionId: row.provider_subscription_id, providerOperationId: op.id })]);
+        await providerOps.reconciled(op.id, { result: { subscriptionId: row.id, recovered: false } });
+        return synced;
+    } catch (error) {
+        await providerOps.recordError(op.id, error).catch(() => {});
+        throw error;
     }
-    const synced = await syncSubscription(row.id, { adapter: remoteAdapter });
-    if (!synced.ok) throw new Error(`Provider accepted the renewal change, but verification failed: ${synced.error}`);
-    await query(`
-        INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-        VALUES($1,$2,'subscription',$3,$4::jsonb)
-    `, [actorUserId, enabled ? 'billing.renewal.resume' : 'billing.renewal.stop', row.id, JSON.stringify({ provider: row.source, providerSubscriptionId: row.provider_subscription_id })]);
-    return synced;
+}
+
+function recoveryManual(message) { const error = new Error(message); error.providerOperationManual = true; return error; }
+function recoverySuperseded(message) { const error = new Error(message); error.providerOperationSuperseded = true; return error; }
+async function recoverProviderOperation(op) {
+    if (!['renewal_stop', 'renewal_resume'].includes(op.operation_type)) throw recoveryManual(`Unsupported renewal recovery type ${op.operation_type}.`);
+    const newer = await providerOps.newerOperation(op, { operationTypes: ['renewal_stop', 'renewal_resume'] });
+    if (newer) throw recoverySuperseded(`Superseded by newer ${newer.operation_type} operation ${newer.id}.`);
+    const request = op.request_snapshot || {}, subscriptionId = request.subscriptionId || op.local_reference;
+    const row = await subscriptionById(subscriptionId);
+    if (!row || String(row.customer_id) !== String(op.owner_id)) throw recoveryManual('Renewal subscription no longer exists for this customer.');
+    const desired = Boolean(request.desiredCancelAtPeriodEnd), remoteAdapter = await defaultAdapter(row.source);
+    let remote = await remoteAdapter.fetchRemote(row);
+    if (!remote || !remote.status || typeof remote.cancelAtPeriodEnd !== 'boolean') throw new Error('Provider returned an ambiguous renewal state.');
+    await providerOps.observed(op.id, { result: { cancelAtPeriodEnd: remote.cancelAtPeriodEnd, remoteStatus: remote.remoteStatus || remote.status || null } });
+
+    if (remote.cancelAtPeriodEnd !== desired) {
+        if (['provider_applied', 'local_applied'].includes(op.state)) throw recoveryManual('Provider no longer reflects the already-applied renewal decision; refusing to overwrite a later remote decision.');
+        if (desired) await remoteAdapter.stopRenewal(row, { idempotencyKey: op.idempotency_key });
+        else await remoteAdapter.resumeRenewal(row, { idempotencyKey: op.idempotency_key });
+        remote = await remoteAdapter.fetchRemote(row);
+        if (!remote || remote.cancelAtPeriodEnd !== desired) throw new Error('Provider renewal state remains ambiguous after idempotent recovery.');
+    }
+
+    if (op.state === 'planned') await providerOps.providerApplied(op.id, { providerReference: row.provider_subscription_id, result: { desiredCancelAtPeriodEnd: desired, recovered: true } });
+    await applyRemoteState(row, remote);
+    await recordSuccess(row, remote);
+    if (op.state !== 'local_applied') await providerOps.localApplied(op.id, { localReference: row.id, result: { cancelAtPeriodEnd: desired, recovered: true } });
+    await providerOps.reconciled(op.id, { result: { subscriptionId: row.id, recovered: true } });
+    return { ok: true, id: op.id, type: op.operation_type };
 }
 
 async function dashboardData() {
@@ -341,6 +397,7 @@ module.exports = {
     syncSubscription,
     syncDue,
     setRenewal,
+    recoverProviderOperation,
     dashboardData,
     subscriptionById,
     stripePeriod,
