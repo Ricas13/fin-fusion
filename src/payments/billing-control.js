@@ -23,6 +23,21 @@ function isRecurring(row) {
     return false;
 }
 
+function providerMissing(error) {
+    const status = Number(error?.status || error?.statusCode || 0);
+    const code = String(error?.code || '').toLowerCase();
+    const detail = String(error?.message || error || '');
+    return status === 404 || code === 'resource_missing' || /\b404\b|no such subscription|not found|does not exist/i.test(detail);
+}
+
+function stripeTerminalStatus(status) {
+    return ['canceled', 'cancelled', 'incomplete_expired'].includes(String(status || '').toLowerCase());
+}
+
+function paypalTerminalStatus(status) {
+    return ['CANCELLED', 'EXPIRED'].includes(String(status || '').toUpperCase());
+}
+
 function retryDelayMs(failures) {
     const count = Math.max(1, Number(failures || 1));
     return Math.min(MAX_RETRY_MS, MIN_RETRY_MS * (2 ** Math.min(5, count - 1)));
@@ -62,6 +77,31 @@ async function stripeAdapter() {
         },
         async resumeRenewal(row, { idempotencyKey = null } = {}) {
             await stripeClient.subscriptions.update(row.provider_subscription_id, { cancel_at_period_end: false }, idempotencyKey ? { idempotencyKey } : undefined);
+        },
+        async terminate(row, { idempotencyKey = null } = {}) {
+            try {
+                let subscription = await stripeClient.subscriptions.retrieve(row.provider_subscription_id, { expand: ['items.data.price'] });
+                if (stripeTerminalStatus(subscription?.status)) {
+                    return { status: 'cancelled', remoteStatus: String(subscription.status || '').toLowerCase() };
+                }
+                subscription = await stripeClient.subscriptions.cancel(
+                    row.provider_subscription_id,
+                    { invoice_now: false, prorate: false },
+                    idempotencyKey ? { idempotencyKey } : undefined
+                );
+                let remoteStatus = String(subscription?.status || '').toLowerCase();
+                if (!stripeTerminalStatus(remoteStatus)) {
+                    subscription = await stripeClient.subscriptions.retrieve(row.provider_subscription_id, { expand: ['items.data.price'] });
+                    remoteStatus = String(subscription?.status || '').toLowerCase();
+                }
+                if (!stripeTerminalStatus(remoteStatus)) {
+                    throw new Error(`Stripe subscription ${row.provider_subscription_id} is still ${remoteStatus || 'non-terminal'} after cancellation.`);
+                }
+                return { status: 'cancelled', remoteStatus };
+            } catch (error) {
+                if (providerMissing(error)) return { status: 'already_missing', remoteStatus: 'missing' };
+                throw error;
+            }
         }
     };
 }
@@ -150,6 +190,27 @@ async function paypalAdapter() {
         },
         async resumeRenewal() {
             throw new Error('A cancelled PayPal subscription cannot be resumed automatically. The customer must start a new PayPal subscription.');
+        },
+        async terminate(row, { idempotencyKey = null } = {}) {
+            try {
+                let subscription = await paypalApi(`/v1/billing/subscriptions/${encodeURIComponent(row.provider_subscription_id)}`);
+                let remoteStatus = String(subscription?.status || '').toUpperCase();
+                if (paypalTerminalStatus(remoteStatus)) return { status: 'cancelled', remoteStatus };
+                await paypalApi(`/v1/billing/subscriptions/${encodeURIComponent(row.provider_subscription_id)}/cancel`, {
+                    method: 'POST',
+                    body: { reason: 'Customer account hard-deleted in CAPTAiNFiN' },
+                    idempotencyKey
+                });
+                subscription = await paypalApi(`/v1/billing/subscriptions/${encodeURIComponent(row.provider_subscription_id)}`);
+                remoteStatus = String(subscription?.status || '').toUpperCase();
+                if (!paypalTerminalStatus(remoteStatus)) {
+                    throw new Error(`PayPal subscription ${row.provider_subscription_id} is still ${remoteStatus || 'non-terminal'} after cancellation.`);
+                }
+                return { status: 'cancelled', remoteStatus };
+            } catch (error) {
+                if (providerMissing(error)) return { status: 'already_missing', remoteStatus: 'MISSING' };
+                throw error;
+            }
         }
     };
 }
@@ -158,6 +219,22 @@ async function defaultAdapter(provider) {
     if (provider === 'stripe') return stripeAdapter();
     if (provider === 'paypal') return paypalAdapter();
     throw new Error('Unsupported recurring payment provider.');
+}
+
+async function terminateRecurringForDeletion(row, { adapter = null, idempotencyKey = null } = {}) {
+    if (!isRecurring(row)) throw new Error('This is not a recurring Stripe/PayPal subscription.');
+    const remoteAdapter = adapter || await defaultAdapter(row.source);
+    if (typeof remoteAdapter.terminate !== 'function') throw new Error(`Recurring ${row.source} adapter cannot prove immediate cancellation.`);
+    const result = await remoteAdapter.terminate(row, { idempotencyKey });
+    if (!result || !['cancelled', 'already_missing'].includes(result.status)) {
+        throw new Error(`Recurring ${row.source} subscription cancellation could not be verified.`);
+    }
+    return {
+        ...result,
+        provider: row.source,
+        providerSubscriptionId: row.provider_subscription_id,
+        subscriptionId: row.id || null
+    };
 }
 
 async function subscriptionById(id) {
@@ -392,7 +469,11 @@ module.exports = {
     MIN_RETRY_MS,
     MAX_RETRY_MS,
     isRecurring,
+    providerMissing,
+    stripeTerminalStatus,
+    paypalTerminalStatus,
     retryDelayMs,
+    terminateRecurringForDeletion,
     syncSubscription,
     syncDue,
     setRenewal,
