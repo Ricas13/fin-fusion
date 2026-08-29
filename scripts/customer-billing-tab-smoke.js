@@ -8,6 +8,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const viewV2 = read('src/platform/customer-360-view-v2.js');
 const admin360 = read('src/platform/admin-customer-360.js');
+const customer360 = read('src/platform/customer-360.js');
 const billingControl = read('src/payments/billing-control.js');
 const planChange = read('src/payments/customer-plan-change.js');
 
@@ -17,6 +18,8 @@ assert(viewV2.includes("function billing(d,token,options={})"), 'billing() must 
 assert(/renewalRow=s\?`.*Renewal.*pill\(s\.cancel_at_period_end\?'Off':'On'/.test(viewV2), 'billing tab must show renewal on/off derived from cancel_at_period_end');
 assert(viewV2.includes("kv('Open plan change'") && viewV2.includes('pending.target_plan_name'), 'billing tab must show the open plan-change target and effective date when one exists');
 assert(viewV2.includes('No refunds are issued from this page'), 'billing tab must not offer in-app refunds');
+assert(customer360.includes('COALESCE(s.price_minor_snapshot,p.price_minor) price_minor')&&customer360.includes('COALESCE(s.currency_snapshot,p.currency) currency')&&customer360.includes('COALESCE(s.billing_interval_snapshot,p.billing_interval) billing_interval'),'Billing facts must read preserved subscription billing snapshots, not blindly adopt a manually assigned plan\'s commercial defaults');
+assert(customer360.includes("p.is_free_tier AND NOT ((s.source='stripe'")&&customer360.includes("s.source='paypal'"),'a recurring provider period end must remain visible even when a manual entitlement edit points access at a free-tier plan');
 
 // Actions must call the existing billing-control/plan-change services
 // directly, not new SQL in the view layer.
