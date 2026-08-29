@@ -13,6 +13,7 @@ const customerStremio=read('src/platform/customer-stremio.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
 const deletion=read('src/platform/customer-deletion.js');
+const externalDeletion=read('src/platform/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
@@ -53,14 +54,14 @@ assert(management.includes('stremio.entitledSubscription(req.params.customerId)'
 assert(management.includes("serviceType:type")&&management.includes('hasJellyfinAccount'),'Customer 360 must expose service-aware action context');
 assert(management.includes('data-native-submit="true"'),'single-customer plan/expiry actions must bypass inline AJAX form handling');
 
-// Hard deletion is a cross-system saga: keep the customer/access inventory until
-// every remote Jellyfin identity has been confirmed deleted or already missing,
-// then perform the irreversible local cleanup through one constrained DB finalizer.
+// Hard deletion is a cross-system saga: persist every access-bearing target
+// before destructive work, then perform irreversible local cleanup through one
+// constrained DB finalizer only after all blocking targets are confirmed absent.
 assert(deletionMigration.includes('CREATE TABLE IF NOT EXISTS public.customer_deletion_jobs'),'hard deletion must have durable operation state');
 assert(deletionMigration.includes("WHERE status IN ('pending','running','failed')")&&deletionMigration.includes('customer_deletion_jobs_one_active_customer_idx'),'only one unfinished hard deletion may own a customer');
 assert(deletion.includes('enqueueHardDelete(customerId')&&deletion.includes('processDeletionJob(job.id)'),'admin hard delete must enqueue durably before attempting destructive work');
-assert(deletion.includes('holdAccess:false,removeLocal:false,continueOnMissing:true'),'hard deletion remote phase must retain every local Jellyfin row for retry');
-assert(deletion.includes("Number(error?.status)===404")&&deletion.includes("status:'already_missing'"),'remote 404 must be a successful resumable deletion outcome');
+assert(externalDeletion.includes("provider:'jellyfin'")&&externalDeletion.includes("resourceType:'user'")&&externalDeletion.includes("desiredState:'absent'"),'hard deletion must snapshot Jellyfin identities as durable absent targets before remote removal');
+assert(externalDeletion.includes("Number(error?.status)===404")&&externalDeletion.includes("status:'already_missing'"),'remote 404 must be a successful resumable deletion outcome');
 assert(deletion.includes("CUSTOMER_DELETION_PENDING")&&deletion.includes("status='failed'")&&deletion.includes('next_attempt_at=NOW()+make_interval'),'failed deletion must persist a retryable state with backoff');
 assert(deletion.includes("SELECT public.finalize_customer_deletion($1) AS result"),'portal cleanup must cross the constrained privileged finalization boundary only after remote confirmation is persisted');
 const confirmationGuard=deletionMigration.indexOf('COALESCE(confirmed_accounts,0) <> expected_accounts');
