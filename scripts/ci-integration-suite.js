@@ -52,6 +52,7 @@ const suites = [
       ['node', ['scripts/affiliate-service-credit-smoke.js']],
       ['node', ['scripts/affiliate-mixed-payment-smoke.js']],
       ['node', ['scripts/affiliate-credit-invariants-smoke.js']],
+      ['node', ['scripts/affiliate-reservation-reversal-smoke.js']],
     ],
   },
   {
