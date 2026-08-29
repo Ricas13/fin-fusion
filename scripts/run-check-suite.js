@@ -84,17 +84,33 @@ function run(command, index, total) {
 }
 
 function annotationEscape(value) {
-  return String(value || '')
-    .replace(/%/g, '%25')
-    .replace(/\r/g, '%0D')
-    .replace(/\n/g, '%0A');
+  return String(value || '').replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+}
+
+function selectedCommands(all) {
+  if (!fs.existsSync('.check-bisect')) return { commands:all, offset:0, originalTotal:all.length, mode:'full' };
+  const mode = fs.readFileSync('.check-bisect','utf8').trim().toLowerCase();
+  const midpoint = Math.ceil(all.length / 2);
+  if (mode === 'first') return { commands:all.slice(0, midpoint), offset:0, originalTotal:all.length, mode };
+  if (mode === 'second') return { commands:all.slice(midpoint), offset:midpoint, originalTotal:all.length, mode };
+  throw new Error(`Unsupported .check-bisect mode: ${mode}`);
 }
 
 async function main() {
   if (!scripts[scriptName]) throw new Error(`Unknown npm script: ${scriptName}`);
   try { fs.rmSync(failureFile, { force:true }); } catch (_) {}
-  const commands = expand(scripts[scriptName], [scriptName]);
-  for (let i = 0; i < commands.length; i += 1) await run(commands[i], i + 1, commands.length);
+  const all = expand(scripts[scriptName], [scriptName]);
+  const selected = selectedCommands(all);
+  console.log(`check suite mode=${selected.mode}; running ${selected.commands.length}/${selected.originalTotal} commands`);
+  for (let i = 0; i < selected.commands.length; i += 1) {
+    try {
+      await run(selected.commands[i], selected.offset + i + 1, selected.originalTotal);
+    } catch (error) {
+      error.commandIndex = selected.offset + i + 1;
+      error.commandTotal = selected.originalTotal;
+      throw error;
+    }
+  }
 }
 
 main().catch(error => {
