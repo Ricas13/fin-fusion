@@ -27,16 +27,20 @@ async function main() {
         assert.strictEqual(Number(authRemaining.rows[0].n), 1, 'bounded retention should leave the third eligible row for a later run');
 
         // Provider saga retention only accepts terminal reconciled/compensated operations.
+        const owner = (await client.query(
+            'INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id',
+            [`Retention ${suffix}`, `retention-${suffix}@example.invalid`]
+        )).rows[0];
         const pendingKey = `ci-pending-${suffix}`;
         const failedKey = `ci-failed-${suffix}`;
         const terminalKey = `ci-terminal-${suffix}`;
         await client.query(
-            `INSERT INTO provider_operations(provider,scope,operation_type,idempotency_key,state,created_at,updated_at)
+            `INSERT INTO provider_operations(provider,scope,owner_id,operation_type,idempotency_key,state,created_at,updated_at)
              VALUES
-             ('stripe','subscription','ci.retention',$1,'provider_applied',$4,$4),
-             ('paypal','subscription','ci.retention',$2,'failed',$4,$4),
-             ('stripe','subscription','ci.retention',$3,'reconciled',$4,$4)`,
-            [pendingKey, failedKey, terminalKey, old]
+             ('stripe','subscription',$4,'ci.retention',$1,'provider_applied',$5,$5),
+             ('paypal','subscription',$4,'ci.retention',$2,'failed',$5,$5),
+             ('stripe','subscription',$4,'ci.retention',$3,'reconciled',$5,$5)`,
+            [pendingKey, failedKey, terminalKey, owner.id, old]
         );
         const providerBatch = await client.query("SELECT run_data_retention_batch('provider_operations',$1,100) AS deleted", [cutoff]);
         assert(Number(providerBatch.rows[0].deleted) >= 1, 'terminal provider operation should be retention eligible');
