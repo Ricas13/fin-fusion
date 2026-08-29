@@ -1,10 +1,8 @@
 /* CAPTAiNFiN admin card density system ---------------------------------
-   A six-column foundation gives configuration pages three deliberate widths:
-   3-up = 2 columns, 2-up = 3 columns, 1-up = all 6 columns.
-
-   Use the smallest width that keeps the control understandable. Read-only KPI
-   strips and data tables keep their own semantic layouts; this layer is for
-   card-based administration/settings surfaces. */
+   Shared configuration grids must not fight their component-specific layout
+   owners. Generic settings/server cards keep this density layer; planControlGrid
+   is owned by admin-plan-control-room.css so plan editors cannot regress into
+   a 3-up mosaic. */
 
 :root{
   --admin-card-gap:10px;
@@ -20,7 +18,6 @@
   grid-auto-flow:row dense;
 }
 
-/* Explicit widths for new/exceptional surfaces. */
 .adminCardDensity--3,
 [data-card-density="3"]{grid-column:span 2!important}
 .adminCardDensity--2,
@@ -28,9 +25,6 @@
 .adminCardDensity--1,
 [data-card-density="1"]{grid-column:1/-1!important}
 
-/* Settings pages default to three compact cards per row. Two-card pages use
-   the available width instead of leaving a dead third column; exactly four
-   cards balance as 2x2. Explicit data-card-density always wins. */
 .settings-grid>*{grid-column:span 2;min-width:0;align-self:start}
 .settings-grid>:only-child{grid-column:1/-1}
 .settings-grid:has(>:nth-child(2):last-child)>*{grid-column:span 3}
@@ -41,9 +35,6 @@
 .settings-grid>[data-card-density="1"]{grid-column:1/-1!important}
 .settings-card{align-self:start;min-width:0}
 
-/* serverGrid is used for ordinary summary/config cards throughout Customer,
-   Server and Settings views. Give it the same balanced default without
-   changing KPI strips, analytics charts or data tables. */
 .serverGrid>*{grid-column:span 2;min-width:0;align-self:start}
 .serverGrid>:only-child{grid-column:1/-1}
 .serverGrid:has(>:nth-child(2):last-child)>*{grid-column:span 3}
@@ -52,42 +43,18 @@
 .serverGrid>[data-card-density="2"]{grid-column:span 3!important}
 .serverGrid>[data-card-density="1"]{grid-column:1/-1!important}
 
-/* Keep personal connection cards at a maximum of three across. These are
-   short settings cards, not KPI tiles, so four-across made the controls feel
-   unnecessarily narrow. */
 .notificationIdentityGrid{
   grid-template-columns:repeat(3,minmax(0,1fr))!important;
   align-items:start!important;
 }
 
-/* Jellyfin plan editor --------------------------------------------------
-   The collapsed advanced controls make Availability, Placement and Libraries
-   safe at 3-up density. Product/Access and Requests/Commerce remain 2-up. */
-.planControlGrid{
-  grid-template-columns:repeat(6,minmax(0,1fr))!important;
-  grid-auto-flow:row dense;
-  align-items:start!important;
-  gap:var(--admin-card-gap)!important;
-}
-.planControlGrid>.planConfigCard{min-width:0;align-self:start;grid-column:span 2!important}
-.planControlGrid>#product,
-.planControlGrid>#access,
-.planControlGrid>#requests,
-.planControlGrid>#commerce{grid-column:span 3!important}
-.planControlGrid>#availability,
-.planControlGrid>#delivery,
-.planControlGrid>#libraries{grid-column:span 2!important}
-
-/* No equal-height stretching: a short configuration card should end when its
-   controls end instead of inheriting the height of a taller neighbour. */
+/* planControlGrid deliberately has no column/span rules here. Its complete
+   one-column / max-two-column contract lives in admin-plan-control-room.css. */
 .planConfigCard,
 .settings-card,
 .serverCard,
 .stremioCard{height:auto;align-self:start}
 
-/* Stremio plan cards contain longer household/help controls, so their four
-   primary editors stay intentionally 2-up. Requests and source management are
-   wide exception surfaces because they contain permission/source matrices. */
 .stremioPlanGrid{
   grid-template-columns:repeat(2,minmax(0,1fr))!important;
   gap:var(--admin-card-gap)!important;
@@ -97,14 +64,9 @@
 .requestPlanCard.stremioCard,
 .stremioSourcesCard{align-self:start}
 
-/* Complex capability/source editors and analytics remain intentionally wide
-   or 2-up. Their controls/tables need horizontal context and are exceptions to
-   the 3-up default rather than candidates for forced mini-cards. */
 .capabilityControlGrid,
 .analyticsGrid{align-items:start!important}
 
-/* Shared card chrome: reduce decorative vertical bulk without shrinking real
-   controls. Typography/input minimums stay owned by their existing components. */
 .settings-card>.card-header{min-height:44px!important;padding:8px 11px!important}
 .settings-card>.card-body{padding:10px 11px!important}
 .settings-card .formGroup{margin-bottom:8px!important}
@@ -114,14 +76,12 @@
 @media(max-width:1180px){
   .adminCardDensityGrid,
   .settings-grid,
-  .serverGrid,
-  .planControlGrid{
+  .serverGrid{
     grid-template-columns:repeat(2,minmax(0,1fr))!important;
   }
   .adminCardDensityGrid>*,
   .settings-grid>*,
   .serverGrid>*,
-  .planControlGrid>.planConfigCard,
   .adminCardDensity--3,
   .adminCardDensity--2,
   [data-card-density="3"],
@@ -129,13 +89,6 @@
   .adminCardDensity--1,
   [data-card-density="1"]{grid-column:1/-1!important}
   .settings-grid>:has(.dataTable,.tableWrap,.booleanMatrix,.capabilityLibraryGrid){grid-column:1/-1!important}
-  .planControlGrid>#product,
-  .planControlGrid>#access,
-  .planControlGrid>#requests,
-  .planControlGrid>#commerce,
-  .planControlGrid>#availability,
-  .planControlGrid>#delivery,
-  .planControlGrid>#libraries{grid-column:span 1!important}
   .notificationIdentityGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
 
@@ -143,13 +96,11 @@
   .adminCardDensityGrid,
   .settings-grid,
   .serverGrid,
-  .planControlGrid,
   .stremioPlanGrid,
   .notificationIdentityGrid{grid-template-columns:1fr!important}
   .adminCardDensityGrid>*,
   .settings-grid>*,
   .serverGrid>*,
-  .planControlGrid>*,
   .adminCardDensity--1,
   .adminCardDensity--2,
   .adminCardDensity--3,

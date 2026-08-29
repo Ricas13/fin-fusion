@@ -43,12 +43,16 @@
    individual cards expose the useful state. The duplicate status strip used
    to consume a full extra row above every editor. */
 .planControlHeader{display:none!important}
-/* Keep one predictable desktop geometry: every configuration card occupies
-   exactly one half-width column. The old span2/span3 mosaic produced 2-card,
-   3-card and full-width rows on the same screen. */
-.planControlGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px;align-items:stretch!important}
-.planConfigCard{min-width:0;height:100%;border:1px solid var(--border);border-radius:10px;background:var(--panel);overflow:hidden}
-.planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}
+/* One job per row by default. Only deliberate peer cards opt into the two
+   column desktop row below; legacy span classes no longer build mosaics. */
+.planControlGrid{display:grid;grid-template-columns:1fr!important;gap:10px;align-items:start!important}
+.planConfigCard{min-width:0;height:auto;align-self:start;border:1px solid var(--border);border-radius:10px;background:var(--panel);overflow:hidden}
+.planConfigCard.span2,.planConfigCard.span3{grid-column:1/-1!important}
+.planControlGrid>.requestPlanCard{grid-column:1/-1!important;align-self:start!important;height:auto!important}
+@media(min-width:1100px){
+  .planControlGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .planControlGrid>#access,.planControlGrid>#availability{grid-column:auto!important}
+}
 .planConfigHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid var(--border-soft);background:rgba(255,255,255,.012)}
 .planConfigHead h2,.planConfigHead h3{margin:0;color:var(--text-strong);font-size:13px}
 .planConfigHead p{margin:2px 0 0;color:var(--muted);font-size:10px;line-height:1.35}
@@ -58,6 +62,8 @@
 .planConfigBody .formGrid{gap:8px 10px}
 .planConfigBody .toggleGrid{gap:6px;margin:8px 0}
 .planConfigBody .toggleRow{padding:8px 9px}
+.planConfigBody .toggleRow>span{min-width:0}
+.planConfigBody .toggleRow strong,.planPermissionGrid .toggleRow strong{overflow-wrap:normal;word-break:normal;hyphens:none}
 .planConfigBody .buttonRow{margin-top:9px}
 .planConfigFacts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:9px}
 .planConfigFact{padding:7px 8px;border:1px solid var(--border-soft);border-radius:8px;background:var(--panel2)}
@@ -124,7 +130,7 @@
   .attentionTable{min-width:760px}
   .planControlRoom,.planControlGrid{gap:12px}
   .planControlGrid{grid-template-columns:1fr!important}
-  .planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}
+  .planConfigCard.span2,.planConfigCard.span3{grid-column:1/-1!important}
   .planConfigHead{padding:12px 13px}
   .planConfigBody{padding:12px 13px}
   .planConfigBody .formGroup{margin-bottom:12px}
