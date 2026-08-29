@@ -65,11 +65,11 @@ async function preview(entitlement, req, options = {}) {
 }
 
 function deniedTitle() {
-  return 'Outside household connection';
+  return 'Household IP limit reached';
 }
 
 function deniedMessage(_decision) {
-  return 'This Stremio plan is already linked to another household internet connection. The connection you are using now is different, so playback is blocked. Connect from the registered household connection, wait until it can be replaced automatically, or change your household connection from your account when eligible.';
+  return 'This Stremio plan has already reached its allowed household internet connections. Connect from a registered household connection, wait until a connection can be replaced automatically, or change your household connection from your account when eligible.';
 }
 
 function blockedMediaIsWebReady(value) {
