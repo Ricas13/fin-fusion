@@ -82,7 +82,6 @@ function main() {
     const provisioningSource = source('src/jellyfin/resilient-provisioning.js');
     const reconcile = section(provisioningSource, 'async function reconcileCustomerUnlocked', 'async function reconcileCustomer');
     assert(reconcile.includes('assertDiscordSyncResult(await discordRoles.syncRoleForCustomer'), 'Discord role sync is not awaited by the canonical reconciliation owner.');
-    assert(!reconcile.includes("syncRoleForCustomer(customerId").includes?.('.catch('), 'invalid test guard');
     assert(!/syncRoleForCustomer\([^\n]+\)\.catch\(/.test(reconcile), 'Discord role failure is still fire-and-forget.');
     assert(reconcile.includes('primaryEntitlement&&!primaryEntitlement.blocked'), 'Blocked primary entitlement can still request a managed Discord role.');
     assert(reconcile.includes('freeEntitlement&&!freeEntitlement.blocked'), 'Blocked Free entitlement can still request a managed Discord role.');
