@@ -12,7 +12,6 @@ function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private
 function number(value){return Number(value||0).toLocaleString('en-GB');}
 function date(value){if(!value)return'Never';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB');}
 function metric(label,value,meta='',href=''){const body=`<div class="metricLabel">${esc(label)}</div><div class="metricValue">${esc(number(value))}</div>${meta?`<div class="subText">${esc(meta)}</div>`:''}`;return href?`<a class="metric" href="${esc(href)}" style="text-decoration:none">${body}</a>`:`<div class="metric">${body}</div>`;}
-function actions(items){return `<div class="quick-actions">${items.map(item=>`<a class="quick-action" href="${esc(item.href)}"><strong>${esc(item.title)}</strong><span>${esc(item.text)}</span></a>`).join('')}</div>`;}
 function csrfInput(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
 function leaseResetAction(row,token){if(!row.customer_id)return'<span class="muted">No customer link</span>';return `<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(row.customer_id)}/stremio-household/reset">${csrfInput(token)}<button class="button secondary btn-sm" type="submit">Reset lease</button></form>`;}
 
@@ -74,35 +73,21 @@ async function stremioPlaybackData(){
 }
 
 async function stremioPlaybackPage(req){
-  await runtimeSettings.ensureLoaded();const d=await stremioPlaybackData(),s=d.summary,resetToken=csrf.token(req);
+  await runtimeSettings.ensureLoaded();
+  const d=await stremioPlaybackData(),s=d.summary,resetToken=csrf.token(req);
   const rows=d.recent.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Hidden user</th><th>Server</th><th>State</th><th>Last managed playback</th></tr></thead><tbody>${d.recent.map(row=>`<tr><td><a href="/admin/users/${esc(row.customer_id)}"><strong>${esc(row.customer_name)}</strong></a><div class="subText">${esc(row.customer_email||'')}</div></td><td>${esc(row.hidden_username||'—')}</td><td>${esc(row.server_name)}</td><td><span class="pill ${row.status==='active'&&!row.last_error?'good':row.status==='error'?'bad':'warn'}">${esc(row.status)}</span>${row.last_error?`<div class="subText">${esc(row.last_error)}</div>`:''}</td><td>${esc(date(row.last_playback_info_at||row.updated_at))}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No managed Stremio accounts have been created yet.</div>';
   const leaseRows=d.leases.length?`<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Plan</th><th>IP family</th><th>Network fingerprint</th><th>Leased</th><th>Expires</th><th>Actions</th></tr></thead><tbody>${d.leases.map(row=>`<tr><td>${row.customer_id?`<a href="/admin/users/${esc(row.customer_id)}"><strong>${esc(row.customer_name)}</strong></a>`:`<strong>${esc(row.customer_name||'Unknown entitlement')}</strong>`}<div class="subText">${esc(row.customer_email||row.subject_key||'')}</div></td><td>${esc(row.plan_name||'Unknown plan')}<div class="subText">${esc(row.plan_code||'')}</div></td><td><span class="pill accent">${esc(String(row.network_family||'unknown').toUpperCase())}</span></td><td><code>${esc(String(row.network_hash||'').slice(0,12))}...</code><div class="subText">Plain IP addresses are not stored.</div></td><td>${esc(date(row.last_seen_at||row.first_seen_at))}</td><td>${esc(date(row.expires_at))}</td><td>${leaseResetAction(row,resetToken)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No active Stremio household IP leases right now.</div>';
   const body=`<div class="metrics">${metric('Active IP leases',d.leases.length,'Current IPv4/IPv6 household windows')}${metric('Managed accounts',s.managed_accounts,'Hidden Jellyfin identities')}${metric('Active',s.active_accounts,'Ready managed mappings')}${metric('Used in 24h',s.playback_24h,'Managed PlaybackInfo activity')}${metric('Needs attention',s.attention,'Mappings with an error','/admin/servers/stremio')}</div><div class="securityNote standalone"><strong>External playback is intentionally not tracked here.</strong><div class="subText">External Stremio results go directly from the customer to the external Jellyfin server, so CAPTAiNFiN never sees or proxies those media bytes. Household lease timing is tracked without plaintext IP storage.</div></div><section class="section"><div class="sectionHead"><h2>Current household IP leases</h2><a class="button secondary btn-sm" href="/admin/users?service=stremio">Open Stremio customers</a></div>${leaseRows}</section><section class="section"><div class="sectionHead"><h2>Recent managed playback</h2><a class="button secondary btn-sm" href="/admin/servers/stremio#activity">Open source activity</a></div>${rows}</section>`;
   return layout({siteName:runtimeSettings.siteName(),active:'stremio-playback',title:'Stremio household leases',subtitle:'Current user/IP lease windows and managed playback health',body});
 }
 
-const resellerSections={
-  '/admin/resellers':{active:'reseller-overview',title:'Resellers',subtitle:'Reserved product module',lead:'The reseller module is intentionally structural for now. The commercial model is a monthly fee tied to a configurable Jellyfin user allowance.'},
-  '/admin/resellers/resellers':{active:'reseller-accounts',title:'Resellers',subtitle:'Reseller accounts',lead:'Future reseller organisations and account status will live here.'},
-  '/admin/resellers/plans':{active:'reseller-plans',title:'Reseller plans',subtitle:'Commercial model',lead:'Future reseller plans will define a monthly Jellyfin user allowance plus the Jellyfin policy applied to users created under that plan.'},
-  '/admin/resellers/users':{active:'reseller-users',title:'Reseller users',subtitle:'Allocations',lead:'Future reseller-created Jellyfin users and allocation limits will live here.'},
-  '/admin/resellers/servers':{active:'reseller-servers',title:'Reseller servers',subtitle:'Delivery scope',lead:'Future reseller server eligibility and placement rules will live here.'},
-  '/admin/resellers/activity':{active:'reseller-activity',title:'Reseller activity',subtitle:'Operational history',lead:'Future reseller provisioning and usage events will live here.'}
-};
-function resellerPage(path){const page=resellerSections[path]||resellerSections['/admin/resellers'];const body=`<div class="notice"><strong>Reserved for later development.</strong> ${esc(page.lead)}</div>${actions([
-  {title:'Shared Customers',text:'Customer identity stays global rather than duplicated per module',href:'/admin/users'},
-  {title:'Shared Commerce',text:'Orders and payments remain authoritative in one place',href:'/admin/commerce'},
-  {title:'Jellyfin',text:'Current managed-server product workspace',href:'/admin/servers'},
-  {title:'Stremio',text:'Current stream-source product workspace',href:'/admin/servers/stremio'}
-])}`;return layout({siteName:runtimeSettings.siteName(),active:page.active,title:page.title,subtitle:page.subtitle,body});}
-
 function createAdminProductModulesRouter(){
-  const router=express.Router();router.use('/admin',gate,noStore);
+  const router=express.Router();
+  router.use('/admin',gate,noStore);
   router.get('/admin/jellyfin',(_req,res)=>res.redirect('/admin/servers'));
   router.get('/admin/stremio',(_req,res)=>res.redirect('/admin/servers/stremio'));
   router.get('/admin/stremio/playback',async(req,res,next)=>{try{return res.send(await stremioPlaybackPage(req));}catch(error){return next(error);}});
-  for(const path of Object.keys(resellerSections))router.get(path,async(_req,res,next)=>{try{await runtimeSettings.ensureLoaded();return res.send(resellerPage(path));}catch(error){return next(error);}});
   return router;
 }
 
-module.exports={createAdminProductModulesRouter,jellyfinData,stremioData,stremioPlaybackData,resellerSections};
+module.exports={createAdminProductModulesRouter,jellyfinData,stremioData,stremioPlaybackData};
