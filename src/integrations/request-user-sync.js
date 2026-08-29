@@ -7,6 +7,12 @@ const planPolicy = require('./request-plan-policy');
 const outbound = require('../security/outbound-url-policy');
 
 const REQUEST_PERMISSION = planPolicy.DEFAULT_REQUEST_MASK;
+const DEFAULT_SYNC_CONCURRENCY = 3;
+const MAX_SYNC_CONCURRENCY = 8;
+const MANAGED_MAIN_FIELDS = [
+  'username','email','locale','discoverRegion','streamingRegion','region','originalLanguage',
+  'watchlistSyncMovies','watchlistSyncTv','movieQuotaLimit','movieQuotaDays','tvQuotaLimit','tvQuotaDays'
+];
 
 function cleanBaseUrl(value) {
   const raw = String(value || '').trim();
@@ -55,6 +61,24 @@ function fallbackEmail(customerId) {
 }
 function quotaLimit(value) { const n = Number(value); return Number.isInteger(n) && n > 0 ? n : 0; }
 function quotaDays(value) { const n = Number(value); return Number.isInteger(n) && n > 0 ? n : 30; }
+function syncConcurrency(value = process.env.REQUEST_USER_SYNC_CONCURRENCY) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(MAX_SYNC_CONCURRENCY, parsed) : DEFAULT_SYNC_CONCURRENCY;
+}
+async function mapBounded(items, limit, mapper) {
+  const values = Array.from(items || []), results = new Array(values.length);
+  if (!values.length) return results;
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(1, Number(limit) || 1), values.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index], index);
+    }
+  }));
+  return results;
+}
 
 async function syncCandidates() {
   const result = await query(`
@@ -114,12 +138,11 @@ function requestLocale(override, current) {
   const value = planValue(override, current, 'en');
   return String(value || '').trim() || 'en';
 }
-async function setQuotas(externalUserId, externalUsername, plan, externalEmail = null) {
-  const current = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`);
+function desiredMainSettings(current, externalUsername, plan, externalEmail = null) {
   const email = validEmail(current?.email) || validEmail(externalEmail) || fallbackEmail(plan?.customer_id);
   const discoverRegion = planValue(plan?.request_discover_region, current?.discoverRegion ?? current?.region, null);
   const streamingRegion = planValue(plan?.request_streaming_region, current?.streamingRegion ?? current?.region, null);
-  const body = {
+  return {
     username: current?.username ?? externalUsername ?? cleanUsername(plan?.username),
     email,
     locale: requestLocale(plan?.request_locale, current?.locale),
@@ -136,8 +159,20 @@ async function setQuotas(externalUserId, externalUsername, plan, externalEmail =
     tvQuotaLimit: quotaLimit(plan?.request_tv_quota_limit),
     tvQuotaDays: quotaDays(plan?.request_tv_quota_days)
   };
-  await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`, { method: 'POST', body });
-  return body;
+}
+function settingValue(value) { return value === undefined || value === null ? null : value; }
+function mainSettingsChanged(current, desired) {
+  return MANAGED_MAIN_FIELDS.some(field => settingValue(current?.[field]) !== settingValue(desired?.[field]));
+}
+async function syncMainSettings(externalUserId, externalUsername, plan, externalEmail = null) {
+  const current = await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`);
+  const settings = desiredMainSettings(current, externalUsername, plan, externalEmail);
+  const changed = mainSettingsChanged(current, settings);
+  if (changed) await apiRequest(`/api/v1/user/${encodeURIComponent(externalUserId)}/settings/main`, { method: 'POST', body: settings });
+  return { settings, changed };
+}
+async function setQuotas(externalUserId, externalUsername, plan, externalEmail = null) {
+  return (await syncMainSettings(externalUserId, externalUsername, plan, externalEmail)).settings;
 }
 
 async function mark(customerId, fields = {}) {
@@ -156,17 +191,18 @@ function desiredPermissions(candidate, currentPermissions) {
 async function suspendCustomer(candidate, external, { planId = null, desired = null } = {}) {
   if (!external?.id) {
     await mark(candidate.customer_id, { status: 'skipped', email: candidate.external_email || validEmail(candidate.email), username: candidate.external_username || cleanUsername(candidate.username), passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: desired ?? candidate.active_permissions, accessSuspended: true, planId, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
-    return { status: 'ignored', customerId: candidate.customer_id };
+    return { status: 'ignored', customerId: candidate.customer_id, remoteChanged: false };
   }
   try {
     const currentPermissions = await permissionState(external.id);
     const activePermissions = desired == null ? desiredPermissions(candidate, currentPermissions) : planPolicy.sanitizePermissionMask(desired) ?? REQUEST_PERMISSION;
-    if (currentPermissions !== 0) await setPermissions(external.id, 0);
+    const remoteChanged = currentPermissions !== 0;
+    if (remoteChanged) await setPermissions(external.id, 0);
     await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || candidate.external_email || validEmail(candidate.email), username: external.username || candidate.external_username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions, accessSuspended: true, planId, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days });
-    return { status: 'suspended', customerId: candidate.customer_id };
+    return { status: 'suspended', customerId: candidate.customer_id, remoteChanged };
   } catch (error) {
     await mark(candidate.customer_id, { status: 'failed', externalUserId: external.id, email: external.email || candidate.external_email, username: external.username || candidate.username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
-    return { status: 'failed', customerId: candidate.customer_id, error: error.message };
+    return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
   }
 }
 function indexesFor(users) {
@@ -193,13 +229,15 @@ async function syncCustomer(candidate, indexes = {}) {
     if (!external?.id) throw new Error('Request service did not return a user id.');
     const currentPermissions = await permissionState(external.id);
     const activePermissions = desiredPermissions(candidate, currentPermissions);
-    if (currentPermissions !== activePermissions) await setPermissions(external.id, activePermissions);
-    const settings = await setQuotas(external.id, external.username || username, candidate, external.email || email);
+    const permissionsChanged = currentPermissions !== activePermissions;
+    if (permissionsChanged) await setPermissions(external.id, activePermissions);
+    const main = await syncMainSettings(external.id, external.username || username, candidate, external.email || email);
+    const settings = main.settings;
     await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired: created || Boolean(candidate.password_reset_required), activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
-    return { status: 'synced', customerId: candidate.customer_id, created };
+    return { status: 'synced', customerId: candidate.customer_id, created, remoteChanged: created || permissionsChanged || main.changed };
   } catch (error) {
     await mark(candidate.customer_id, { status: 'failed', externalUserId: external?.id || candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
-    return { status: 'failed', customerId: candidate.customer_id, error: error.message };
+    return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
   }
 }
 function cleanFailureMessage(value) {
@@ -218,10 +256,21 @@ function countResult(summary, result) {
   else if (result.status === 'ignored') summary.ignored = Number(summary.ignored || 0) + 1;
   else if (result.created) summary.created++;
   else if (result.status === 'synced') summary.linked++;
+  if (summary._operational) {
+    summary._operational.usersInspected++;
+    if (result.status === 'failed') summary._operational.failed++;
+    else if (result.remoteChanged) summary._operational.updated++;
+    else summary._operational.unchanged++;
+  }
 }
 function finalizeSummary(summary) {
   const reasons = [...(summary._failureReasons || new Map()).entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   delete summary._failureReasons;
+  if (summary._operational) {
+    summary.metrics = { ...summary._operational, elapsedMs: Math.max(0, Date.now() - summary._operational.startedAt) };
+    delete summary.metrics.startedAt;
+    delete summary._operational;
+  }
   if (summary.failed > 0 && reasons.length) {
     const [message, count] = reasons[0];
     const otherCount = reasons.slice(1).reduce((total, [, occurrences]) => total + occurrences, 0);
@@ -229,11 +278,23 @@ function finalizeSummary(summary) {
   }
   return summary;
 }
+function operationalSummary(total) {
+  const summary = emptySummary(total);
+  summary._operational = { usersInspected: 0, unchanged: 0, updated: 0, failed: 0, concurrency: syncConcurrency(), startedAt: Date.now() };
+  return summary;
+}
+async function syncBatch(candidates, indexes, summary) {
+  const results = await mapBounded(candidates, summary._operational?.concurrency || syncConcurrency(), async candidate => {
+    try { return await syncCustomer(candidate, indexes); }
+    catch (error) { return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false }; }
+  });
+  for (const result of results) countResult(summary, result);
+}
 async function syncAll() {
   const config = await configuration();
   if (!config.configured) throw new Error('Configure the external request service URL and API key first.');
-  const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]), indexes = indexesFor(existing), summary = emptySummary(candidates.length);
-  for (const candidate of candidates) countResult(summary, await syncCustomer(candidate, indexes));
+  const [candidates, existing] = await Promise.all([syncCandidates(), externalUsers()]), indexes = indexesFor(existing), summary = operationalSummary(candidates.length);
+  await syncBatch(candidates, indexes, summary);
   return finalizeSummary(summary);
 }
 function selectedIds(values) {
@@ -248,8 +309,8 @@ async function syncSelected(customerIds) {
   const [allCandidates, existing] = await Promise.all([syncCandidates(), externalUsers()]);
   const wanted = new Set(ids), candidates = allCandidates.filter(row => wanted.has(String(row.customer_id)));
   if (candidates.length !== ids.length) throw new Error('One or more selected customers no longer exist. Refresh the page and try again.');
-  const indexes = indexesFor(existing), summary = emptySummary(candidates.length);
-  for (const candidate of candidates) countResult(summary, await syncCustomer(candidate, indexes));
+  const indexes = indexesFor(existing), summary = operationalSummary(candidates.length);
+  await syncBatch(candidates, indexes, summary);
   return finalizeSummary(summary);
 }
 async function syncOneCustomer(customerId) {
@@ -284,4 +345,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncCandidates, externalUsers, permissionState, setPermissions, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
