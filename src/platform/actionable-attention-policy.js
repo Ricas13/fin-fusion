@@ -22,20 +22,31 @@ function provisioningDecision(row, now = Date.now()) {
     if (!['failed', 'blocked'].includes(status)) return { visible: false, automatic: true, severity: null };
     const action = String(row?.last_action || row?.action || '').toLowerCase();
     const failures = Math.max(0, Number(row?.consecutive_failures || 0));
+    // When available, measure from the beginning of the current unresolved
+    // streak rather than the most recent retry. Otherwise each automatic retry
+    // would reset the blocked grace period forever.
     const problemStarted = timestamp(row?.problem_started_at || row?.last_attempt_at || row?.run_started_at || row?.updated_at);
     const ageMs = problemStarted ? Math.max(0, now - problemStarted) : Infinity;
 
+    // Access removal is safety-sensitive: a failed disable can leave service
+    // available after CAPTAiNFiN intended to revoke it, so do not hide it behind
+    // the normal retry tolerance.
     if (action === 'disable') {
         return { visible: true, automatic: false, severity: 'critical', failures, ageMs, reason: 'access_removal_failed' };
     }
 
     if (status === 'blocked') {
+        // Blocked usually means a missing server/plan/source prerequisite. Give
+        // a fresh failure a short window for fleet/source state to recover, then
+        // ask an operator to inspect the prerequisite rather than retry forever.
         if (ageMs < PROVISIONING_BLOCKED_GRACE_MS) {
             return { visible: false, automatic: true, severity: null, failures, ageMs, reason: 'blocked_grace' };
         }
         return { visible: true, automatic: false, severity: 'warning', failures, ageMs, reason: 'blocked' };
     }
 
+    // Ordinary failed reconciles already have 1/2/5/10/30/60 minute automatic
+    // retry backoff. The first two misses are telemetry, not operator work.
     if (failures < PROVISIONING_WARNING_FAILURES) {
         return { visible: false, automatic: true, severity: null, failures, ageMs, reason: 'automatic_retry' };
     }
@@ -52,9 +63,7 @@ function provisioningDecision(row, now = Date.now()) {
 function jobDecision(row, state) {
     const health = String(state || '').toLowerCase();
     const jobKey = String(row?.job_key || '');
-    if (health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)) {
-        return { visible: true, severity: 'critical', reason: 'disabled', failures: 0 };
-    }
+    if (health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)) return { visible: true, severity: 'critical', reason: 'disabled', failures: 0 };
     if (health === 'stale') return { visible: true, severity: 'warning', reason: 'stale' };
     if (!['failed', 'degraded'].includes(health)) return { visible: false, severity: null };
     const failures = Math.max(0, Number(row?.consecutive_failures || 0));
@@ -92,6 +101,8 @@ function workerDecision(row, now = Date.now(), appUptimeSeconds = process.uptime
 
 function serverDecision(row, healthJob) {
     const status = String(row?.health_status || '').toLowerCase();
+    // Degraded is diagnostic state from an initial miss. Needs Attention waits
+    // for repeated fleet-health failures before interrupting the operator.
     if (status !== 'offline') return { visible: false, severity: null, reason: status || 'unknown' };
     const failures = Math.max(0, Number(healthJob?.consecutive_failures || 0));
     if (healthJob && failures < JOB_WARNING_FAILURES) {
@@ -112,6 +123,9 @@ function paymentDecision(row) {
     if (type === 'dispute' || type === 'chargeback') {
         return { visible: true, severity: 'critical', reason: type };
     }
+    // Refunds, mapped renewal failures and mapped checkout completions are
+    // provider/lifecycle history. Surface them only when CAPTAiNFiN cannot
+    // safely identify the customer or finish checkout reconciliation.
     if (type === 'refund') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'history_only' };
     if (type === 'failed_renewal') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'warning' : null, reason: unresolvedIdentity ? 'unresolved_identity' : 'provider_retry' };
     if (type === 'checkout_completion') return { visible: unresolvedIdentity, severity: unresolvedIdentity ? 'critical' : null, reason: unresolvedIdentity ? 'checkout_reconciliation' : 'history_only' };
