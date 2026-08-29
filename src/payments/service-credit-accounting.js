@@ -90,7 +90,7 @@ async function recordRecovery(client,{customerId,currency,sourceRewardId,amountM
   const amount=int(amountMinor);if(amount<=0)return 0;
   await client.query(`INSERT INTO affiliate_credit_recoveries(customer_id,currency,source_reward_id,amount_minor,reason,metadata)
     VALUES($1,$2,$3,$4,$5,$6::jsonb)
-    ON CONFLICT(source_reward_id) DO UPDATE SET amount_minor=affiliate_credit_recoveries.amount_minor+EXCLUDED.amount_minor,
+    ON CONFLICT(source_reward_id) DO UPDATE SET amount_minor=GREATEST(affiliate_credit_recoveries.amount_minor,EXCLUDED.amount_minor),
       reason=EXCLUDED.reason,metadata=affiliate_credit_recoveries.metadata||EXCLUDED.metadata,updated_at=NOW()`,[customerId,cleanCurrency(currency),sourceRewardId,amount,String(reason).slice(0,500),JSON.stringify(metadata||{})]);
   return amount;
 }
