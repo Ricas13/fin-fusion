@@ -29,6 +29,9 @@ assert(/portal_delete/.test(bulkCustomers)&&/Delete portal customer \+ all local
 assert(/confirmWord:'DELETE'/.test(bulkCustomers)&&/meta\.immediate/.test(bulkCustomers),'Permanent portal deletion must require a distinct confirmation and must not run as an async customer-referencing job');
 assert(/name=\"planId\" required><option/.test(bulkCustomers)&&!/Use the plan UUID/.test(bulkCustomers),'bulk plan changes must use human plan choices, not UUID entry');
 assert(/name=\"serverId\" required><option/.test(bulkCustomers)&&!/Use the server UUID/.test(bulkCustomers),'bulk server moves must use human server choices, not UUID entry');
+assert(/name=\"reason\" minlength=\"3\" maxlength=\"500\" required/.test(bulkCustomers)&&/Required · at least 3 characters\. Stored on the audit log\./.test(bulkCustomers),'bulk destructive reasons must explain and enforce the three-character audit requirement');
+for(const message of ['Reason must be at least 3 characters.','Choose a plan.','Enter a valid expiry date.','Choose a server.','Invalid extension units.'])assert(bulkCustomers.includes(message),`bulk validation must name the invalid field: ${message}`);
+assert(!bulkCustomers.includes('Bulk action validation failed. Check the selected action inputs.'),'bulk validation must not collapse field errors into a generic message');
 assert(/serviceKind/.test(plans)&&/data-plan-service/.test(plans)&&/Stremio-only plan/.test(plans),'plan workflow must be service-type aware');
 assert(/ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard)&&/journeyPrimary/.test(dashboard),'customer home must be action-first and hide management complexity');
 assert(/simpleHero\.ready/.test(dashboardCss)&&/rgba\(101,214,248/.test(dashboardCss),'customer dashboard must use semantic state colour and blue hover feedback');
