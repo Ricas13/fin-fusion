@@ -1,5 +1,5 @@
 'use strict';
-const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning');
+const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/resilient-provisioning');
 const{reconcileActiveEntitlements,healthcheckAllServers}=require('../jellyfin/jobs');
 const drift=require('../jellyfin/drift-control');
 const bulkWorker=require('../jellyfin/bulk-worker');
