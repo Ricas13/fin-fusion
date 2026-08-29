@@ -97,10 +97,13 @@ async function refundStateForReward(client,row){
 async function topUpRewardToCurrentRate({creditId,actorUserId=null,reason}={}){
   const note=requiredReason(reason);if(!creditId)throw new Error('Choose a referral reward to top up.');
   return transaction(async client=>{
+    const candidate=await client.query(`SELECT id,customer_id FROM affiliate_credit_ledger WHERE id=$1 AND entry_type='earned'`,[creditId]);
+    if(!candidate.rowCount)throw new Error('Affiliate reward not found.');
+    await accounting.lockCustomer(client,candidate.rows[0].customer_id);
     const earned=await client.query(`SELECT * FROM affiliate_credit_ledger WHERE id=$1 AND entry_type='earned' FOR UPDATE`,[creditId]);
     if(!earned.rowCount)throw new Error('Affiliate reward not found.');
     const row=earned.rows[0];if(row.state==='void')throw new Error('A reversed affiliate reward cannot be topped up.');
-    await accounting.lockCustomer(client,row.customer_id);await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
+    await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
     const metadata=row.metadata&&typeof row.metadata==='object'?row.metadata:{},grossPaidMinor=Number(metadata.grossPaidMinor||metadata.paidMinor);
     if(!Number.isInteger(grossPaidMinor)||grossPaidMinor<=0)throw new Error('The original qualifying payment amount is unavailable for this reward. Use a manual credit adjustment instead.');
     const adverse=row.qualifying_subscription_id?await refundStateForReward(client,row):{chargeback:false,refundedMinor:0};
@@ -140,9 +143,13 @@ async function adminAdjustCredit({customerId,currency,amountMinor,reason,actorUs
 async function reverseReward({redemptionId,paymentIncidentId=null,reason='payment_reversal'}={}){
   if(!redemptionId)return{reversed:false,reason:'missing_redemption'};
   return transaction(async client=>{
-    const earned=await client.query(`SELECT * FROM affiliate_credit_ledger WHERE referral_redemption_id=$1 AND entry_type='earned' ORDER BY created_at LIMIT 1 FOR UPDATE`,[redemptionId]);if(!earned.rowCount)return{reversed:false,reason:'no_credit'};
+    const candidate=await client.query(`SELECT id,customer_id FROM affiliate_credit_ledger WHERE referral_redemption_id=$1 AND entry_type='earned' ORDER BY created_at LIMIT 1`,[redemptionId]);
+    if(!candidate.rowCount)return{reversed:false,reason:'no_credit'};
+    await accounting.lockCustomer(client,candidate.rows[0].customer_id);
+    const earned=await client.query(`SELECT * FROM affiliate_credit_ledger WHERE id=$1 FOR UPDATE`,[candidate.rows[0].id]);
+    if(!earned.rowCount)return{reversed:false,reason:'no_credit'};
     const row=earned.rows[0];if(row.state==='void')return{reversed:false,reason:'legacy_void_reward'};
-    await accounting.lockCustomer(client,row.customer_id);await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
+    await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
     const metadata=row.metadata&&typeof row.metadata==='object'?row.metadata:{},grossPaidMinor=Math.max(0,Number(metadata.grossPaidMinor||metadata.paidMinor||0));
     if(!grossPaidMinor)return{reversed:false,reason:'missing_paid_basis'};
     const source=await client.query(`SELECT COALESCE(SUM(amount_minor),0)::int granted,
