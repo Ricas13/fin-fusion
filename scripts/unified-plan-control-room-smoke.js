@@ -13,6 +13,7 @@ const attentionPolicy = read('src/platform/actionable-attention-policy.js');
 const operatorState = read('src/platform/admin-operator-state.js');
 const attentionSource = read('src/platform/attention.js');
 const css = read('public/css/admin-plan-control-room.css');
+const densityCss = read('public/css/admin-card-density.css');
 const capability = read('public/css/admin-capability.css');
 const attention = read('src/platform/admin-attention.js');
 const baseline = read('db/migrations/000_database_baseline.sql');
@@ -41,7 +42,10 @@ assert(editor.includes('[plan.id, name, description, features, visible, active]'
 
 assert(stremioEditor.includes('Plan, storefront & commerce') && stremioEditor.includes('name="description"') && stremioEditor.includes('name="feature${i+1}"'), 'Stremio must edit storefront copy inside its existing product/commerce card');
 assert(stremioEditor.includes('UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],billing_interval=$5,duration_days=$6'), 'the Stremio product/commerce save must persist storefront copy in the same mutation');
-assert(!stremioEditor.includes('editor-storefront') && !stremioEditor.includes('saveStorefront') && !stremioEditor.includes('Save storefront'), 'Stremio must not retain a second storefront POST or Save button');
+assert(stremioEditor.includes("post('editor-storefront',saveStorefront,'Storefront saved.')"), 'legacy Storefront POST must be accepted by the canonical Stremio editor router and return to the editor');
+assert(stremioEditor.includes('UPDATE plans SET description=$2,marketing_features=$3::text[],updated_at=NOW() WHERE id=$1'), 'Storefront compatibility save must write the same description/features columns without changing commerce ownership');
+assert(!stremioEditor.includes('Save storefront'), 'Stremio must not render a second Storefront Save button or editor');
+assert(stremioEditor.includes("if(!data.sources.length)return") && stremioEditor.includes('Manage sources'), 'empty Stremio Sources must point to source management instead of presenting a useless Save');
 assert(stremioEditor.includes("res.redirect(`/admin/plans?error=${encodeURIComponent(error.message||'Plan not found')}`)"), 'missing Stremio plans must return to the catalogue with an error notice instead of rendering Not found as page/header content');
 
 assert(attentionPolicy.includes("const REQUIRED_ENABLED_JOBS = new Set(['payment_events', 'plan_changes'])"), 'payment-event retry and plan-change lifecycle jobs must be declared operator-required');
@@ -50,10 +54,15 @@ assert(attentionSource.includes('jobHealth.list()'), 'Needs Attention must deriv
 assert(operatorState.includes('attention.openSummary()'), 'header Alerts count must use the same Needs Attention snapshot as the Alerts page');
 
 assert(capability.includes("@import url('/css/admin-plan-control-room.css')"), 'shared admin shell must load the plan/attention layout corrections');
-assert(css.includes('.planControlGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use one predictable two-column card grid on wide screens');
-assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}'), 'legacy card spans must not recreate an irregular two/three/full-width mosaic');
+assert(css.includes('.planControlGrid{display:grid;grid-template-columns:1fr!important'), 'plan editor must default to one configuration job per row');
+assert(css.includes('@media(min-width:1100px)') && css.includes('.planControlGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use at most two columns on wide screens');
+assert(css.includes('.planControlGrid>#access,.planControlGrid>#availability{grid-column:auto!important}'), 'Access and Availability must be the deliberate two-card pair');
+assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:1/-1!important}'), 'legacy span classes must resolve to full-width cards rather than mosaics');
+assert(css.includes('.planControlGrid>.requestPlanCard{grid-column:1/-1!important'), 'request/Jellyseerr policy must remain a full-width monster card');
+assert(css.includes('overflow-wrap:normal;word-break:normal;hyphens:none'), 'toggle titles must not wrap in the middle of words');
+assert(!densityCss.includes('.planControlGrid{') && !densityCss.includes('.planControlGrid>'), 'card-density CSS must not override planControlGrid geometry or spans');
 assert(css.includes('.planControlHeader{display:none!important}'), 'duplicate plan status strip must stay out of the editor');
-assert(css.includes('@media(max-width:700px)') && css.includes('.planControlGrid{grid-template-columns:1fr!important}'), 'plan editor must collapse to one column on small screens');
+assert(css.includes('@media(max-width:700px)') && css.includes('.planControlGrid{grid-template-columns:1fr!important}'), 'plan editor must stay one column on small screens');
 assert(css.includes('.planControlRoom,.planControlGrid{gap:12px}') && css.includes('.planConfigBody{padding:12px 13px}'), 'narrow plan editors must retain readable card spacing instead of desktop-density padding');
 assert(css.includes('@media(max-width:480px)') && css.includes('.planServerChoice{grid-template-columns:auto minmax(0,1fr)}'), 'very narrow server controls must stack the weight input rather than squeeze three columns');
 assert(css.includes('.section.bulkBar{overflow:visible}'), 'bulk-action sections must not clip controls or focus rings at the shared section boundary');
