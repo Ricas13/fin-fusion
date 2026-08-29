@@ -11,6 +11,8 @@ ON CONFLICT(setting_key) DO NOTHING;
 -- Retention predicates are deliberately index-backed and terminal-state-only.
 CREATE INDEX IF NOT EXISTS playback_history_ended_retention_idx
     ON playback_history(ended_at,id) WHERE ended_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS auth_events_created_retention_idx
+    ON auth_events(created_at,id);
 CREATE INDEX IF NOT EXISTS audit_log_created_retention_idx
     ON audit_log(created_at,id);
 CREATE INDEX IF NOT EXISTS payment_events_processed_retention_idx
@@ -71,7 +73,8 @@ BEGIN
             WITH doomed AS (
                 SELECT id FROM audit_log
                 WHERE created_at < p_cutoff
-                  AND action <> 'data.retention.batch'
+                  AND action !~* '^(payment|billing|affiliate|subscription|refund|provider)[._]'
+                  AND COALESCE(entity_type,'') !~* '^(payment|billing|affiliate|subscription|provider)'
                 ORDER BY created_at,id LIMIT v_limit
                 FOR UPDATE SKIP LOCKED
             )
@@ -158,9 +161,11 @@ BEGIN
     END CASE;
 
     GET DIAGNOSTICS v_deleted = ROW_COUNT;
-    INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-    VALUES(NULL,'data.retention.batch','data_retention',p_class,
-        jsonb_build_object('class',p_class,'cutoff',p_cutoff,'batchLimit',v_limit,'deleted',v_deleted));
+    IF v_deleted > 0 THEN
+        INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+        VALUES(NULL,'data.retention.batch','data_retention',p_class,
+            jsonb_build_object('class',p_class,'cutoff',p_cutoff,'batchLimit',v_limit,'deleted',v_deleted));
+    END IF;
     RETURN v_deleted;
 END;
 $$;
@@ -197,7 +202,7 @@ REVOKE ALL ON FUNCTION public.run_data_retention_batch(TEXT,TIMESTAMPTZ,INTEGER)
 REVOKE ALL ON FUNCTION public.cleanup_expired_access_network_leases(INTEGER) FROM PUBLIC;
 
 COMMENT ON FUNCTION public.run_data_retention_batch(TEXT,TIMESTAMPTZ,INTEGER) IS
-    'Canonical bounded retention owner. Only terminal/finished records are eligible; financial ledgers, incidents, subscriptions and unfinished provider/payment state are intentionally excluded.';
+    'Canonical bounded retention owner. Only terminal/finished records are eligible; financial ledgers/incidents/subscriptions, finance audit records and unfinished provider/payment state are intentionally excluded.';
 COMMENT ON FUNCTION public.cleanup_expired_access_network_leases(INTEGER) IS
     'Canonical bounded housekeeping for expired household/network leases; does not alter admission policy.';
 
