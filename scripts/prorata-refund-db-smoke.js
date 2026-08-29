@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { query, getPool } = require('../src/db');
 const refunds = require('../src/payments/prorata-refunds');
+const refundLifecycle = require('../src/payments/lifecycle-prepaid-refunds');
 
 const source = file => fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
@@ -26,19 +27,33 @@ async function main() {
   const afterPrior = await refunds.quote(subscription.id);
   assert(Math.abs(afterPrior.refundMinor - 1500) <= 2, `prior £5 refund must reduce remaining pro-rata cash allowance, got ${afterPrior.refundMinor}`);
 
+  const queued = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,starts_at,current_period_end,price_minor_snapshot,currency_snapshot,service_type_snapshot,commercial_snapshot)
+    VALUES($1,$2,'active','stripe',$3,$4,$4::timestamptz+INTERVAL '30 days',4000,'GBP','jellyfin',$5::jsonb) RETURNING *`, [customer.id,plan.id,`pi_prorata_queue_${suffix}`,subscription.current_period_end,JSON.stringify({discountedMinor:4000,currency:'GBP',checkoutMode:'payment'})])).rows[0];
+  const cutoffAt = new Date();
+  const applied = await refundLifecycle.applyPrepaidRefund({subscriptionId:subscription.id,customerId:customer.id,originalEnd:subscription.current_period_end,cutoffAt,serviceType:'jellyfin'});
+  assert(applied.removedMs > 0, 'first lifecycle application must remove the unused service span');
+  const shiftedOnce = (await query('SELECT starts_at,current_period_end FROM subscriptions WHERE id=$1',[queued.id])).rows[0];
+  assert(Math.abs(new Date(shiftedOnce.starts_at).getTime()-cutoffAt.getTime()) < 1000, 'queued prepaid access must move forward to the refund cutoff');
+  const retry = await refundLifecycle.applyPrepaidRefund({subscriptionId:subscription.id,customerId:customer.id,originalEnd:subscription.current_period_end,cutoffAt,serviceType:'jellyfin'});
+  assert.equal(retry.removedMs,0,'recovery after local commit must not remove the same service span twice');
+  const shiftedTwice = (await query('SELECT starts_at,current_period_end FROM subscriptions WHERE id=$1',[queued.id])).rows[0];
+  assert.equal(new Date(shiftedTwice.starts_at).getTime(),new Date(shiftedOnce.starts_at).getTime(),'retry must not shift queued prepaid periods twice');
+
   const recurring = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,starts_at,current_period_end,price_minor_snapshot,currency_snapshot,commercial_snapshot)
     VALUES($1,$2,'active','stripe',$3,NOW(),NOW()+INTERVAL '1 month',5000,'GBP',$4::jsonb) RETURNING id`, [customer.id,plan.id,`sub_prorata_${suffix}`,JSON.stringify({discountedMinor:5000,currency:'GBP',checkoutMode:'subscription'})])).rows[0];
   await assert.rejects(() => refunds.quote(recurring.id), /Recurring provider subscriptions/, 'recurring agreements must remain provider-authoritative and outside prepaid pro-rata refunds');
 
   const implementation = source('src/payments/prorata-refunds.js');
+  const lifecycle = source('src/payments/lifecycle-prepaid-refunds.js');
   assert(implementation.includes('FOR UPDATE OF s'), 'confirmation must recalculate under a subscription row lock');
-  assert(implementation.includes("operation_type") && implementation.includes("prorata_refund"), 'provider/local refund divergence must have durable operation state');
-  assert(implementation.includes("current_period_end=$2,status='expired'"), 'completed unused-time refund must shorten the purchased entitlement');
-  assert(implementation.includes("queued.starts_at-($4::bigint * INTERVAL '1 millisecond')"), 'later prepaid periods must compact forward by removed unused time');
+  assert(implementation.includes('operation_type') && implementation.includes('prorata_refund'), 'provider/local refund divergence must have durable operation state');
+  assert(lifecycle.includes("current_period_end=$2,status='expired'"), 'lifecycle owner must shorten the purchased entitlement');
+  assert(lifecycle.includes("queued.starts_at-($4::bigint * INTERVAL '1 millisecond')"), 'lifecycle owner must compact later prepaid periods');
+  assert(lifecycle.includes('observedEndMs - cutoffMs'), 'lifecycle application must converge idempotently from the currently observed local end');
   assert(implementation.includes('/v2/payments/captures/') && implementation.includes('payment_intent:'), 'Stripe and PayPal one-time provider refunds must target exact stored payment references');
   assert(implementation.includes('provisioning.reconcileCustomer'), 'access must reconcile after local entitlement shortening');
 
-  console.log('pro-rata refund DB smoke: ok — provider cash basis, prior refunds, recurring exclusion, locked durable execution contract');
+  console.log('pro-rata refund DB smoke: ok — cash basis, prior refunds, recurring exclusion, lifecycle ownership and idempotent compaction');
 }
 
 main().then(()=>getPool().end()).catch(async error => { console.error(error.stack || error); try { await getPool().end(); } catch (_) {} process.exit(1); });
