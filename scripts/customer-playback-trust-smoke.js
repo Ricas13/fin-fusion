@@ -65,6 +65,8 @@ expect(activityView.includes('this Free Server has a trustworthy recent playback
 expect(activityView.includes('freeUsage.observed_streams')===false,'Customer Activity must not read observed streams from the wrong object.');
 expect(activityView.includes('e.observed_streams'),'Stream-limit actions must render the canonical observed stream count.');
 expect(!activityView.includes('a.max_height')&&!activityView.includes('a.container'),'Customer Activity must not render playback fields that are absent from playback_history.');
+expect(activityView.includes("case'transcode':return'Server transcoding'")&&activityView.includes('playbackLabel(a.playback_method)'),'Playback method must use neutral human-readable copy.');
+expect(!activityView.includes('<span class="pill"><%= a.playback_method'),'Playback method must not be rendered as a quality-style pill.');
 expect(!activityView.includes("a.playback_method === 'transcode'")&&!activityView.includes("a.playback_method === 'Transcode'"),'Playback method must not be rendered as a transcode quality score.');
 
 const enforcement=source('src/jellyfin/activity.js');
