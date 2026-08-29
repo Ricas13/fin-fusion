@@ -49,24 +49,24 @@ assert(referrals.includes("SET status='rewarded'"), 'the referral must become te
 assert(referrals.includes('`affiliate:${redemption.id}`'), 'earned reward identity must be unique per referral redemption');
 
 const composition = read('src/platform/admin-route-composition.js');
-const actualCriticalOrder = [
-  ['usersDashboard','createAdminUsersDashboardRouter()'],
-  ['settingsCommerce','createAdminSettingsCommerceRouter()'],
-  ['originalSettings','createAdminOriginalSettingsRouter()'],
-  ['planAccess','createAdminPlanAccessRouter()'],
-  ['plans','createAdminPlansRouter()'],
-  ['impersonation','createAdminImpersonationRouter()'],
-  ['lanePolicy','createAdminLanePolicyRouter()'],
-  ['customer360','createAdminCustomer360Router()']
-].sort((a,b) => composition.indexOf(a[1]) - composition.indexOf(b[1])).map(item => item[0]);
-assert(actualCriticalOrder.every(name => composition.includes(actualCriticalOrder.find(item => item === name) ? ({usersDashboard:'createAdminUsersDashboardRouter()',settingsCommerce:'createAdminSettingsCommerceRouter()',originalSettings:'createAdminOriginalSettingsRouter()',planAccess:'createAdminPlanAccessRouter()',plans:'createAdminPlansRouter()',impersonation:'createAdminImpersonationRouter()',lanePolicy:'createAdminLanePolicyRouter()',customer360:'createAdminCustomer360Router()'}[name]) : '')));
+const tokens = {
+  usersDashboard:'createAdminUsersDashboardRouter()',settingsCommerce:'createAdminSettingsCommerceRouter()',
+  originalSettings:'createAdminOriginalSettingsRouter()',planAccess:'createAdminPlanAccessRouter()',
+  plans:'createAdminPlansRouter()',impersonation:'createAdminImpersonationRouter()',
+  lanePolicy:'createAdminLanePolicyRouter()',customer360:'createAdminCustomer360Router()'
+};
+for (const token of Object.values(tokens)) assert(composition.includes(token), `admin composition is missing ${token}`);
+const actualCriticalOrder = Object.entries(tokens)
+  .sort((a,b) => composition.indexOf(a[1]) - composition.indexOf(b[1]))
+  .map(([name]) => name);
 assert(routeManifest.assertAdminRouteOrder(actualCriticalOrder));
 assert(composition.includes('createAdminProrataRefundsRouter'), 'the staff pro-rata refund workflow must be mounted in canonical admin composition');
+assert(composition.includes('assertAdminRouteOrder(criticalOrder)'), 'production startup must enforce critical route precedence');
 
 const nav = read('src/platform/admin-nav.js');
 assert(!/reseller/i.test(nav), 'retired reseller product traces must not remain in admin navigation');
 const recovery = read('src/payments/provider-operation-recovery.js');
-assert(recovery.includes("operation_type==='prorata_refund'"), 'provider recovery must own unresolved pro-rata refunds');
+assert(/operation_type\s*===\s*['"]prorata_refund['"]/.test(recovery), 'provider recovery must own unresolved pro-rata refunds');
 
 for (const file of ['src/payments/provider-operation-recovery.js','src/payments/billing-control.js','src/payments/prorata-refunds.js']) {
   const source = read(file);
