@@ -19,6 +19,10 @@ function checkboxAttrs({name,value='on',checked=false,disabled=false,form='',ari
   ].filter(Boolean).join(' ');
 }
 
+function field({label,help='',control='',className='formGroup'}){
+  return `<div class="${esc(className)}"><label>${esc(label)}</label>${help?`<div class="fieldHelp">${esc(help)}</div>`:''}${String(control||'')}</div>`;
+}
+
 function toggle({name,label,description='',checked=false,disabled=false,value='on',form='',tone='',className='',title='',confirmWhenChecked=''}){
   const text=String(label||name||'Setting');
   return `<label class="settingToggle ${tone?`settingToggle-${esc(tone)}`:''} ${esc(className)}" ${title?`title="${esc(title)}"`:''}>
@@ -41,4 +45,4 @@ function configured(label,configured,{configuredLabel='Configured',missingLabel=
   return `<div class="settingCredential"><span>${esc(label)}</span><strong class="${configured?'good':'warn'}">${esc(configured?configuredLabel:missingLabel)}</strong>${href?`<a class="button secondary btn-sm" href="${esc(href)}">${esc(actionLabel)}</a>`:''}</div>`;
 }
 
-module.exports={stylesheet,toggle,grid,switchInput,configured};
+module.exports={stylesheet,field,toggle,grid,switchInput,configured};
