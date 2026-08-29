@@ -1,11 +1,12 @@
 'use strict';
 
 const assert=require('assert');
+const fs=require('fs');
 const path=require('path');
 const externalDeletion=require('../src/platform/customer-external-deletion');
 
 function target(provider,id='resource-1'){
-  return{id:`${provider}-${id}`,deletion_job_id:'job-1',customer_id:'customer-1',provider,resource_type:provider==='request_service'?'permissions':provider==='discord'?'managed_role':provider==='stremio'?'install_credential':'user',external_identifier:id,desired_state:'absent',state:'pending',blocking:true,attempt_count:0,next_attempt_at:new Date(),last_error:null,metadata:{identity:id},result:null};
+  return{id:`${provider}-${id}`,deletion_job_id:'job-1',customer_id:'customer-1',provider,resource_type:provider==='request_service'?'permissions':provider==='discord'?'managed_role':provider==='stremio'?'install_credential':['stripe','paypal'].includes(provider)?'recurring_subscription':'user',external_identifier:id,desired_state:['stripe','paypal'].includes(provider)?'cancelled':'absent',state:'pending',blocking:true,attempt_count:0,next_attempt_at:new Date(),last_error:null,metadata:{identity:id},result:null};
 }
 function storeFor(rows){return new Map(rows.map(row=>[row.id,{...row,metadata:{...row.metadata}}]));}
 function snapshot(store){return [...store.values()].map(row=>({...row,metadata:{...row.metadata},result:row.result&&{...row.result}}));}
@@ -46,8 +47,6 @@ async function scenarioC(){
 }
 async function scenarioD(){
   const persisted=storeFor([target('jellyfin','jf-user')]);
-  // Crash after persistence: no API call and no state mutation. A new worker
-  // instance receives the same durable rows and continues normally.
   const restarted=persisted;
   await run(restarted,async()=>({status:'deleted'}));
   assert.strictEqual(restarted.values().next().value.state,'succeeded','D: restart after persistence must converge');
@@ -98,14 +97,56 @@ async function scenarioI(){
   const row=target('request_service','restart-midway'),durable=storeFor([row]);let first=true;
   await run(durable,async()=>{if(first){first=false;throw new Error('worker interrupted');}return{status:'permissions_revoked',permissions:0};});
   assert.strictEqual(durable.get(row.id).state,'failed','I: interrupted worker leaves durable retry state');
-  // New runner/process, same durable store.
   await run(durable,async()=>({status:'permissions_revoked',permissions:0}));
   assert.strictEqual(durable.get(row.id).state,'succeeded','I: restarted worker completes midway deletion');
 }
 
+async function scenarioJ(){
+  const requestUserSyncPath=require.resolve('../src/integrations/request-user-sync'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const saved=new Map([requestUserSyncPath,externalPath].map(key=>[key,require.cache[key]]));
+  try{
+    require.cache[requestUserSyncPath]={id:requestUserSyncPath,filename:requestUserSyncPath,loaded:true,exports:{externalUsers:async()=>[{id:999,email:'someone-else@example.com',username:'someone-else'}],permissionState:async()=>0,setPermissions:async()=>{}}};
+    delete require.cache[externalPath];
+    const fresh=require('../src/platform/customer-external-deletion');
+
+    const everProvisioned={id:'request_service-1',provider:'request_service',resource_type:'permissions',external_identifier:'identity:stale@example.com',metadata:{externalUserId:null,email:'stale@example.com',username:'stale',everProvisioned:true}};
+    await assert.rejects(fresh.executeTarget(everProvisioned),/could not be located/,'J: a previously-provisioned request-service account that cannot be matched must escalate, not silently succeed');
+
+    const neverProvisioned={id:'request_service-2',provider:'request_service',resource_type:'permissions',external_identifier:'identity:new@example.com',metadata:{externalUserId:null,email:'new@example.com',username:'new',everProvisioned:false}};
+    const result=await fresh.executeTarget(neverProvisioned);
+    assert.strictEqual(result.status,'already_missing','J: an account never provisioned on the request service is safely already-missing');
+  }finally{
+    for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
+  }
+}
+
+async function scenarioK(){
+  const billingPath=require.resolve('../src/payments/billing-control'),externalPath=require.resolve('../src/platform/customer-external-deletion');
+  const saved=new Map([billingPath,externalPath].map(key=>[key,require.cache[key]]));
+  const calls=[];
+  try{
+    require.cache[billingPath]={id:billingPath,filename:billingPath,loaded:true,exports:{terminateRecurringForDeletion:async(row,options)=>{calls.push({row,options});return{status:'cancelled',provider:row.source,providerSubscriptionId:row.provider_subscription_id};}}};
+    delete require.cache[externalPath];
+    const fresh=require('../src/platform/customer-external-deletion');
+    const recurring={id:'stripe-sub-target',customer_id:'customer-1',provider:'stripe',resource_type:'recurring_subscription',external_identifier:'sub_critical123',metadata:{subscriptionId:'local-sub-1',providerSubscriptionId:'sub_critical123',localStatus:'active',currentPeriodEnd:new Date().toISOString(),cancelAtPeriodEnd:false}};
+    const result=await fresh.executeTarget(recurring);
+    assert.strictEqual(result.status,'cancelled','K: recurring provider cancellation must be proven before target success');
+    assert.strictEqual(calls.length,1,'K: deletion target must invoke the canonical billing-control owner once');
+    assert.strictEqual(calls[0].row.source,'stripe');
+    assert.strictEqual(calls[0].row.provider_subscription_id,'sub_critical123');
+    assert.match(calls[0].options.idempotencyKey,/customer-delete-stripe-sub-target/,'K: cancellation retry must carry a stable deletion-target idempotency key');
+  }finally{
+    for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
+  }
+
+  const source=fs.readFileSync(path.join(__dirname,'../src/platform/customer-external-deletion.js'),'utf8');
+  assert.match(source,/FROM subscriptions[\s\S]+source='stripe'[\s\S]+source='paypal'/,'K: deletion inventory must snapshot recurring Stripe and PayPal identifiers');
+  assert.doesNotMatch(source,/if\(current\.targets_persisted_at\)/,'K: old deletion snapshots must be refreshed so newly-recognized billing resources cannot be skipped');
+}
+
 (async()=>{
-  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();
+  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();
   assert.strictEqual(externalDeletion.retryMinutes(1),1);
   assert.strictEqual(externalDeletion.retryMinutes(99),360,'retry backoff must be bounded');
-  console.log('customer deletion durable target runtime smoke passed (A-I)');
+  console.log('customer deletion durable target runtime smoke passed (A-K)');
 })().catch(error=>{console.error(error);process.exit(1);});

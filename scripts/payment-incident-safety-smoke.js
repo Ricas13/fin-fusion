@@ -96,16 +96,20 @@ function main() {
     }
 
     // Stripe webhook delivery is not guaranteed to arrive in lifecycle order.
-    // A stale invoice failure must never resurrect a subscription after Stripe
-    // has already marked the grandfathered agreement terminal.
+    // Current verified provider state is authoritative over a historical event:
+    // terminal subscriptions stay terminal and already-recovered subscriptions
+    // must not be regressed by a delayed invoice.payment_failed delivery.
     if (stripe.effectiveSyncStatus('canceled', 'past_due') !== 'canceled') {
         throw new Error('A late Stripe payment failure can regress canceled access back to past_due.');
     }
     if (stripe.effectiveSyncStatus('incomplete_expired', 'active') !== 'incomplete_expired') {
         throw new Error('A late Stripe paid event can resurrect an incomplete-expired subscription.');
     }
-    if (stripe.effectiveSyncStatus('active', 'past_due') !== 'past_due') {
-        throw new Error('A genuine failed renewal is not allowed to mark an active Stripe subscription delinquent.');
+    if (stripe.effectiveSyncStatus('active', 'past_due') !== 'active') {
+        throw new Error('A late historical Stripe payment failure can regress a currently-active subscription.');
+    }
+    if (stripe.effectiveSyncStatus('past_due', 'past_due') !== 'past_due') {
+        throw new Error('A currently-delinquent Stripe subscription must still remain past_due.');
     }
 
     // One Stripe invoice can emit several invoice.payment_failed events while

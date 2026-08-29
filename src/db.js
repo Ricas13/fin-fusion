@@ -71,4 +71,11 @@ async function healthcheck() {
     return { ok: true, latencyMs: Date.now() - started, now: result.rows[0].now };
 }
 
-module.exports = { getPool, query, transaction, healthcheck, isMutationSql };
+async function closePool() {
+    if (!pool) return;
+    const current = pool;
+    pool = undefined;
+    await current.end();
+}
+
+module.exports = { getPool, query, transaction, healthcheck, closePool, isMutationSql };

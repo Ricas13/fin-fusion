@@ -6,6 +6,7 @@ const requestUsers=require('../integrations/request-user-sync');
 const discordRoles=require('../integrations/discord-roles');
 const notificationSettings=require('../integrations/notification-settings');
 const stremioEntitlements=require('../stremio/entitlements');
+const billingControl=require('../payments/billing-control');
 
 const RETRY_MINUTES=[1,5,15,60,180,360];
 
@@ -20,7 +21,10 @@ async function insertTarget(client,{jobId,customerId,provider,resourceType,exter
     INSERT INTO customer_external_deletion_targets(
       deletion_job_id,customer_id,provider,resource_type,external_identifier,desired_state,metadata,state,next_attempt_at,updated_at
     ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'pending',NOW(),NOW())
-    ON CONFLICT(deletion_job_id,provider,resource_type,external_identifier) DO NOTHING
+    ON CONFLICT(deletion_job_id,provider,resource_type,external_identifier) DO UPDATE SET
+      desired_state=EXCLUDED.desired_state,
+      metadata=customer_external_deletion_targets.metadata||EXCLUDED.metadata,
+      updated_at=NOW()
   `,[jobId,customerId,provider,resourceType,String(externalIdentifier),desiredState,json(metadata)]);
 }
 
@@ -36,12 +40,10 @@ async function persistTargets(job){
   return transaction(async client=>{
     const locked=await client.query('SELECT * FROM customer_deletion_jobs WHERE id=$1 FOR UPDATE',[job.id]);
     if(!locked.rowCount)throw new Error('Customer deletion job not found while persisting external targets.');
-    const current=locked.rows[0];
-    if(current.targets_persisted_at){
-      const existing=await client.query('SELECT * FROM customer_external_deletion_targets WHERE deletion_job_id=$1 ORDER BY created_at,id',[job.id]);
-      return existing.rows;
-    }
 
+    // Always refresh the inventory before finalization. Inserts are idempotent,
+    // and this lets a newer release add newly-recognized external resources to
+    // an already-pending deletion job without trusting an older snapshot as complete.
     const jellyfin=await client.query(`
       SELECT id,server_id,jellyfin_user_id,jellyfin_username,account_purpose
       FROM jellyfin_accounts WHERE customer_id=$1 ORDER BY created_at,id
@@ -55,7 +57,7 @@ async function persistTargets(job){
     }
 
     const request=await client.query(`
-      SELECT external_user_id,external_email,external_username
+      SELECT external_user_id,external_email,external_username,status
       FROM request_user_sync WHERE customer_id=$1
     `,[job.customer_id]);
     for(const row of request.rows){
@@ -66,7 +68,32 @@ async function persistTargets(job){
       if(locator)await insertTarget(client,{
         jobId:job.id,customerId:job.customer_id,provider:'request_service',resourceType:'permissions',
         externalIdentifier:remoteId||`identity:${locator}`,desiredState:'permissions:0',
-        metadata:{externalUserId:remoteId,email,username}
+        metadata:{externalUserId:remoteId,email,username,everProvisioned:row.status==='synced',verificationVersion:2}
+      });
+    }
+
+    const recurring=await client.query(`
+      SELECT id,source,provider_subscription_id,status,current_period_end,cancel_at_period_end
+      FROM subscriptions
+      WHERE customer_id=$1
+        AND (
+          (source='stripe' AND provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\')
+          OR (source='paypal' AND provider_subscription_id LIKE 'I-%')
+        )
+      ORDER BY created_at,id
+    `,[job.customer_id]);
+    for(const subscription of recurring.rows){
+      await insertTarget(client,{
+        jobId:job.id,customerId:job.customer_id,provider:subscription.source,resourceType:'recurring_subscription',
+        externalIdentifier:subscription.provider_subscription_id,desiredState:'cancelled',
+        metadata:{
+          subscriptionId:subscription.id,
+          providerSubscriptionId:subscription.provider_subscription_id,
+          localStatus:subscription.status,
+          currentPeriodEnd:subscription.current_period_end,
+          cancelAtPeriodEnd:Boolean(subscription.cancel_at_period_end),
+          inventoryVersion:2
+        }
       });
     }
 
@@ -130,7 +157,12 @@ async function resolveRequestUser(target){
 
 async function revokeRequestTarget(target){
   const externalUserId=await resolveRequestUser(target);
-  if(!externalUserId)return{status:'already_missing',policy:'remote_account_retained_permissions_zero'};
+  if(!externalUserId){
+    if(target.metadata?.everProvisioned){
+      throw new Error(`Request-service account for target ${target.external_identifier} was previously provisioned (status=synced) but could not be located by id, email, or username in the current user list; permissions cannot be confirmed revoked.`);
+    }
+    return{status:'already_missing',policy:'remote_account_retained_permissions_zero'};
+  }
   try{
     let permissions=await requestUsers.permissionState(externalUserId);
     if(permissions!==0)await requestUsers.setPermissions(externalUserId,0);
@@ -141,6 +173,21 @@ async function revokeRequestTarget(target){
     if(isRemoteMissing(error))return{status:'already_missing',externalUserId,policy:'remote_account_retained_permissions_zero'};
     throw error;
   }
+}
+
+async function cancelRecurringTarget(target){
+  const meta=target.metadata||{};
+  const providerSubscriptionId=String(meta.providerSubscriptionId||target.external_identifier||'').trim();
+  if(!providerSubscriptionId)throw new Error(`${target.provider} recurring deletion target is missing its durable provider subscription identity.`);
+  return billingControl.terminateRecurringForDeletion({
+    id:meta.subscriptionId||null,
+    customer_id:target.customer_id,
+    source:target.provider,
+    provider_subscription_id:providerSubscriptionId,
+    status:meta.localStatus||null,
+    current_period_end:meta.currentPeriodEnd||null,
+    cancel_at_period_end:Boolean(meta.cancelAtPeriodEnd)
+  },{idempotencyKey:`customer-delete-${target.id}`});
 }
 
 async function removeDiscordTarget(target){
@@ -179,6 +226,7 @@ async function revokeStremioTarget(target){
 async function executeTarget(target){
   if(target.provider==='jellyfin'&&target.resource_type==='user')return deleteJellyfinTarget(target);
   if(target.provider==='request_service'&&target.resource_type==='permissions')return revokeRequestTarget(target);
+  if(['stripe','paypal'].includes(target.provider)&&target.resource_type==='recurring_subscription')return cancelRecurringTarget(target);
   if(target.provider==='discord'&&target.resource_type==='managed_role')return removeDiscordTarget(target);
   if(target.provider==='stremio'&&target.resource_type==='install_credential')return revokeStremioTarget(target);
   throw new Error(`Unsupported external deletion target ${target.provider}/${target.resource_type}.`);

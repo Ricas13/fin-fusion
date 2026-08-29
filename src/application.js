@@ -8,7 +8,7 @@ const express = require('express');
 const session = require('express-session');
 const PgStore = require('connect-pg-simple')(session);
 
-const { query } = require('./db');
+const { query, closePool } = require('./db');
 const firstRun = require('./auth/first-run-setup');
 const controller = require('./auth/staff-controller');
 const { guardSession } = require('./auth/session-guard');
@@ -25,6 +25,7 @@ const IS_PRODUCTION = String(process.env.NODE_ENV || '').toLowerCase() === 'prod
 const PORT = Number(process.env.PORT || 3030);
 const SESSION_SECRET = String(process.env.SESSION_SECRET || '');
 const DEFAULT_TRUST_PROXY = 'loopback, linklocal, uniquelocal';
+const DEFAULT_SHUTDOWN_GRACE_MS = 30000;
 
 function fail(message) {
   throw new Error(`Startup configuration error: ${message}`);
@@ -339,7 +340,70 @@ async function startupSummary() {
   }
 }
 
-function start() {
+function shutdownGraceMs(value = process.env.SHUTDOWN_GRACE_MS) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SHUTDOWN_GRACE_MS;
+  return Math.max(1000, Math.min(120000, Math.floor(parsed)));
+}
+
+function createGracefulShutdown({
+  server,
+  prune = null,
+  closeDatabase = closePool,
+  exit = code => process.exit(code),
+  timeoutMs = shutdownGraceMs(),
+  clearIntervalFn = clearInterval,
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout
+} = {}) {
+  if (!server || typeof server.close !== 'function') throw new Error('HTTP server is required for graceful shutdown.');
+  let shutdownPromise = null;
+  return function shutdown(signal = 'SIGTERM') {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = new Promise(resolve => {
+      let finished = false;
+      let timer = null;
+      const finish = async initialCode => {
+        if (finished) return;
+        finished = true;
+        if (timer) clearTimeoutFn(timer);
+        let code = initialCode;
+        try { await closeDatabase(); }
+        catch (error) {
+          code = 1;
+          console.error('Database shutdown failed:', error.message);
+        }
+        exit(code);
+        resolve(code);
+      };
+
+      if (prune) clearIntervalFn(prune);
+      console.log(`CAPTAiNFiN received ${signal}; draining HTTP requests for up to ${timeoutMs}ms.`);
+      timer = setTimeoutFn(() => {
+        console.warn(`CAPTAÏNFiN graceful shutdown timed out after ${timeoutMs}ms; forcing remaining HTTP connections closed.`);
+        try { server.closeAllConnections?.(); } catch (_) {}
+        finish(1);
+      }, timeoutMs);
+      timer.unref?.();
+
+      try {
+        server.close(error => {
+          if (error) console.error('HTTP shutdown failed:', error.message);
+          finish(error ? 1 : 0);
+        });
+        // Idle keep-alive sockets are not in-flight work and should not consume
+        // the deployment grace period. Active requests remain untouched.
+        server.closeIdleConnections?.();
+      } catch (error) {
+        console.error('HTTP shutdown failed:', error.message);
+        finish(1);
+      }
+    });
+    return shutdownPromise;
+  };
+}
+
+function start({ installSignalHandlers = require.main === module } = {}) {
   const app = createApplication();
   const server = app.listen(PORT, () => {
     console.log('CAPTAiNFiN running');
@@ -352,9 +416,25 @@ function start() {
     3600000
   );
   prune.unref?.();
-  return { app, server };
+  const shutdown = createGracefulShutdown({ server, prune });
+  if (installSignalHandlers) {
+    process.once('SIGTERM', () => { shutdown('SIGTERM').catch(error => console.error('SIGTERM shutdown failed:', error.message)); });
+    process.once('SIGINT', () => { shutdown('SIGINT').catch(error => console.error('SIGINT shutdown failed:', error.message)); });
+  }
+  return { app, server, shutdown };
 }
 
 if (require.main === module) start();
 
-module.exports = { createApplication, start, securityHeaders, validateEnvironment, startupSummary, trustProxySetting, DEFAULT_TRUST_PROXY };
+module.exports = {
+  createApplication,
+  start,
+  createGracefulShutdown,
+  shutdownGraceMs,
+  securityHeaders,
+  validateEnvironment,
+  startupSummary,
+  trustProxySetting,
+  DEFAULT_TRUST_PROXY,
+  DEFAULT_SHUTDOWN_GRACE_MS
+};
