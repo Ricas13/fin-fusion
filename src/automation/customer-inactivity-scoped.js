@@ -6,6 +6,7 @@ const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const planPolicy = require('../entitlements/plan-lifecycle-policy');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
+const fleetMetrics = require('../jellyfin/fleet-metrics');
 const registry = require('../jellyfin/registry');
 const base = require('./customer-inactivity');
 
@@ -19,9 +20,33 @@ function candidateServerIds(rows) {
         .filter(Boolean))];
 }
 
+// Playback trust comes only from the activity worker's /Sessions poll ledger.
+// A successful /Users refresh below is additional freshness evidence; it must
+// never promote a failed/stale playback sample back to ready.
 async function refreshCandidateServers(rows, existing = {}) {
     const current = await activityTrust.serverTelemetry(candidateServerIds(rows));
     return { ...existing, ...current };
+}
+
+async function refreshCandidateUserActivity(rows, serverTelemetry = {}) {
+    const telemetry = { ...serverTelemetry };
+    for (const serverId of candidateServerIds(rows)) {
+        const poll = telemetry[serverId];
+        if (!poll?.ready) continue;
+        try {
+            const refreshed = await fleetMetrics.refreshServerUserActivity(serverId);
+            telemetry[serverId] = { ...poll, userActivityReady: true, userActivity: refreshed };
+        } catch (error) {
+            telemetry[serverId] = {
+                ...poll,
+                ready: false,
+                reason: 'user_activity_refresh_failed',
+                userActivityReady: false,
+                error: String(error?.message || error).slice(0, 1000)
+            };
+        }
+    }
+    return telemetry;
 }
 
 function eligibleOnReadyServers(rows, serverTelemetry) {
@@ -144,7 +169,8 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
         return { processed: rows.length, deleted: 0, restored: 0, failed: 0, deferred: rows.length, serverFailures: 0, skipped: 'telemetry_not_trustworthy', telemetry: telemetrySummary(worker, {}) };
     }
 
-    const serverTelemetry = await refreshCandidateServers(rows, {});
+    let serverTelemetry = await refreshCandidateServers(rows, {});
+    serverTelemetry = await refreshCandidateUserActivity(rows, serverTelemetry);
     rows = await pendingFreeLifecycle();
     let deleted = 0, restored = 0, failed = 0, deferred = 0;
 
@@ -179,7 +205,7 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
             if (due.getTime() > Date.now()) { deferred += 1; continue; }
 
             const dryRun = forceDryRun === null ? effective.dryRun : Boolean(forceDryRun);
-            const evidence = { category: 'free', accessLane: 'free', disabledAt: row.disabled_at, deleteAfter: due, planId: row.plan_id, planCode: row.plan_code, dryRun, portalAccountPreserved: true, activityPollTrustedImmediatelyBeforeDecision: true };
+            const evidence = { category: 'free', accessLane: 'free', disabledAt: row.disabled_at, deleteAfter: due, planId: row.plan_id, planCode: row.plan_code, dryRun, portalAccountPreserved: true, activityPollTrustedImmediatelyBeforeDecision: true, activityRefreshedImmediatelyBeforeDecision: true };
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'jellyfin_account',$3,$4::jsonb)`, [actorUserId,dryRun?'jellyfin.lifecycle.would_delete':'jellyfin.lifecycle.delete',row.account_id,JSON.stringify(evidence)]);
             if (dryRun) { deferred += 1; continue; }
 
@@ -216,15 +242,19 @@ async function usageSatisfiedEarlierToday(row) {
 }
 
 async function finalEligibility(row, globalCfg) {
-    const [worker, serverTelemetry, freshRows] = await Promise.all([
-        activityWorkerTelemetry(),
-        refreshCandidateServers([row]),
-        base.candidates(globalCfg, { customerId: row.customer_id })
-    ]);
-    const server = serverTelemetry[String(row.server_id)] || null;
-    const fresh = freshRows.find(item => String(item.account_id) === String(row.account_id) && String(item.plan_id) === String(row.plan_id)) || null;
-    if (!worker.ready) return { ready: false, reason: 'activity_worker_stale', worker, server };
+    const worker = await activityWorkerTelemetry();
+    if (!worker.ready) return { ready: false, reason: 'activity_worker_stale', worker, server: null };
+
+    let serverTelemetry = await refreshCandidateServers([row]);
+    let server = serverTelemetry[String(row.server_id)] || null;
     if (!server?.ready) return { ready: false, reason: server?.reason || 'server_poll_untrusted', worker, server };
+
+    serverTelemetry = await refreshCandidateUserActivity([row], serverTelemetry);
+    server = serverTelemetry[String(row.server_id)] || null;
+    if (!server?.ready) return { ready: false, reason: server?.reason || 'user_activity_refresh_failed', worker, server };
+
+    const freshRows = await base.candidates(globalCfg, { customerId: row.customer_id });
+    const fresh = freshRows.find(item => String(item.account_id) === String(row.account_id) && String(item.plan_id) === String(row.plan_id)) || null;
     if (!fresh?.eligible) return { ready: false, reason: 'usage_no_longer_eligible', worker, server, fresh };
     if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh };
     return { ready: true, worker, server, fresh };
@@ -259,8 +289,11 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         };
     }
 
-    const rows = await base.candidates(globalCfg);
-    const serverTelemetry = await refreshCandidateServers(rows);
+    const discovered = await base.candidates(globalCfg);
+    let serverTelemetry = await refreshCandidateServers(discovered);
+    serverTelemetry = await refreshCandidateUserActivity(discovered, serverTelemetry);
+    const rows = discovered.length ? await base.candidates(globalCfg) : discovered;
+    serverTelemetry = await refreshCandidateServers(rows, serverTelemetry);
     const eligible = eligibleOnReadyServers(rows, serverTelemetry);
     const unsafeEligible = rows.filter(row => row?.eligible && !serverTelemetry[String(row.server_id)]?.ready);
     let enforced = 0, wouldDisable = 0, failed = 0, safetySkipped = unsafeEligible.length;
@@ -279,7 +312,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         }
         const row = final.fresh;
         const dryRun = forceDryRun === null ? row.policy.dryRun : Boolean(forceDryRun);
-        const evidence = { planId: row.plan_id, planCode: row.plan_code, accessLane: 'free', accountId: row.account_id, serverId: row.server_id, lastPlaybackAt: row.last_playback_at || null, inactiveReferenceAt: row.inactive_reference_at, observationStartedAt: row.observation_started_at, playbackMinutes: Math.round(row.playback_seconds / 60), triggers: row.triggers, dryRun, policyInherited: row.policy.inherited, repairExistingHold: Boolean(row.repairExistingHold), portalAccountPreserved: true, activityPollTrustedImmediatelyBeforeDecision: true };
+        const evidence = { planId: row.plan_id, planCode: row.plan_code, accessLane: 'free', accountId: row.account_id, serverId: row.server_id, lastPlaybackAt: row.last_playback_at || null, inactiveReferenceAt: row.inactive_reference_at, observationStartedAt: row.observation_started_at, playbackMinutes: Math.round(row.playback_seconds / 60), triggers: row.triggers, dryRun, policyInherited: row.policy.inherited, repairExistingHold: Boolean(row.repairExistingHold), portalAccountPreserved: true, activityPollTrustedImmediatelyBeforeDecision: true, activityRefreshedImmediatelyBeforeDecision: true };
         try {
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`, [actorUserId,dryRun?'customer.inactivity.would_disable_jellyfin':'customer.inactivity.disable_jellyfin',row.customer_id,JSON.stringify(evidence)]);
             if (dryRun) { wouldDisable += 1; continue; }
@@ -322,6 +355,7 @@ module.exports = {
     activityWorkerTelemetry,
     candidateServerIds,
     refreshCandidateServers,
+    refreshCandidateUserActivity,
     eligibleOnReadyServers,
     telemetrySummary,
     deletionPolicy,
