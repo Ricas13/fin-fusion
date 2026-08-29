@@ -96,6 +96,10 @@ async function customerDiscordUserId(customerId){
   const r=await query(`SELECT discord_user_id FROM customer_communication_preferences WHERE customer_id=$1 AND discord_user_id IS NOT NULL`,[customerId]);
   return r.rows[0]?.discord_user_id||null;
 }
+async function deletionInProgress(customerId){
+  const r=await query(`SELECT 1 FROM customer_deletion_jobs WHERE customer_id=$1 AND status IN ('pending','running','failed') LIMIT 1`,[customerId]);
+  return r.rowCount>0;
+}
 async function currentGuildRoles(guildId,discordUserId){
   try{
     const member=await notificationSettings.discordApi(`/guilds/${encodeURIComponent(guildId)}/members/${encodeURIComponent(discordUserId)}`);
@@ -112,7 +116,11 @@ async function syncRoleForCustomer(customerId,activePlanIds=[]){
   if(!discordUserId)return{skipped:'not_linked'};
   const managed=await managedRoleIds();
   if(!managed.size)return{skipped:'no_roles_configured'};
-  const desired=await desiredRoleIdsForPlans(activePlanIds);
+  // A destructive deletion hold is authoritative. Generic role reconciliation
+  // may help remove access, but it must never re-add a managed role while the
+  // durable deletion saga is retaining this identity for strict cleanup.
+  const deleting=await deletionInProgress(customerId);
+  const desired=deleting?new Set():await desiredRoleIdsForPlans(activePlanIds);
   const current=await currentGuildRoles(status.discordGuildId,discordUserId);
   if(current===null)return{skipped:'not_guild_member'};
   const toAdd=[...desired].filter(id=>!current.has(id));
@@ -128,4 +136,4 @@ async function syncRoleForCustomer(customerId,activePlanIds=[]){
   }
   return result;
 }
-module.exports={syncRoleForCustomer,managedRoleIds,desiredRoleIdsForPlans,roleCatalogue,analyzeGuildRoles,snowflake,compactError,DISCORD_ADMINISTRATOR,DISCORD_MANAGE_ROLES};
+module.exports={syncRoleForCustomer,managedRoleIds,desiredRoleIdsForPlans,customerDiscordUserId,deletionInProgress,currentGuildRoles,roleCatalogue,analyzeGuildRoles,snowflake,compactError,DISCORD_ADMINISTRATOR,DISCORD_MANAGE_ROLES};
