@@ -40,6 +40,7 @@ assert(inventory.includes('Fleet stream capacity')&&inventory.includes('Sold / h
 assert(inventory.includes('n<0||n>1000000'),'Availability backend must accept zero and reject negative manual limits');
 assert(serverForm.includes('Sellable stream capacity')&&serverForm.includes('A 3-stream plan consumes 3 units'),'server configuration must explain that max_users is the sellable stream-entitlement budget');
 assert(capacitySource.includes("commercial_snapshot->'streams'")&&capacitySource.includes('billing_checkout_intents'),'fleet usage must count snapshotted stream entitlements and open checkout holds');
+assert(capacitySource.includes("FLEET_OCCUPANT_STATUSES=['active','trialing']")&&capacitySource.includes("FLEET_ACCESS_HOLD_TYPES=['inactivity_policy','jellyfin_cleanup']"),'fleet occupancy must only count active/trialing customers without inactivity or cleanup holds');
 assert(capacitySource.includes("commercial_snapshot->'stremioHouseholdNetworkLimit'")&&capacitySource.includes('async function stremioHouseholdUsage'),'Stremio usage must count purchased and held household units');
 assert(capacitySource.includes("key=model==='fleet_streams'?`fleet:${serverClass(plan)}`"),'fleet acquisition must serialize against a shared Premium/Free capacity lock');
 assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'fleet capacity must follow placement health/state and retain an explicit configured-fleet signal during drain/outage');
@@ -48,7 +49,7 @@ assert(onboarding.includes('scarcityBadge')&&onboarding.includes('sharedCapacity
 assert(onboarding.includes("if(sold)")&&onboarding.includes('No new place can be activated until capacity becomes available.'),'sold-out plans must disable acquisition actions in the customer portal');
 assert(storefront.includes('sectionAvailability')&&storefront.includes('state?.label'),'public storefront must use the real capacity scarcity label rather than synthetic inventory copy');
 assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative recheck');
-assert(plansList.includes('Active ${active} · held ${held}')&&plansList.includes('stream entitlements allocated or held'),'admin plan capacity must distinguish active stream use from temporary holds while preserving stream-entitlement semantics');
+assert(plansList.includes('${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer')&&plansList.includes('View shared ${esc(state.pool)} capacity'),'admin plan capacity must show occupants, temporary holds, sellable capacity and per-customer stream weight separately');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must admit explicit zero capacity');
 
 // Discord community settings extend the existing notification_delivery_v1 owner.
@@ -57,7 +58,8 @@ assert(notificationSettings.includes('async function sendDiscordChannel({channel
 assert(notificationSettings.includes("allowed_mentions:{parse:allowEveryone?['everyone']:[]}"),'Discord channel delivery must suppress @everyone unless explicitly enabled');
 assert(notificationOutbox.includes('enqueueDiscordChannel')&&notificationOutbox.includes('payload?.discordChannel')&&notificationOutbox.includes('settings.sendDiscord(payload?.text||row.message_type,{userId:row.destination})'),'durable channel delivery must coexist with the existing Discord DM outbox path');
 assert(adminNotifications.includes('discordInviteUrl')&&adminNotifications.includes('discordFreePlacesDigestEnabled')&&adminNotifications.includes('discordFreePlacesChannelId')&&adminNotifications.includes('discordFreePlacesTimezone')&&adminNotifications.includes('discordFreePlacesTime1')&&adminNotifications.includes('discordFreePlacesTime2')&&adminNotifications.includes('discordFreePlacesMinRemaining')&&adminNotifications.includes('discordFreePlacesMentionEveryone')&&adminNotifications.includes('stremioMetadataAddonUrl'),'Discord community and onboarding fields must live with the existing notification delivery settings');
-assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_places_digest:30'),'free-place slot checks must run through the canonical automation worker frequently enough to hit local HH:MM slots');
+assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_places_digest:30')&&automationWorker.includes('VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING')&&automationWorker.includes('DEFAULT_JOB_INTERVALS[jobKey]||300'),'free-place digest must be inserted enabled at its 30-second default instead of the generic five-minute interval');
+assert(notificationSettings.includes('communityForLoad')&&notificationSettings.includes('extras=communityForLoad'),'persisted incomplete community settings must load without throwing and leave the digest disabled');
 assert(!inactivity.includes('free-places-digest')&&!inactivity.includes('free_places_digest'),'inactivity handling must never post a Discord free-place digest directly');
 
 // /account reuses assigned credentials and private Stremio URLs; no reversible Jellyfin password is introduced.
@@ -82,6 +84,7 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   const acquisition=capacity.acquisitionSql('p');
   assert(acquisition.includes('p.capacity_limit IS NULL OR p.capacity_limit >'),'SQL acquisition guard must preserve legacy/manual zero-capacity behavior');
   assert(acquisition.includes('SUM(capacity_server.max_users)')&&acquisition.includes("active_subscription.commercial_snapshot->'streams'")&&acquisition.includes("capacity_checkout.commercial_snapshot->'streams'"),'fleet SQL acquisition must compare eligible stream capacity with active and checkout stream units');
+  assert(acquisition.includes("active_subscription.status IN ('active','trialing')")&&acquisition.includes("capacity_access_hold.hold_type IN ('inactivity_policy','jellyfin_cleanup')"),'fleet SQL acquisition must use the same occupant statuses and open-hold exclusion as runtime usage');
   assert(acquisition.includes('capacity_free_hold.consumed_at IS NULL')&&acquisition.includes('capacity_free_hold.released_at IS NULL'),'fleet SQL acquisition must count pending Free Access holds');
   assert(acquisition.includes('GREATEST(1,COALESCE(p.streams,1))'),'fleet SQL acquisition must reserve enough room for the next plan-sized stream entitlement');
   assert(acquisition.includes('plan_server_eligibility capacity_restriction')&&acquisition.includes('plan_server_eligibility capacity_match'),'fleet SQL acquisition must honor plan-specific server eligibility when detecting/configuring capacity');
@@ -106,23 +109,43 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert.strictEqual(unavailable.remaining,0,'unavailable fleet must expose zero places');
   assert.strictEqual(unavailable.soldOut,true,'unavailable fleet must close acquisition instead of falling back to the legacy per-plan limit');
 
+  let occupantSql='',occupantParams=[];
+  const occupiedFleetDb=async(sql,params=[])=>{
+    if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'occupied-free',capacity_limit:null,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true,streams:1}]};
+    if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
+    if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,stream_limit:10}]};
+    if(sql.includes('AS stream_used')){occupantSql=sql;occupantParams=params;return{rowCount:1,rows:[{stream_used:2}]};}
+    if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:1}]};
+    if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:1}]};
+    throw new Error(`Unexpected occupied fleet query: ${sql.slice(0,120)}`);
+  };
+  const occupied=await capacity.usage('occupied-free',occupiedFleetDb);
+  assert.strictEqual(occupied.streamUsed,2,'streamUsed must represent current occupants only');
+  assert.strictEqual(occupied.streamReserved,2,'checkout and Free Access reservations must remain held separately');
+  assert.strictEqual(occupied.streamRemaining,6,'remaining stream capacity must subtract occupants and holds');
+  assert(occupantSql.includes('NOT EXISTS(SELECT 1 FROM customer_access_holds h')&&occupantSql.includes('h.released_at IS NULL'),'open access holds must exclude the customer from streamUsed');
+  assert.deepStrictEqual(occupantParams,['free',['active','trialing'],['inactivity_policy','jellyfin_cleanup']],'runtime fleet occupancy must bind only occupant statuses and inactivity/cleanup hold types');
+
+  let freePlanQuery='';
   const freePlanDb=async sql=>{
-    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'"))return{rowCount:1,rows:[{id:'free-plan'}]};
+    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};}
     throw new Error(`Unexpected free-place digest query: ${sql.slice(0,120)}`);
   };
   const digestSettings={discordFreePlacesDigestEnabled:true,discordConfigured:true,discordFreePlacesChannelId:'123456789012345678',discordFreePlacesTimezone:'UTC',discordFreePlacesTime1:'06:00',discordFreePlacesTime2:'18:00',discordFreePlacesMinRemaining:1,discordFreePlacesMentionEveryone:false};
   const deduped=new Set(),messages=[];
   const enqueue=async input=>{if(deduped.has(input.dedupeKey))return{queued:false};deduped.add(input.dedupeKey);messages.push(input);return{queued:true};};
-  const evening={now:new Date('2026-08-29T18:00:20Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}};
-  const firstDigest=await digest.run(evening),duplicateDigest=await digest.run(evening);
-  assert.strictEqual(firstDigest.queued,1,'18:00 with three free places must enqueue the digest');
-  assert.strictEqual(duplicateDigest.queued,0,'the same channel/date/slot must not enqueue twice');
+  const firstDigest=await digest.run({now:new Date('2026-08-29T18:02:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
+  const duplicateDigest=await digest.run({now:new Date('2026-08-29T20:17:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
+  assert.strictEqual(firstDigest.queued,1,'18:02 with three free places must enqueue the 18:00 digest');
+  assert.strictEqual(firstDigest.slot,'18:00','the latest started local slot must remain due after its exact minute');
+  assert.strictEqual(duplicateDigest.queued,0,'a later tick the same evening must not enqueue the same slot twice');
   assert.strictEqual(messages.length,1,'the durable dedupe key must produce one Discord channel message per slot');
   assert.strictEqual(messages[0].dedupeKey,'free-places-digest:123456789012345678:2026-08-29:18:00','free-place digest dedupe key must be channel/date/slot scoped');
   assert.strictEqual(messages[0].text,'Free Server — 3 places open\nhttps://portal.example','digest copy must expose only free-place count and the public portal URL');
+  assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'),'digest must choose the same first public Free Server plan as the storefront');
   const beforeMorning=messages.length;
-  const morning=await digest.run({now:new Date('2026-08-30T06:00:10Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:0}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example'}});
-  assert.strictEqual(morning.queued,0,'06:00 with zero remaining must stay silent');
+  const morning=await digest.run({now:new Date('2026-08-30T06:02:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:0}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example'}});
+  assert.strictEqual(morning.queued,0,'06:02 with zero remaining must stay silent');
   assert.strictEqual(messages.length,beforeMorning,'zero remaining must not enqueue a Discord digest');
 
   const soldPlan={id:'free-plan',name:'Free Server',description:'Free access',service_type:'jellyfin',billing_interval:'month',price_minor:0,streams:1,capacity:{soldOut:true,label:'Currently full',kind:'sold'}};
