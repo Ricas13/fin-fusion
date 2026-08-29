@@ -7,6 +7,8 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const runtimeSource = fs.readFileSync(path.join(root, 'src/stremio/runtime.js'), 'utf8');
 const limiterSource = fs.readFileSync(path.join(root, 'src/security/route-rate-limit.js'), 'utf8');
+const mediaEdgeSource = fs.readFileSync(path.join(root, 'src/stremio/media-edge-grant.js'), 'utf8');
+const mediaEdge = require('../src/stremio/media-edge-grant');
 
 // Stremio is sold as household access with unlimited devices/streams. A single
 // household can legitimately have many clients refreshing results at once, so
@@ -20,9 +22,19 @@ assert(runtimeSource.includes("router.get('/stremio/:token/manifest.json', async
 assert(runtimeSource.includes("router.get('/stremio/:token/stream/:type/:videoId.json', async"), 'stream route must mount directly without a limiter middleware');
 assert(runtimeSource.includes("router.get('/stremio/:token/household-blocked/:type/:videoId.mp4', sendHouseholdBlockedMedia)"), 'blocked-media route must mount directly without a limiter middleware');
 
+// Stremio Core parses cacheMaxAge/staleRevalidate/staleError from resource JSON.
+// Stream results and empty results must explicitly disable that client-side cache
+// instead of relying only on HTTP Cache-Control headers.
+assert(mediaEdgeSource.includes('cacheMaxAge: 0'), 'Stremio stream responses must explicitly disable resource caching');
+assert(mediaEdgeSource.includes('staleRevalidate: 0'), 'Stremio stream responses must disable stale revalidation reuse');
+assert(mediaEdgeSource.includes('staleError: 0'), 'Stremio stream responses must disable stale-on-error reuse');
+assert(mediaEdgeSource.includes("'no-store, no-cache, must-revalidate, max-age=0'"), 'HTTP stream responses must also disable intermediary/browser caching');
+const uncached = mediaEdge.noCacheStreamResponse({ streams: [] });
+assert.deepStrictEqual(uncached, { streams: [], cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 }, 'empty stream results must not become a sticky Stremio resource-cache entry');
+
 // Sensitive authentication/mutation routes elsewhere still use the canonical
 // database-backed limiter. Removing Stremio throttling must not weaken that
 // shared security default.
 assert(limiterSource.includes("backend = 'database'"), 'shared database rate limiting must remain the default for sensitive routes');
 
-console.log('stremio unlimited request contract smoke: ok');
+console.log('stremio unlimited request and no-cache contract smoke: ok');

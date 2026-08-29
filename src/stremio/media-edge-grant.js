@@ -196,21 +196,35 @@ function authorizeHandler(req, res) {
   return res.status(204).end();
 }
 
+function noCacheStreamResponse(body) {
+  if (!body || !Array.isArray(body.streams)) return body;
+  return {
+    ...body,
+    cacheMaxAge: 0,
+    staleRevalidate: 0,
+    staleError: 0
+  };
+}
+
 function runtimeProtectionMiddleware(req, res, next) {
-  if (!enabled()) return next();
   const requestPath = String(req.path || '');
   if (/^\/stremio\/[^/]+\/stream\/[^/]+\/[^/]+\.json$/.test(requestPath)) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const sendJson = res.json.bind(res);
     res.json = body => {
-      if (!body || !Array.isArray(body.streams) || !body.streams.length) return sendJson(body);
+      const uncachedBody = noCacheStreamResponse(body);
+      if (!uncachedBody || !Array.isArray(uncachedBody.streams) || !uncachedBody.streams.length || !enabled()) return sendJson(uncachedBody);
       try {
-        return sendJson({ ...body, streams: protectStreams(body.streams, req, null) });
+        return sendJson({ ...uncachedBody, streams: protectStreams(uncachedBody.streams, req, null) });
       } catch (error) {
         console.error('Stremio edge grant issuance failed:', String(error?.message || error).slice(0, 300));
-        return sendJson({ streams: [] });
+        return sendJson(noCacheStreamResponse({ streams: [] }));
       }
     };
   }
+  if (!enabled()) return next();
   if (/^\/stremio\/[^/]+\/(?:play|external-play)\//.test(requestPath)) {
     const redirect = res.redirect.bind(res);
     res.redirect = (statusOrUrl, maybeUrl) => {
@@ -250,5 +264,6 @@ module.exports = {
   edgeSecretMatches,
   authorize,
   authorizeHandler,
+  noCacheStreamResponse,
   runtimeProtectionMiddleware
 };
