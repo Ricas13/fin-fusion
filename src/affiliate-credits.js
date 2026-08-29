@@ -85,6 +85,15 @@ async function createPendingReward({affiliateCustomerId,referredCustomerId,redem
   return r.rowCount?{created:true,...r.rows[0],amountMinor:reward}:{created:false,reason:'already_recorded'};
 }
 
+async function refundStateForReward(client,row){
+  const sub=(await client.query(`SELECT source,provider_subscription_id FROM subscriptions WHERE id=$1`,[row.qualifying_subscription_id])).rows[0]||{};
+  const incidents=await client.query(`SELECT provider,incident_type,incident_status,amount_minor FROM payment_incidents WHERE customer_id=$1 AND provider=$2 AND provider_subscription_id=$3 AND incident_type IN('refund','chargeback') ORDER BY created_at,id`,[row.referred_customer_id,sub.source,sub.provider_subscription_id]);
+  const chargeback=incidents.rows.some(x=>x.incident_type==='chargeback'&&String(x.incident_status||'').toLowerCase()!=='won');
+  const refunds=incidents.rows.filter(x=>x.incident_type==='refund').map(x=>Math.max(0,Number(x.amount_minor||0)));
+  const refunded=sub.source==='stripe'?(refunds.length?Math.max(...refunds):0):refunds.reduce((a,b)=>a+b,0);
+  return{chargeback,refundedMinor:refunded,provider:sub.source};
+}
+
 async function topUpRewardToCurrentRate({creditId,actorUserId=null,reason}={}){
   const note=requiredReason(reason);if(!creditId)throw new Error('Choose a referral reward to top up.');
   return transaction(async client=>{
@@ -98,8 +107,12 @@ async function topUpRewardToCurrentRate({creditId,actorUserId=null,reason}={}){
     const paidMinor=adverse.chargeback?0:Math.max(0,grossPaidMinor-Math.min(grossPaidMinor,adverse.refundedMinor));
     if(paidMinor<=0)throw new Error('This affiliate reward has no remaining qualifying paid value to top up.');
     const settings=await settingsFor(client),targetRewardMinor=Math.max(1,Math.floor(paidMinor*settings.rewardPercent/100));
-    const prior=await client.query(`SELECT COALESCE(SUM(amount_minor),0)::int amount FROM affiliate_credit_ledger WHERE customer_id=$1 AND entry_type='adjustment' AND state<>'void' AND metadata->>'sourceRewardId'=$2`,[row.customer_id,String(row.id)]);
-    const currentRewardMinor=Number(row.amount_minor||0)+Number(prior.rows[0]?.amount||0),topUpMinor=targetRewardMinor-currentRewardMinor;
+    const prior=await client.query(`SELECT
+        COALESCE(SUM(CASE WHEN entry_type='adjustment' AND amount_minor>0 AND state<>'void' AND metadata->>'sourceRewardId'=$2 THEN amount_minor ELSE 0 END),0)::int topups,
+        COALESCE(SUM(CASE WHEN entry_type='reversed' AND state<>'void' AND (metadata->>'sourceRewardId'=$2 OR metadata->>'earnedCreditId'=$2) THEN -amount_minor ELSE 0 END),0)::int reversed
+      FROM affiliate_credit_ledger WHERE customer_id=$1`,[row.customer_id,String(row.id)]);
+    const recovery=await accounting.recoveryForReward(client,row.id);
+    const currentRewardMinor=Number(row.amount_minor||0)+Number(prior.rows[0]?.topups||0)-Number(prior.rows[0]?.reversed||0)-Number(recovery.amountMinor||0),topUpMinor=targetRewardMinor-currentRewardMinor;
     if(topUpMinor<=0)return{created:false,reason:'already_at_or_above_current_rate',customerId:row.customer_id,currency:row.currency,currentRewardMinor,targetRewardMinor,targetRewardPercent:settings.rewardPercent};
     const availableAt=row.available_at?new Date(row.available_at):new Date(),state=row.state==='pending'&&availableAt.getTime()>Date.now()?'pending':'available',referenceId=`affiliate-rate-topup:${row.id}:${settings.rewardPercent}`;
     const inserted=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,referred_customer_id,qualifying_subscription_id,available_at,reference_id,note,metadata)
@@ -124,15 +137,6 @@ async function adminAdjustCredit({customerId,currency,amountMinor,reason,actorUs
   });
 }
 
-async function refundStateForReward(client,row){
-  const sub=(await client.query(`SELECT source,provider_subscription_id FROM subscriptions WHERE id=$1`,[row.qualifying_subscription_id])).rows[0]||{};
-  const incidents=await client.query(`SELECT provider,incident_type,incident_status,amount_minor FROM payment_incidents WHERE customer_id=$1 AND provider=$2 AND provider_subscription_id=$3 AND incident_type IN('refund','chargeback') ORDER BY created_at,id`,[row.referred_customer_id,sub.source,sub.provider_subscription_id]);
-  const chargeback=incidents.rows.some(x=>x.incident_type==='chargeback'&&String(x.incident_status||'').toLowerCase()!=='won');
-  const refunds=incidents.rows.filter(x=>x.incident_type==='refund').map(x=>Math.max(0,Number(x.amount_minor||0)));
-  const refunded=sub.source==='stripe'?(refunds.length?Math.max(...refunds):0):refunds.reduce((a,b)=>a+b,0);
-  return{chargeback,refundedMinor:refunded,provider:sub.source};
-}
-
 async function reverseReward({redemptionId,paymentIncidentId=null,reason='payment_reversal'}={}){
   if(!redemptionId)return{reversed:false,reason:'missing_redemption'};
   return transaction(async client=>{
@@ -149,8 +153,8 @@ async function reverseReward({redemptionId,paymentIncidentId=null,reason='paymen
     const targetRewardMinor=netPaidMinor>0?Math.min(totalGranted,Math.max(1,Math.floor(netPaidMinor*effectiveRate/100))):0;
     const requiredReduction=Math.max(0,totalGranted-targetRewardMinor);
     const prior=await client.query(`SELECT COALESCE(SUM(-amount_minor),0)::int n FROM affiliate_credit_ledger WHERE entry_type='reversed' AND state<>'void' AND (metadata->>'sourceRewardId'=$1 OR metadata->>'earnedCreditId'=$1)`,[String(row.id)]);
-    const alreadyReversed=Number(prior.rows[0]?.n||0),delta=Math.max(0,requiredReduction-alreadyReversed);
-    if(delta===0)return{reversed:false,reason:'already_reconciled',amountMinor:0,currency:row.currency,customerId:row.customer_id,remainingRewardMinor:targetRewardMinor,recoverableMinor:0};
+    const existingRecovery=await accounting.recoveryForReward(client,row.id),alreadyReversed=Number(prior.rows[0]?.n||0),alreadyAccounted=alreadyReversed+Number(existingRecovery.amountMinor||0),delta=Math.max(0,requiredReduction-alreadyAccounted);
+    if(delta===0)return{reversed:false,reason:'already_reconciled',amountMinor:0,currency:row.currency,customerId:row.customer_id,remainingRewardMinor:targetRewardMinor,recoverableMinor:Math.max(0,Number(existingRecovery.amountMinor||0)-Number(existingRecovery.recoveredMinor||0))};
     const capacity=await accounting.sourceCapacity(client,row.id),allocated=await accounting.allocatedFromReward(client,row.id),unspent=Math.max(0,capacity-allocated),debitMinor=Math.min(delta,unspent),recoveryMinor=delta-debitMinor;
     if(debitMinor>0){
       const state=row.state==='pending'?'pending':'available',referenceId=`affiliate-reversal:${redemptionId}:${paymentIncidentId||crypto.createHash('sha256').update(String(reason)).digest('hex').slice(0,16)}:${requiredReduction}`;
