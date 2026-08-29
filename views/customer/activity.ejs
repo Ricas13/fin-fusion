@@ -13,6 +13,7 @@
 <%
   function when(v){if(!v)return'Not recorded yet';const d=new Date(v);return Number.isNaN(d.getTime())?'Not recorded yet':d.toLocaleString();}
   function ruleText(policy){const parts=[];if(policy&&policy.noPlaybackDays!=null)parts.push(`play something at least once every ${policy.noPlaybackDays} day(s)`);if(policy&&policy.minimumPlaybackMinutes!=null)parts.push(`watch at least ${policy.minimumPlaybackMinutes} minutes in each ${policy.playbackWindowDays||7}-day window`);return parts.join(' and ')||'No automatic usage threshold';}
+  function playbackLabel(v){switch(String(v||'').toLowerCase()){case'directplay':return'Direct play';case'directstream':return'Direct stream';case'transcode':return'Server transcoding';default:return'Unknown';}}
 %>
 <body><div class="portalShell">
 <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
@@ -38,7 +39,7 @@
   <section class="panel"><div class="sectionHead"><div><h2>Recent playback</h2><p>Up to your latest 100 recorded Jellyfin playbacks.</p></div></div>
     <% if (!activity.length) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
     <div class="tableWrap"><table class="activityTable"><thead><tr><th>Started</th><th>Media</th><th>Playback</th><th>Device</th><th>Server</th><th>Ended</th></tr></thead><tbody>
-      <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong></td><td><span class="pill"><%= a.playback_method || 'Unknown' %></span></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
+      <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong></td><td><%= playbackLabel(a.playback_method) %></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
     </tbody></table></div><% } %>
   </section>
   <section class="sectionBlock"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams appear here. Normal playback does not create an action.</p></div></div><div class="panel">
