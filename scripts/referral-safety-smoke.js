@@ -70,7 +70,7 @@ async function main(){
     const paidReferrer=await customer('paid-referrer'),paidReferred=await customer('paid-referred');
     const paidCode=await referrals.ensureReferralCode(paidReferrer.id);
     assert(await referrals.attributeReferral(paidReferred.id,paidCode),'Paid referral was not attributed');
-    await subscription(paidReferred.id,paidPlan.id,{source:'paypal',discountedMinor:500});
+    const paidPurchase=await subscription(paidReferred.id,paidPlan.id,{source:'paypal',discountedMinor:500});
     const reward=await referrals.rewardIfQualifying(paidReferred.id);
     assert.strictEqual(reward?.rewarded,true,'Qualifying paid referral was not rewarded');
     assert.strictEqual(reward.amountMinor,250,'50% affiliate reward must equal half of actual paid value');
@@ -82,7 +82,9 @@ async function main(){
     assert.strictEqual(Number((await query(`SELECT COUNT(*) n FROM affiliate_credit_ledger WHERE customer_id=$1 AND entry_type='earned'`,[paidReferrer.id])).rows[0].n),1,'Referral reward created duplicate earned-credit entries');
 
     // A later adverse payment removes only still-unspent credit and preserves service.
-    const reversal=await referrals.revisitRewardAfterAdversePayment({referredCustomerId:paidReferred.id,reason:'smoke_chargeback'});
+    // Reversal is grounded in the same durable incident evidence production webhooks record.
+    const chargeback=await incidents.record({provider:'paypal',eventId:`evt_chargeback_${suffix}`,caseId:`case_chargeback_${suffix}`,kind:'chargeback',status:'lost',identity:{scope:'direct',customerId:paidReferred.id},providerSubscriptionId:paidPurchase.provider_subscription_id,amountMinor:500,currency:'GBP',metadata:{smoke:true}});
+    const reversal=await referrals.revisitRewardAfterAdversePayment({referredCustomerId:paidReferred.id,incidentId:chargeback.incident.id,reason:'smoke_chargeback'});
     assert.strictEqual(reversal.reversed,true,'Adverse payment did not reverse unspent affiliate credit');
     balance=(await credits.balances(paidReferrer.id)).find(row=>row.currency==='GBP');
     assert.strictEqual(Number(balance?.available_minor||0),0,'Reversed affiliate credit remained spendable');
