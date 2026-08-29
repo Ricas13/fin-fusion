@@ -4,6 +4,7 @@ const { query } = require('../db');
 const lifecycle = require('./lifecycle');
 const providerSettings = require('./provider-settings');
 const providerOps = require('./provider-operations');
+const providerHttp = require('./provider-http');
 
 const HEALTHY_SYNC_MS = 6 * 60 * 60 * 1000;
 const MIN_RETRY_MS = 15 * 60 * 1000;
@@ -42,7 +43,8 @@ async function stripeAdapter() {
         const Stripe = require('stripe');
         stripeClient = new Stripe(key, {
             apiVersion: '2026-06-24.dahlia',
-            appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' }
+            appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' },
+            timeout: providerHttp.timeoutMs('stripe')
         });
         stripeClientKey = key;
     }
@@ -68,6 +70,13 @@ function paypalBaseUrl(cfg) {
     return cfg.environment === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
 }
 
+function paypalHttpError(response, payload, requestId, prefix = 'PayPal HTTP') {
+    const detail = payload?.message || payload?.name || payload?.error_description || 'request failed';
+    const error = providerHttp.responseError('paypal', response, payload, requestId, `${prefix} ${response.status}: ${detail}`);
+    error.message = `${prefix} ${response.status}: ${detail}`;
+    return error;
+}
+
 async function paypalAccessToken() {
     const cfg = await providerSettings.get('paypal');
     if (!cfg.clientId || !cfg.clientSecret) throw new Error('PayPal is disabled or not configured.');
@@ -78,7 +87,7 @@ async function paypalAccessToken() {
         paypalTokenUntil = 0;
     }
     if (paypalToken && Date.now() < paypalTokenUntil - 60000) return { cfg, token: paypalToken };
-    const response = await fetch(`${paypalBaseUrl(cfg)}/v1/oauth2/token`, {
+    const { response, data: payload, requestId } = await providerHttp.fetchJson('paypal', `${paypalBaseUrl(cfg)}/v1/oauth2/token`, {
         method: 'POST',
         headers: {
             Authorization: `Basic ${Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64')}`,
@@ -87,8 +96,7 @@ async function paypalAccessToken() {
         },
         body: 'grant_type=client_credentials'
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.access_token) throw new Error(`PayPal OAuth failed: ${payload.error_description || response.status}`);
+    if (!response.ok || !payload.access_token) throw paypalHttpError(response, payload, requestId, 'PayPal OAuth failed:');
     paypalToken = payload.access_token;
     paypalTokenUntil = Date.now() + Number(payload.expires_in || 300) * 1000;
     return { cfg, token: paypalToken };
@@ -96,7 +104,7 @@ async function paypalAccessToken() {
 
 async function paypalApi(path, { method = 'GET', body = null, idempotencyKey = null } = {}) {
     const { cfg, token } = await paypalAccessToken();
-    const response = await fetch(`${paypalBaseUrl(cfg)}${path}`, {
+    const result = await providerHttp.fetchJson('paypal', `${paypalBaseUrl(cfg)}${path}`, {
         method,
         headers: {
             Authorization: `Bearer ${token}`,
@@ -106,17 +114,8 @@ async function paypalApi(path, { method = 'GET', body = null, idempotencyKey = n
         },
         ...(body ? { body: JSON.stringify(body) } : {})
     });
-    const text = await response.text();
-    let payload = {};
-    if (text) {
-        try { payload = JSON.parse(text); }
-        catch { payload = { message: text }; }
-    }
-    if (!response.ok) {
-        const error = new Error(`PayPal HTTP ${response.status}: ${payload.message || payload.name || 'request failed'}`);
-        error.status = response.status;
-        throw error;
-    }
+    const payload = result.data || {};
+    if (!result.response.ok) throw paypalHttpError(result.response, payload, result.requestId);
     return payload;
 }
 
