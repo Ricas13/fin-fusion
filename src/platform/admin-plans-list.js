@@ -59,6 +59,7 @@ function capacityCell(plan) {
   const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{};
   if(state.model==='fleet_streams'){
     const used=Math.max(0,Number(state.streamUsed||0)),held=Math.max(0,Number(state.streamReserved||0)),occupied=used+held,limit=Math.max(0,Number(state.streamLimit||0)),pct=limit?Math.min(100,Math.round((occupied/limit)*100)):100,near=pct>=85?' nearFull':'';
+    // Shared stream entitlements allocated or held are shown separately below as occupying versus held capacity.
     return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':Number(state.remaining)<=10?'statusWarn':'statusGood'}">${esc(state.label||`${state.remaining} available`)}</strong><div class="subText">${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View shared ${esc(state.pool)} capacity →</a></div>`;
   }
   const limit=state.limit==null?null:Number(state.limit),used=Number(state.used||0)+Number(state.reserved||0);
