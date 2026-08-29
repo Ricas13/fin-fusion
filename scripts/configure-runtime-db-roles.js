@@ -11,6 +11,28 @@ const ROLE_SPECS = {
     backupVerify: { role: 'steamfusion_backup_verify', urlEnv: 'BACKUP_VERIFY_DATABASE_URL', connectionLimit: 3, statementTimeout: '0', lockTimeout: '10s', idleTimeout: '60s', createdb: true }
 };
 
+const APP_DELETE_TABLES = Object.freeze([
+    // Session/security rows have explicit lifecycle owners in the web process.
+    'user_sessions','account_activation_tokens','account_tokens','auth_recovery_codes','auth_sessions','auth_totp_enrollments','login_rate_limits',
+    'admin_channel_link_tokens','customer_channel_link_tokens','customer_account_claims','pending_registrations','free_access_registration_reservations',
+    // Replaceable preference/configuration/mapping rows used by mounted admin/customer routes.
+    'admin_nav_read_state','admin_notification_preferences','customer_notification_preferences','customer_library_overrides','customer_library_selection','customer_policy_overrides',
+    'plan_server_eligibility','plan_stremio_sources','request_routes','stremio_source_libraries','stremio_sources','arr_instances',
+    // Runtime caches/leases are not durable business history.
+    'stremio_source_playback_leases','stremio_media_index','stremio_source_media_index','active_playback_sessions',
+    // Jellyfin account removal is an explicit provisioning operation; customer rows themselves are finalized only through finalize_customer_deletion().
+    'jellyfin_accounts'
+]);
+
+const APP_APPEND_ONLY_TABLES = Object.freeze([
+    'auth_events','customer_download_events','discount_redemptions','invitation_redemptions','payment_incident_notes',
+    'referral_reward_reversals','stream_policy_events','stremio_stream_attribution','subscription_service_extension_events'
+]);
+
+const APP_READ_ONLY_TABLES = Object.freeze([
+    'schema_migrations','playback_history','operational_worker_state','activity_worker_state','jellyfin_activity_poll_state'
+]);
+
 function credentialFromUrl(envName, expectedRole, { optional = false } = {}) {
     const raw = String(process.env[envName] || '').trim();
     if (!raw) { if (optional) return null; throw new Error(`${envName} is required`); }
@@ -66,21 +88,60 @@ async function ensureRole(client, spec, credential) {
     await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${role}`);
 }
 
+async function tableExists(client, table) {
+    const result = await client.query('SELECT to_regclass($1) AS table_name', [`public.${table}`]);
+    return Boolean(result.rows[0]?.table_name);
+}
+
+async function grantExistingTables(client, role, privileges, tables) {
+    for (const table of tables) {
+        if (await tableExists(client, table)) await client.query(`GRANT ${privileges} ON ${table} TO ${role}`);
+    }
+}
+
+async function revokeExistingTables(client, role, privileges, tables) {
+    for (const table of tables) {
+        if (await tableExists(client, table)) await client.query(`REVOKE ${privileges} ON ${table} FROM ${role}`);
+    }
+}
+
 async function grantDeletionFinalizer(client, role) {
     const exists = await client.query("SELECT to_regprocedure('public.finalize_customer_deletion(uuid)') AS function_name");
-    if (exists.rows[0]?.function_name) {
-        await client.query(`GRANT EXECUTE ON FUNCTION public.finalize_customer_deletion(uuid) TO ${role}`);
+    if (exists.rows[0]?.function_name) await client.query(`GRANT EXECUTE ON FUNCTION public.finalize_customer_deletion(uuid) TO ${role}`);
+}
+
+async function grantRetentionFunctions(client, role) {
+    const retention = await client.query("SELECT to_regprocedure('public.run_data_retention_batch(text,timestamptz,integer)') AS retention, to_regprocedure('public.cleanup_expired_access_network_leases(integer)') AS leases");
+    if (retention.rows[0]?.retention) await client.query(`GRANT EXECUTE ON FUNCTION public.run_data_retention_batch(text,timestamptz,integer) TO ${role}`);
+    if (retention.rows[0]?.leases) await client.query(`GRANT EXECUTE ON FUNCTION public.cleanup_expired_access_network_leases(integer) TO ${role}`);
+}
+
+async function revokeFutureRuntimeDefaults(client) {
+    // Migrations run as the owner/deploy role. New tables/functions are deliberately inaccessible
+    // until this script or the migration grants the exact runtime capability they require.
+    for (const spec of Object.values(ROLE_SPECS)) {
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM ${spec.role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM ${spec.role}`);
+        await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM ${spec.role}`);
     }
+    await client.query('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC');
 }
 
 async function grantApp(client) {
     const role = ROLE_SPECS.app.role;
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
-    await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
-    await client.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
-    await client.query(`REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM ${role}`);
-    await client.query(`GRANT SELECT ON schema_migrations TO ${role}`);
-    await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
+    // Existing mounted routes keep their current INSERT/UPDATE compatibility. DELETE is opt-in below.
+    await client.query(`GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA public TO ${role}`);
+    await client.query(`GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+    await grantExistingTables(client, role, 'DELETE', APP_DELETE_TABLES);
+    await revokeExistingTables(client, role, 'UPDATE,DELETE', APP_APPEND_ONLY_TABLES);
+    await revokeExistingTables(client, role, 'INSERT,UPDATE,DELETE', APP_READ_ONLY_TABLES);
+    if (await tableExists(client, 'audit_log')) await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
+    if (await tableExists(client, 'payment_events')) await client.query(`REVOKE DELETE ON payment_events FROM ${role}`);
+    if (await tableExists(client, 'provider_operations')) await client.query(`REVOKE DELETE ON provider_operations FROM ${role}`);
+    if (await tableExists(client, 'notification_outbox')) await client.query(`REVOKE DELETE ON notification_outbox FROM ${role}`);
+    if (await tableExists(client, 'customers')) await client.query(`REVOKE DELETE ON customers FROM ${role}`);
+    if (await tableExists(client, 'subscriptions')) await client.query(`REVOKE DELETE ON subscriptions FROM ${role}`);
     await grantDeletionFinalizer(client, role);
 }
 
@@ -88,18 +149,22 @@ async function grantAutomation(client) {
     const role = ROLE_SPECS.automation.role;
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${role}`);
-    await client.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
-    await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
+    await client.query(`GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
+    if (await tableExists(client, 'audit_log')) await client.query(`REVOKE UPDATE,DELETE ON audit_log FROM ${role}`);
     for (const table of ['auth_totp_enrollments','auth_recovery_codes','auth_sessions','auth_events','login_rate_limits','schema_migrations','user_sessions']) {
-        const exists = await client.query('SELECT to_regclass($1) AS table_name', [`public.${table}`]);
-        if (exists.rows[0]?.table_name) await client.query(`REVOKE ALL ON ${table} FROM ${role}`);
+        if (await tableExists(client, table)) await client.query(`REVOKE ALL ON ${table} FROM ${role}`);
     }
-    const appUsers = await client.query("SELECT to_regclass('public.app_users') AS table_name");
-    if (appUsers.rows[0]?.table_name) {
+    if (await tableExists(client, 'app_users')) {
         await client.query(`REVOKE INSERT,UPDATE,DELETE ON app_users FROM ${role}`);
         await client.query(`GRANT SELECT ON app_users TO ${role}`);
     }
+    // Financial and provider history is never a generic automation cleanup target.
+    await revokeExistingTables(client, role, 'DELETE', [
+        'affiliate_credit_ledger','payment_events','payment_incidents','payment_incident_notes','provider_operations',
+        'subscriptions','subscription_service_extension_events','referral_reward_reversals','discount_redemptions','invitation_redemptions'
+    ]);
     await grantDeletionFinalizer(client, role);
+    await grantRetentionFunctions(client, role);
 }
 
 async function grantActivity(client) {
@@ -148,8 +213,7 @@ async function grantBackup(client) {
     await client.query(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${role}`);
     await client.query(`GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`);
     for (const table of ['backup_runs','backup_worker_state','backup_verification_requests']) {
-        const exists = await client.query('SELECT to_regclass($1) AS table_name', [`public.${table}`]);
-        if (exists.rows[0]?.table_name) await client.query(`GRANT INSERT,UPDATE ON ${table} TO ${role}`);
+        if (await tableExists(client, table)) await client.query(`GRANT INSERT,UPDATE ON ${table} TO ${role}`);
     }
 }
 
@@ -183,6 +247,7 @@ async function configureRoles({ activityOnly = false } = {}) {
             await grantActivity(client);
             await grantBackup(client);
             await grantBackupVerify(client);
+            await revokeFutureRuntimeDefaults(client);
         }
         await client.query('COMMIT');
         console.log(activityOnly ? 'Configured steamfusion_activity with least-privilege grants' : 'Configured isolated app, automation, activity, backup and backup-verify PostgreSQL roles');
@@ -199,4 +264,4 @@ async function main(options = {}) { return configureRoles(options); }
 if (require.main === module) {
     main({ activityOnly: process.argv.includes('--activity-only') }).catch(error => { console.error(error.message); process.exit(1); });
 }
-module.exports = { ROLE_SPECS, credentialFromUrl, activityCredential, validateDistinctCredentials, configureRoles, main };
+module.exports = { ROLE_SPECS, APP_DELETE_TABLES, APP_APPEND_ONLY_TABLES, APP_READ_ONLY_TABLES, credentialFromUrl, activityCredential, validateDistinctCredentials, configureRoles, main };
