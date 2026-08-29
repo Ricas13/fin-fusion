@@ -111,8 +111,16 @@ function insertBeforeMainEnd(html, section) {
 }
 function hideEmptyManualEdit(html) {
     if (typeof html !== 'string') return html;
-    const form = /<form class="plainForm" method="post" action="\/admin\/customers\/bulk\/preview">[\s\S]*?<input type="hidden" name="action" value="plan_change">[\s\S]*?<button class="button secondary" type="submit">Manual entitlement edit<\/button><\/form>/;
-    return html.replace(form, '');
+    const actionNeedle = '<input type="hidden" name="action" value="plan_change">';
+    const labelNeedle = '>Manual entitlement edit</button>';
+    const actionIndex = html.indexOf(actionNeedle);
+    if (actionIndex < 0) return html;
+    const labelIndex = html.indexOf(labelNeedle, actionIndex);
+    if (labelIndex < 0) return html;
+    const formStart = html.lastIndexOf('<form ', actionIndex);
+    const formEnd = html.indexOf('</form>', labelIndex);
+    if (formStart < 0 || formEnd < 0) return html;
+    return html.slice(0, formStart) + html.slice(formEnd + '</form>'.length);
 }
 function normalizedGrantInput(body = {}) {
     const method = text(body.method, 20).toLowerCase();
@@ -205,6 +213,8 @@ function createAdminManualEntitlementRouter() {
     const router = express.Router();
     router.use('/admin/users', gate, noStore);
 
+    // All /admin POSTs are already covered by adminMutationRateLimit in
+    // admin-route-composition before this router is mounted.
     router.post('/admin/users/:customerId/manual-grant', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         let input;
