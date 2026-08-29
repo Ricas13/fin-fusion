@@ -83,7 +83,11 @@ async function assertPersonalNotificationMutation(page,pool,adminUserId){
   const checkbox=form.locator(`input[name="${channel}__${event.event_type}"]`);
   assert.equal(await checkbox.count(),1,'selected notification event/channel is missing from mounted form');
   assert(!(await checkbox.isDisabled()),'selected notification event/channel is disabled despite global availability');
-  await checkbox.check({force:true});
+  await checkbox.evaluate(element=>{
+    element.checked=true;
+    element.dispatchEvent(new Event('change',{bubbles:true}));
+  });
+  assert(await checkbox.isChecked(),'selected notification event/channel was not checked in the real form');
 
   await Promise.all([
     page.waitForNavigation({waitUntil:'domcontentloaded'}),
