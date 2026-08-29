@@ -57,7 +57,8 @@ assert(notificationSettings.includes('async function sendDiscordChannel({channel
 assert(notificationSettings.includes("allowed_mentions:{parse:allowEveryone?['everyone']:[]}"),'Discord channel delivery must suppress @everyone unless explicitly enabled');
 assert(notificationOutbox.includes('enqueueDiscordChannel')&&notificationOutbox.includes('payload?.discordChannel')&&notificationOutbox.includes('settings.sendDiscord(payload?.text||row.message_type,{userId:row.destination})'),'durable channel delivery must coexist with the existing Discord DM outbox path');
 assert(adminNotifications.includes('discordInviteUrl')&&adminNotifications.includes('discordFreePlacesDigestEnabled')&&adminNotifications.includes('discordFreePlacesChannelId')&&adminNotifications.includes('discordFreePlacesTimezone')&&adminNotifications.includes('discordFreePlacesTime1')&&adminNotifications.includes('discordFreePlacesTime2')&&adminNotifications.includes('discordFreePlacesMinRemaining')&&adminNotifications.includes('discordFreePlacesMentionEveryone')&&adminNotifications.includes('stremioMetadataAddonUrl'),'Discord community and onboarding fields must live with the existing notification delivery settings');
-assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_places_digest:30'),'free-place slot checks must run through the canonical automation worker frequently enough to hit local HH:MM slots');
+assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_places_digest:30')&&automationWorker.includes('VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING')&&automationWorker.includes('DEFAULT_JOB_INTERVALS[jobKey]||300'),'free-place digest must be inserted enabled at its 30-second default instead of the generic five-minute interval');
+assert(notificationSettings.includes('communityForLoad')&&notificationSettings.includes('extras=communityForLoad'),'persisted incomplete community settings must load without throwing and leave the digest disabled');
 assert(!inactivity.includes('free-places-digest')&&!inactivity.includes('free_places_digest'),'inactivity handling must never post a Discord free-place digest directly');
 
 // /account reuses assigned credentials and private Stremio URLs; no reversible Jellyfin password is introduced.
@@ -106,23 +107,26 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert.strictEqual(unavailable.remaining,0,'unavailable fleet must expose zero places');
   assert.strictEqual(unavailable.soldOut,true,'unavailable fleet must close acquisition instead of falling back to the legacy per-plan limit');
 
+  let freePlanQuery='';
   const freePlanDb=async sql=>{
-    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'"))return{rowCount:1,rows:[{id:'free-plan'}]};
+    if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};}
     throw new Error(`Unexpected free-place digest query: ${sql.slice(0,120)}`);
   };
   const digestSettings={discordFreePlacesDigestEnabled:true,discordConfigured:true,discordFreePlacesChannelId:'123456789012345678',discordFreePlacesTimezone:'UTC',discordFreePlacesTime1:'06:00',discordFreePlacesTime2:'18:00',discordFreePlacesMinRemaining:1,discordFreePlacesMentionEveryone:false};
   const deduped=new Set(),messages=[];
   const enqueue=async input=>{if(deduped.has(input.dedupeKey))return{queued:false};deduped.add(input.dedupeKey);messages.push(input);return{queued:true};};
-  const evening={now:new Date('2026-08-29T18:00:20Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}};
-  const firstDigest=await digest.run(evening),duplicateDigest=await digest.run(evening);
-  assert.strictEqual(firstDigest.queued,1,'18:00 with three free places must enqueue the digest');
-  assert.strictEqual(duplicateDigest.queued,0,'the same channel/date/slot must not enqueue twice');
+  const firstDigest=await digest.run({now:new Date('2026-08-29T18:02:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
+  const duplicateDigest=await digest.run({now:new Date('2026-08-29T20:17:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
+  assert.strictEqual(firstDigest.queued,1,'18:02 with three free places must enqueue the 18:00 digest');
+  assert.strictEqual(firstDigest.slot,'18:00','the latest started local slot must remain due after its exact minute');
+  assert.strictEqual(duplicateDigest.queued,0,'a later tick the same evening must not enqueue the same slot twice');
   assert.strictEqual(messages.length,1,'the durable dedupe key must produce one Discord channel message per slot');
   assert.strictEqual(messages[0].dedupeKey,'free-places-digest:123456789012345678:2026-08-29:18:00','free-place digest dedupe key must be channel/date/slot scoped');
   assert.strictEqual(messages[0].text,'Free Server — 3 places open\nhttps://portal.example','digest copy must expose only free-place count and the public portal URL');
+  assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'),'digest must choose the same first public Free Server plan as the storefront');
   const beforeMorning=messages.length;
-  const morning=await digest.run({now:new Date('2026-08-30T06:00:10Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:0}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example'}});
-  assert.strictEqual(morning.queued,0,'06:00 with zero remaining must stay silent');
+  const morning=await digest.run({now:new Date('2026-08-30T06:02:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:0}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example'}});
+  assert.strictEqual(morning.queued,0,'06:02 with zero remaining must stay silent');
   assert.strictEqual(messages.length,beforeMorning,'zero remaining must not enqueue a Discord digest');
 
   const soldPlan={id:'free-plan',name:'Free Server',description:'Free access',service_type:'jellyfin',billing_interval:'month',price_minor:0,streams:1,capacity:{soldOut:true,label:'Currently full',kind:'sold'}};
