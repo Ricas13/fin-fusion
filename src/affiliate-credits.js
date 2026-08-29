@@ -105,8 +105,8 @@ async function topUpRewardToCurrentRate({creditId,actorUserId=null,reason}={}){
     const pending=row.state==='pending'&&availableAt.getTime()>Date.now();
     const state=pending?'pending':'available';
     const referenceId=`affiliate-rate-topup:${row.id}:${settings.rewardPercent}`;
-    const inserted=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,referred_customer_id,qualifying_subscription_id,available_at,reference_type,reference_id,note,metadata)
-      VALUES($1,$2,$3,'adjustment',$4,$5,$6,$7,$8,'affiliate_reward_rate_topup',$9,$10,$11::jsonb)
+    const inserted=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,referred_customer_id,qualifying_subscription_id,available_at,reference_id,note,metadata)
+      VALUES($1,$2,$3,'adjustment',$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
       ON CONFLICT(entry_type,reference_id) DO NOTHING RETURNING id`,[
         row.customer_id,row.currency,topUpMinor,state,row.referral_redemption_id,row.referred_customer_id,row.qualifying_subscription_id,availableAt,referenceId,
         `Referral reward top-up to ${settings.rewardPercent}% · ${note}`,
@@ -134,8 +134,8 @@ async function adminAdjustCredit({customerId,currency,amountMinor,reason,actorUs
       if(Math.abs(amount)>available)throw new Error(`This adjustment would remove more ${requested} credit than is currently spendable.`);
     }
     const referenceId=`admin-affiliate-adjustment:${crypto.randomUUID()}`;
-    const inserted=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_type,reference_id,note,metadata)
-      VALUES($1,$2,$3,'adjustment','available','admin_adjustment',$4,$5,$6::jsonb) RETURNING id`,[
+    const inserted=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id,note,metadata)
+      VALUES($1,$2,$3,'adjustment','available',$4,$5,$6::jsonb) RETURNING id`,[
         customerId,requested,amount,referenceId,`Admin affiliate credit adjustment · ${note}`,JSON.stringify({adjustmentKind:'manual',reason:note,actorUserId})
       ]);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.affiliate.credit.adjustment','affiliate_credit',$2,$3::jsonb)`,[
