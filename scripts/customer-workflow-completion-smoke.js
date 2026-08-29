@@ -93,10 +93,11 @@ const recurringAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'
 assert(recurringAccessHtml.includes('Manage renewal in Billing')&&!recurringAccessHtml.includes('Change expiry')&&!recurringAccessHtml.includes('Reset expiry to plan term'),'provider-controlled recurring expiry must stay a Billing fact/action rather than pretending a local expiry mutation is provider-safe');
 
 const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route});
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal')),'automatic renewal changes','restricted support view must block automatic renewal changes');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'checkout','restricted support view must keep checkout blocked');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/plan-change/cancel')),null,'restricted support view must keep scheduled plan-change cancellation available for support');
+for(const route of ['/account/subscription/renewal','/account/checkout/paypal','/account/plan-change/cancel']){
+  assert.strictEqual(restrictedImpersonationAction(impersonatedPost(route)),'customer changes',`read-only support view must block ${route}`);
+}
 const bannerHtml=injectBanner('<html><body><main>customer</main></body></html>',{session:{impersonation:{id:'workflow-smoke',displayName:'Smoke Customer'},csrfToken:'csrf-smoke'}});
-assert(bannerHtml.includes('Scheduled plan-change cancellation remains available for support.'),'impersonation banner must document the allowed plan-change cancellation action');
+assert(bannerHtml.includes('Read-only support view: Smoke Customer'),'impersonation banner must identify the read-only support boundary');
+assert(bannerHtml.includes('all customer account changes are blocked while impersonating'),'impersonation banner must explain that support cannot mutate the customer account');
 
 console.log('customer/admin workflow completion smoke: ok');
