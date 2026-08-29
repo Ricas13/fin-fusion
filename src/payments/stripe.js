@@ -74,7 +74,12 @@ function terminalStripeStatus(status) {
     return ['canceled','cancelled','incomplete_expired'].includes(String(status||'').toLowerCase());
 }
 function effectiveSyncStatus(remoteStatus,statusOverride=null) {
-    return terminalStripeStatus(remoteStatus)?remoteStatus:(statusOverride||remoteStatus);
+    const remote=String(remoteStatus||'').toLowerCase(),override=String(statusOverride||'').toLowerCase();
+    if(terminalStripeStatus(remote))return remoteStatus;
+    // A historical failed-invoice webhook must never overwrite a provider state
+    // that has already recovered. The current provider read is authoritative.
+    if(override==='past_due'&&['active','trialing'].includes(remote))return remoteStatus;
+    return statusOverride||remoteStatus;
 }
 async function checkoutContract(session) {
     const customerId=session.metadata?.internal_customer_id,planId=session.metadata?.internal_plan_id;
@@ -170,6 +175,8 @@ async function handleWebhookEvent(event) {
                 const synced=await syncSubscription(subscriptionId,'past_due');
                 if(terminalStripeStatus(synced.providerStatus)){
                     await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe subscription is already cancelled; this late failed-invoice retry is historical only.'});
+                }else if(['active','trialing'].includes(synced.effectiveStatus)){
+                    await failedRenewals.resolveOpen({provider:'stripe',providerSubscriptionId:subscriptionId,providerCaseId:object.id,note:'Stripe subscription is already healthy; this late failed-invoice event is historical only.'});
                 }else{
                     await failedRenewals.record({provider:'stripe',eventId:event.id,caseId:object.id,providerSubscriptionId:subscriptionId,amountMinor:object.amount_due,currency:object.currency,metadata:{invoiceId:object.id}});
                 }
