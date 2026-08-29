@@ -141,7 +141,7 @@ function forwardedTarget(req) {
   const proto = firstHeader(req, 'x-forwarded-proto').toLowerCase();
   const uri = firstHeader(req, 'x-forwarded-uri');
   if (!host || !/^[a-z0-9.:[\]-]+$/i.test(host)) throw new Error('Missing forwarded media host.');
-  if (!['http', 'https:'].includes(proto)) throw new Error('Missing forwarded media protocol.');
+  if (!['http', 'https'].includes(proto)) throw new Error('Missing forwarded media protocol.');
   if (!uri.startsWith('/') || uri.startsWith('//')) throw new Error('Missing forwarded media URI.');
   const url = new URL(`${proto}://${host}${uri}`);
   if (url.searchParams.has('api_key')) throw new Error('Protected media requests must not expose Jellyfin API keys in the URL.');
