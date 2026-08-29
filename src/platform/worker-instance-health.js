@@ -34,9 +34,10 @@ function clean(value, max = 200) {
 
 function instanceView(row) {
   const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const instanceId = clean(row?.instance_id, 200) || 'unknown';
   return {
     key: clean(row?.worker_key, 80) || 'unknown',
-    instanceId: clean(row?.instance_id, 200) || 'unknown',
+    instanceId,
     version: clean(row?.version, 80),
     commitSha: clean(row?.commit_sha, 80),
     startedAt: row?.started_at || null,
@@ -45,7 +46,7 @@ function instanceView(row) {
     freshnessSeconds: freshnessSeconds(row),
     state: instanceState(row),
     draining: Boolean(row?.draining_at),
-    hostname: clean(metadata.hostname, 200),
+    hostname: clean(metadata.hostname, 200) || instanceId,
     containerId: clean(metadata.containerId, 200),
     containerName: clean(metadata.containerName, 200),
     lastCycleOutcome: clean(metadata.lastCycleOutcome, 24),
@@ -84,8 +85,9 @@ function summarize(rows = []) {
     });
   }
 
-  const liveCommits = [...new Set(instances.filter(instance => instance.state !== 'stale' && !instance.draining).map(instance => instance.commitSha).filter(Boolean))];
-  if (liveCommits.length > 1 && !warnings.some(warning => warning.type === 'version_skew')) warnings.push({ type: 'version_skew', workerKey: null, commitShas: liveCommits, versions: [], instanceIds: instances.filter(instance => instance.state !== 'stale' && !instance.draining).map(instance => instance.instanceId) });
+  const activeInstances = instances.filter(instance => instance.state !== 'stale' && !instance.draining);
+  const liveCommits = [...new Set(activeInstances.map(instance => instance.commitSha).filter(Boolean))];
+  if (liveCommits.length > 1 && !warnings.some(warning => warning.type === 'version_skew')) warnings.push({ type: 'version_skew', workerKey: null, commitShas: liveCommits, versions: [], instanceIds: activeInstances.map(instance => instance.instanceId) });
 
   return { workers, instances, warnings };
 }
