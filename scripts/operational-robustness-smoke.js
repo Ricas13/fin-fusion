@@ -6,6 +6,9 @@ const path = require('path');
 const requestSync = require('../src/integrations/request-user-sync');
 const workerHealth = require('../src/platform/worker-instance-health');
 const providerHttp = require('../src/payments/provider-http');
+const billingControl = require('../src/payments/billing-control');
+const stripe = require('../src/payments/stripe');
+const application = require('../src/application');
 
 async function testBoundedConcurrency() {
   let active = 0;
@@ -99,11 +102,87 @@ async function testProviderDeadlines() {
   assert.match(plisioSource, /15000/, 'Plisio existing 15s deadline must remain intact');
 }
 
+async function testDeletionBillingControl() {
+  const row = { id: 'sub-local', source: 'stripe', provider_subscription_id: 'sub_remote', customer_id: 'customer-1' };
+  let seen = null;
+  const result = await billingControl.terminateRecurringForDeletion(row, {
+    idempotencyKey: 'delete-target-1',
+    adapter: {
+      terminate: async (received, options) => {
+        seen = { received, options };
+        return { status: 'cancelled', remoteStatus: 'canceled' };
+      }
+    }
+  });
+  assert.strictEqual(result.status, 'cancelled');
+  assert.strictEqual(result.providerSubscriptionId, 'sub_remote');
+  assert.strictEqual(seen.received, row, 'deletion cancellation must use the existing billing-control adapter contract');
+  assert.strictEqual(seen.options.idempotencyKey, 'delete-target-1');
+  await assert.rejects(
+    billingControl.terminateRecurringForDeletion(row, { adapter: { terminate: async () => { throw new Error('provider unavailable'); } } }),
+    /provider unavailable/,
+    'provider cancellation failure must propagate so deletion stays blocked'
+  );
+
+  const source = fs.readFileSync(path.join(__dirname, '../src/payments/billing-control.js'), 'utf8');
+  assert.match(source, /subscriptions\.cancel\([\s\S]+invoice_now:\s*false[\s\S]+prorate:\s*false/, 'Stripe hard deletion must immediately cancel without creating an extra proration invoice');
+  assert.match(source, /billing\/subscriptions\/[\s\S]+\/cancel/, 'PayPal hard deletion must use the subscription cancellation endpoint');
+  assert.match(source, /paypalTerminalStatus\(remoteStatus\)/, 'PayPal cancellation must be verified from the remote terminal state');
+}
+
+function testStripeWebhookOrdering() {
+  assert.strictEqual(stripe.effectiveSyncStatus('active', 'past_due'), 'active', 'late failed invoice must not regress a recovered active subscription');
+  assert.strictEqual(stripe.effectiveSyncStatus('trialing', 'past_due'), 'trialing', 'late failed invoice must not regress a recovered trial');
+  assert.strictEqual(stripe.effectiveSyncStatus('past_due', 'past_due'), 'past_due');
+  assert.strictEqual(stripe.effectiveSyncStatus('canceled', 'active'), 'canceled', 'terminal provider state remains authoritative');
+  const source = fs.readFileSync(path.join(__dirname, '../src/payments/stripe.js'), 'utf8');
+  assert.match(source, /invoice\.payment_failed[\s\S]+\['active','trialing'\]\.includes\(synced\.effectiveStatus\)[\s\S]+historical only/, 'late failed-invoice handler must resolve historical failures instead of recording a new incident');
+}
+
+async function testGracefulShutdown() {
+  let closeCalled = 0;
+  let idleClosed = 0;
+  let dbClosed = 0;
+  let exitCode = null;
+  let intervalCleared = 0;
+  const fakeServer = {
+    close(callback) { closeCalled += 1; setImmediate(() => callback()); },
+    closeIdleConnections() { idleClosed += 1; },
+    closeAllConnections() { throw new Error('should not force-close a healthy drain'); }
+  };
+  const shutdown = application.createGracefulShutdown({
+    server: fakeServer,
+    prune: { fake: true },
+    closeDatabase: async () => { dbClosed += 1; },
+    exit: code => { exitCode = code; },
+    timeoutMs: 1000,
+    clearIntervalFn: () => { intervalCleared += 1; }
+  });
+  const first = shutdown('SIGTERM');
+  const second = shutdown('SIGINT');
+  assert.strictEqual(first, second, 'shutdown must be idempotent across duplicate process signals');
+  const code = await first;
+  assert.strictEqual(code, 0);
+  assert.strictEqual(closeCalled, 1, 'HTTP listener must stop accepting new connections once');
+  assert.strictEqual(idleClosed, 1, 'idle keep-alive sockets may be closed without killing in-flight work');
+  assert.strictEqual(dbClosed, 1, 'database pool must close after HTTP drain');
+  assert.strictEqual(intervalCleared, 1, 'background web-process cleanup interval must stop during drain');
+  assert.strictEqual(exitCode, 0);
+  assert.strictEqual(application.shutdownGraceMs(1), 1000);
+  assert.strictEqual(application.shutdownGraceMs(999999), 120000);
+  const source = fs.readFileSync(path.join(__dirname, '../src/application.js'), 'utf8');
+  assert.match(source, /process\.once\('SIGTERM'/, 'production web process must own SIGTERM');
+  assert.match(source, /closeAllConnections/, 'bounded shutdown must have a forced-close escape hatch');
+}
+
 (async () => {
   testRequestDiff();
   await testBoundedConcurrency();
   testWorkerInstances();
   await testProviderDeadlines();
+  await testDeletionBillingControl();
+  testStripeWebhookOrdering();
+  await testGracefulShutdown();
   console.log('operational robustness smoke: ok');
 })().catch(error => {
   console.error(error);
