@@ -78,10 +78,10 @@ has(branchHygiene,'if [[ "$branch" == "main" || "$branch" == "HEAD" ]]','main mu
 
 const readme=read('README.md');
 has(readme,'# CAPTAiNFiN','README must use the canonical public product name');
-const commerceGuide=read('docs/guide/admin-plans-and-commerce.md');
-has(commerceGuide,'Plisio','internal commerce guide must document Plisio');
-has(commerceGuide,'one-time','internal commerce guide must retain one-time provider semantics');
-const deploymentGuide=read('docs/PRODUCTION_DEPLOYMENT.md');
-has(deploymentGuide,'steam-fusion','internal deployment guide must preserve compatibility identifiers');
+has(readme,'Personal self-hosted project.','README must remain intentionally minimal');
+lacks(readme,'| Plisio |','minimal README must not become a payment-provider capability matrix');
+lacks(readme,'Stripe','minimal README must not advertise payment-provider implementation details');
+lacks(readme,'PayPal','minimal README must not advertise payment-provider implementation details');
+lacks(readme,'steam-fusion','minimal README must not expose compatibility/deployment identifiers');
 
 console.log('release completion smoke: ok');
