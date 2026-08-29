@@ -7,6 +7,7 @@ const control = require('../src/jellyfin/reconciliation-control');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const adminProvisioning=read('src/platform/admin-provisioning.js');
+const automationJobs=read('src/automation/jobs.js');
 const stremioRequeue=read('db/migrations/031_requeue_legacy_stremio_provisioning.sql');
 const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
@@ -68,6 +69,7 @@ assert(reconciliationLock.includes("CUSTOMER_RECONCILIATION_LOCK_TIMEOUT"),'reco
 assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
 assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(provisioningFacade),'legacy provisioning facade must serialize direct reconciliation callers too');
 assert(provisioningFacade.includes('reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);})'),'account-scoped reconciliation must share the same customer lock');
+assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy single-lane facade');
 
 assert(provisioningEngine.includes("const compensation = require('./provisioning-compensation')"),'provisioning engine must use the shared remote-user compensation helper');
 assert(provisioningEngine.includes("stage: 'policy_apply'")&&provisioningEngine.includes("stage: 'database_persist'"),'both remote policy failure and local persistence failure must invoke provisioning compensation');
