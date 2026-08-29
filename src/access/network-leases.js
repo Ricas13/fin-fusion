@@ -71,11 +71,9 @@ async function claim(options = {}) {
   return transaction(async client => {
     const lockKey = `${cfg.tenantKey}|${cfg.scope}|${cfg.subjectKey}`;
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [lockKey]);
-    await client.query(
-      `DELETE FROM access_network_leases
-       WHERE tenant_key=$1 AND scope=$2 AND subject_key=$3 AND expires_at<=NOW()`,
-      [cfg.tenantKey, cfg.scope, cfg.subjectKey]
-    );
+    // Expired rows are ignored below and physically removed by the canonical
+    // retention owner. The web runtime intentionally does not need DELETE on
+    // access_network_leases just to claim or refresh household access.
     const active = await client.query(
       `SELECT network_hash,network_family,first_seen_at,last_seen_at,expires_at
        FROM access_network_leases
@@ -169,7 +167,8 @@ async function activeForSubject({ tenantKey = 'default', scope, subjectKey }) {
 
 async function releaseSubject({ tenantKey = 'default', scope, subjectKey }) {
   const result = await query(
-    `DELETE FROM access_network_leases WHERE tenant_key=$1 AND scope=$2 AND subject_key=$3`,
+    `UPDATE access_network_leases SET expires_at=NOW()
+     WHERE tenant_key=$1 AND scope=$2 AND subject_key=$3 AND expires_at>NOW()`,
     [clean(tenantKey, 100) || 'default', clean(scope, 80), clean(subjectKey, 200)]
   );
   return result.rowCount;

@@ -56,6 +56,10 @@ assert(networkIdentity.includes("family: canonical.startsWith('ipv4:') ? 'ipv4' 
 assert(networkLeases.includes('network_family')&&networkLeases.includes('activeSameFamily'),'dual-stack household slots must continue to be enforced per address family');
 assert(familyMigration.includes('access_network_leases_subject_family_idx'),'dual-stack lease lookup migration must remain present');
 assert(networkLeases.includes("decision === 'denied'")&&networkLeases.includes("INTERVAL '5 minutes'"),'repeated denied polling must remain audit-throttled');
+const claimLeaseScope=networkLeases.slice(networkLeases.indexOf('async function claim'),networkLeases.indexOf('async function preview'));
+const releaseLeaseScope=networkLeases.slice(networkLeases.indexOf('async function releaseSubject'),networkLeases.indexOf('async function cleanupExpired'));
+assert(!claimLeaseScope.includes('DELETE FROM access_network_leases'),'Stremio household claims must not require web-role DELETE on network leases');
+assert(releaseLeaseScope.includes('UPDATE access_network_leases SET expires_at=NOW()')&&!releaseLeaseScope.includes('DELETE FROM access_network_leases'),'customer/admin household reset must expire leases using web-role UPDATE rather than DELETE');
 
 // The household denial is an ordinary Stremio stream result backed by a local
 // MP4. HTTPS MP4 is web-ready: marking it notWebReady causes Stremio Web to
@@ -102,7 +106,7 @@ assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&pol
 assert(!fs.existsSync(path.join(root,'src/platform/admin-stremio-plan-create.js')),'retired standalone Stremio plan creator must stay removed; adaptive plan creation owns this flow');
 assert(!stremioPlanEditor.includes('New purchases only')&&!stremioPlanEditor.includes('Existing customers too'),'Stremio plan edits must not offer stale-policy grandfathering for current members');
 assert(stremioPlanEditor.includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must update all current household snapshots and queue current members for request-policy reconciliation');
-assert(stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must reset current Stremio leases so the new allowance takes effect');
+assert(stremioPlanEditor.includes("UPDATE access_network_leases SET expires_at=NOW() WHERE scope='stremio'")&&!stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must expire current Stremio leases without requiring web-role DELETE');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
 assert(customerDashboard.includes('Unlimited streams · Unlimited devices')&&customerStremio.includes('customerInitiated:true'),'Account Home must own unlimited playback copy while customer Stremio routes retain server-enforced household replacement');
