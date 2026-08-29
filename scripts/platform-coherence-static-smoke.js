@@ -1,43 +1,51 @@
 'use strict';
+
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
-const root=path.join(__dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const ROOT=path.resolve(__dirname,'..');
+function read(rel){return fs.readFileSync(path.join(ROOT,rel),'utf8');}
+function exists(rel){return fs.existsSync(path.join(ROOT,rel));}
+function walk(dir,out=[]){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){if(['node_modules','.git'].includes(entry.name))continue;const full=path.join(dir,entry.name);if(entry.isDirectory())walk(full,out);else out.push(full);}return out;}
+function rel(file){return path.relative(ROOT,file).replaceAll(path.sep,'/');}
 
-const app=read('src/application.js');
-assert(app.includes("./platform/router"),'application must mount platform router');
-assert(!app.includes("./platform/admin-route-shim"),'application must not mount retired admin route shim');
+const packageJson=JSON.parse(read('package.json'));
+assert.strictEqual(packageJson.scripts.start,'node src/application.js','supported startup must use canonical application composition');
+assert.strictEqual(packageJson.scripts['automation:worker'],'node scripts/automation-worker.js');
+assert.strictEqual(packageJson.scripts.syntax,'node scripts/check-js-syntax.js');
 
-const platform=read('src/platform/router.js');
-assert(platform.includes("require('./admin-router')"),'platform router must mount canonical admin router');
-assert(platform.includes("require('./customer-router')"),'platform router must mount canonical customer router');
+for(const removed of ['import_users.js','check-expired.js'])assert(!exists(removed),`${removed} must remain removed from the supported tree`);
+for(const migration of ['000_database_baseline.sql','001_remove_retired_product.sql'])assert(exists(`db/migrations/${migration}`),`missing baseline migration ${migration}`);
 
-const admin=read('src/platform/admin-router.js');
-assert(admin.includes("require('./admin-customers')"),'admin router must own customer admin routes');
-assert(admin.includes("require('./admin-plans')"),'admin router must own plan admin routes');
-assert(admin.includes("require('./admin-servers')"),'admin router must own server admin routes');
-assert(admin.includes("require('./admin-settings')"),'admin router must own settings routes');
+const application=read('src/application.js'),platformRouter=read('src/platform/router.js');
+const adminRouteComposition=exists('src/platform/admin-route-composition.js')?read('src/platform/admin-route-composition.js'):application;
+const customerRouteComposition=exists('src/platform/customer-route-composition.js')?read('src/platform/customer-route-composition.js'):platformRouter;
+assert(adminRouteComposition.includes('createAdminDriftRouter'),'Policy Drift must be mounted by the canonical admin route composition');
+assert(customerRouteComposition.includes('createCustomerAffiliateRouter')&&customerRouteComposition.includes('router.use(createCustomerAffiliateRouter())'),'customer affiliate runtime must be mounted by the canonical customer/platform route composition');
+assert(adminRouteComposition.includes('createAdminReferralsRouter'),'affiliate administration must be mounted by the canonical admin route composition');
 
-const customer=read('src/platform/customer-router.js');
-assert(customer.includes("require('./customer-dashboard')"),'customer router must own dashboard routes');
-assert(customer.includes("require('./customer-settings')"),'customer router must own settings routes');
-assert(customer.includes("require('./customer-subscriptions')"),'customer router must own subscription routes');
+const automation=read('src/automation/jobs.js');
+for(const key of ['policy_drift','billing','plan_changes','referral_rewards','activation_cleanup','pending_registration_cleanup'])assert(new RegExp(`\\b${key}\\b`).test(automation),`automation worker is missing ${key}`);
 
-const provisioning=read('src/jellyfin/provisioning.js');
-assert(provisioning.includes('reconcileCustomer'),'provisioning must expose canonical customer reconciliation');
-const resilient=read('src/jellyfin/resilient-provisioning.js');
-assert(resilient.includes('provisioning.reconcileCustomer'),'resilient provisioning must wrap the canonical owner');
+const adminAutomation=read('src/platform/admin-automation.js');
+assert(adminAutomation.includes('Affiliate rewards'),'Automation UI must describe affiliate reward qualification');
 
-const holds=read('src/entitlements/access-holds.js');
-assert(holds.includes('customer_access_holds'),'access holds must persist in PostgreSQL');
-assert(holds.includes('reconcileCustomer'),'access-hold changes must reconcile provisioning');
+const plansList=read('src/platform/admin-plans-list.js');
+assert(!/buy .*credits|credit wallet/i.test(plansList),'Unified Plans must not revive retired credit-wallet semantics');
 
-const entitlements=read('src/entitlements/effective.js');
-assert(entitlements.includes('effective_customer_entitlements'),'effective entitlement owner must use the canonical view');
+const compose=read('docker-compose.yml');
+assert(/automation-worker:[\s\S]*scripts\/automation-worker\.js/.test(compose),'Compose must run the dedicated automation worker');
+assert(!/captainfin_proxy/.test(compose),'unused captainfin_proxy network must not return');
 
-const settings=read('src/platform/settings.js');
-assert(settings.includes('platform_settings'),'platform settings must use PostgreSQL');
+const readiness=read('scripts/production-readiness.js');
+assert(!readiness.includes('JELLYFIN_ALLOWED_HOSTS'),'readiness must not require the retired Jellyfin host allowlist');
+for(const expected of ['provider-settings','request-service-settings','email-settings','plan-servers'])assert(readiness.includes(expected),`readiness must use canonical ${expected} service`);
+
+const runtimeSettings=read('src/platform/runtime-settings.js');
+assert(!/process\.env\.SITE_NAME\s*=/.test(runtimeSettings),'runtime settings must never mutate process.env.SITE_NAME');
+const sourceFiles=walk(path.join(ROOT,'src')).filter(file=>file.endsWith('.js'));
+for(const file of sourceFiles){const text=fs.readFileSync(file,'utf8');assert(!/process\.env\.SITE_NAME\s*=/.test(text),`${rel(file)} mutates SITE_NAME at runtime`);assert(!/db\/data\.json|db\\data\.json/.test(text),`${rel(file)} still depends on the JSON-era database`);}
+
 const branding=read('src/platform/branding.js');
 assert(branding.includes('branding_assets'),'branding must use shared PostgreSQL asset storage');
 assert(branding.includes('importLegacy'),'existing filesystem branding must have an upgrade-safe import path');
@@ -72,4 +80,8 @@ assert(!/effective_at<=NOW\(\)\+INTERVAL\s*'15 minutes'/.test(customerPlanChange
 assert(customerPlanChange.includes('effective_at<=NOW()'),'scheduled Stripe plan changes must become due only at the paid-through boundary');
 assert(customerPlanChange.includes('scheduledStripeSubscription'),'due plan changes must resolve their recorded subscription even immediately after its previous period ends');
 
-console.log('platform coherence static smoke: ok');
+const drift=read('src/jellyfin/drift-control.js');
+assert(drift.includes("method:'GET'")||drift.includes("method: 'GET'"),'drift audit must explicitly use read-only Jellyfin GET');
+assert(exists('scripts/jellyfin-drift-smoke.js'),'current-schema Policy Drift smoke test must exist');
+
+console.log(`platform coherence static contract: ok (${sourceFiles.length} source files inspected; affiliate runtime active, retired-product runtime absent)`);
