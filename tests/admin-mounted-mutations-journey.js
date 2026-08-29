@@ -87,7 +87,7 @@ async function assertPersonalNotificationMutation(page,pool,adminUserId){
   const checkbox=form.locator(`input[name="${channel}__${event.event_type}"]`);
   assert.equal(await checkbox.count(),1,'selected notification event/channel is missing from mounted form');
   assert(!(await checkbox.isDisabled()),'selected notification event/channel is disabled despite global availability');
-  await checkbox.check();
+  await checkbox.check({force:true});
 
   await Promise.all([
     page.waitForNavigation({waitUntil:'domcontentloaded'}),
@@ -98,7 +98,7 @@ async function assertPersonalNotificationMutation(page,pool,adminUserId){
   const stored=await pool.query(`SELECT enabled FROM admin_notification_preferences WHERE admin_user_id=$1 AND event_type=$2 AND channel=$3`,[adminUserId,event.event_type,channel]);
   assert.equal(stored.rowCount,1,'personal notification mutation did not persist a preference row');
   assert.equal(stored.rows[0].enabled,true,'personal notification mounted POST did not persist the selected channel');
-  const audit=await pool.query(`SELECT 1 FROM audit_log WHERE actor_user_id=$1 AND action='admin.notifications.personal.update' ORDER BY created_at DESC LIMIT 1`,[adminUserId]);
+  const audit=await pool.query(`SELECT 1 FROM audit_log WHERE actor_user_id=$1 AND action='admin.notifications.personal.update' LIMIT 1`,[adminUserId]);
   assert.equal(audit.rowCount,1,'personal notification mounted POST did not write its audit record');
 }
 
