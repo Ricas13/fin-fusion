@@ -110,6 +110,14 @@ async function recordActivityPollTrust(result) {
   await activityTrust.recordCycle(serverIds, result.serverFailures || [], new Date());
 }
 
+async function recordAbortedActivityCycle(error) {
+  const serverIds = await activityTrust.managedServerIds();
+  if (!serverIds.length) return 0;
+  const failures = serverIds.map(serverId => ({ serverId, error: `activity_cycle_failed: ${String(error?.message || error).slice(0, 900)}` }));
+  await activityTrust.recordCycle(serverIds, failures, new Date());
+  return serverIds.length;
+}
+
 async function run() {
   heartbeat();
   await operationalHeartbeat().catch(error => console.warn('Activity operational heartbeat unavailable:', error.message));
@@ -145,6 +153,11 @@ async function run() {
           }
         } catch (error) {
           current.outcome = 'failed';
+          try {
+            current.serverFailures = Math.max(current.serverFailures, await recordAbortedActivityCycle(error));
+          } catch (trustError) {
+            console.error('Activity aborted-cycle trust update failed:', trustError.message);
+          }
           console.error('Activity cycle failed:', error.message);
         }
         try {
