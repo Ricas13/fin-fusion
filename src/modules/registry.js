@@ -4,7 +4,6 @@ const MODULES = Object.freeze({
   core: Object.freeze({ id: 'core', label: 'CAPTAiNFiN Core', free: true, capabilities: ['platform.core'] }),
   jellyfin: Object.freeze({ id: 'jellyfin', label: 'Jellyfin', free: false, capabilities: ['jellyfin.access', 'jellyfin.concurrent_streams', 'jellyfin.household_network'] }),
   stremio: Object.freeze({ id: 'stremio', label: 'Stremio', free: false, capabilities: ['stremio.access', 'stremio.household_network'] }),
-  reseller: Object.freeze({ id: 'reseller', label: 'Reseller', free: false, capabilities: ['reseller.access'] }),
   affiliate: Object.freeze({ id: 'affiliate', label: 'Affiliate', free: false, capabilities: ['affiliate.access'] })
 });
 
@@ -18,8 +17,8 @@ function definition(id) {
 
 function parseConfiguredModules(raw = process.env.CAPTAINFIN_ENABLED_MODULES) {
   // Compatibility mode deliberately enables every currently shipped module.
-  // A future signed licence provider can set CAPTAINFIN_ENABLED_MODULES (or
-  // replace this provider) without changing feature callers throughout the app.
+  // The registry remains the neutral extension seam for a future project to
+  // add separately-owned modules without CAPTAiNFiN shipping their product UI.
   if (raw == null || String(raw).trim() === '') return new Set(ids());
   const configured = new Set(
     String(raw)
