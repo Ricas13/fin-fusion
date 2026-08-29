@@ -1,6 +1,7 @@
 'use strict';
 
 const routeRateLimit = require('../security/route-rate-limit');
+const { ownerBoundary } = require('../auth/owner-guard');
 const dashboard = require('./admin-dashboard');
 require('./admin-commerce-expense-widgets');
 const { createAdminProductModulesRouter } = require('./admin-product-modules');
@@ -85,6 +86,7 @@ function adminMutationRateLimit(req, res, next) {
 
 function mountAdminRoutes(app) {
   app.use('/admin', adminMutationRateLimit);
+  app.use('/admin', ownerBoundary);
   app.get('/admin', dashboard.dashboardPage);
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
