@@ -37,7 +37,7 @@ async function ensureRows() {
 async function heartbeat({ draining = false } = {}) {
     await query(`INSERT INTO operational_worker_state(worker_key,instance_id,version,commit_sha,started_at,last_heartbeat_at,draining_at,metadata,updated_at)
         VALUES('automation',$1,$2,$3,NOW(),NOW(),CASE WHEN $4 THEN NOW() ELSE NULL END,$5::jsonb,NOW())
-        ON CONFLICT(worker_key) DO UPDATE SET instance_id=EXCLUDED.instance_id,version=EXCLUDED.version,
+        ON CONFLICT(worker_key,instance_id) DO UPDATE SET version=EXCLUDED.version,
             commit_sha=EXCLUDED.commit_sha,last_heartbeat_at=NOW(),draining_at=CASE WHEN $4 THEN COALESCE(operational_worker_state.draining_at,NOW()) ELSE NULL END,
             metadata=EXCLUDED.metadata,updated_at=NOW()`,
     [INSTANCE_ID, pkg.version || null, COMMIT_SHA, Boolean(draining), JSON.stringify({
@@ -45,7 +45,10 @@ async function heartbeat({ draining = false } = {}) {
         concurrency: MAX_CONCURRENCY,
         requestedConcurrency: REQUESTED_CONCURRENCY,
         dbPoolSize: DB_POOL_SIZE,
-        dbControlHeadroom: DB_CONTROL_HEADROOM
+        dbControlHeadroom: DB_CONTROL_HEADROOM,
+        hostname: process.env.HOSTNAME || null,
+        containerId: process.env.CONTAINER_ID || null,
+        containerName: process.env.CONTAINER_NAME || null
     })]);
 }
 
