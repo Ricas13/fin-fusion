@@ -10,6 +10,7 @@ const managedSources=require('../stremio/managed-sources');
 const installRecovery=require('../stremio/install-credential-recovery');
 const householdAccess=require('../stremio/household-access');
 
+const accessLimit=routeRateLimit.middleware({scope:'customer-stremio-access',max:120,windowSeconds:60});
 const mutateLimit=routeRateLimit.middleware({scope:'customer-stremio-install',max:10,windowSeconds:300});
 const resetBurstLimit=rateLimit({windowMs:300_000,limit:10,keyGenerator:req=>req.session?.customerUserId?`customer:${req.session.customerUserId}`:ipKeyGenerator(req.ip),standardHeaders:false,legacyHeaders:false});
 function guard(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account#stremio-access'));}
@@ -28,7 +29,7 @@ async function preprovisionManaged(credential){
 }
 function homeRedirect(kind,message){return `/account?${kind}=${encodeURIComponent(message)}#stremio-access`;}
 function createCustomerStremioRouter(){
-  const r=express.Router();r.use('/account/stremio',guard);
+  const r=express.Router();r.use('/account/stremio',accessLimit,guard);
   // Compatibility URL: Stremio setup now lives directly on Account Home.
   r.get('/account/stremio',(req,res)=>res.redirect(302,'/account#stremio-access'));
   r.post('/account/stremio/install',mutateLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const issued=await stremio.issueInstallation(req.session.customerId);await installRecovery.save({customerId:req.session.customerId,entitlement:issued.entitlement,credential:issued.credential,actorUserId:req.session.customerUserId});const provisioned=await preprovisionManaged(issued.credential);return res.redirect(homeRedirect(provisioned?'message':'error',provisioned?'Your new Stremio installation link is ready. This is a secret bearer link: anyone who has it can use your Stremio access, so treat it like a password and do not share it. Any previous installation link has been replaced.':'Your new Stremio installation link is ready, but automatic access setup is still finishing. Treat the link like a password and do not share it. If playback does not work within a few minutes, open Account Home and create the link again.'));}catch(error){return res.redirect(homeRedirect('error',error.message||'Stremio installation link could not be created.'));}});
