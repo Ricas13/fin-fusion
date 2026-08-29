@@ -28,12 +28,12 @@
       const option = select.options[select.selectedIndex];
       const raw = option ? option.getAttribute('data-plan-impact') : null;
       if (!raw) {
-        panel.innerHTML = '<strong>Choose a plan above to preview the impact.</strong>';
+        panel.innerHTML = '<strong>Choose a plan above to preview the entitlement change.</strong>';
         return;
       }
       let next;
       try { next = JSON.parse(raw); } catch (_) { return; }
-      panel.innerHTML = '<strong>Impact for this customer</strong><div class="kvList">'
+      panel.innerHTML = '<strong>Plan entitlement impact</strong><div class="subText">Current entitlement snapshot → target plan defaults. Customer-specific policy, library and household overrides are preserved and continue to apply after the manual edit.</div><div class="kvList">'
         + row('Service', serviceLabel(current.serviceType), serviceLabel(next.serviceType))
         + row('Streams', label(current.streams), label(next.streams))
         + row('Server class', label(current.serverClass), label(next.serverClass))
