@@ -8,6 +8,7 @@ const incidents = require('./incidents');
 const failedRenewals = require('./failed-renewals');
 const checkoutIntents = require('./checkout-intents');
 const providerSettings = require('./provider-settings');
+const providerHttp = require('./provider-http');
 const referrals = require('../referrals');
 const { query } = require('../db');
 
@@ -15,12 +16,13 @@ let stripeClient;
 let stripeClientKey = null;
 function apiKeyFrom(config) { return config?.restrictedKey || config?.apiKey || ''; }
 function enabled() { return Boolean(apiKeyFrom(providerSettings.peek('stripe'))); }
+function classifyStripeError(error) { const details=providerHttp.classifySdkError('stripe',error);if(error&&typeof error==='object'){error.provider='stripe';error.retryable=details.retryable;error.requestId=details.requestId;error.status=details.status;}return error; }
 async function getStripe() {
     const config = await providerSettings.get('stripe'), key = apiKeyFrom(config);
     if (!key) throw new Error('Stripe is not configured');
     if (!stripeClient || stripeClientKey !== key) {
         const Stripe = require('stripe');
-        stripeClient = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' } });
+        stripeClient = new Stripe(key, { apiVersion: '2026-06-24.dahlia', appInfo: { name: 'CAPTAiNFiN', version: '1.0.0' }, timeout: providerHttp.timeoutMs('stripe') });
         stripeClientKey = key;
     }
     return stripeClient;
@@ -180,7 +182,7 @@ async function handleWebhookEvent(event) {
         default: break;
     }
 }
-async function processClaimedEvent(eventRow,event){try{await handleWebhookEvent(event);await lifecycle.finishPaymentEvent(eventRow);return{processed:true};}catch(error){await lifecycle.finishPaymentEvent(eventRow,error);console.error('Stripe webhook processing deferred to internal retry:',error.message);return{processed:false,error};}}
+async function processClaimedEvent(eventRow,event){try{await handleWebhookEvent(event);await lifecycle.finishPaymentEvent(eventRow);return{processed:true};}catch(error){classifyStripeError(error);await lifecycle.finishPaymentEvent(eventRow,error);console.error('Stripe webhook processing deferred to internal retry:',error.message,providerHttp.safeErrorFields(error));return{processed:false,error};}}
 async function processWebhook(rawBody,signature) {
     const config=await providerSettings.get('stripe'),secret=config.webhookSecret;if(!secret)throw new Error('Stripe webhook secret is not configured');
     const stripe=await getStripe(),event=stripe.webhooks.constructEvent(rawBody,signature,secret),eventRow=await lifecycle.beginPaymentEvent({provider:'stripe',eventId:event.id,eventType:event.type,payload:event});if(!eventRow)return{duplicate:true};
