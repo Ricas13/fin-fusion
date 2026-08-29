@@ -54,9 +54,9 @@ If you have a billing problem, contact support first where possible so the avail
 
 Check that it is enabled, healthy, in the correct server class, below configured capacity, and eligible for the selected plan. Also verify its internal base URL and API credentials.
 
-## Stremio does not appear for customers
+## Stremio is not working
 
-The Stremio work in the current foundation release is not a production addon. Server eligibility, delivery types and entitlement storage can be prepared, but customer installation/playback should not be expected until the dedicated addon runtime is released.
+Open the Stremio section of your account and check the status shown there. If setup is incomplete, credentials were changed, or the service reports an error, follow the account guidance or contact support with the visible error details. Do not send passwords, access tokens or other credentials in a support message.
 
 ## Where can I get help?
 
