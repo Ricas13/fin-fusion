@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 const { reconcileCustomer } = require('../jellyfin/resilient-provisioning');
 const accessHolds = require('../entitlements/access-holds');
+const capacity = require('../entitlements/plan-capacity');
 const discounts = require('./discounts');
 const referrals = require('../referrals');
 
@@ -152,11 +153,26 @@ function purchaseSnapshot(snapshot, { provider, planId }) {
     return { ...snapshot, durationDays, priceMinor };
 }
 
-async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null }) {
+async function assertSettlementCheckout(client, checkoutIntentId, { customerId, planId, provider }) {
+    if (!checkoutIntentId) return null;
+    const result = await client.query(`SELECT id,customer_id,plan_id,provider FROM billing_checkout_intents WHERE id=$1 FOR UPDATE`, [checkoutIntentId]);
+    if (!result.rowCount) throw new Error('Settlement checkout intent disappeared before activation.');
+    const row = result.rows[0];
+    if (String(row.customer_id) !== String(customerId) || String(row.plan_id || '') !== String(planId) || row.provider !== provider) {
+        const error = new Error('Settlement checkout intent does not match the verified provider contract.');
+        error.code = 'CHECKOUT_SETTLEMENT_IDENTITY_MISMATCH';
+        throw error;
+    }
+    return row;
+}
+
+async function activatePurchase({ customerId, planId, provider, providerCustomerId = null, providerSubscriptionId, providerStatus = 'active', periodStart = null, periodEnd = null, cancelAtPeriodEnd = false, discountCodeId = null, discountAmountAppliedMinor = 0, commercialSnapshot = null, checkoutIntentId = null }) {
     if (!['stripe', 'paypal', 'plisio'].includes(provider)) throw new Error('Unsupported payment provider');
     if (!providerSubscriptionId) throw new Error('Provider subscription/payment ID is required');
     const contract = purchaseSnapshot(commercialSnapshot, { provider, planId });
     const subscription = await transaction(async client => {
+        const customer = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
+        if (!customer.rowCount) throw new Error('Customer not found');
         const planResult = await client.query('SELECT * FROM plans WHERE id=$1', [planId]);
         if (!planResult.rowCount) throw new Error('Plan not found');
         const plan = planResult.rows[0];
@@ -169,6 +185,14 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
         const status = mapProviderStatus(provider, providerStatus);
         if (!status) throw new Error(`Unsupported ${provider} subscription status: ${String(providerStatus || 'unknown').slice(0, 120)}`);
         const existing = await client.query(`SELECT * FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1 FOR UPDATE`, [provider, providerSubscriptionId]);
+        if (!existing.rowCount) {
+            const settlementIntent = await assertSettlementCheckout(client, checkoutIntentId, { customerId, planId, provider });
+            await capacity.lockAndAssert(client, planId, plan.name || 'This plan', {
+                excludeCheckoutIntentId: settlementIntent?.id || null,
+                streams: contract?.streams,
+                households: contract?.stremioHouseholdNetworkLimit
+            });
+        }
         const snapshotJson = contract ? JSON.stringify(contract) : null;
         const planNameSnapshot = contract?.planName || plan.name;
         const planCodeSnapshot = contract?.planCode || plan.code;
@@ -203,7 +227,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 await client.query('ROLLBACK TO SAVEPOINT discount_redemption');
             }
         }
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status, checkoutContract: Boolean(contract) })]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, providerSubscriptionId, providerPriceId, status, checkoutContract: Boolean(contract), checkoutIntentId: checkoutIntentId || null })]);
         return row;
     });
     if (providerCustomerId) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
@@ -241,6 +265,7 @@ module.exports = {
     finishPaymentEvent,
     claimRetryablePaymentEvents,
     purchaseSnapshot,
+    assertSettlementCheckout,
     activatePurchase,
     updateProviderSubscription
 };
