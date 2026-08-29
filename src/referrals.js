@@ -56,7 +56,7 @@ async function revisitRewardAfterAdversePayment({referredCustomerId,incidentId=n
   const out=await affiliateCredits.reverseReward({redemptionId:r.rows[0].id,paymentIncidentId:incidentId,reason});
   if(out.reversed||out.reason==='already_reconciled'){
     const fullyReversed=Number(out.remainingRewardMinor||0)===0,status=fullyReversed?'reversed':'rewarded';
-    const note=fullyReversed?`Qualifying paid value was fully reversed. Removed ${out.amountMinor||0} ${out.currency||''} minor units of unspent affiliate credit; ${out.recoverableMinor||0} is tracked separately as recoverable value from already-delivered service.`:`Qualifying paid value changed. Reward reconciled to ${out.remainingRewardMinor} ${out.currency||''} minor units; this event removed ${out.amountMinor||0} unspent units.`;
+    const note=fullyReversed?`Qualifying paid value was fully reversed. Removed ${out.amountMinor||0} ${out.currency||''} minor units of unspent affiliate credit; already-delivered service was preserved, and ${out.recoverableMinor||0} is tracked separately as recoverable affiliate value.`:`Qualifying paid value changed. Reward reconciled to ${out.remainingRewardMinor} ${out.currency||''} minor units; this event removed ${out.amountMinor||0} unspent units and already-delivered service was preserved.`;
     await query(`UPDATE referral_redemptions SET status=$2,reward_note=$3 WHERE id=$1`,[r.rows[0].id,status,note]);
   }
   return out;
