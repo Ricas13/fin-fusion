@@ -86,11 +86,16 @@ async function sourceCapacity(client,sourceRewardId){
   return int(r.rows[0]?.n);
 }
 
+async function recoveryForReward(client,sourceRewardId){
+  const r=await client.query(`SELECT COALESCE(amount_minor,0)::int amount_minor,COALESCE(recovered_minor,0)::int recovered_minor FROM affiliate_credit_recoveries WHERE source_reward_id=$1 FOR UPDATE`,[sourceRewardId]);
+  return{amountMinor:int(r.rows[0]?.amount_minor),recoveredMinor:int(r.rows[0]?.recovered_minor)};
+}
+
 async function recordRecovery(client,{customerId,currency,sourceRewardId,amountMinor,reason,metadata={}}){
   const amount=int(amountMinor);if(amount<=0)return 0;
   await client.query(`INSERT INTO affiliate_credit_recoveries(customer_id,currency,source_reward_id,amount_minor,reason,metadata)
     VALUES($1,$2,$3,$4,$5,$6::jsonb)
-    ON CONFLICT(source_reward_id) DO UPDATE SET amount_minor=GREATEST(affiliate_credit_recoveries.amount_minor,EXCLUDED.amount_minor),
+    ON CONFLICT(source_reward_id) DO UPDATE SET amount_minor=affiliate_credit_recoveries.amount_minor+EXCLUDED.amount_minor,
       reason=EXCLUDED.reason,metadata=affiliate_credit_recoveries.metadata||EXCLUDED.metadata,updated_at=NOW()`,[customerId,cleanCurrency(currency),sourceRewardId,amount,String(reason).slice(0,500),JSON.stringify(metadata||{})]);
   return amount;
 }
@@ -100,4 +105,4 @@ async function recoverableMinorForClient(client,customerId,currency){
   return int(r.rows[0]?.n);
 }
 
-module.exports={cleanCurrency,lockCustomer,rawAvailableMinorForClient,ensureHistoricalAllocations,allocateOneDebit,allocatedFromReward,sourceCapacity,recordRecovery,recoverableMinorForClient};
+module.exports={cleanCurrency,lockCustomer,rawAvailableMinorForClient,ensureHistoricalAllocations,allocateOneDebit,allocatedFromReward,sourceCapacity,recoveryForReward,recordRecovery,recoverableMinorForClient};
