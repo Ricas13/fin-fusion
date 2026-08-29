@@ -3,6 +3,8 @@
 require('dotenv').config();
 const assert=require('assert');
 const crypto=require('crypto');
+const fs=require('fs');
+const path=require('path');
 const {query,getPool}=require('../src/db');
 const referrals=require('../src/referrals');
 const credits=require('../src/affiliate-credits');
@@ -12,6 +14,20 @@ const checkoutIntents=require('../src/payments/checkout-intents');
 
 const suffix=crypto.randomBytes(5).toString('hex');
 const uniq=label=>`${label}-${suffix}-${crypto.randomBytes(3).toString('hex')}`;
+
+function functionSlice(source,name,nextName){const start=source.indexOf(`async function ${name}`);assert(start>=0,`Missing ${name}`);const end=nextName?source.indexOf(`async function ${nextName}`,start+1):-1;return source.slice(start,end>start?end:source.length);}
+function assertCheckoutLockOrder(){
+  const source=fs.readFileSync(path.join(__dirname,'../src/payments/checkout-intents.js'),'utf8');
+  for(const [name,next,needle] of [
+    ['createIntent','attachProviderCheckout','UPDATE billing_checkout_intents'],
+    ['consume','completeVerifiedProvider','FOR UPDATE'],
+    ['completeVerifiedProvider','findProviderIntent','FOR UPDATE'],
+    ['cancelForOwner',null,'UPDATE billing_checkout_intents']
+  ]){
+    const body=functionSlice(source,name,next),lock=body.indexOf('lockCheckoutOwner'),narrow=body.indexOf(needle);
+    assert(lock>=0&&narrow>=0&&lock<narrow,`${name} must lock the customer before checkout-intent/reservation state`);
+  }
+}
 
 async function setRate(){
   await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('affiliate_program',$1::jsonb)
@@ -50,6 +66,7 @@ async function reverse(purchase,incident,label){return referrals.revisitRewardAf
 async function balance(customerId){return (await credits.balances(customerId)).find(row=>row.currency==='GBP')||{available_minor:0,recoverable_minor:0};}
 
 async function main(){
+  assertCheckoutLockOrder();
   await setRate();
 
   // Reservation cancelled: reversal waits while held, then removes the whole reward.
