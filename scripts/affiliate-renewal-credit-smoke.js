@@ -10,13 +10,16 @@ const renewals=require('../src/payments/service-credit-renewals');
 function source(file){return fs.readFileSync(path.join(__dirname,'..',file),'utf8');}
 
 async function main(){
-  const stripeSource=source('src/payments/stripe.js');
+  const stripeSource=source('src/payments/stripe.js'),affiliateRoute=source('src/platform/customer-affiliate.js');
   assert(stripeSource.includes("case 'invoice.created'"),'Stripe invoice.created must own renewal credit application.');
   assert(stripeSource.includes('stripe.invoiceItems.create'),'Stripe renewal credit must adjust the exact draft invoice.');
   assert(stripeSource.includes('amount:-Number(reservation.amountMinor)'),'Stripe renewal credit must reduce provider amount by the reserved credit.');
+  assert(stripeSource.includes('stripe.invoiceItems.list({invoice:String(invoiceId),limit:100})'),'Provider/local recovery must verify the durable Stripe invoice item after ambiguous application.');
+  assert(stripeSource.includes('recoverServiceCreditProviderItem'),'Stripe renewal handling must converge an applied provider adjustment when the local write was interrupted.');
   assert(stripeSource.includes("case 'invoice.paid'"),'Stripe invoice.paid must settle the reserved credit.');
   assert(stripeSource.includes("case 'invoice.voided'")&&stripeSource.includes("case 'invoice.deleted'")&&stripeSource.includes("case 'invoice.marked_uncollectible'"),'Terminal unpaid invoices must release renewal credit.');
   assert(stripeSource.includes('automatic_tax_not_supported'),'Automatic-tax invoices must fail closed instead of adding an incompatible negative invoice item.');
+  assert(affiliateRoute.includes('serviceCreditReservations.availableMinor'),'Customer affiliate balances must display actually spendable credit after checkout and renewal reservations.');
 
   const suffix=Date.now().toString(36);
   const user=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,'x','customer',TRUE) RETURNING id`,[`renewal-credit-${suffix}`,`renewal-credit-${suffix}@example.invalid`])).rows[0];
@@ -60,7 +63,7 @@ async function main(){
   await renewals.releaseStripeInvoice(`in_credit_${suffix}_3`,'invoice_voided');
   assert.equal(await accounting.rawAvailableMinorForClient({query},customer.id,'GBP'),400,'voided invoice credit must become spendable again');
 
-  console.log('affiliate renewal credit smoke: ok — durable reserve, provider apply, paid consume, release and duplicate guards');
+  console.log('affiliate renewal credit smoke: ok — durable reserve, provider recovery, paid consume, release and duplicate guards');
 }
 
 main().then(()=>getPool().end()).catch(async error=>{console.error(error.stack||error);try{await getPool().end();}catch(_){}process.exit(1);});
