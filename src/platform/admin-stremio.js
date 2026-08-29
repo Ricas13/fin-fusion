@@ -4,7 +4,6 @@ const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
-const stremioRuntime=require('../stremio/runtime-settings');
 
 const mutationLimit=routeRateLimit.middleware({scope:'admin-stremio-settings',max:20,windowSeconds:300});
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
@@ -17,7 +16,9 @@ function createAdminStremioRouter(){
   router.get('/admin/stremio-sources',gate,noStore,(_req,res)=>res.redirect(302,'/admin/servers/stremio'));
   router.use('/admin/settings/stremio',gate,noStore);
   router.get('/admin/settings/stremio',(_req,res)=>res.redirect(302,'/admin/servers/stremio'));
-  router.post('/admin/settings/stremio/runtime',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled)==='1';await stremioRuntime.setEnabled(enabled,req.session.authUserId);return res.redirect(target(enabled?'Stremio runtime enabled.':'Stremio runtime disabled.'));}catch(error){return res.redirect(target('',error.message));}});
+  // Compatibility only. Preserve old POST bookmarks/forms, but keep mutation
+  // ownership in the canonical production-mounted Stremio server router.
+  router.post('/admin/settings/stremio/runtime',(req,res)=>res.redirect(307,'/admin/servers/stremio/runtime'));
   router.post('/admin/settings/stremio/index',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await queueIndex();return res.redirect(target('Stremio indexing queued.'));}catch(error){return res.redirect(target('',error.message));}});
   router.post('/admin/settings/stremio/plans/:id',mutationLimit,(req,res)=>res.redirect(303,`/admin/plans/${encodeURIComponent(req.params.id)}/delivery?error=${encodeURIComponent('Stremio plan delivery is now managed from the plan Delivery page.')}`));
   router.post('/admin/settings/stremio/servers/:id',mutationLimit,(req,res)=>res.redirect(303,target('Managed Jellyfin Stremio eligibility is controlled from the Stremio page.')));

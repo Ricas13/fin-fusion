@@ -43,11 +43,14 @@ function stripInlineScripts(body){
     return out;
 }
 
+// Legacy compatibility only. New semantic field help belongs in the owning
+// route/template/component (for example admin-setting-controls.field()).
+// Entries should shrink as owning pages migrate; do not add new application
+// behaviour here.
 const SETTING_HELP=Object.freeze({
     'Hero title':'The main headline customers see at the top of the public storefront.',
     'Hero subtitle':'Short supporting copy that explains the service beneath the main storefront headline.',
     'Features heading':'Heading shown above the storefront feature list.',
-    'Support email':'Public contact address customers can use when they need help.',
     'Announcement':'Optional short message displayed prominently on the storefront.',
     'Features · one per line':'Each non-empty line becomes one public feature item.',
     'Site name':'The customer-facing platform name used in page titles, emails and portal branding.',
@@ -78,8 +81,6 @@ const SETTING_HELP=Object.freeze({
     'Retention days':'How long eligible records or backups are retained before automated cleanup.',
     'Public base URL':'Canonical HTTPS origin used to build customer-facing links and callbacks.',
     'Support email address':'Address shown to customers for account, service or legal support.',
-    'Terms URL':'Public URL containing the service terms customers should be able to review.',
-    'Privacy URL':'Public URL containing the privacy information customers should be able to review.',
     'Impact confirmation':'Safety confirmation required before changing a setting with live customer impact.'
 });
 
