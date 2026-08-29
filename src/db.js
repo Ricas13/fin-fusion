@@ -27,13 +27,18 @@ function getPool() {
 
 function isMutationSql(text) {
     const sql = String(text || '').replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, '').trim();
-    if (/^(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COMMENT|REFRESH|REINDEX|CLUSTER)\b/i.test(sql)) return true;
+    if (/^(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COMMENT|REFRESH|REINDEX|CLUSTER|CALL|DO)\b/i.test(sql)) return true;
     return /^WITH\b/i.test(sql) && /\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql);
 }
 
-async function query(text, params = []) {
-    if (!isMutationSql(text)) return getPool().query(text, params);
+async function readQuery(text, params = []) {
+    if (isMutationSql(text)) {
+        throw new Error('readQuery cannot execute SQL classified as a mutation; use mutationQuery or transaction.');
+    }
+    return getPool().query(text, params);
+}
 
+async function mutationQuery(text, params = []) {
     const client = await getPool().connect();
     try {
         await client.query('BEGIN');
@@ -47,6 +52,10 @@ async function query(text, params = []) {
     } finally {
         client.release();
     }
+}
+
+async function query(text, params = []) {
+    return isMutationSql(text) ? mutationQuery(text, params) : readQuery(text, params);
 }
 
 async function transaction(fn) {
@@ -67,7 +76,7 @@ async function transaction(fn) {
 
 async function healthcheck() {
     const started = Date.now();
-    const result = await query('SELECT NOW() AS now');
+    const result = await readQuery('SELECT NOW() AS now');
     return { ok: true, latencyMs: Date.now() - started, now: result.rows[0].now };
 }
 
@@ -78,4 +87,4 @@ async function closePool() {
     await current.end();
 }
 
-module.exports = { getPool, query, transaction, healthcheck, closePool, isMutationSql };
+module.exports = { getPool, query, readQuery, mutationQuery, transaction, healthcheck, closePool, isMutationSql };
