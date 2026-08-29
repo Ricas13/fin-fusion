@@ -19,7 +19,9 @@ assert.strictEqual(limited.deploymentMode,'hosted');
 assert.strictEqual(limited.tenantKey,'tenant-a');
 assert(modules.isEnabled('jellyfin',{enabledModules:'jellyfin'}));
 assert(!modules.isEnabled('stremio',{enabledModules:'jellyfin'}));
-assert(modules.definition('reseller').capabilities.includes('reseller.access'),'future commercial modules must have stable capability identities');
+assert.strictEqual(modules.definition('reseller'),null,'CAPTAiNFiN must not ship a reseller product module');
+assert(!modules.ids().includes('reseller'),'reseller must not appear in the shipped module catalogue');
+assert(modules.definition('affiliate').capabilities.includes('affiliate.access'),'the neutral module/capability extension seam must remain intact for separately-owned future projects');
 
 const streamPlan={service_type:'jellyfin',jellyfin_access_model:'concurrent_streams',streams:3};
 const streamComponent=components.componentForPlan(streamPlan,'jellyfin');
