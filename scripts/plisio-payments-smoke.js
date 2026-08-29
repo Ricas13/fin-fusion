@@ -42,7 +42,10 @@ expect(checkout.includes("wantsCredit&&provider==='plisio'"),'Plisio must reject
 
 const webhook=source('src/platform/webhooks.js');
 expect(webhook.includes("'/webhooks/plisio'"),'Plisio webhook route is missing.');
-expect((webhook.match(/router\.post\('\/webhooks\//g)||[]).length===3,'Only Stripe, PayPal and Plisio webhook routes may be mounted.');
+const webhookRoutes=[...webhook.matchAll(/router\.post\('([^']+)'/g)].map(match=>match[1]).filter(route=>route.startsWith('/webhooks/'));
+const paymentWebhookRoutes=webhookRoutes.filter(route=>['/webhooks/stripe','/webhooks/paypal','/webhooks/plisio'].includes(route));
+expect(paymentWebhookRoutes.length===3,'Stripe, PayPal and Plisio webhook routes must remain mounted.');
+expect(webhookRoutes.length===4&&webhookRoutes.includes('/webhooks/jellyfin/:serverId'),'Only the three payment webhooks and the Jellyfin playback telemetry webhook may be mounted.');
 const returns=source('src/platform/customer-payment-return.js');
 expect(returns.includes("'/account/plisio/return'"),'Plisio browser return handler is missing.');
 const returnRoutes=returns.match(/\/account\/[^'\"]+\/return/g)||[];
