@@ -22,17 +22,47 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
 
     const originalEndMs = dateMs(originalEnd, 'Original service end');
     const cutoffMs = dateMs(cutoffAt, 'Refund cutoff');
+    const startsMs = dateMs(row.starts_at, 'Subscription start');
     const observedEndMs = dateMs(row.current_period_end, 'Current service end');
     if (cutoffMs > originalEndMs) throw new Error('Refund cutoff exceeds the original service end.');
     if (observedEndMs > originalEndMs) throw new Error('Prepaid entitlement was extended after the refund was planned; manual review is required.');
+
+    const observedEndDate = new Date(observedEndMs);
+    const cutoffDate = new Date(cutoffMs);
+    const effectiveServiceType = String(serviceType || row.service_type_snapshot || row.service_type || 'jellyfin');
+
+    // A fully unused future refund can be reconciled first by the canonical
+    // payment_incident trigger when the provider webhook races this operation.
+    // That trigger expires this row and compacts the queue atomically. Detect
+    // that committed state before deriving removedMs so recovery can never
+    // compact the same later prepaid periods a second time.
+    if (String(row.status || '').toLowerCase() === 'expired' && cutoffMs === startsMs) {
+      const incident = await client.query(`
+        SELECT 1
+        FROM payment_incidents
+        WHERE customer_id=$1
+          AND provider=$2
+          AND provider_subscription_id=$3
+          AND incident_type='refund'
+          AND COALESCE((metadata->>'fullRefund')::boolean,FALSE)=TRUE
+        LIMIT 1
+      `, [row.customer_id, row.source, row.provider_subscription_id]);
+      if (incident.rowCount) {
+        return {
+          row,
+          removedMs:0,
+          cutoffAt:cutoffDate,
+          observedEnd:observedEndDate,
+          serviceType:effectiveServiceType,
+          alreadyAppliedByIncident:true
+        };
+      }
+    }
 
     // Recovery may re-enter after the entitlement transaction committed but
     // before provider_operations reached local_applied. Only remove the span
     // still present locally, so queued periods can never be shifted twice.
     const removedMs = Math.max(0, observedEndMs - cutoffMs);
-    const observedEndDate = new Date(observedEndMs);
-    const cutoffDate = new Date(cutoffMs);
-    const effectiveServiceType = String(serviceType || row.service_type_snapshot || row.service_type || 'jellyfin');
 
     if (removedMs > 0) {
       await client.query(`
