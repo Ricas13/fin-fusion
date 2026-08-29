@@ -5,21 +5,13 @@ const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const planPolicy = require('../entitlements/plan-lifecycle-policy');
 const provisioning = require('../jellyfin/resilient-provisioning');
+const activityTrust = require('../jellyfin/activity-trust');
 const fleetMetrics = require('../jellyfin/fleet-metrics');
 const registry = require('../jellyfin/registry');
 const base = require('./customer-inactivity');
 
 async function activityWorkerTelemetry() {
-    const worker = await query(`
-        SELECT EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age_seconds
-        FROM operational_worker_state
-        WHERE worker_key='activity'
-    `);
-    const age = Number(worker.rows[0]?.age_seconds ?? Infinity);
-    return {
-        ready: Number.isFinite(age) && age < 120,
-        activityWorkerAgeSeconds: Number.isFinite(age) ? Math.round(age) : null
-    };
+    return activityTrust.workerTelemetry();
 }
 
 function candidateServerIds(rows) {
@@ -28,16 +20,28 @@ function candidateServerIds(rows) {
         .filter(Boolean))];
 }
 
+// Playback trust comes only from the activity worker's /Sessions poll ledger.
+// A successful /Users refresh below is additional freshness evidence; it must
+// never promote a failed/stale playback sample back to ready.
 async function refreshCandidateServers(rows, existing = {}) {
-    const telemetry = { ...existing };
+    const current = await activityTrust.serverTelemetry(candidateServerIds(rows));
+    return { ...existing, ...current };
+}
+
+async function refreshCandidateUserActivity(rows, serverTelemetry = {}) {
+    const telemetry = { ...serverTelemetry };
     for (const serverId of candidateServerIds(rows)) {
-        if (Object.prototype.hasOwnProperty.call(telemetry, serverId)) continue;
+        const poll = telemetry[serverId];
+        if (!poll?.ready) continue;
         try {
             const refreshed = await fleetMetrics.refreshServerUserActivity(serverId);
-            telemetry[serverId] = { ready: true, ...refreshed };
+            telemetry[serverId] = { ...poll, userActivityReady: true, userActivity: refreshed };
         } catch (error) {
             telemetry[serverId] = {
+                ...poll,
                 ready: false,
+                reason: 'user_activity_refresh_failed',
+                userActivityReady: false,
                 error: String(error?.message || error).slice(0, 1000)
             };
         }
@@ -57,7 +61,7 @@ function telemetrySummary(worker, serverTelemetry) {
     const servers = Object.entries(serverTelemetry || {}).map(([serverId, value]) => ({ serverId, ...value }));
     const unsafe = servers.filter(server => !server.ready);
     return {
-        ready: Boolean(worker?.ready),
+        ready: Boolean(worker?.ready && unsafe.length === 0),
         activityWorkerAgeSeconds: worker?.activityWorkerAgeSeconds ?? null,
         targetServers: servers.length,
         unsafeTargetServers: unsafe.length,
@@ -139,9 +143,6 @@ async function pendingFreeLifecycle() {
 
 async function markLifecycleRestored(row, reason, actorUserId = null) {
     if (row.plan_id) {
-        // Do not close the durable lifecycle episode unless the hold that caused
-        // the Free lane disable has actually been released. A transient DB error
-        // must leave this row retryable rather than stranded disabled forever.
         await accessHolds.releaseHold({ customerId: row.customer_id, type: base.HOLD_TYPE, sourceKey: `plan:${row.plan_id}`, actorUserId });
     }
     await query(`UPDATE jellyfin_account_lifecycle SET restored_at=NOW(),metadata=metadata||$2::jsonb,updated_at=NOW() WHERE id=$1`, [
@@ -168,9 +169,8 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
         return { processed: rows.length, deleted: 0, restored: 0, failed: 0, deferred: rows.length, serverFailures: 0, skipped: 'telemetry_not_trustworthy', telemetry: telemetrySummary(worker, {}) };
     }
 
-    const serverTelemetry = await refreshCandidateServers(rows, {});
-    // Re-read after /Users refresh so the final delete decision uses the latest
-    // authoritative Jellyfin activity timestamp plus the live playback tracker.
+    let serverTelemetry = await refreshCandidateServers(rows, {});
+    serverTelemetry = await refreshCandidateUserActivity(rows, serverTelemetry);
     rows = await pendingFreeLifecycle();
     let deleted = 0, restored = 0, failed = 0, deferred = 0;
 
@@ -205,7 +205,7 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
             if (due.getTime() > Date.now()) { deferred += 1; continue; }
 
             const dryRun = forceDryRun === null ? effective.dryRun : Boolean(forceDryRun);
-            const evidence = { category: 'free', accessLane: 'free', disabledAt: row.disabled_at, deleteAfter: due, planId: row.plan_id, planCode: row.plan_code, dryRun, portalAccountPreserved: true, activityRefreshedImmediatelyBeforeDecision: true };
+            const evidence = { category: 'free', accessLane: 'free', disabledAt: row.disabled_at, deleteAfter: due, planId: row.plan_id, planCode: row.plan_code, dryRun, portalAccountPreserved: true, activityPollTrustedImmediatelyBeforeDecision: true, activityRefreshedImmediatelyBeforeDecision: true };
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'jellyfin_account',$3,$4::jsonb)`, [actorUserId,dryRun?'jellyfin.lifecycle.would_delete':'jellyfin.lifecycle.delete',row.account_id,JSON.stringify(evidence)]);
             if (dryRun) { deferred += 1; continue; }
 
@@ -228,6 +228,52 @@ async function processPendingDeletions(globalCfg, { actorUserId = null, forceDry
     return { processed: rows.length, deleted, restored, failed, deferred, serverFailures: Object.values(serverTelemetry).filter(value => !value.ready).length, serverTelemetry, telemetry: telemetrySummary(worker, serverTelemetry) };
 }
 
+async function usageSatisfiedEarlierToday(row) {
+    const minimumMinutes = Number(row?.policy?.minimumPlaybackMinutes);
+    const windowDays = Number(row?.policy?.playbackWindowDays);
+    if (!Number.isFinite(minimumMinutes) || minimumMinutes <= 0 || !Number.isFinite(windowDays) || windowDays <= 0) return false;
+    const result = await query(`
+        SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at)))),0)::bigint playback_seconds
+        FROM playback_history
+        WHERE customer_id=$1 AND server_id=$2
+          AND started_at >= date_trunc('day',NOW()) - ($3::int * INTERVAL '1 day')
+    `, [row.customer_id,row.server_id,windowDays]);
+    return Number(result.rows[0]?.playback_seconds || 0) >= minimumMinutes * 60;
+}
+
+async function finalEligibility(row, globalCfg) {
+    const worker = await activityWorkerTelemetry();
+    if (!worker.ready) return { ready: false, reason: 'activity_worker_stale', worker, server: null };
+
+    let serverTelemetry = await refreshCandidateServers([row]);
+    let server = serverTelemetry[String(row.server_id)] || null;
+    if (!server?.ready) return { ready: false, reason: server?.reason || 'server_poll_untrusted', worker, server };
+
+    serverTelemetry = await refreshCandidateUserActivity([row], serverTelemetry);
+    server = serverTelemetry[String(row.server_id)] || null;
+    if (!server?.ready) return { ready: false, reason: server?.reason || 'user_activity_refresh_failed', worker, server };
+
+    const freshRows = await base.candidates(globalCfg, { customerId: row.customer_id });
+    const fresh = freshRows.find(item => String(item.account_id) === String(row.account_id) && String(item.plan_id) === String(row.plan_id)) || null;
+    if (!fresh?.eligible) return { ready: false, reason: 'usage_no_longer_eligible', worker, server, fresh };
+    if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh };
+    return { ready: true, worker, server, fresh };
+}
+
+async function logTelemetrySkip(row, actorUserId, reason, server = null) {
+    const metadata = {
+        planId: row.plan_id,
+        planCode: row.plan_code,
+        accessLane: 'free',
+        accountId: row.account_id,
+        serverId: row.server_id,
+        reason,
+        serverTelemetry: server || null
+    };
+    console.warn('Free Server inactivity enforcement skipped:', metadata);
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.inactivity.skipped_telemetry','customer',$2,$3::jsonb)`, [actorUserId,row.customer_id,JSON.stringify(metadata)]).catch(() => {});
+}
+
 async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     const globalCfg = await lifecyclePolicy.get();
     const released = await base.releaseObsoletePlanHolds(actorUserId, globalCfg);
@@ -235,12 +281,6 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
 
     const worker = await activityWorkerTelemetry();
     if (!worker.ready) {
-        // Unlike `lifecycle_disabled` above (a deliberate admin choice), a stale
-        // activity-worker heartbeat is an operational fault: it silently blocks
-        // every Free Server inactivity disable until the worker recovers, with
-        // no other signal in the admin UI. Report it as a failed run (not a
-        // quiet 0-processed success) so it surfaces on the automation dashboard
-        // and retries sooner than the normal schedule.
         return {
             processed: 0, eligible: 0, enforced: 0, wouldDisable: 0, failed: 1, released, dryRun: true,
             skipped: 'telemetry_not_trustworthy',
@@ -251,14 +291,28 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
 
     const discovered = await base.candidates(globalCfg);
     let serverTelemetry = await refreshCandidateServers(discovered);
+    serverTelemetry = await refreshCandidateUserActivity(discovered, serverTelemetry);
     const rows = discovered.length ? await base.candidates(globalCfg) : discovered;
     serverTelemetry = await refreshCandidateServers(rows, serverTelemetry);
     const eligible = eligibleOnReadyServers(rows, serverTelemetry);
-    let enforced = 0, wouldDisable = 0, failed = 0;
+    const unsafeEligible = rows.filter(row => row?.eligible && !serverTelemetry[String(row.server_id)]?.ready);
+    let enforced = 0, wouldDisable = 0, failed = 0, safetySkipped = unsafeEligible.length;
 
-    for (const row of eligible) {
+    for (const row of unsafeEligible) {
+        const server = serverTelemetry[String(row.server_id)] || null;
+        await logTelemetrySkip(row, actorUserId, server?.reason || 'server_poll_untrusted', server);
+    }
+
+    for (const original of eligible) {
+        const final = await finalEligibility(original, globalCfg);
+        if (!final.ready) {
+            safetySkipped += 1;
+            await logTelemetrySkip(original, actorUserId, final.reason, final.server || null);
+            continue;
+        }
+        const row = final.fresh;
         const dryRun = forceDryRun === null ? row.policy.dryRun : Boolean(forceDryRun);
-        const evidence = { planId: row.plan_id, planCode: row.plan_code, accessLane: 'free', accountId: row.account_id, serverId: row.server_id, lastPlaybackAt: row.last_playback_at || null, inactiveReferenceAt: row.inactive_reference_at, observationStartedAt: row.observation_started_at, playbackMinutes: Math.round(row.playback_seconds / 60), triggers: row.triggers, dryRun, policyInherited: row.policy.inherited, repairExistingHold: Boolean(row.repairExistingHold), portalAccountPreserved: true, activityRefreshedImmediatelyBeforeDecision: true };
+        const evidence = { planId: row.plan_id, planCode: row.plan_code, accessLane: 'free', accountId: row.account_id, serverId: row.server_id, lastPlaybackAt: row.last_playback_at || null, inactiveReferenceAt: row.inactive_reference_at, observationStartedAt: row.observation_started_at, playbackMinutes: Math.round(row.playback_seconds / 60), triggers: row.triggers, dryRun, policyInherited: row.policy.inherited, repairExistingHold: Boolean(row.repairExistingHold), portalAccountPreserved: true, activityPollTrustedImmediatelyBeforeDecision: true, activityRefreshedImmediatelyBeforeDecision: true };
         try {
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`, [actorUserId,dryRun?'customer.inactivity.would_disable_jellyfin':'customer.inactivity.disable_jellyfin',row.customer_id,JSON.stringify(evidence)]);
             if (dryRun) { wouldDisable += 1; continue; }
@@ -269,10 +323,6 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
                 enforced += 1;
             } catch (error) {
                 await accessHolds.releaseHold({ customerId: row.customer_id, type: base.HOLD_TYPE, sourceKey: `plan:${row.plan_id}`, actorUserId }).catch(() => {});
-                // A failed disable/ledger write must not leave the Free user
-                // disabled without a deletion state. Reconcile immediately after
-                // rolling the hold back; resilient provisioning will also retain
-                // retry state if Jellyfin is still unavailable.
                 await provisioning.reconcileCustomer(row.customer_id).catch(recoveryError => {
                     console.warn('Free Server inactivity rollback reconciliation pending:', { customerId: row.customer_id, error: recoveryError.message });
                 });
@@ -285,7 +335,7 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
     }
 
     const telemetry = telemetrySummary(worker, serverTelemetry);
-    return { processed: rows.length, eligible: eligible.length, enforced, wouldDisable, failed, released, dryRun: eligible.every(row => forceDryRun === true || row.policy.dryRun), telemetry, serverFailures: telemetry.unsafeTargetServers, examples: eligible.slice(0,25).map(row=>({customerId:row.customer_id,name:row.customer_name,plan:row.plan_code,server:row.server_name,triggers:row.triggers,lastPlaybackAt:row.last_playback_at,playbackMinutes:Math.round(row.playback_seconds/60)})) };
+    return { processed: rows.length, eligible: eligible.length, enforced, wouldDisable, failed, safetySkipped, released, dryRun: eligible.every(row => forceDryRun === true || row.policy.dryRun), telemetry, serverFailures: telemetry.unsafeTargetServers, examples: eligible.slice(0,25).map(row=>({customerId:row.customer_id,name:row.customer_name,plan:row.plan_code,server:row.server_name,triggers:row.triggers,lastPlaybackAt:row.last_playback_at,playbackMinutes:Math.round(row.playback_seconds/60)})) };
 }
 
 async function run(options = {}) {
@@ -294,7 +344,7 @@ async function run(options = {}) {
     const deletions = await processPendingDeletions(globalCfg, options);
     return {
         processed: Number(planRules.processed || 0) + Number(deletions.processed || 0),
-        failed: Number(planRules.failed || 0) + Number(planRules.serverFailures || 0) + Number(deletions.failed || 0) + Number(deletions.serverFailures || 0),
+        failed: Number(planRules.failed || 0) + Number(deletions.failed || 0),
         warning: planRules.warning || deletions.warning || undefined,
         planRules,
         deletions
@@ -305,6 +355,7 @@ module.exports = {
     activityWorkerTelemetry,
     candidateServerIds,
     refreshCandidateServers,
+    refreshCandidateUserActivity,
     eligibleOnReadyServers,
     telemetrySummary,
     deletionPolicy,
@@ -312,6 +363,8 @@ module.exports = {
     pendingFreeLifecycle,
     activityAfterDisable,
     processPendingDeletions,
+    usageSatisfiedEarlierToday,
+    finalEligibility,
     runPlanRules,
     run,
     base

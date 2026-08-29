@@ -70,6 +70,16 @@ const originalRequest = registry.request;
 
         await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`, [lifecyclePolicy.KEY, JSON.stringify({ enabled:true, dryRun:false, freeNoPlaybackDays:7, freeDeleteAfterDisableDays:1, trialDeleteAfterDisableDays:30, paidDeleteAfterDisableDays:30 })]);
         await query(`SELECT public.record_activity_worker_heartbeat($1,$2,$3,FALSE,$4::jsonb)`, [`free-lifecycle-test-${suffix}`, 'test', 'test', '{}']);
+        await query(`
+            INSERT INTO jellyfin_activity_poll_state(server_id,last_attempt_at,last_success_at,last_failure_at,last_error,updated_at)
+            VALUES($1,NOW(),NOW(),NULL,NULL,NOW())
+            ON CONFLICT(server_id) DO UPDATE SET
+                last_attempt_at=EXCLUDED.last_attempt_at,
+                last_success_at=EXCLUDED.last_success_at,
+                last_failure_at=NULL,
+                last_error=NULL,
+                updated_at=NOW()
+        `, [serverId]);
 
         const disable = await lifecycle.runPlanRules();
         assert.strictEqual(disable.enforced, 1, 'stale inherited Free plan should be disabled');

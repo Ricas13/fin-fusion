@@ -109,12 +109,13 @@ async function grantActivity(client) {
         to_regclass('public.playback_history') AS history,
         to_regclass('public.stream_policy_events') AS events,
         to_regclass('public.jellyfin_server_metrics') AS metrics,
+        to_regclass('public.jellyfin_activity_poll_state') AS activity_poll_state,
         to_regclass('public.access_network_leases') AS network_leases,
         to_regclass('public.access_network_events') AS network_events,
         to_regclass('public.customer_lane_policy_overrides') AS lane_overrides,
         to_regclass('public.customer_entitlement_overrides') AS entitlement_overrides,
         to_regprocedure('public.record_activity_worker_heartbeat(text,text,text,boolean,jsonb)') AS heartbeat_function`);
-    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].lane_overrides || !required.rows[0].entitlement_overrides || !required.rows[0].heartbeat_function) {
+    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].activity_poll_state || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].lane_overrides || !required.rows[0].entitlement_overrides || !required.rows[0].heartbeat_function) {
         throw new Error('Run database migrations before configuring the activity role');
     }
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
@@ -131,6 +132,7 @@ async function grantActivity(client) {
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON playback_history TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON stream_policy_events TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE ON jellyfin_server_metrics TO ${role}`);
+    await client.query(`GRANT SELECT,INSERT,UPDATE ON jellyfin_activity_poll_state TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON access_network_leases TO ${role}`);
     await client.query(`GRANT SELECT,INSERT ON access_network_events TO ${role}`);
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE playback_history_id_seq TO ${role}`);

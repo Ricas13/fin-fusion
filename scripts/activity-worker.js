@@ -14,11 +14,12 @@ process.env.ALLOW_LEGACY_DATA_KEY_FOR_JELLYFIN = 'false';
 const { query, getPool } = require('../src/db');
 const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock');
 const activity = require('../src/jellyfin/lane-stream-policy');
+const activityTrust = require('../src/jellyfin/activity-trust');
 const householdNetworkPolicy = require('../src/jellyfin/household-network-policy');
 const fleetMetrics = require('../src/jellyfin/fleet-metrics');
 const streamPolicy = require('../src/jellyfin/stream-policy-settings');
 
-const intervalSeconds = Math.max(10, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 30)));
+const intervalSeconds = Math.max(15, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 20)));
 const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
 const HEARTBEAT_FILE = process.env.ACTIVITY_HEARTBEAT_FILE || '/tmp/activity-heartbeat';
 const INSTANCE_ID = String(process.env.HOSTNAME || `activity-${crypto.randomUUID()}`).slice(0, 200);
@@ -103,6 +104,20 @@ function sleep(ms) {
   });
 }
 
+async function recordActivityPollTrust(result) {
+  if (!result || result.skipped) return;
+  const serverIds = await activityTrust.managedServerIds();
+  await activityTrust.recordCycle(serverIds, result.serverFailures || [], new Date());
+}
+
+async function recordAbortedActivityCycle(error) {
+  const serverIds = await activityTrust.managedServerIds();
+  if (!serverIds.length) return 0;
+  const failures = serverIds.map(serverId => ({ serverId, error: `activity_cycle_failed: ${String(error?.message || error).slice(0, 900)}` }));
+  await activityTrust.recordCycle(serverIds, failures, new Date());
+  return serverIds.length;
+}
+
 async function run() {
   heartbeat();
   await operationalHeartbeat().catch(error => console.warn('Activity operational heartbeat unavailable:', error.message));
@@ -123,6 +138,12 @@ async function run() {
           current.observedStreams = Number(result?.observedStreams || 0);
           current.serverFailures = Array.isArray(result?.serverFailures) ? result.serverFailures.length : 0;
           if (current.serverFailures) current.outcome = 'degraded';
+          try {
+            await recordActivityPollTrust(result);
+          } catch (error) {
+            current.outcome = 'degraded';
+            console.error('Activity poll trust ledger update failed:', error.message);
+          }
           if (!result.skipped) {
             console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now() - started}`);
             const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ pollsReliable: !result.serverFailures?.length });
@@ -132,6 +153,11 @@ async function run() {
           }
         } catch (error) {
           current.outcome = 'failed';
+          try {
+            current.serverFailures = Math.max(current.serverFailures, await recordAbortedActivityCycle(error));
+          } catch (trustError) {
+            console.error('Activity aborted-cycle trust update failed:', trustError.message);
+          }
           console.error('Activity cycle failed:', error.message);
         }
         try {

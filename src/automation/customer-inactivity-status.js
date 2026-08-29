@@ -10,8 +10,7 @@ async function customerStatus(customerId){
   let serverTelemetry={};
   if(rows.length&&worker.ready){
     serverTelemetry=await scoped.refreshCandidateServers(rows);
-    // Re-read after the authoritative Jellyfin refresh so the portal evaluates
-    // the same activity snapshot the enforcement worker would use.
+    serverTelemetry=await scoped.refreshCandidateUserActivity(rows,serverTelemetry);
     rows=await scoped.base.candidates(globalCfg,{customerId});
   }
   const telemetry=scoped.telemetrySummary(worker,serverTelemetry);
@@ -20,8 +19,8 @@ async function customerStatus(customerId){
   const server=serverTelemetry[String(row.server_id)]||null;
   const enforcementReady=Boolean(worker.ready&&server?.ready);
   const reasons=Array.isArray(row.reasons)?[...row.reasons]:[];
-  if(!worker.ready)reasons.push('Free Server usage enforcement is paused because playback telemetry is stale.');
-  else if(!server?.ready)reasons.push('Free Server usage enforcement is paused because this server could not be refreshed safely.');
+  if(!worker.ready)reasons.push('Free Server usage enforcement is paused because the activity worker heartbeat is stale.');
+  else if(!server?.ready)reasons.push(`Free Server usage enforcement is paused because this server does not have a trustworthy recent playback sample${server?.reason?` (${server.reason})`:''}.`);
   return{
     applies:true,
     telemetry,
