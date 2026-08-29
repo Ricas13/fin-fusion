@@ -16,6 +16,7 @@ const householdAccess=require('../stremio/household-access');
 const installRecovery=require('../stremio/install-credential-recovery');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const requestUserSync=require('../integrations/request-user-sync');
+const notificationSettings=require('../integrations/notification-settings');
 const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const customerNav=require('./customer-nav-html');
@@ -31,7 +32,7 @@ function fallbackCapacity(plan){return{limit:plan.capacity_limit??null,used:0,re
 async function sellablePlans(){const currency=await planPricing.platformDefaultCurrency(),logical=await customers.listPublicPlans(),priced=await planPricing.decoratePlans(logical,null),decorated=await accessVariants.decoratePlans(priced,currency),ctx=await productReadiness.context(),ready=decorated.filter(plan=>productReadiness.evaluate(plan,ctx).sellable),enriched=[];for(const plan of ready){const capacity=await planCapacity.usage(plan.id).catch(()=>fallbackCapacity(plan));let variants=Array.isArray(plan.access_variants)?plan.access_variants:[];if(variants.length)variants=await Promise.all(variants.map(async variant=>{const quantity=Number(variant.access_quantity||variant.quantity||1),capacityOptions=variant.variant_kind==='households'?{households:quantity}:{streams:quantity};return{...variant,capacity:await planCapacity.usage(plan.id,undefined,capacityOptions).catch(()=>capacity)};}));enriched.push({...plan,capacity,access_variants:variants});}return enriched.filter(plan=>plan.is_free_tier||!plan.capacity.soldOut);}
 function accountForEntitlement(portal,entitlement){if(!Array.isArray(portal?.accounts)||!entitlement)return null;const lane=entitlement.is_free_tier?'free':'primary';return portal.accounts.find(a=>a.access_lane===lane&&!a.disabled)||portal.accounts.find(a=>a.access_lane===lane)||null;}
 function onboardingMessage(portal,currentPlan){if(!currentPlan||!['jellyfin','bundle'].includes(deliveryType(currentPlan)))return null;const account=accountForEntitlement(portal,currentPlan);if(!account||account.disabled||account.last_activity_at)return null;const username=account.jellyfin_username||portal.customer?.login_username||'your Jellyfin username';if(account.password_setup_required)return 'Your Jellyfin account is ready. Choose your password below to start watching.';return `Your Jellyfin account is ready. Open Jellyfin and sign in as ${username}.`;}
-function customerProvisioningMessage(state){const message=String(state?.last_error||'');if(/no eligible jellyfin server|no jellyfin server|no suitable server/i.test(message))return 'No suitable Jellyfin server is available for this plan right now. We will retry automatically, or you can retry now.';if(/username .* already exists|target_username_exists/i.test(message))return 'That Jellyfin username is already in use on the target server. Please retry; if it continues, contact support.';if(/capacity|max_users|sold out/i.test(message))return 'The eligible Jellyfin server is currently at capacity. We will retry automatically when space is available.';if(state&&['blocked','failed','pending','running'].includes(String(state.status||'')))return 'One of your streaming services is still being prepared. CAPTAiNFiN will keep retrying automatically.';return null;}
+function customerProvisioningMessage(state){const message=String(state?.last_error||'');if(/no eligible jellyfin server|no jellyfin server|no suitable server/i.test(message))return 'No suitable Jellyfin server is available for this plan right now. We will retry automatically, or you can retry now.';if(/username .* already exists|target_username_exists/i.test(message))return 'That Jellyfin username is already in use on the target server. Please retry; if it continues, contact support.';if(/capacity|max_users|sold out/i.test(message))return 'The eligible Jellyfin server is currently at capacity. We will retry automatically when space is available.';if(state&&['blocked','failed','pending','running'].includes(String(state.status||'')))return 'One of your streaming services is still being prepared. CAPTaINFiN will keep retrying automatically.';return null;}
 function stremioDeepLink(manifestUrl){if(!manifestUrl)return null;const url=new URL(manifestUrl);return `stremio://${url.host}${url.pathname}${url.search}`;}
 async function stremioLinks(req,customerId,hasStremio){
   if(!hasStremio)return{manifestUrl:null,installUrl:null};
@@ -77,7 +78,7 @@ function createCustomerDashboardRouter(){
         return res.send(returningAccessPage(req,returnStatus));
       }
       const currency=await planPricing.platformDefaultCurrency();
-      const [portalRaw,plans,currentPlan,freePlan,stremioPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange]=await Promise.all([
+      const [portalRaw,plans,currentPlan,freePlan,stremioPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
         customers.getCustomerPortal(customerId),
         sellablePlans(),
         provisioning.currentEntitlement(customerId),
@@ -87,7 +88,8 @@ function createCustomerDashboardRouter(){
         requestUserSync.configuration(),
         provisioning.control.getCustomerState(customerId).catch(()=>null),
         planChange.currentRecurring(customerId).catch(()=>null),
-        planChange.pendingForCustomer(customerId).catch(()=>null)
+        planChange.pendingForCustomer(customerId).catch(()=>null),
+        notificationSettings.status().catch(()=>({}))
       ]);
       const portal=await hideInternalAccounts(customerId,portalRaw),navOptions=customerNav.optionsFromPortal(portal),paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()};
       if(!currentPlan&&!freePlan&&!stremioPlan&&!openPlanChange){
@@ -95,7 +97,7 @@ function createCustomerDashboardRouter(){
         return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null});
       }
       const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage(portal,jellyfinPlan),message=req.query.message||welcome||null;
-      return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,renewalSubscription,openPlanChange,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl});
+      return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,renewalSubscription,openPlanChange,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
