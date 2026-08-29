@@ -17,7 +17,8 @@ async function main(){
   assert(stripeSource.includes('stripe.invoiceItems.list({invoice:String(invoiceId),limit:100})'),'Provider/local recovery must verify the durable Stripe invoice item after ambiguous application.');
   assert(stripeSource.includes('recoverServiceCreditProviderItem'),'Stripe renewal handling must converge an applied provider adjustment when the local write was interrupted.');
   assert(stripeSource.includes("case 'invoice.paid'"),'Stripe invoice.paid must settle the reserved credit.');
-  assert(stripeSource.includes("case 'invoice.voided'")&&stripeSource.includes("case 'invoice.deleted'")&&stripeSource.includes("case 'invoice.marked_uncollectible'"),'Terminal unpaid invoices must release renewal credit.');
+  assert(stripeSource.includes("case 'invoice.voided'")&&stripeSource.includes("case 'invoice.deleted'"),'Terminal void/deleted invoices must release renewal credit.');
+  assert(!stripeSource.includes("case 'invoice.marked_uncollectible': if(object?.id)await renewalCredits.releaseStripeInvoice"),'Uncollectible invoices can later be paid, so their already-applied credit must remain committed.');
   assert(stripeSource.includes('automatic_tax_not_supported'),'Automatic-tax invoices must fail closed instead of adding an incompatible negative invoice item.');
   assert(affiliateRoute.includes('serviceCreditReservations.availableMinor'),'Customer affiliate balances must display actually spendable credit after checkout and renewal reservations.');
 
