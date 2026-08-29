@@ -9,6 +9,7 @@ const JOB_CRITICAL_FAILURES = 6;
 const WORKER_WARNING_MS = 5 * MINUTE_MS;
 const WORKER_CRITICAL_MS = 15 * MINUTE_MS;
 const CORE_AUTOMATION_JOBS = new Set(['entitlements', 'billing', 'plan_changes', 'health']);
+const REQUIRED_ENABLED_JOBS = new Set(['payment_events', 'plan_changes']);
 
 function timestamp(value) {
     if (!value) return 0;
@@ -61,11 +62,13 @@ function provisioningDecision(row, now = Date.now()) {
 
 function jobDecision(row, state) {
     const health = String(state || '').toLowerCase();
+    const jobKey = String(row?.job_key || '');
+    if (health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)) return { visible: true, severity: 'critical', reason: 'disabled', failures: 0 };
     if (health === 'stale') return { visible: true, severity: 'warning', reason: 'stale' };
     if (!['failed', 'degraded'].includes(health)) return { visible: false, severity: null };
     const failures = Math.max(0, Number(row?.consecutive_failures || 0));
     if (failures < JOB_WARNING_FAILURES) return { visible: false, severity: null, failures, reason: 'automatic_retry' };
-    const core = CORE_AUTOMATION_JOBS.has(String(row?.job_key || ''));
+    const core = CORE_AUTOMATION_JOBS.has(jobKey);
     return {
         visible: true,
         severity: core && failures >= JOB_CRITICAL_FAILURES ? 'critical' : 'warning',
@@ -140,6 +143,7 @@ module.exports = {
     WORKER_WARNING_MS,
     WORKER_CRITICAL_MS,
     CORE_AUTOMATION_JOBS,
+    REQUIRED_ENABLED_JOBS,
     timestamp,
     provisioningDecision,
     jobDecision,
