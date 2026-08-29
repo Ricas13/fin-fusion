@@ -76,6 +76,8 @@ const protectionDays=Math.max(Number(settings.qualificationDelayDays||0),Number(
   <div class="affiliateLegalNote">Service credit is not cash and cannot be withdrawn. Self-referrals or referrals using the same payment identity are not eligible. Refunded or disputed qualifying purchases can reverse unused credit.</div>
 </section>
 
+<div class="notice">Available service credit is automatically applied to future Stripe recurring renewal invoices. Credit committed to an open renewal is temporarily removed from your available balance until that invoice is paid or cancelled. Recurring PayPal renewals are not automatically offset.</div>
+
 <section class="panel affiliateReferralHistory">
   <div class="sectionHead"><div><h2>Your referral activity</h2><p>Status is shown without exposing the referred customer's personal details.</p></div></div>
   <% if(!referrals.length){ %><div class="empty">No referrals have been recorded yet. Share your link to get started.</div><% } else { %>

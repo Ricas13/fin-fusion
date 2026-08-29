@@ -4,6 +4,7 @@ const express=require('express');
 const customers=require('../customers');
 const affiliateCredits=require('../affiliate-credits');
 const planPricing=require('../payments/plan-pricing');
+const serviceCreditReservations=require('../payments/service-credit-reservations');
 const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const customerNav=require('./customer-nav-html');
@@ -23,7 +24,9 @@ function createCustomerAffiliateRouter(){
       await affiliateCredits.matureDueCredits(req.session.customerId);
       const currency=planPricing.cleanCurrency(req.query.currency||await planPricing.userPreferredCurrency(req.session.customerUserId),'GBP');
       const referralLink=await operations.absoluteUrl(req,'/account/register?ref='+encodeURIComponent(enrolled.code));
-      const [state,plans,portal]=await Promise.all([affiliateCredits.profile(req.session.customerId),plansFor(currency),customers.getCustomerPortal(req.session.customerId)]);
+      const [rawState,plans,portal]=await Promise.all([affiliateCredits.profile(req.session.customerId),plansFor(currency),customers.getCustomerPortal(req.session.customerId)]);
+      const balances=await Promise.all((rawState.balances||[]).map(async balance=>({...balance,available_minor:await serviceCreditReservations.availableMinor(req.session.customerId,balance.currency)})));
+      const state={...rawState,balances};
       return res.render('customer/affiliate',{siteName:runtimeSettings.siteName(),settings,code:enrolled.code,referralLink,state,plans,currency,currencies:await planPricing.enabledCurrencies(),navOptions:customerNav.optionsFromPortal(portal),csrfToken:csrf.token(req),message:req.query.message||null,error:req.query.error||null});
     }catch(error){next(error);}
   });
