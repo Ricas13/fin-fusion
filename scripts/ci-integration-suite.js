@@ -58,6 +58,10 @@ const suites = [
     commands: [['node', ['scripts/billing-lifecycle-smoke.js']]],
   },
   {
+    name: 'Provider operation recovery and recurring serialization',
+    commands: [['node', ['scripts/provider-operation-recovery-db-smoke.js']]],
+  },
+  {
     name: 'Browser payment configuration and flexible checkout',
     commands: [['node', ['scripts/browser-payments-flex-smoke.js']]],
   },
