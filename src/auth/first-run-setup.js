@@ -174,10 +174,10 @@ async function completeSetup({ claimCode, username, email, password, passwordCon
         const legacyId = Number(legacyIdResult.rows[0]?.next_id || 1);
         const inserted = await client.query(`
             INSERT INTO app_users(
-                email,username,password_hash,role,active,legacy_numeric_id,
+                email,username,password_hash,role,active,legacy_numeric_id,is_owner,
                 password_changed_at,email_verified_at,created_at,updated_at
-            ) VALUES($1,$2,$3,'admin',TRUE,$4,NOW(),CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END,NOW(),NOW())
-            RETURNING id,email,username,role,active,legacy_numeric_id,session_version,totp_enabled
+            ) VALUES($1,$2,$3,'admin',TRUE,$4,TRUE,NOW(),CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END,NOW(),NOW())
+            RETURNING id,email,username,role,active,legacy_numeric_id,is_owner,session_version,totp_enabled
         `, [clean.email, clean.username, passwordHash, legacyId]);
         const user = inserted.rows[0];
 
@@ -205,6 +205,7 @@ async function completeSetup({ claimCode, username, email, password, passwordCon
             username: clean.username,
             siteName: clean.siteName,
             legacyNumericId: legacyId,
+            owner: true,
             source: 'browser_first_run'
         })]);
 
