@@ -51,6 +51,21 @@ function addDays(dateText, days) {
     d.setUTCDate(d.getUTCDate() + Number(days || 30));
     return d.toISOString().slice(0, 10);
 }
+function effectivePrimarySql() {
+    return `
+        s.superseded_by IS NULL
+        AND COALESCE(p.is_addon,FALSE)=FALSE
+        AND s.starts_at<=NOW()
+        AND (
+            (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+            OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+            OR (
+                COALESCE(s.service_extension_days,0)>0
+                AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
+                AND (s.current_period_end + ((s.service_extension_days || ' days')::interval))>NOW()
+            )
+        )`;
+}
 async function grantPlans() {
     const result = await query(`
         SELECT id,code,name,service_type,billing_interval,duration_days,price_minor,currency
@@ -71,12 +86,8 @@ async function currentPrimarySubscription(customerId) {
         SELECT s.id,s.status,s.current_period_end,p.name AS plan_name
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
-        WHERE s.customer_id=$1
-          AND s.superseded_by IS NULL
-          AND COALESCE(p.is_addon,FALSE)=FALSE
-          AND s.starts_at<=NOW()
-          AND s.status IN('active','trialing','past_due','paused')
-          AND s.current_period_end>NOW()
+        LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+        WHERE s.customer_id=$1 AND ${effectivePrimarySql()}
         ORDER BY s.created_at DESC
         LIMIT 1
     `, [customerId]);
@@ -145,12 +156,8 @@ async function createManualGrant(customerId, actorUserId, input) {
             SELECT s.id,p.name AS plan_name
             FROM subscriptions s
             JOIN plans p ON p.id=s.plan_id
-            WHERE s.customer_id=$1
-              AND s.superseded_by IS NULL
-              AND COALESCE(p.is_addon,FALSE)=FALSE
-              AND s.starts_at<=NOW()
-              AND s.status IN('active','trialing','past_due','paused')
-              AND s.current_period_end>NOW()
+            LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+            WHERE s.customer_id=$1 AND ${effectivePrimarySql()}
             FOR UPDATE OF s
             LIMIT 1
         `, [customerId]);
@@ -184,8 +191,13 @@ async function createManualGrant(customerId, actorUserId, input) {
         })]);
         return { subscriptionId: sub.rows[0].id, planName: plan.name };
     });
-    await provisioning.reconcileCustomer(customerId);
-    return created;
+    try {
+        await provisioning.reconcileCustomer(customerId);
+        return { ...created, reconciled: true };
+    } catch (error) {
+        console.error('Manual customer entitlement reconciliation failed:', { customerId, error: error.message });
+        return { ...created, reconciled: false };
+    }
 }
 function createAdminManualEntitlementRouter() {
     const router = express.Router();
@@ -197,7 +209,10 @@ function createAdminManualEntitlementRouter() {
         try {
             input = normalizedGrantInput(req.body || {});
             const result = await createManualGrant(req.params.customerId, req.session.authUserId, input);
-            return res.redirect(customerPath(req.params.customerId, input.returnTab, 'message', `${result.planName} granted. Local access was reconciled; no provider charge was created and renewal remains off.`));
+            const message = result.reconciled
+                ? `${result.planName} granted. Local access was reconciled; no provider charge was created and renewal remains off.`
+                : `${result.planName} granted. No provider charge was created and renewal remains off, but service reconciliation still needs attention.`;
+            return res.redirect(customerPath(req.params.customerId, input.returnTab, 'message', message));
         } catch (error) {
             console.error('Manual customer entitlement grant failed:', { customerId: req.params.customerId, error: error.message });
             const tab = input?.returnTab || (req.body?.returnTab === 'billing' ? 'billing' : 'access');
@@ -234,6 +249,7 @@ module.exports = {
     CURRENCIES,
     providerSubscriptionId,
     normalizedGrantInput,
+    effectivePrimarySql,
     currentPrimarySubscription,
     grantForm,
     hideEmptyManualEdit,
