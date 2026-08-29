@@ -21,12 +21,20 @@ expect(activityRoute.includes('ph.playback_method'),'Customer Activity must sele
 expect(!activityRoute.includes('ph.play_method'),'Customer Activity must not query the nonexistent playback_history play_method column.');
 expect(!activityRoute.includes('ph.max_height')&&!activityRoute.includes('ph.container'),'Customer Activity must not query nonexistent playback_history media-detail columns.');
 expect(activityRoute.includes('observed_streams'),'Customer Activity must use the canonical observed stream count.');
+expect(activityRoute.includes('LIMIT 100'),'Customer recent playback must remain capped at the latest 100 rows.');
 const activityView=source('views/customer/activity.ejs');
 expect(activityView.includes('Free Server usage'),'Customer Activity must explain Free Server usage status.');
 expect(activityView.includes('Automatic inactivity removal is paused.'),'Customer Activity must tell customers when telemetry safety pauses removal.');
 expect(activityView.includes('freeUsage.observed_streams')===false,'Customer Activity must not read observed streams from the wrong object.');
 expect(activityView.includes('e.observed_streams'),'Stream-limit actions must render the canonical observed stream count.');
 expect(!activityView.includes('a.max_height')&&!activityView.includes('a.container'),'Customer Activity must not render playback fields that are absent from playback_history.');
+expect(activityView.includes('<th>Title</th><th>When</th><th>Device</th>'),'Desktop recent playback must use the customer-facing Title, When and Device columns.');
+expect(activityView.includes('playbackServers.length>1')&&activityView.includes('if(showPlaybackServer)'),'Server must only appear when recent playback spans more than one server.');
+expect(!activityView.includes('<th>Playback</th>')&&!activityView.includes('a.playback_method'),'Customer recent playback must not expose raw playback-method pills such as transcode.');
+expect(activityView.includes('a.device_name,a.client_name')&&activityView.includes("join(' · ')"),'Customer playback must combine device and Jellyfin client into one friendly Device value.');
+expect(activityView.includes('a.ended_at')&&activityView.includes('a.last_seen_at')&&activityView.includes('playbackDuration'),'Customer playback When must render an end time or elapsed duration.');
+expect(activityView.includes('class="playbackMobile"')&&activityView.includes('class="playbackCard"'),'Mobile recent playback must render stacked session cards.');
+expect(activityView.includes('.playbackDesktop{display:none}.playbackMobile{display:block}'),'Mobile layout must replace the desktop table at the customer breakpoint.');
 
 const enforcement=source('src/jellyfin/activity.js');
 expect(!enforcement.includes('if (!stillPresent.supportsMediaControl)'),'Stream enforcement must not abandon a confirmed violation solely because the client omits media-control support.');
