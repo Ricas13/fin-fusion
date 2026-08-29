@@ -8,11 +8,19 @@
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
-  <style>.activityTable{min-width:780px}.activityDecision{margin:9px 0;padding:13px;border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;background:var(--panel-2)}.activityDecision.stop{border-left-color:var(--danger)}.usageGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}.usageStat{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}.usageStat span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.usageStatus{margin-top:12px}@media(max-width:760px){.usageGrid{grid-template-columns:1fr 1fr}}</style>
+  <style>.activityTable{min-width:640px}.playbackMobile{display:none}.playbackCard{padding:13px 0;border-bottom:1px solid var(--line)}.playbackCard:first-child{padding-top:0}.playbackCard:last-child{padding-bottom:0;border-bottom:0}.playbackCardTitle{font-weight:700}.playbackCardWhen,.playbackCardDevice{margin-top:5px;color:var(--muted);font-size:13px}.activityDecision{margin:9px 0;padding:13px;border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;background:var(--panel-2)}.activityDecision.stop{border-left-color:var(--danger)}.usageGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}.usageStat{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}.usageStat span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.usageStatus{margin-top:12px}@media(max-width:760px){.usageGrid{grid-template-columns:1fr 1fr}.playbackDesktop{display:none}.playbackMobile{display:block}}</style>
 </head>
 <%
   function when(v){if(!v)return'Not recorded yet';const d=new Date(v);return Number.isNaN(d.getTime())?'Not recorded yet':d.toLocaleString();}
+  function playbackDate(d){return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});}
+  function playbackTime(d){return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});}
+  function samePlaybackDay(a,b){return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();}
+  function playbackDuration(start,end){const minutes=Math.max(0,Math.round((end-start)/60000));if(minutes<1)return'<1m';const hours=Math.floor(minutes/60),remainder=minutes%60;return hours?(remainder?`${hours}h ${remainder}m`:`${hours}h`):`${minutes}m`;}
+  function playbackWhen(a){const start=new Date(a.started_at);if(Number.isNaN(start.getTime()))return'Not recorded yet';const startText=`${playbackDate(start)} ${playbackTime(start)}`;if(a.ended_at){const end=new Date(a.ended_at);if(!Number.isNaN(end.getTime()))return samePlaybackDay(start,end)?`${startText}–${playbackTime(end)}`:`${startText}–${playbackDate(end)} ${playbackTime(end)}`;}if(a.last_seen_at){const seen=new Date(a.last_seen_at);if(!Number.isNaN(seen.getTime())&&seen>=start)return`${startText} · ${playbackDuration(start,seen)}`;}return startText;}
+  function playbackDevice(a){const values=[a.device_name,a.client_name].map(v=>String(v||'').trim()).filter(Boolean);const unique=values.filter((v,i)=>values.findIndex(x=>x.toLowerCase()===v.toLowerCase())===i);return unique.join(' · ')||'Unknown device';}
   function ruleText(policy){const parts=[];if(policy&&policy.noPlaybackDays!=null)parts.push(`play something at least once every ${policy.noPlaybackDays} day(s)`);if(policy&&policy.minimumPlaybackMinutes!=null)parts.push(`watch at least ${policy.minimumPlaybackMinutes} minutes in each ${policy.playbackWindowDays||7}-day window`);return parts.join(' and ')||'No automatic usage threshold';}
+  const playbackServers=[...new Set(activity.map(a=>a.server_name).filter(Boolean))];
+  const showPlaybackServer=playbackServers.length>1;
 %>
 <body><div class="portalShell">
 <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
@@ -36,9 +44,12 @@
 
   <section class="panel"><div class="sectionHead"><div><h2>Recent playback</h2><p>Up to your latest 100 recorded Jellyfin playbacks.</p></div></div>
     <% if (!activity.length) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
-    <div class="tableWrap"><table class="activityTable"><thead><tr><th>Started</th><th>Media</th><th>Playback</th><th>Device</th><th>Server</th><th>Ended</th></tr></thead><tbody>
-      <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong></td><td><span class="pill"><%= a.playback_method || 'Unknown' %></span></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
-    </tbody></table></div><% } %>
+    <div class="playbackDesktop tableWrap"><table class="activityTable"><thead><tr><th>Title</th><th>When</th><th>Device</th><% if(showPlaybackServer){ %><th>Server</th><% } %></tr></thead><tbody>
+      <% activity.forEach(function(a){ %><tr><td><strong><%= a.item_name || 'Unknown item' %></strong></td><td><%= playbackWhen(a) %></td><td><%= playbackDevice(a) %></td><% if(showPlaybackServer){ %><td><%= a.server_name || 'Unknown server' %></td><% } %></tr><% }) %>
+    </tbody></table></div>
+    <div class="playbackMobile">
+      <% activity.forEach(function(a){ %><article class="playbackCard"><div class="playbackCardTitle"><%= a.item_name || 'Unknown item' %></div><div class="playbackCardWhen"><%= playbackWhen(a) %></div><div class="playbackCardDevice"><%= playbackDevice(a) %></div></article><% }) %>
+    </div><% } %>
   </section>
   <section class="sectionBlock"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams appear here. Normal playback does not create an action.</p></div></div><div class="panel">
     <% if (!events.length) { %><div class="empty">No stream-limit actions.</div><% } else { %><% events.forEach(function(e){const stopped=['stopped','stop_failed'].includes(String(e.decision||'')); %><div class="activityDecision <%= stopped?'stop':'' %>"><strong><%= e.decision==='stopped'?'Playback stopped':e.decision==='stop_failed'?'Stop attempt failed':'Stream policy decision' %></strong> · <%= when(e.created_at) %><p><%= e.observed_streams == null ? '?' : e.observed_streams %> active stream(s) / limit <%= e.stream_limit == null ? '?' : e.stream_limit %></p><div class="accessMeta"><%= e.reason || 'No additional detail' %></div></div><% }) %><% } %>
