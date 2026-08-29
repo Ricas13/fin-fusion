@@ -36,6 +36,6 @@ assert(manual.includes('o.permanent_access=TRUE') && manual.includes('service_ex
 assert(manual.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect existing subscriptions to the normal manual edit flow');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
 assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
-assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf('app.use(createAdminCustomer360Router());'), 'manual entitlement injection must mount before Customer 360');
+assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf("mountCritical('customer360', createAdminCustomer360Router())"), 'manual entitlement injection must mount before Customer 360');
 
 console.log('admin manual entitlement smoke: ok');
