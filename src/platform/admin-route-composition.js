@@ -62,6 +62,7 @@ const { createAdminServersRouter } = require('./admin-servers');
 const { createAdminActivityRouter } = require('./admin-activity');
 const { createAdminLibrariesRouter } = require('./admin-libraries');
 const { createAdminCustomerManagementRouter } = require('./admin-customer-management');
+const { createAdminManualEntitlementRouter } = require('./admin-manual-entitlement');
 const { createAdminImpersonationRouter } = require('./admin-impersonation');
 const { createAdminLanePolicyRouter } = require('./admin-lane-policy');
 const { createAdminCustomer360Router } = require('./admin-customer-360');
@@ -162,6 +163,9 @@ function mountAdminRoutes(app) {
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
   app.use(createAdminCustomerManagementRouter());
+  // Manual grants own only the first-current-entitlement path and inject their
+  // form into Customer 360 Access/Billing before the canonical page renders.
+  app.use(createAdminManualEntitlementRouter());
   // These middleware-owning routers must precede Customer 360. They wrap the
   // canonical page response and own the lane-scoped mutation paths before the
   // legacy customer-wide handlers can match them. Impersonation's own
