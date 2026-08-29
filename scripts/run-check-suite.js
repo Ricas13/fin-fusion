@@ -90,10 +90,16 @@ function annotationEscape(value) {
 function selectedCommands(all) {
   if (!fs.existsSync('.check-bisect')) return { commands:all, offset:0, originalTotal:all.length, mode:'full' };
   const mode = fs.readFileSync('.check-bisect','utf8').trim().toLowerCase();
-  const midpoint = Math.ceil(all.length / 2);
-  if (mode === 'first') return { commands:all.slice(0, midpoint), offset:0, originalTotal:all.length, mode };
-  if (mode === 'second') return { commands:all.slice(midpoint), offset:midpoint, originalTotal:all.length, mode };
-  throw new Error(`Unsupported .check-bisect mode: ${mode}`);
+  const choices = mode.split(/[:/]/).map(value=>value.trim()).filter(Boolean);
+  let start = 0;
+  let end = all.length;
+  for (const choice of choices) {
+    const midpoint = start + Math.ceil((end - start) / 2);
+    if (choice === 'first') end = midpoint;
+    else if (choice === 'second') start = midpoint;
+    else throw new Error(`Unsupported .check-bisect choice: ${choice}`);
+  }
+  return { commands:all.slice(start,end), offset:start, originalTotal:all.length, mode };
 }
 
 async function main() {
@@ -101,7 +107,7 @@ async function main() {
   try { fs.rmSync(failureFile, { force:true }); } catch (_) {}
   const all = expand(scripts[scriptName], [scriptName]);
   const selected = selectedCommands(all);
-  console.log(`check suite mode=${selected.mode}; running ${selected.commands.length}/${selected.originalTotal} commands`);
+  console.log(`check suite mode=${selected.mode}; running ${selected.commands.length}/${selected.originalTotal} commands from ${selected.offset+1}`);
   for (let i = 0; i < selected.commands.length; i += 1) {
     try {
       await run(selected.commands[i], selected.offset + i + 1, selected.originalTotal);
