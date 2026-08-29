@@ -6,14 +6,46 @@ function source(f){return fs.readFileSync(path.join(__dirname,'..',f),'utf8');}
 function expect(v,m){if(!v)throw new Error(m);}
 
 const inactivity=source('src/automation/customer-inactivity.js');
-expect(inactivity.includes("worker_key='activity'"),'Inactivity enforcement must require the activity worker heartbeat.');
-expect(inactivity.includes("health_status='offline'")&&inactivity.includes("last_health_check<NOW()-INTERVAL '10 minutes'"),'Inactivity enforcement must reject stale/unhealthy Jellyfin telemetry.');
-const telemetryGate=inactivity.indexOf("if(!telemetry.ready)return{processed:0,eligible:0,enforced:0,wouldDisable:0,released,dryRun:true,skipped:'telemetry_not_trustworthy'");
-const candidateRun=inactivity.indexOf('const rows=await candidates(globalCfg)');
-expect(telemetryGate>=0&&candidateRun>telemetryGate,'Free Server inactivity must fail closed before evaluating or enforcing new disables when telemetry is untrustworthy.');
-expect(inactivity.indexOf('const globalCfg=await lifecyclePolicy.get(),released=await releaseObsoletePlanHolds')<telemetryGate,'Obsolete policy holds may be released before the telemetry gate so disabling a rule cannot strand Jellyfin access.');
-expect(inactivity.includes("account_purpose='jellyfin'")&&!inactivity.includes("account_purpose='stremio_internal') first_account_at"),'Free Server inactivity age must use normal customer Jellyfin accounts, not hidden Stremio identities.');
-expect(inactivity.includes('!row.currently_playing'),'A currently-playing customer must never become inactivity-eligible.');
+const scoped=source('src/automation/customer-inactivity-scoped.js');
+const trust=source('src/jellyfin/activity-trust.js');
+const worker=source('scripts/activity-worker.js');
+expect(inactivity.includes("require('../jellyfin/activity-trust')"),'Inactivity must use the per-server activity trust owner.');
+expect(!inactivity.includes("health_status='offline'")&&!inactivity.includes("last_health_check<NOW()-INTERVAL '10 minutes'"),'Free Server inactivity must not gate on fleet-wide server health.');
+expect(scoped.includes('activityTrust.serverTelemetry(candidateServerIds(rows))'),'Scoped inactivity must request telemetry only for candidate servers.');
+expect(!scoped.includes('fleetMetrics.refreshServerUserActivity'),'Inactivity trust must come from the /Sessions poll ledger, not an unrelated /Users refresh.');
+expect(scoped.includes('eligibleOnReadyServers')&&scoped.includes("serverTelemetry[String(row.server_id)]"),'Each inactivity candidate must be gated by its own server.');
+expect(scoped.includes("customer.inactivity.skipped_telemetry")&&scoped.includes('Free Server inactivity enforcement skipped'),'A failed Free Server sample must produce an explicit skip reason.');
+expect(scoped.includes('finalEligibility(original, globalCfg)')&&scoped.includes('usage_no_longer_eligible'),'Enforcement must re-read playback evidence immediately before disabling access.');
+expect(scoped.includes('usageSatisfiedEarlierToday')&&scoped.includes('usage_satisfied_earlier_today'),'A customer whose rolling usage was satisfied earlier the same day must not be disabled that day.');
+expect(trust.includes('successMs < attemptMs')&&trust.includes("reason = 'last_poll_failed'"),'A newer failed poll must not be hidden by an older success.');
+expect(trust.includes('cfg.pollSeconds + cfg.slackSeconds'),'Server trust must expire at poll interval plus slack.');
+expect(worker.includes("STREAM_POLICY_POLL_SECONDS || 20")&&worker.includes('Math.max(15'),'Playback poll default must be 20s with a 15s floor.');
+expect(worker.includes('activityTrust.recordCycle(serverIds, result.serverFailures || []'),'The activity worker must persist current-cycle per-server poll outcomes.');
+
+// Offline Premium boxes are intentionally absent from a Free-only telemetry
+// scope. The pure summary must therefore stay ready when the one target Free
+// server is trustworthy.
+const scopedModule=require('../src/automation/customer-inactivity-scoped');
+const freeOnlySummary=scopedModule.telemetrySummary({ready:true,activityWorkerAgeSeconds:20},{'free-server':{ready:true}});
+expect(freeOnlySummary.ready===true&&freeOnlySummary.unsafeTargetServers===0,'An unrelated Premium server must not make a Free-only telemetry scope unsafe.');
+
+const inactivityBase=source('src/automation/customer-inactivity.js');
+expect(inactivityBase.includes("account_purpose='jellyfin'")&&!inactivityBase.includes("account_purpose='stremio_internal') first_account_at"),'Free Server inactivity age must use normal customer Jellyfin accounts, not hidden Stremio identities.');
+expect(inactivityBase.includes('!row.currently_playing'),'A currently-playing customer must never become inactivity-eligible.');
+
+const webhook=source('src/jellyfin/playback-webhook.js');
+const webhookRoute=source('src/platform/webhooks.js');
+expect(webhookRoute.includes("/webhooks/jellyfin/:serverId")&&webhookRoute.includes('x-fin-fusion-webhook-secret'),'Jellyfin playback ingest must use the documented shared-secret endpoint.');
+expect(webhook.includes("['playbackstart','playbackprogress','playbackstop']"),'Webhook ingest must accept Start, Progress and Stop.');
+expect(webhook.includes("registry.request(serverId, '/Sessions?activeWithinSeconds=120')")&&webhook.includes('pollPlaybackKey(serverId, match)'),'Webhook Start/Progress must converge on the poller session/playback key when Jellyfin exposes the live session.');
+expect(webhook.includes('ON CONFLICT(server_id,playback_key) DO UPDATE'),'Webhook/poll observations must share the playback_history idempotency key.');
+expect(webhook.includes("ended_at=COALESCE(ended_at,$3)")&&webhook.includes("ended_reason=COALESCE(ended_reason,'webhook_stop')"),'Duplicate Stop events must close a playback history row once.');
+expect(webhook.includes('last_seen_at=GREATEST(last_seen_at,$3)'),'Playback Progress, including paused progress, must advance last-seen evidence.');
+
+const migration=source('db/migrations/108_activity_poll_trust.sql');
+expect(migration.includes('jellyfin_activity_poll_state'),'Per-server activity poll state migration must exist.');
+expect(migration.includes('playback_history_not_seen_grace_trigger')&&migration.includes('active_playback_delete_grace_trigger'),'Missing poll sessions must remain open until grace expires.');
+expect(migration.includes('NEW.ended_at := COALESCE(OLD.ended_at, observed_at, OLD.last_seen_at)'),'Grace expiry must close at the last server-reported timestamp rather than inventing watched seconds.');
 
 const activityRoute=source('src/platform/customer-activity.js');
 expect(activityRoute.includes('customer-inactivity-status'),'Customer Activity must expose the same canonical inactivity evidence used by automation.');
@@ -22,11 +54,12 @@ expect(!activityRoute.includes('ph.play_method'),'Customer Activity must not que
 expect(!activityRoute.includes('ph.max_height')&&!activityRoute.includes('ph.container'),'Customer Activity must not query nonexistent playback_history media-detail columns.');
 expect(activityRoute.includes('observed_streams'),'Customer Activity must use the canonical observed stream count.');
 const activityView=source('views/customer/activity.ejs');
-expect(activityView.includes('Free Server usage'),'Customer Activity must explain Free Server usage status.');
-expect(activityView.includes('Automatic inactivity removal is paused.'),'Customer Activity must tell customers when telemetry safety pauses removal.');
+expect(activityView.includes('Based on what the server reported.')&&activityView.includes('Short clips under ~30s may not appear.'),'Free Server usage must disclose the limits of server-reported playback.');
+expect(activityView.includes('this Free Server has a trustworthy recent playback sample'),'Customer Activity must explain scoped telemetry safety.');
 expect(activityView.includes('freeUsage.observed_streams')===false,'Customer Activity must not read observed streams from the wrong object.');
 expect(activityView.includes('e.observed_streams'),'Stream-limit actions must render the canonical observed stream count.');
 expect(!activityView.includes('a.max_height')&&!activityView.includes('a.container'),'Customer Activity must not render playback fields that are absent from playback_history.');
+expect(!activityView.includes("a.playback_method === 'transcode'")&&!activityView.includes("a.playback_method === 'Transcode'"),'Playback method must not be rendered as a transcode quality score.');
 
 const enforcement=source('src/jellyfin/activity.js');
 expect(!enforcement.includes('if (!stillPresent.supportsMediaControl)'),'Stream enforcement must not abandon a confirmed violation solely because the client omits media-control support.');
@@ -47,4 +80,4 @@ expect(passwordSync.indexOf('verifyPortalPassword(req.session.customerUserId,por
 expect(passwordSync.includes("'customer.request_password.sync_from_portal'"),'Successful password sync must be audited without logging the password.');
 expect(!passwordSync.includes('metadata:{password'),'Password sync audit must never include plaintext secrets.');
 
-console.log('Customer playback trust and Seerr password sync smoke: ok');
+console.log('Customer playback trust, webhook ingest and Seerr password sync smoke: ok');
