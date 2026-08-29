@@ -36,7 +36,7 @@ const pageKeys=Object.fromEntries(nav.groups.map(group=>[group.key,group.pages.m
 assert.deepStrictEqual(pageKeys.dashboard,['dashboard'],'Dashboard must expose one primary operator starting point');
 assert.deepStrictEqual(pageKeys.jellyfin,['servers','activity'],'Jellyfin must keep Servers and Playback as its primary destinations');
 assert.deepStrictEqual(pageKeys.stremio,['stremio-sources'],'Stremio must expose one primary control room');
-assert.strictEqual(pageKeys.resellers,undefined,'Reserved reseller routes must not appear as a shipped primary sidebar module');
+assert.strictEqual(pageKeys.resellers,undefined,'Retired reseller routes must not appear as a shipped primary sidebar module');
 assert.deepStrictEqual(pageKeys.people,['users','tickets'],'Customers must expose customer management and Support as primary destinations');
 assert.deepStrictEqual(pageKeys.commerce,['plans','orders','payments'],'Commerce must keep Plans & Storefront, Orders & Growth, and Payments & Billing as its primary destinations');
 assert.deepStrictEqual(pageKeys.automation,['provisioning','automation-jobs','backups'],'Operations must keep Provisioning, Automation, and Backups & Recovery as its primary destinations');
@@ -60,7 +60,7 @@ assert.strictEqual(nav.activeKey('jellyfin-overview'),'servers','legacy Jellyfin
 assert.strictEqual(nav.activeKey('stremio-overview'),'stremio-sources','legacy Stremio overview context must resolve to Stremio');
 assert.strictEqual(nav.activeKey('jellyfin-plans'),'plans','legacy Jellyfin Plans context must resolve to canonical Commerce Plans');
 assert.strictEqual(nav.activeKey('stremio-plans'),'plans','legacy Stremio Plans context must resolve to canonical Commerce Plans');
-assert.strictEqual(nav.activeKey('reseller-plans'),'plans','legacy reseller Plans context must resolve to canonical Commerce Plans');
+assert(!Object.keys(nav.aliases).some(key=>/reseller/i.test(key)),'retired reseller navigation aliases must stay removed');
 assert.strictEqual(nav.activeKey('jellyfin-customers'),'users','legacy Jellyfin Customers context must resolve to canonical Customers');
 assert.strictEqual(nav.activeKey('stremio-customers'),'users','legacy Stremio Customers context must resolve to canonical Customers');
 assert(pageKeys.settings.includes('settings-commerce')&&nav.groups.find(group=>group.key==='settings').pages.find(page=>page[0]==='settings-commerce')?.[2]==='/admin/settings/commerce','Commerce must have one Settings-owned configuration directory');
@@ -85,7 +85,7 @@ assert(productModules.includes("router.get('/admin/jellyfin',(_req,res)=>res.red
 assert(productModules.includes("router.get('/admin/stremio',(_req,res)=>res.redirect('/admin/servers/stremio'))"),'Legacy Stremio overview URL must redirect to the canonical Stremio control room');
 assert(productModules.includes("'/admin/stremio/playback'"),'Stremio IP access must remain a dedicated operational workspace');
 assert(!productModules.includes('async function jellyfinPage')&&!productModules.includes('async function stremioPage'),'Retired Jellyfin/Stremio overview renderers must stay removed now that their legacy URLs redirect to canonical control rooms');
-assert(productModules.includes('Reserved for later development.')&&productModules.includes('monthly fee tied to a configurable Jellyfin user allowance')&&productModules.includes('monthly Jellyfin user allowance'),'Resellers must remain a structural shell aligned to the monthly user-allowance model');
+assert(!/reseller/i.test(productModules),'retired reseller product routes, placeholder pages and copy must stay removed from CAPTAiNFiN');
 assert(!productModules.toLowerCase().includes(['cred','it-based'].join(''))&&!productModules.toLowerCase().includes(['cred','it balance'].join('')),'retired commercial balance language must not return');
 assert(customerFilters.includes("SERVICE_VALUES = ['jellyfin', 'stremio']")&&customerFilters.includes('service_type_snapshot'),'Shared Customers must support product context without duplicating customer data');
 assert(plansList.includes("planComponents.accessLabel(plan)"),'Plan list must use shared component access labels');
