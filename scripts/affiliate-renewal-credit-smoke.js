@@ -10,7 +10,7 @@ const renewals=require('../src/payments/service-credit-renewals');
 function source(file){return fs.readFileSync(path.join(__dirname,'..',file),'utf8');}
 
 async function main(){
-  const stripeSource=source('src/payments/stripe.js'),affiliateRoute=source('src/platform/customer-affiliate.js');
+  const stripeSource=source('src/payments/stripe.js'),affiliateRoute=source('src/platform/customer-affiliate.js'),runtimeRoles=source('scripts/configure-runtime-db-roles.js');
   assert(stripeSource.includes("case 'invoice.created'"),'Stripe invoice.created must own renewal credit application.');
   assert(stripeSource.includes('stripe.invoiceItems.create'),'Stripe renewal credit must adjust the exact draft invoice.');
   assert(stripeSource.includes('amount:-Number(reservation.amountMinor)'),'Stripe renewal credit must reduce provider amount by the reserved credit.');
@@ -21,6 +21,7 @@ async function main(){
   assert(!stripeSource.includes("case 'invoice.marked_uncollectible': if(object?.id)await renewalCredits.releaseStripeInvoice"),'Uncollectible invoices can later be paid, so their already-applied credit must remain committed.');
   assert(stripeSource.includes('automatic_tax_not_supported'),'Automatic-tax invoices must fail closed instead of adding an incompatible negative invoice item.');
   assert(affiliateRoute.includes('serviceCreditReservations.availableMinor'),'Customer affiliate balances must display actually spendable credit after checkout and renewal reservations.');
+  assert(runtimeRoles.includes("'affiliate_credit_ledger','affiliate_credit_renewal_reservations'"),'Generic automation cleanup must not receive DELETE on durable renewal-credit financial state.');
 
   const suffix=Date.now().toString(36);
   const user=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,'x','customer',TRUE) RETURNING id`,[`renewal-credit-${suffix}`,`renewal-credit-${suffix}@example.invalid`])).rows[0];
