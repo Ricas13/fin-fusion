@@ -6,6 +6,7 @@ const platformHealth = require('./health');
 const configurationHealth = require('./admin-configuration-health');
 const releaseStatus = require('./release-status');
 const runtimeSettings = require('./runtime-settings');
+const workerInstanceHealth = require('./worker-instance-health');
 const { deriveRecoveryReadiness } = require('./backup-recovery-readiness');
 
 const SECRET_ENV_KEYS = [
@@ -47,28 +48,11 @@ function groupStatus({ key, label, href, critical = 0, warning = 0, detail = '' 
 }
 
 function workerFreshnessSeconds(row) {
-  const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
-  const key = String(row?.worker_key || '');
-  if (key === 'activity') {
-    return Math.max(120, Math.min(1800, safeNumber(metadata.pollSeconds || 30) * 4));
-  }
-  if (key === 'automation') {
-    const pollSeconds = Math.ceil(safeNumber(metadata.pollMs || 15000) / 1000);
-    return Math.max(90, Math.min(900, pollSeconds * 4));
-  }
-  return 90;
+  return workerInstanceHealth.freshnessSeconds(row);
 }
 
 function operationalWorkerState(row) {
-  if (!row) return 'missing';
-  if (row.draining_at) return 'draining';
-  const age = safeNumber(row.heartbeat_age_seconds);
-  if (age > workerFreshnessSeconds(row)) return 'stale';
-  const outcome = String(row.metadata?.lastCycleOutcome || '').toLowerCase();
-  if (outcome === 'failed') return 'failed';
-  if (outcome === 'degraded') return 'degraded';
-  if (outcome === 'maintenance') return 'maintenance';
-  return 'healthy';
+  return workerInstanceHealth.instanceState(row);
 }
 
 async function backupSnapshot() {
@@ -103,7 +87,7 @@ async function collectSystemDiagnostics() {
     configurationHealth.health(),
     releaseStatus.checkForUpdate(),
     query(`SELECT current_setting('server_version') AS version,(SELECT COUNT(*)::int FROM schema_migrations) AS migration_count,(SELECT filename FROM schema_migrations ORDER BY filename DESC LIMIT 1) AS latest_migration`),
-    query(`SELECT worker_key,metadata,draining_at,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state ORDER BY worker_key`),
+    query(`SELECT worker_key,instance_id,version,commit_sha,started_at,last_heartbeat_at,metadata,draining_at,EXTRACT(EPOCH FROM(NOW()-last_heartbeat_at))::int heartbeat_age_seconds FROM operational_worker_state ORDER BY worker_key,last_heartbeat_at DESC`),
     query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE health_status='offline')::int offline,COUNT(*) FILTER(WHERE COALESCE(placement_mode,'active')<>'active')::int non_active FROM jellyfin_servers WHERE enabled=TRUE`),
     query(`SELECT
       COUNT(*) FILTER(WHERE status='pending')::int pending,
@@ -128,6 +112,7 @@ async function collectSystemDiagnostics() {
   };
   const db = dbResult.status === 'fulfilled' ? dbResult.value.rows[0] || {} : {};
   const workerRows = workersResult.status === 'fulfilled' ? workersResult.value.rows : [];
+  const workerHealth = workerInstanceHealth.summarize(workerRows);
   const fleet = fleetResult.status === 'fulfilled' ? fleetResult.value.rows[0] || {} : {};
   const notifications = notificationResult.status === 'fulfilled' ? notificationResult.value.rows[0] || {} : {};
   const backup = backupResult.status === 'fulfilled' ? backupResult.value : null;
@@ -154,11 +139,12 @@ async function collectSystemDiagnostics() {
   const databaseKind = readiness.checks?.database && readiness.checks?.migrations ? 'good' : 'bad';
   const applicationKind = readiness.ok ? (readiness.degraded ? 'warn' : 'good') : 'bad';
   const backupKind = backup?.overall?.kind || 'bad';
-  const workerStates = workerRows.map(row => ({ row, state: operationalWorkerState(row) }));
+  const workerStates = workerHealth.workers.map(row => ({ row, state: row.state }));
   const hardWorkerProblems = workerStates.filter(item => ['stale','failed'].includes(item.state)).length;
   const softWorkerProblems = workerStates.filter(item => ['degraded','draining','maintenance'].includes(item.state)).length;
+  const workerInstanceWarnings = workerHealth.warnings.filter(warning => ['duplicate_instances','version_skew'].includes(warning.type)).length;
   const expectedWorkers = new Set(['automation','activity']);
-  for (const row of workerRows) expectedWorkers.delete(String(row.worker_key || ''));
+  for (const row of workerHealth.workers) expectedWorkers.delete(String(row.key || ''));
   const missingWorkers = expectedWorkers.size;
   const queuedAge = safeNumber(notifications.oldest_queued_age_seconds);
   const notificationStuck = queuedAge > 15 * 60;
@@ -167,7 +153,7 @@ async function collectSystemDiagnostics() {
     { key: 'application', label: 'Application', href: '/admin/system', kind: applicationKind, detail: readiness.ok ? (readiness.degraded ? 'Running with a capability warning.' : 'Process readiness checks passed.') : 'One or more process readiness checks failed.' },
     { key: 'database', label: 'Database', href: '/admin/system', kind: databaseKind, detail: databaseKind === 'good' ? 'Database connectivity and migrations are current.' : 'Database connectivity or migration state needs attention.' },
     groupStatus({ key: 'catalogue', label: 'Catalogue & plans', href: '/admin/plans', critical: planCounts.critical, warning: planCounts.warning, detail: planCounts.critical || planCounts.warning ? 'One or more active plan readiness checks need review.' : 'No active plan readiness issues detected.' }),
-    groupStatus({ key: 'automation', label: 'Background workers', href: '/admin/automation', critical: automationCounts.critical + hardWorkerProblems, warning: automationCounts.warning + softWorkerProblems + missingWorkers, detail: hardWorkerProblems ? `${hardWorkerProblems} worker heartbeat/outcome problem(s) detected.` : softWorkerProblems || missingWorkers ? `${softWorkerProblems} degraded/draining and ${missingWorkers} missing expected worker state(s).` : 'Automation and Activity worker heartbeats are within their own expected cadence.' }),
+    groupStatus({ key: 'automation', label: 'Background workers', href: '/admin/automation', critical: automationCounts.critical + hardWorkerProblems, warning: automationCounts.warning + softWorkerProblems + missingWorkers + workerInstanceWarnings, detail: workerInstanceWarnings ? `${workerInstanceWarnings} duplicate/version-skew worker warning(s) detected.` : hardWorkerProblems ? `${hardWorkerProblems} worker heartbeat/outcome problem(s) detected.` : softWorkerProblems || missingWorkers ? `${softWorkerProblems} degraded/draining and ${missingWorkers} missing expected worker state(s).` : 'Automation and Activity worker heartbeats are within their own expected cadence.' }),
     { key: 'backups', label: 'Backups & recovery', href: '/admin/backups', kind: backupKind, critical: backupKind === 'bad' ? 1 : 0, warning: backupKind === 'warn' ? 1 : 0, detail: backup?.overall?.detail || 'Backup readiness could not be determined.' },
     groupStatus({ key: 'fleet', label: 'Jellyfin fleet', href: '/admin/servers', critical: fleetCounts.critical, warning: fleetCounts.warning + safeNumber(fleet.offline), detail: `${safeNumber(fleet.total)} enabled server(s); ${safeNumber(fleet.offline)} offline; ${safeNumber(fleet.non_active)} not accepting normal placement.` }),
     groupStatus({ key: 'integrations', label: 'Payments & integrations', href: '/admin/payments', critical: integrationCounts.critical, warning: integrationCounts.warning, detail: integrationCounts.critical || integrationCounts.warning ? 'Configuration health found integration items requiring review.' : 'No payment/request configuration issues detected.' }),
@@ -196,14 +182,9 @@ async function collectSystemDiagnostics() {
       latestMigration: db.latest_migration ? String(db.latest_migration).slice(0, 120) : null,
       pool
     },
-    workers: workerRows.map(row => ({
-      key: String(row.worker_key || '').slice(0, 80),
-      heartbeatAgeSeconds: safeNumber(row.heartbeat_age_seconds),
-      freshnessSeconds: workerFreshnessSeconds(row),
-      state: operationalWorkerState(row),
-      lastCycleOutcome: String(row.metadata?.lastCycleOutcome || '').slice(0, 24) || null,
-      serverFailures: safeNumber(row.metadata?.serverFailures)
-    })),
+    workers: workerHealth.workers,
+    workerInstances: workerHealth.instances,
+    workerWarnings: workerHealth.warnings,
     backups: backup,
     fleet: { total: safeNumber(fleet.total), offline: safeNumber(fleet.offline), nonActive: safeNumber(fleet.non_active) },
     notifications: {
