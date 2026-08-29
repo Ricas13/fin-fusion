@@ -16,6 +16,7 @@ const householdAccess=require('../stremio/household-access');
 const installRecovery=require('../stremio/install-credential-recovery');
 const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const requestUserSync=require('../integrations/request-user-sync');
+const notificationSettings=require('../integrations/notification-settings');
 const runtimeSettings=require('./runtime-settings');
 const operations=require('./operations-settings');
 const customerNav=require('./customer-nav-html');
@@ -77,7 +78,7 @@ function createCustomerDashboardRouter(){
         return res.send(returningAccessPage(req,returnStatus));
       }
       const currency=await planPricing.platformDefaultCurrency();
-      const [portalRaw,plans,currentPlan,freePlan,stremioPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange]=await Promise.all([
+      const [portalRaw,plans,currentPlan,freePlan,stremioPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
         customers.getCustomerPortal(customerId),
         sellablePlans(),
         provisioning.currentEntitlement(customerId),
@@ -87,15 +88,16 @@ function createCustomerDashboardRouter(){
         requestUserSync.configuration(),
         provisioning.control.getCustomerState(customerId).catch(()=>null),
         planChange.currentRecurring(customerId).catch(()=>null),
-        planChange.pendingForCustomer(customerId).catch(()=>null)
+        planChange.pendingForCustomer(customerId).catch(()=>null),
+        notificationSettings.status().catch(()=>({}))
       ]);
       const portal=await hideInternalAccounts(customerId,portalRaw),navOptions=customerNav.optionsFromPortal(portal),paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()};
       if(!currentPlan&&!freePlan&&!stremioPlan&&!openPlanChange){
         const openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
-        return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null});
+        return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       }
       const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage(portal,jellyfinPlan),message=req.query.message||welcome||null;
-      return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,renewalSubscription,openPlanChange,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl});
+      return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,renewalSubscription,openPlanChange,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}
   });
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{
