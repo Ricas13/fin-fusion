@@ -14,8 +14,10 @@ async function rawAvailableMinorForClient(client,customerId,currency,{includeRes
   const wanted=cleanCurrency(currency);
   const r=await client.query(`SELECT
     COALESCE((SELECT SUM(amount_minor) FROM affiliate_credit_ledger WHERE customer_id=$1 AND currency=$2 AND state='available'),0)::int AS ledger,
-    COALESCE((SELECT SUM(amount_minor) FROM affiliate_credit_checkout_reservations WHERE customer_id=$1 AND currency=$2 AND state='reserved' AND expires_at>NOW()),0)::int AS reserved`,[customerId,wanted]);
-  const available=int(r.rows[0]?.ledger)-(includeReservations?int(r.rows[0]?.reserved):0);
+    COALESCE((SELECT SUM(amount_minor) FROM affiliate_credit_checkout_reservations WHERE customer_id=$1 AND currency=$2 AND state='reserved' AND expires_at>NOW()),0)::int AS checkout_reserved,
+    COALESCE((SELECT SUM(amount_minor) FROM affiliate_credit_renewal_reservations WHERE customer_id=$1 AND currency=$2 AND state IN('reserved','provider_applied')),0)::int AS renewal_reserved`,[customerId,wanted]);
+  const reserved=int(r.rows[0]?.checkout_reserved)+int(r.rows[0]?.renewal_reserved);
+  const available=int(r.rows[0]?.ledger)-(includeReservations?reserved:0);
   if(available<0)throw new Error(`Service-credit accounting invariant violated for ${wanted}: calculated available balance is ${available}.`);
   return available;
 }
