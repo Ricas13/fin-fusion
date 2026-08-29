@@ -27,7 +27,7 @@ async function requireOwner(req,res,next) {
 }
 
 // Support administrators retain customer/ticket/operational work, while the
-// highest-impact configuration and credential surfaces stay owner-only.
+// highest-impact platform configuration and credential surfaces stay owner-only.
 const OWNER_ONLY_PATHS = [
     /^\/settings(?:\/|$)/,
     /^\/setup(?:\/|$)/,
@@ -36,6 +36,9 @@ const OWNER_ONLY_PATHS = [
     /^\/backups(?:\/|$)/,
     /^\/configuration(?:\/|$)/,
     /^\/payment(?:s|-settings)?(?:\/|$)/,
+    /^\/notifications\/preferences(?:\/|$)/,
+    /^\/email(?:\/|$)/,
+    /^\/provider-mappings(?:\/|$)/,
     /^\/data-export(?:\/|$)/
 ];
 
