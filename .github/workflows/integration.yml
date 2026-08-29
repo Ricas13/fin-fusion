@@ -61,6 +61,7 @@ jobs:
           node scripts/csp-inline-audit.js
           node scripts/payment-incident-safety-smoke.js
           node scripts/customer-portal-view-smoke.js
+          node scripts/affiliate-program-clarity-smoke.js
           node scripts/storefront-v2-smoke.js
           node scripts/ux-control-centre-smoke.js
           node scripts/ux-release-contract-smoke.js
