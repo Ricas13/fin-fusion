@@ -29,6 +29,7 @@ function sqlStatements(source) {
 const PROVIDER_MUTATION_OWNERS = new Set([
     'src/payments/lifecycle-primitives.js',
     'src/payments/lifecycle.js',
+    'src/payments/lifecycle-prepaid-refunds.js',
     'src/payments/customer-plan-change.js'
 ]);
 
