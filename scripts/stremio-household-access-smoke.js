@@ -36,7 +36,7 @@ const planComponents=require('../src/access/plan-components');
 // Unlimited playback remains the runtime contract. Household admission is the
 // only commercial Stremio access limit; protocol abuse controls stay separate.
 assert(!runtime.includes("require('./source-admission')"),'retired Stremio stream admission must stay removed');
-assert(!runtime.includes('managed-session-reconciler')&&!runtime.includes('X-CAPTAiNFiN-Stream-Limit'),'runtime must not reintroduce commercial stream counting');
+assert(!runtime.includes('managed-session-reconciler')&&!runtime.includes('X-CAPTAINFiN-Stream-Limit'),'runtime must not reintroduce commercial stream counting');
 assert((runtime.match(/reason: 'protocol_rate_limit'/g)||[]).length>=3,'protocol abuse rate limits must remain enabled');
 assert(runtime.includes("householdAccess.claim(entitlement, req")&&runtime.includes('householdAccess.preview(entitlement, req'),'Stremio playback must still claim and preview household access');
 assert(runtime.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household access must be claimed before direct authenticated Jellyfin URLs are returned');
@@ -67,7 +67,7 @@ assert(releaseLeaseScope.includes('UPDATE access_network_leases SET expires_at=N
 assert(householdAccess.includes('bingeGroup')&&householdAccess.includes('videoSize'),'denied results must retain blocked-media playback hints');
 assert(householdAccess.includes('blockedMediaIsWebReady')&&householdAccess.includes("url.protocol === 'https:'"),'denied result visibility must distinguish a web-ready HTTPS MP4 from non-web-ready fallback URLs');
 const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{url:'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4',videoSize:blockedMedia.MEDIA_SIZE});
-assert.match(`${denied.title} ${denied.description}`,/Outside household connection.*another household internet connection.*change your household connection/is,'denial copy must explain the household-connection replacement action');
+assert.match(`${denied.title} ${denied.description}`,/Household IP limit reached.*allowed household internet connections.*change your household connection/is,'denial copy must explain the household-connection replacement action');
 assert.strictEqual(denied.url,'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4','denied result must point at the local MP4 endpoint');
 assert.strictEqual(denied.behaviorHints?.notWebReady,false,'HTTPS MP4 household denial must remain visible to Stremio Web');
 assert.strictEqual(denied.behaviorHints?.filename,'CAPTAiNFiN household connection blocked.mp4','blocked result must keep its readable media filename');
