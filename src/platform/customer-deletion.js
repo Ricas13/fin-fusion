@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const registry=require('../jellyfin/registry');
 const provisioning=require('../jellyfin/provisioning');
+const externalDeletion=require('./customer-external-deletion');
 
 const RUNNING_STALE_MINUTES=15;
 const RETRY_MINUTES=[1,5,15,60,180,360];
@@ -10,8 +11,15 @@ const RETRY_MINUTES=[1,5,15,60,180,360];
 function message(error){return String(error?.message||error||'Unknown error').slice(0,1000);}
 function isRemoteMissing(error){const value=message(error);return Number(error?.status)===404||/\b404\b|not found|not\s+exist/i.test(value);}
 function retryMinutes(attempt){const n=Math.max(1,Number(attempt)||1);return RETRY_MINUTES[Math.min(n-1,RETRY_MINUTES.length-1)];}
-function pendingError(job,error){const out=new Error(`Customer deletion is pending and will retry automatically: ${message(error)}`);out.code='CUSTOMER_DELETION_PENDING';out.jobId=job?.id||null;out.cause=error;return out;}
+function pendingError(job,error){
+  const out=new Error(`Customer deletion is pending and will retry automatically: ${message(error)}`);
+  out.code='CUSTOMER_DELETION_PENDING';out.jobId=job?.id||null;out.cause=error;
+  if(Array.isArray(error?.blockingTargets))out.blockingTargets=error.blockingTargets;
+  return out;
+}
 
+// Kept as a compatibility utility for callers that explicitly delete Jellyfin
+// identities. The hard-deletion saga below uses durable per-resource targets.
 async function deleteJellyfinAccounts(customerId,{actorUserId=null,reason='Deleted by administrator',holdAccess=true,removeLocal=true,continueOnMissing=true}={}){
   if(holdAccess)await provisioning.holdAccess(customerId,'jellyfin_deleted',actorUserId);
   const accounts=await query(`SELECT id,server_id,jellyfin_user_id,jellyfin_username FROM jellyfin_accounts WHERE customer_id=$1 ORDER BY created_at`,[customerId]);
@@ -48,7 +56,16 @@ async function customerSnapshot(customerId){
   return customer.rows[0];
 }
 
+async function existingDeletion(customerId){
+  const existing=await query(`SELECT * FROM customer_deletion_jobs WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 1`,[customerId]);
+  return existing.rows[0]||null;
+}
+
 async function enqueueHardDelete(customerId,{actorUserId=null,reason='Portal customer deleted by administrator'}={}){
+  // Idempotency also works after the canonical customer row is gone: a replay
+  // of the same hard-delete operation returns the durable succeeded tombstone.
+  const prior=await existingDeletion(customerId);
+  if(prior&&prior.status==='succeeded')return prior;
   const row=await customerSnapshot(customerId);
   const created=await query(`
     INSERT INTO customer_deletion_jobs(customer_id,user_id,customer_name,customer_email,actor_user_id,reason,status,next_attempt_at,updated_at)
@@ -106,10 +123,8 @@ async function ensureDeletionHold(job){
 }
 
 async function finalizePortalDeletion(job,jellyfin){
-  // The SECURITY DEFINER function validates that this running job contains a
-  // successful remote outcome for every local Jellyfin identity before it can
-  // delete portal/user records. This lets the restricted automation role retry
-  // deletion without receiving generic DELETE rights on app_users/auth_events.
+  // SECURITY DEFINER independently checks both the durable target gate and the
+  // legacy per-Jellyfin-account proof before deleting canonical identities.
   const finalized=await query('SELECT public.finalize_customer_deletion($1) AS result',[job.id]);
   return finalized.rows[0]?.result||{customerId:job.customer_id,name:job.customer_name,email:job.customer_email,jellyfin,deleted:true,jobId:job.id};
 }
@@ -118,24 +133,34 @@ async function processDeletionJob(jobId){
   let job=await claimDeletionJob(jobId);
   if(job.status==='succeeded')return job.result||{customerId:job.customer_id,deleted:true,jobId:job.id};
   try{
+    // 1) authoritative hold first: normal provisioning may remove access, but
+    // must not create/re-add it while cleanup identity is being snapshotted.
     job=await ensureDeletionHold(job);
-    let jellyfin;
+
+    // 2) snapshot every currently-owned cleanup identity before any destructive
+    // external API call. A crash immediately after this point is recoverable.
+    await externalDeletion.persistTargets(job);
+
+    let targets;
     try{
-      // Do not remove local rows here. They are the durable inventory needed to
-      // retry safely if one server or the final database transaction fails.
-      jellyfin=await deleteJellyfinAccounts(job.customer_id,{actorUserId:job.actor_user_id||null,reason:job.reason,holdAccess:false,removeLocal:false,continueOnMissing:true});
+      // 3) each target is an idempotent desired-state operation with durable
+      // attempts/error/result. Discord removal is awaited and verified here.
+      targets=await externalDeletion.reconcileJobTargets(job);
     }catch(error){
-      await markDeletionFailed(job,error,error.deletionResults||null);
+      const current=await externalDeletion.listTargets(job.id).catch(()=>[]);
+      const jellyfinResults=externalDeletion.jellyfinResultsFromTargets(current);
+      await markDeletionFailed(job,error,jellyfinResults);
       throw pendingError(job,error);
     }
-    // Persist remote confirmation before crossing the privileged finalization
-    // boundary. A crash from here onwards is safe: retrying DELETE receives 404,
-    // which is deliberately treated as a confirmed already-missing identity.
-    await query('UPDATE customer_deletion_jobs SET jellyfin_results=$2::jsonb,updated_at=NOW() WHERE id=$1',[job.id,JSON.stringify(jellyfin.results||[])]);
-    try{
-      return await finalizePortalDeletion(job,jellyfin);
-    }catch(error){
-      await markDeletionFailed(job,error,jellyfin.results||[]);
+
+    // Preserve the original Jellyfin proof consumed by the privileged
+    // finalizer. The values are now derived from succeeded durable targets.
+    const jellyfinResults=externalDeletion.jellyfinResultsFromTargets(targets);
+    await query('UPDATE customer_deletion_jobs SET jellyfin_results=$2::jsonb,updated_at=NOW() WHERE id=$1',[job.id,JSON.stringify(jellyfinResults)]);
+
+    try{return await finalizePortalDeletion(job,{results:jellyfinResults});}
+    catch(error){
+      await markDeletionFailed(job,error,jellyfinResults);
       throw pendingError(job,error);
     }
   }catch(error){
@@ -158,13 +183,14 @@ async function processDue({limit=10}={}){
   const failures=[];
   for(const row of due.rows){
     try{await processDeletionJob(row.id);succeeded+=1;}
-    catch(error){failed+=1;failures.push({jobId:row.id,error:message(error)});}
+    catch(error){failed+=1;failures.push({jobId:row.id,error:message(error),blockingTargets:error?.blockingTargets||[]});}
   }
   return{total:due.rowCount,processed:due.rowCount,succeeded,failed,failures};
 }
 
 async function hardDeletePortalCustomer(customerId,{actorUserId=null,reason='Portal customer deleted by administrator'}={}){
   const job=await enqueueHardDelete(customerId,{actorUserId,reason});
+  if(job.status==='succeeded')return job.result||{customerId:job.customer_id,deleted:true,jobId:job.id};
   try{return await processDeletionJob(job.id);}
   catch(error){
     if(error?.code==='CUSTOMER_DELETION_IN_PROGRESS')throw error;
@@ -172,6 +198,8 @@ async function hardDeletePortalCustomer(customerId,{actorUserId=null,reason='Por
     throw pendingError(job,error);
   }
 }
+
+async function deletionStatus(options){return externalDeletion.deletionStatus(options);}
 
 module.exports={
   RUNNING_STALE_MINUTES,
@@ -184,5 +212,6 @@ module.exports={
   claimDeletionJob,
   processDeletionJob,
   processDue,
-  hardDeletePortalCustomer
+  hardDeletePortalCustomer,
+  deletionStatus
 };
