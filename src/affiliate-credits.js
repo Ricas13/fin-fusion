@@ -152,9 +152,12 @@ async function reverseReward({redemptionId,paymentIncidentId=null,reason='paymen
     await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
     const activeReservation=await client.query(`SELECT id FROM affiliate_credit_checkout_reservations
       WHERE customer_id=$1 AND currency=$2 AND state='reserved' AND expires_at>NOW()
-      ORDER BY created_at,id LIMIT 1`,[row.customer_id,row.currency]);
+      UNION ALL
+      SELECT id FROM affiliate_credit_renewal_reservations
+      WHERE customer_id=$1 AND currency=$2 AND state IN('reserved','provider_applied')
+      LIMIT 1`,[row.customer_id,row.currency]);
     if(activeReservation.rowCount){
-      const error=new Error('Affiliate reward reconciliation deferred while service credit is reserved by an open checkout.');
+      const error=new Error('Affiliate reward reconciliation deferred while service credit is reserved by an open checkout or renewal invoice.');
       error.code='AFFILIATE_CREDIT_RESERVATION_PENDING';
       throw error;
     }
