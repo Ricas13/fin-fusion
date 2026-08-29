@@ -131,7 +131,7 @@ assert(/stremio\.assertAcquirable/.test(lifecycle),'Canonical paid/free/trial li
 const driftAdmin=text('src/platform/admin-drift.js');
 assert(/Automatic check cadence/.test(driftAdmin)&&!/drift\/settings/.test(driftAdmin),'Access consistency low-level tuning must stay out of the normal operator form.');
 
-const migrations=fs.readdirSync(path.join(root,'db','migrations')).filter(name=>/^\d{3}.*\.sql$/.test(name));
+const migrations=fs.readdirSync(path.join(root,'db','migrations')).filter(name=>/^\d{3}_.*\.sql$/.test(name));
 const groups=new Map();
 for(const name of migrations){const prefix=Number(name.slice(0,3));if(prefix<67)continue;const list=groups.get(prefix)||[];list.push(name);groups.set(prefix,list);}
 for(const[prefix,names]of groups)assert(names.length===1,`Migration prefix ${String(prefix).padStart(3,'0')} is reused: ${names.join(', ')}`);

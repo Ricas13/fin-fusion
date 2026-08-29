@@ -64,7 +64,9 @@ assert(directCheckout.includes('applyServiceCredit'),'direct checkout must suppo
 const checkoutIntents=read('src/payments/checkout-intents.js');
 assert(checkoutIntents.includes('serviceCreditReservations.settle'),'checkout completion must settle reserved service credit atomically');
 const creditReservations=read('src/payments/service-credit-reservations.js');
-assert(creditReservations.includes('reserveForIntent')&&creditReservations.includes("state='reserved'"),'service-credit checkout reservations must protect against double spend');
+const creditAccounting=read('src/payments/service-credit-accounting.js');
+assert(creditReservations.includes('reserveForIntent')&&creditAccounting.includes("state='reserved'"),'service-credit checkout reservations must protect against double spend through the canonical accounting owner');
+assert(creditReservations.includes('accounting.ensureHistoricalAllocations')&&creditAccounting.includes('allocateOneDebit'),'service-credit mutations must allocate debit provenance through the canonical accounting owner');
 
 const stripeBilling=read('src/payments/stripe.js');
 assert(stripeBilling.includes('internal_checkout_intent_id'),'Stripe checkout must preserve the local intent ID in provider metadata');
