@@ -8,6 +8,7 @@ const scripts = packageJson.scripts || {};
 const scriptName = process.argv[2] || 'check:fast';
 const timeoutArg = process.argv.find(arg => arg.startsWith('--timeout-ms='));
 const timeoutMs = Math.max(1000, Number(timeoutArg?.split('=')[1] || process.env.CHECK_COMMAND_TIMEOUT_MS || 180000));
+const failureFile = process.env.CHECK_FAILURE_FILE || '.check-failure.txt';
 
 function expand(command, stack = []) {
   return String(command || '').split(/\s+&&\s+/).flatMap(part => {
@@ -52,10 +53,17 @@ function run(command, index, total) {
     const timer = setTimeout(() => {
       terminate(child);
       const seconds = Math.round((Date.now() - started) / 1000);
-      reject(new Error(`Timed out after ${seconds}s: ${command}`));
+      const error = new Error(`Timed out after ${seconds}s: ${command}`);
+      error.failedCommand = command;
+      error.commandIndex = index;
+      error.commandTotal = total;
+      reject(error);
     }, timeoutMs);
     child.once('error', error => {
       clearTimeout(timer);
+      error.failedCommand = command;
+      error.commandIndex = index;
+      error.commandTotal = total;
       reject(error);
     });
     child.once('exit', (code, signal) => {
@@ -65,7 +73,11 @@ function run(command, index, total) {
         console.log(`[${index}/${total}] completed in ${seconds}s`);
         resolve();
       } else {
-        reject(new Error(`${command} failed with ${signal || `exit ${code}`} after ${seconds}s`));
+        const error = new Error(`${command} failed with ${signal || `exit ${code}`} after ${seconds}s`);
+        error.failedCommand = command;
+        error.commandIndex = index;
+        error.commandTotal = total;
+        reject(error);
       }
     });
   });
@@ -73,11 +85,20 @@ function run(command, index, total) {
 
 async function main() {
   if (!scripts[scriptName]) throw new Error(`Unknown npm script: ${scriptName}`);
+  try { fs.rmSync(failureFile, { force:true }); } catch (_) {}
   const commands = expand(scripts[scriptName], [scriptName]);
   for (let i = 0; i < commands.length; i += 1) await run(commands[i], i + 1, commands.length);
 }
 
 main().catch(error => {
+  const diagnostic = [
+    `suite=${scriptName}`,
+    `index=${error.commandIndex || ''}`,
+    `total=${error.commandTotal || ''}`,
+    `command=${error.failedCommand || ''}`,
+    `error=${String(error.message || error).replace(/\r?\n/g, ' ')}`
+  ].join('\n') + '\n';
+  try { fs.writeFileSync(failureFile, diagnostic, 'utf8'); } catch (_) {}
   console.error(error.message || error);
   process.exit(1);
 });
