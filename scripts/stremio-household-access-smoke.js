@@ -67,7 +67,7 @@ assert(releaseLeaseScope.includes('UPDATE access_network_leases SET expires_at=N
 assert(householdAccess.includes('bingeGroup')&&householdAccess.includes('videoSize'),'denied results must retain blocked-media playback hints');
 assert(householdAccess.includes('blockedMediaIsWebReady')&&householdAccess.includes("url.protocol === 'https:'"),'denied result visibility must distinguish a web-ready HTTPS MP4 from non-web-ready fallback URLs');
 const denied=householdModule.deniedStream({networkLimit:1,networkFamily:'ipv4'},{url:'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4',videoSize:blockedMedia.MEDIA_SIZE});
-assert.match(`${denied.title} ${denied.description}`,/Outside household connection.*another household internet connection.*change your household connection/is,'denial copy must explain the household-connection replacement action');
+assert.match(`${denied.title} ${denied.description}`,/Household IP limit reached.*allowed household internet connections.*change your household connection/is,'denial copy must explain the household-connection replacement action');
 assert.strictEqual(denied.url,'https://example.invalid/stremio/token/household-blocked/movie/tt1.mp4','denied result must point at the local MP4 endpoint');
 assert.strictEqual(denied.behaviorHints?.notWebReady,false,'HTTPS MP4 household denial must remain visible to Stremio Web');
 assert.strictEqual(denied.behaviorHints?.filename,'CAPTAiNFiN household connection blocked.mp4','blocked result must keep its readable media filename');

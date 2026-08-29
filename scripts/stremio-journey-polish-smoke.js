@@ -38,7 +38,7 @@ assert(customer.includes('automatic access setup is still finishing'),'a failed 
 // Shared labels and blocked-playback guidance use the same plain-language model
 // while all persisted compatibility field names stay unchanged.
 assert(components.includes('household connection${households === 1 ?')&&!components.includes('household IP${households === 1 ?'),'shared Stremio plan labels must use household connections');
-assert(household.includes("return 'Outside household connection';")&&household.includes('another household internet connection'),'blocked playback must explain the connection mismatch plainly');
+assert(household.includes("return 'Household IP limit reached';")&&household.includes('allowed household internet connections')&&household.includes('change your household connection'),'blocked playback must explain the household limit and replacement action plainly');
 assert(household.includes('stremio_ip_replacement_policy_snapshot')&&household.includes('stremio_ip_replacement_cooldown_minutes_snapshot'),'persisted Stremio replacement contracts must remain unchanged');
 assert(household.includes("'X-CAPTAiNFiN-429-Reason', 'household_network'"),'runtime household-network response contract must remain unchanged');
 

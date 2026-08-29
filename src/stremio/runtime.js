@@ -6,6 +6,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const operations = require('../platform/operations-settings');
 const modules = require('../modules/registry');
 const entitlements = require('./entitlements');
+const foundation = require('./foundation');
 const managedRuntime = require('./managed-runtime');
 const externalRuntime = require('./external-direct-runtime');
 const householdAccess = require('./household-access');
@@ -18,9 +19,9 @@ function stremioRateIdentity(req) {
   return token ? `install:${token}` : null;
 }
 
-const manifestLimit = routeRateLimit.middleware({ scope: 'stremio-manifest', max: 60, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
-const streamLimit = routeRateLimit.middleware({ scope: 'stremio-stream', max: 240, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
-const playbackLimit = routeRateLimit.middleware({ scope: 'stremio-playback-control', max: 1200, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit' });
+const manifestLimit = routeRateLimit.middleware({ scope: 'stremio-manifest', max: 60, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit', backend: 'memory' });
+const streamLimit = routeRateLimit.middleware({ scope: 'stremio-stream', max: 240, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit', backend: 'memory' });
+const playbackLimit = routeRateLimit.middleware({ scope: 'stremio-playback-control', max: 1200, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit', backend: 'memory' });
 const PLAYBACK_REDIRECT_STATUS = 302;
 const STREAM_RESULT_CACHE_TTL_MS = 15000;
 const STREAM_RESULT_CACHE_MAX = 250;
@@ -67,6 +68,28 @@ function clearStreamResultCache() {
 
 function enabled() {
   return runtimeSettings.enabled() && modules.isEnabled('stremio');
+}
+
+async function installTokenState(raw) {
+  const token = String(raw || '');
+  if (token.length < 32) return { kind: 'invalid', entitlement: null };
+  const active = await entitlements.findByInstallToken(token);
+  if (active) return { kind: 'active', entitlement: active };
+  const hash = foundation.hashInstallCredential(token);
+  const result = await query(
+    `SELECT e.*,s.plan_id,s.status subscription_status,s.current_period_end,s.service_type_snapshot,
+            p.service_type,p.streams,p.name plan_name,p.is_addon
+     FROM stremio_entitlements e
+     JOIN subscriptions s ON s.id=e.subscription_id
+     JOIN plans p ON p.id=s.plan_id
+     WHERE e.token_hash=$1 AND e.status IN ('active','suspended')
+     ORDER BY e.updated_at DESC
+     LIMIT 1`,
+    [hash]
+  );
+  const row = result.rows[0] || null;
+  if (!row || !['stremio', 'bundle'].includes(entitlements.serviceType(row))) return { kind: 'invalid', entitlement: null };
+  return { kind: 'subscription_ended', entitlement: row };
 }
 
 function cors(_req, res, next) {
@@ -156,6 +179,30 @@ async function deniedStreamResponse(entitlement, req, type, videoId, decision) {
   };
 }
 
+function subscriptionEndedStream({ origin, installToken, type, videoId }) {
+  const base = String(origin || '').replace(/\/$/, '');
+  const url = `${base}/stremio/${encodeURIComponent(String(installToken || ''))}/subscription-ended/${encodeURIComponent(String(type || 'video'))}/${encodeURIComponent(String(videoId || 'ended'))}.mp4`;
+  return {
+    name: 'CAPTAiNFiN • Subscription ended',
+    title: 'Subscription ended',
+    description: 'Your CAPTAiNFiN Stremio subscription has ended. Renew your subscription in your CAPTAiNFiN account to restore streams.',
+    url,
+    externalUrl: `${base}/account#stremio-access`,
+    behaviorHints: {
+      notWebReady: false,
+      bingeGroup: 'captainfin-subscription-ended',
+      filename: 'CAPTAiNFiN subscription ended.mp4',
+      videoSize: blockedMedia.MEDIA_SIZE
+    }
+  };
+}
+
+async function subscriptionEndedStreamResponse(entitlement, req, type, videoId) {
+  await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
+  const origin = await publicOrigin(req);
+  return { streams: [subscriptionEndedStream({ origin, installToken: req.params.token, type, videoId })] };
+}
+
 async function claimDirectStreamResult(entitlement, req) {
   return householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' });
 }
@@ -173,6 +220,19 @@ async function sendHouseholdBlockedMedia(req, res) {
   }
 }
 
+async function sendSubscriptionEndedMedia(req, res) {
+  if (!enabled()) return res.status(404).end();
+  try {
+    const state = await installTokenState(req.params.token);
+    if (state.kind !== 'subscription_ended' || !state.entitlement) return res.status(404).end();
+    await entitlements.markUse(state.entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
+    return blockedMedia.send(req, res);
+  } catch (error) {
+    console.error('Stremio subscription-ended media failed:', safeLogText(error?.message || error, 300));
+    return res.status(502).end();
+  }
+}
+
 function createStremioRuntimeRouter() {
   const router = express.Router();
   router.all('/stremio-edge/authorize', mediaEdge.authorizeHandler);
@@ -183,9 +243,9 @@ function createStremioRuntimeRouter() {
   router.get('/stremio/:token/manifest.json', manifestLimit, async (req, res) => {
     if (!enabled()) return res.status(404).json({ error: 'Not found' });
     try {
-      const entitlement = await entitlements.findByInstallToken(req.params.token);
-      if (!entitlement) return res.status(404).json({ error: 'Not found' });
-      await entitlements.markUse(entitlement.id, 'manifest');
+      const state = await installTokenState(req.params.token);
+      if (!state.entitlement) return res.status(404).json({ error: 'Not found' });
+      await entitlements.markUse(state.entitlement.id, 'manifest');
       return res.json(manifest());
     } catch (_error) {
       console.error('Stremio manifest request failed.');
@@ -196,10 +256,12 @@ function createStremioRuntimeRouter() {
   router.get('/stremio/:token/stream/:type/:videoId.json', streamLimit, async (req, res) => {
     if (!enabled()) return res.json({ streams: [] });
     try {
-      const entitlement = await entitlements.findByInstallToken(req.params.token);
-      if (!entitlement) return res.json({ streams: [] });
+      const state = await installTokenState(req.params.token);
+      if (!state.entitlement) return res.json({ streams: [] });
+      const entitlement = state.entitlement;
       const type = String(req.params.type || '');
       const videoId = String(req.params.videoId || '');
+      if (state.kind === 'subscription_ended') return res.json(await subscriptionEndedStreamResponse(entitlement, req, type, videoId));
 
       // Preview first so a disallowed household never causes source credentials
       // to be resolved into a response. The actual claim happens immediately
@@ -240,6 +302,8 @@ function createStremioRuntimeRouter() {
 
   router.get('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
   router.head('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
+  router.get('/stremio/:token/subscription-ended/:type/:videoId.mp4', playbackLimit, sendSubscriptionEndedMedia);
+  router.head('/stremio/:token/subscription-ended/:type/:videoId.mp4', playbackLimit, sendSubscriptionEndedMedia);
 
   // Compatibility only for stream results cached by clients before the raw-file
   // rollout. This route no longer calls PlaybackInfo, authenticates a fresh
@@ -303,6 +367,9 @@ module.exports = {
   enabled,
   manifest,
   publicOrigin,
+  installTokenState,
+  subscriptionEndedStream,
+  subscriptionEndedStreamResponse,
   hasExplicitSources,
   managedMapping,
   settledStreams,
