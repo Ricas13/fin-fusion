@@ -40,6 +40,7 @@ assert(inventory.includes('Fleet stream capacity')&&inventory.includes('Sold / h
 assert(inventory.includes('n<0||n>1000000'),'Availability backend must accept zero and reject negative manual limits');
 assert(serverForm.includes('Sellable stream capacity')&&serverForm.includes('A 3-stream plan consumes 3 units'),'server configuration must explain that max_users is the sellable stream-entitlement budget');
 assert(capacitySource.includes("commercial_snapshot->'streams'")&&capacitySource.includes('billing_checkout_intents'),'fleet usage must count snapshotted stream entitlements and open checkout holds');
+assert(capacitySource.includes("FLEET_OCCUPANT_STATUSES=['active','trialing']")&&capacitySource.includes("FLEET_ACCESS_HOLD_TYPES=['inactivity_policy','jellyfin_cleanup']"),'fleet occupancy must only count active/trialing customers without inactivity or cleanup holds');
 assert(capacitySource.includes("commercial_snapshot->'stremioHouseholdNetworkLimit'")&&capacitySource.includes('async function stremioHouseholdUsage'),'Stremio usage must count purchased and held household units');
 assert(capacitySource.includes("key=model==='fleet_streams'?`fleet:${serverClass(plan)}`"),'fleet acquisition must serialize against a shared Premium/Free capacity lock');
 assert(capacitySource.includes("health_status IN('healthy','degraded')")&&capacitySource.includes("COALESCE(js.placement_mode,'active')='active'")&&capacitySource.includes('configured_servers'),'fleet capacity must follow placement health/state and retain an explicit configured-fleet signal during drain/outage');
@@ -48,7 +49,7 @@ assert(onboarding.includes('scarcityBadge')&&onboarding.includes('sharedCapacity
 assert(onboarding.includes("if(sold)")&&onboarding.includes('No new place can be activated until capacity becomes available.'),'sold-out plans must disable acquisition actions in the customer portal');
 assert(storefront.includes('sectionAvailability')&&storefront.includes('state?.label'),'public storefront must use the real capacity scarcity label rather than synthetic inventory copy');
 assert(lifecycle.includes("capacity.acquisitionSql('p')")&&lifecycle.includes('capacity.lockAndAssert(client,plan.id'),'payment/free/trial acquisition must retain the SQL prefilter plus locked authoritative recheck');
-assert(plansList.includes('Active ${active} · held ${held}')&&plansList.includes('stream entitlements allocated or held'),'admin plan capacity must distinguish active stream use from temporary holds while preserving stream-entitlement semantics');
+assert(plansList.includes('${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer')&&plansList.includes('View shared ${esc(state.pool)} capacity'),'admin plan capacity must show occupants, temporary holds, sellable capacity and per-customer stream weight separately');
 assert(/capacity_limit IS NULL\)\s+OR\s+\(capacity_limit >= 0\)|capacity_limit IS NULL OR capacity_limit >= 0/.test(migration),'database constraint must admit explicit zero capacity');
 
 // Discord community settings extend the existing notification_delivery_v1 owner.
@@ -83,6 +84,7 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   const acquisition=capacity.acquisitionSql('p');
   assert(acquisition.includes('p.capacity_limit IS NULL OR p.capacity_limit >'),'SQL acquisition guard must preserve legacy/manual zero-capacity behavior');
   assert(acquisition.includes('SUM(capacity_server.max_users)')&&acquisition.includes("active_subscription.commercial_snapshot->'streams'")&&acquisition.includes("capacity_checkout.commercial_snapshot->'streams'"),'fleet SQL acquisition must compare eligible stream capacity with active and checkout stream units');
+  assert(acquisition.includes("active_subscription.status IN ('active','trialing')")&&acquisition.includes("capacity_access_hold.hold_type IN ('inactivity_policy','jellyfin_cleanup')"),'fleet SQL acquisition must use the same occupant statuses and open-hold exclusion as runtime usage');
   assert(acquisition.includes('capacity_free_hold.consumed_at IS NULL')&&acquisition.includes('capacity_free_hold.released_at IS NULL'),'fleet SQL acquisition must count pending Free Access holds');
   assert(acquisition.includes('GREATEST(1,COALESCE(p.streams,1))'),'fleet SQL acquisition must reserve enough room for the next plan-sized stream entitlement');
   assert(acquisition.includes('plan_server_eligibility capacity_restriction')&&acquisition.includes('plan_server_eligibility capacity_match'),'fleet SQL acquisition must honor plan-specific server eligibility when detecting/configuring capacity');
@@ -106,6 +108,23 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert.strictEqual(unavailable.streamLimit,0,'unavailable/drained eligible servers must contribute zero sellable stream capacity');
   assert.strictEqual(unavailable.remaining,0,'unavailable fleet must expose zero places');
   assert.strictEqual(unavailable.soldOut,true,'unavailable fleet must close acquisition instead of falling back to the legacy per-plan limit');
+
+  let occupantSql='',occupantParams=[];
+  const occupiedFleetDb=async(sql,params=[])=>{
+    if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'occupied-free',capacity_limit:null,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true,streams:1}]};
+    if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
+    if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,stream_limit:10}]};
+    if(sql.includes('AS stream_used')){occupantSql=sql;occupantParams=params;return{rowCount:1,rows:[{stream_used:2}]};}
+    if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:1}]};
+    if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:1}]};
+    throw new Error(`Unexpected occupied fleet query: ${sql.slice(0,120)}`);
+  };
+  const occupied=await capacity.usage('occupied-free',occupiedFleetDb);
+  assert.strictEqual(occupied.streamUsed,2,'streamUsed must represent current occupants only');
+  assert.strictEqual(occupied.streamReserved,2,'checkout and Free Access reservations must remain held separately');
+  assert.strictEqual(occupied.streamRemaining,6,'remaining stream capacity must subtract occupants and holds');
+  assert(occupantSql.includes('NOT EXISTS(SELECT 1 FROM customer_access_holds h')&&occupantSql.includes('h.released_at IS NULL'),'open access holds must exclude the customer from streamUsed');
+  assert.deepStrictEqual(occupantParams,['free',['active','trialing'],['inactivity_policy','jellyfin_cleanup']],'runtime fleet occupancy must bind only occupant statuses and inactivity/cleanup hold types');
 
   let freePlanQuery='';
   const freePlanDb=async sql=>{
