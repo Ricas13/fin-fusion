@@ -31,7 +31,7 @@ async function refund(purchase,eventId,amount){
 }
 async function chargeback(purchase,eventId){
   const incident=(await query(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,customer_id,provider_subscription_id,amount_minor,currency,access_action,metadata) VALUES('stripe',$1,$2,'chargeback','lost','direct',$3,$4,$5,'GBP','preserve','{}'::jsonb) RETURNING *`,[eventId,`case-${eventId}`,purchase.referred.id,purchase.sub.provider_subscription_id,purchase.gross])).rows[0];
-  return referrals.revisitRewardAfterAdversePayment({referredCustomerId:purchase.referred.id,incidentId:incident.id,reason:`stripe:chargeback:${eventId}`});
+  return{incident,result:await referrals.revisitRewardAfterAdversePayment({referredCustomerId:purchase.referred.id,incidentId:incident.id,reason:`stripe:chargeback:${eventId}`})};
 }
 async function spend(customerId,amount,reference=id('spend')){
   return transaction(async client=>{
@@ -69,12 +69,20 @@ async function main(){
   await refund(c,`evt-C-full-${suffix}`,10000);assert.equal((await balance(cAffiliate.id)).available_minor,0,'E: full refund after partial refund did not converge to zero');
 
   // F: chargeback after spend preserves delivered service and records explicit recovery.
-  const fAffiliate=await newAffiliate('F-affiliate'),f=await rewardPurchase(fAffiliate,'F');await spend(fAffiliate.id,2500);await chargeback(f,`evt-F-cb-${suffix}`);
-  const fBal=await balance(fAffiliate.id);assert.equal(fBal.available_minor,0,'F: chargeback created spendable negative/positive drift');assert.equal(fBal.recoverable_minor,2500,'F: spent reversed affiliate value was not explicit recovery');
+  const fAffiliate=await newAffiliate('F-affiliate'),f=await rewardPurchase(fAffiliate,'F');await spend(fAffiliate.id,2500);const fChargeback=await chargeback(f,`evt-F-cb-${suffix}`);
+  let fBal=await balance(fAffiliate.id);assert.equal(fBal.available_minor,0,'F: chargeback created spendable negative/positive drift');assert.equal(fBal.recoverable_minor,2500,'F: spent reversed affiliate value was not explicit recovery');
+  await referrals.revisitRewardAfterAdversePayment({referredCustomerId:f.referred.id,incidentId:fChargeback.incident.id,reason:`stripe:chargeback:evt-F-cb-${suffix}`});
+  fBal=await balance(fAffiliate.id);assert.equal(fBal.recoverable_minor,2500,'F/H: chargeback replay double-counted recoverable value');
 
   // G: unrelated admin top-up survives affiliate reversal.
   const gAffiliate=await newAffiliate('G-affiliate'),g=await rewardPurchase(gAffiliate,'G');await credits.adminAdjustCredit({customerId:gAffiliate.id,currency:'GBP',amountMinor:400,reason:'Invariant smoke admin top-up'});await refund(g,`evt-G-full-${suffix}`,10000);
   assert.equal((await balance(gAffiliate.id)).available_minor,400,'G: affiliate reversal consumed unrelated admin top-up');
+
+  // Rate correction after a partial refund uses the surviving net paid basis.
+  const tAffiliate=await newAffiliate('T-affiliate'),t=await rewardPurchase(tAffiliate,'T');await refund(t,`evt-T-5-${suffix}`,500);await setRate(30);
+  const topUp=await credits.topUpRewardToCurrentRate({creditId:t.grant.id,reason:'Net-basis top-up invariant smoke'});
+  assert.equal(topUp.topUpMinor,475,'Partial-refund rate top-up did not use the £95 net paid basis');assert.equal((await balance(tAffiliate.id)).available_minor,2850,'Rate top-up recreated or omitted refunded affiliate value');
+  await setRate(25);
 
   // I: concurrent spend/reversal serializes on the customer row. Either reversal wins
   // (spend is rejected) or spend wins (delivered value becomes explicit recovery).
@@ -85,6 +93,6 @@ async function main(){
   if(spendSucceeded)assert.equal(iBal.recoverable_minor,2000,'I: winning concurrent spend was not captured as recovery');else assert.match(String(race[0].reason?.message||''),/insufficient service credit/,'I: concurrent spend failed for an unexpected reason');
   const allocationOverrun=await query(`SELECT g.id,g.amount_minor,COALESCE(SUM(a.amount_minor),0)::int allocated FROM affiliate_credit_ledger g LEFT JOIN affiliate_credit_allocations a ON a.grant_ledger_id=g.id WHERE g.customer_id=$1 AND g.amount_minor>0 GROUP BY g.id HAVING COALESCE(SUM(a.amount_minor),0)>g.amount_minor`,[iAffiliate.id]);assert.equal(allocationOverrun.rowCount,0,'I: concurrent operations over-allocated a grant source');
 
-  console.log('affiliate credit invariants smoke: A-I passed');
+  console.log('affiliate credit invariants smoke: A-I plus replay/net-top-up passed');
 }
 main().then(()=>getPool().end()).catch(async error=>{console.error(error.stack||error);try{await getPool().end();}catch(_){}process.exit(1);});
