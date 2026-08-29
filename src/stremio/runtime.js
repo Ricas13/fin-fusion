@@ -2,7 +2,6 @@
 
 const express = require('express');
 const { query } = require('../db');
-const routeRateLimit = require('../security/route-rate-limit');
 const operations = require('../platform/operations-settings');
 const modules = require('../modules/registry');
 const entitlements = require('./entitlements');
@@ -14,14 +13,6 @@ const blockedMedia = require('./blocked-media');
 const runtimeSettings = require('./runtime-settings');
 const mediaEdge = require('./media-edge-grant');
 
-function stremioRateIdentity(req) {
-  const token = String(req.params?.token || '').trim();
-  return token ? `install:${token}` : null;
-}
-
-const manifestLimit = routeRateLimit.middleware({ scope: 'stremio-manifest', max: 60, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit', backend: 'memory' });
-const streamLimit = routeRateLimit.middleware({ scope: 'stremio-stream', max: 240, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit', backend: 'memory' });
-const playbackLimit = routeRateLimit.middleware({ scope: 'stremio-playback-control', max: 1200, windowSeconds: 60, identity: stremioRateIdentity, reason: 'protocol_rate_limit', backend: 'memory' });
 const PLAYBACK_REDIRECT_STATUS = 302;
 const STREAM_RESULT_CACHE_TTL_MS = 15000;
 const STREAM_RESULT_CACHE_MAX = 250;
@@ -240,7 +231,7 @@ function createStremioRuntimeRouter() {
   router.use('/stremio', cors, loadRuntimeSetting);
   router.options('/stremio/*', (_req, res) => res.sendStatus(204));
 
-  router.get('/stremio/:token/manifest.json', manifestLimit, async (req, res) => {
+  router.get('/stremio/:token/manifest.json', async (req, res) => {
     if (!enabled()) return res.status(404).json({ error: 'Not found' });
     try {
       const state = await installTokenState(req.params.token);
@@ -253,7 +244,7 @@ function createStremioRuntimeRouter() {
     }
   });
 
-  router.get('/stremio/:token/stream/:type/:videoId.json', streamLimit, async (req, res) => {
+  router.get('/stremio/:token/stream/:type/:videoId.json', async (req, res) => {
     if (!enabled()) return res.json({ streams: [] });
     try {
       const state = await installTokenState(req.params.token);
@@ -300,16 +291,16 @@ function createStremioRuntimeRouter() {
     }
   });
 
-  router.get('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
-  router.head('/stremio/:token/household-blocked/:type/:videoId.mp4', playbackLimit, sendHouseholdBlockedMedia);
-  router.get('/stremio/:token/subscription-ended/:type/:videoId.mp4', playbackLimit, sendSubscriptionEndedMedia);
-  router.head('/stremio/:token/subscription-ended/:type/:videoId.mp4', playbackLimit, sendSubscriptionEndedMedia);
+  router.get('/stremio/:token/household-blocked/:type/:videoId.mp4', sendHouseholdBlockedMedia);
+  router.head('/stremio/:token/household-blocked/:type/:videoId.mp4', sendHouseholdBlockedMedia);
+  router.get('/stremio/:token/subscription-ended/:type/:videoId.mp4', sendSubscriptionEndedMedia);
+  router.head('/stremio/:token/subscription-ended/:type/:videoId.mp4', sendSubscriptionEndedMedia);
 
   // Compatibility only for stream results cached by clients before the raw-file
   // rollout. This route no longer calls PlaybackInfo, authenticates a fresh
   // Jellyfin device, or reports /Sessions/Playing. It simply re-checks household
   // access and redirects to the same static/original-file URL new results carry.
-  router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId', playbackLimit, async (req, res) => {
+  router.get('/stremio/:token/play/:mappingId/:itemId/:mediaSourceId', async (req, res) => {
     if (!enabled()) return res.status(404).end();
     try {
       const entitlement = await entitlements.findByInstallToken(req.params.token);
@@ -333,7 +324,7 @@ function createStremioRuntimeRouter() {
 
   // Compatibility only for older external stream results. New Stremio results
   // already contain the Jellyfin URL directly.
-  router.get('/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId', playbackLimit, async (req, res) => {
+  router.get('/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId', async (req, res) => {
     if (!enabled()) return res.status(404).end();
     try {
       const entitlement = await entitlements.findByInstallToken(req.params.token);
@@ -357,8 +348,8 @@ function createStremioRuntimeRouter() {
   // Historical byte-proxy paths remain retired. CAPTAiNFiN authorizes and
   // resolves streams but never receives or relays the media bytes.
   const retiredPlayback = (_req, res) => res.status(410).end();
-  router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId', playbackLimit, retiredPlayback);
-  router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', playbackLimit, retiredPlayback);
+  router.get('/stremio/:token/jellyfin/:itemId/:mediaSourceId', retiredPlayback);
+  router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', retiredPlayback);
   return router;
 }
 
@@ -373,7 +364,6 @@ module.exports = {
   hasExplicitSources,
   managedMapping,
   settledStreams,
-  stremioRateIdentity,
   claimHouseholdOrReject,
   deniedStreamResponse,
   claimDirectStreamResult,
