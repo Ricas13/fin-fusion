@@ -13,11 +13,11 @@ function localStamp(now,timeZone){
 }
 function dueSlot(cfg,now=new Date()){
   const stamp=localStamp(now,cfg.discordFreePlacesTimezone);
-  const slots=[cfg.discordFreePlacesTime1,cfg.discordFreePlacesTime2];
-  return slots.includes(stamp.time)?{...stamp,slot:stamp.time}:null;
+  const slot=[cfg.discordFreePlacesTime1,cfg.discordFreePlacesTime2].filter(Boolean).sort().reverse().find(value=>value<=stamp.time);
+  return slot?{...stamp,slot}:null;
 }
 async function freePlan(db=query){
-  const result=await db(`SELECT id FROM plans WHERE is_free_tier=TRUE AND service_type='jellyfin' AND active=TRUE AND archived_at IS NULL ORDER BY created_at LIMIT 1`);
+  const result=await db(`SELECT id FROM plans WHERE is_free_tier=TRUE AND service_type='jellyfin' AND COALESCE(is_addon,FALSE)=FALSE AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND audience IN('direct','both') ORDER BY sort_order,price_minor LIMIT 1`);
   return result.rows[0]||null;
 }
 function digestText(remaining,publicBaseUrl){
