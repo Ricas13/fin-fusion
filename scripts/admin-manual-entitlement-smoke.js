@@ -14,18 +14,20 @@ assert(customerActions.includes("INSERT INTO subscriptions(customer_id,plan_id,s
 assert(manual.includes("INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_subscription_id)"), 'manual grant must use the existing subscription table path rather than a parallel entitlement product');
 assert(manual.includes("'admin.customer.manual_grant'"), 'manual grants must be audit logged');
 assert(manual.includes('await provisioning.reconcileCustomer(customerId);'), 'manual grants must reconcile customer access after commit');
+assert(manual.includes('reconciled: false') && manual.includes('service reconciliation still needs attention'), 'a post-commit reconciliation failure must not falsely report that the grant itself failed');
 assert(manual.includes("chargedProvider: false") && manual.includes("renewal: false"), 'audit metadata must record non-provider, non-renewing semantics');
 assert(!manual.includes('payment_events'), 'manual grants must not fabricate payment_events');
 assert(!manual.includes("require('../payments/stripe')") && !manual.includes("require('../payments/paypal')"), 'manual grants must not call provider adapters');
 assert(manual.includes("method === 'stripe' && /^sub_") && manual.includes("method === 'paypal' && /^I-"), 'only real-looking Stripe/PayPal subscription IDs may attach to the local subscription');
-assert(manual.includes("source,starts_at,current_period_end,cancel_at_period_end,provider_subscription_id"), 'provider ID storage must stay on the local subscription record');
-assert(manual.includes("source='admin_grant'") === false, 'manual grant must not pretend the source is Stripe or PayPal');
+assert(!manual.includes("source='stripe'") && !manual.includes("source='paypal'"), 'manual grants must never pretend their local subscription source is a recurring provider');
 assert(manual.includes('does not charge the provider'), 'operator confirmation must explicitly say the provider is not charged');
-assert(manual.includes("req.query.tab === 'billing'") && manual.includes("req.query.tab === 'access'"), 'manual grant surface must appear on both Customer 360 Billing and Access');
-assert(manual.includes('currentPrimarySubscription') && manual.includes('if (!existing)'), 'manual grant form must only appear when there is no current primary subscription');
+assert(manual.includes("surface === 'access' || surface === 'billing'"), 'manual grant form must appear on both Customer 360 Billing and Access');
+assert(manual.includes("surface !== 'overview'") && manual.includes("'overview' : null"), 'Customer 360 overview must still participate in the empty-account guard without rendering a second grant form');
+assert(manual.includes('currentPrimarySubscription') && manual.includes('if (!existing)'), 'manual grant form must only appear when there is no effective primary subscription');
+assert(manual.includes('o.permanent_access=TRUE') && manual.includes('service_extension_days'), 'permanent and extension-backed effective access must block duplicate first-entitlement grants');
 assert(manual.includes('Use Manual entitlement edit instead.'), 'server-side guard must redirect existing subscriptions to the normal manual edit flow');
 assert(manual.includes("value=\"plan_change\"") && manual.includes('Manual entitlement edit'), 'empty-account renderer must explicitly remove the plan_change action');
-assert(routes.includes("createAdminManualEntitlementRouter"), 'manual entitlement router must be part of canonical admin composition');
+assert(routes.includes('createAdminManualEntitlementRouter'), 'manual entitlement router must be part of canonical admin composition');
 assert(routes.indexOf('app.use(createAdminManualEntitlementRouter());') < routes.indexOf('app.use(createAdminCustomer360Router());'), 'manual entitlement injection must mount before Customer 360');
 
 console.log('admin manual entitlement smoke: ok');
