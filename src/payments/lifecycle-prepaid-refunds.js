@@ -22,9 +22,15 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
 
     const originalEndMs = dateMs(originalEnd, 'Original service end');
     const cutoffMs = dateMs(cutoffAt, 'Refund cutoff');
+    const observedEndMs = dateMs(row.current_period_end, 'Current service end');
     if (cutoffMs > originalEndMs) throw new Error('Refund cutoff exceeds the original service end.');
-    const removedMs = Math.max(0, originalEndMs - cutoffMs);
-    const originalEndDate = new Date(originalEndMs);
+    if (observedEndMs > originalEndMs) throw new Error('Prepaid entitlement was extended after the refund was planned; manual review is required.');
+
+    // Recovery may re-enter after the entitlement transaction committed but
+    // before provider_operations reached local_applied. Only remove the span
+    // still present locally, so queued periods can never be shifted twice.
+    const removedMs = Math.max(0, observedEndMs - cutoffMs);
+    const observedEndDate = new Date(observedEndMs);
     const cutoffDate = new Date(cutoffMs);
     const effectiveServiceType = String(serviceType || row.service_type_snapshot || row.service_type || 'jellyfin');
 
@@ -55,10 +61,10 @@ async function applyPrepaidRefund({ subscriptionId, customerId, originalEnd, cut
             OR $5='bundle'
             OR COALESCE(queued.service_type_snapshot,qp.service_type,'jellyfin')=$5
           )
-      `, [row.customer_id, row.id, originalEndDate, removedMs, effectiveServiceType]);
+      `, [row.customer_id, row.id, observedEndDate, removedMs, effectiveServiceType]);
     }
 
-    return { row, removedMs, cutoffAt:cutoffDate, originalEnd:originalEndDate, serviceType:effectiveServiceType };
+    return { row, removedMs, cutoffAt:cutoffDate, observedEnd:observedEndDate, serviceType:effectiveServiceType };
   });
 }
 
