@@ -35,7 +35,6 @@ async function ensureRows() {
 }
 
 async function heartbeat({ draining = false } = {}) {
-    await query('SELECT public.prune_operational_worker_instances($1::interval)', ['24 hours']);
     await query(`INSERT INTO operational_worker_state(worker_key,instance_id,version,commit_sha,started_at,last_heartbeat_at,draining_at,metadata,updated_at)
         VALUES('automation',$1,$2,$3,NOW(),NOW(),CASE WHEN $4 THEN NOW() ELSE NULL END,$5::jsonb,NOW())
         ON CONFLICT(worker_key,instance_id) DO UPDATE SET version=EXCLUDED.version,
