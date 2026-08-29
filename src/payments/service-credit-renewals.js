@@ -96,7 +96,10 @@ async function releaseStripeInvoice(providerInvoiceId,reason='invoice_not_paid')
     await accounting.lockCustomer(client,candidate.customer_id);
     const row=(await client.query(`UPDATE affiliate_credit_renewal_reservations SET state='released',released_at=COALESCE(released_at,NOW()),release_reason=$2,updated_at=NOW()
       WHERE provider='stripe' AND provider_invoice_id=$1 AND state IN('reserved','provider_applied') RETURNING *`,[invoiceId,String(reason||'invoice_not_paid').slice(0,500)])).rows[0];
-    if(!row)return reservationForStripeInvoice(invoiceId);
+    if(!row){
+      const existing=(await client.query(`SELECT * FROM affiliate_credit_renewal_reservations WHERE provider='stripe' AND provider_invoice_id=$1`,[invoiceId])).rows[0];
+      return rowResult(existing);
+    }
     await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('affiliate.credit.renewal.release','subscription',$1,$2::jsonb)`,[String(row.subscription_id),JSON.stringify({customerId:row.customer_id,provider:'stripe',providerInvoiceId:invoiceId,currency:row.currency,amountMinor:int(row.amount_minor),reservationId:row.id,reason:String(reason||'invoice_not_paid').slice(0,500)})]);
     return rowResult(row);
   });
