@@ -78,6 +78,8 @@ jobs:
           exit 1
       - name: Crawl authenticated admin UI in Chromium
         run: node tests/admin-browser-regression.js
+      - name: Prove mounted state-changing admin routes
+        run: node tests/admin-mounted-mutations-journey.js
       - name: Seed admin information architecture fixture
         run: node tests/seed-admin-ia-fixture.js
       - name: Verify admin information architecture in Chromium
