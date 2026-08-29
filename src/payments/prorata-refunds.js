@@ -1,12 +1,12 @@
 'use strict';
 
-const crypto = require('crypto');
 const Stripe = require('stripe');
-const { query, transaction } = require('../db');
+const { transaction } = require('../db');
 const providerSettings = require('./provider-settings');
 const providerHttp = require('./provider-http');
 const providerOps = require('./provider-operations');
 const refundPolicy = require('./refund-policy');
+const prepaidRefundLifecycle = require('./lifecycle-prepaid-refunds');
 const buildInfo = require('../build-info');
 const provisioning = require('../jellyfin/resilient-provisioning');
 
@@ -57,9 +57,7 @@ function refundableQuoteFromRow(row, { refundedMinor = 0, now = new Date() } = {
   const cutoffMs = future ? startsMs : Math.max(startsMs, nowMs);
   const totalMs = endMs - startsMs;
   const unusedMs = endMs - cutoffMs;
-  const refundableTotalAtCutoff = future
-    ? providerPaidMinor
-    : Math.floor((providerPaidMinor * unusedMs) / totalMs);
+  const refundableTotalAtCutoff = future ? providerPaidMinor : Math.floor((providerPaidMinor * unusedMs) / totalMs);
   const refundMinor = Math.max(0, Math.min(remainingProviderCashMinor, refundableTotalAtCutoff - Number(refundedMinor || 0)));
   if (refundMinor <= 0) throw new Error('The unused portion does not have any refundable provider-paid cash remaining.');
 
@@ -229,47 +227,14 @@ function providerRefundComplete(provider, status) {
 
 async function applyLocal(op) {
   const request = op.request_snapshot || {};
+  const lifecycleResult = await prepaidRefundLifecycle.applyPrepaidRefund({
+    subscriptionId: request.subscriptionId,
+    customerId: request.customerId,
+    originalEnd: request.originalEnd,
+    cutoffAt: request.cutoffAt,
+    serviceType: request.serviceType
+  });
   await transaction(async client => {
-    const row = await loadForQuote(client, request.subscriptionId, { lock: true });
-    if (!row || String(row.customer_id) !== String(op.owner_id)) throw new Error('Refunded prepaid subscription no longer exists.');
-
-    const originalEndMs = dateMs(request.originalEnd, 'Original service end');
-    const cutoffMs = dateMs(request.cutoffAt, 'Refund cutoff');
-    if (cutoffMs > originalEndMs) throw new Error('Refund cutoff exceeds the original service end.');
-    const removedMs = Math.max(0, originalEndMs - cutoffMs);
-    const originalEnd = new Date(originalEndMs);
-    const cutoff = new Date(cutoffMs);
-
-    if (removedMs > 0) {
-      await client.query(`
-        UPDATE subscriptions
-        SET current_period_end=$2,status='expired',service_extension_days=0,updated_at=NOW()
-        WHERE id=$1
-      `, [row.id, cutoff]);
-
-      await client.query(`
-        UPDATE subscriptions queued
-        SET starts_at=queued.starts_at-($4::bigint * INTERVAL '1 millisecond'),
-            current_period_end=queued.current_period_end-($4::bigint * INTERVAL '1 millisecond'),
-            updated_at=NOW()
-        FROM plans qp
-        WHERE queued.plan_id=qp.id
-          AND queued.customer_id=$1
-          AND queued.id<>$2
-          AND queued.superseded_by IS NULL
-          AND queued.starts_at >= $3
-          AND queued.status IN ('active','trialing','past_due','paused','cancelled')
-          AND queued.source IN ('stripe','paypal','plisio')
-          AND NOT (queued.source='stripe' AND COALESCE(queued.provider_subscription_id,'') ~* '^sub_')
-          AND NOT (queued.source='paypal' AND COALESCE(queued.provider_subscription_id,'') ~* '^I-')
-          AND (
-            COALESCE(queued.service_type_snapshot,qp.service_type,'jellyfin')='bundle'
-            OR $5='bundle'
-            OR COALESCE(queued.service_type_snapshot,qp.service_type,'jellyfin')=$5
-          )
-      `, [row.customer_id, row.id, originalEnd, removedMs, request.serviceType]);
-    }
-
     await client.query(`
       UPDATE provider_operations
       SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,
@@ -279,7 +244,7 @@ async function applyLocal(op) {
     await client.query(`
       INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.prepaid.prorata_refund','subscription',$2,$3::jsonb)
-    `, [request.actorUserId || null, String(row.id), JSON.stringify({
+    `, [request.actorUserId || null, String(request.subscriptionId), JSON.stringify({
       provider: request.provider,
       providerRefundId: op.provider_reference || null,
       providerPaidMinor: request.providerPaidMinor,
@@ -290,6 +255,7 @@ async function applyLocal(op) {
       mode: request.mode,
       originalEnd: request.originalEnd,
       cutoffAt: request.cutoffAt,
+      removedServiceMs: lifecycleResult.removedMs,
       reason: request.reason,
       providerOperationId: op.id
     })]);
