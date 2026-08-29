@@ -83,14 +83,33 @@ function effectiveSyncStatus(remoteStatus,statusOverride=null) {
     return statusOverride||remoteStatus;
 }
 function stripeObjectId(value){return typeof value==='string'?value:value?.id||null;}
-function serviceCreditLine(lines,reservationId){return(lines?.data||[]).find(line=>String(line?.metadata?.captainfin_service_credit_reservation_id||'')===String(reservationId))||null;}
-function serviceCreditLineReference(line){return stripeObjectId(line?.invoice_item)||stripeObjectId(line?.parent?.invoice_item_details?.invoice_item)||line?.id||null;}
+async function serviceCreditInvoiceItem(stripe,invoiceId,reservationId){
+    const items=await stripe.invoiceItems.list({invoice:String(invoiceId),limit:100});
+    return(items?.data||[]).find(item=>String(item?.metadata?.captainfin_service_credit_reservation_id||'')===String(reservationId))||null;
+}
+function validateServiceCreditInvoiceItem(item,reservation,invoiceId){
+    const applied=Math.abs(Number(item?.amount||0));
+    if(applied!==Number(reservation.amountMinor))throw new Error(`Stripe renewal service-credit amount mismatch for invoice ${invoiceId}: reserved ${reservation.amountMinor}, provider ${applied}.`);
+    if(!item?.id)throw new Error(`Stripe renewal service-credit item for invoice ${invoiceId} has no provider reference.`);
+    return item.id;
+}
+async function recoverServiceCreditProviderItem(stripe,invoiceId,reservation){
+    const item=await serviceCreditInvoiceItem(stripe,invoiceId,reservation.id);
+    if(!item)return null;
+    const providerAdjustmentId=validateServiceCreditInvoiceItem(item,reservation,invoiceId);
+    const saved=await renewalCredits.markStripeApplied({providerInvoiceId:invoiceId,providerAdjustmentId});
+    return{reservation:saved||reservation,providerAdjustmentId};
+}
 async function applyServiceCreditToRenewalInvoice(invoice,stripe){
     if(!invoice?.id||String(invoice.billing_reason||'')!=='subscription_cycle')return{applied:false,reason:'not_subscription_cycle'};
     let live=await stripe.invoices.retrieve(invoice.id);
     if(String(live.status||'')!=='draft'){
-        await renewalCredits.releaseStripeInvoice(live.id,'invoice_not_draft_before_service_credit').catch(()=>{});
-        return{applied:false,reason:'invoice_not_draft'};
+        const existing=await renewalCredits.reservationForStripeInvoice(live.id);
+        if(!existing||['consumed','released'].includes(existing.state))return{applied:false,reason:'invoice_not_draft'};
+        const recovered=await recoverServiceCreditProviderItem(stripe,live.id,existing);
+        if(recovered)return{applied:true,...recovered,existing:true,recovered:true};
+        await renewalCredits.releaseStripeInvoice(live.id,'invoice_finalized_without_service_credit_adjustment');
+        return{applied:false,reason:'invoice_finalized_without_adjustment'};
     }
     if(live.automatic_tax?.enabled)return{applied:false,reason:'automatic_tax_not_supported'};
     const providerSubscriptionId=extractInvoiceSubscriptionId(live),customerId=stripeObjectId(live.customer),amountDue=Math.max(0,Number(live.amount_due||0)),currency=String(live.currency||'').toUpperCase();
@@ -118,11 +137,15 @@ async function applyServiceCreditToRenewalInvoice(invoice,stripe){
     }catch(error){
         try{
             live=await stripe.invoices.retrieve(invoice.id);
+            const recovered=await recoverServiceCreditProviderItem(stripe,invoice.id,reservation);
+            if(recovered)return{applied:true,...recovered,recovered:true};
             if(String(live.status||'')!=='draft'){
-                await renewalCredits.releaseStripeInvoice(invoice.id,'invoice_finalized_before_service_credit_adjustment');
-                return{applied:false,reason:'invoice_finalized_before_adjustment'};
+                await renewalCredits.releaseStripeInvoice(invoice.id,'invoice_finalized_without_service_credit_adjustment');
+                return{applied:false,reason:'invoice_finalized_without_adjustment'};
             }
-        }catch(_){}
+        }catch(recoveryError){
+            throw recoveryError;
+        }
         throw error;
     }
 }
@@ -132,17 +155,12 @@ async function settlePaidServiceCreditInvoice(invoice,stripe){
     if(!reservation||reservation.state==='consumed'||reservation.state==='released')return reservation;
     let adjustmentId=reservation.providerAdjustmentId;
     if(!adjustmentId){
-        const live=await stripe.invoices.retrieve(invoice.id,{expand:['lines']});
-        const line=serviceCreditLine(live.lines,reservation.id);
-        if(!line){
+        const recovered=await recoverServiceCreditProviderItem(stripe,invoice.id,reservation);
+        if(!recovered){
             await renewalCredits.releaseStripeInvoice(invoice.id,'paid_without_service_credit_adjustment');
             return{...reservation,state:'released'};
         }
-        const applied=Math.abs(Number(line.amount||0));
-        if(applied!==Number(reservation.amountMinor))throw new Error(`Stripe renewal service-credit amount mismatch for invoice ${invoice.id}: reserved ${reservation.amountMinor}, provider ${applied}.`);
-        adjustmentId=serviceCreditLineReference(line);
-        if(!adjustmentId)throw new Error(`Stripe renewal service-credit line for invoice ${invoice.id} has no provider reference.`);
-        await renewalCredits.markStripeApplied({providerInvoiceId:invoice.id,providerAdjustmentId:adjustmentId});
+        adjustmentId=recovered.providerAdjustmentId;
     }
     return renewalCredits.consumeStripeInvoice({providerInvoiceId:invoice.id,providerAdjustmentId:adjustmentId});
 }
@@ -269,4 +287,4 @@ async function processWebhook(rawBody,signature) {
     const outcome=await processClaimedEvent(eventRow,event);return{duplicate:false,type:event.type,processingError:outcome.processed?null:String(outcome.error?.message||outcome.error||'processing failed')};
 }
 async function retryPaymentEvent(eventRow){if(!eventRow||eventRow.provider!=='stripe')throw new Error('Stripe retry received the wrong payment event.');const event=eventRow.payload;if(!event||String(event.id||'')!==String(eventRow.provider_event_id||''))throw new Error('Stored Stripe payment event payload does not match its event ID.');return processClaimedEvent(eventRow,event);}
-module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditLine};
+module.exports={enabled,createCheckout,createCustomerPortal,processWebhook,retryPaymentEvent,handleWebhookEvent,subscriptionPeriod,incidentContextForCharge,checkoutContract,activateCheckoutSession,confirmCheckout,recordStripeRefund,recordStripeDispute,reverseReferralForDirectIdentity,effectiveSyncStatus,terminalStripeStatus,applyServiceCreditToRenewalInvoice,settlePaidServiceCreditInvoice,serviceCreditInvoiceItem,validateServiceCreditInvoiceItem};
