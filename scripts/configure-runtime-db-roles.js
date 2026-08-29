@@ -160,7 +160,7 @@ async function grantAutomation(client) {
     }
     // Financial and provider history is never a generic automation cleanup target.
     await revokeExistingTables(client, role, 'DELETE', [
-        'affiliate_credit_ledger','payment_events','payment_incidents','payment_incident_notes','provider_operations',
+        'affiliate_credit_ledger','affiliate_credit_renewal_reservations','payment_events','payment_incidents','payment_incident_notes','provider_operations',
         'subscriptions','subscription_service_extension_events','referral_reward_reversals','discount_redemptions','invitation_redemptions'
     ]);
     await grantDeletionFinalizer(client, role);
