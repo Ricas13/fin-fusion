@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS affiliate_credit_allocations (
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     currency CHAR(3) NOT NULL CHECK (currency IN ('GBP','USD','EUR')),
     debit_ledger_id UUID NOT NULL REFERENCES affiliate_credit_ledger(id) ON DELETE CASCADE,
-    grant_ledger_id UUID NOT NULL REFERENCES affiliate_credit_ledger(id) ON DELETE RESTRICT,
+    grant_ledger_id UUID NOT NULL REFERENCES affiliate_credit_ledger(id) ON DELETE CASCADE,
     amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(debit_ledger_id, grant_ledger_id)
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS affiliate_credit_recoveries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     currency CHAR(3) NOT NULL CHECK (currency IN ('GBP','USD','EUR')),
-    source_reward_id UUID NOT NULL REFERENCES affiliate_credit_ledger(id) ON DELETE RESTRICT,
+    source_reward_id UUID NOT NULL REFERENCES affiliate_credit_ledger(id) ON DELETE CASCADE,
     amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
     recovered_minor INTEGER NOT NULL DEFAULT 0 CHECK (recovered_minor >= 0),
     reason TEXT NOT NULL,
