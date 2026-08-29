@@ -17,6 +17,12 @@ function jellyfinPasswordSupport(detail){
   return `<section class="section"><div class="sectionHead"><div><h2>Jellyfin password support</h2><div class="muted">Help this customer change a Jellyfin password without exposing or storing the plaintext password in CAPTAiNFiN.</div></div><a class="button secondary" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}">Change Jellyfin password</a></div></section>`;
 }
 function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
+function stremioHouseholdSection(detail,token,currentPlan,options){
+  const customerId=detail?.customer?.id,planDefault=currentPlan?.stremio_household_network_limit,override=options.householdOverrides?.stremio?.network_limit??null;
+  if(!customerId||(planDefault==null&&override==null))return'';
+  const hasOverride=override!=null,effective=hasOverride?override:planDefault;
+  return `<section class="section"><div class="sectionHead"><h2>Stremio household network</h2><span class="muted">Plan → admin override → effective</span></div><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(customerId)}/household-overrides"><input type="hidden" name="_csrf" value="${escapeHtml(token)}"><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Field</th><th>Plan</th><th>Override</th><th>Effective</th><th>Set override</th></tr></thead><tbody><tr><td data-label="Field">Household network limit</td><td data-label="Plan">${planDefault==null?'—':escapeHtml(planDefault)}</td><td data-label="Override">${hasOverride?escapeHtml(override):'—'}</td><td data-label="Effective"><strong>${effective==null?'—':escapeHtml(effective)}</strong></td><td data-label="Set override"><input class="input compact" type="number" name="stremio" aria-label="Household network limit override" min="1" max="10" placeholder="Inherit" value="${hasOverride?escapeHtml(override):''}"></td></tr></tbody></table></div><div class="buttonRow"><button class="button">Save override</button></div></form></section>`;
+}
 function foldedAccessSections(detail,token,options){
   const portal=manage.portalSection(detail,token,options.activationInfo);
   const stremioInstall=options.stremioInfo?manage.stremioSection(detail,token,options.stremioInfo):'';
@@ -24,8 +30,8 @@ function foldedAccessSections(detail,token,options){
 }
 function body(detail,tab,token,accessDetail,options={}){
   const safe=customerFacingDetail(detail),type=serviceType(detail);
-  if(tab==='access'&&type==='stremio')return v2.body(safe,tab,token,accessDetail,{skipAccessSections:true})+stremioAccessPanel(detail)+foldedAccessSections(safe,token,options);
-  const html=v2.body(safe,tab,token,accessDetail);
+  if(tab==='access'&&type==='stremio')return v2.body(safe,tab,token,accessDetail,{skipAccessSections:true})+stremioAccessPanel(detail)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+foldedAccessSections(safe,token,options);
+  const html=v2.body(safe,tab,token,accessDetail,options);
   if(tab!=='access')return html;
   return jellyfinPasswordSupport(safe)+html+foldedAccessSections(safe,token,options);
 }

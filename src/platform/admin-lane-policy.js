@@ -16,7 +16,8 @@ const LABELS = {
     allow_remuxing: 'Remuxing',
     allow_live_tv: 'Live TV',
     allow_live_tv_management: 'Live TV recording',
-    allow_remote_access: 'Remote access'
+    allow_remote_access: 'Remote access',
+    allow_subtitle_editing: 'Subtitle editing'
 };
 
 function esc(value) {

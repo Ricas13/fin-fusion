@@ -5,6 +5,7 @@ const modules = require('../modules/registry');
 const planComponents = require('../access/plan-components');
 const leases = require('../access/network-leases');
 const networkIdentity = require('../access/network-identity');
+const householdOverrides = require('../entitlements/household-overrides');
 
 async function planForEntitlement(entitlement) {
   if (!entitlement?.plan_id) throw new Error('Stremio entitlement has no plan.');
@@ -31,6 +32,8 @@ function subjectKey(entitlement) {
 async function configForEntitlement(entitlement) {
   modules.assertEnabled('stremio');
   const plan = await planForEntitlement(entitlement);
+  const override = await householdOverrides.get(entitlement.customer_id, 'stremio');
+  if (override && override.network_limit != null) plan.stremio_household_network_limit = override.network_limit;
   const component = planComponents.componentForPlan(plan, 'stremio');
   if (!component || component.driver !== 'household_network') throw new Error('Stremio household access is not configured for this plan.');
   return { plan, component };
