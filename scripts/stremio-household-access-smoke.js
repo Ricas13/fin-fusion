@@ -36,7 +36,7 @@ const planComponents=require('../src/access/plan-components');
 // Unlimited playback remains the runtime contract. Household admission is the
 // only commercial Stremio access limit; protocol abuse controls stay separate.
 assert(!runtime.includes("require('./source-admission')"),'retired Stremio stream admission must stay removed');
-assert(!runtime.includes('managed-session-reconciler')&&!runtime.includes('X-CAPTAINFiN-Stream-Limit'),'runtime must not reintroduce commercial stream counting');
+assert(!runtime.includes('managed-session-reconciler')&&!runtime.includes('X-CAPTAiNFiN-Stream-Limit'),'runtime must not reintroduce commercial stream counting');
 assert((runtime.match(/reason: 'protocol_rate_limit'/g)||[]).length>=3,'protocol abuse rate limits must remain enabled');
 assert(runtime.includes("householdAccess.claim(entitlement, req")&&runtime.includes('householdAccess.preview(entitlement, req'),'Stremio playback must still claim and preview household access');
 assert(runtime.includes("householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' })"),'household access must be claimed before direct authenticated Jellyfin URLs are returned');
