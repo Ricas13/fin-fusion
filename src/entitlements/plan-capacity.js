@@ -3,6 +3,8 @@
 const {query}=require('../db');
 
 const LIVE_STATUSES=['active','trialing','past_due','paused'];
+const FLEET_OCCUPANT_STATUSES=['active','trialing'];
+const FLEET_ACCESS_HOLD_TYPES=['inactivity_policy','jellyfin_cleanup'];
 const RESERVATION_SQL=`consumed_at IS NULL AND released_at IS NULL AND expires_at>NOW()`;
 const FLEET_CLASSES=new Set(['premium','free']);
 
@@ -98,13 +100,14 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null}={}){
   const used=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(s.commercial_snapshot->'streams')='number' THEN (s.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_used
     FROM subscriptions s JOIN plans p ON p.id=s.plan_id
     WHERE s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()
-      AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1`,[cls,LIVE_STATUSES]);
+      AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
+      AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)`,[cls,FLEET_OCCUPANT_STATUSES,FLEET_ACCESS_HOLD_TYPES]);
   const checkout=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(i.commercial_snapshot->'streams')='number' THEN (i.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_reserved
     FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
     WHERE i.state='open' AND i.expires_at>NOW() AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1`,[cls]);
   const freeHolds=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.streams,1))),0)::int AS stream_reserved
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
-    WHERE ${RESERVATION_SQL} AND p.service_type='jellyfin' AND p.server_class=$1 AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
+    WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1 AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
   const streamUsed=Number(used.rows[0]?.stream_used||0),streamReserved=Number(checkout.rows[0]?.stream_reserved||0)+Number(freeHolds.rows[0]?.stream_reserved||0),streamRemaining=Math.max(0,streamLimit-streamUsed-streamReserved);
   return{pool:cls,configuredServers,streamLimit,streamUsed,streamReserved,streamRemaining,healthMode};
 }
@@ -125,7 +128,7 @@ async function usage(planId,db=query,{excludeReservationId=null,streams=null,hou
     if(manual.remaining!=null)remaining=Math.min(remaining,manual.remaining);
     if(manual.limit!=null)limit=Math.min(limit,manual.limit);
   }
-  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,healthMode:fleet.healthMode,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining<=0,manualLimit,manualUsed,manualReserved};
+  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,healthMode:fleet.healthMode,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining===0,manualLimit,manualUsed,manualReserved};
   return{...state,...scarcity(state)};
 }
 
@@ -205,10 +208,14 @@ function fleetAvailableSql(alias='p'){
     FROM subscriptions active_subscription
     JOIN plans active_plan ON active_plan.id=active_subscription.plan_id
     WHERE active_subscription.superseded_by IS NULL
-      AND active_subscription.status IN ('active','trialing','past_due','paused')
+      AND active_subscription.status IN ('active','trialing')
       AND active_subscription.starts_at<=NOW() AND active_subscription.current_period_end>NOW()
       AND active_plan.service_type IN('jellyfin','bundle')
       AND active_plan.server_class=${alias}.server_class
+      AND NOT EXISTS(SELECT 1 FROM customer_access_holds capacity_access_hold
+        WHERE capacity_access_hold.customer_id=active_subscription.customer_id
+          AND capacity_access_hold.hold_type IN ('inactivity_policy','jellyfin_cleanup')
+          AND capacity_access_hold.released_at IS NULL)
   )`;
   const checkoutHolds=`(
     SELECT COALESCE(SUM(GREATEST(1,COALESCE(
@@ -227,7 +234,7 @@ function fleetAvailableSql(alias='p'){
     WHERE capacity_free_hold.consumed_at IS NULL
       AND capacity_free_hold.released_at IS NULL
       AND capacity_free_hold.expires_at>NOW()
-      AND free_plan.service_type='jellyfin'
+      AND free_plan.service_type IN('jellyfin','bundle')
       AND free_plan.server_class=${alias}.server_class
   )`;
   return `(${streamCapacity} >= (${activeStreams} + ${checkoutHolds} + ${freeHolds} + GREATEST(1,COALESCE(${alias}.streams,1))))`;
