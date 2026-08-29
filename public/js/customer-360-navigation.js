@@ -9,10 +9,8 @@
   const tabs=[
     ['overview','Overview',`${base}?tab=overview`],
     ['access','Access',`${base}?tab=access`],
-    ['activity','Activity',`${base}?tab=activity`],
     ['billing','Billing',`${base}?tab=billing`],
-    ['security','Security',`${base}?tab=security`],
-    ['history','History',`${base}?tab=history`]
+    ['activity','Activity',`${base}?tab=activity`]
   ];
 
   function activeTab(){
@@ -53,14 +51,13 @@
       else document.querySelector('.profileHero')?.insertAdjacentElement('afterend',nav);
     }
 
-    // Keep every tab deterministic. The general operator script used to turn
-    // Stremio Access into a jump to the separate management page after an async
-    // context request, which made the navigation mutate underneath the user.
+    // Keep every primary tab deterministic. Historical/security deep links can
+    // remain routable, but the customer workspace itself has four primary tabs.
     if(nav){
       const active=activeTab();
       [...nav.querySelectorAll('a')].forEach((link,index)=>{
         const item=tabs[index];
-        if(!item)return;
+        if(!item){link.remove();return;}
         const [key,label,href]=item;
         if(link.getAttribute('href')!==href)link.setAttribute('href',href);
         if(link.textContent!==label)link.textContent=label;
