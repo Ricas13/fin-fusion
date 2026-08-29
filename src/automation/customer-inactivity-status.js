@@ -6,8 +6,13 @@ const lifecyclePolicy=require('../entitlements/jellyfin-lifecycle-policy');
 async function customerStatus(customerId){
   const globalCfg=await lifecyclePolicy.get();
   const worker=await scoped.activityWorkerTelemetry();
-  const rows=await scoped.base.candidates(globalCfg,{customerId});
-  const serverTelemetry=rows.length&&worker.ready?await scoped.refreshCandidateServers(rows):{};
+  let rows=await scoped.base.candidates(globalCfg,{customerId});
+  let serverTelemetry={};
+  if(rows.length&&worker.ready){
+    serverTelemetry=await scoped.refreshCandidateServers(rows);
+    serverTelemetry=await scoped.refreshCandidateUserActivity(rows,serverTelemetry);
+    rows=await scoped.base.candidates(globalCfg,{customerId});
+  }
   const telemetry=scoped.telemetrySummary(worker,serverTelemetry);
   const row=rows[0]||null;
   if(!row)return{applies:false,telemetry};
