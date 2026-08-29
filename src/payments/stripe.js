@@ -273,7 +273,6 @@ async function handleWebhookEvent(event) {
         }
         case 'invoice.voided': if(object?.id)await renewalCredits.releaseStripeInvoice(object.id,'invoice_voided'); break;
         case 'invoice.deleted': if(object?.id)await renewalCredits.releaseStripeInvoice(object.id,'invoice_deleted'); break;
-        case 'invoice.marked_uncollectible': if(object?.id)await renewalCredits.releaseStripeInvoice(object.id,'invoice_marked_uncollectible'); break;
         case 'charge.refunded': await recordStripeRefund(event,stripe,object); break;
         case 'charge.dispute.created': await recordStripeDispute(event,stripe,object); break;
         case 'charge.dispute.closed': await recordStripeDispute(event,stripe,object); break;
