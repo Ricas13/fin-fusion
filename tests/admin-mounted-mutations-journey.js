@@ -26,15 +26,11 @@ async function assertPaymentWebhookOwnership(request){
     maxRedirects:0
   });
   assert.equal(mounted.status(),404,'disabled Stripe webhook should deliberately return 404');
-  assert.equal(await mounted.text(),'','Stripe webhook 404 must come from the mounted provider handler, not the application fallback');
+  assert.equal(await mounted.text(),'','Stripe webhook POST must come from the mounted provider handler, not the application fallback');
 
-  const missing=await request.post(`${BASE}/webhooks/not-a-provider`,{
-    headers:{'content-type':'application/json'},
-    data:'{}',
-    maxRedirects:0
-  });
-  assert.equal(missing.status(),404,'unknown webhook route should return 404');
-  assert.equal(await missing.text(),'Not found','unknown webhook route should reach the application fallback');
+  const wrongMethod=await request.get(`${BASE}/webhooks/stripe`,{maxRedirects:0});
+  assert.equal(wrongMethod.status(),404,'unmounted Stripe webhook method should reach the application fallback');
+  assert.equal(await wrongMethod.text(),'Not found','GET on the webhook path must be distinguishable from the mounted POST handler');
 }
 
 async function assertSupportPolicyMutation(page,pool){
