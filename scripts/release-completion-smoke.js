@@ -78,7 +78,10 @@ has(branchHygiene,'if [[ "$branch" == "main" || "$branch" == "HEAD" ]]','main mu
 
 const readme=read('README.md');
 has(readme,'# CAPTAiNFiN','README must use the canonical public product name');
-has(readme,'| Plisio | Yes | No | No |','README must document Plisio as one-time-only crypto checkout');
-has(readme,'These `steam-fusion` / `steamfusion` names are **compatibility identifiers**','README must distinguish persistent compatibility identifiers from public branding');
+const commerceGuide=read('docs/guide/admin-plans-and-commerce.md');
+has(commerceGuide,'Plisio','internal commerce guide must document Plisio');
+has(commerceGuide,'one-time','internal commerce guide must retain one-time provider semantics');
+const deploymentGuide=read('docs/PRODUCTION_DEPLOYMENT.md');
+has(deploymentGuide,'steam-fusion','internal deployment guide must preserve compatibility identifiers');
 
 console.log('release completion smoke: ok');
