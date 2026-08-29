@@ -150,6 +150,14 @@ async function reverseReward({redemptionId,paymentIncidentId=null,reason='paymen
     if(!earned.rowCount)return{reversed:false,reason:'no_credit'};
     const row=earned.rows[0];if(row.state==='void')return{reversed:false,reason:'legacy_void_reward'};
     await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
+    const activeReservation=await client.query(`SELECT id FROM affiliate_credit_checkout_reservations
+      WHERE customer_id=$1 AND currency=$2 AND state='reserved' AND expires_at>NOW()
+      ORDER BY created_at,id LIMIT 1`,[row.customer_id,row.currency]);
+    if(activeReservation.rowCount){
+      const error=new Error('Affiliate reward reconciliation deferred while service credit is reserved by an open checkout.');
+      error.code='AFFILIATE_CREDIT_RESERVATION_PENDING';
+      throw error;
+    }
     const metadata=row.metadata&&typeof row.metadata==='object'?row.metadata:{},grossPaidMinor=Math.max(0,Number(metadata.grossPaidMinor||metadata.paidMinor||0));
     if(!grossPaidMinor)return{reversed:false,reason:'missing_paid_basis'};
     const source=await client.query(`SELECT COALESCE(SUM(amount_minor),0)::int granted,
@@ -159,10 +167,13 @@ async function reverseReward({redemptionId,paymentIncidentId=null,reason='paymen
     const adverse=await refundStateForReward(client,row),netPaidMinor=adverse.chargeback?0:Math.max(0,grossPaidMinor-Math.min(grossPaidMinor,adverse.refundedMinor));
     const targetRewardMinor=netPaidMinor>0?Math.min(totalGranted,Math.max(1,Math.floor(netPaidMinor*effectiveRate/100))):0;
     const requiredReduction=Math.max(0,totalGranted-targetRewardMinor);
-    const prior=await client.query(`SELECT COALESCE(SUM(-amount_minor),0)::int n FROM affiliate_credit_ledger WHERE entry_type='reversed' AND state<>'void' AND (metadata->>'sourceRewardId'=$1 OR metadata->>'earnedCreditId'=$1)`,[String(row.id)]);
-    const existingRecovery=await accounting.recoveryForReward(client,row.id),alreadyReversed=Number(prior.rows[0]?.n||0),alreadyAccounted=alreadyReversed+Number(existingRecovery.amountMinor||0),delta=Math.max(0,requiredReduction-alreadyAccounted);
+    const breakdown=await accounting.allocationBreakdownForReward(client,row.id);
+    const existingRecovery=await accounting.recoveryForReward(client,row.id);
+    const alreadyAccounted=breakdown.reversed+breakdown.adjusted+Number(existingRecovery.amountMinor||0),delta=Math.max(0,requiredReduction-alreadyAccounted);
     if(delta===0)return{reversed:false,reason:'already_reconciled',amountMinor:0,currency:row.currency,customerId:row.customer_id,remainingRewardMinor:targetRewardMinor,recoverableMinor:Math.max(0,Number(existingRecovery.amountMinor||0)-Number(existingRecovery.recoveredMinor||0))};
-    const capacity=await accounting.sourceCapacity(client,row.id),allocated=await accounting.allocatedFromReward(client,row.id),unspent=Math.max(0,capacity-allocated),debitMinor=Math.min(delta,unspent),recoveryMinor=delta-debitMinor;
+    const capacity=await accounting.sourceCapacity(client,row.id),unspent=Math.max(0,capacity-breakdown.total),debitMinor=Math.min(delta,unspent),recoveryMinor=delta-debitMinor;
+    const recoverableCapacity=Math.max(0,breakdown.redeemed-Number(existingRecovery.amountMinor||0));
+    if(recoveryMinor>recoverableCapacity)throw new Error(`Affiliate recovery invariant violated: ${recoveryMinor} ${row.currency} minor units exceed delivered service-credit value ${recoverableCapacity}.`);
     if(debitMinor>0){
       const state=row.state==='pending'?'pending':'available',referenceId=`affiliate-reversal:${redemptionId}:${paymentIncidentId||crypto.createHash('sha256').update(String(reason)).digest('hex').slice(0,16)}:${requiredReduction}`;
       const inserted=await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,referral_redemption_id,payment_incident_id,available_at,reference_id,note,metadata)

@@ -36,9 +36,11 @@ async function reserveForIntent({customerId,checkoutIntentId,currency,maxAmountM
 
 async function settle(client,checkoutIntentId,state){
   if(!checkoutIntentId)return null;
-  const row=(await client.query(`SELECT * FROM affiliate_credit_checkout_reservations WHERE checkout_intent_id=$1 FOR UPDATE`,[checkoutIntentId])).rows[0];
+  const candidate=(await client.query(`SELECT * FROM affiliate_credit_checkout_reservations WHERE checkout_intent_id=$1`,[checkoutIntentId])).rows[0];
+  if(!candidate||candidate.state!=='reserved')return candidate||null;
+  await accounting.lockCustomer(client,candidate.customer_id);
+  const row=(await client.query(`SELECT * FROM affiliate_credit_checkout_reservations WHERE id=$1 FOR UPDATE`,[candidate.id])).rows[0];
   if(!row||row.state!=='reserved')return row||null;
-  await accounting.lockCustomer(client,row.customer_id);
   await accounting.ensureHistoricalAllocations(client,row.customer_id,row.currency);
   if(state==='expired')return row;
   if(state==='completed'){
