@@ -9,6 +9,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const routes = read('src/platform/admin-route-composition.js');
 const editor = read('src/platform/admin-jellyfin-plan-editor.js');
 const stremioEditor = read('src/platform/admin-stremio-plan-editor.js');
+const stremioDispatch = read('src/platform/admin-stremio-plan-dispatch.js');
 const attentionPolicy = read('src/platform/actionable-attention-policy.js');
 const operatorState = read('src/platform/admin-operator-state.js');
 const attentionSource = read('src/platform/attention.js');
@@ -42,11 +43,19 @@ assert(editor.includes('[plan.id, name, description, features, visible, active]'
 
 assert(stremioEditor.includes('Plan, storefront & commerce') && stremioEditor.includes('name="description"') && stremioEditor.includes('name="feature${i+1}"'), 'Stremio must edit storefront copy inside its existing product/commerce card');
 assert(stremioEditor.includes('UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],billing_interval=$5,duration_days=$6'), 'the Stremio product/commerce save must persist storefront copy in the same mutation');
-assert(stremioEditor.includes("post('editor-storefront',saveStorefront,'Storefront saved.')"), 'legacy Storefront POST must be accepted by the canonical Stremio editor router and return to the editor');
+assert(stremioEditor.includes("post('editor-storefront',saveStorefront,'Storefront saved.')"), 'legacy Storefront POST must remain accepted by the compatibility Stremio editor router');
 assert(stremioEditor.includes('UPDATE plans SET description=$2,marketing_features=$3::text[],updated_at=NOW() WHERE id=$1'), 'Storefront compatibility save must write the same description/features columns without changing commerce ownership');
 assert(!stremioEditor.includes('Save storefront'), 'Stremio must not render a second Storefront Save button or editor');
 assert(stremioEditor.includes("if(!data.sources.length)return") && stremioEditor.includes('Manage sources'), 'empty Stremio Sources must point to source management instead of presenting a useless Save');
 assert(stremioEditor.includes("res.redirect(`/admin/plans?error=${encodeURIComponent(error.message||'Plan not found')}`)"), 'missing Stremio plans must return to the catalogue with an error notice instead of rendering Not found as page/header content');
+assert(routes.includes('createAdminStremioPlanDispatchRouter'), 'route composition must mount the live Stremio plan dispatcher');
+assert(routes.indexOf('createAdminStremioPlanDispatchRouter()') < routes.indexOf('createAdminJellyfinPlanEditorRouter()'), 'Stremio card saves must be dispatched before shared Jellyfin plan routes can match them');
+assert(stremioDispatch.includes('(editor-commerce|editor-storefront|editor-access|editor-availability|editor-payments)'), 'the mounted Stremio dispatcher must own every card POST rendered by the Stremio edit page');
+for (const [action, handler] of [['editor-commerce','saveCommerce'],['editor-storefront','saveStorefront'],['editor-access','saveAccess'],['editor-availability','saveAvailability'],['editor-payments','savePayments']]) {
+  assert(stremioDispatch.includes(`['${action}',{handler:editor.${handler}`), `mounted Stremio dispatcher must route ${action} to editor.${handler}`);
+}
+assert(stremioDispatch.includes("if(!data||String(data.plan.service_type)!=='stremio')return next();"), 'Stremio card dispatch must fall through for non-Stremio plans so Jellyfin routing remains intact');
+assert(stremioDispatch.includes("cardRedirect(res,data.plan.id,'error'"), 'Stremio card save failures must return to the same editor with a useful error instead of falling through to Not found');
 
 assert(attentionPolicy.includes("const REQUIRED_ENABLED_JOBS = new Set(['payment_events', 'plan_changes'])"), 'payment-event retry and plan-change lifecycle jobs must be declared operator-required');
 assert(attentionPolicy.includes("health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)") && attentionPolicy.includes("reason: 'disabled'"), 'disabled required payment lifecycle jobs must become operator-visible alerts immediately');
