@@ -16,17 +16,19 @@ async function notifyNewJellyfinAccess(customerId,account){
     const notifications=require('../integrations/notification-dispatch');
     const runtimeSettings=require('../platform/runtime-settings');
     await runtimeSettings.ensureLoaded().catch(()=>{});
-    const found=await query(`SELECT COALESCE(c.email,u.email) email,COALESCE(c.display_name,u.username,'Customer') customer_name,u.role user_role,c.registration_source,cp.phone_e164,cp.whatsapp_opt_in FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id WHERE c.id=$1`,[customerId]);
+    const found=await query(`SELECT COALESCE(c.email,u.email) email,COALESCE(c.display_name,u.username,'Customer') customer_name,u.username portal_username,u.role user_role,c.registration_source,cp.phone_e164,cp.whatsapp_opt_in FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id WHERE c.id=$1`,[customerId]);
     if(!found.rowCount)return;
-    const row=found.rows[0],site=runtimeSettings.siteName(),serverUrl=String(account.public_url||'').trim(),username=account.jellyfin_username||'your Jellyfin username',personalAdmin=row.user_role==='admin'&&row.registration_source==='admin_personal';
-    const steps=account.password_setup_required
+    const row=found.rows[0],site=runtimeSettings.siteName(),serverUrl=String(account.public_url||'').trim(),username=row.portal_username||account.jellyfin_username||'your Jellyfin username',personalAdmin=row.user_role==='admin'&&row.registration_source==='admin_personal';
+    const passwordStep=account.password_setup_required
       ? personalAdmin
-        ? `Your Jellyfin access has been created. Open ${site} administration, go to Settings > My Profile, and set your Jellyfin password under Personal media profile. Then open the server${serverUrl?` at ${serverUrl}`:''} and sign in as ${username}. Start any title to confirm playback.`
-        : `Your Jellyfin access has been created. Sign in to your ${site} portal first, open Jellyfin access and choose your Jellyfin password. Then open the server${serverUrl?` at ${serverUrl}`:''} and sign in as ${username}. Start any title to confirm playback.`
+        ? `Set your Jellyfin password under Settings > My Profile in ${site} administration, then use that password in Jellyfin.`
+        : `Sign in to your ${site} portal, open Jellyfin access and choose your Jellyfin password, then use that password in Jellyfin.`
       : personalAdmin
-        ? `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. You can manage your Jellyfin password under Settings > My Profile in ${site} administration.`
-        : `Your Jellyfin access has been created. Open the server${serverUrl?` at ${serverUrl}`:''}, sign in as ${username}, and start any title to confirm playback. The same instructions are shown in your ${site} portal.`;
-    await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,customerId,subject:`Your ${site} Jellyfin access is ready`,text:steps,adminSubject:`${site}: Jellyfin access provisioned`,adminText:`${row.customer_name} (${row.email||customerId}) was provisioned as ${username}${serverUrl?` on ${serverUrl}`:''}.`,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
+        ? `Use the Jellyfin password you set under Settings > My Profile in ${site} administration.`
+        : `Use the password you set under Jellyfin access in your ${site} portal.`;
+    const serverStep=serverUrl||`Open your ${site} portal to see the assigned Jellyfin server URL.`;
+    const steps=`Your Jellyfin access has been created.\n\n1. Download an official Jellyfin client: https://jellyfin.org/downloads/\n2. Server URL: ${serverStep}\n3. Username: ${username}\n4. Password: ${passwordStep}\n\nThese same steps are shown in your ${site} account.`;
+    await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,customerId,subject:`Your ${site} Jellyfin access is ready`,text:steps,adminSubject:`${site}: Jellyfin access provisioned`,adminText:`${row.customer_name} (${row.email||customerId}) was provisioned as ${account.jellyfin_username||username}${serverUrl?` on ${serverUrl}`:''}.`,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
   }catch(error){console.warn('Jellyfin onboarding notification failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});}
 }
 async function reconcileCustomerUnlocked(customerId){
