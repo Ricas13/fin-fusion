@@ -38,8 +38,8 @@ async function headerMetrics(){
   const currency=reporting.cleanCurrency(reportingState.currency),profit=await profitability.headerProfitability({...reportingState,currency});
   return {
     streams:{active:activeStreams,total:totalStreams},
-    monthlyProfit:{minor:profit.current.profitMinor,currency},
-    yearlyProfit:{minor:profit.ytd.profitMinor,currency}
+    monthlyProfit:{minor:profit.current.profitMinor,currency,basisText:profit.current.basisText,webhookOnly:profit.current.webhookOnly},
+    yearlyProfit:{minor:profit.ytd.profitMinor,currency,basisText:profit.ytd.basisText,webhookOnly:profit.ytd.webhookOnly}
   };
 }
 

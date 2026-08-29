@@ -15,13 +15,13 @@ function messageBlock(req){return`${req.query.message?`<div class="notice succes
 function percentDelta(current,previous){const a=Number(current||0),b=Number(previous||0);if(!b)return null;return((a-b)/Math.abs(b))*100;}
 function profitDelta(profit,currency){const current=Number(profit.current?.profitMinor||0),previous=Number(profit.previous?.profitMinor||0),delta=current-previous,pct=percentDelta(current,previous),kind=delta>=0?'good':'bad',direction=delta>=0?'up':'down';return`<span class="profitDelta ${kind}">${direction} ${esc(money(Math.abs(delta),currency))}${pct==null?'':` · ${Math.abs(pct).toFixed(1)}%`} vs last month</span>`;}
 function dashboardHero(ctx){
-  const stats=ctx.data||{},profit=stats.profitability||{},currency=profit.currency||ctx.reporting?.currency||'GBP',current=Number(profit.current?.profitMinor||0),ytd=Number(profit.ytd?.profitMinor||0),gauge=stats.streamGauge||{active:0,capacity:0},active=Number(gauge.active||0),capacity=Number(gauge.capacity||0),attention=Number(stats.attention?.count||0),used=capacity>0?Math.min(100,Math.max(0,Math.round(active/capacity*100))):0;
+  const stats=ctx.data||{},profit=stats.profitability||{},currency=profit.currency||ctx.reporting?.currency||'GBP',current=Number(profit.current?.profitMinor||0),ytd=Number(profit.ytd?.profitMinor||0),gauge=stats.streamGauge||{active:0,capacity:0},active=Number(gauge.active||0),capacity=Number(gauge.capacity||0),attention=Number(stats.attention?.count||0),used=capacity>0?Math.min(100,Math.max(0,Math.round(active/capacity*100))):0,basis=profit.ytd?.basisText||'Net provider receipts (imported history + webhooks) minus booked expenses. Bank payouts are transfers, not costs.';
   return `<section class="profitHeroGrid" aria-label="Business and operational summary">
-    <a class="profitHeroCard ${current>=0?'good':'bad'}" href="/admin/expenses"><span>Profit this month</span><strong>${esc(money(current,currency))}</strong><small>${profitDelta(profit,currency)}</small></a>
-    <a class="profitHeroCard ${ytd>=0?'good':'bad'}" href="/admin/expenses"><span>Profit YTD</span><strong>${esc(money(ytd,currency))}</strong><small>Net provider receipts minus booked expenses</small></a>
+    <a class="profitHeroCard ${current>=0?'good':'bad'}" href="/admin/expenses" title="${esc(profit.current?.basisText||basis)}"><span>Profit this month</span><strong>${esc(money(current,currency))}</strong><small>${profitDelta(profit,currency)}</small></a>
+    <a class="profitHeroCard ${ytd>=0?'good':'bad'}" href="/admin/expenses" title="${esc(basis)}"><span>Profit YTD</span><strong>${esc(money(ytd,currency))}</strong><small>Net provider receipts minus booked expenses</small></a>
     <a class="profitHeroCard info" href="/admin/servers"><span>Live streams</span><strong>${esc(number(active))} / ${capacity?esc(number(capacity)):'—'}</strong><div class="profitGauge" aria-hidden="true"><i style="width:${used}%"></i></div><small>used / sellable stream capacity</small></a>
     <a class="profitHeroCard ${attention>0?'bad':'good'}" href="/admin/attention"><span>Needs attention</span><strong>${esc(number(attention))}</strong><small>${attention?`${attention} current ${attention===1?'issue':'issues'} require review`:'No current intervention required'}</small></a>
-  </section>`;
+  </section><div class="subText">${esc(basis)}</div>`;
 }
 
 async function dashboardPage(req,res){
