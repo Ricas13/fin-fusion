@@ -16,7 +16,7 @@ ALTER TABLE provider_operations
 
 CREATE INDEX IF NOT EXISTS provider_operations_recovery_due_idx
     ON provider_operations(next_attempt_at,created_at)
-    WHERE state IN ('planned','provider_applied','failed')
+    WHERE state IN ('planned','provider_applied','local_applied','failed')
       AND manual_review_required=FALSE
       AND COALESCE(failure_kind,'') NOT IN ('terminal','superseded');
 
