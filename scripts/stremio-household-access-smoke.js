@@ -56,6 +56,10 @@ assert(networkIdentity.includes("family: canonical.startsWith('ipv4:') ? 'ipv4' 
 assert(networkLeases.includes('network_family')&&networkLeases.includes('activeSameFamily'),'dual-stack household slots must continue to be enforced per address family');
 assert(familyMigration.includes('access_network_leases_subject_family_idx'),'dual-stack lease lookup migration must remain present');
 assert(networkLeases.includes("decision === 'denied'")&&networkLeases.includes("INTERVAL '5 minutes'"),'repeated denied polling must remain audit-throttled');
+const claimLeaseScope=networkLeases.slice(networkLeases.indexOf('async function claim'),networkLeases.indexOf('async function preview'));
+const releaseLeaseScope=networkLeases.slice(networkLeases.indexOf('async function releaseSubject'),networkLeases.indexOf('async function cleanupExpired'));
+assert(!claimLeaseScope.includes('DELETE FROM access_network_leases'),'Stremio household claims must not require web-role DELETE on network leases');
+assert(releaseLeaseScope.includes('UPDATE access_network_leases SET expires_at=NOW()')&&!releaseLeaseScope.includes('DELETE FROM access_network_leases'),'customer/admin household reset must expire leases using web-role UPDATE rather than DELETE');
 
 // The household denial is an ordinary Stremio stream result backed by a local
 // MP4. HTTPS MP4 is web-ready: marking it notWebReady causes Stremio Web to
