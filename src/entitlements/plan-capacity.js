@@ -35,16 +35,16 @@ async function loadPlan(planId,db=query){
   if(!result.rowCount)throw new Error('Plan not found.');
   return result.rows[0];
 }
-async function legacyUsage(plan,db=query,{excludeReservationId=null}={}){
+async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
   const result=await db(`SELECT
       (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
-       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW())) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId]);
+       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW() AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
 }
-async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,households=null}={}){
+async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
   const result=await db(`SELECT
       (SELECT COALESCE(SUM(GREATEST(1,COALESCE(
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
@@ -58,7 +58,7 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ho
           CASE WHEN jsonb_typeof(i.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (i.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
           p.stremio_household_network_limit,1))),0)::int
         FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
-        WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW())) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId]);
+        WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW() AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},householdLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit),householdUsed=Number(row.household_used||0),householdReserved=Number(row.household_reserved||0),householdRemaining=householdLimit==null?null:Math.max(0,householdLimit-householdUsed-householdReserved),requiredHouseholds=positiveInt(households,positiveInt(plan.stremio_household_network_limit,1));
   const limit=householdLimit==null?null:Math.floor(householdLimit/requiredHouseholds),remaining=householdRemaining==null?null:Math.floor(householdRemaining/requiredHouseholds),used=limit==null?householdUsed:Math.max(0,limit-remaining),state={planId:plan.id,plan,model:'manual_households',pool:'stremio',requiredHouseholds,householdLimit,householdUsed,householdReserved,householdRemaining,limit,used,reserved:0,remaining,soldOut:remaining!=null&&remaining<=0,manualLimit:householdLimit,manualUsed:householdUsed,manualReserved:householdReserved};
   return{...state,...scarcity(state)};
@@ -73,7 +73,7 @@ function healthSql(alias,mode){
   if(mode==='fail_open')return`COALESCE(${alias}.health_status,'unknown')<>'offline'`;
   return`${alias}.health_status IN('healthy','degraded')`;
 }
-async function fleetStreams(plan,db=query,{excludeReservationId=null}={}){
+async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
   const cls=serverClass(plan),healthMode=await placementHealthMode(db),health=healthSql('js',healthMode);
   const serviceFlag=cls==='free'?'TRUE':isTrial(plan)?'js.trial_enabled=TRUE':'js.paid_enabled=TRUE';
   const configured=await db(`WITH restriction AS (
@@ -104,26 +104,27 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null}={}){
       AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)`,[cls,FLEET_OCCUPANT_STATUSES,FLEET_ACCESS_HOLD_TYPES]);
   const checkout=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(i.commercial_snapshot->'streams')='number' THEN (i.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_reserved
     FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
-    WHERE i.state='open' AND i.expires_at>NOW() AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1`,[cls]);
+    WHERE i.state='open' AND i.expires_at>NOW() AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
+      AND ($2::uuid IS NULL OR i.id<>$2::uuid)`,[cls,excludeCheckoutIntentId]);
   const freeHolds=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.streams,1))),0)::int AS stream_reserved
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
     WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1 AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
   const streamUsed=Number(used.rows[0]?.stream_used||0),streamReserved=Number(checkout.rows[0]?.stream_reserved||0)+Number(freeHolds.rows[0]?.stream_reserved||0),streamRemaining=Math.max(0,streamLimit-streamUsed-streamReserved);
   return{pool:cls,configuredServers,streamLimit,streamUsed,streamReserved,streamRemaining,healthMode};
 }
-async function usage(planId,db=query,{excludeReservationId=null,streams=null,households=null}={}){
+async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
-  if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,households});
-  if(model!=='fleet_streams')return legacyUsage(plan,db,{excludeReservationId});
-  const fleet=await fleetStreams(plan,db,{excludeReservationId});
+  if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
+  if(model!=='fleet_streams')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
+  const fleet=await fleetStreams(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   if(!fleet){
-    const legacy=await legacyUsage(plan,db,{excludeReservationId});
+    const legacy=await legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
     return{...legacy,model:'legacy_plan',fallbackReason:'No eligible server stream capacity is configured.'};
   }
   const requiredStreams=positiveInt(streams,positiveInt(plan.streams,1)),fleetLimit=Math.floor(fleet.streamLimit/requiredStreams),fleetRemaining=Math.floor(fleet.streamRemaining/requiredStreams),fleetUsed=Math.max(0,fleetLimit-fleetRemaining);
   let remaining=fleetRemaining,limit=fleetLimit,manualLimit=null,manualUsed=0,manualReserved=0;
   if(isTrial(plan)){
-    const manual=await legacyUsage(plan,db,{excludeReservationId});
+    const manual=await legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
     manualLimit=manual.limit;manualUsed=manual.used;manualReserved=manual.reserved;
     if(manual.remaining!=null)remaining=Math.min(remaining,manual.remaining);
     if(manual.limit!=null)limit=Math.min(limit,manual.limit);
@@ -132,16 +133,16 @@ async function usage(planId,db=query,{excludeReservationId=null,streams=null,hou
   return{...state,...scarcity(state)};
 }
 
-async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,streams=null,households=null}={}){
-  const state=await usage(planId,db,{excludeReservationId,streams,households});
-  if(state.soldOut)throw new Error(`${label} is currently sold out.`);
+async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
+  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,streams,households});
+  if(state.soldOut){const error=new Error(`${label} is currently sold out.`);error.code='PLAN_CAPACITY_EXHAUSTED';error.planId=String(planId);throw error;}
   return state;
 }
 
-async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,streams=null,households=null}={}){
+async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
   const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_streams'?`fleet:${serverClass(plan)}`:`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
-  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,streams,households});
+  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,streams,households});
 }
 
 function legacyAcquisitionSql(alias='p'){

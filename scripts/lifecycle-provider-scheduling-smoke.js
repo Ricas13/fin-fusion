@@ -28,8 +28,9 @@ assert(/waiting:Number\(stripe\.pending\|\|0\)/.test(jobs),'Stripe plan changes 
 const paypal=read('src/payments/paypal.js'),stripe=read('src/payments/stripe.js'),plisio=read('src/payments/plisio.js'),lifecycle=read('src/payments/lifecycle-primitives.js'),paymentRetry=read('src/payments/payment-event-retry.js'),returns=read('src/platform/customer-payment-return.js'),checkout=read('src/platform/flexible-checkout.js'),subscriptions=read('src/subscriptions.js');
 assert(/case 'BILLING\.SUBSCRIPTION\.ACTIVATED':await activateSubscription/.test(paypal),'PayPal activation events must use the first-purchase activation path');
 assert(/case 'BILLING\.SUBSCRIPTION\.UPDATED':await syncSubscription/.test(paypal),'PayPal subscription updates must sync existing provider state instead of replaying purchase activation');
-assert(/case 'PAYMENT\.SALE\.COMPLETED'[\s\S]*await syncSubscription\(subscriptionId\)/.test(paypal),'PayPal renewal sales must sync the existing subscription instead of replaying purchase activation');
-assert(/if\(intent\)return activateSubscription\(subscription\.id\)/.test(paypal),'an out-of-order first PayPal update may activate only when a matching local checkout intent exists');
+assert(/case 'PAYMENT\.SALE\.COMPLETED'[\s\S]*await syncCurrentSubscription\(subscriptionId\)/.test(paypal),'PayPal renewal sales must read current provider subscription state instead of replaying purchase activation');
+assert(/if\(intent&&activateMissing\)\{const activated=await activateSubscription\(subscription\.id\)/.test(paypal),'an out-of-order first positive PayPal update may activate only when a matching local checkout intent exists and the caller permits missing activation');
+assert(/activateMissing:false/.test(paypal),'negative PayPal events must be able to reconcile current provider state without creating missing access');
 assert(/resolveRecordedPlanChange/.test(paypal)&&/resolveAwaitingCheckout/.test(resolution),'fresh PayPal checkout completion must resolve its recorded awaiting plan change');
 for(const [name,source] of [['Stripe',stripe],['PayPal',paypal],['Plisio',plisio]])assert(/retryPaymentEvent/.test(source)&&/processing deferred to internal retry/.test(source),`${name} must retain verified processing failures for internal retry instead of throwing them back to the provider`);
 assert(/claimRetryablePaymentEvents/.test(lifecycle)&&/FOR UPDATE SKIP LOCKED/.test(lifecycle),'payment-event retries must claim durable failed rows without duplicate workers');
@@ -63,6 +64,7 @@ async function subscriptionOwnershipBehavior(){
   let calls=[];
   const client={query:async(sql,params=[])=>{
     calls.push({sql,params});
+    if(sql==='SELECT id FROM customers WHERE id=$1 FOR UPDATE')return{rowCount:1,rows:[{id:params[0]}]};
     if(sql==='SELECT * FROM plans WHERE id=$1')return{rowCount:1,rows:[{id:'plan-a',name:'Plan A',code:'plan-a',billing_interval:'month',duration_days:30,price_minor:600,currency:'GBP'}]};
     if(sql.startsWith('SELECT external_id FROM plan_provider_prices'))return{rowCount:0,rows:[]};
     if(sql.startsWith('SELECT * FROM subscriptions WHERE source='))return{rowCount:1,rows:[existing]};
