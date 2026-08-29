@@ -81,20 +81,14 @@ function dedupeOverviewActions(body='',action=''){
   );
 }
 
-function clarifyManualEntitlementLabels(html){
-  return String(html||'')
-    .replace(/>Change plan</g,'>Manual entitlement edit<')
-    .replace(/Preview: Change plan/g,'Preview: Manual entitlement edit');
-}
-
 function layout(options={}){
   const withActions={...options,body:dedupeOverviewActions(options.body,options.action)};
   const normalized=addServerContextNavigation(withActions);
   const rendered=useAdminHelp(removeSecondaryWorkflowNavigation(base.layout(normalized)));
   const withBreadcrumb=replaceBreadcrumb(rendered,options.active);
-  const html=clarifyManualEntitlementLabels(addFilterStyles(addCommandPalette(withBreadcrumb)));
+  const html=addFilterStyles(addCommandPalette(withBreadcrumb));
   const scripts='<script src="/js/admin-setting-controls.js" defer></script><script src="/js/admin-filter-bars.js" defer></script><script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-safety-confirmations.js" defer></script><script src="/js/admin-command-palette.js" defer></script><script src="/js/admin-sidebar-nav.js" defer></script><script src="/js/admin-stremio-journey.js" defer></script><script src="/js/admin-release-status.js" defer></script><script src="/js/admin-form-accessibility.js" defer></script><script src="/js/admin-surface-semantics.js" defer></script><script src="/js/admin-server-control.js" defer></script><script src="/js/admin-navigation-coherence.js" defer></script>';
   return html.includes('</body>')?html.replace('</body>',`${scripts}</body>`):`${html}${scripts}`;
 }
 
-module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,useAdminHelp,addServerContextNavigation,replaceBreadcrumb,removeSecondaryWorkflowNavigation,removeRedundantWorkflowNavigation,actionHrefs,dedupeOverviewActions,clarifyManualEntitlementLabels};
+module.exports={...base,layout,commandPaletteMarkup,addCommandPalette,addFilterStyles,useAdminHelp,addServerContextNavigation,replaceBreadcrumb,removeSecondaryWorkflowNavigation,removeRedundantWorkflowNavigation,actionHrefs,dedupeOverviewActions};

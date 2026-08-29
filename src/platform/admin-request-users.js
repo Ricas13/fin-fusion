@@ -49,7 +49,7 @@ function configPanel(req, status) {
 }
 
 function bulkBar(req, configured) {
-  return `<form id="requestUserBulkForm" class="formPanel requestUserBulkBar" method="post" action="/admin/request-users/sync-selected">${csrfInput(req)}<strong><span data-request-selected-count>0</span> selected</strong><span class="muted">Use the current plan policy, or move the selected customers to another plan.</span><div class="buttonRow"><button class="button secondary" type="submit" data-requires-request-selection ${configured ? '' : 'disabled'}>Sync selected</button><button class="button secondary" type="submit" formaction="/admin/customers/bulk/preview" name="action" value="plan_change" data-requires-request-selection>Change plan…</button></div></form>`;
+  return `<form id="requestUserBulkForm" class="formPanel requestUserBulkBar" method="post" action="/admin/request-users/sync-selected">${csrfInput(req)}<strong><span data-request-selected-count>0</span> selected</strong><span class="muted">Use the current plan policy, or move the selected customers to another plan.</span><div class="buttonRow"><button class="button secondary" type="submit" data-requires-request-selection ${configured ? '' : 'disabled'}>Sync selected</button><button class="button secondary" type="submit" formaction="/admin/customers/bulk/preview" name="action" value="plan_change" data-requires-request-selection>Manual entitlement edit…</button></div></form>`;
 }
 
 async function page(req) {

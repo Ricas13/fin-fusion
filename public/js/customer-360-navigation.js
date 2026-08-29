@@ -1,11 +1,10 @@
 'use strict';
 
 (() => {
-  const match=location.pathname.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/(manage))?\/?$/i);
+  const match=location.pathname.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i);
   if(!match)return;
 
   const customerId=decodeURIComponent(match[1]);
-  const managePage=Boolean(match[2]);
   const base=`/admin/users/${encodeURIComponent(customerId)}`;
   const tabs=[
     ['overview','Overview',`${base}?tab=overview`],
@@ -13,12 +12,10 @@
     ['activity','Activity',`${base}?tab=activity`],
     ['billing','Billing',`${base}?tab=billing`],
     ['security','Security',`${base}?tab=security`],
-    ['history','History',`${base}?tab=history`],
-    ['manage','Manage',`${base}/manage`]
+    ['history','History',`${base}?tab=history`]
   ];
 
   function activeTab(){
-    if(managePage)return'manage';
     const tab=new URLSearchParams(location.search).get('tab')||'overview';
     return tabs.some(([key])=>key===tab)?tab:'overview';
   }
@@ -51,15 +48,9 @@
       legacy.replaceWith(nav);
     }else if(!nav){
       nav=buildNavigation();
-      if(managePage){
-        const banner=document.querySelector('.statusBanner');
-        if(banner)banner.insertAdjacentElement('afterend',nav);
-        else document.querySelector('.pageHeader')?.insertAdjacentElement('afterend',nav);
-      }else{
-        const summary=document.querySelector('.profileHero + .summaryGrid')||document.querySelector('.summaryGrid');
-        if(summary)summary.insertAdjacentElement('afterend',nav);
-        else document.querySelector('.profileHero')?.insertAdjacentElement('afterend',nav);
-      }
+      const summary=document.querySelector('.profileHero + .summaryGrid')||document.querySelector('.summaryGrid');
+      if(summary)summary.insertAdjacentElement('afterend',nav);
+      else document.querySelector('.profileHero')?.insertAdjacentElement('afterend',nav);
     }
 
     // Keep every tab deterministic. The general operator script used to turn
@@ -81,7 +72,7 @@
     // Customer identity, current plan and the persistent navigation should be
     // encountered before the override toolbox. This keeps the page oriented
     // around the customer rather than around administrator mutations.
-    if(!managePage&&nav){
+    if(nav){
       const controls=document.querySelector('.customerControlCentre');
       if(controls&&controls.previousElementSibling!==nav)nav.insertAdjacentElement('afterend',controls);
     }
@@ -97,7 +88,6 @@
     actions.querySelectorAll('a').forEach(link=>{
       const href=link.getAttribute('href')||'';
       if(href===`${base}?tab=activity`)link.remove();
-      if(managePage&&href===base)link.remove();
     });
   }
 

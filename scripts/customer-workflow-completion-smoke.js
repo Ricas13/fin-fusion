@@ -5,7 +5,6 @@ const fs=require('fs');
 const path=require('path');
 const ejs=require('ejs');
 const adminNav=require('../src/platform/admin-nav');
-const adminHtml=require('../src/platform/admin-html-core');
 const {restrictedImpersonationAction,injectBanner}=require('../src/platform/admin-impersonation');
 
 const root=path.join(__dirname,'..');
@@ -63,9 +62,15 @@ const register=ejs.render(fs.readFileSync(registerPath,'utf8'),{siteName:'CAPTAi
 assert(register.includes('claim link')&&register.includes('do not register again'),'registration must warn imported Jellyfin customers not to create a duplicate portal account');
 
 assert(!adminNav.groups.some(group=>group.key==='resellers'),'reserved reseller routes must not appear as a shipped module in the default admin sidebar');
-assert.strictEqual(adminHtml.clarifyManualEntitlementLabels('<button>Change plan</button>'),'<button>Manual entitlement edit</button>','admin plan-change controls must identify themselves as manual entitlement edits');
+const bulkCustomersSource=fs.readFileSync(path.join(root,'src/platform/admin-bulk-customers.js'),'utf8');
+const requestUsersSource=fs.readFileSync(path.join(root,'src/platform/admin-request-users.js'),'utf8');
+assert(bulkCustomersSource.includes("['plan_change','Manual entitlement edit',"),'the plan_change bulk-action catalog must label itself as a manual entitlement edit at the source, not via a rendering-time patch');
+assert(!bulkCustomersSource.includes("'Change plan'"),'no bulk-action catalog entry should still say "Change plan"');
 assert(customer360Source.includes("bulkActionForm(token,c.id,'plan_change','Manual entitlement edit')"),'Customer 360 must label plan_change as a manual entitlement edit at the source door');
-assert(customerManagementSource.includes("bulkPreview(req,id,'plan_change','Manual entitlement edit')"),'customer management must label plan_change as a manual entitlement edit at the source door');
+assert(!requestUsersSource.includes('Change plan'),'the request-users bulk plan-change button must not still say "Change plan"');
+assert(requestUsersSource.includes('Manual entitlement edit'),'the request-users bulk plan-change button must say "Manual entitlement edit"');
+assert(!fs.readFileSync(path.join(root,'src/platform/admin-html-core.js'),'utf8').includes('clarifyManualEntitlementLabels'),'the label-rewriting patch should be removed once every source site labels itself correctly');
+assert(/manage.*res\.redirect\(`\/admin\/users\/\$\{encodeURIComponent\(req\.params\.customerId\)\}\?tab=access`\)/.test(customerManagementSource),'GET /admin/users/:customerId/manage must redirect into the Access tab, not render a second page');
 const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route});
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal')),'automatic renewal changes','restricted support view must block automatic renewal changes');
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'checkout','restricted support view must keep checkout blocked');

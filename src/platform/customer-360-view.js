@@ -1,6 +1,7 @@
 'use strict';
 
 const v2=require('./customer-360-view-v2');
+const manage=require('./admin-customer-management');
 
 function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
@@ -16,12 +17,17 @@ function jellyfinPasswordSupport(detail){
   return `<section class="section"><div class="sectionHead"><div><h2>Jellyfin password support</h2><div class="muted">Help this customer change a Jellyfin password without exposing or storing the plaintext password in CAPTAiNFiN.</div></div><a class="button secondary" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}">Change Jellyfin password</a></div></section>`;
 }
 function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
-function body(detail,tab,token,accessDetail){
+function foldedAccessSections(detail,token,options){
+  const portal=manage.portalSection(detail,token,options.activationInfo);
+  const stremioInstall=options.stremioInfo?manage.stremioSection(detail,token,options.stremioInfo):'';
+  return portal+stremioInstall;
+}
+function body(detail,tab,token,accessDetail,options={}){
   const safe=customerFacingDetail(detail),type=serviceType(detail);
-  if(tab==='access'&&type==='stremio')return v2.body(safe,tab,token,accessDetail,{skipAccessSections:true})+stremioAccessPanel(detail);
+  if(tab==='access'&&type==='stremio')return v2.body(safe,tab,token,accessDetail,{skipAccessSections:true})+stremioAccessPanel(detail)+foldedAccessSections(safe,token,options);
   const html=v2.body(safe,tab,token,accessDetail);
   if(tab!=='access')return html;
-  return jellyfinPasswordSupport(safe)+html;
+  return jellyfinPasswordSupport(safe)+html+foldedAccessSections(safe,token,options);
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription};

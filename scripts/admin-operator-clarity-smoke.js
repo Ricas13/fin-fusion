@@ -99,7 +99,8 @@ assert(!plans.includes('Plan policies & storefront tools') && plans.includes('/a
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search'), 'Plans must not render filters for the deliberately small catalogue');
 assert(plans.includes('archived=1') && plans.includes('Retired catalogue versions'), 'Archived plan versions must remain reachable without cluttering the active catalogue');
 
-assert(stableCustomerNav.includes("['overview','Overview'") && stableCustomerNav.includes("['manage','Manage'"), 'Customer 360 must expose one stable customer-scoped navigation from Overview through Manage');
+assert(stableCustomerNav.includes("['overview','Overview'") && stableCustomerNav.includes("['history','History'"), 'Customer 360 must expose one stable customer-scoped navigation from Overview through History');
+assert(!stableCustomerNav.includes("['manage','Manage'"), 'Manage must no longer be a separate persistent nav tab now that /manage redirects into the Access tab');
 assert(stableCustomerNav.includes("link.setAttribute('href',href)") && stableCustomerNav.includes('MutationObserver'), 'late service-aware enrichment must not mutate Customer 360 navigation after render');
 
 assert(orders.includes('Transaction desk') && orders.includes('Open customer billing →'), 'Orders must act as a transaction trail into customer billing rather than a raw record table');
