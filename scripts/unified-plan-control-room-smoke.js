@@ -8,6 +8,10 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const routes = read('src/platform/admin-route-composition.js');
 const editor = read('src/platform/admin-jellyfin-plan-editor.js');
+const stremioEditor = read('src/platform/admin-stremio-plan-editor.js');
+const attentionPolicy = read('src/platform/actionable-attention-policy.js');
+const operatorState = read('src/platform/admin-operator-state.js');
+const attentionSource = read('src/platform/attention.js');
 const css = read('public/css/admin-plan-control-room.css');
 const capability = read('public/css/admin-capability.css');
 const attention = read('src/platform/admin-attention.js');
@@ -34,6 +38,17 @@ assert(baseline.includes("marketing_features text[] DEFAULT '{}'::text[] NOT NUL
 assert(editor.includes('marketing_features=$4::text[]'), 'product editor must persist homepage features using the schema text-array type');
 assert(!editor.includes('marketing_features=$4::jsonb'), 'product editor must never cast marketing features to jsonb');
 assert(editor.includes('[plan.id, name, description, features, visible, active]'), 'product editor must bind the feature array directly instead of JSON-encoding it');
+
+assert(stremioEditor.includes('Plan, storefront & commerce') && stremioEditor.includes('name="description"') && stremioEditor.includes('name="feature${i+1}"'), 'Stremio must edit storefront copy inside its existing product/commerce card');
+assert(stremioEditor.includes('UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],billing_interval=$5,duration_days=$6'), 'the Stremio product/commerce save must persist storefront copy in the same mutation');
+assert(!stremioEditor.includes('editor-storefront') && !stremioEditor.includes('saveStorefront') && !stremioEditor.includes('Save storefront'), 'Stremio must not retain a second storefront POST or Save button');
+assert(stremioEditor.includes("res.redirect(`/admin/plans?error=${encodeURIComponent(error.message||'Plan not found')}`)"), 'missing Stremio plans must return to the catalogue with an error notice instead of rendering Not found as page/header content');
+
+assert(attentionPolicy.includes("const REQUIRED_ENABLED_JOBS = new Set(['payment_events', 'plan_changes'])"), 'payment-event retry and plan-change lifecycle jobs must be declared operator-required');
+assert(attentionPolicy.includes("health === 'disabled' && REQUIRED_ENABLED_JOBS.has(jobKey)") && attentionPolicy.includes("reason: 'disabled'"), 'disabled required payment lifecycle jobs must become operator-visible alerts immediately');
+assert(attentionSource.includes('jobHealth.list()'), 'Needs Attention must derive job alerts from the canonical automation job snapshot');
+assert(operatorState.includes('attention.openSummary()'), 'header Alerts count must use the same Needs Attention snapshot as the Alerts page');
+
 assert(capability.includes("@import url('/css/admin-plan-control-room.css')"), 'shared admin shell must load the plan/attention layout corrections');
 assert(css.includes('.planControlGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use one predictable two-column card grid on wide screens');
 assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}'), 'legacy card spans must not recreate an irregular two/three/full-width mosaic');
