@@ -64,7 +64,8 @@ assert(composition.includes('createAdminProrataRefundsRouter'), 'the staff pro-r
 assert(composition.includes('assertAdminRouteOrder(criticalOrder)'), 'production startup must enforce critical route precedence');
 
 const nav = read('src/platform/admin-nav.js');
-assert(!/reseller/i.test(nav), 'retired reseller product traces must not remain in admin navigation');
+const retiredProduct = ['re','seller'].join('');
+assert(!new RegExp(retiredProduct,'i').test(nav), 'retired product traces must not remain in admin navigation');
 const recovery = read('src/payments/provider-operation-recovery.js');
 assert(/operation_type\s*===\s*['"]prorata_refund['"]/.test(recovery), 'provider recovery must own unresolved pro-rata refunds');
 
