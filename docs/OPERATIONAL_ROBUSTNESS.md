@@ -12,7 +12,7 @@ Bulk synchronization uses a bounded worker pool. The default concurrency is **3*
 
 ## Worker instance health
 
-Migration `109_worker_instance_health.sql` changes `operational_worker_state` identity from worker role alone to `(worker_key, instance_id)`. This makes concurrent containers/processes separately observable while preserving the aggregate `workers` diagnostics consumed by existing callers.
+Migration `20260829174000_worker_instance_health.sql` changes `operational_worker_state` identity from worker role alone to `(worker_key, instance_id)`. This makes concurrent containers/processes separately observable while preserving the aggregate `workers` diagnostics consumed by existing callers.
 
 System diagnostics additionally expose `workerInstances` and `workerWarnings`. Instance diagnostics include role, instance ID, version, commit SHA, start/heartbeat timestamps, state, and available hostname/container metadata. Warnings identify duplicate live instances of a singleton worker role, version/commit skew, and stale instances.
 
