@@ -222,16 +222,17 @@ function createAdminManualEntitlementRouter() {
 
     router.use('/admin/users/:customerId', async (req, res, next) => {
         if (req.method !== 'GET') return next();
-        const tab = req.query.tab === 'billing' ? 'billing' : req.query.tab === 'access' ? 'access' : null;
-        if (!tab) return next();
+        const surface = req.query.tab === 'billing' ? 'billing' : req.query.tab === 'access' ? 'access' : (!req.query.tab || req.query.tab === 'overview') ? 'overview' : null;
+        if (!surface) return next();
         try {
-            const [existing, plans] = await Promise.all([currentPrimarySubscription(req.params.customerId), grantPlans()]);
+            const existing = await currentPrimarySubscription(req.params.customerId);
+            const plans = !existing && surface !== 'overview' ? await grantPlans() : [];
             const send = res.send.bind(res);
             res.send = body => {
                 let html = body;
                 if (!existing) {
                     html = hideEmptyManualEdit(html);
-                    html = insertBeforeMainEnd(html, grantForm(req, req.params.customerId, plans));
+                    if (surface === 'access' || surface === 'billing') html = insertBeforeMainEnd(html, grantForm(req, req.params.customerId, plans));
                 }
                 return send(html);
             };
