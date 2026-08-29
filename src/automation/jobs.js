@@ -9,6 +9,7 @@ const emailSettings=require('../integrations/email-settings');
 const emailOutbox=require('../integrations/email-outbox');
 const notificationOutbox=require('../integrations/notification-outbox');
 const billingControl=require('../payments/billing-control');
+const providerOperationRecovery=require('../payments/provider-operation-recovery');
 const customerPlanChange=require('../payments/customer-plan-change');
 const paymentEventRetry=require('../payments/payment-event-retry');
 const referrals=require('../referrals');
@@ -41,6 +42,7 @@ const jobs={
  async notification_outbox(){return notificationOutbox.deliverDue({limit:50})},
  async request_users(){await requestServiceSettings.ensureLoaded();const config=await requestUserSync.configuration();if(!config.configured)return{processed:0,skipped:'request_service_not_configured'};const result=await requestUserSync.syncAll();return{...result,processed:Number(result.total||0)}},
  async billing(){return billingControl.syncDue({all:false,limit:100})},
+ async provider_operation_recovery(){return providerOperationRecovery.run({limit:25})},
  async payment_events(){return paymentEventRetry.run({limit:25})},
  async plan_changes(){const stripe=await customerPlanChange.applyDueStripe(),paypalExpiry=await customerPlanChange.expireDuePaypal();return{...stripe,paypalExpiry,processed:Number(stripe.succeeded||0)+Number(paypalExpiry.notified||0),waiting:Number(stripe.pending||0),failed:Number(stripe.failed||0)+Number(paypalExpiry.failed||0)}},
  async referral_rewards(){return referrals.processDueRewards({limit:100})},
