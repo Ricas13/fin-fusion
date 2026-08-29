@@ -26,6 +26,7 @@
     "server:add": "node scripts/add-jellyfin-server.js",
     "payments:map": "node scripts/map-provider-price.js",
     "payments:plisio-smoke": "node scripts/plisio-payments-smoke.js",
+    "payments:operations-status": "node scripts/provider-operations-status.js",
     "activity:worker": "node scripts/activity-worker.js",
     "automation:worker": "node scripts/automation-worker.js",
     "secrets:rotate-jellyfin": "node scripts/rotate-jellyfin-keys.js",
