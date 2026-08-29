@@ -11,6 +11,7 @@ const transfer = require('../src/platform/configuration-transfer');
 const activity = require('../src/jellyfin/activity');
 const outbound = require('../src/security/outbound-url-policy');
 const adminStepUp = require('../src/auth/admin-step-up');
+const ownerGuard = require('../src/auth/owner-guard');
 
 async function main() {
     const legacy = transfer.normalizeV2Plan({ code: 'legacy', streams: 1 }, { streams: null });
@@ -152,6 +153,43 @@ async function main() {
     ]) {
         assert(migration.includes(token), `security migration is missing ${token}`);
     }
+
+    // Owner/support split: existing admins are promoted exactly once when the
+    // column is introduced; future admins remain support-only by default.
+    const ownerMigration = read('db/migrations/107_admin_owner_capability.sql');
+    const firstRun = read('src/auth/first-run-setup.js');
+    const adminComposition = read('src/platform/admin-route-composition.js');
+    assert(ownerMigration.includes("column_name='is_owner'"), 'owner migration must detect first introduction before backfilling existing admins');
+    assert(ownerMigration.includes('ADD COLUMN is_owner BOOLEAN NOT NULL DEFAULT FALSE'), 'new administrators must default to support-only');
+    assert(ownerMigration.includes("WHERE role='admin'"), 'pre-split administrators must retain owner authority');
+    assert(firstRun.includes('legacy_numeric_id,is_owner'), 'first-run administrator creation must explicitly set owner capability');
+    assert(firstRun.includes("'admin',TRUE,$4,TRUE"), 'the installation owner must be created with owner capability');
+    assert.strictEqual(ownerGuard.isOwnerOnlyPath('/settings/support'), true, 'platform settings must be owner-only');
+    assert.strictEqual(ownerGuard.isOwnerOnlyPath('/payments/stripe'), true, 'payment credentials must be owner-only');
+    assert.strictEqual(ownerGuard.isOwnerOnlyPath('/notifications/preferences/delivery'), true, 'messaging credentials must be owner-only');
+    assert.strictEqual(ownerGuard.isOwnerOnlyPath('/email'), true, 'email infrastructure must be owner-only');
+    assert.strictEqual(ownerGuard.isOwnerOnlyPath('/users/00000000-0000-0000-0000-000000000001'), false, 'support must retain customer operations');
+    assert.strictEqual(ownerGuard.isOwnerOnlyPath('/support/tickets'), false, 'support must retain ticket operations');
+    assert(
+        adminComposition.indexOf("app.use('/admin', adminMutationRateLimit);") < adminComposition.indexOf("app.use('/admin', ownerBoundary);"),
+        'existing admin mutation rate limiting must run before owner authorization'
+    );
+
+    // Stremio installation credentials are bearer secrets. The portal must say
+    // so explicitly, and customer communications must not acquire a code path
+    // that reads installation credentials for outbound delivery.
+    const customerStremio = read('src/platform/customer-stremio.js');
+    const customerDashboard = read('views/customer/dashboard.ejs');
+    const customerCommunications = read('src/platform/customer-communications.js');
+    assert(/secret bearer link/.test(customerStremio)&&/treat it like a password/.test(customerStremio), 'new Stremio links must be described as bearer secrets');
+    assert(/Keep this link private/.test(customerDashboard), 'the persistent Stremio UI must warn customers to keep the manifest private');
+    assert(!customerCommunications.includes('install-credential-recovery')&&!customerCommunications.includes('stremioManifestUrl'), 'outbound customer communications must not read or send Stremio bearer credentials');
+
+    // Stored community settings should degrade safely if an older/bad value is
+    // present rather than making the admin/customer dashboard unrenderable.
+    const notificationSettings = read('src/integrations/notification-settings.js');
+    assert(notificationSettings.includes('function communityForLoad'), 'notification settings must have a tolerant load-normalization path');
+    assert(notificationSettings.includes('const safe=(parse,fallback)=>{try{return parse()}catch{return fallback}}'), 'malformed saved community settings must fall back safely on load');
 
     console.log('security boundary hardening smoke: ok');
 }

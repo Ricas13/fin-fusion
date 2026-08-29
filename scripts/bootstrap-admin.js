@@ -60,16 +60,16 @@ async function main() {
         const legacyId = Number(legacyIdResult.rows[0].next_id || 1);
         const inserted = await client.query(`
             INSERT INTO app_users(
-                email,username,password_hash,role,active,legacy_numeric_id,
+                email,username,password_hash,role,active,legacy_numeric_id,is_owner,
                 password_changed_at,email_verified_at,created_at,updated_at
-            ) VALUES($1,$2,$3,'admin',TRUE,$4,NOW(),CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END,NOW(),NOW())
-            RETURNING id,username,legacy_numeric_id
+            ) VALUES($1,$2,$3,'admin',TRUE,$4,TRUE,NOW(),CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END,NOW(),NOW())
+            RETURNING id,username,legacy_numeric_id,is_owner
         `, [email, username, passwordHash, legacyId]);
         const adminId = inserted.rows[0].id;
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'admin.bootstrap','app_user',$2,$3::jsonb)
-        `, [adminId, String(adminId), JSON.stringify({ username, legacyNumericId: legacyId, source: 'environment' })]);
+        `, [adminId, String(adminId), JSON.stringify({ username, legacyNumericId: legacyId, owner: true, source: 'environment' })]);
         await client.query('COMMIT');
         console.log(`native admin bootstrap: created ${username}`);
     } catch (error) {

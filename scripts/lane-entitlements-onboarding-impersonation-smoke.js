@@ -101,22 +101,31 @@ assert(/async function changePortalPassword/.test(customers)&&/password_hash/.te
 assert(/\/account\/security\/password/.test(security), 'Account Security must expose portal password change');
 assert(/customer_no_email_verification_state/.test(migration), 'email-less imported users must not be trapped by the email-verification gate');
 
-// Admin impersonation uses the real portal with an explicit restricted support policy.
-assert(/View portal \(restricted\)/.test(impersonation), 'Customer 360 must label impersonation as a restricted portal view');
+// Admin impersonation uses the real portal with a global read-only support policy.
+assert(/View portal \(read-only\)/.test(impersonation), 'Customer 360 must label impersonation as a read-only portal view');
 assert(/Nested impersonation is not allowed/.test(impersonation), 'nested impersonation must be blocked');
 assert(/row\?\.role === 'customer'/.test(impersonation), 'privileged/admin targets must not be impersonable');
 assert(/req\.session\.impersonation = \{/.test(impersonation)&&/actorUserId: req\.session\.authUserId/.test(impersonation), 'real admin actor identity must remain attached to impersonation');
 assert(/req\.session\.customerId = target\.customer_id/.test(impersonation)&&/return res\.redirect\('\/account'\)/.test(impersonation), 'impersonation must enter the real customer portal');
-assert(/Restricted support view: \$\{esc\(label\)\}/.test(impersonation)&&/Exit impersonation/.test(impersonation), 'persistent restricted-support banner/exit control missing');
-assert(/admin\.impersonation\.start/.test(impersonation)&&/admin\.impersonation\.end/.test(impersonation)&&/admin\.impersonation\.customer_action/.test(impersonation), 'impersonation lifecycle and allowed mutations must be audited');
+assert(/Read-only support view: \$\{esc\(label\)\}/.test(impersonation)&&/Exit impersonation/.test(impersonation), 'persistent read-only support banner/exit control missing');
+assert(/admin\.impersonation\.start/.test(impersonation)&&/admin\.impersonation\.end/.test(impersonation)&&/admin\.impersonation\.customer_action/.test(impersonation), 'impersonation lifecycle and denied mutations must be audited');
 assert(!/password_hash|currentPassword|setJellyfinPassword/.test(impersonation), 'impersonation must never read or bypass customer passwords');
-const impersonatedPost=path=>({session:{impersonation:{id:'test'}},method:'POST',path});
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/stripe')),'checkout','impersonation must block provider checkout');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/security/password')),'portal password changes','impersonation must block portal password changes');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/jellyfin/account-1/password')),'Jellyfin password changes','impersonation must block Jellyfin password changes');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/requests/password')),'request-site password changes','impersonation must block request-site password changes');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/affiliate/credit-to-service')),'service-credit redemption','impersonation must block service-credit redemption');
-assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/support/tickets')),null,'restricted support view must keep non-sensitive customer actions available and audited');
+const impersonated=(method,path)=>({session:{impersonation:{id:'test'}},method,path});
+for (const path of [
+  '/account/checkout/stripe',
+  '/account/security/password',
+  '/account/jellyfin/account-1/password',
+  '/account/requests/password',
+  '/account/affiliate/credit-to-service',
+  '/account/support/tickets',
+  '/account/stremio/install',
+  '/account/stremio/reset-household',
+  '/account/stremio/revoke'
+]) assert.strictEqual(restrictedImpersonationAction(impersonated('POST',path)),'customer changes',`impersonation must block ${path}`);
+assert.strictEqual(restrictedImpersonationAction(impersonated('PATCH','/account/profile')),'customer changes','impersonation must block PATCH mutations');
+assert.strictEqual(restrictedImpersonationAction(impersonated('DELETE','/account/profile')),'customer changes','impersonation must block DELETE mutations');
+assert.strictEqual(restrictedImpersonationAction(impersonated('GET','/account')) ,null,'read-only browsing must remain available');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/impersonation/exit')),null,'exit must remain available');
 assert.strictEqual(restrictedImpersonationAction({session:{},method:'POST',path:'/account/checkout/stripe'}),null,'normal customer sessions must not be affected by impersonation policy');
 
 // New plan UI must not silently re-enable the permissions that triggered this audit.
