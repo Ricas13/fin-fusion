@@ -5,6 +5,7 @@ const fs=require('fs');
 const path=require('path');
 const ejs=require('ejs');
 const adminNav=require('../src/platform/admin-nav');
+const customer360View=require('../src/platform/customer-360-view');
 const {restrictedImpersonationAction,injectBanner}=require('../src/platform/admin-impersonation');
 
 const root=path.join(__dirname,'..');
@@ -63,6 +64,7 @@ assert(register.includes('claim link')&&register.includes('do not register again
 
 assert(!adminNav.groups.some(group=>group.key==='resellers'),'reserved reseller routes must not appear as a shipped module in the default admin sidebar');
 const bulkCustomersSource=fs.readFileSync(path.join(root,'src/platform/admin-bulk-customers.js'),'utf8');
+const bulkOperationsSource=fs.readFileSync(path.join(root,'src/platform/bulk-operations.js'),'utf8');
 const requestUsersSource=fs.readFileSync(path.join(root,'src/platform/admin-request-users.js'),'utf8');
 assert(bulkCustomersSource.includes("['plan_change','Manual entitlement edit',"),'the plan_change bulk-action catalog must label itself as a manual entitlement edit at the source, not via a rendering-time patch');
 assert(!bulkCustomersSource.includes("'Change plan'"),'no bulk-action catalog entry should still say "Change plan"');
@@ -70,7 +72,18 @@ assert(customer360Source.includes("bulkActionForm(token,c.id,'plan_change','Manu
 assert(!requestUsersSource.includes('Change plan'),'the request-users bulk plan-change button must not still say "Change plan"');
 assert(requestUsersSource.includes('Manual entitlement edit'),'the request-users bulk plan-change button must say "Manual entitlement edit"');
 assert(!fs.readFileSync(path.join(root,'src/platform/admin-html-core.js'),'utf8').includes('clarifyManualEntitlementLabels'),'the label-rewriting patch should be removed once every source site labels itself correctly');
-assert(/manage.*res\.redirect\(`\/admin\/users\/\$\{encodeURIComponent\(req\.params\.customerId\)\}\?tab=access`\)/.test(customerManagementSource),'GET /admin/users/:customerId/manage must redirect into the Access tab, not render a second page');
+const manualHandler=bulkOperationsSource.slice(bulkOperationsSource.indexOf("registerHandler('plan_change'"),bulkOperationsSource.indexOf("registerHandler('extend_entitlement'"));
+assert(manualHandler.includes('applyManualEntitlementContract(sub,target)'),'recurring provider customers must use the local manual entitlement contract');
+assert(!manualHandler.includes('requestChange('),'Manual entitlement edit must never call customer-plan-change.requestChange or schedule a provider change');
+assert(manualHandler.includes('providerBillingChanged:false')&&manualHandler.includes("mode:'manual_entitlement'"),'manual entitlement edits must explicitly preserve provider billing state');
+assert(bulkOperationsSource.includes('billingContractPreserved:true'),'the recurring manual entitlement snapshot must preserve the existing provider billing contract while replacing access terms');
+assert(customerManagementSource.includes('function accessPath(')&&customerManagementSource.includes('return res.redirect(accessPath(id,key,message,anchor))'),'folded /manage POST actions must return success/error feedback directly to the Access tab');
+assert(customerManagementSource.includes("r.get('/admin/users/:customerId/manage'")&&customerManagementSource.includes('return res.redirect(accessPath(req.params.customerId,key,message))'),'GET /manage must redirect into Access and preserve an existing message/error');
+const localAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[{...subscription(false),source:'manual',provider_subscription_id:null}],accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Server A',recon_status:'successful'}]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
+assert(localAccessHtml.includes('Manual entitlement edit')&&localAccessHtml.includes('Reset all to plan')&&localAccessHtml.includes('Move server')&&localAccessHtml.includes('Change expiry')&&localAccessHtml.includes('Reconcile access'),'Access must expose plan assignment, server edit, expiry edit, reset-to-plan and reconciliation from one workspace');
+assert(localAccessHtml.includes('Reset server to plan placement'),'assigned server must have a customer-level reset/reconcile action instead of requiring the global migration console');
+const recurringAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[subscription(false)],accounts:[]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
+assert(recurringAccessHtml.includes('Manage renewal in Billing')&&!recurringAccessHtml.includes('Change expiry'),'provider-controlled recurring expiry must stay a Billing fact/action rather than pretending a local expiry edit is provider-safe');
 const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route});
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal')),'automatic renewal changes','restricted support view must block automatic renewal changes');
 assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'checkout','restricted support view must keep checkout blocked');
