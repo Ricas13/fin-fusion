@@ -9,33 +9,81 @@
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-dashboard.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
+  <link rel="stylesheet" href="/css/customer-affiliate.css">
   <script src="/js/customer-referral-copy.js" defer></script>
 </head>
 <%
 function money(minor,c){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:c,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100)}catch(_){return `${c} ${(Number(minor||0)/100).toFixed(2)}`}}
+function when(v){if(!v)return null;const d=new Date(v);return Number.isNaN(d.getTime())?null:d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});}
+function referralStatus(r){
+  if(['reversed','unfulfilled'].includes(String(r.status||'')))return{label:'Not eligible',detail:r.reward_note||'This referral did not meet the reward rules.'};
+  if(!r.credit_id)return{label:'Waiting for paid purchase',detail:'The referral is recorded, but no eligible paid purchase has qualified yet.'};
+  if(r.credit_state==='pending')return{label:'Qualified · pending',detail:`The paid purchase qualified. Credit is pending${when(r.available_at)?` until ${when(r.available_at)}`:''}.`};
+  if(r.credit_state==='available')return{label:'Credit available',detail:'This reward has cleared the protection window and is spendable.'};
+  if(r.credit_state==='void')return{label:'Reversed',detail:'The original reward is no longer spendable.'};
+  return{label:'Qualified',detail:'A qualifying paid purchase has been recorded.'};
+}
 const balances=new Map((state.balances||[]).map(x=>[x.currency,x]));
 const selected=balances.get(currency)||{available_minor:0,pending_minor:0};
 const available=Number(selected.available_minor||0);
 const usdBalance=balances.get('USD')||{available_minor:0,pending_minor:0};
 const paidPlans=plans.filter(p=>Number(p.price_minor)>0);
+const referrals=Array.isArray(state.referrals)?state.referrals:[];
+const protectionDays=Math.max(Number(settings.qualificationDelayDays||0),Number(settings.refundWindowDays||0));
 %>
 <body><div class="portalShell">
 <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
 <div class="customerLayout"><aside class="customerSidebar" aria-label="Customer navigation"><div class="customerNavTitle">My account</div><%- include('_nav',{active:'affiliate'}) %></aside><main class="portalMain affiliatePage">
 <% if(message){ %><div class="notice success"><%= message %></div><% } %>
 <% if(error){ %><div class="notice error"><%= error %></div><% } %>
-<section class="accountHero simpleHero affiliateHero"><div><div class="eyebrow">Affiliate</div><h1>Share CAPTAiNFiN. Earn service credit.</h1><p>Send your referral link to friends. When a qualifying purchase matures, your reward becomes credit you can use on eligible plans.</p></div><div class="affiliateCode"><span>Your code</span><strong><%= code %></strong></div></section>
+
+<section class="accountHero simpleHero affiliateHero"><div><div class="eyebrow">Affiliate</div><h1>Share CAPTAiNFiN. Earn service credit.</h1><p>Share your referral link. A signup records the referral; you earn credit only after that person completes an eligible paid purchase.</p></div><div class="affiliateCode"><span>Your code</span><strong><%= code %></strong></div></section>
 
 <section class="affiliateOverview">
-  <div class="panel affiliateLinkCard"><div class="sectionHead"><div><h2>Your referral link</h2><p>Copy it once and share it anywhere.</p></div></div><div class="copyLine"><input class="input" id="referral-signup-link" type="text" readonly value="<%= referralLink %>"><button class="button primary" type="button" data-copy-referral-link>Copy link</button></div><div class="accessMeta">Credit becomes available after at least <%= Math.max(settings.qualificationDelayDays,settings.refundWindowDays) %> day(s). Refunded or disputed qualifying purchases can reverse unused credit.</div></div>
-  <div class="affiliateHowCard"><span class="eyebrow">How it works</span><ol><li>Someone joins through your link.</li><li>Their qualifying purchase clears the reward window.</li><li>You receive <strong><%= settings.rewardPercent %>%</strong> service credit.</li></ol></div>
+  <div class="panel affiliateLinkCard">
+    <div class="sectionHead"><div><h2>Your referral link</h2><p>Anyone who creates their account through this link is attributed to you.</p></div></div>
+    <div class="copyLine"><input class="input" id="referral-signup-link" type="text" readonly value="<%= referralLink %>"><button class="button primary" type="button" data-copy-referral-link>Copy link</button></div>
+    <div class="accessMeta">The referral can stay recorded while they decide what to buy. A free-plan signup alone does not create a reward.</div>
+  </div>
+  <div class="affiliateQualificationCard">
+    <span class="eyebrow">When does it qualify?</span>
+    <h2>After their first eligible paid purchase</h2>
+    <p>Signing up through your link records the referral, but it does <strong>not</strong> earn credit by itself.</p>
+    <ul class="affiliateRuleList">
+      <li>An eligible paid CAPTAiNFiN purchase must complete successfully.</li>
+      <li>Your reward is <strong><%= settings.rewardPercent %>%</strong> of the actual qualifying amount paid.</li>
+      <li>Qualified credit stays pending for <strong><%= protectionDays %> day<%= protectionDays===1?'':'s' %></strong> before it becomes spendable.</li>
+    </ul>
+  </div>
 </section>
 
 <section class="overviewGrid affiliateMetrics">
   <article class="metricCard"><div class="metricLabel">Available <%= currency %> credit</div><div class="metricValue"><%= money(available,currency) %></div><div class="metricSub">Ready to use now</div></article>
-  <article class="metricCard"><div class="metricLabel">Pending <%= currency %> credit</div><div class="metricValue"><%= money(selected.pending_minor,currency) %></div><div class="metricSub">Waiting to qualify</div></article>
-  <article class="metricCard"><div class="metricLabel">Reward rate</div><div class="metricValue"><%= settings.rewardPercent %>%</div><div class="metricSub">Of qualifying referred spend</div></article>
+  <article class="metricCard"><div class="metricLabel">Pending <%= currency %> credit</div><div class="metricValue"><%= money(selected.pending_minor,currency) %></div><div class="metricSub">Qualified; waiting for the protection window</div></article>
+  <article class="metricCard"><div class="metricLabel">Referrals recorded</div><div class="metricValue"><%= referrals.length %></div><div class="metricSub">Includes referrals still waiting for a paid purchase</div></article>
+  <article class="metricCard"><div class="metricLabel">Current reward rate</div><div class="metricValue"><%= settings.rewardPercent %>%</div><div class="metricSub">Of the actual qualifying paid amount</div></article>
   <% if(currency!=='USD'&&(Number(usdBalance.available_minor||0)>0||Number(usdBalance.pending_minor||0)>0)){ %><article class="metricCard"><div class="metricLabel">USD balance</div><div class="metricValue"><%= money(usdBalance.available_minor,'USD') %></div><div class="metricSub"><%= money(usdBalance.pending_minor,'USD') %> pending</div></article><% } %>
+</section>
+
+<section class="panel affiliateHow">
+  <div class="sectionHead"><div><h2>How the referral journey works</h2><p>You can see the difference between a recorded referral, a qualified purchase and spendable credit.</p></div></div>
+  <div class="affiliateSteps">
+    <div class="affiliateStep"><div class="affiliateStepNumber">1</div><strong>They use your link</strong><p>Their new account is permanently attributed to your referral code.</p></div>
+    <div class="affiliateStep"><div class="affiliateStepNumber">2</div><strong>Referral recorded</strong><p>Nothing is earned yet. They can remain on a free plan or decide later whether to purchase.</p></div>
+    <div class="affiliateStep"><div class="affiliateStepNumber">3</div><strong>Paid purchase qualifies</strong><p>The first eligible successful paid purchase creates a reward worth <%= settings.rewardPercent %>% of the actual qualifying spend.</p></div>
+    <div class="affiliateStep"><div class="affiliateStepNumber">4</div><strong>Credit becomes available</strong><p>After the <%= protectionDays %>-day protection window, unused qualifying credit becomes spendable service credit.</p></div>
+  </div>
+  <div class="affiliateLegalNote">Service credit is not cash and cannot be withdrawn. Self-referrals or referrals using the same payment identity are not eligible. Refunded or disputed qualifying purchases can reverse unused credit.</div>
+</section>
+
+<section class="panel affiliateReferralHistory">
+  <div class="sectionHead"><div><h2>Your referral activity</h2><p>Status is shown without exposing the referred customer's personal details.</p></div></div>
+  <% if(!referrals.length){ %><div class="empty">No referrals have been recorded yet. Share your link to get started.</div><% } else { %>
+  <div class="affiliateReferralList">
+    <% referrals.forEach(function(r){const status=referralStatus(r),total=Number(r.total_reward_minor||0); %>
+      <div class="affiliateReferralRow"><div class="affiliateReferralMain"><strong><%= status.label %></strong><div class="affiliateReferralMeta"><%= status.detail %> · Referral recorded <%= when(r.created_at)||'recently' %></div></div><div class="affiliateReferralValue"><% if(total>0&&r.currency){ %><strong><%= money(total,r.currency) %></strong><span>reward credit</span><% } else { %><strong>—</strong><span>no reward yet</span><% } %></div></div>
+    <% }) %>
+  </div><% } %>
 </section>
 
 <% if(available>0&&paidPlans.length){ %>
@@ -47,6 +95,6 @@ const paidPlans=plans.filter(p=>Number(p.price_minor)>0);
 </div></article><% }) %>
 </div><div class="notice">Recurring PayPal subscriptions cannot be part-paid with service credit. Stripe and one-time PayPal payments can use an eligible credit balance.</div></section>
 <% } else { %>
-<section class="panel affiliateEmptyCredit"><div><span class="eyebrow">Your credit</span><h2>No spendable credit yet</h2><p>There is nothing you need to choose here until a referral reward becomes available. Your normal plans remain on Account Home.</p></div><a class="button secondary" href="/account#plans">View my plans</a></section>
+<section class="panel affiliateEmptyCredit"><div><span class="eyebrow">Your credit</span><h2>No spendable credit yet</h2><p>There is nothing you need to choose here until a qualified referral reward becomes available. Your normal plans remain on Account Home.</p></div><a class="button secondary" href="/account#plans">View my plans</a></section>
 <% } %>
 </main></div></div></body></html>
