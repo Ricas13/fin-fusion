@@ -18,7 +18,7 @@ class ProviderHttpError extends Error {
 function boundedTimeout(value, fallback = DEFAULT_TIMEOUT_MS) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.max(1000, Math.min(120000, Math.round(parsed)));
+  return Math.max(50, Math.min(120000, Math.round(parsed)));
 }
 
 function timeoutMs(provider) {
@@ -78,10 +78,8 @@ async function fetchJson(provider, url, options = {}, { timeout = timeoutMs(prov
   const controller = new AbortController();
   const deadline = boundedTimeout(timeout);
   const timer = setTimeout(() => controller.abort(), deadline);
-  timer.unref?.();
-  let response;
   try {
-    response = await fetchImpl(url, { ...options, signal: controller.signal });
+    const response = await fetchImpl(url, { ...options, signal: controller.signal });
     const requestId = requestIdFromHeaders(provider, response.headers);
     let data;
     try {
