@@ -45,6 +45,8 @@ const externalJellyfin={media_server_type:'jellyfin',base_url:'https://fallback.
 const externalJellyfinUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'jf-item',mediaSourceId:'jf-media',container:'mkv',filename:'x.mkv'}));
 assert.strictEqual(externalJellyfinUrl.pathname,'/jellyfin/Videos/jf-item/stream.mkv','external Jellyfin playback must preserve configured prefixes');
 assert.strictEqual(externalJellyfinUrl.searchParams.get('api_key'),'external-jellyfin-token');
+const externalStrmUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'strm-item',mediaSourceId:'',container:'',filename:'Movie.2026.1080p.mkv.strm'}));
+assert.strictEqual(externalStrmUrl.pathname,'/jellyfin/Videos/strm-item/stream.mkv','external STRM playback must infer the underlying video container when MediaSource.Container is absent');
 const externalEmby={media_server_type:'emby',base_url:'https://fallback.example/proxy',access_token_encrypted:sourceClient.encryptToken('external-emby-token')};
 const externalEmbyUrl=new URL(external.directPlaybackUrl({source:externalEmby,itemId:'emby-item',mediaSourceId:'emby-media',container:'mkv',filename:'x.mkv'}));
 assert.strictEqual(externalEmbyUrl.pathname,'/proxy/emby/Videos/emby-item/stream.mkv','external Emby playback must use the provider adapter and preserve reverse-proxy prefixes');
@@ -85,7 +87,6 @@ assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includ
 assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
 assert(/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(externalSource),'external sources must return static/original-file URLs');
 assert(externalSource.includes('client.sourceUrl(source.base_url')&&externalSource.includes('source.media_server_type'),'external direct URLs must route through the stored provider type');
-assert(externalSource.includes('containerExtension(container) || pathExtension(file)'),'external raw URLs must share the same container fallback used for double-extension STRM paths');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside playback-session reporting');
 
 console.log('stremio Jellyfin/Emby raw-file playback compatibility smoke: ok');
