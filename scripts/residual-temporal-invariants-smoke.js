@@ -85,10 +85,14 @@ function main() {
     assert(requestChange.includes("state=CASE WHEN $3::boolean THEN 'failed' ELSE state END"), 'Retryable Stripe scheduling errors do not preserve the open local plan-change state.');
     const dueStripe = section(planChange, 'async function applyDueStripe', 'async function expireDuePaypal');
     assert(dueStripe.includes("throw planChangeRefusal('Scheduled Stripe target price is missing."), 'Deterministic scheduled Stripe invariants must be marked for manual failure.');
-    assert(dueStripe.includes("if(error.planChangeRefusal){await query(`UPDATE customer_plan_changes SET state='failed'"), 'Unrecoverable scheduled Stripe divergence must still become a visible failed plan change.');
+    assert(dueStripe.includes('if(error.planChangeRefusal){') && dueStripe.includes("SET state='failed',error=$2"), 'Unrecoverable scheduled Stripe divergence must still become a visible failed plan change.');
     assert(dueStripe.includes("UPDATE customer_plan_changes SET error=$2,updated_at=NOW() WHERE id=$1 AND state='pending'"), 'Transient scheduled Stripe failures must remain pending so the next automation cycle can converge them.');
     assert(dueStripe.includes("provider_schedule_state='applied',error=NULL"), 'Successful scheduled Stripe convergence must clear stale retry errors.');
-    assert(dueStripe.includes('provider_schedule_state=$2,error=NULL'), 'A healthy provider poll must clear a previous transient scheduled-change error.');
+    assert(dueStripe.includes('provider_schedule_id=COALESCE(provider_schedule_id,$2),provider_schedule_state=$3,error=NULL'), 'A healthy provider schedule observation must backfill missing local schedule identity and clear a previous transient error.');
+    assert(dueStripe.includes('billingControl.providerMissing(error)'), 'A provider-confirmed missing Stripe schedule must not remain waiting forever.');
+    assert(dueStripe.includes('scheduleTargetPrice(schedule)'), 'Due Stripe schedule verification must prove the remote target still matches the intended plan price.');
+    assert(dueStripe.includes('String(schedule.id)!==String(change.provider_schedule_id)'), 'Due Stripe convergence must refuse a different remote schedule from the locally recorded one.');
+    assert(dueStripe.includes('const synced=await billingControl.syncSubscription(current.subscription_id);'), 'Applied scheduled Stripe changes must enter canonical provider verification.');
 
     assert.deepStrictEqual(provisioning.assertDiscordSyncResult({ added: [], removed: [], errors: [] }).errors, []);
     const discordError = expectThrows(() => provisioning.assertDiscordSyncResult({ errors: ['remove role: HTTP 503'] }), 'DISCORD_ROLE_SYNC_FAILED');
