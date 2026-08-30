@@ -201,6 +201,8 @@ async function historicalCheckoutReplayInvariant() {
     const providerSubscriptionId = `sub_replay_${suffix}`;
     const priceA = `price_replay_a_${suffix}`;
     const priceB = `price_replay_b_${suffix}`;
+    const currentProviderCustomerId = `cus_current_${suffix}`;
+    const recoveryProviderCustomerId = `cus_recovery_${suffix}`;
     const snapshotA = replaySnapshot(planA, priceA);
     const oldIntent = await checkoutIntents.createIntent({
         scope: 'customer', customerId: replayCustomer.id, planId: planA.id, provider: 'stripe', checkoutMode: 'subscription', commercialSnapshot: snapshotA
@@ -219,7 +221,10 @@ async function historicalCheckoutReplayInvariant() {
             billing_interval_snapshot,duration_days_snapshot,commercial_snapshot
         ) VALUES($1,$2,'active','stripe',NOW()-INTERVAL '5 days',$3,FALSE,$4,$5,$6,$7,$8,$9,'GBP','month',30,$10::jsonb)
         RETURNING *
-    `, [replayCustomer.id, planB.id, currentEnd, `cus_current_${suffix}`, providerSubscriptionId, priceB, planB.name, planB.code, Number(planB.price_minor), JSON.stringify(currentSnapshot)])).rows[0];
+    `, [replayCustomer.id, planB.id, currentEnd, currentProviderCustomerId, providerSubscriptionId, priceB, planB.name, planB.code, Number(planB.price_minor), JSON.stringify(currentSnapshot)])).rows[0];
+    const initialPaymentCustomer = (await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rows[0];
+    assert(initialPaymentCustomer, 'subscription/payment-customer synchronization did not create the current provider identity');
+    assert.strictEqual(initialPaymentCustomer.provider_customer_id, currentProviderCustomerId, 'pre-replay provider-customer mapping is wrong');
 
     const replayed = await lifecycle.activatePurchase({
         customerId: replayCustomer.id,
@@ -238,11 +243,13 @@ async function historicalCheckoutReplayInvariant() {
     assert.strictEqual(String(afterReplay.plan_id), String(planB.id), 'completed historical checkout replay reverted the current plan');
     assert.strictEqual(afterReplay.status, 'active', 'completed historical checkout replay regressed current provider status');
     assert.strictEqual(afterReplay.cancel_at_period_end, false, 'completed historical checkout replay regressed renewal state');
-    assert.strictEqual(afterReplay.provider_customer_id, `cus_current_${suffix}`, 'completed historical checkout replay regressed provider-customer identity');
+    assert.strictEqual(afterReplay.provider_customer_id, currentProviderCustomerId, 'completed historical checkout replay regressed provider-customer identity');
     assert.strictEqual(afterReplay.provider_price_id_snapshot, priceB, 'completed historical checkout replay regressed provider price snapshot');
     assert.strictEqual(afterReplay.plan_code_snapshot, planB.code, 'completed historical checkout replay regressed commercial snapshot');
     assert.strictEqual(new Date(afterReplay.current_period_end).toISOString(), currentEnd.toISOString(), 'completed historical checkout replay regressed paid-through time');
-    assert.strictEqual((await query(`SELECT 1 FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rowCount, 0, 'historical replay rewrote provider-customer mapping outside the subscription row');
+    const paymentCustomerAfterReplay = (await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rows[0];
+    assert(paymentCustomerAfterReplay, 'historical replay removed the current provider-customer mapping');
+    assert.strictEqual(paymentCustomerAfterReplay.provider_customer_id, currentProviderCustomerId, 'historical replay replaced the current provider-customer mapping with stale checkout identity');
 
     const openIntent = await checkoutIntents.createIntent({
         scope: 'customer', customerId: replayCustomer.id, planId: planA.id, provider: 'stripe', checkoutMode: 'subscription', commercialSnapshot: snapshotA
@@ -254,7 +261,7 @@ async function historicalCheckoutReplayInvariant() {
         customerId: replayCustomer.id,
         planId: planA.id,
         provider: 'stripe',
-        providerCustomerId: `cus_recovery_${suffix}`,
+        providerCustomerId: recoveryProviderCustomerId,
         providerSubscriptionId,
         providerStatus: 'active',
         periodEnd: recoveredEnd,
@@ -264,6 +271,10 @@ async function historicalCheckoutReplayInvariant() {
     assert.strictEqual(String(afterOpenRecovery.plan_id), String(planA.id), 'open checkout crash-recovery path was incorrectly blocked by replay protection');
     assert.strictEqual(afterOpenRecovery.provider_price_id_snapshot, priceA, 'open checkout recovery did not restore its verified provider price snapshot');
     assert.strictEqual(afterOpenRecovery.plan_code_snapshot, planA.code, 'open checkout recovery did not restore its verified commercial snapshot');
+    assert.strictEqual(afterOpenRecovery.provider_customer_id, recoveryProviderCustomerId, 'open checkout recovery did not update the subscription provider-customer identity');
+    const paymentCustomerAfterRecovery = (await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rows[0];
+    assert(paymentCustomerAfterRecovery, 'open checkout recovery lost the provider-customer mapping');
+    assert.strictEqual(paymentCustomerAfterRecovery.provider_customer_id, recoveryProviderCustomerId, 'open checkout recovery did not converge the provider-customer mapping');
 
     return { customerId: replayCustomer.id, planIds: [planA.id, planB.id] };
 }
