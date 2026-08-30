@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
 const planPolicy = require('../entitlements/plan-lifecycle-policy');
+const restorationGrace = require('../entitlements/jellyfin-inactivity-grace');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const activityTrust = require('../jellyfin/activity-trust');
 const fleetMetrics = require('../jellyfin/fleet-metrics');
@@ -253,9 +254,9 @@ async function finalEligibility(row, globalCfg) {
     server = serverTelemetry[String(row.server_id)] || null;
     if (!server?.ready) return { ready: false, reason: server?.reason || 'user_activity_refresh_failed', worker, server };
 
-    const freshRows = await base.candidates(globalCfg, { customerId: row.customer_id });
+    const freshRows = await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg, { customerId: row.customer_id }));
     const fresh = freshRows.find(item => String(item.account_id) === String(row.account_id) && String(item.plan_id) === String(row.plan_id)) || null;
-    if (!fresh?.eligible) return { ready: false, reason: 'usage_no_longer_eligible', worker, server, fresh };
+    if (!fresh?.eligible) return { ready: false, reason: fresh?.restoration_grace ? 'admin_restore_observation_window' : 'usage_no_longer_eligible', worker, server, fresh };
     if (await usageSatisfiedEarlierToday(fresh)) return { ready: false, reason: 'usage_satisfied_earlier_today', worker, server, fresh };
     return { ready: true, worker, server, fresh };
 }
@@ -289,10 +290,10 @@ async function runPlanRules({ actorUserId = null, forceDryRun = null } = {}) {
         };
     }
 
-    const discovered = await base.candidates(globalCfg);
+    const discovered = await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg));
     let serverTelemetry = await refreshCandidateServers(discovered);
     serverTelemetry = await refreshCandidateUserActivity(discovered, serverTelemetry);
-    const rows = discovered.length ? await base.candidates(globalCfg) : discovered;
+    const rows = discovered.length ? await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg)) : discovered;
     serverTelemetry = await refreshCandidateServers(rows, serverTelemetry);
     const eligible = eligibleOnReadyServers(rows, serverTelemetry);
     const unsafeEligible = rows.filter(row => row?.eligible && !serverTelemetry[String(row.server_id)]?.ready);
