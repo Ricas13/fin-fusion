@@ -7,12 +7,17 @@ const expiryPolicy = require('../integrations/notification-expiry-policy');
 const DEFAULT_WARNING_DAYS = Math.max(...expiryPolicy.DEFAULT_POLICY.milestones);
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-function recurringAutoRenewal(row) {
-    if (String(row?.status || '').toLowerCase() !== 'active') return false;
+function recurringProviderSubscription(row) {
     const source = String(row?.source || '').toLowerCase();
     const providerId = String(row?.provider_subscription_id || '');
     return (source === 'stripe' && providerId.startsWith('sub_')) ||
         (source === 'paypal' && providerId.startsWith('I-'));
+}
+
+function recurringAutoRenewal(row) {
+    if (String(row?.status || '').toLowerCase() !== 'active') return false;
+    if (row?.cancel_at_period_end === true) return false;
+    return recurringProviderSubscription(row);
 }
 
 function expiryDate(value) {
@@ -44,7 +49,7 @@ function expiryDedupeKey({ subscriptionId, accessExpiresAt, milestone }) {
 async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
     const warningDays = Math.max(0, Math.min(30, Number(days) || 0));
     const result = await query(`
-        SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,
+        SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,s.cancel_at_period_end,
                COALESCE(s.plan_name_snapshot,p.name,'Your subscription') AS plan_name,
                s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at,
                COALESCE(c.display_name,au.username,c.email,'Customer') AS customer_name
@@ -67,7 +72,7 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
             WHERE next_s.customer_id=s.customer_id
               AND next_s.id<>s.id
               AND next_s.superseded_by IS NULL
-              AND next_s.status IN('active','trialing','past_due','paused','cancelled')
+              AND next_s.status IN('active','trialing','past_due','paused')
               AND next_s.starts_at>s.starts_at
               AND next_s.starts_at<=s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval+INTERVAL '5 minutes'
               AND (
@@ -124,7 +129,50 @@ async function notifyExpiringSubscriptions({ days = null, milestones = null, dis
     return result;
 }
 
-async function expireDueSubscriptions() {
+async function dueRecurringExpiryCandidates() {
+    const result = await query(`
+        SELECT id,customer_id,source,provider_subscription_id,status,current_period_end,service_extension_days
+        FROM subscriptions
+        WHERE superseded_by IS NULL
+          AND status IN('active','trialing','past_due','paused','cancelled')
+          AND current_period_end IS NOT NULL
+          AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW()
+          AND (
+            (source='stripe' AND provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\')
+            OR (source='paypal' AND provider_subscription_id LIKE 'I-%')
+          )
+        ORDER BY current_period_end,id
+    `);
+    return result.rows;
+}
+
+async function refreshDueRecurringSubscriptions({ syncRecurringSubscription = null, onProviderSyncError = null } = {}) {
+    const candidates = await dueRecurringExpiryCandidates();
+    const verifiedIds = [];
+    let failed = 0;
+    for (const row of candidates) {
+        if (typeof syncRecurringSubscription !== 'function') {
+            failed += 1;
+            if (typeof onProviderSyncError === 'function') onProviderSyncError(row, new Error('No recurring provider-sync owner was supplied.'));
+            continue;
+        }
+        try {
+            const result = await syncRecurringSubscription(row.id);
+            if (result?.ok === true) verifiedIds.push(String(row.id));
+            else {
+                failed += 1;
+                if (typeof onProviderSyncError === 'function') onProviderSyncError(row, new Error(result?.error || 'Recurring provider state could not be verified.'));
+            }
+        } catch (error) {
+            failed += 1;
+            if (typeof onProviderSyncError === 'function') onProviderSyncError(row, error);
+        }
+    }
+    return { candidates: candidates.length, verifiedIds, failed };
+}
+
+async function expireDueSubscriptions({ verifiedRecurringIds = [] } = {}) {
+    const verified = [...new Set((Array.isArray(verifiedRecurringIds) ? verifiedRecurringIds : []).map(String).filter(Boolean))];
     return transaction(async client => {
         const rows = await client.query(`
             WITH expired AS (
@@ -132,29 +180,44 @@ async function expireDueSubscriptions() {
                 SET status='expired',service_extension_days=0,updated_at=NOW()
                 WHERE superseded_by IS NULL
                   AND (
-                    (status IN('active','trialing','past_due','paused','cancelled')
-                     AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW())
+                    (
+                      status IN('active','trialing','past_due','paused','cancelled')
+                      AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW()
+                      AND (
+                        NOT (
+                          (source='stripe' AND provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\')
+                          OR (source='paypal' AND provider_subscription_id LIKE 'I-%')
+                        )
+                        OR id::text=ANY($1::text[])
+                      )
+                    )
                     OR
                     (status='expired' AND COALESCE(service_extension_days,0)>0
                      AND current_period_end+(service_extension_days||' days')::interval<=NOW())
                   )
-                RETURNING customer_id,plan_id,source
+                RETURNING customer_id,plan_id,source,service_type_snapshot
             )
-            SELECT DISTINCT e.customer_id,BOOL_OR(p.price_minor>0) AS had_paid_expiry
+            SELECT DISTINCT e.customer_id,
+                   BOOL_OR(p.price_minor>0) AS had_paid_expiry,
+                   BOOL_OR(
+                     p.price_minor>0
+                     AND COALESCE(NULLIF(e.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
+                   ) AS had_paid_jellyfin_expiry
             FROM expired e JOIN plans p ON p.id=e.plan_id
             GROUP BY e.customer_id
-        `);
+        `, [verified]);
         return rows.rows;
     });
 }
 
-async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null } = {}) {
+async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null, syncRecurringSubscription = null, onProviderSyncError = null } = {}) {
     if (typeof reconcileCustomer !== 'function') throw new Error('A subscription-expiry reconcile callback is required.');
-    const expired = await expireDueSubscriptions();
+    const refresh = await refreshDueRecurringSubscriptions({ syncRecurringSubscription, onProviderSyncError });
+    const expired = await expireDueSubscriptions({ verifiedRecurringIds: refresh.verifiedIds });
     for (const row of expired) {
         const customerId = row.customer_id;
         let downgraded = null;
-        if (row.had_paid_expiry && typeof autoDowngrade === 'function') downgraded = await autoDowngrade(customerId);
+        if (row.had_paid_jellyfin_expiry && typeof autoDowngrade === 'function') downgraded = await autoDowngrade(customerId);
         if (downgraded) continue;
         try { await reconcileCustomer(customerId); }
         catch (error) {
@@ -165,4 +228,4 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onR
     return expired.length;
 }
 
-module.exports = { DEFAULT_WARNING_DAYS, recurringAutoRenewal, expiryDate, daysUntilExpiry, selectExpiryMilestone, expiryDedupeKey, expiringSubscriptions, notifyExpiringSubscriptions, expireDueSubscriptions, expireAndReconcile };
+module.exports = { DEFAULT_WARNING_DAYS, recurringProviderSubscription, recurringAutoRenewal, expiryDate, daysUntilExpiry, selectExpiryMilestone, expiryDedupeKey, expiringSubscriptions, notifyExpiringSubscriptions, dueRecurringExpiryCandidates, refreshDueRecurringSubscriptions, expireDueSubscriptions, expireAndReconcile };
