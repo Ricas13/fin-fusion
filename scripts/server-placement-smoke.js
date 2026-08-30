@@ -49,6 +49,7 @@ assert.strictEqual(plansList.durationLabel({ billing_interval: 'trial', duration
 assert.strictEqual(plansList.durationLabel({ billing_interval: 'month', duration_days: 30 }), '1 month');
 assert.strictEqual(plansList.durationLabel({ billing_interval: '6_months', duration_days: 180 }), '6 months');
 assert.strictEqual(plansList.durationLabel({ billing_interval: 'year', duration_days: 365 }), '1 year');
+assert.strictEqual(plansList.durationLabel({ billing_interval: 'custom', duration_days: 45 }), '45 days');
 assert.strictEqual(plansList.priceLabel({ price_minor: 0, currency: 'USD' }), 'Free');
 assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), 'USD 6.00');
 
