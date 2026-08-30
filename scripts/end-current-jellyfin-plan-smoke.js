@@ -9,6 +9,7 @@ const bulk=fs.readFileSync('src/platform/bulk-operations.js','utf8');
 const providerRecovery=fs.readFileSync('src/payments/provider-operation-recovery.js','utf8');
 const permanent=fs.readFileSync('src/entitlements/permanent-access.js','utf8');
 const terminationSource=fs.readFileSync('src/payments/subscription-termination.js','utf8');
+const stateSource=fs.readFileSync('src/entitlements/subscription-state.js','utf8');
 
 assert(ui.includes("['end_jellyfin_plan','End current Jellyfin plan',{highImpact:true,fields:['reason'],confirmWord:'END'}]"),'admin action must be high-impact, require a reason, and use explicit END confirmation');
 assert(ui.includes("action==='end_jellyfin_plan'&&!row.plan_id"),'preview must exclude customers without a current plan');
@@ -27,6 +28,8 @@ assert(bulk.includes('bulk-end-jellyfin:${item.id}'),'bulk item identity must pr
 assert(terminationSource.includes("operationType:OPERATION_TYPE"),'provider termination must be recorded as a provider operation');
 assert(terminationSource.includes("const OPERATION_TYPE='subscription_terminate'"),'provider operation type must be stable');
 assert(terminationSource.includes('billingControl.terminateRecurringForDeletion'),'termination must reuse the verified Stripe/PayPal cancellation adapter rather than bypass it');
+assert(terminationSource.includes('subscriptionState.effectiveSubscription(customerId,{includeBlocked:true})'),'current Jellyfin termination must use the service-scoped entitlement owner rather than an arbitrary primary view row');
+assert(stateSource.includes("IN ('jellyfin','bundle')"),'the canonical primary entitlement resolver must explicitly scope Jellyfin/bundle services');
 assert(terminationSource.includes('providerOps.providerApplied'),'provider success must be durable before local convergence');
 assert(terminationSource.includes('providerOps.localApplied'),'local convergence must be durable');
 assert(terminationSource.includes('providerOps.reconciled'),'completed provider termination must close the operation');
