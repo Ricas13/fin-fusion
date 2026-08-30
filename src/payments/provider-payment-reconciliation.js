@@ -143,6 +143,8 @@ async function providerResult(provider, since) {
         const local = await localRows(provider, since), rows = remote.rows.map(row => ({ ...row, ...localMatch(row, local) })).filter(row => row.reason);
         return { provider, configured: true, error: null, rows, truncated: Boolean(remote.truncated) };
     } catch (error) {
+        // Financial/provider failures are deliberately returned to the UI, not
+        // converted into an apparently clean empty reconciliation result.
         return { provider, configured: true, error: error.message || String(error), rows: [] };
     }
 }
