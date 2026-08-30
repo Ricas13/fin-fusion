@@ -56,8 +56,8 @@ async function begin({email,username,password,referralCode=null,communicationPre
         if(freeAccess){
             const plan=await canonicalFreePlan(client);
             if(!plan)throw new Error('Free Access is not available for new claims right now.');
-            if(plan.capacity_limit!=null){
-                await planCapacity.lockAndAssert(client,plan.id,plan.name||'Free Access');
+            const capacityState=await planCapacity.lockAndAssert(client,plan.id,plan.name||'Free Access');
+            if(capacityState.limit!=null){
                 const holdExpiresAt=new Date(Math.min(expiresAt.getTime(),Date.now()+FREE_HOLD_MINUTES*60000));
                 freeReservation=(await client.query(`INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at) VALUES($1,$2,$3,$4) RETURNING id,plan_id,expires_at`,[created.rows[0].id,plan.id,email,holdExpiresAt])).rows[0];
             }else freeReservation={id:null,plan_id:plan.id,expires_at:expiresAt,unlimited:true};
