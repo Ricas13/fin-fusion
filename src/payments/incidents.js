@@ -2,7 +2,7 @@
 
 const { query, transaction } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
-const provisioning = require('../jellyfin/provisioning');
+const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 
 const POLICY_KEY = 'payment_risk_policy';
