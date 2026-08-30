@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const networkIdentity = require('../access/network-identity');
 const { keyFromEnv } = require('../security/purpose-crypto');
+const { query } = require('../db');
 
 const GRANT_PARAM = 'cf_grant';
 const GRANT_PREFIX = 'cfedge1';
@@ -105,6 +106,7 @@ function protectUrl(rawUrl, req, { entitlementId = null, nowMs = Date.now() } = 
   const url = new URL(String(rawUrl || ''));
   const token = String(url.searchParams.get('api_key') || '');
   if (!token) return url.toString();
+  if (!entitlementId) throw new Error('Current Stremio entitlement is required for protected media.');
   url.searchParams.delete('api_key');
   url.searchParams.delete(GRANT_PARAM);
 
@@ -117,7 +119,7 @@ function protectUrl(rawUrl, req, { entitlementId = null, nowMs = Date.now() } = 
     net: networkHashForRequest(req),
     target: digest(canonicalTarget(url)),
     token,
-    entitlement: entitlementId ? String(entitlementId).slice(0, 80) : null
+    entitlement: String(entitlementId).slice(0, 80)
   };
   url.searchParams.set(GRANT_PARAM, sealPayload(payload));
   return url.toString();
@@ -125,9 +127,10 @@ function protectUrl(rawUrl, req, { entitlementId = null, nowMs = Date.now() } = 
 
 function protectStreams(streams, req, entitlement) {
   if (!enabled()) return Array.isArray(streams) ? streams.map(stream => ({ ...stream })) : [];
+  if (!entitlement?.id) throw new Error('Current Stremio entitlement is required for protected streams.');
   return (Array.isArray(streams) ? streams : []).map(stream => ({
     ...stream,
-    url: stream?.url ? protectUrl(stream.url, req, { entitlementId: entitlement?.id || null }) : stream?.url
+    url: stream?.url ? protectUrl(stream.url, req, { entitlementId: entitlement.id }) : stream?.url
   }));
 }
 
@@ -163,6 +166,7 @@ function verifyGrant(grant, { target, req, nowMs = Date.now() } = {}) {
   if (expiresAt - issuedAt > MAX_TTL_SECONDS + 60) throw new Error('Media grant lifetime is invalid.');
   if (!safeEqual(payload.net, networkHashForRequest(req))) throw new Error('Media grant network mismatch.');
   if (!safeEqual(payload.target, digest(target))) throw new Error('Media grant target mismatch.');
+  if (!payload.entitlement) throw new Error('Media grant is not bound to an entitlement.');
   return payload;
 }
 
@@ -182,16 +186,38 @@ function authorize(req, { nowMs = Date.now() } = {}) {
   try {
     const { grant, target } = forwardedTarget(req);
     const payload = verifyGrant(grant, { target, req, nowMs });
-    return { allowed: true, status: 204, token: payload.token, entitlementId: payload.entitlement || null };
+    return { allowed: true, status: 204, token: payload.token, entitlementId: payload.entitlement };
   } catch (error) {
     return { allowed: false, status: 403, reason: String(error?.message || 'invalid_grant').slice(0, 120) };
   }
 }
 
-function authorizeHandler(req, res) {
+async function entitlementActive(entitlementId) {
+  if (!entitlementId) return false;
+  const result = await query(`WITH effective AS (
+      SELECT customer_id,subscription_id,access_expires_at,blocked FROM effective_stremio_entitlements
+      UNION ALL
+      SELECT a.customer_id,a.subscription_id,a.access_expires_at,public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+      FROM effective_customer_addons a JOIN subscriptions s ON s.id=a.subscription_id
+    )
+    SELECT EXISTS(
+      SELECT 1 FROM stremio_entitlements e
+      JOIN effective ee ON ee.customer_id=e.customer_id AND ee.subscription_id=e.subscription_id
+      WHERE e.id=$1 AND e.status='active' AND ee.blocked=FALSE AND ee.access_expires_at>NOW()
+    ) AS active`, [entitlementId]);
+  return result.rows[0]?.active === true;
+}
+
+async function authorizeHandler(req, res) {
   const result = authorize(req);
   res.setHeader('Cache-Control', 'no-store');
   if (!result.allowed) return res.status(result.status).end();
+  try {
+    if (!await entitlementActive(result.entitlementId)) return res.status(403).end();
+  } catch (error) {
+    console.error('Stremio edge entitlement verification failed:', String(error?.message || error).slice(0, 300));
+    return res.status(503).end();
+  }
   res.setHeader(TOKEN_HEADER, result.token);
   return res.status(204).end();
 }
@@ -206,6 +232,18 @@ function noCacheStreamResponse(body) {
   };
 }
 
+function requestInstallToken(req) {
+  const match = String(req.path || '').match(/^\/stremio\/([^/]+)\/(?:stream|play|external-play)\//);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch (_) { return null; }
+}
+
+async function requestEntitlement(req) {
+  const token = requestInstallToken(req);
+  if (!token) return null;
+  return require('./entitlements').findByInstallToken(token);
+}
+
 function runtimeProtectionMiddleware(req, res, next) {
   const requestPath = String(req.path || '');
   if (/^\/stremio\/[^/]+\/stream\/[^/]+\/[^/]+\.json$/.test(requestPath)) {
@@ -213,11 +251,13 @@ function runtimeProtectionMiddleware(req, res, next) {
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     const sendJson = res.json.bind(res);
-    res.json = body => {
+    res.json = async body => {
       const uncachedBody = noCacheStreamResponse(body);
       if (!uncachedBody || !Array.isArray(uncachedBody.streams) || !uncachedBody.streams.length || !enabled()) return sendJson(uncachedBody);
       try {
-        return sendJson({ ...uncachedBody, streams: protectStreams(uncachedBody.streams, req, null) });
+        const entitlement = await requestEntitlement(req);
+        if (!entitlement) return sendJson(noCacheStreamResponse({ streams: [] }));
+        return sendJson({ ...uncachedBody, streams: protectStreams(uncachedBody.streams, req, entitlement) });
       } catch (error) {
         console.error('Stremio edge grant issuance failed:', String(error?.message || error).slice(0, 300));
         return sendJson(noCacheStreamResponse({ streams: [] }));
@@ -227,11 +267,13 @@ function runtimeProtectionMiddleware(req, res, next) {
   if (!enabled()) return next();
   if (/^\/stremio\/[^/]+\/(?:play|external-play)\//.test(requestPath)) {
     const redirect = res.redirect.bind(res);
-    res.redirect = (statusOrUrl, maybeUrl) => {
+    res.redirect = async (statusOrUrl, maybeUrl) => {
       const hasStatus = typeof statusOrUrl === 'number';
       const target = hasStatus ? maybeUrl : statusOrUrl;
       try {
-        const protectedTarget = protectUrl(target, req);
+        const entitlement = await requestEntitlement(req);
+        if (!entitlement) return res.status(403).end();
+        const protectedTarget = protectUrl(target, req, { entitlementId: entitlement.id });
         return hasStatus ? redirect(statusOrUrl, protectedTarget) : redirect(protectedTarget);
       } catch (error) {
         console.error('Stremio edge compatibility grant issuance failed:', String(error?.message || error).slice(0, 300));
@@ -263,7 +305,10 @@ module.exports = {
   verifyGrant,
   edgeSecretMatches,
   authorize,
+  entitlementActive,
   authorizeHandler,
   noCacheStreamResponse,
+  requestInstallToken,
+  requestEntitlement,
   runtimeProtectionMiddleware
 };
