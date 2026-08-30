@@ -1,4 +1,5 @@
 'use strict';
+const{query}=require('../db');
 const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/resilient-provisioning');
 const{reconcileActiveEntitlements,healthcheckAllServers}=require('../jellyfin/jobs');
 const drift=require('../jellyfin/drift-control');
@@ -28,13 +29,14 @@ const customerDeletion=require('../platform/customer-deletion');
 require('../platform/bulk-operations');
 require('../platform/bulk-server-migration');
 require('../platform/operator-bulk-operations');
+async function notificationLifecycleSafeRun(){const checkpoint=await notificationLifecycle.loadState(new Date());const result=await notificationLifecycle.run();if(Number(result?.failed||0)>0){await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[notificationLifecycle.STATE_KEY,JSON.stringify({cursor:checkpoint.cursor.toISOString(),servers:checkpoint.servers})]);return{...result,cursorRetained:true};}return result;}
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
  async entitlements(){const warnings=await notifyExpiringSubscriptions(),expired=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements();return{...active,expired,warnings,processed:Number(expired||0)+Number(active.total||0),failed:Number(active.failed||0)+Number(active.blocked||0)+Number(warnings.failed||0)}},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
- async notification_lifecycle(){return notificationLifecycle.run()},
+ async notification_lifecycle(){return notificationLifecycleSafeRun()},
  async admin_activity_notifications(){return adminActivityNotifications.run()},
  async free_places_digest(){return freePlacesDigest.run()},
  async data_retention(){return dataRetention.run()},
@@ -57,4 +59,4 @@ const jobs={
 };
 function names(){return Object.keys(jobs)}
 async function run(jobKey){const job=jobs[jobKey];if(!job)throw new Error(`Unknown automation job: ${jobKey}`);return job()}
-module.exports={jobs,names,run};
+module.exports={jobs,names,run,notificationLifecycleSafeRun};

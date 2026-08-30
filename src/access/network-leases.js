@@ -165,8 +165,9 @@ async function activeForSubject({ tenantKey = 'default', scope, subjectKey }) {
   return result.rows;
 }
 
-async function releaseSubject({ tenantKey = 'default', scope, subjectKey }) {
-  const result = await query(
+async function releaseSubject({ tenantKey = 'default', scope, subjectKey }, { client = null } = {}) {
+  const db = client || { query };
+  const result = await db.query(
     `UPDATE access_network_leases SET expires_at=NOW()
      WHERE tenant_key=$1 AND scope=$2 AND subject_key=$3 AND expires_at>NOW()`,
     [clean(tenantKey, 100) || 'default', clean(scope, 80), clean(subjectKey, 200)]

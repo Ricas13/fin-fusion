@@ -61,6 +61,12 @@ const claimLeaseScope=networkLeases.slice(networkLeases.indexOf('async function 
 const releaseLeaseScope=networkLeases.slice(networkLeases.indexOf('async function releaseSubject'),networkLeases.indexOf('async function cleanupExpired'));
 assert(!claimLeaseScope.includes('DELETE FROM access_network_leases'),'Stremio household claims must not require web-role DELETE on network leases');
 assert(releaseLeaseScope.includes('UPDATE access_network_leases SET expires_at=NOW()')&&!releaseLeaseScope.includes('DELETE FROM access_network_leases'),'customer/admin household reset must expire leases using web-role UPDATE rather than DELETE');
+assert(releaseLeaseScope.includes('{ client = null }')&&releaseLeaseScope.includes('const db = client || { query }'),'household lease release must accept the caller transaction so reset state cannot partially commit');
+const householdReleaseScope=householdAccess.slice(householdAccess.indexOf('async function release('),householdAccess.indexOf('module.exports'));
+assert(householdReleaseScope.includes('return transaction(async client => {'),'household replacement must own lease expiry and audit in one transaction');
+assert(householdReleaseScope.includes('pg_advisory_xact_lock(hashtextextended($1,0))'),'household replacement must serialize with claims on the same subject');
+assert(householdReleaseScope.includes("leases.releaseSubject({ scope: 'stremio', subjectKey: key }, { client })"),'household replacement must expire the lease through the same transaction client');
+assert(householdReleaseScope.indexOf('releaseSubject')<householdReleaseScope.indexOf("'stremio.household_lease.reset'"),'household reset audit must be part of the transaction that releases the lease');
 
 // The household denial is an ordinary Stremio stream result backed by a local
 // MP4. HTTPS MP4 is web-ready: marking it notWebReady causes Stremio Web to
@@ -86,6 +92,20 @@ assert(!managedRuntime.includes("require('./source-admission')"),'managed playba
 assert(managedEntitlements.includes('MaxActiveSessions:0'),'hidden Stremio Jellyfin identities must remain unlimited');
 const hiddenScope=(jellyfinActivity.match(/account_purpose,'jellyfin'\)<>'stremio_internal'/g)||[]).length;
 assert(hiddenScope>=2,'generic Jellyfin activity paths must keep excluding internal Stremio identities');
+
+// Install-link issuance and explicit revoke are credential mutations. Concurrent
+// issuance must be idempotent, and revoke must disable the bearer link first
+// while preserving the only remote cleanup identity until logout/disable succeeds.
+assert(entitlements.includes('const INSTALL_CONCURRENCY_WINDOW_MS=5000'),'concurrent Stremio install issuance must have a bounded idempotency window');
+assert(entitlements.includes('operationLock.withLock(`install-credential:${customerId}`'),'Stremio install issuance/revoke must serialize per customer across processes');
+assert(entitlements.includes('installRecovery.current(customerId)'),'concurrent install issuance must reuse a just-issued durable recovery credential');
+assert(entitlements.includes('reused:true'),'the install owner must explicitly report concurrent credential reuse');
+const revokeScope=entitlements.slice(entitlements.indexOf('async function revoke(customerId)'),entitlements.indexOf('async function findByInstallToken'));
+assert(revokeScope.includes("SET status='suspended',token_hash=NULL,token_hint=NULL"),'explicit revoke must invalidate the install bearer credential immediately');
+assert(revokeScope.includes('Could not verify revocation of legacy Stremio access; revoke will retry without discarding cleanup identity.'),'failed legacy token logout must remain a retryable revoke failure');
+assert(revokeScope.indexOf("SET status='suspended',token_hash=NULL")<revokeScope.indexOf('detachLegacyToken(row)'),'local bearer access must fail closed before remote cleanup starts');
+assert(revokeScope.indexOf('detachLegacyToken(row)')<revokeScope.lastIndexOf("SET status='revoked',server_id=NULL"),'remote token cleanup must complete before its stored identity is erased');
+assert(!revokeScope.includes('detachLegacyToken(row).catch(()=>{})')&&!revokeScope.includes('disableLegacyAccountIfUnowned(row.jellyfin_account_id).catch(()=>{})'),'explicit revoke must never swallow remote cleanup failure');
 
 // Household policy: configurable allowance, unlimited streams/devices, safe
 // default cooldown, and durable subscription snapshots for runtime lookup.

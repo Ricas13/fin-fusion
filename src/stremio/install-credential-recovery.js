@@ -6,11 +6,12 @@ const {encryptWithEnv,decryptWithEnv}=require('../security/purpose-crypto');
 const KEY_ENV='DATA_ENCRYPTION_KEY';
 const PREFIX='stremio-install-recovery';
 
-async function save({customerId,entitlement,credential,actorUserId=null}){
+async function save({customerId,entitlement,credential,actorUserId=null},{client=null}={}){
   if(!customerId||!entitlement?.id||!credential)throw new Error('Stremio install credential recovery data is incomplete.');
   const tokenVersion=Number(entitlement.token_version||0);
   const encrypted=encryptWithEnv(String(credential),KEY_ENV,PREFIX);
-  await query(`
+  const db=client||{query};
+  await db.query(`
     INSERT INTO stremio_install_credential_recovery(
       customer_id,entitlement_id,token_version,token_hint,credential_encrypted,issued_by_user_id,updated_at
     ) VALUES($1,$2,$3,$4,$5,$6,NOW())
