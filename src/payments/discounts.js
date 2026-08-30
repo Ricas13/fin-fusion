@@ -5,7 +5,7 @@ const { query, transaction } = require('../db');
 function normalizeCode(raw) { return String(raw || '').trim().toUpperCase(); }
 function redemptionDivergence(message) {
     const error = new Error(message);
-    error.code = 'DISCOUNT_REDEMPTION_DIVERGENCE';
+    error.code='DISCOUNT_REDEMPTION_DIVERGENCE';
     return error;
 }
 function discountConflict(message) {
