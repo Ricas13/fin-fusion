@@ -54,6 +54,31 @@ try {
     assert.strictEqual(registry.mediaProvider.normalizeType(undefined), 'jellyfin', 'legacy rows must default to Jellyfin semantics');
     assert.throws(() => registry.mediaProvider.normalizeType('plex'), /Unsupported media server type/);
 
+    const jellyfinPolicy = {
+        IsAdministrator:false,
+        IsDisabled:false,
+        EnableRemoteAccess:true,
+        AuthenticationProviderId:'Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider',
+        PasswordResetProviderId:'Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider'
+    };
+    assert.strictEqual(
+        registry.mediaProvider.requestBody('jellyfin', '/Users/u1/Policy', jellyfinPolicy),
+        jellyfinPolicy,
+        'Jellyfin user policy must remain byte-shape compatible'
+    );
+    const embyPolicy = registry.mediaProvider.requestBody('emby', '/Users/u1/Policy', jellyfinPolicy);
+    assert.strictEqual(embyPolicy.AuthenticationProviderId, undefined, 'Emby policy must not receive Jellyfin authentication provider IDs');
+    assert.strictEqual(embyPolicy.PasswordResetProviderId, undefined, 'Emby policy must not receive Jellyfin password-reset provider IDs');
+    assert.strictEqual(embyPolicy.EnableRemoteAccess, true, 'Shared entitlement policy fields must survive Emby adaptation');
+    assert.strictEqual(jellyfinPolicy.AuthenticationProviderId.includes('Jellyfin.Server'), true, 'Provider adaptation must not mutate the caller-owned policy object');
+    const createBody = { Name:'compat-user', Password:'secret' };
+    assert.strictEqual(registry.mediaProvider.requestBody('emby', '/Users/New', createBody), createBody, 'Compatible non-policy request bodies must pass through unchanged');
+    assert.deepStrictEqual(
+        registry.mediaProvider.requestBody('emby', '/emby/Users/u1/Policy', jellyfinPolicy),
+        embyPolicy,
+        'Policy adaptation must also recognize already-prefixed Emby paths'
+    );
+
     // Jellyfin /Users activity is the authoritative freshness signal for managed
     // accounts. LastActivityDate wins, with LastLoginDate as the compatibility
     // fallback used by older/less active Jellyfin records. Emby exposes the same
