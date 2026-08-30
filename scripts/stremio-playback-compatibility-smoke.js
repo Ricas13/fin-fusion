@@ -12,6 +12,7 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const managed=require('../src/stremio/managed-runtime');
 const external=require('../src/stremio/external-direct-runtime');
+const sourceClient=require('../src/stremio/source-client');
 
 const mapping={media_server_type:'jellyfin',public_url:'https://media.example/jellyfin',base_url:'http://jellyfin:8096/jellyfin',access_token_encrypted:null};
 const direct=new URL(managed.directUrl(mapping,'item','source','token','mkv','Movie.2026.1080p.mkv'));
@@ -40,6 +41,16 @@ const strmFallback=new URL(managed.directUrl(mapping,'strm-item','strm-source','
 assert.strictEqual(strmFallback.pathname,'/jellyfin/Videos/strm-item/stream.mkv','STRM items without MediaSource.Container must still expose a video extension to Stremio');
 
 assert.strictEqual(typeof external.directPlaybackUrl,'function','external sources must expose a direct raw-file URL builder');
+const externalJellyfin={media_server_type:'jellyfin',base_url:'https://fallback.example/jellyfin',access_token_encrypted:sourceClient.encryptToken('external-jellyfin-token')};
+const externalJellyfinUrl=new URL(external.directPlaybackUrl({source:externalJellyfin,itemId:'jf-item',mediaSourceId:'jf-media',container:'mkv',filename:'x.mkv'}));
+assert.strictEqual(externalJellyfinUrl.pathname,'/jellyfin/Videos/jf-item/stream.mkv','external Jellyfin playback must preserve configured prefixes');
+assert.strictEqual(externalJellyfinUrl.searchParams.get('api_key'),'external-jellyfin-token');
+const externalEmby={media_server_type:'emby',base_url:'https://fallback.example/proxy',access_token_encrypted:sourceClient.encryptToken('external-emby-token')};
+const externalEmbyUrl=new URL(external.directPlaybackUrl({source:externalEmby,itemId:'emby-item',mediaSourceId:'emby-media',container:'mkv',filename:'x.mkv'}));
+assert.strictEqual(externalEmbyUrl.pathname,'/proxy/emby/Videos/emby-item/stream.mkv','external Emby playback must use the provider adapter and preserve reverse-proxy prefixes');
+assert.strictEqual(externalEmbyUrl.searchParams.get('Static'),'true');
+assert.strictEqual(externalEmbyUrl.searchParams.get('MediaSourceId'),'emby-media');
+assert.strictEqual(externalEmbyUrl.searchParams.get('api_key'),'external-emby-token');
 
 const managedSource=read('src/stremio/managed-runtime.js');
 const externalSource=read('src/stremio/external-direct-runtime.js');
@@ -72,7 +83,8 @@ assert(!runtimeSource.includes('stream_limit'),'raw Stremio playback must not en
 assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includes('never receives or relays the media bytes'),'CAPTAiNFiN must remain control-plane only');
 
 assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
-assert(externalSource.includes("url.searchParams.set('Static', 'true')"),'external Jellyfin sources must also return static/original-file URLs');
+assert(externalSource.includes("url.searchParams.set('Static', 'true')"),'external sources must return static/original-file URLs');
+assert(externalSource.includes('client.sourceUrl(source.base_url')&&externalSource.includes('source.media_server_type'),'external direct URLs must route through the stored provider type');
 assert(externalSource.includes('containerExtension(container) || pathExtension(file)'),'external raw URLs must share the same container fallback used for double-extension STRM paths');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside playback-session reporting');
 
