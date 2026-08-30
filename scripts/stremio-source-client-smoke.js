@@ -69,7 +69,7 @@ const client=require('../src/stremio/source-client');
     assert.equal(new URL(calls[calls.length-1].url).pathname,'/emby/Users/AuthenticateByName','an Emby API-root URL must not duplicate the /emby prefix');
 
     const root=path.join(__dirname,'..');
-    const migration=fs.readFileSync(path.join(root,'db/migrations/071_stremio_external_media_server_type.sql'),'utf8');
+    const migration=fs.readFileSync(path.join(root,'db/migrations/20260830100000_stremio_external_source_provider.sql'),'utf8');
     const pool=fs.readFileSync(path.join(root,'src/stremio/source-pool.js'),'utf8');
     assert(migration.includes("DEFAULT 'jellyfin'")&&migration.includes("CHECK (media_server_type IN ('jellyfin','emby'))"),'external source migration must preserve existing Jellyfin rows and constrain provider types');
     assert(pool.includes('mediaServerType=client.providerType(auth.mediaServerType)'),'first connect must persist the provider returned by authentication');
