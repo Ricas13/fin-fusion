@@ -235,12 +235,15 @@ async function applyLocal(op) {
     serviceType: request.serviceType
   });
   await transaction(async client => {
-    await client.query(`
+    const attempt = providerOps.expectedAttempt(op.id);
+    const updated = await client.query(`
       UPDATE provider_operations
       SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,
           failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+INTERVAL '5 minutes',updated_at=NOW()
-      WHERE id=$1
-    `, [op.id]);
+      WHERE id=$1 AND ($2::int IS NULL OR attempt_count=$2)
+      RETURNING id
+    `, [op.id,attempt]);
+    if (!updated.rowCount && attempt != null) throw providerOps.leaseLost(op.id);
     await client.query(`
       INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.prepaid.prorata_refund','subscription',$2,$3::jsonb)

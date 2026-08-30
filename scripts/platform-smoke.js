@@ -38,8 +38,15 @@ async function verifyPaymentEventClaims(suffix) {
     const failedClaim = await lifecycle.beginPaymentEvent({ provider: 'paypal', eventId: retryId, eventType: retryPayload.type, payload: retryPayload });
     if (!failedClaim) throw new Error('Initial retry payment event claim failed');
     if (!(await lifecycle.finishPaymentEvent(failedClaim, new Error('intentional smoke failure')))) throw new Error('Failed payment event could not be released');
+    const immediateRetry = await lifecycle.beginPaymentEvent({ provider: 'paypal', eventId: retryId, eventType: retryPayload.type, payload: retryPayload });
+    if (immediateRetry) throw new Error('Failed payment event bypassed the retry cooldown');
+    await query(`
+        UPDATE payment_events
+        SET processing_started_at=NOW() - (($2::int + 1) * INTERVAL '1 minute')
+        WHERE provider='paypal' AND provider_event_id=$1
+    `, [retryId, lifecycle.PAYMENT_EVENT_RETRY_MINUTES]);
     const retryClaim = await lifecycle.beginPaymentEvent({ provider: 'paypal', eventId: retryId, eventType: retryPayload.type, payload: retryPayload });
-    if (!retryClaim) throw new Error('Failed payment event was not immediately retryable');
+    if (!retryClaim) throw new Error('Failed payment event was not retryable after the cooldown');
     if (!(await lifecycle.finishPaymentEvent(retryClaim))) throw new Error('Retried payment event could not be completed');
 
     const staleId = `smoke-stale-${suffix}`;

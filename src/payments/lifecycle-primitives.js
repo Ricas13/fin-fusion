@@ -104,14 +104,14 @@ async function findPaymentCustomer(customerId, provider) {
 }
 
 async function beginPaymentEvent({ provider, eventId, eventType, payload }) {
-    const result = await query(`INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processing_started_at,processing_token) VALUES($1,$2,$3,$4::jsonb,NOW(),gen_random_uuid()) ON CONFLICT(provider,provider_event_id) DO UPDATE SET event_type=EXCLUDED.event_type,payload=EXCLUDED.payload,processing_error=NULL,processing_started_at=NOW(),processing_token=gen_random_uuid() WHERE payment_events.processed_at IS NULL AND (payment_events.processing_started_at IS NULL OR payment_events.processing_started_at < NOW() - ($5::int * INTERVAL '1 minute')) RETURNING id,provider,provider_event_id,event_type,payload,processing_token,processing_started_at`, [provider, eventId, eventType, JSON.stringify(payload), PAYMENT_EVENT_LEASE_MINUTES]);
+    const result = await query(`INSERT INTO payment_events(provider,provider_event_id,event_type,payload,processing_started_at,processing_token) VALUES($1,$2,$3,$4::jsonb,NOW(),gen_random_uuid()) ON CONFLICT(provider,provider_event_id) DO UPDATE SET event_type=EXCLUDED.event_type,payload=EXCLUDED.payload,processing_error=NULL,processing_started_at=NOW(),processing_token=gen_random_uuid() WHERE payment_events.processed_at IS NULL AND (payment_events.processing_started_at IS NULL OR (payment_events.processing_error IS NOT NULL AND payment_events.processing_token IS NULL AND payment_events.processing_started_at < NOW() - ($5::int * INTERVAL '1 minute')) OR (payment_events.processing_token IS NOT NULL AND payment_events.processing_started_at < NOW() - ($6::int * INTERVAL '1 minute'))) RETURNING id,provider,provider_event_id,event_type,payload,processing_token,processing_started_at`, [provider, eventId, eventType, JSON.stringify(payload), PAYMENT_EVENT_RETRY_MINUTES, PAYMENT_EVENT_LEASE_MINUTES]);
     return result.rows[0] || null;
 }
 
 async function finishPaymentEvent(eventRow, error = null) {
     if (!eventRow?.id || !eventRow?.processing_token) return false;
     const failure = error ? String(error.message || error).slice(0, 4000) : null;
-    const result = await query(`UPDATE payment_events SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,processing_error=$3,processing_started_at=NULL,processing_token=NULL WHERE id=$1 AND processing_token=$2 RETURNING id`, [eventRow.id, eventRow.processing_token, failure]);
+    const result = await query(`UPDATE payment_events SET processed_at=CASE WHEN $3::text IS NULL THEN NOW() ELSE NULL END,processing_error=$3,processing_started_at=CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END,processing_token=NULL WHERE id=$1 AND processing_token=$2 RETURNING id`, [eventRow.id, eventRow.processing_token, failure]);
     return result.rowCount === 1;
 }
 
@@ -124,7 +124,7 @@ async function claimRetryablePaymentEvents({ limit = 25 } = {}) {
             WHERE processed_at IS NULL
               AND (
                 (processing_error IS NOT NULL AND processing_token IS NULL
-                 AND (processing_started_at IS NULL OR processing_started_at < NOW() - ($2::int * INTERVAL '1 minute')))
+                 AND processing_started_at < NOW() - ($2::int * INTERVAL '1 minute'))
                 OR
                 (processing_token IS NOT NULL AND processing_started_at < NOW() - ($3::int * INTERVAL '1 minute'))
               )

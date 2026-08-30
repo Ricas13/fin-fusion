@@ -39,7 +39,7 @@ function subscriptionPeriod(subscription) {
 }
 async function ensureStripeCustomer(customerId,email) {
     const existing=await lifecycle.findPaymentCustomer(customerId,'stripe'); if(existing)return existing.provider_customer_id;
-    const stripe=await getStripe(),customer=await stripe.customers.create({email:email||undefined,metadata:{internal_customer_id:customerId}});
+    const stripe=await getStripe(),customer=await stripe.customers.create({email:email||undefined,metadata:{internal_customer_id:customerId}},{idempotencyKey:`captainfin-customer-${String(customerId)}`});
     await lifecycle.ensurePaymentCustomer({customerId,provider:'stripe',providerCustomerId:customer.id}); return customer.id;
 }
 async function ensureStripeCoupon(discount,plan) {
@@ -77,15 +77,21 @@ function terminalStripeStatus(status) {
 function effectiveSyncStatus(remoteStatus,statusOverride=null) {
     const remote=String(remoteStatus||'').toLowerCase(),override=String(statusOverride||'').toLowerCase();
     if(terminalStripeStatus(remote))return remoteStatus;
-    // A historical failed-invoice webhook must never overwrite a provider state
-    // that has already recovered. The current provider read is authoritative.
     if(override==='past_due'&&['active','trialing'].includes(remote))return remoteStatus;
     return statusOverride||remoteStatus;
 }
 function stripeObjectId(value){return typeof value==='string'?value:value?.id||null;}
 async function serviceCreditInvoiceItem(stripe,invoiceId,reservationId){
-    const items=await stripe.invoiceItems.list({invoice:String(invoiceId),limit:100});
-    return(items?.data||[]).find(item=>String(item?.metadata?.captainfin_service_credit_reservation_id||'')===String(reservationId))||null;
+    let startingAfter=null,pages=0;
+    while(true){
+        if(++pages>100)throw new Error(`Stripe renewal invoice ${invoiceId} has too many invoice items to verify safely.`);
+        const items=await stripe.invoiceItems.list({invoice:String(invoiceId),limit:100,...(startingAfter?{starting_after:startingAfter}:{})});
+        const found=(items?.data||[]).find(item=>String(item?.metadata?.captainfin_service_credit_reservation_id||'')===String(reservationId));
+        if(found)return found;
+        if(!items?.has_more||!(items?.data||[]).length)return null;
+        startingAfter=items.data[items.data.length-1].id;
+        if(!startingAfter)throw new Error(`Stripe renewal invoice ${invoiceId} pagination did not return a continuation ID.`);
+    }
 }
 function validateServiceCreditInvoiceItem(item,reservation,invoiceId){
     const applied=Math.abs(Number(item?.amount||0));
