@@ -83,7 +83,7 @@ assert(!runtimeSource.includes('stream_limit'),'raw Stremio playback must not en
 assert(runtimeSource.includes('CAPTAiNFiN authorizes and')&&runtimeSource.includes('never receives or relays the media bytes'),'CAPTAiNFiN must remain control-plane only');
 
 assert(!externalSource.includes('controlPlaybackUrl'),'external source results must not be wrapped in CAPTAiNFiN playback URLs');
-assert(externalSource.includes("url.searchParams.set('Static', 'true')"),'external sources must return static/original-file URLs');
+assert(/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(externalSource),'external sources must return static/original-file URLs');
 assert(externalSource.includes('client.sourceUrl(source.base_url')&&externalSource.includes('source.media_server_type'),'external direct URLs must route through the stored provider type');
 assert(externalSource.includes('containerExtension(container) || pathExtension(file)'),'external raw URLs must share the same container fallback used for double-extension STRM paths');
 assert(!externalSource.includes("searchParams.set('PlaySessionId'")&&!externalSource.includes("searchParams.set('DeviceId'"),'external raw URLs must remain outside playback-session reporting');
