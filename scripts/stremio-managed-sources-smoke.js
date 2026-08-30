@@ -21,6 +21,8 @@ assert(migration.includes('CREATE TABLE IF NOT EXISTS stremio_managed_accounts')
 assert(migration.includes('UNIQUE(entitlement_id, server_id)'),'managed account must be unique per entitlement/server');
 assert(migration.includes('jellyfin_access_token_encrypted'),'legacy managed entitlement migration must preserve restricted playback tokens');
 assert(managed.includes("registry.request(serverId,'/System/Info/Public'"),'managed source enablement must validate the stored backend Jellyfin credential');
+assert(managed.includes("normalizeType(server.media_server_type)!=='jellyfin'"),'managed Stremio must explicitly reject Emby until restricted user-token auth is provider-safe');
+assert(managed.includes("COALESCE(media_server_type,'jellyfin')='jellyfin'"),'managed Stremio source selection must exclude Emby at the query boundary');
 assert(managed.includes('api_configured'),'managed source view may expose credential presence but not its value');
 assert(managed.includes('public_url IS NOT NULL'),'managed direct playback sources must require a public URL');
 assert(managed.includes('ORDER BY stremio_priority,priority,name'),'managed sources must have explicit deterministic source ordering');
