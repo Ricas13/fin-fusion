@@ -12,6 +12,7 @@ const billingControl = require('./billing-control');
 const PLAN_OPERATION_TYPES = ['plan_change_immediate','plan_change_schedule'];
 const RENEWAL_OPERATION_TYPES = ['renewal_stop','renewal_resume'];
 const REFUND_OPERATION_TYPES = ['prorata_refund'];
+const TERMINATION_OPERATION_TYPES = ['subscription_terminate'];
 const MAX_AUTOMATIC_ATTEMPTS = 12;
 
 function manual(message) { const error = new Error(message); error.providerOperationManual = true; return error; }
@@ -170,6 +171,7 @@ async function recoverOne(op) {
   if (op.operation_type === 'plan_change_schedule') return recoverSchedule(op);
   if (op.operation_type === 'prorata_refund') return require('./prorata-refunds').recoverProviderOperation(op);
   if (RENEWAL_OPERATION_TYPES.includes(op.operation_type) && typeof billingControl.recoverProviderOperation === 'function') return billingControl.recoverProviderOperation(op);
+  if (TERMINATION_OPERATION_TYPES.includes(op.operation_type)) return require('./subscription-termination').recoverProviderOperation(op);
   throw manual(`No recovery handler exists for provider operation type ${op.operation_type}.`);
 }
 async function run({ limit=25 } = {}) {
@@ -213,4 +215,4 @@ async function run({ limit=25 } = {}) {
 }
 async function attention({ limit=100 } = {}) { return providerOps.open({ limit }); }
 
-module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,recoverOne,run,attention };
+module.exports = { PLAN_OPERATION_TYPES,RENEWAL_OPERATION_TYPES,REFUND_OPERATION_TYPES,TERMINATION_OPERATION_TYPES,MAX_AUTOMATIC_ATTEMPTS,recoverOne,run,attention };
