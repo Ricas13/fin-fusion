@@ -103,7 +103,7 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
             SET restored_at=NOW(),
                 metadata=metadata||$2::jsonb,
                 updated_at=NOW()
-            WHERE id=ANY($1::uuid[]) AND restored_at IS NULL AND deleted_at IS NULL
+            WHERE id=ANY($1::bigint[]) AND restored_at IS NULL AND deleted_at IS NULL
             RETURNING id,account_id,restored_at
         `, [lifecycleIds, JSON.stringify({ restoredReason: 'admin_reenable', explicitRestore: true, actorUserId })]);
         if (!restored.rowCount) throw new Error('The Free Server lifecycle changed while the restore was being prepared. Refresh and try again.');
