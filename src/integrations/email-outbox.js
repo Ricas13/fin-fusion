@@ -6,6 +6,7 @@ const emailSettings = require('./email-settings');
 
 const PREFIX = 'mail1';
 const KEY_ENV = 'DATA_ENCRYPTION_KEY';
+const STALE_SENDING_MINUTES = 15;
 
 function validEmail(value) {
     const email = String(value || '').trim().toLowerCase();
@@ -48,10 +49,13 @@ async function claimOne() {
     return transaction(async client => {
         const found = await client.query(`
             SELECT id FROM notification_outbox
-            WHERE channel='email' AND status IN ('pending','failed') AND next_attempt_at<=NOW()
-            ORDER BY next_attempt_at,created_at
+            WHERE channel='email' AND (
+                (status IN ('pending','failed') AND next_attempt_at<=NOW())
+                OR (status='sending' AND last_attempt_at<=NOW()-make_interval(mins=>$1))
+            )
+            ORDER BY CASE WHEN status='sending' THEN last_attempt_at ELSE next_attempt_at END,created_at
             FOR UPDATE SKIP LOCKED LIMIT 1
-        `);
+        `, [STALE_SENDING_MINUTES]);
         if (!found.rowCount) return null;
         const claimed = await client.query(`
             UPDATE notification_outbox
@@ -132,4 +136,4 @@ async function counts() {
     return result.rows[0] || { total: 0, pending: 0, failed: 0, sent: 0 };
 }
 
-module.exports = { enqueue, deliverDue, deliverOne, retry, recent, counts, retryDelayMs, encryptPayload, decryptPayload };
+module.exports = { enqueue, deliverDue, deliverOne, retry, recent, counts, retryDelayMs, encryptPayload, decryptPayload, STALE_SENDING_MINUTES };
