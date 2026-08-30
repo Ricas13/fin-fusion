@@ -38,12 +38,14 @@ async function recoverMapping(entitlement,server,account,effective,prior=null){
   const encryptedToken=encryptWithEnv(auth.accessToken,entitlements.TOKEN_ENV,entitlements.TOKEN_PREFIX),encryptedPassword=encryptPlaybackPassword(nextPassword);
   return(await query(`INSERT INTO stremio_managed_accounts(entitlement_id,customer_id,server_id,jellyfin_account_id,access_token_encrypted,playback_password_encrypted,token_issued_at,status,last_error) VALUES($1,$2,$3,$4,$5,$6,NOW(),'active',NULL) ON CONFLICT(entitlement_id,server_id) DO UPDATE SET jellyfin_account_id=EXCLUDED.jellyfin_account_id,access_token_encrypted=EXCLUDED.access_token_encrypted,playback_password_encrypted=EXCLUDED.playback_password_encrypted,token_issued_at=NOW(),status='active',last_error=NULL,updated_at=NOW() RETURNING *`,[entitlement.id,entitlement.customer_id,server.id,account.id,encryptedToken,encryptedPassword])).rows[0];
 }
+async function otherActiveMappingOwns(accountId,mappingId){if(!accountId)return false;const result=await query(`SELECT EXISTS(SELECT 1 FROM stremio_managed_accounts WHERE jellyfin_account_id=$1 AND id<>$2 AND status='active') yes`,[accountId,mappingId]);return result.rows[0]?.yes===true;}
 async function disableMapping(row,reason='Managed Stremio access suspended'){
   const account={id:row.jellyfin_account_id,customer_id:row.customer_id,server_id:row.server_id,jellyfin_user_id:row.jellyfin_user_id,jellyfin_username:row.jellyfin_username,account_purpose:'stremio_internal'};
   policyReady.delete(policyKey(account));
   try{
     if(row.access_token_encrypted){const loggedOut=await entitlements.logoutRestrictedToken({id:row.server_id,name:row.server_name,base_url:row.base_url,media_server_type:row.media_server_type},row.access_token_encrypted);if(!loggedOut)throw new Error('Media server did not confirm managed Stremio token logout.');}
-    await provisioning.disableJellyfinAccount(account);
+    const shared=await otherActiveMappingOwns(row.jellyfin_account_id,row.mapping_id);
+    if(!shared)await provisioning.disableJellyfinAccount(account);
     await query(`UPDATE stremio_managed_accounts SET status='suspended',last_error=$2,updated_at=NOW() WHERE id=$1`,[row.mapping_id,String(reason).slice(0,1000)]);
     return true;
   }catch(error){
@@ -82,4 +84,4 @@ async function syncActive(){
   return{total:rows.length+Number(revocation.total||0),processed:processed+Number(revocation.revoked||0),failed,revoked:Number(revocation.revoked||0),revocation};
 }
 
-module.exports={PASSWORD_PREFIX,hiddenUsername,password,encryptPlaybackPassword,decryptPlaybackPassword,policyKey,mappingReady,planFor,serverFor,internalAccount,applyPolicy,ensureSource,ensure,mappings,disableStale,disableMapping,revokeInactiveMappings,currentMappings,syncActive};
+module.exports={PASSWORD_PREFIX,hiddenUsername,password,encryptPlaybackPassword,decryptPlaybackPassword,policyKey,mappingReady,planFor,serverFor,internalAccount,applyPolicy,ensureSource,ensure,mappings,otherActiveMappingOwns,disableStale,disableMapping,revokeInactiveMappings,currentMappings,syncActive};
