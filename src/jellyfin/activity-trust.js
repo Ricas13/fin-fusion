@@ -47,16 +47,23 @@ async function recordCycle(serverIds, failures = [], at = new Date()) {
     }
 }
 
-async function workerTelemetry() {
-    const result = await query(`
-        SELECT EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age_seconds
+async function workerTelemetry(queryFn = query) {
+    const result = await queryFn(`
+        SELECT instance_id,last_heartbeat_at,
+               EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age_seconds
         FROM operational_worker_state
         WHERE worker_key='activity'
+          AND draining_at IS NULL
+        ORDER BY last_heartbeat_at DESC,instance_id
+        LIMIT 1
     `);
     const age = Number(result.rows[0]?.age_seconds ?? Infinity);
+    const maxAgeSeconds = timing().workerMaxAgeSeconds;
     return {
-        ready: Number.isFinite(age) && age < 120,
-        activityWorkerAgeSeconds: Number.isFinite(age) ? Math.round(age) : null
+        ready: Number.isFinite(age) && age < maxAgeSeconds,
+        activityWorkerAgeSeconds: Number.isFinite(age) ? Math.round(age) : null,
+        activityWorkerInstanceId: result.rows[0]?.instance_id || null,
+        activityWorkerLastHeartbeatAt: result.rows[0]?.last_heartbeat_at || null
     };
 }
 
