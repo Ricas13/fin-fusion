@@ -20,23 +20,27 @@ assert(migration.includes('stremio_priority integer DEFAULT 100 NOT NULL'),'mana
 assert(migration.includes('CREATE TABLE IF NOT EXISTS stremio_managed_accounts'),'multi-server managed-account mapping missing');
 assert(migration.includes('UNIQUE(entitlement_id, server_id)'),'managed account must be unique per entitlement/server');
 assert(migration.includes('jellyfin_access_token_encrypted'),'legacy managed entitlement migration must preserve restricted playback tokens');
-assert(managed.includes("registry.request(serverId,'/System/Info/Public'"),'managed source enablement must validate the stored backend Jellyfin credential');
-assert(managed.includes("normalizeType(server.media_server_type)!=='jellyfin'"),'managed Stremio must explicitly reject Emby until restricted user-token auth is provider-safe');
-assert(managed.includes("COALESCE(media_server_type,'jellyfin')='jellyfin'"),'managed Stremio source selection must exclude Emby at the query boundary');
+assert(managed.includes('registry.mediaProvider.credentialProbeEndpoint(type)'),'managed source enablement must validate the stored backend credential through the provider adapter');
+assert(!managed.includes("normalizeType(server.media_server_type)!=='jellyfin'"),'managed Stremio must not retain the old Emby rejection gate');
+assert(!managed.includes("COALESCE(media_server_type,'jellyfin')='jellyfin'"),'managed Stremio source selection must not silently exclude Emby');
+assert(managed.includes('media_server_type'),'managed source rows must carry the provider discriminator');
 assert(managed.includes('api_configured'),'managed source view may expose credential presence but not its value');
 assert(managed.includes('public_url IS NOT NULL'),'managed direct playback sources must require a public URL');
 assert(managed.includes('ORDER BY stremio_priority,priority,name'),'managed sources must have explicit deterministic source ordering');
 assert(managed.includes('stremio_managed_accounts'),'managed runtime foundation must use a per-entitlement/server account mapping');
 assert((managedEntitlements.match(/effective_stremio_entitlements/g)||[]).length>=2,'managed Stremio revoke and sync must use the Stremio effective entitlement view');
-assert(!managedEntitlements.includes('effective_customer_entitlements'),'managed Stremio lifecycle must not use the Jellyfin-only primary entitlement view');
+assert(!managedEntitlements.includes('effective_customer_entitlements'),'managed Stremio lifecycle must not use the media-server-only primary entitlement view');
 assert(managedEntitlements.includes('effective_customer_addons'),'managed Stremio lifecycle must continue accepting add-on entitlements');
+assert(managedEntitlements.includes('js.media_server_type'),'managed token cleanup must retain provider identity for logout');
+assert(managedEntitlements.includes('logoutRestrictedToken({id:row.server_id,name:row.server_name,base_url:row.base_url,media_server_type:row.media_server_type}'),'managed disable cleanup must send provider identity to restricted-token logout');
 
 assert(admin.includes("router.use('/admin/servers/stremio/managed',gate,noStore)"),'managed source compatibility route must stay authenticated and no-store');
 assert(admin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed page must redirect to the single Stremio control centre');
 assert(admin.includes('csrf.verify(req)'),'managed source mutation must retain CSRF protection');
-assert(admin.includes('probeCredentials(server.base_url,key)'),'new API keys must be verified against Jellyfin before storage');
-assert(admin.includes("encryptWithEnv(key,'JELLYFIN_ENCRYPTION_KEY','jf1')"),'managed API keys must use the canonical Jellyfin encryption purpose');
+assert(admin.includes('probeCredentials(server.base_url,key,type)'),'new API keys must be verified using the selected media-server provider');
+assert(admin.includes("encryptWithEnv(key,'JELLYFIN_ENCRYPTION_KEY','jf1')"),'managed API keys must use the canonical media-server credential encryption purpose');
 assert(admin.includes("'admin.stremio.managed_source.api_key.rotate'"),'managed API-key rotation must be audited without recording the key');
+assert(admin.includes('mediaServerType:type'),'managed API-key rotation audit must record provider type');
 assert(!admin.includes('decryptWithEnv')&&!admin.includes('decryptJellyfinKey'),'managed source handling must never decrypt an API key for display');
 assert(admin.includes("res.redirect('/admin/servers/stremio?message='"),'managed source saves must return to the single Stremio page');
 
@@ -62,4 +66,4 @@ assert(nav.includes('function sidebarKey(value){const key=activeKey(value)'),'na
 assert(!html.includes("require('./stremio-workflow-tabs')")&&!html.includes('stremioTabsFor'),'single Stremio control centre must not render obsolete top tabs');
 assert(!fs.existsSync(path.join(root,'src/platform/stremio-workflow-tabs.js')),'obsolete Stremio workflow tabs module must remain removed');
 
-console.log('stremio managed sources smoke: ok');
+console.log('stremio managed Jellyfin/Emby sources smoke: ok');

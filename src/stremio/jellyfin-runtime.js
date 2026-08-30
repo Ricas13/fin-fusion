@@ -1,117 +1,24 @@
 'use strict';
 
 const outbound=require('../security/outbound-url-policy');
+const registry=require('../jellyfin/registry');
 const foundation=require('./foundation');
 const mediaIndex=require('./media-index');
 const entitlements=require('./entitlements');
 
-function restrictedHeaders(token,{json=false}={}){
-  return{
-    Authorization:entitlements.jellyfinAuthHeader(token),
-    Accept:'application/json',
-    ...(json?{'Content-Type':'application/json'}:{})
-  };
-}
-
+function restrictedHeaders(token,{json=false,mediaServerType='jellyfin'}={}){return registry.mediaProvider.userTokenHeaders(mediaServerType,token,{jsonBody:json});}
 async function restrictedRequest(entitlement,endpoint,{method='GET',body=null,timeoutMs=12000}={}){
-  if(typeof endpoint!=='string'||!endpoint.startsWith('/')||endpoint.startsWith('//'))throw new Error('Invalid restricted Jellyfin endpoint.');
-  const base=new URL(String(entitlement.base_url));
-  const url=new URL(endpoint,`${base.toString().replace(/\/$/,'')}/`);
-  if(url.origin!==base.origin)throw new Error('Restricted Jellyfin endpoint escaped the configured server origin.');
-  const token=entitlements.accessToken(entitlement);
-  const response=await outbound.safeFetch(url,{
-    purpose:`Stremio restricted Jellyfin request on ${entitlement.server_name}`,
-    method,
-    timeoutMs,
-    headers:restrictedHeaders(token,{json:body!==null}),
-    ...(body!==null?{body:JSON.stringify(body)}:{})
-  });
-  const text=await response.text();
-  let parsed={};
-  if(text){try{parsed=JSON.parse(text);}catch{parsed=text;}}
-  if(!response.ok){
-    const error=new Error(`Restricted Jellyfin request returned HTTP ${response.status}`);
-    error.status=response.status;
-    throw error;
-  }
-  return parsed;
+  if(typeof endpoint!=='string'||!endpoint.startsWith('/')||endpoint.startsWith('//'))throw new Error('Invalid restricted media-server endpoint.');
+  const type=registry.mediaProvider.normalizeType(entitlement?.media_server_type),providerLabel=registry.mediaProvider.label(type),base=new URL(String(entitlement.base_url)),url=registry.mediaProvider.apiUrl(base,type,endpoint);
+  if(url.origin!==base.origin)throw new Error(`Restricted ${providerLabel} endpoint escaped the configured server origin.`);
+  const token=entitlements.accessToken(entitlement),response=await outbound.safeFetch(url,{purpose:`Stremio restricted ${providerLabel} request on ${entitlement.server_name}`,method,timeoutMs,headers:restrictedHeaders(token,{json:body!==null,mediaServerType:type}),...(body!==null?{body:JSON.stringify(body)}:{})});
+  const text=await response.text();let parsed={};if(text){try{parsed=JSON.parse(text);}catch{parsed=text;}}
+  if(!response.ok){const error=new Error(`Restricted ${providerLabel} request returned HTTP ${response.status}`);error.status=response.status;throw error;}return parsed;
 }
-
-function parseVideoId(type,videoId){
-  if(type==='movie'){
-    const imdb=mediaIndex.normalizeImdb(videoId);
-    return imdb?{type:'movie',imdb}:null;
-  }
-  if(type!=='series')return null;
-  const match=String(videoId||'').match(/^(tt\d{5,12}):(\d{1,3}):(\d{1,4})$/i);
-  if(!match)return null;
-  return{type:'series',imdb:match[1].toLowerCase(),season:Number(match[2]),episode:Number(match[3])};
-}
-
-async function resolveItem(entitlement,args){
-  const indexed=await mediaIndex.lookup(entitlement.server_id,args.imdb,args.type);
-  if(!indexed)return null;
-  if(args.type==='movie')return{id:indexed.item_id,name:indexed.name,path:indexed.path,type:'Movie'};
-  const qs=new URLSearchParams({
-    UserId:String(entitlement.jellyfin_user_id),
-    Season:String(args.season),
-    Fields:'Path,MediaSources,MediaStreams',
-    StartIndex:'0',
-    Limit:'500',
-    EnableImages:'false'
-  });
-  const payload=await restrictedRequest(entitlement,`/Shows/${encodeURIComponent(indexed.item_id)}/Episodes?${qs.toString()}`);
-  const items=Array.isArray(payload?.Items)?payload.Items:[];
-  const item=items.find(row=>Number(row.IndexNumber)===args.episode&&Number(row.ParentIndexNumber??args.season)===args.season);
-  return item?{...item,id:String(item.Id),name:item.Name||indexed.name,path:item.Path||null,type:'Episode'}:null;
-}
-
-function basenameFromPath(value){
-  const raw=String(value||'').trim();
-  if(!raw)return'';
-  try{
-    const parsed=new URL(raw);
-    return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop()||'');
-  }catch(_){
-    return raw.split(/[\\/]/).pop()||'';
-  }
-}
-
-function sourceFilename(item,source){
-  const itemPath=String(item?.path||item?.Path||'');
-  const sourcePath=String(source?.Path||'');
-  const preferred=/\.strm(?:$|[?#])/i.test(itemPath)?itemPath:(sourcePath||itemPath);
-  return basenameFromPath(preferred)||`${item?.name||item?.Name||'video'}.mkv`;
-}
-
-function sourceQuality(source,filename){
-  const display=foundation.streamDisplayFromFilename(filename);
-  const meta=display.metadata||{};
-  const height=Number(source?.Height||source?.MediaStreams?.find(s=>s.Type==='Video')?.Height||0);
-  const bitrate=Number(source?.Bitrate||0);
-  let rank=0;
-  if(meta.resolution==='4K'||height>=2000)rank=400;
-  if(meta.resolution==='1080p'||height>=1000&&height<2000)rank=Math.max(rank,300);
-  if(meta.resolution==='720p'||height>=700&&height<1000)rank=Math.max(rank,200);
-  if(meta.source==='REMUX')rank+=35;
-  if(meta.source==='BluRay')rank+=20;
-  if(meta.source==='WEB-DL')rank+=10;
-  rank+=Math.min(20,bitrate/5000000);
-  return{display,meta,height,bitrate,rank};
-}
-
-function streamDescription(quality,source){
-  const meta=quality.meta||{};
-  const streams=Array.isArray(source?.MediaStreams)?source.MediaStreams:[];
-  const video=streams.find(s=>s.Type==='Video');
-  const audio=streams.find(s=>s.Type==='Audio');
-  const parts=[];
-  const videoFallback=[meta.codec,...(Array.isArray(meta.dynamicRange)?meta.dynamicRange:[])].filter(Boolean).join(' · ');
-  if(video?.DisplayTitle)parts.push(`📺 ${video.DisplayTitle}`);else if(videoFallback)parts.push(`📺 ${videoFallback}`);
-  if(audio?.DisplayTitle)parts.push(`🔊 ${audio.DisplayTitle}`);else if(meta.audio)parts.push(`🔊 ${[meta.audio,meta.channels].filter(Boolean).join(' · ')}`);
-  if(Number(source?.Bitrate)>0)parts.push(`📶 ${(Number(source.Bitrate)/1000000).toFixed(1)} Mbps`);
-  if(meta.releaseGroup)parts.push(`🏷️ ${meta.releaseGroup}`);
-  return parts.join('\n')||'▶️ Direct Jellyfin playback';
-}
-
-module.exports={restrictedRequest,parseVideoId,resolveItem,sourceQuality,sourceFilename,basenameFromPath,streamDescription};
+function parseVideoId(type,videoId){if(type==='movie'){const imdb=mediaIndex.normalizeImdb(videoId);return imdb?{type:'movie',imdb}:null;}if(type!=='series')return null;const match=String(videoId||'').match(/^(tt\d{5,12}):(\d{1,3}):(\d{1,4})$/i);if(!match)return null;return{type:'series',imdb:match[1].toLowerCase(),season:Number(match[2]),episode:Number(match[3])};}
+async function resolveItem(entitlement,args){const indexed=await mediaIndex.lookup(entitlement.server_id,args.imdb,args.type);if(!indexed)return null;if(args.type==='movie')return{id:indexed.item_id,name:indexed.name,path:indexed.path,type:'Movie'};const qs=new URLSearchParams({UserId:String(entitlement.jellyfin_user_id),Season:String(args.season),Fields:'Path,MediaSources,MediaStreams',StartIndex:'0',Limit:'500',EnableImages:'false'}),payload=await restrictedRequest(entitlement,`/Shows/${encodeURIComponent(indexed.item_id)}/Episodes?${qs.toString()}`),items=Array.isArray(payload?.Items)?payload.Items:[],item=items.find(row=>Number(row.IndexNumber)===args.episode&&Number(row.ParentIndexNumber??args.season)===args.season);return item?{...item,id:String(item.Id),name:item.Name||indexed.name,path:item.Path||null,type:'Episode'}:null;}
+function basenameFromPath(value){const raw=String(value||'').trim();if(!raw)return'';try{const parsed=new URL(raw);return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop()||'');}catch(_){return raw.split(/[\\/]/).pop()||'';}}
+function sourceFilename(item,source){const itemPath=String(item?.path||item?.Path||''),sourcePath=String(source?.Path||''),preferred=/\.strm(?:$|[?#])/i.test(itemPath)?itemPath:(sourcePath||itemPath);return basenameFromPath(preferred)||`${item?.name||item?.Name||'video'}.mkv`;}
+function sourceQuality(source,filename){const display=foundation.streamDisplayFromFilename(filename),meta=display.metadata||{},height=Number(source?.Height||source?.MediaStreams?.find(s=>s.Type==='Video')?.Height||0),bitrate=Number(source?.Bitrate||0);let rank=0;if(meta.resolution==='4K'||height>=2000)rank=400;if(meta.resolution==='1080p'||height>=1000&&height<2000)rank=Math.max(rank,300);if(meta.resolution==='720p'||height>=700&&height<1000)rank=Math.max(rank,200);if(meta.source==='REMUX')rank+=35;if(meta.source==='BluRay')rank+=20;if(meta.source==='WEB-DL')rank+=10;rank+=Math.min(20,bitrate/5000000);return{display,meta,height,bitrate,rank};}
+function streamDescription(quality,source){const meta=quality.meta||{},streams=Array.isArray(source?.MediaStreams)?source.MediaStreams:[],video=streams.find(s=>s.Type==='Video'),audio=streams.find(s=>s.Type==='Audio'),parts=[],videoFallback=[meta.codec,...(Array.isArray(meta.dynamicRange)?meta.dynamicRange:[])].filter(Boolean).join(' · ');if(video?.DisplayTitle)parts.push(`📺 ${video.DisplayTitle}`);else if(videoFallback)parts.push(`📺 ${videoFallback}`);if(audio?.DisplayTitle)parts.push(`🔊 ${audio.DisplayTitle}`);else if(meta.audio)parts.push(`🔊 ${[meta.audio,meta.channels].filter(Boolean).join(' · ')}`);if(Number(source?.Bitrate)>0)parts.push(`📶 ${(Number(source.Bitrate)/1000000).toFixed(1)} Mbps`);if(meta.releaseGroup)parts.push(`🏷️ ${meta.releaseGroup}`);return parts.join('\n')||'▶️ Direct media-server playback';}
+module.exports={restrictedHeaders,restrictedRequest,parseVideoId,resolveItem,sourceQuality,sourceFilename,basenameFromPath,streamDescription};
