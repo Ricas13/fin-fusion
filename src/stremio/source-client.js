@@ -63,6 +63,29 @@ async function authenticate(baseUrl,username,password,type='jellyfin'){
   const provider=providerType(type),base=cleanUrl(baseUrl,provider),user=cleanUsername(username,provider),secret=String(password||'');if(!secret)throw new Error(`Enter the ${providerLabel(provider)} password.`);
   try{return await authenticateOnce(base,user,secret,provider);}catch(error){const compactUser=user.replace(/\s+/g,'');if(error?.code==='STREMIO_SOURCE_AUTH'&&/\s/.test(user)&&compactUser&&compactUser!==user){try{return await authenticateOnce(base,compactUser,secret,provider);}catch(retryError){retryError.detail=[retryError.detail,`A retry also failed after removing whitespace from the username (${compactUser}).`].filter(Boolean).join(' ');throw retryError;}}throw error;}
 }
+function detectionOrder(baseUrl){
+  let pathname='';try{pathname=new URL(String(baseUrl||'')).pathname.replace(/\/+$/,'').toLowerCase();}catch{}
+  return pathname.endsWith('/emby')?['emby','jellyfin']:['jellyfin','emby'];
+}
+function preferredDetectionError(attempts){
+  const auth=attempts.find(row=>row.error?.code==='STREMIO_SOURCE_AUTH');if(auth)return auth.error;
+  const non404=attempts.find(row=>!(row.error?.code==='STREMIO_SOURCE_HTTP'&&Number(row.error?.status)===404));if(non404)return non404.error;
+  const first=attempts[0]?.error||new Error('No compatible Jellyfin or Emby sign-in endpoint was found.');
+  first.hint=first.hint||'Check that the URL points to a Jellyfin or Emby server and includes any required reverse-proxy base path.';
+  return first;
+}
+async function authenticateAuto(baseUrl,username,password){
+  const attempts=[];
+  for(const type of detectionOrder(baseUrl)){
+    try{return await authenticate(baseUrl,username,password,type);}catch(error){
+      // Outbound-policy/DNS/TLS/connection failures apply to the destination as
+      // a whole; trying a second provider contract cannot make them safer.
+      if(['STREMIO_SOURCE_OUTBOUND_POLICY','STREMIO_SOURCE_DNS','STREMIO_SOURCE_TLS','STREMIO_SOURCE_REFUSED','STREMIO_SOURCE_TIMEOUT','STREMIO_SOURCE_CONNECTION'].includes(error?.code))throw error;
+      attempts.push({type,error});
+    }
+  }
+  throw preferredDetectionError(attempts);
+}
 function sourceToken(source){return decryptToken(source.access_token_encrypted);}
 async function logoutToken(baseUrl,token,sourceName='Media server',type='jellyfin'){if(!baseUrl||!token)return false;const provider=providerType(type),label=providerLabel(provider);try{const response=await outbound.safeFetch(sourceUrl(baseUrl,'/Sessions/Logout',provider),{purpose:`Stremio source logout on ${sourceName||label}`,method:'POST',timeoutMs:8000,maxBytes:1024*1024,headers:userTokenHeaders(provider,token)});return response.ok||response.status===401||response.status===403;}catch(_error){return false;}}
 async function logout(source){if(!source?.access_token_encrypted)return false;return logoutToken(source.base_url,sourceToken(source),source.name||providerLabel(source.media_server_type),source.media_server_type);}
@@ -74,4 +97,4 @@ async function request(source,endpoint,{method='GET',body=null,timeoutMs=15000,m
 }
 async function discoverLibraries(source){const payload=await request(source,`/Users/${encodeURIComponent(source.jellyfin_user_id)}/Views?IncludeExternalContent=false`,{maxBytes:4*1024*1024}),supported=new Set(['movies','tvshows','mixed']);return(Array.isArray(payload.Items)?payload.Items:[]).map(item=>({libraryId:String(item.Id||''),name:String(item.Name||'Library'),collectionType:String(item.CollectionType||'').toLowerCase()})).filter(item=>item.libraryId&&supported.has(item.collectionType));}
 
-module.exports={TOKEN_PREFIX,PASSWORD_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,providerType,providerLabel,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,userTokenHeaders,jellyfinAuthHeader,encryptToken,decryptToken,encryptPassword,decryptPassword,sourceError,connectionDiagnosis,httpDiagnosis,authenticate,sourceToken,logoutToken,logout,request,discoverLibraries};
+module.exports={TOKEN_PREFIX,PASSWORD_PREFIX,TOKEN_ENV,LEGACY_TOKEN_ENV,providerType,providerLabel,cleanUrl,sourceUrl,cleanUsername,clientAuthorization,userTokenHeaders,jellyfinAuthHeader,encryptToken,decryptToken,encryptPassword,decryptPassword,sourceError,connectionDiagnosis,httpDiagnosis,authenticate,authenticateAuto,detectionOrder,preferredDetectionError,sourceToken,logoutToken,logout,request,discoverLibraries};
