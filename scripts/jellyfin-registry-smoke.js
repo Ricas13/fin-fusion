@@ -60,6 +60,26 @@ try {
     assert.strictEqual(registry.mediaProvider.needsPostCreatePassword('jellyfin','/Users/New',createBody), false, 'Jellyfin user creation must keep its existing single-call behavior');
     assert.deepStrictEqual(registry.mediaProvider.requestBody('emby', '/emby/Users/u1/Policy', jellyfinPolicy),embyPolicy,'Policy adaptation must also recognize already-prefixed Emby paths');
 
+    assert.strictEqual(
+        registry.mediaProvider.apiPath('emby','/Sessions?activeWithinSeconds=120&foo=bar'),
+        '/emby/Sessions?foo=bar',
+        'Emby session requests must not send Jellyfin-only activeWithinSeconds'
+    );
+    assert.strictEqual(
+        registry.mediaProvider.apiPath('jellyfin','/Sessions?activeWithinSeconds=120&foo=bar'),
+        '/Sessions?activeWithinSeconds=120&foo=bar',
+        'Jellyfin session polling must retain its server-side freshness filter'
+    );
+    const sessionNow=Date.parse('2026-08-30T08:00:00.000Z');
+    const embySessions=registry.mediaProvider.responseBody('emby','/Sessions?activeWithinSeconds=120',[
+        {Id:'recent',LastActivityDate:'2026-08-30T07:59:30.000Z',SupportsRemoteControl:true},
+        {Id:'stale',LastActivityDate:'2026-08-30T07:50:00.000Z',SupportsRemoteControl:true}
+    ],{now:sessionNow});
+    assert.deepStrictEqual(embySessions.map(session=>session.Id),['recent'],'Emby sessions outside the requested freshness window must be filtered locally');
+    assert.strictEqual(embySessions[0].SupportsMediaControl,true,'Emby SupportsRemoteControl must normalize to CAPTAiNFiN media-control capability');
+    const jellyfinSessions=[{Id:'jf',LastActivityDate:'2020-01-01T00:00:00.000Z',SupportsMediaControl:true}];
+    assert.strictEqual(registry.mediaProvider.responseBody('jellyfin','/Sessions?activeWithinSeconds=120',jellyfinSessions,{now:sessionNow}),jellyfinSessions,'Jellyfin session responses must remain untouched');
+
     // Jellyfin and Emby expose the same MediaBrowser activity fields.
     const preferred = fleetMetrics.userActivityDate({LastActivityDate:'2026-08-26T21:30:00.000Z',LastLoginDate:'2026-08-20T10:00:00.000Z'});
     assert.strictEqual(preferred.toISOString(), '2026-08-26T21:30:00.000Z');
