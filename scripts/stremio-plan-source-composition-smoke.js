@@ -19,7 +19,7 @@ assert(!planExternal.includes('SELECT s.*,s.priority plan_priority FROM stremio_
 assert(externalRuntime.includes("require('./plan-external-sources')"),'external stream generation must use explicit plan source composition');
 assert(externalRuntime.includes('planExternalSources.forEntitlement(entitlement)'),'external stream generation must not implicitly add unselected sources');
 assert(!runtime.includes("require('./plan-external-sources')"),'protocol runtime must not own external source authorization after relay retirement');
-assert(/router\.get\('\/stremio\/:token\/source\/:sourceId\/:itemId\/:mediaSourceId'\s*,\s*playbackLimit\s*,\s*retiredPlayback\)/.test(runtime),'legacy external CAPTAiNFiN proxy URLs must remain retired with 410');
+assert(runtime.includes("const retiredPlayback = (_req, res) => res.status(410).end();")&&runtime.includes("router.get('/stremio/:token/source/:sourceId/:itemId/:mediaSourceId', retiredPlayback)"),'legacy external CAPTAiNFiN proxy URLs must remain retired with 410');
 assert(!externalRuntime.includes('controlPlaybackUrl'),'external stream results must not be wrapped in a CAPTAiNFiN playback control hop');
 assert(externalRuntime.includes('url: directPlaybackUrl({ source, itemId: item.Id, mediaSourceId: media.Id, container: media.Container, filename: file })'),'external stream results must contain the Jellyfin raw-file URL directly');
 assert(externalRuntime.includes("url.searchParams.set('Static', 'true')"),'external direct playback must request Jellyfin static/original media bytes');
