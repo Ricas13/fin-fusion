@@ -13,10 +13,15 @@ const SERVER_ID_PARAM = ':serverId([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 const SAFE_ERROR_PREFIXES = [
     'Slug must be ', 'Enter a valid ', 'Only http and https ', 'URLs may not contain ',
     'URL hostname is required.', 'Internal/base URL is required.', 'Jellyfin API key is required.',
-    'Jellyfin API key format is invalid.', 'Priority must be between ', 'Maximum users must be between ',
-    'Invalid server class.', 'Jellyfin returned HTTP ', 'Jellyfin returned an unexpected response.',
-    'Jellyfin validation timed out.', 'Could not validate the Jellyfin server securely.',
-    'Jellyfin destination ', 'Jellyfin hostname ', 'Could not connect to Jellyfin at ',
+    'Jellyfin API key format is invalid.', 'Emby API key is required.', 'Emby API key format is invalid.',
+    'Media-server API key is required.', 'Media-server API key format is invalid.',
+    'Priority must be between ', 'Maximum users must be between ', 'Invalid server class.',
+    'Invalid media server type.', 'Jellyfin returned HTTP ', 'Emby returned HTTP ',
+    'Jellyfin returned an unexpected response.', 'Emby returned an unexpected response.',
+    'Jellyfin validation timed out.', 'Emby validation timed out.',
+    'Could not validate the Jellyfin server securely.', 'Could not validate the Emby server securely.',
+    'Jellyfin destination ', 'Emby destination ', 'Jellyfin hostname ', 'Emby hostname ',
+    'Could not connect to Jellyfin at ', 'Could not connect to Emby at ',
     'Server name is required.', 'Server not found.'
 ];
 
@@ -51,11 +56,15 @@ function normalizeUrl(value, { baseUrl = false, field = null } = {}) {
     parsed.pathname = parsed.pathname.replace(/\/+$/, ''); parsed.search = ''; parsed.hash = '';
     return parsed.toString().replace(/\/$/, '');
 }
-function validateApiKey(value, required = true) {
-    const key = String(value || '').trim();
-    if (!key && required) throw invalidField('apiKey', 'Jellyfin API key is required.');
+function mediaServerType(value) {
+    try { return registry.mediaProvider.normalizeType(cleanText(value, 20) || 'jellyfin'); }
+    catch (_) { throw invalidField('mediaServerType', 'Invalid media server type. Choose Jellyfin or Emby.'); }
+}
+function validateApiKey(value, required = true, type = 'jellyfin') {
+    const key = String(value || '').trim(), providerLabel = registry.mediaProvider.label(type);
+    if (!key && required) throw invalidField('apiKey', `${providerLabel} API key is required.`);
     if (!key && !required) return null;
-    if (key.length < 16 || key.length > 256 || /[\s\x00-\x1f\x7f]/.test(key)) throw invalidField('apiKey', 'Jellyfin API key format is invalid.');
+    if (key.length < 16 || key.length > 256 || /[\s\x00-\x1f\x7f]/.test(key)) throw invalidField('apiKey', `${providerLabel} API key format is invalid.`);
     return key;
 }
 function boolField(value) { return value === 'on' || value === 'true' || value === true || value === '1'; }
@@ -85,48 +94,51 @@ function parseServerForm(body, { apiKeyRequired = false } = {}) {
     const name = cleanText(body.name, 100); if (!name) throw invalidField('name', 'Server name is required.');
     const serverClass = cleanText(body.serverClass, 20).toLowerCase();
     if (!SERVER_CLASSES.has(serverClass)) throw invalidField('serverClass', 'Invalid server class.');
+    const type = mediaServerType(body.mediaServerType);
     return {
-        name, slug: cleanSlug(body.slug), serverClass,
+        name, slug: cleanSlug(body.slug), serverClass, mediaServerType: type,
         baseUrl: normalizeUrl(body.baseUrl, { baseUrl: true, field: 'baseUrl' }),
         publicUrl: normalizeUrl(body.publicUrl, { field: 'publicUrl' }),
         location: cleanText(body.location, 100) || null,
         priority: intField(body.priority, { min: 0, max: 10000, field: 'priority', label: 'Priority' }),
         maxUsers: intField(body.maxUsers, { min: 1, max: 100000, nullable: true, field: 'maxUsers', label: 'Maximum users' }),
         allowNewUsers: boolField(body.allowNewUsers), trialEnabled: boolField(body.trialEnabled),
-        paidEnabled: boolField(body.paidEnabled), apiKey: validateApiKey(body.apiKey, apiKeyRequired)
+        paidEnabled: boolField(body.paidEnabled), apiKey: validateApiKey(body.apiKey, apiKeyRequired, type)
     };
 }
 function headerValue(headers,name){if(!headers)return'';if(typeof headers.get==='function')return headers.get(name)||'';return headers[String(name).toLowerCase()]||headers[name]||'';}
-function connectionPolicyMessage(error,baseUrl){
-    const message=String(error?.message||'');
-    if(/private address that is not explicitly allowed/i.test(message))return 'Jellyfin destination resolves to a private address. Enable private integrations and add this Jellyfin hostname or network CIDR to the trusted outbound destinations in Settings, then retry.';
-    if(/resolved to a blocked/i.test(message))return `Jellyfin destination is blocked by outbound network safety: ${message.replace(/^Jellyfin server validation destination\s*/i,'')}`;
-    if(/hostname did not resolve|ENOTFOUND|EAI_AGAIN/i.test(message))return 'Jellyfin hostname could not be resolved. Check the internal/base URL and DNS from the CAPTAiNFiN host.';
-    if(/ECONNREFUSED/i.test(message))return `Could not connect to Jellyfin at ${baseUrl}. The host resolved, but the connection was refused.`;
-    if(/ETIMEDOUT|timeout/i.test(message))return `Could not connect to Jellyfin at ${baseUrl} before the connection timed out.`;
+function connectionPolicyMessage(error,baseUrl,type='jellyfin'){
+    const message=String(error?.message||''),providerLabel=registry.mediaProvider.label(type);
+    if(/private address that is not explicitly allowed/i.test(message))return `${providerLabel} destination resolves to a private address. Enable private integrations and add this ${providerLabel} hostname or network CIDR to the trusted outbound destinations in Settings, then retry.`;
+    if(/resolved to a blocked/i.test(message))return `${providerLabel} destination is blocked by outbound network safety: ${message.replace(/^.*server validation destination\s*/i,'')}`;
+    if(/hostname did not resolve|ENOTFOUND|EAI_AGAIN/i.test(message))return `${providerLabel} hostname could not be resolved. Check the internal/base URL and DNS from the CAPTAiNFiN host.`;
+    if(/ECONNREFUSED/i.test(message))return `Could not connect to ${providerLabel} at ${baseUrl}. The host resolved, but the connection was refused.`;
+    if(/ETIMEDOUT|timeout/i.test(message))return `Could not connect to ${providerLabel} at ${baseUrl} before the connection timed out.`;
     return null;
 }
-async function probeCredentials(baseUrl, apiKey) {
+async function probeCredentials(baseUrl, apiKey, type='jellyfin') {
+    const provider=mediaServerType(type),providerLabel=registry.mediaProvider.label(provider);
     try {
-        const response = await outbound.safeFetch(`${baseUrl}/System/Info`, { purpose: 'Jellyfin server validation', method: 'GET', timeoutMs: 5000, maxBytes: 1024*1024, headers: registry.authHeaders(apiKey) });
-        if (response.status === 401) throw invalidField('apiKey', 'Jellyfin returned HTTP 401 — API key was not accepted.');
-        if (response.status === 403) throw invalidField('baseUrl', 'Jellyfin returned HTTP 403 — request was blocked by the Jellyfin server or reverse proxy.');
-        if (!response.ok) throw invalidField('baseUrl', `Jellyfin returned HTTP ${response.status} while validating the server.`);
-        if (!String(headerValue(response.headers,'content-type')).includes('application/json')) throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
+        const path=registry.mediaProvider.apiPath(provider, registry.mediaProvider.healthEndpoint(provider));
+        const response = await outbound.safeFetch(new URL(path, `${baseUrl}/`), { purpose: `${providerLabel} server validation`, method: 'GET', timeoutMs: 5000, maxBytes: 1024*1024, headers: registry.authHeaders(apiKey,{mediaServerType:provider}) });
+        if (response.status === 401) throw invalidField('apiKey', `${providerLabel} returned HTTP 401 — API key was not accepted.`);
+        if (response.status === 403) throw invalidField('baseUrl', `${providerLabel} returned HTTP 403 — request was blocked by the ${providerLabel} server or reverse proxy.`);
+        if (!response.ok) throw invalidField('baseUrl', `${providerLabel} returned HTTP ${response.status} while validating the server.`);
+        if (!String(headerValue(response.headers,'content-type')).includes('application/json')) throw invalidField('baseUrl', `${providerLabel} returned an unexpected response.`);
         const info = await response.json();
-        if (!info || typeof info !== 'object' || Array.isArray(info)) throw invalidField('baseUrl', 'Jellyfin returned an unexpected response.');
+        if (!info || typeof info !== 'object' || Array.isArray(info)) throw invalidField('baseUrl', `${providerLabel} returned an unexpected response.`);
         return info;
     } catch (error) {
         if (error instanceof FieldValidationError) throw error;
-        if (error.name === 'AbortError') throw invalidField('baseUrl', 'Jellyfin validation timed out.');
-        const useful=connectionPolicyMessage(error,baseUrl);if(useful)throw invalidField('baseUrl',useful);
-        if (String(error.message||'').startsWith('Jellyfin ')) throw invalidField('baseUrl',String(error.message));
-        throw invalidField('baseUrl', 'Could not validate the Jellyfin server securely. Check that CAPTAiNFiN can reach the internal/base URL and that the API key is valid.');
+        if (error.name === 'AbortError') throw invalidField('baseUrl', `${providerLabel} validation timed out.`);
+        const useful=connectionPolicyMessage(error,baseUrl,provider);if(useful)throw invalidField('baseUrl',useful);
+        if (String(error.message||'').startsWith(`${providerLabel} `)) throw invalidField('baseUrl',String(error.message));
+        throw invalidField('baseUrl', `Could not validate the ${providerLabel} server securely. Check that CAPTAiNFiN can reach the internal/base URL and that the API key is valid.`);
     }
 }
 async function serverList() {
     const result = await query(`
-        SELECT js.id,js.name,js.slug,js.server_class,js.public_url,js.location,js.enabled,
+        SELECT js.id,js.name,js.slug,js.server_class,js.media_server_type,js.public_url,js.location,js.enabled,
                js.allow_new_users,js.trial_enabled,js.paid_enabled,js.priority,js.max_users,
                js.health_status,js.last_health_check,js.created_at,js.updated_at,
                COUNT(DISTINCT ja.id)::int assigned_users,COUNT(DISTINCT aps.jellyfin_session_id)::int active_streams
@@ -136,7 +148,7 @@ async function serverList() {
     return result.rows;
 }
 async function serverDetail(serverId) {
-    const result = await query(`SELECT id,name,slug,server_class,base_url,public_url,location,enabled,allow_new_users,
+    const result = await query(`SELECT id,name,slug,server_class,media_server_type,base_url,public_url,location,enabled,allow_new_users,
         trial_enabled,paid_enabled,priority,max_users,health_status,last_health_check,created_at,updated_at
         FROM jellyfin_servers WHERE id=$1`, [serverId]);
     return result.rows[0] || null;
@@ -153,6 +165,7 @@ async function serverImpact(serverId) {
 function riskyServerChange(server, form, impact) {
     const reasons = [];
     if (String(server.server_class) !== String(form.serverClass)) reasons.push(`server class ${server.server_class} → ${form.serverClass}`);
+    if (registry.mediaProvider.normalizeType(server.media_server_type) !== form.mediaServerType) reasons.push(`media server ${registry.mediaProvider.label(server.media_server_type)} → ${registry.mediaProvider.label(form.mediaServerType)}`);
     if (String(server.base_url) !== String(form.baseUrl)) reasons.push('internal/base URL');
     if (server.paid_enabled && !form.paidEnabled) reasons.push('paid-placement disabled');
     if (server.trial_enabled && !form.trialEnabled) reasons.push('trial-placement disabled');
@@ -163,26 +176,26 @@ async function persistHealthCheck(serverId, status) {
     if (!result.rowCount) throw new Error('Server not found.'); return result.rows[0].last_health_check;
 }
 async function createServer(actorUserId, form) {
-    await probeCredentials(form.baseUrl, form.apiKey);
+    await probeCredentials(form.baseUrl, form.apiKey, form.mediaServerType);
     return transaction(async client => {
-        const result = await client.query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check)
-            VALUES($1,$2,$3,$4,$5,$6,TRUE,$7,$8,$9,$10,$11,$12,'unknown',NULL) RETURNING id`, [form.name,form.slug,form.serverClass,form.baseUrl,form.publicUrl,encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'),form.priority,form.maxUsers,form.location,form.allowNewUsers,form.trialEnabled,form.paidEnabled]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.create','jellyfin_server',$2,$3::jsonb)`, [actorUserId,result.rows[0].id,JSON.stringify({fields:['name','slug','serverClass','baseUrl','publicUrl','priority','maxUsers','placement','apiKey']})]);
+        const result = await client.query(`INSERT INTO jellyfin_servers(name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check)
+            VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8,$9,$10,$11,$12,$13,'unknown',NULL) RETURNING id`, [form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'),form.priority,form.maxUsers,form.location,form.allowNewUsers,form.trialEnabled,form.paidEnabled]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.create','jellyfin_server',$2,$3::jsonb)`, [actorUserId,result.rows[0].id,JSON.stringify({mediaServerType:form.mediaServerType,fields:['name','slug','serverClass','mediaServerType','baseUrl','publicUrl','priority','maxUsers','placement','apiKey']})]);
         return result.rows[0].id;
     });
 }
 async function updateServer(actorUserId, serverId, form) {
     const current = await registry.getServerSecret(serverId); if (!current) throw new Error('Server not found.');
-    const candidateKey = form.apiKey || current.apiKey, connectivityChanged = form.baseUrl !== current.base_url || Boolean(form.apiKey);
-    if (connectivityChanged) await probeCredentials(form.baseUrl, candidateKey);
+    const candidateKey = form.apiKey || current.apiKey, providerChanged=form.mediaServerType!==registry.mediaProvider.normalizeType(current.media_server_type), connectivityChanged = form.baseUrl !== current.base_url || Boolean(form.apiKey) || providerChanged;
+    if (connectivityChanged) await probeCredentials(form.baseUrl, candidateKey, form.mediaServerType);
     await transaction(async client => {
-        const result = await client.query(`UPDATE jellyfin_servers SET name=$2,slug=$3,server_class=$4,base_url=$5,public_url=$6,location=$7,
-            priority=$8,max_users=$9,allow_new_users=$10,trial_enabled=$11,paid_enabled=$12,
-            api_key_encrypted=CASE WHEN $13::text IS NULL THEN api_key_encrypted ELSE $13 END,
-            health_status=CASE WHEN base_url<>$5 OR $13::text IS NOT NULL THEN 'unknown' ELSE health_status END,updated_at=NOW()
-            WHERE id=$1 RETURNING id`, [serverId,form.name,form.slug,form.serverClass,form.baseUrl,form.publicUrl,form.location,form.priority,form.maxUsers,form.allowNewUsers,form.trialEnabled,form.paidEnabled,form.apiKey?encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'):null]);
+        const result = await client.query(`UPDATE jellyfin_servers SET name=$2,slug=$3,server_class=$4,media_server_type=$5,base_url=$6,public_url=$7,location=$8,
+            priority=$9,max_users=$10,allow_new_users=$11,trial_enabled=$12,paid_enabled=$13,
+            api_key_encrypted=CASE WHEN $14::text IS NULL THEN api_key_encrypted ELSE $14 END,
+            health_status=CASE WHEN base_url<>$6 OR media_server_type<>$5 OR $14::text IS NOT NULL THEN 'unknown' ELSE health_status END,updated_at=NOW()
+            WHERE id=$1 RETURNING id`, [serverId,form.name,form.slug,form.serverClass,form.mediaServerType,form.baseUrl,form.publicUrl,form.location,form.priority,form.maxUsers,form.allowNewUsers,form.trialEnabled,form.paidEnabled,form.apiKey?encryptWithEnv(form.apiKey,'JELLYFIN_ENCRYPTION_KEY','jf1'):null]);
         if (!result.rowCount) throw new Error('Server not found.');
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.update','jellyfin_server',$2,$3::jsonb)`, [actorUserId,serverId,JSON.stringify({credentialRotated:Boolean(form.apiKey),connectivityChanged})]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.update','jellyfin_server',$2,$3::jsonb)`, [actorUserId,serverId,JSON.stringify({mediaServerType:form.mediaServerType,providerChanged,credentialRotated:Boolean(form.apiKey),connectivityChanged})]);
     });
 }
 async function renderLocals(req, server = null, error = null) {
@@ -195,13 +208,13 @@ function createAdminServersRouter() {
     router.get(`/admin/servers/${SERVER_ID_PARAM}/edit`, async (req,res,next) => { try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); return res.render('admin/server-form',await renderLocals(req,server)); } catch(error){next(error);} });
     router.post('/admin/servers', async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
-        try { const form=parseServerForm(req.body,{apiKeyRequired:true}),id=await createServer(req.session.authUserId,form); try{await registry.healthcheckServer(id);}catch(_){} return res.redirect('/admin/servers?message='+encodeURIComponent('Jellyfin server added and credentials validated.')); }
+        try { const form=parseServerForm(req.body,{apiKeyRequired:true}),id=await createServer(req.session.authUserId,form),providerLabel=registry.mediaProvider.label(form.mediaServerType); try{await registry.healthcheckServer(id);}catch(_){} return res.redirect('/admin/servers?message='+encodeURIComponent(`${providerLabel} server added and credentials validated.`)); }
         catch(error){console.warn('Admin server create rejected:',error.message);return res.redirect(formErrorRedirect('/admin/servers/new',error));}
     });
     router.post(`/admin/servers/${SERVER_ID_PARAM}/test`, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const started=Date.now();
-        try { const server=await serverDetail(req.params.serverId),secret=await registry.getServerSecret(req.params.serverId); if(!server||!secret)return res.status(404).send('Server not found'); const info=await probeCredentials(secret.base_url,secret.apiKey),latencyMs=Date.now()-started,serverName=cleanText(info.ServerName,100)||server.name,version=cleanText(info.Version,40),checkedAt=await persistHealthCheck(req.params.serverId,'healthy'); await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.connection_test','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.serverId,JSON.stringify({ok:true,latencyMs,version:version||null,checkedAt})]); return res.redirect('/admin/servers?message='+encodeURIComponent(`Connection successful — ${serverName}${version?` · Jellyfin ${version}`:''} · ${latencyMs} ms.`)); }
+        try { const server=await serverDetail(req.params.serverId),secret=await registry.getServerSecret(req.params.serverId); if(!server||!secret)return res.status(404).send('Server not found'); const info=await probeCredentials(secret.base_url,secret.apiKey,secret.media_server_type),latencyMs=Date.now()-started,serverName=cleanText(info.ServerName,100)||server.name,version=cleanText(info.Version,40),checkedAt=await persistHealthCheck(req.params.serverId,'healthy'),providerLabel=registry.mediaProvider.label(secret.media_server_type); await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.connection_test','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.serverId,JSON.stringify({ok:true,provider:secret.media_server_type,latencyMs,version:version||null,checkedAt})]); return res.redirect('/admin/servers?message='+encodeURIComponent(`Connection successful — ${serverName}${version?` · ${providerLabel} ${version}`:''} · ${latencyMs} ms.`)); }
         catch(error){await persistHealthCheck(req.params.serverId,'offline').catch(()=>{});console.warn('Admin server connection test failed:',error.message);return res.redirect('/admin/servers?error='+encodeURIComponent(`Connection failed — ${safeAdminError(error)}`));}
     });
     router.post(`/admin/servers/${SERVER_ID_PARAM}`, async (req,res) => {
@@ -216,10 +229,10 @@ function createAdminServersRouter() {
     });
     router.post(`/admin/servers/${SERVER_ID_PARAM}/health`, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
-        try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); const result=await registry.healthcheckServer(req.params.serverId); await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.healthcheck','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.serverId,JSON.stringify({ok:result.ok,latencyMs:result.latencyMs})]); return res.redirect('/admin/servers?'+(result.ok?'message=':'error=')+encodeURIComponent(result.ok?`Server health check passed (${result.latencyMs} ms).`:'Server health check failed.')); }
+        try { const server=await serverDetail(req.params.serverId); if(!server)return res.status(404).send('Server not found'); const result=await registry.healthcheckServer(req.params.serverId); await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.server.healthcheck','jellyfin_server',$2,$3::jsonb)`,[req.session.authUserId,req.params.serverId,JSON.stringify({ok:result.ok,provider:result.provider||server.media_server_type,latencyMs:result.latencyMs})]); return res.redirect('/admin/servers?'+(result.ok?'message=':'error=')+encodeURIComponent(result.ok?`Server health check passed (${result.latencyMs} ms).`:'Server health check failed.')); }
         catch(error){return res.redirect('/admin/servers?error='+encodeURIComponent('Server health check could not be completed.'));}
     });
     router.use('/admin/servers', async (error,_req,res,_next) => { console.error('Admin servers route error:',error.message); await runtimeSettings.ensureLoaded().catch(()=>{}); return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Servers unavailable',message:'Server administration could not be loaded safely.',link:'/admin',linkText:'Return to Administration'}); });
     return router;
 }
-module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage };
+module.exports = { createAdminServersRouter,serverList,serverDetail,serverImpact,riskyServerChange,parseServerForm,normalizeUrl,allowedHosts,probeCredentials,safeAdminError,safeAdminErrorInfo,persistHealthCheck,FieldValidationError,connectionPolicyMessage,mediaServerType };
