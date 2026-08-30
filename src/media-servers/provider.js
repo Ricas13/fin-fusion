@@ -48,4 +48,24 @@ function userPolicyOverrides(type) {
   };
 }
 
-module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, userPolicyOverrides };
+function userPolicy(type, policy) {
+  const provider = normalizeType(type);
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return policy;
+  const overrides = userPolicyOverrides(provider);
+  if (!overrides) return policy;
+  const result = { ...policy };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete result[key];
+    else result[key] = value;
+  }
+  return result;
+}
+
+function requestBody(type, endpoint, body) {
+  if (body === null || body === undefined) return body;
+  const path = String(endpoint || '').replace(/^\/emby(?=\/|$)/, '') || '/';
+  if (/^\/Users\/[^/]+\/Policy$/.test(path)) return userPolicy(type, body);
+  return body;
+}
+
+module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, userPolicyOverrides, userPolicy, requestBody };
