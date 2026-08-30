@@ -2,8 +2,17 @@
 
 const express = require('express');
 const csrf = require('../auth/csrf');
+const routeRateLimit = require('../security/route-rate-limit');
 const restore = require('../entitlements/jellyfin-inactivity-restore');
 const provisioning = require('../jellyfin/resilient-provisioning');
+
+const reenableLimit = routeRateLimit.middleware({
+    scope: 'admin-jellyfin-reenable',
+    max: 30,
+    windowSeconds: 60,
+    reason: 'admin_jellyfin_reenable',
+    backend: 'memory'
+});
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -24,7 +33,10 @@ function createAdminJellyfinReenableRouter() {
     const router = express.Router();
     router.use('/admin/users', gate, noStore);
 
-    router.post('/admin/users/:customerId/jellyfin/re-enable', async (req, res) => {
+    // This route also inherits the shared DB-backed /admin mutation limiter from
+    // admin-route-composition. Keep a local bounded limiter here as defense in
+    // depth and so the sensitive mutation is visibly protected at its owner.
+    router.post('/admin/users/:customerId/jellyfin/re-enable', reenableLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
             const result = await restore.restoreDisabledFreeAccess(req.params.customerId, {
