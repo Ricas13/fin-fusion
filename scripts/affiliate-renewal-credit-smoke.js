@@ -19,7 +19,7 @@ async function main(){
   assert(stripeSource.includes("case 'invoice.created'"),'Stripe invoice.created must own renewal credit application.');
   assert(stripeSource.includes('stripe.invoiceItems.create'),'Stripe renewal credit must adjust the exact draft invoice.');
   assert(stripeSource.includes('amount:-Number(reservation.amountMinor)'),'Stripe renewal credit must reduce provider amount by the reserved credit.');
-  assert(stripeSource.includes('stripe.invoiceItems.list({invoice:String(invoiceId),limit:100})'),'Provider/local recovery must verify the durable Stripe invoice item after ambiguous application.');
+  assert(stripeSource.includes('stripe.invoiceItems.list({invoice:String(invoiceId),limit:100')&&stripeSource.includes('starting_after:startingAfter')&&stripeSource.includes('items?.has_more'),'Provider/local recovery must exhaust paginated Stripe invoice items before declaring an adjustment absent.');
   assert(stripeSource.includes('recoverServiceCreditProviderItem'),'Stripe renewal handling must converge an applied provider adjustment when the local write was interrupted.');
   assert(stripeSource.includes("case 'invoice.paid'"),'Stripe invoice.paid must settle the reserved credit.');
   assert(stripeSource.includes("case 'invoice.voided'")&&stripeSource.includes("case 'invoice.deleted'"),'Terminal void/deleted invoices must release renewal credit.');
@@ -75,7 +75,6 @@ async function main(){
   await renewals.releaseStripeInvoice(`in_credit_${suffix}_3`,'invoice_voided');
   assert.equal(await accounting.rawAvailableMinorForClient({query},customer.id,'GBP'),400,'voided invoice credit must become spendable again');
 
-  // Refund/chargeback reconciliation must not invalidate credit that Stripe already owns on a renewal invoice.
   await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('affiliate_program',$1::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[JSON.stringify({enabled:true,rewardPercent:25,qualificationDelayDays:0,refundWindowDays:0})]);
   const affiliate=await bareCustomer(`renewal-reversal-affiliate`,suffix),referred=await bareCustomer(`renewal-reversal-buyer`,suffix);await credits.enroll(affiliate.id);
   const purchasePlan=await testPlan(`renewal-reversal-purchase-${suffix}`,'Renewal reversal purchase',10000),code=(await query(`SELECT code FROM referral_codes WHERE customer_id=$1`,[affiliate.id])).rows[0].code;
