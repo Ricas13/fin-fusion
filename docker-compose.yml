@@ -154,7 +154,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "-e", "const{Client}=require('pg');const c=new Client({connectionString:process.env.DATABASE_URL});c.connect().then(()=>c.query(\"SELECT EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age FROM operational_worker_state WHERE worker_key='automation'\")).then(r=>{const ok=r.rowCount&&Number(r.rows[0].age)<90;return c.end().then(()=>process.exit(ok?0:1))}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "const{Client}=require('pg');const c=new Client({connectionString:process.env.DATABASE_URL});const max=Math.max(90,Math.ceil(Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS||15000)/1000)*4);c.connect().then(()=>c.query(\"SELECT EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at)) age FROM operational_worker_state WHERE worker_key='automation' AND instance_id=$1 AND draining_at IS NULL\",[process.env.HOSTNAME])).then(r=>{const ok=r.rowCount&&Number(r.rows[0].age)<max;return c.end().then(()=>process.exit(ok?0:1))}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 8s
       retries: 3
@@ -186,6 +186,7 @@ services:
       DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-true}
       STREAM_POLICY_MODE: ${STREAM_POLICY_MODE:-observe}
       STREAM_POLICY_POLL_SECONDS: ${STREAM_POLICY_POLL_SECONDS:-30}
+      ACTIVITY_WORKER_HEARTBEAT_MS: ${ACTIVITY_WORKER_HEARTBEAT_MS:-15000}
       STREAM_POLICY_ACTIVE_WINDOW_SECONDS: ${STREAM_POLICY_ACTIVE_WINDOW_SECONDS:-120}
       STREAM_POLICY_GRACE_SECONDS: ${STREAM_POLICY_GRACE_SECONDS:-45}
       STREAM_POLICY_CONFIRMATIONS: ${STREAM_POLICY_CONFIRMATIONS:-2}

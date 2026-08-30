@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const diagnostics = require('../src/platform/system-diagnostics');
+const workerInstanceHealth = require('../src/platform/worker-instance-health');
 const requestSync = require('../src/integrations/request-user-sync');
 
 const now = Date.now();
@@ -11,21 +12,31 @@ const automation = {
   worker_key: 'automation',
   heartbeat_age_seconds: 50,
   draining_at: null,
-  metadata: { pollMs: 15000 }
+  metadata: { pollMs: 15000, heartbeatMs: 15000 }
 };
 const activity = {
   worker_key: 'activity',
   heartbeat_age_seconds: 100,
   draining_at: null,
-  metadata: { pollSeconds: 30, lastCycleOutcome: 'healthy' }
+  metadata: { pollSeconds: 30, heartbeatMs: 15000, lastCycleOutcome: 'healthy' }
 };
 assert.strictEqual(diagnostics.workerFreshnessSeconds(automation), 90, 'automation freshness must preserve control-plane headroom');
-assert.strictEqual(diagnostics.workerFreshnessSeconds(activity), 120, 'activity freshness must derive from its own cadence');
+assert.strictEqual(diagnostics.workerFreshnessSeconds(activity), 120, 'activity freshness must derive from its heartbeat cadence');
+assert.strictEqual(workerInstanceHealth.freshnessSeconds({ ...activity, metadata: { ...activity.metadata, heartbeatMs: 60000 } }), 240, 'slow supported heartbeat cadence must expand the activity freshness window');
 assert.strictEqual(diagnostics.operationalWorkerState(activity), 'healthy');
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, heartbeat_age_seconds: 121 }), 'stale');
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, metadata: { ...activity.metadata, lastCycleOutcome: 'degraded' } }), 'degraded');
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, metadata: { ...activity.metadata, lastCycleOutcome: 'failed' } }), 'failed');
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, draining_at: new Date(now).toISOString() }), 'draining');
+
+const rolloutSummary = workerInstanceHealth.summarize([
+  { worker_key: 'activity', instance_id: 'replacement', heartbeat_age_seconds: 12, draining_at: null, metadata: { heartbeatMs: 15000, lastCycleOutcome: 'healthy' } },
+  { worker_key: 'activity', instance_id: 'retiring', heartbeat_age_seconds: 2, draining_at: new Date(now).toISOString(), metadata: { heartbeatMs: 15000, lastCycleOutcome: 'healthy' } }
+]);
+const rolloutActivity = rolloutSummary.workers.find(worker => worker.key === 'activity');
+assert.strictEqual(rolloutActivity.state, 'healthy', 'a fresher draining instance must not override a healthy active replacement');
+assert.strictEqual(rolloutActivity.heartbeatAgeSeconds, 12, 'role summary must report the representative active instance, not the draining row');
+assert.strictEqual(rolloutActivity.liveInstances, 1, 'draining workers must not count as active instances');
 
 const requestSummary = requestSync.emptySummary(5);
 requestSync.countResult(requestSummary, { status: 'failed', error: ' Seerr returned HTTP 500\nwhile saving settings ' });
@@ -49,8 +60,12 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const migration = read('db/migrations/029_activity_worker_heartbeat.sql');
 const roles = read('scripts/configure-runtime-db-roles.js');
 const worker = read('scripts/activity-worker.js');
+const automationWorker = read('scripts/automation-worker.js');
 const activityTrust = read('src/jellyfin/activity-trust.js');
 const jellyfinJobs = read('src/jellyfin/jobs.js');
+const automationJobs = read('src/automation/jobs.js');
+const compose = read('docker-compose.yml');
+const envExample = read('.env.example');
 const system = read('src/platform/system-diagnostics.js');
 const requestUserSync = read('src/integrations/request-user-sync.js');
 const jobHealth = read('src/automation/job-health.js');
@@ -66,15 +81,27 @@ assert(worker.includes("worker_key='activity'") === false, 'Activity worker shou
 assert(worker.includes('record_activity_worker_heartbeat'), 'Activity worker must publish through the fixed-key heartbeat function');
 assert(worker.includes("lastCycleOutcome"), 'Activity heartbeat metadata must include cycle outcome');
 assert(worker.includes('serverFailures'), 'Activity heartbeat metadata must include downstream server-failure count');
+assert(worker.includes('heartbeatMs: HEARTBEAT_MS'), 'Activity heartbeat metadata must publish its independent liveness cadence');
+assert(worker.includes('heartbeatTimer = setInterval'), 'Activity worker must heartbeat independently of the playback poll loop');
+assert(worker.includes("if (result?.recorded || result?.reason === 'database_maintenance') heartbeat();"), 'Local activity health must advance only when the database heartbeat path is proven reachable');
 assert(worker.includes('withMaintenanceSharedLock'), 'Activity heartbeat/cycles must remain maintenance-aware');
+assert(automationWorker.includes('heartbeatMs: HEARTBEAT_MS'), 'Automation heartbeat metadata must publish its liveness cadence');
 assert(activityTrust.includes("WHERE worker_key='activity'"), 'Activity trust must read only activity worker instances');
 assert(activityTrust.includes('draining_at IS NULL'), 'Activity trust must ignore workers that have begun draining');
 assert(activityTrust.includes('ORDER BY last_heartbeat_at DESC'), 'Activity trust must select the freshest live worker instance after multi-instance health migration');
 assert(activityTrust.includes('LIMIT 1'), 'Activity trust must collapse multiple live/stale rows to one freshest heartbeat');
+assert(activityTrust.includes("intEnv('ACTIVITY_WORKER_HEARTBEAT_MS'"), 'Activity trust freshness must follow the independent worker heartbeat cadence');
 
 assert(jellyfinJobs.includes('summarizeFailureReasons'), 'entitlement reconciliation must aggregate repeated failure causes');
 assert(jellyfinJobs.includes('warning = summarizeFailureReasons'), 'entitlement job result must expose a structured warning instead of only a failed count');
+assert(jellyfinJobs.includes('blocked pending recovery'), 'blocked reconciliation must surface an operator-visible degraded warning');
 assert(jellyfinJobs.includes("replace(/[\\r\\n\\t\\u2028\\u2029]+/g, ' ')"), 'entitlement failure diagnostics must be compact and safe for the automation card');
+assert(automationJobs.includes('Number(active.blocked||0)'), 'blocked entitlement reconciliation must contribute to the automation failed count and degraded outcome');
+
+assert(compose.includes("instance_id=$1 AND draining_at IS NULL"), 'Automation container health must check its own non-draining worker instance');
+assert(compose.includes('[process.env.HOSTNAME]'), 'Automation container health must bind the current container instance id instead of reading an arbitrary row');
+assert(compose.includes('ACTIVITY_WORKER_HEARTBEAT_MS: ${ACTIVITY_WORKER_HEARTBEAT_MS:-15000}'), 'Compose must pass the independent activity heartbeat cadence');
+assert(envExample.includes('ACTIVITY_WORKER_HEARTBEAT_MS=15000'), 'Example configuration must document the activity heartbeat cadence');
 
 assert(system.includes("runtimeSettings.ensureLoaded()"), 'support diagnostics must load canonical browser-managed runtime settings');
 assert(system.includes('runtimeSettings.requireAdminTwoFactor()'), 'admin 2FA posture must come from canonical runtime settings');

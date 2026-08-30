@@ -42,6 +42,7 @@ async function heartbeat({ draining = false } = {}) {
             metadata=EXCLUDED.metadata,updated_at=NOW()`,
     [INSTANCE_ID, pkg.version || null, COMMIT_SHA, Boolean(draining), JSON.stringify({
         pollMs: POLL_MS,
+        heartbeatMs: HEARTBEAT_MS,
         concurrency: MAX_CONCURRENCY,
         requestedConcurrency: REQUESTED_CONCURRENCY,
         dbPoolSize: DB_POOL_SIZE,

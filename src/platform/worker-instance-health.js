@@ -8,10 +8,13 @@ function number(value) {
 function freshnessSeconds(row) {
   const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   const key = String(row?.worker_key || '');
-  if (key === 'activity') return Math.max(120, Math.min(1800, number(metadata.pollSeconds || 30) * 4));
+  if (key === 'activity') {
+    const heartbeatSeconds = Math.ceil(number(metadata.heartbeatMs || 15000) / 1000);
+    return Math.max(120, Math.min(600, heartbeatSeconds * 4));
+  }
   if (key === 'automation') {
-    const pollSeconds = Math.ceil(number(metadata.pollMs || 15000) / 1000);
-    return Math.max(90, Math.min(900, pollSeconds * 4));
+    const heartbeatSeconds = Math.ceil(number(metadata.heartbeatMs || metadata.pollMs || 15000) / 1000);
+    return Math.max(90, Math.min(900, heartbeatSeconds * 4));
   }
   return 90;
 }
@@ -54,6 +57,10 @@ function instanceView(row) {
   };
 }
 
+function newest(rows = []) {
+  return [...rows].sort((a, b) => a.heartbeatAgeSeconds - b.heartbeatAgeSeconds)[0] || null;
+}
+
 function summarize(rows = []) {
   const instances = rows.map(instanceView);
   const byRole = new Map();
@@ -67,7 +74,10 @@ function summarize(rows = []) {
   for (const [key, roleInstances] of byRole) {
     const live = roleInstances.filter(instance => instance.state !== 'stale');
     const active = live.filter(instance => !instance.draining);
-    const latest = [...roleInstances].sort((a, b) => a.heartbeatAgeSeconds - b.heartbeatAgeSeconds)[0];
+    const latest = newest(roleInstances);
+    const latestActive = newest(active);
+    const latestLive = newest(live);
+    const representative = latestActive || latestLive || latest;
     const commits = [...new Set(active.map(instance => instance.commitSha).filter(Boolean))];
     const versions = [...new Set(active.map(instance => instance.version).filter(Boolean))];
     if (active.length > 1) warnings.push({ type: 'duplicate_instances', workerKey: key, instanceCount: active.length, instanceIds: active.map(instance => instance.instanceId) });
@@ -75,11 +85,11 @@ function summarize(rows = []) {
     for (const instance of roleInstances.filter(item => item.state === 'stale')) warnings.push({ type: 'stale_instance', workerKey: key, instanceId: instance.instanceId, heartbeatAgeSeconds: instance.heartbeatAgeSeconds });
     workers.push({
       key,
-      heartbeatAgeSeconds: latest.heartbeatAgeSeconds,
-      freshnessSeconds: latest.freshnessSeconds,
-      state: live.length ? latest.state : 'stale',
-      lastCycleOutcome: latest.lastCycleOutcome,
-      serverFailures: latest.serverFailures,
+      heartbeatAgeSeconds: representative?.heartbeatAgeSeconds ?? 0,
+      freshnessSeconds: representative?.freshnessSeconds ?? 90,
+      state: latestActive ? latestActive.state : (latestLive ? latestLive.state : 'stale'),
+      lastCycleOutcome: representative?.lastCycleOutcome || null,
+      serverFailures: representative?.serverFailures || 0,
       instanceCount: roleInstances.length,
       liveInstances: active.length
     });
