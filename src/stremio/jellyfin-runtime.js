@@ -1,36 +1,32 @@
 'use strict';
 
 const outbound=require('../security/outbound-url-policy');
+const registry=require('../jellyfin/registry');
 const foundation=require('./foundation');
 const mediaIndex=require('./media-index');
 const entitlements=require('./entitlements');
 
-function restrictedHeaders(token,{json=false}={}){
-  return{
-    Authorization:entitlements.jellyfinAuthHeader(token),
-    Accept:'application/json',
-    ...(json?{'Content-Type':'application/json'}:{})
-  };
+function restrictedHeaders(token,{json=false,mediaServerType='jellyfin'}={}){
+  return registry.mediaProvider.userTokenHeaders(mediaServerType,token,{jsonBody:json});
 }
 
 async function restrictedRequest(entitlement,endpoint,{method='GET',body=null,timeoutMs=12000}={}){
-  if(typeof endpoint!=='string'||!endpoint.startsWith('/')||endpoint.startsWith('//'))throw new Error('Invalid restricted Jellyfin endpoint.');
-  const base=new URL(String(entitlement.base_url));
-  const url=new URL(endpoint,`${base.toString().replace(/\/$/,'')}/`);
-  if(url.origin!==base.origin)throw new Error('Restricted Jellyfin endpoint escaped the configured server origin.');
+  if(typeof endpoint!=='string'||!endpoint.startsWith('/')||endpoint.startsWith('//'))throw new Error('Invalid restricted media-server endpoint.');
+  const type=registry.mediaProvider.normalizeType(entitlement?.media_server_type),providerLabel=registry.mediaProvider.label(type),base=new URL(String(entitlement.base_url)),path=registry.mediaProvider.apiPath(type,endpoint),url=new URL(path,`${base.toString().replace(/\/$/,'')}/`);
+  if(url.origin!==base.origin)throw new Error(`Restricted ${providerLabel} endpoint escaped the configured server origin.`);
   const token=entitlements.accessToken(entitlement);
   const response=await outbound.safeFetch(url,{
-    purpose:`Stremio restricted Jellyfin request on ${entitlement.server_name}`,
+    purpose:`Stremio restricted ${providerLabel} request on ${entitlement.server_name}`,
     method,
     timeoutMs,
-    headers:restrictedHeaders(token,{json:body!==null}),
+    headers:restrictedHeaders(token,{json:body!==null,mediaServerType:type}),
     ...(body!==null?{body:JSON.stringify(body)}:{})
   });
   const text=await response.text();
   let parsed={};
   if(text){try{parsed=JSON.parse(text);}catch{parsed=text;}}
   if(!response.ok){
-    const error=new Error(`Restricted Jellyfin request returned HTTP ${response.status}`);
+    const error=new Error(`Restricted ${providerLabel} request returned HTTP ${response.status}`);
     error.status=response.status;
     throw error;
   }
@@ -111,7 +107,7 @@ function streamDescription(quality,source){
   if(audio?.DisplayTitle)parts.push(`🔊 ${audio.DisplayTitle}`);else if(meta.audio)parts.push(`🔊 ${[meta.audio,meta.channels].filter(Boolean).join(' · ')}`);
   if(Number(source?.Bitrate)>0)parts.push(`📶 ${(Number(source.Bitrate)/1000000).toFixed(1)} Mbps`);
   if(meta.releaseGroup)parts.push(`🏷️ ${meta.releaseGroup}`);
-  return parts.join('\n')||'▶️ Direct Jellyfin playback';
+  return parts.join('\n')||'▶️ Direct media-server playback';
 }
 
-module.exports={restrictedRequest,parseVideoId,resolveItem,sourceQuality,sourceFilename,basenameFromPath,streamDescription};
+module.exports={restrictedHeaders,restrictedRequest,parseVideoId,resolveItem,sourceQuality,sourceFilename,basenameFromPath,streamDescription};
