@@ -78,6 +78,17 @@ function main() {
     assert(scheduled.includes('providerMutationAttempted=true;schedule=await client.subscriptionSchedules.create'), 'Stripe schedule creation ambiguity is not routed into provider-operation recovery.');
     assert(scheduled.includes('providerMutationAttempted=true;const updated=await client.subscriptionSchedules.update'), 'Stripe schedule update ambiguity is not routed into provider-operation recovery.');
     assert(scheduled.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Scheduled Stripe post-provider failures are still forced terminal.');
+    assert(scheduled.includes("scheduleChangeId!==String(change.id)"), 'A new local plan change can still take over a Stripe schedule owned by an older CAPTAiNFiN change.');
+    assert(scheduled.includes('error.planChangeMutationAttempted=providerMutationAttempted'), 'Schedule errors do not carry provider-mutation ambiguity back to the local plan-change owner.');
+    const requestChange = section(planChange, 'async function requestChange', 'async function scheduledStripeSubscription');
+    assert(requestChange.includes('error.planChangeRefusal&&!error.planChangeMutationAttempted'), 'Ambiguous Stripe scheduling errors can still be collapsed into a permanent local failure.');
+    assert(requestChange.includes("state=CASE WHEN $3::boolean THEN 'failed' ELSE state END"), 'Retryable Stripe scheduling errors do not preserve the open local plan-change state.');
+    const dueStripe = section(planChange, 'async function applyDueStripe', 'async function expireDuePaypal');
+    assert(dueStripe.includes("throw planChangeRefusal('Scheduled Stripe target price is missing."), 'Deterministic scheduled Stripe invariants must be marked for manual failure.');
+    assert(dueStripe.includes("if(error.planChangeRefusal){await query(`UPDATE customer_plan_changes SET state='failed'"), 'Unrecoverable scheduled Stripe divergence must still become a visible failed plan change.');
+    assert(dueStripe.includes("UPDATE customer_plan_changes SET error=$2,updated_at=NOW() WHERE id=$1 AND state='pending'"), 'Transient scheduled Stripe failures must remain pending so the next automation cycle can converge them.');
+    assert(dueStripe.includes("provider_schedule_state='applied',error=NULL"), 'Successful scheduled Stripe convergence must clear stale retry errors.');
+    assert(dueStripe.includes('provider_schedule_state=$2,error=NULL'), 'A healthy provider poll must clear a previous transient scheduled-change error.');
 
     assert.deepStrictEqual(provisioning.assertDiscordSyncResult({ added: [], removed: [], errors: [] }).errors, []);
     const discordError = expectThrows(() => provisioning.assertDiscordSyncResult({ errors: ['remove role: HTTP 503'] }), 'DISCORD_ROLE_SYNC_FAILED');
