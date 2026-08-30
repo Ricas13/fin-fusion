@@ -33,10 +33,8 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
         LIMIT 1
         ${lock ? 'FOR UPDATE' : ''}
     `;
-    const [accounts, hold] = await Promise.all([
-        db.query(accountSql, [customerId]),
-        db.query(holdSql, [customerId, HOLD_TYPE, sourceKey])
-    ]);
+    const accounts = await db.query(accountSql, [customerId]);
+    const hold = await db.query(holdSql, [customerId, HOLD_TYPE, sourceKey]);
 
     let lifecycleRows = [];
     if (accounts.rowCount) {
