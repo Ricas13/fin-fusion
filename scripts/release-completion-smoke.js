@@ -58,8 +58,9 @@ has(firstRun,'docker compose exec app npm run setup:claim','first-run setup must
 has(firstRun,'You do not need to search application logs.','first-run setup must not require log archaeology');
 
 // Repository hygiene is part of release integrity: old migration tools must be
-// visibly legacy/fail-closed, and automated branch pruning must delete only
-// work already represented by main (identical ancestry or equivalent patches).
+// visibly legacy/fail-closed, temporary test-selection markers must never ship,
+// and automated branch pruning must delete only work already represented by main.
+assert(!fs.existsSync(path.join(__dirname,'..','.check-bisect')),'Temporary .check-bisect must never be committed; it disables part of the fast-check suite');
 const packageJson=JSON.parse(read('package.json'));
 assert.strictEqual(packageJson.private,true,'CAPTAiNFiN must remain a private npm package');
 assert.strictEqual(packageJson.scripts['legacy:import-json'],'node scripts/migrate-json-to-postgres.js','legacy JSON import must be visibly namespaced as legacy tooling');
