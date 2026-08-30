@@ -82,20 +82,29 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeChec
         JOIN jellyfin_servers restricted_server ON restricted_server.id=pse.server_id
         WHERE pse.plan_id=$1 AND restricted_server.server_class=$2
       ) AS restricted
-    )
-    SELECT
-      COUNT(*) FILTER(WHERE js.max_users IS NOT NULL AND (NOT r.restricted OR pse.server_id IS NOT NULL))::int configured_servers,
-      COALESCE(SUM(js.max_users) FILTER(WHERE js.max_users IS NOT NULL
+    ), eligible_servers AS (
+      SELECT js.id,js.max_users
+      FROM jellyfin_servers js
+      CROSS JOIN restriction r
+      LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
+      WHERE js.server_class=$2
+        AND js.max_users IS NOT NULL
         AND (NOT r.restricted OR pse.server_id IS NOT NULL)
         AND js.enabled=TRUE AND js.allow_new_users=TRUE
         AND COALESCE(js.placement_mode,'active')='active'
         AND ${health}
-        AND ${serviceFlag}),0)::int stream_limit
-    FROM jellyfin_servers js
-    CROSS JOIN restriction r
-    LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
-    WHERE js.server_class=$2`,[plan.id,cls]);
-  const configuredServers=Number(configured.rows[0]?.configured_servers||0),streamLimit=Number(configured.rows[0]?.stream_limit||0);
+        AND ${serviceFlag}
+    )
+    SELECT
+      (SELECT COUNT(*)::int
+       FROM jellyfin_servers js
+       CROSS JOIN restriction r
+       LEFT JOIN plan_server_eligibility pse ON pse.plan_id=$1 AND pse.server_id=js.id
+       WHERE js.server_class=$2 AND js.max_users IS NOT NULL
+         AND (NOT r.restricted OR pse.server_id IS NOT NULL)) AS configured_servers,
+      COALESCE((SELECT SUM(es.max_users) FROM eligible_servers es),0)::int AS stream_limit,
+      COALESCE((SELECT COUNT(DISTINCT ja.id) FROM jellyfin_accounts ja JOIN eligible_servers es ON es.id=ja.server_id WHERE ja.disabled=FALSE),0)::int AS enabled_accounts`,[plan.id,cls]);
+  const configuredServers=Number(configured.rows[0]?.configured_servers||0),streamLimit=Number(configured.rows[0]?.stream_limit||0),enabledAccountFloor=Number(configured.rows[0]?.enabled_accounts||0);
   if(!configuredServers)return null;
   const used=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(s.commercial_snapshot->'streams')='number' THEN (s.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_used
     FROM subscriptions s JOIN plans p ON p.id=s.plan_id
@@ -109,8 +118,8 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeChec
   const freeHolds=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.streams,1))),0)::int AS stream_reserved
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
     WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1 AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
-  const streamUsed=Number(used.rows[0]?.stream_used||0),streamReserved=Number(checkout.rows[0]?.stream_reserved||0)+Number(freeHolds.rows[0]?.stream_reserved||0),streamRemaining=Math.max(0,streamLimit-streamUsed-streamReserved);
-  return{pool:cls,configuredServers,streamLimit,streamUsed,streamReserved,streamRemaining,healthMode};
+  const entitlementStreamUsed=Number(used.rows[0]?.stream_used||0),streamUsed=Math.max(entitlementStreamUsed,enabledAccountFloor),streamReserved=Number(checkout.rows[0]?.stream_reserved||0)+Number(freeHolds.rows[0]?.stream_reserved||0),streamRemaining=Math.max(0,streamLimit-streamUsed-streamReserved),capacityGap=Math.max(0,enabledAccountFloor-entitlementStreamUsed);
+  return{pool:cls,configuredServers,streamLimit,streamUsed,entitlementStreamUsed,enabledAccountFloor,capacityGap,streamReserved,streamRemaining,healthMode};
 }
 async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
@@ -129,7 +138,7 @@ async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutI
     if(manual.remaining!=null)remaining=Math.min(remaining,manual.remaining);
     if(manual.limit!=null)limit=Math.min(limit,manual.limit);
   }
-  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,healthMode:fleet.healthMode,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining===0,manualLimit,manualUsed,manualReserved};
+  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,entitlementStreamUsed:fleet.entitlementStreamUsed,enabledAccountFloor:fleet.enabledAccountFloor,capacityGap:fleet.capacityGap,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,healthMode:fleet.healthMode,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining===0,manualLimit,manualUsed,manualReserved};
   return{...state,...scarcity(state)};
 }
 
@@ -181,12 +190,12 @@ function fleetConfiguredSql(alias='p'){
   ))`;
 }
 function fleetAvailableSql(alias='p'){
-  const restriction=fleetRestrictionSql(alias,'capacity_server');
+  const restriction=fleetRestrictionSql(alias,'capacity_server'),accountRestriction=fleetRestrictionSql(alias,'account_server');
   const healthMode=`COALESCE((SELECT setting_value->>'placementHealthMode' FROM platform_settings WHERE setting_key='operations_v1'),'healthy_or_degraded')`;
-  const healthy=`CASE ${healthMode}
-    WHEN 'healthy_only' THEN capacity_server.health_status='healthy'
-    WHEN 'fail_open' THEN COALESCE(capacity_server.health_status,'unknown')<>'offline'
-    ELSE capacity_server.health_status IN('healthy','degraded')
+  const healthFor=serverAlias=>`CASE ${healthMode}
+    WHEN 'healthy_only' THEN ${serverAlias}.health_status='healthy'
+    WHEN 'fail_open' THEN COALESCE(${serverAlias}.health_status,'unknown')<>'offline'
+    ELSE ${serverAlias}.health_status IN('healthy','degraded')
   END`;
   const streamCapacity=`(
     SELECT COALESCE(SUM(capacity_server.max_users),0)
@@ -197,7 +206,7 @@ function fleetAvailableSql(alias='p'){
       AND capacity_server.enabled=TRUE
       AND capacity_server.allow_new_users=TRUE
       AND COALESCE(capacity_server.placement_mode,'active')='active'
-      AND ${healthy}
+      AND ${healthFor('capacity_server')}
       AND (${alias}.server_class='free'
         OR (${alias}.billing_interval='trial' AND capacity_server.trial_enabled=TRUE)
         OR (${alias}.billing_interval<>'trial' AND capacity_server.paid_enabled=TRUE))
@@ -217,6 +226,22 @@ function fleetAvailableSql(alias='p'){
         WHERE capacity_access_hold.customer_id=active_subscription.customer_id
           AND capacity_access_hold.hold_type IN ('inactivity_policy','jellyfin_cleanup')
           AND capacity_access_hold.released_at IS NULL)
+  )`;
+  const enabledAccounts=`(
+    SELECT COUNT(DISTINCT capacity_account.id)
+    FROM jellyfin_accounts capacity_account
+    JOIN jellyfin_servers account_server ON account_server.id=capacity_account.server_id
+    WHERE capacity_account.disabled=FALSE
+      AND account_server.server_class=${alias}.server_class
+      AND account_server.max_users IS NOT NULL
+      AND ${accountRestriction}
+      AND account_server.enabled=TRUE
+      AND account_server.allow_new_users=TRUE
+      AND COALESCE(account_server.placement_mode,'active')='active'
+      AND ${healthFor('account_server')}
+      AND (${alias}.server_class='free'
+        OR (${alias}.billing_interval='trial' AND account_server.trial_enabled=TRUE)
+        OR (${alias}.billing_interval<>'trial' AND account_server.paid_enabled=TRUE))
   )`;
   const checkoutHolds=`(
     SELECT COALESCE(SUM(GREATEST(1,COALESCE(
@@ -238,7 +263,7 @@ function fleetAvailableSql(alias='p'){
       AND free_plan.service_type IN('jellyfin','bundle')
       AND free_plan.server_class=${alias}.server_class
   )`;
-  return `(${streamCapacity} >= (${activeStreams} + ${checkoutHolds} + ${freeHolds} + GREATEST(1,COALESCE(${alias}.streams,1))))`;
+  return `(${streamCapacity} >= (GREATEST(${activeStreams},${enabledAccounts}) + ${checkoutHolds} + ${freeHolds} + GREATEST(1,COALESCE(${alias}.streams,1))))`;
 }
 function acquisitionSql(alias='p'){
   const fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
