@@ -4,6 +4,7 @@ const {query,transaction}=require('../db');
 const provisioning=require('../jellyfin/resilient-provisioning');
 
 function reasonText(value){return String(value||'Permanent access granted by administrator').trim().slice(0,500)||'Permanent access granted by administrator';}
+function revokeReasonText(value){return String(value||'Permanent access removed by administrator').trim().slice(0,500)||'Permanent access removed by administrator';}
 
 async function status(customerId,{client=null}={}){
     const db=client||{query};
@@ -52,19 +53,22 @@ async function enable(customerId,{actorUserId=null,reason=''}={}){
     return{...saved,status:await status(customerId)};
 }
 
+async function revokeInTransaction(client,customerId,{actorUserId=null,reason='',expectedSubscriptionId=null}={}){
+    const note=revokeReasonText(reason);
+    const row=await client.query('SELECT * FROM customer_entitlement_overrides WHERE customer_id=$1 FOR UPDATE',[customerId]);
+    if(!row.rowCount||!row.rows[0].permanent_access||row.rows[0].revoked_at)return{changed:false};
+    const current=row.rows[0];
+    if(expectedSubscriptionId&&String(current.subscription_id)!==String(expectedSubscriptionId))return{changed:false,subscriptionMismatch:true,subscriptionId:current.subscription_id};
+    await client.query(`UPDATE customer_entitlement_overrides SET permanent_access=FALSE,reason=$2,revoked_at=NOW(),revoked_by=$3,updated_by=$3,updated_at=NOW() WHERE customer_id=$1`,[customerId,note,actorUserId]);
+    await client.query(`UPDATE customers SET automation_protected=$2,automation_protected_reason=$3,automation_protected_at=CASE WHEN $2 THEN $4::timestamptz ELSE NULL END,automation_protected_by=CASE WHEN $2 THEN $5::uuid ELSE NULL END,updated_at=NOW() WHERE id=$1`,[customerId,Boolean(current.previous_automation_protected),current.previous_automation_reason||null,current.previous_automation_protected_at||null,current.previous_automation_protected_by||null]);
+    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.revoke','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:current.subscription_id,reason:note,providerBillingChanged:false,restoredAutomationProtected:Boolean(current.previous_automation_protected),restoredAutomationProtectedAt:current.previous_automation_protected_at||null,restoredAutomationProtectedBy:current.previous_automation_protected_by||null})]);
+    return{changed:true,subscriptionId:current.subscription_id};
+}
+
 async function revoke(customerId,{actorUserId=null,reason=''}={}){
-    const note=String(reason||'Permanent access removed by administrator').trim().slice(0,500)||'Permanent access removed by administrator';
-    const result=await transaction(async client=>{
-        const row=await client.query('SELECT * FROM customer_entitlement_overrides WHERE customer_id=$1 FOR UPDATE',[customerId]);
-        if(!row.rowCount||!row.rows[0].permanent_access||row.rows[0].revoked_at)return{changed:false};
-        const current=row.rows[0];
-        await client.query(`UPDATE customer_entitlement_overrides SET permanent_access=FALSE,reason=$2,revoked_at=NOW(),revoked_by=$3,updated_by=$3,updated_at=NOW() WHERE customer_id=$1`,[customerId,note,actorUserId]);
-        await client.query(`UPDATE customers SET automation_protected=$2,automation_protected_reason=$3,automation_protected_at=CASE WHEN $2 THEN $4::timestamptz ELSE NULL END,automation_protected_by=CASE WHEN $2 THEN $5::uuid ELSE NULL END,updated_at=NOW() WHERE id=$1`,[customerId,Boolean(current.previous_automation_protected),current.previous_automation_reason||null,current.previous_automation_protected_at||null,current.previous_automation_protected_by||null]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.permanent_access.revoke','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId:current.subscription_id,reason:note,providerBillingChanged:false,restoredAutomationProtected:Boolean(current.previous_automation_protected),restoredAutomationProtectedAt:current.previous_automation_protected_at||null,restoredAutomationProtectedBy:current.previous_automation_protected_by||null})]);
-        return{changed:true};
-    });
+    const result=await transaction(client=>revokeInTransaction(client,customerId,{actorUserId,reason}));
     await provisioning.reconcileCustomer(customerId).catch(error=>console.warn('Permanent access revoke reconciliation deferred:',error.message));
     return{...result,status:await status(customerId)};
 }
 
-module.exports={status,enable,revoke};
+module.exports={status,enable,revoke,revokeInTransaction};
