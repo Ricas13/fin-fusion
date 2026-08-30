@@ -33,9 +33,20 @@ async function reserveForIntent({code,planCode,customerId,checkoutIntentId,baseM
 }
 async function releaseIntentReservation(checkoutIntentId,state='released'){if(!checkoutIntentId)return 0;const normalized=state==='consumed'?'consumed':'released',r=await query(`UPDATE discount_checkout_reservations SET state=$2,consumed_at=CASE WHEN $2='consumed' THEN NOW() ELSE consumed_at END,released_at=CASE WHEN $2='released' THEN NOW() ELSE released_at END,updated_at=NOW() WHERE checkout_intent_id=$1 AND state='reserved' RETURNING id`,[checkoutIntentId,normalized]);return r.rowCount;}
 
+function redemptionDivergence(message){const error=new Error(message);error.code='DISCOUNT_REDEMPTION_DIVERGENCE';return error;}
 async function redeemForSubscriptionTx(client,{discountCodeId,customerId,subscriptionId,amountAppliedMinor=0}){
-    if(!discountCodeId)return{redeemed:false,reason:'no_code'};const discount=await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE',[discountCodeId]);if(!discount.rowCount){console.error(`Discount code ${discountCodeId} was removed before redemption could be recorded; granting access anyway.`);return{redeemed:false,reason:'code_missing'}}const row=discount.rows[0];
-    if(row.max_redemptions!==null&&row.redemption_count>=row.max_redemptions){console.error(`Discount ${row.code} exceeded its redemption limit at activation time; granting access anyway.`);return{redeemed:false,reason:'max_redemptions'}}if(customerId){const used=await client.query('SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2',[discountCodeId,customerId]);if(used.rows[0].n>=row.per_customer_limit){console.error(`Discount ${row.code} exceeded its per-customer limit for customer ${customerId} at activation time; granting access anyway.`);return{redeemed:false,reason:'per_customer_limit'}}}
-    const inserted=await client.query(`INSERT INTO discount_redemptions(discount_code_id,customer_id,subscription_id,amount_applied_minor) VALUES($1,$2,$3,$4) ON CONFLICT (subscription_id) WHERE subscription_id IS NOT NULL DO NOTHING RETURNING id`,[discountCodeId,customerId,subscriptionId||null,amountAppliedMinor]);if(!inserted.rowCount)return{redeemed:true,alreadyRecorded:true};await client.query('UPDATE discount_codes SET redemption_count=redemption_count+1,updated_at=NOW() WHERE id=$1',[discountCodeId]);return{redeemed:true};
+    if(!discountCodeId)return{redeemed:false,reason:'no_code'};
+    const discount=await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE',[discountCodeId]);
+    if(!discount.rowCount)throw redemptionDivergence(`Discount code ${discountCodeId} was removed before its paid checkout could be accounted for.`);
+    const row=discount.rows[0];
+    if(row.max_redemptions!==null&&row.redemption_count>=row.max_redemptions)throw redemptionDivergence(`Discount ${row.code} no longer has redemption capacity for this paid checkout.`);
+    if(customerId){
+        const used=await client.query('SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2',[discountCodeId,customerId]);
+        if(used.rows[0].n>=row.per_customer_limit)throw redemptionDivergence(`Discount ${row.code} can no longer be attributed to this customer without exceeding its per-customer limit.`);
+    }
+    const inserted=await client.query(`INSERT INTO discount_redemptions(discount_code_id,customer_id,subscription_id,amount_applied_minor) VALUES($1,$2,$3,$4) ON CONFLICT (subscription_id) WHERE subscription_id IS NOT NULL DO NOTHING RETURNING id`,[discountCodeId,customerId,subscriptionId||null,amountAppliedMinor]);
+    if(!inserted.rowCount)return{redeemed:true,alreadyRecorded:true};
+    await client.query('UPDATE discount_codes SET redemption_count=redemption_count+1,updated_at=NOW() WHERE id=$1',[discountCodeId]);
+    return{redeemed:true};
 }
-module.exports={normalizeCode,findActiveCode,validateForCheckout,computeDiscountedMinor,reserveForIntent,releaseIntentReservation,redeemForSubscriptionTx};
+module.exports={normalizeCode,findActiveCode,validateForCheckout,computeDiscountedMinor,reserveForIntent,releaseIntentReservation,redeemForSubscriptionTx,redemptionDivergence};
