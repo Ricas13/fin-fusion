@@ -20,7 +20,7 @@ async function main(){
  const client=await getPool().connect(),suffix=crypto.randomBytes(5).toString('hex');
  try{
   await client.query('BEGIN');
-  const directPlan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams) VALUES($1,$2,'direct','month',30,699,'GBP',TRUE,TRUE,'premium',2) RETURNING *`,[`ci-direct-${suffix}`,`CI Direct ${suffix}`])).rows[0];
+  const directPlan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams,service_type) VALUES($1,$2,'direct','month',30,699,'GBP',TRUE,TRUE,'premium',2,'jellyfin') RETURNING *`,[`ci-direct-${suffix}`,`CI Direct ${suffix}`])).rows[0];
   const customer=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`,[`CI Customer ${suffix}`,`ci-${suffix}@example.invalid`])).rows[0];
   const sub=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','admin_grant',NOW(),NOW()+INTERVAL '30 days') RETURNING *`,[customer.id,directPlan.id])).rows[0];
   assert.strictEqual(sub.plan_name_snapshot,directPlan.name,'subscription trigger must snapshot plan name');
@@ -31,7 +31,12 @@ async function main(){
   assert.strictEqual(effective.contract_plan_name,directPlan.name,'contract history must not follow later catalogue name edits');
   assert.strictEqual(Number(effective.contract_price_minor),699,'contract price must remain snapshotted');
 
-  const futurePlan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams) VALUES($1,$2,'direct','month',30,600,'GBP',TRUE,TRUE,'premium',3) RETURNING *`,[`ci-future-${suffix}`,`CI Future ${suffix}`])).rows[0];
+  const stremioPlan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams,service_type) VALUES($1,$2,'direct','month',30,399,'GBP',TRUE,TRUE,'premium',1,'stremio') RETURNING *`,[`ci-stremio-${suffix}`,`CI Stremio ${suffix}`])).rows[0];
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','admin_grant',NOW(),NOW()+INTERVAL '90 days')`,[customer.id,stremioPlan.id]);
+  const jellyfinWithStremio=await state.effectiveSubscription(customer.id,{client,includeBlocked:true});
+  assert.strictEqual(String(jellyfinWithStremio.plan_id),String(directPlan.id),'a later-ending Stremio-only subscription must never replace the current Jellyfin entitlement');
+
+  const futurePlan=(await client.query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,active,visible,server_class,streams,service_type) VALUES($1,$2,'direct','month',30,600,'GBP',TRUE,TRUE,'premium',3,'jellyfin') RETURNING *`,[`ci-future-${suffix}`,`CI Future ${suffix}`])).rows[0];
   await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','admin_grant',NOW()+INTERVAL '31 days',NOW()+INTERVAL '61 days')`,[customer.id,futurePlan.id]);
   const currentStillEffective=await state.effectiveSubscription(customer.id,{client,includeBlocked:true});
   assert.strictEqual(String(currentStillEffective.plan_id),String(directPlan.id),'future scheduled plan must not activate before starts_at');
