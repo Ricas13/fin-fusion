@@ -17,11 +17,30 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        e.access_expires_at,e.blocked
- FROM effective_customer_entitlements e
- JOIN subscriptions s ON s.id=e.subscription_id
- JOIN plans p ON p.id=e.plan_id
- WHERE e.customer_id=$1 AND ($2::boolean OR e.blocked=FALSE)
+        CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
+             THEN 'infinity'::timestamptz
+             ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
+        END AS access_expires_at,
+        EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.released_at IS NULL) AS blocked
+ FROM subscriptions s
+ JOIN plans p ON p.id=s.plan_id
+ LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+ WHERE s.customer_id=$1
+   AND COALESCE(p.is_addon,FALSE)=FALSE
+   AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
+   AND s.superseded_by IS NULL
+   AND s.starts_at<=NOW()
+   AND (
+      (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+      OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+      OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
+   )
+   AND ($2::boolean OR NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.released_at IS NULL))
+ ORDER BY CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
+               THEN 'infinity'::timestamptz
+               ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
+          END DESC,
+          s.created_at DESC
  LIMIT 1
  `,[customerId,Boolean(includeBlocked)]);return result.rows[0]||null}
 async function effectiveStremioSubscription(customerId,{client=null,includeBlocked=false}={}){
