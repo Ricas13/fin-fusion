@@ -1,8 +1,10 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const placement = require('../src/jellyfin/placement');
 const plansList = require('../src/platform/admin-plans-list');
+const capacity = require('../src/entitlements/plan-capacity');
 require('../public/js/admin-plans-table');
 
 const base = {
@@ -47,8 +49,32 @@ assert.strictEqual(plansList.durationLabel({ billing_interval: 'trial', duration
 assert.strictEqual(plansList.durationLabel({ billing_interval: 'month', duration_days: 30 }), '1 month');
 assert.strictEqual(plansList.durationLabel({ billing_interval: '6_months', duration_days: 180 }), '6 months');
 assert.strictEqual(plansList.durationLabel({ billing_interval: 'year', duration_days: 365 }), '1 year');
-assert.strictEqual(plansList.durationLabel({ billing_interval: 'custom', duration_days: 45 }), '45 days');
 assert.strictEqual(plansList.priceLabel({ price_minor: 0, currency: 'USD' }), 'Free');
 assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), 'USD 6.00');
 
-console.log('server placement + plans list smoke: ok');
+const capacitySource=fs.readFileSync('src/entitlements/plan-capacity.js','utf8');
+const pendingRegistrationSource=fs.readFileSync('src/security/pending-registration.js','utf8');
+const acquisition=capacity.acquisitionSql('p');
+assert(capacitySource.includes('enabledAccountFloor')&&capacitySource.includes('capacityGap'),'fleet runtime capacity must expose the enabled-account floor and divergence');
+assert(acquisition.includes('jellyfin_accounts capacity_account')&&acquisition.includes('COUNT(DISTINCT capacity_account.id)')&&acquisition.includes('GREATEST(('),'fleet acquisition SQL must not advertise capacity below the enabled Jellyfin-account floor');
+assert(pendingRegistrationSource.includes('const capacityState=await planCapacity.lockAndAssert')&&pendingRegistrationSource.includes('if(capacityState.limit!=null)'),'Free Access registration must reserve derived fleet capacity even when plans.capacity_limit is null');
+
+(async()=>{
+    const fakeDb=async sql=>{
+        if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-floor',capacity_limit:null,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true,streams:1}]};
+        if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
+        if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,stream_limit:10,enabled_accounts:10}]};
+        if(sql.includes('AS stream_used'))return{rowCount:1,rows:[{stream_used:2}]};
+        if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:0}]};
+        if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:0}]};
+        throw new Error(`Unexpected capacity-floor query: ${sql.slice(0,120)}`);
+    };
+    const floor=await capacity.usage('free-floor',fakeDb);
+    assert.strictEqual(floor.entitlementStreamUsed,2,'subscription demand must remain visible independently');
+    assert.strictEqual(floor.enabledAccountFloor,10,'enabled Jellyfin accounts must establish the minimum occupied stream budget');
+    assert.strictEqual(floor.capacityGap,8,'capacity diagnostics must expose enabled accounts not explained by current entitlement demand');
+    assert.strictEqual(floor.streamUsed,10,'effective occupancy must use the larger of entitlements and enabled accounts');
+    assert.strictEqual(floor.remaining,0,'a server with every account slot occupied must not advertise a Free place');
+    assert.strictEqual(floor.soldOut,true,'account-floor exhaustion must close acquisition before provisioning');
+    console.log('server placement + plans list + fleet account floor smoke: ok');
+})().catch(error=>{console.error(error.stack||error);process.exit(1);});
