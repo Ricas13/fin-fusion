@@ -12,15 +12,33 @@ function label(value) {
   return normalizeType(value) === 'emby' ? 'Emby' : 'Jellyfin';
 }
 
+function validToken(value, description) {
+  const token=String(value||'').trim();
+  if(!token)throw new Error(`${description} is required.`);
+  if(/[\r\n]/.test(token))throw new Error(`${description} contains invalid characters.`);
+  return token;
+}
+
 function authHeaders(type, apiKey, { jsonBody = false } = {}) {
   const provider = normalizeType(type);
-  const token = String(apiKey || '').trim();
-  if (!token) throw new Error(`${label(provider)} API key is required.`);
-  if (/[\r\n]/.test(token)) throw new Error(`${label(provider)} API key contains invalid characters.`);
+  const token = validToken(apiKey, `${label(provider)} API key`);
   const auth = provider === 'emby'
     ? { 'X-Emby-Token': token }
     : { Authorization: `MediaBrowser Token="${token}"` };
   return { ...auth, Accept:'application/json', ...(jsonBody ? { 'Content-Type':'application/json' } : {}) };
+}
+
+function userTokenHeaders(type, accessToken, {jsonBody=false}={}) {
+  const provider=normalizeType(type),token=validToken(accessToken,`${label(provider)} user token`);
+  const auth=provider==='emby'?{'X-Emby-Token':token}:{Authorization:`MediaBrowser Token="${token}"`};
+  return{...auth,Accept:'application/json',...(jsonBody?{'Content-Type':'application/json'}:{})};
+}
+
+function clientAuthorization(type,{userId=''}={}) {
+  const provider=normalizeType(type),prefix=provider==='emby'?'Emby':'MediaBrowser';
+  const id=String(userId||'').trim();
+  const fields=[id?`UserId="${id}"`:null,'Client="CAPTAiNFiN Stremio"','Device="CAPTAiNFiN"','DeviceId="captainfin-stremio"','Version="2.0"'].filter(Boolean);
+  return `${prefix} ${fields.join(', ')}`;
 }
 
 function canonicalPath(endpoint) {
@@ -36,9 +54,6 @@ function apiPath(type, endpoint) {
   if (provider !== 'emby') return path;
   const parsed=new URL(path,'http://media.invalid');
   const canonical=parsed.pathname.replace(/^\/emby(?=\/|$)/,'')||'/';
-  // Jellyfin supports activeWithinSeconds on /Sessions. Emby's documented
-  // SessionService does not, so CAPTAiNFiN applies the same freshness filter
-  // locally in responseBody instead of sending an undocumented query option.
   if(canonical==='/Sessions')parsed.searchParams.delete('activeWithinSeconds');
   const normalized=`${parsed.pathname}${parsed.search}${parsed.hash}`;
   if (normalized === '/emby' || normalized.startsWith('/emby/')) return normalized;
@@ -50,16 +65,12 @@ function healthEndpoint(type) {
 }
 
 function credentialProbeEndpoint(_type) {
-  // Unlike Jellyfin's public health endpoint, /System/Info requires the supplied
-  // server credential and therefore proves both reachability and API-key validity.
   return '/System/Info';
 }
 
 function userPolicyOverrides(type) {
   if (normalizeType(type) !== 'emby') return null;
   return {
-    // The shared policy fields are kept; only values that are Jellyfin-specific
-    // or absent from Emby's documented UserPolicy contract are removed.
     AuthenticationProviderId: undefined,
     PasswordResetProviderId: undefined,
     SyncPlayAccess: undefined
@@ -115,4 +126,4 @@ function responseBody(type, endpoint, body, { now = Date.now() } = {}) {
     }));
 }
 
-module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, credentialProbeEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword, responseBody };
+module.exports = { TYPES, normalizeType, label, authHeaders, userTokenHeaders, clientAuthorization, apiPath, healthEndpoint, credentialProbeEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword, responseBody };
