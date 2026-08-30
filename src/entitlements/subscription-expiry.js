@@ -60,13 +60,8 @@ async function dueRecurringSubscriptions() {
           AND source IN ('stripe','paypal')
           AND ((source='stripe' AND COALESCE(provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\')
             OR (source='paypal' AND COALESCE(provider_subscription_id,'') LIKE 'I-%'))
-          AND (
-            (status IN('active','trialing','past_due','paused','cancelled')
-             AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW())
-            OR
-            (status='expired' AND COALESCE(service_extension_days,0)>0
-             AND current_period_end+(service_extension_days||' days')::interval<=NOW())
-          )
+          AND status IN('active','trialing','past_due','paused')
+          AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW()
         ORDER BY current_period_end,id
     `);
     return result.rows;
