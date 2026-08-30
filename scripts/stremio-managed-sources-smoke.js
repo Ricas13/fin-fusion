@@ -47,7 +47,7 @@ assert(operationLock.includes('pg_try_advisory_lock(hashtextextended($1,0))'),'S
 assert(operationLock.includes('pg_advisory_unlock(hashtextextended($1,0))'),'Stremio mutation lock must always have an explicit unlock path');
 assert(tokenMaintenance.includes('operationLock.withLock(`external-token:${source.id}`'),'automatic external token rotation must serialize per source');
 assert(tokenMaintenance.includes('SELECT * FROM stremio_sources WHERE id=$1 FOR UPDATE'),'token rotation must revalidate current source state in the mutation transaction');
-assert(tokenMaintenance.includes('retireEncryptedTokenTx(db,locked'),'token rotation must durably retire the previous credential before replacing it');
+assert(tokenMaintenance.includes('retireEncryptedTokenTx(db,latest'),'token rotation must durably retire the transaction-locked current credential before replacing it');
 assert(sourcePool.includes('operationLock.withLock(`external-token:${sourceId}`'),'manual reconnect/delete must share the same per-source serialization owner');
 assert((sourcePool.match(/retireEncryptedTokenTx/g)||[]).length>=2,'manual reconnect and delete must durably retain the old token before losing source state');
 
