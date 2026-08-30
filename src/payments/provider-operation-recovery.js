@@ -66,7 +66,8 @@ async function finishImmediateLocal(op, subscription, target, mapping) {
     if (!locked) throw manual('Local subscription disappeared during provider recovery.');
     await assertNewest(op, PLAN_OPERATION_TYPES);
     await applyPlanSnapshot(db, locked.id, target, mapping);
-    await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1`, [op.id,providerOps.ACTIVE_LEASE_SECONDS]);
+    const updated = await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1 AND attempt_count=$3 RETURNING id`, [op.id,providerOps.ACTIVE_LEASE_SECONDS,op.attempt_count]);
+    if (!updated.rowCount) throw providerOps.leaseLost(op.id);
   });
 }
 async function recoverImmediate(op) {
@@ -157,7 +158,8 @@ async function recoverSchedule(op) {
     if (!locked) throw manual('Plan-change record disappeared during recovery.');
     await assertNewest(op, PLAN_OPERATION_TYPES);
     await db.query(`UPDATE customer_plan_changes SET state=CASE WHEN state='failed' THEN 'pending' ELSE state END,provider_schedule_id=$2,provider_schedule_state=$3,source_price_id=COALESCE($4,source_price_id),target_price_id=$5,error=NULL,updated_at=NOW() WHERE id=$1`, [change.id,schedule.id,schedule.status||'active',remote.sourcePrice||null,request.targetPriceId]);
-    await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1`, [op.id,providerOps.ACTIVE_LEASE_SECONDS]);
+    const updated = await db.query(`UPDATE provider_operations SET state='local_applied',local_applied_at=COALESCE(local_applied_at,NOW()),last_error=NULL,failure_kind=NULL,manual_review_required=FALSE,next_attempt_at=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW() WHERE id=$1 AND attempt_count=$3 RETURNING id`, [op.id,providerOps.ACTIVE_LEASE_SECONDS,op.attempt_count]);
+    if (!updated.rowCount) throw providerOps.leaseLost(op.id);
   });
   await providerOps.reconciled(op.id, { result:{changeId:change.id,scheduleId:schedule.id,targetPlanId:request.targetPlanId,recovered:true} });
   return { ok:true,type:op.operation_type,id:op.id };
@@ -172,24 +174,40 @@ async function recoverOne(op) {
 }
 async function run({ limit=25 } = {}) {
   const claimed = await providerOps.claimRecoverable({ limit });
-  const summary = { total:claimed.length,reconciled:0,retryable:0,manual:0,superseded:0,failed:0,results:[] };
+  const summary = { total:claimed.length,reconciled:0,retryable:0,manual:0,superseded:0,stale:0,failed:0,results:[] };
   for (const op of claimed) {
-    try {
-      const result = await recoverOne(op);
-      summary.reconciled++;
-      summary.results.push(result);
-    } catch (error) {
-      if (error.providerOperationSuperseded) {
-        await providerOps.markSuperseded(op.id,error); summary.superseded++; summary.results.push({ok:false,id:op.id,superseded:true,error:error.message}); continue;
+    await providerOps.withRecoveryClaim(op, async () => {
+      try {
+        const result = await recoverOne(op);
+        summary.reconciled++;
+        summary.results.push(result);
+      } catch (error) {
+        if (error.providerOperationLeaseLost) {
+          summary.stale++;
+          summary.results.push({ok:false,id:op.id,stale:true,error:error.message});
+          return;
+        }
+        try {
+          if (error.providerOperationSuperseded) {
+            await providerOps.markSuperseded(op.id,error); summary.superseded++; summary.results.push({ok:false,id:op.id,superseded:true,error:error.message}); return;
+          }
+          if (error.providerOperationManual) {
+            await providerOps.markManual(op.id,error); summary.manual++; summary.results.push({ok:false,id:op.id,manual:true,error:error.message}); return;
+          }
+          const updated = await providerOps.recordError(op.id,error);
+          if (updated?.manual_review_required) summary.manual++; else summary.retryable++;
+          summary.failed++;
+          summary.results.push({ok:false,id:op.id,error:error.message,failureKind:updated?.failure_kind||null});
+        } catch (writeError) {
+          if (writeError.providerOperationLeaseLost) {
+            summary.stale++;
+            summary.results.push({ok:false,id:op.id,stale:true,error:writeError.message});
+            return;
+          }
+          throw writeError;
+        }
       }
-      if (error.providerOperationManual) {
-        await providerOps.markManual(op.id,error); summary.manual++; summary.results.push({ok:false,id:op.id,manual:true,error:error.message}); continue;
-      }
-      const updated = await providerOps.recordError(op.id,error);
-      if (updated?.manual_review_required) summary.manual++; else summary.retryable++;
-      summary.failed++;
-      summary.results.push({ok:false,id:op.id,error:error.message,failureKind:updated?.failure_kind||null});
-    }
+    });
   }
   return { ...summary,processed:summary.total,failed:summary.failed+summary.manual };
 }
