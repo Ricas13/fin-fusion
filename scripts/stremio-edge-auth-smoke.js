@@ -34,6 +34,11 @@ try {
   const edge = require('../src/stremio/media-edge-grant');
   const client = req('8.8.8.8');
   const raw = 'https://jellyfin.example.com/Videos/item-1/stream.mkv?Static=true&MediaSourceId=source-1&api_key=restricted-jellyfin-token';
+  assert.throws(
+    () => edge.protectUrl(raw, client),
+    /Current Stremio entitlement is required/,
+    'protected media grants must never be issued without an entitlement identity'
+  );
   const protectedUrl = edge.protectUrl(raw, client, { entitlementId: 'entitlement-1' });
   const parsed = new URL(protectedUrl);
   assert.strictEqual(parsed.origin, 'https://jellyfin.example.com');
@@ -55,6 +60,7 @@ try {
   assert.strictEqual(allowed.allowed, true);
   assert.strictEqual(allowed.status, 204);
   assert.strictEqual(allowed.token, 'restricted-jellyfin-token');
+  assert.strictEqual(allowed.entitlementId, 'entitlement-1', 'edge authorization must retain the bound entitlement identity for live verification');
 
   const replayedElsewhere = edge.authorize(req('1.1.1.1', forwardedHeaders));
   assert.strictEqual(replayedElsewhere.allowed, false);
@@ -70,7 +76,7 @@ try {
   const unauthenticatedEdge = edge.authorize(req('8.8.8.8', missingSecret));
   assert.strictEqual(unauthenticatedEdge.status, 401, 'public callers must not be able to retrieve Jellyfin tokens from edge auth');
 
-  const expiredUrl = edge.protectUrl(raw, client, { nowMs: Date.now() - 7 * 60 * 60 * 1000 });
+  const expiredUrl = edge.protectUrl(raw, client, { entitlementId: 'entitlement-1', nowMs: Date.now() - 7 * 60 * 60 * 1000 });
   const expiredParsed = new URL(expiredUrl);
   const expiredHeaders = {
     ...forwardedHeaders,
@@ -80,7 +86,7 @@ try {
   assert.strictEqual(expired.allowed, false);
   assert.strictEqual(expired.status, 403, 'expired media grants must fail closed');
 
-  const ipv6Protected = edge.protectUrl(raw, req('2001:4860:4860:0000::1234'));
+  const ipv6Protected = edge.protectUrl(raw, req('2001:4860:4860:0000::1234'), { entitlementId: 'entitlement-1' });
   const ipv6Parsed = new URL(ipv6Protected);
   const ipv6Headers = {
     'x-captainfin-edge-secret': process.env.STREMIO_EDGE_AUTH_SECRET,
@@ -99,6 +105,9 @@ try {
   assert(runtime.includes("require('./media-edge-grant')"));
   assert(runtime.includes("router.all('/stremio-edge/authorize', mediaEdge.authorizeHandler)"));
   assert(runtime.includes('router.use(mediaEdge.runtimeProtectionMiddleware)'));
+  const edgeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'stremio', 'media-edge-grant.js'), 'utf8');
+  assert(edgeSource.includes('if (!await entitlementActive(result.entitlementId)) return res.status(403).end();'), 'edge auth must re-check live entitlement state before returning a Jellyfin token');
+  assert(edgeSource.includes("ee.blocked=FALSE AND ee.access_expires_at>NOW()"), 'live edge verification must reject blocked or expired entitlements');
 
   const compose = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
   assert.strictEqual((compose.match(/^\s+STREMIO_EDGE_AUTH_SECRET:/gm) || []).length, 1, 'edge shared secret must only be passed to the web runtime');
