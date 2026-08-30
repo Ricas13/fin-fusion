@@ -66,6 +66,19 @@ function main() {
     assert(denied.includes('failedRenewals.record'), 'Current PayPal delinquency is not durably recorded through the canonical failed-renewal owner.');
     assert(!denied.includes("providerStatus:'suspended'"), 'Delayed PayPal sale denial can still force local suspension from event order alone.');
 
+    const planChange = source('src/payments/customer-plan-change.js');
+    assert(planChange.includes("timeout:providerHttp.timeoutMs('stripe')"), 'Stripe plan-change calls must use the canonical provider HTTP deadline.');
+    const immediate = section(planChange, 'async function setStripePlan', 'async function createLocalChange');
+    assert(immediate.includes('let providerMutationAttempted=false'), 'Immediate Stripe plan changes must track whether a remote mutation may have happened.');
+    assert(immediate.includes('providerMutationAttempted=true;const updated=await client.subscriptions.update'), 'Immediate Stripe mutation ambiguity is not marked before the provider call.');
+    assert(immediate.includes('const synced=await billingControl.syncSubscription(subscriptionId);if(!synced.ok)throw new Error'), 'Immediate Stripe plan change can still be declared reconciled after provider verification fails.');
+    assert(immediate.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Ambiguous post-provider Stripe plan-change failures are still forced terminal instead of entering recovery.');
+    const scheduled = section(planChange, 'async function scheduleStripeProvider', 'async function requestChange');
+    assert(scheduled.includes('let providerMutationAttempted=false'), 'Scheduled Stripe plan changes must track possible provider mutation.');
+    assert(scheduled.includes('providerMutationAttempted=true;schedule=await client.subscriptionSchedules.create'), 'Stripe schedule creation ambiguity is not routed into provider-operation recovery.');
+    assert(scheduled.includes('providerMutationAttempted=true;const updated=await client.subscriptionSchedules.update'), 'Stripe schedule update ambiguity is not routed into provider-operation recovery.');
+    assert(scheduled.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Scheduled Stripe post-provider failures are still forced terminal.');
+
     assert.deepStrictEqual(provisioning.assertDiscordSyncResult({ added: [], removed: [], errors: [] }).errors, []);
     const discordError = expectThrows(() => provisioning.assertDiscordSyncResult({ errors: ['remove role: HTTP 503'] }), 'DISCORD_ROLE_SYNC_FAILED');
     assert.match(discordError.message, /Discord role synchronization failed/);
