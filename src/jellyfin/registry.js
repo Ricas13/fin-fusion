@@ -56,6 +56,30 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
         err.retryable=response.status===408||response.status===429||response.status>=500;
         throw err;
     }
+
+    if(mediaProvider.needsPostCreatePassword(server.media_server_type,endpoint,body)){
+        const userId=parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed.Id:null;
+        if(!userId){
+            const error=new Error('Emby user creation succeeded without returning a user ID; bootstrap password could not be applied safely.');
+            error.code='EMBY_USER_CREATE_INVALID_RESPONSE';
+            throw error;
+        }
+        try{
+            await request(serverId,`/Users/${encodeURIComponent(userId)}/Password`,{method:'POST',body:{Id:String(userId),NewPw:body.Password},timeoutMs});
+        }catch(passwordError){
+            let cleanupError=null;
+            try{await request(serverId,`/Users/${encodeURIComponent(userId)}`,{method:'DELETE',timeoutMs});}catch(error){cleanupError=error;}
+            const failed=new Error(cleanupError
+                ? 'Emby user was created but bootstrap password setup and automatic rollback both failed. Operator attention is required.'
+                : 'Emby bootstrap password setup failed; the newly-created remote user was rolled back.');
+            failed.code=cleanupError?'EMBY_USER_BOOTSTRAP_ROLLBACK_FAILED':'EMBY_USER_BOOTSTRAP_FAILED';
+            failed.cause=passwordError;
+            failed.cleanupError=cleanupError;
+            failed.remoteUserId=String(userId);
+            throw failed;
+        }
+    }
+
     return parsed??{};
 }
 
