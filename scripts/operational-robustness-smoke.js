@@ -9,6 +9,7 @@ const providerHttp = require('../src/payments/provider-http');
 const billingControl = require('../src/payments/billing-control');
 const stripe = require('../src/payments/stripe');
 const application = require('../src/application');
+const subscriptionExpiry = require('../src/entitlements/subscription-expiry');
 
 async function testBoundedConcurrency() {
   let active = 0;
@@ -130,6 +131,20 @@ async function testDeletionBillingControl() {
   assert.match(source, /paypalTerminalStatus\(remoteStatus\)/, 'PayPal cancellation must be verified from the remote terminal state');
 }
 
+function testProviderOwnedExpirySafety() {
+  const stripeRow = { source: 'stripe', provider_subscription_id: 'sub_expiry' };
+  const paypalRow = { source: 'paypal', provider_subscription_id: 'I-EXPIRY' };
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: false }), true, 'failed provider verification must preserve local access');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }), true, 'healthy auto-renewing Stripe access must not be locally expired');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(paypalRow, { ok: true, remote: { status: 'ACTIVE', cancelAtPeriodEnd: false } }), true, 'healthy auto-renewing PayPal access must not be locally expired');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: true } }), false, 'verified end-of-term cancellation may expire locally when due');
+  assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'past_due', cancelAtPeriodEnd: false } }), false, 'delinquent provider state must retain the existing local expiry/grace policy');
+  const source = fs.readFileSync(path.join(__dirname, '../src/entitlements/subscription-expiry.js'), 'utf8');
+  assert.match(source, /dueRecurringSubscriptions\(\)/, 'expiry must identify provider-owned due subscriptions before the destructive update');
+  assert.match(source, /billing-control'\)\.syncSubscription/, 'normal expiry execution must refresh current provider truth through canonical billing control');
+  assert.match(source, /NOT \(s\.id=ANY\(\$1::uuid\[\]\)\)/, 'provider subscriptions that cannot be safely expired must be excluded from the destructive update');
+}
+
 function testStripeWebhookOrdering() {
   assert.strictEqual(stripe.effectiveSyncStatus('active', 'past_due'), 'active', 'late failed invoice must not regress a recovered active subscription');
   assert.strictEqual(stripe.effectiveSyncStatus('trialing', 'past_due'), 'trialing', 'late failed invoice must not regress a recovered trial');
@@ -181,6 +196,7 @@ async function testGracefulShutdown() {
   testWorkerInstances();
   await testProviderDeadlines();
   await testDeletionBillingControl();
+  testProviderOwnedExpirySafety();
   testStripeWebhookOrdering();
   await testGracefulShutdown();
   console.log('operational robustness smoke: ok');

@@ -4,6 +4,7 @@ const {query,transaction}=require('../db');
 const providerOps=require('./provider-operations');
 const billingControl=require('./billing-control');
 const permanentAccess=require('../entitlements/permanent-access');
+const subscriptionState=require('../entitlements/subscription-state');
 
 const OPERATION_TYPE='subscription_terminate';
 const JELLYFIN_SERVICES=new Set(['jellyfin','bundle']);
@@ -32,15 +33,7 @@ async function subscriptionRow(subscriptionId,{client=null}={}){
 }
 
 async function currentJellyfinSubscription(customerId){
-    const result=await query(`
-        SELECT e.*,p.is_addon,p.service_type,
-               COALESCE(NULLIF(e.service_type_snapshot,''),p.service_type,'jellyfin') AS effective_service_type
-        FROM effective_customer_entitlements e
-        JOIN plans p ON p.id=e.plan_id
-        WHERE e.customer_id=$1
-        LIMIT 1
-    `,[customerId]);
-    const row=result.rows[0]||null;
+    const row=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
     if(!row||row.is_addon===true||!JELLYFIN_SERVICES.has(serviceType(row)))return null;
     return row;
 }

@@ -50,7 +50,9 @@ assert(legacyProviderState&&!/beginPaymentEvent/.test(legacyProviderState),'lega
 assert(/updateProviderSubscription/.test(legacyProviderState),'legacy applyProviderState must delegate provider state to the canonical lifecycle');
 
 assert(/return subscriptionState\.effectiveSubscription\(customerId\)/.test(provisioning),'provisioning must use canonical entitlement resolution');
-assert(/effective_customer_entitlements/.test(entitlement),'application entitlement service must consume the canonical database view');
+const effectiveSubscriptionSource=entitlement.match(/async function effectiveSubscription[\s\S]*?\n\}/)?.[0]||'';
+assert(/IN \('jellyfin','bundle'\)/.test(effectiveSubscriptionSource),'application Jellyfin entitlement resolution must be explicitly service-scoped');
+assert(!/FROM effective_customer_entitlements\b/.test(effectiveSubscriptionSource),'Jellyfin entitlement resolution must not consume the cross-service one-row view');
 assert(/CREATE VIEW public\.effective_customer_entitlements/.test(canonical),'canonical entitlement view must be defined in migrations');
 assert(/s\.starts_at\s*<=\s*now\(\)/.test(canonical),'canonical entitlement view must respect starts_at');
 assert(!/p\.active\b/.test(canonical.match(/CREATE VIEW public\.effective_customer_entitlements[\s\S]*?ORDER BY[\s\S]*?s\.created_at DESC;/)?.[0]||''),'existing entitlement resolution must not depend on current catalogue active flag');
