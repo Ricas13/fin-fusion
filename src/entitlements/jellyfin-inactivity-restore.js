@@ -10,11 +10,18 @@ function runner(client) {
     return client || { query };
 }
 
+function isPendingAdminReconcile(row) {
+    return row?.restored_at != null
+        && row?.metadata?.restoredReason === 'admin_reenable'
+        && row?.metadata?.explicitRestore === true
+        && row?.metadata?.reenableReconcilePending === true;
+}
+
 async function restoreStatus(customerId, { client = null, lock = false } = {}) {
     const db = runner(client);
     const entitlement = await subscriptionState.liveFreeJellyfinSubscription(customerId, { client, includeBlocked: true });
     if (!entitlement) {
-        return { eligible: false, reason: 'no_live_free_jellyfin_entitlement', entitlement: null, sourceKey: null, disabledAccounts: [], lifecycleRows: [] };
+        return { eligible: false, reason: 'no_live_free_jellyfin_entitlement', entitlement: null, sourceKey: null, disabledAccounts: [], lifecycleRows: [], resumeReconcile: false };
     }
 
     const sourceKey = `plan:${entitlement.plan_id}`;
@@ -43,7 +50,16 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
             SELECT id,account_id,disabled_at,delete_after,deleted_at,restored_at,metadata
             FROM jellyfin_account_lifecycle
             WHERE customer_id=$1 AND category='free' AND account_id=ANY($2::uuid[])
-              AND deleted_at IS NULL AND restored_at IS NULL
+              AND deleted_at IS NULL
+              AND (
+                restored_at IS NULL
+                OR (
+                  restored_at IS NOT NULL
+                  AND metadata->>'restoredReason'='admin_reenable'
+                  AND metadata->>'explicitRestore'='true'
+                  AND metadata->>'reenableReconcilePending'='true'
+                )
+              )
             ORDER BY disabled_at DESC,id
             ${lock ? 'FOR UPDATE' : ''}
         `, [customerId, accountIds]);
@@ -51,13 +67,32 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
     }
 
     if (!accounts.rowCount) {
-        return { eligible: false, reason: 'no_disabled_free_jellyfin_account', entitlement, sourceKey, disabledAccounts: [], lifecycleRows };
+        return { eligible: false, reason: 'no_disabled_free_jellyfin_account', entitlement, sourceKey, disabledAccounts: [], lifecycleRows, resumeReconcile: false };
+    }
+
+    const pendingLifecycleRows = lifecycleRows.filter(row => row.restored_at == null);
+    const retryLifecycleRows = lifecycleRows.filter(isPendingAdminReconcile);
+
+    // The local hold/lifecycle transition is deliberately committed before the
+    // remote reconciliation. If that remote call failed, a subsequent click
+    // must resume reconciliation instead of demanding the already-released hold.
+    if (!hold.rowCount && retryLifecycleRows.length) {
+        return {
+            eligible: true,
+            reason: null,
+            entitlement,
+            sourceKey,
+            inactivityHold: null,
+            disabledAccounts: accounts.rows,
+            lifecycleRows: retryLifecycleRows,
+            resumeReconcile: true
+        };
     }
     if (!hold.rowCount) {
-        return { eligible: false, reason: 'no_active_inactivity_hold', entitlement, sourceKey, disabledAccounts: accounts.rows, lifecycleRows };
+        return { eligible: false, reason: 'no_active_inactivity_hold', entitlement, sourceKey, disabledAccounts: accounts.rows, lifecycleRows, resumeReconcile: false };
     }
-    if (!lifecycleRows.length) {
-        return { eligible: false, reason: 'no_pending_free_lifecycle', entitlement, sourceKey, disabledAccounts: accounts.rows, lifecycleRows };
+    if (!pendingLifecycleRows.length) {
+        return { eligible: false, reason: 'no_pending_free_lifecycle', entitlement, sourceKey, disabledAccounts: accounts.rows, lifecycleRows, resumeReconcile: false };
     }
 
     return {
@@ -67,8 +102,22 @@ async function restoreStatus(customerId, { client = null, lock = false } = {}) {
         sourceKey,
         inactivityHold: hold.rows[0],
         disabledAccounts: accounts.rows,
-        lifecycleRows
+        lifecycleRows: pendingLifecycleRows,
+        resumeReconcile: false
     };
+}
+
+async function markReconcileComplete(lifecycleIds, actorUserId = null) {
+    if (!lifecycleIds.length) return;
+    await query(`
+        UPDATE jellyfin_account_lifecycle
+        SET metadata=metadata||$2::jsonb,updated_at=NOW()
+        WHERE id=ANY($1::bigint[]) AND deleted_at IS NULL
+    `, [lifecycleIds, JSON.stringify({
+        reenableReconcilePending: false,
+        reenableReconciledAt: new Date().toISOString(),
+        reenableReconciledBy: actorUserId
+    })]);
 }
 
 async function restoreDisabledFreeAccess(customerId, { actorUserId = null, reconcile } = {}) {
@@ -89,6 +138,27 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
             throw Object.assign(new Error(messages[state.reason] || 'This Jellyfin account cannot be restored safely.'), { code: state.reason });
         }
 
+        if (state.resumeReconcile) {
+            const lifecycleIds = state.lifecycleRows.map(row => row.id);
+            await client.query(`
+                INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                VALUES($1,'admin.customer.jellyfin.reenable_retry','customer',$2,$3::jsonb)
+            `, [actorUserId, customerId, JSON.stringify({
+                planId: state.entitlement.plan_id,
+                sourceKey: state.sourceKey,
+                accountIds: state.disabledAccounts.map(row => row.id),
+                lifecycleIds
+            })]);
+            return {
+                planId: state.entitlement.plan_id,
+                sourceKey: state.sourceKey,
+                accountIds: state.disabledAccounts.map(row => row.id),
+                lifecycleIds,
+                restoredAt: state.lifecycleRows[0]?.restored_at || new Date(),
+                resumed: true
+            };
+        }
+
         const released = await accessHolds.releaseHold({
             customerId,
             type: HOLD_TYPE,
@@ -105,7 +175,12 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
                 updated_at=NOW()
             WHERE id=ANY($1::bigint[]) AND restored_at IS NULL AND deleted_at IS NULL
             RETURNING id,account_id,restored_at
-        `, [lifecycleIds, JSON.stringify({ restoredReason: 'admin_reenable', explicitRestore: true, actorUserId })]);
+        `, [lifecycleIds, JSON.stringify({
+            restoredReason: 'admin_reenable',
+            explicitRestore: true,
+            actorUserId,
+            reenableReconcilePending: true
+        })]);
         if (!restored.rowCount) throw new Error('The Free Server lifecycle changed while the restore was being prepared. Refresh and try again.');
 
         await client.query(`
@@ -123,18 +198,26 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
             planId: state.entitlement.plan_id,
             sourceKey: state.sourceKey,
             accountIds: state.disabledAccounts.map(row => row.id),
-            restoredAt: restored.rows[0]?.restored_at || new Date()
+            lifecycleIds: restored.rows.map(row => row.id),
+            restoredAt: restored.rows[0]?.restored_at || new Date(),
+            resumed: false
         };
     });
 
     let reconcileResult;
     try {
         reconcileResult = await reconcile(customerId);
+        await markReconcileComplete(prepared.lifecycleIds, actorUserId);
     } catch (error) {
         await query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'admin.customer.jellyfin.reenable_reconcile_failed','customer',$2,$3::jsonb)
-        `, [actorUserId, customerId, JSON.stringify({ planId: prepared.planId, error: String(error?.message || error).slice(0, 500) })]).catch(() => {});
+        `, [actorUserId, customerId, JSON.stringify({
+            planId: prepared.planId,
+            lifecycleIds: prepared.lifecycleIds,
+            resumed: prepared.resumed,
+            error: String(error?.message || error).slice(0, 500)
+        })]).catch(() => {});
         throw error;
     }
 
@@ -146,6 +229,7 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
 
     return {
         restored: true,
+        resumed: prepared.resumed,
         enabled: remainingHolds.length === 0 && stillDisabled.length === 0,
         blocked: remainingHolds.length > 0,
         remainingHolds: remainingHolds.map(row => ({ type: row.hold_type, sourceKey: row.source_key, reason: row.reason })),
@@ -157,4 +241,4 @@ async function restoreDisabledFreeAccess(customerId, { actorUserId = null, recon
     };
 }
 
-module.exports = { HOLD_TYPE, restoreStatus, restoreDisabledFreeAccess };
+module.exports = { HOLD_TYPE, restoreStatus, restoreDisabledFreeAccess, isPendingAdminReconcile, markReconcileComplete };
