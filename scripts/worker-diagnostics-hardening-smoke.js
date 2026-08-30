@@ -49,6 +49,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const migration = read('db/migrations/029_activity_worker_heartbeat.sql');
 const roles = read('scripts/configure-runtime-db-roles.js');
 const worker = read('scripts/activity-worker.js');
+const activityTrust = read('src/jellyfin/activity-trust.js');
 const system = read('src/platform/system-diagnostics.js');
 const requestUserSync = read('src/integrations/request-user-sync.js');
 const jobHealth = read('src/automation/job-health.js');
@@ -65,6 +66,10 @@ assert(worker.includes('record_activity_worker_heartbeat'), 'Activity worker mus
 assert(worker.includes("lastCycleOutcome"), 'Activity heartbeat metadata must include cycle outcome');
 assert(worker.includes('serverFailures'), 'Activity heartbeat metadata must include downstream server-failure count');
 assert(worker.includes('withMaintenanceSharedLock'), 'Activity heartbeat/cycles must remain maintenance-aware');
+assert(activityTrust.includes("WHERE worker_key='activity'"), 'Activity trust must read only activity worker instances');
+assert(activityTrust.includes('draining_at IS NULL'), 'Activity trust must ignore workers that have begun draining');
+assert(activityTrust.includes('ORDER BY last_heartbeat_at DESC'), 'Activity trust must select the freshest live worker instance after multi-instance health migration');
+assert(activityTrust.includes('LIMIT 1'), 'Activity trust must collapse multiple live/stale rows to one freshest heartbeat');
 
 assert(system.includes("runtimeSettings.ensureLoaded()"), 'support diagnostics must load canonical browser-managed runtime settings');
 assert(system.includes('runtimeSettings.requireAdminTwoFactor()'), 'admin 2FA posture must come from canonical runtime settings');
