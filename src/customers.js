@@ -10,7 +10,7 @@ const DUMMY_CUSTOMER_PASSWORD_HASH='$2b$12$LQv3c1yqBW3CEQY5eZq6.O0L3tT1j7gBQXpUM
 function cleanEmail(value){const email=String(value||'').trim().toLowerCase();if(!email||!email.includes('@')||email.length>254)throw new Error('A valid email address is required');return email}
 function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._-]{3,40}$/.test(username))throw new Error('Username must be 3-40 characters using letters, numbers, dot, underscore or dash');return username}
 function cleanDisplayName(value){const name=String(value||'').trim().slice(0,100);if(!name)throw new Error('Display name is required');return name}
-function validatePassword(password){if(typeof password!=='string'||password.length<12||password.length>200)throw new Error('Password must be between 12 and 200 characters')}
+function validatePassword(password){if(typeof password!=='string'||password.length<8||password.length>200)throw new Error('Password must be between 8 and 200 characters')}
 async function validateNewPassword(password){validatePassword(password);await passwordBreach.assertNotBreached(password);}
 async function assertNoUnclaimedJellyfinUsername(client,username){const conflict=await client.query(`SELECT 1 FROM jellyfin_accounts ja JOIN customers c ON c.id=ja.customer_id WHERE c.user_id IS NULL AND lower(ja.jellyfin_username)=lower($1) LIMIT 1`,[username]);if(conflict.rowCount)throw new Error('That username belongs to an existing Jellyfin account. Use the existing-account claim link instead of creating a new account.');}
 function userAgentHash(req){return crypto.createHash('sha256').update(String(req?.get?.('user-agent')||'')).digest('hex')}

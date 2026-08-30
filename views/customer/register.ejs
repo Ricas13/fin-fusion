@@ -25,7 +25,7 @@
     <label>Email</label><input type="email" name="email" autocomplete="email" required>
     <div class="mandatory">Email is always used for account, invoice, registration and important payment messages.</div>
     <label>Username</label><input name="username" minlength="3" maxlength="40" autocomplete="username" required>
-    <label>Portal password</label><input type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required>
+    <label>Portal password</label><input type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required>
     <p class="muted">This signs you into CAPTAiNFiN. If your plan uses Jellyfin, you set the separate Jellyfin playback password after access is ready.</p>
     <% if (referralsEnabled) { %><label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"><% } %>
     <details class="optional">
