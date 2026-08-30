@@ -39,11 +39,12 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
     const server=await getServerSecret(serverId);
     if(!server||!server.enabled)throw new Error('Media server is unavailable or disabled');
     const apiPath=mediaProvider.apiPath(server.media_server_type,endpoint);
+    const requestBody=mediaProvider.requestBody(server.media_server_type,endpoint,body);
     const url=new URL(apiPath,`${server.base_url}/`);
     if(url.origin!==new URL(server.base_url).origin)throw new Error('Media-server API endpoint escaped the configured server origin.');
     let response;
     try{
-        response=await outbound.safeFetch(url,{purpose:`${mediaProvider.label(server.media_server_type)} server ${server.name}`,method,timeoutMs,headers:authHeaders(server.apiKey,{jsonBody:Boolean(body),mediaServerType:server.media_server_type}),...(body?{body:JSON.stringify(body)}:{})});
+        response=await outbound.safeFetch(url,{purpose:`${mediaProvider.label(server.media_server_type)} server ${server.name}`,method,timeoutMs,headers:authHeaders(server.apiKey,{jsonBody:requestBody!==null&&requestBody!==undefined,mediaServerType:server.media_server_type}),...(requestBody!==null&&requestBody!==undefined?{body:JSON.stringify(requestBody)}:{})});
     }catch(error){
         throw operationError(server,method,url,timeoutMs,error);
     }
