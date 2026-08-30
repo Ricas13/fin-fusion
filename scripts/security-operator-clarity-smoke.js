@@ -74,7 +74,7 @@ assert(/pending_registration_cleanup/.test(jobs),'Expired pending registrations 
 const emailChange=text('src/security/customer-email-change.js');
 assert(/notifyOldAddress/.test(emailChange)&&/email_change_security_completed/.test(emailChange),'Email changes must notify the old address out of band.');
 const servers=text('src/platform/admin-servers.js');
-assert(/outbound\.safeFetch\(`\$\{baseUrl\}\/System\/Info`/.test(servers),'Jellyfin credential probes must use the pinned outbound URL policy.');
+assert(/outbound\.safeFetch\(new URL\(path, `\$\{baseUrl\}\/`\)/.test(servers)&&/credentialProbeEndpoint\(provider\)/.test(servers),'Media-server credential probes must use the pinned outbound URL policy and an authenticated provider endpoint.');
 const serverForm=text('views/admin/server-form.ejs');
 assert(/include\('_nav',\{siteName,activeNav:'servers'\}\)/.test(serverForm),'Server form must render the canonical admin navigation.');
 const csp=text('scripts/csp-inline-audit.js');

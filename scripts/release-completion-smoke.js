@@ -41,10 +41,17 @@ lacks(checkout,"/account?welcome=1&message=Payment%20received.",'Stripe checkout
 const activation=read('src/platform/account-activation-router.js');
 has(activation,"'/account?welcome=1'",'customer activation must carry the user into the access welcome flow');
 
-const servers=read('src/platform/admin-servers.js');
-has(servers,'Enable private integrations and add this Jellyfin hostname or network CIDR','private-address connection failures must explain how to resolve outbound trust');
-has(servers,'Jellyfin hostname could not be resolved','DNS failures must be actionable');
-has(servers,'connection was refused','connection-refused failures must be actionable');
+const serverAdmin=require('../src/platform/admin-servers');
+const privateError={message:'private address that is not explicitly allowed'};
+for(const [type,label] of [['jellyfin','Jellyfin'],['emby','Emby']]){
+  const privateMessage=serverAdmin.connectionPolicyMessage(privateError,'http://media.internal',type);
+  assert(privateMessage&&privateMessage.includes(`${label} destination resolves to a private address`),'private-address failures must identify the selected media-server provider');
+  assert(privateMessage.includes('trusted outbound destinations in Settings'),'private-address connection failures must explain how to resolve outbound trust');
+  const dnsMessage=serverAdmin.connectionPolicyMessage({message:'ENOTFOUND'},'http://missing.internal',type);
+  assert(dnsMessage&&dnsMessage.includes(`${label} hostname could not be resolved`),'DNS failures must be provider-aware and actionable');
+  const refusedMessage=serverAdmin.connectionPolicyMessage({message:'ECONNREFUSED'},'http://media.internal',type);
+  assert(refusedMessage&&refusedMessage.includes('connection was refused'),'connection-refused failures must remain actionable');
+}
 
 const firstRun=read('views/auth/first-run-claim.ejs');
 has(firstRun,'docker compose exec app npm run setup:claim','first-run setup must show a direct setup-code retrieval command');
