@@ -8,175 +8,22 @@ const episodeResolution = require('./episode-resolution');
 const foundation = require('./foundation');
 const { neutralGroup, containerExtension, pathExtension } = require('./managed-runtime');
 
-function parseVideoId(type, videoId) {
-  if (type === 'movie') {
-    const imdb = sourceIndex.normalizeImdb(videoId);
-    return imdb ? { type: 'movie', imdb } : null;
-  }
-  if (type !== 'series') return null;
-  const match = String(videoId || '').match(/^(tt\d{5,12}):(\d{1,3}):(\d{1,4})$/i);
-  if (!match) return null;
-  return { type: 'series', imdb: match[1].toLowerCase(), season: Number(match[2]), episode: Number(match[3]) };
+function parseVideoId(type, videoId) {if(type==='movie'){const imdb=sourceIndex.normalizeImdb(videoId);return imdb?{type:'movie',imdb}:null;}if(type!=='series')return null;const match=String(videoId||'').match(/^(tt\d{5,12}):(\d{1,3}):(\d{1,4})$/i);if(!match)return null;return{type:'series',imdb:match[1].toLowerCase(),season:Number(match[2]),episode:Number(match[3])};}
+function basename(value){const raw=String(value||'').trim();if(!raw)return'';try{const parsed=new URL(raw);return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop()||'');}catch{return raw.split(/[\\/]/).pop()||'';}}
+function filename(item,media){const itemPath=String(item?.Path||item?.path||''),mediaPath=String(media?.Path||''),preferred=/\.strm(?:$|[?#])/i.test(itemPath)?itemPath:(mediaPath||itemPath);return basename(preferred)||`${item?.Name||item?.name||'video'}.mkv`;}
+function quality(media,display){const meta=display.metadata||{},height=Number(media?.Height||media?.MediaStreams?.find(stream=>stream.Type==='Video')?.Height||0),bitrate=Number(media?.Bitrate||0);let rank=0;if(meta.resolution==='4K'||height>=2000)rank=400;if(meta.resolution==='1080p'||(height>=1000&&height<2000))rank=Math.max(rank,300);if(meta.resolution==='720p'||(height>=700&&height<1000))rank=Math.max(rank,200);if(meta.source==='REMUX')rank+=35;if(meta.source==='BluRay')rank+=20;if(meta.source==='WEB-DL')rank+=10;rank+=Math.min(20,bitrate/5000000);return{height,rank};}
+function description(display,media){return foundation.richStreamDescription(display,media);}
+function directPlaybackUrl({source,itemId,mediaSourceId='',container='',filename:file=''}){
+  const item=String(itemId||'').trim(),media=String(mediaSourceId||'').trim();if(!source?.base_url||!item)throw new Error('External media-server raw-file URL is unavailable.');
+  const extension=containerExtension(container)||pathExtension(file),url=client.sourceUrl(source.base_url,`/Videos/${encodeURIComponent(item)}/stream${extension?`.${extension}`:''}`,source.media_server_type);
+  url.searchParams.set('Static','true');if(media)url.searchParams.set('MediaSourceId',media);url.searchParams.set('api_key',client.sourceToken(source));return url.toString();
 }
-
-function basename(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  try {
-    const parsed = new URL(raw);
-    return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || '');
-  } catch {
-    return raw.split(/[\\/]/).pop() || '';
-  }
-}
-
-function filename(item, media) {
-  const itemPath = String(item?.Path || item?.path || '');
-  const mediaPath = String(media?.Path || '');
-  const preferred = /\.strm(?:$|[?#])/i.test(itemPath) ? itemPath : (mediaPath || itemPath);
-  return basename(preferred) || `${item?.Name || item?.name || 'video'}.mkv`;
-}
-
-function quality(media, display) {
-  const meta = display.metadata || {};
-  const height = Number(media?.Height || media?.MediaStreams?.find(stream => stream.Type === 'Video')?.Height || 0);
-  const bitrate = Number(media?.Bitrate || 0);
-  let rank = 0;
-  if (meta.resolution === '4K' || height >= 2000) rank = 400;
-  if (meta.resolution === '1080p' || (height >= 1000 && height < 2000)) rank = Math.max(rank, 300);
-  if (meta.resolution === '720p' || (height >= 700 && height < 1000)) rank = Math.max(rank, 200);
-  if (meta.source === 'REMUX') rank += 35;
-  if (meta.source === 'BluRay') rank += 20;
-  if (meta.source === 'WEB-DL') rank += 10;
-  rank += Math.min(20, bitrate / 5000000);
-  return { height, rank };
-}
-
-function description(display, media) {
-  return foundation.richStreamDescription(display, media);
-}
-
-function directPlaybackUrl({ source, itemId, mediaSourceId = '', container = '', filename: file = '' }) {
-  const item = String(itemId || '').trim();
-  const media = String(mediaSourceId || '').trim();
-  if (!source?.base_url || !item) throw new Error('External Jellyfin raw-file URL is unavailable.');
-  const extension = containerExtension(container) || pathExtension(file);
-  const url = client.sourceUrl(source.base_url, `/Videos/${encodeURIComponent(item)}/stream${extension ? `.${extension}` : ''}`);
-  url.searchParams.set('Static', 'true');
-  if (media) url.searchParams.set('MediaSourceId', media);
-  url.searchParams.set('api_key', client.sourceToken(source));
-  return url.toString();
-}
-
-async function roots(source, args) {
-  return sourceIndex.lookupAll(source.id, args.imdb, args.type);
-}
-
-async function itemDetails(source, item) {
-  const qs = new URLSearchParams({ Fields: 'Path,MediaSources,MediaStreams', EnableImages: 'false' });
-  const detailed = await client.request(source, `/Users/${encodeURIComponent(String(source.jellyfin_user_id))}/Items/${encodeURIComponent(String(item.Id))}?${qs.toString()}`);
-  return detailed && detailed.Id ? { ...item, ...detailed } : item;
-}
-
-async function exactEpisode(source, row, args) {
-  const endpoint = episodeResolution.userItemsPath({
-    userId: source.jellyfin_user_id,
-    seriesId: row.item_id,
-    season: args.season,
-    episode: args.episode,
-    fields: 'Path,MediaSources,MediaStreams'
-  });
-  const payload = await client.request(source, endpoint);
-  const target = episodeResolution.pick(payload, args.season, args.episode);
-  if (target) return target;
-  const qs = new URLSearchParams({ UserId: String(source.jellyfin_user_id), Season: String(args.season), Fields: 'Path,MediaSources,MediaStreams', StartIndex: '0', Limit: '500', EnableImages: 'false' });
-  const legacy = await client.request(source, `/Shows/${encodeURIComponent(row.item_id)}/Episodes?${qs.toString()}`);
-  return (Array.isArray(legacy?.Items) ? legacy.Items : []).find(item => Number(item.IndexNumber) === args.episode && Number(item.ParentIndexNumber ?? args.season) === args.season) || null;
-}
-
-async function items(source, args) {
-  const indexed = await roots(source, args);
-  if (!indexed.length) return [];
-  if (args.type === 'movie') return Promise.all(indexed.map(async row => itemDetails(source, { Id: row.item_id, Name: row.name, Path: row.path })));
-  const settled = await Promise.allSettled(indexed.map(row => exactEpisode(source, row, args)));
-  return settled.filter(row => row.status === 'fulfilled' && row.value).map(row => row.value);
-}
-
-function mediaSources(item) {
-  const sources = (Array.isArray(item?.MediaSources) ? item.MediaSources : []).filter(media => media?.Id);
-  if (sources.length) return sources;
-  return [{ Id: '', Path: item?.Path || item?.path || '', Container: pathExtension(item?.Path || item?.path || ''), MediaStreams: [], Size: null, Bitrate: null }];
-}
-
-async function streamsFrom(source, args, type, videoId) {
-  const found = await items(source, args);
-  const out = [];
-  for (const item of found) {
-    for (const media of mediaSources(item)) {
-      const file = filename(item, media);
-      const display = foundation.streamDisplayFromFilename(file);
-      const q = quality(media, display);
-      out.push({
-        rank: q.rank,
-        stream: {
-          name: display.name,
-          description: description(display, media),
-          url: directPlaybackUrl({ source, itemId: item.Id, mediaSourceId: media.Id, container: media.Container, filename: file }),
-          behaviorHints: {
-            notWebReady: true,
-            bingeGroup: neutralGroup(type, videoId, file),
-            filename: file,
-            ...(Number(media.Size) > 0 ? { videoSize: Number(media.Size) } : {})
-          }
-        }
-      });
-    }
-  }
-  return out.sort((a, b) => b.rank - a.rank).map(row => row.stream);
-}
-
-async function streamsFor(entitlement, type, videoId) {
-  const args = parseVideoId(type, videoId);
-  if (!args) return [];
-  const sources = await planExternalSources.forEntitlement(entitlement);
-  if (!sources.length) return [];
-  const settled = await Promise.allSettled(sources.map(source => streamsFrom(source, args, type, videoId)));
-  const output = [];
-  for (let i = 0; i < settled.length; i += 1) {
-    const result = settled[i];
-    const source = sources[i];
-    if (result.status === 'fulfilled') {
-      output.push(...result.value);
-      await query(`UPDATE stremio_sources SET last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`, [source.id]).catch(() => {});
-      continue;
-    }
-    await query(
-      `UPDATE stremio_sources SET auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE auth_state END,last_error=$3,updated_at=NOW() WHERE id=$1`,
-      [source.id, result.reason?.code === 'STREMIO_SOURCE_AUTH', String(result.reason?.message || result.reason).slice(0, 1000)]
-    ).catch(() => {});
-  }
-  return output;
-}
-
-async function playbackTargetFor(entitlement, sourceId, itemId, mediaSourceId) {
-  const sources = await planExternalSources.forEntitlement(entitlement);
-  const source = sources.find(candidate => String(candidate.id) === String(sourceId));
-  if (!source) return null;
-  return directPlaybackUrl({ source, itemId, mediaSourceId });
-}
-
-module.exports = {
-  parseVideoId,
-  filename,
-  quality,
-  description,
-  directPlaybackUrl,
-  roots,
-  itemDetails,
-  exactEpisode,
-  items,
-  mediaSources,
-  streamsFrom,
-  streamsFor,
-  playbackTargetFor
-};
+async function roots(source,args){return sourceIndex.lookupAll(source.id,args.imdb,args.type);}
+async function itemDetails(source,item){const qs=new URLSearchParams({Fields:'Path,MediaSources,MediaStreams',EnableImages:'false'}),detailed=await client.request(source,`/Users/${encodeURIComponent(String(source.jellyfin_user_id))}/Items/${encodeURIComponent(String(item.Id))}?${qs.toString()}`);return detailed&&detailed.Id?{...item,...detailed}:item;}
+async function exactEpisode(source,row,args){const endpoint=episodeResolution.userItemsPath({userId:source.jellyfin_user_id,seriesId:row.item_id,season:args.season,episode:args.episode,fields:'Path,MediaSources,MediaStreams'}),payload=await client.request(source,endpoint),target=episodeResolution.pick(payload,args.season,args.episode);if(target)return target;const qs=new URLSearchParams({UserId:String(source.jellyfin_user_id),Season:String(args.season),Fields:'Path,MediaSources,MediaStreams',StartIndex:'0',Limit:'500',EnableImages:'false'}),legacy=await client.request(source,`/Shows/${encodeURIComponent(row.item_id)}/Episodes?${qs.toString()}`);return(Array.isArray(legacy?.Items)?legacy.Items:[]).find(item=>Number(item.IndexNumber)===args.episode&&Number(item.ParentIndexNumber??args.season)===args.season)||null;}
+async function items(source,args){const indexed=await roots(source,args);if(!indexed.length)return[];if(args.type==='movie')return Promise.all(indexed.map(async row=>itemDetails(source,{Id:row.item_id,Name:row.name,Path:row.path})));const settled=await Promise.allSettled(indexed.map(row=>exactEpisode(source,row,args)));return settled.filter(row=>row.status==='fulfilled'&&row.value).map(row=>row.value);}
+function mediaSources(item){const sources=(Array.isArray(item?.MediaSources)?item.MediaSources:[]).filter(media=>media?.Id);if(sources.length)return sources;return[{Id:'',Path:item?.Path||item?.path||'',Container:pathExtension(item?.Path||item?.path||''),MediaStreams:[],Size:null,Bitrate:null}];}
+async function streamsFrom(source,args,type,videoId){const found=await items(source,args),out=[];for(const item of found){for(const media of mediaSources(item)){const file=filename(item,media),display=foundation.streamDisplayFromFilename(file),q=quality(media,display);out.push({rank:q.rank,stream:{name:display.name,description:description(display,media),url:directPlaybackUrl({source,itemId:item.Id,mediaSourceId:media.Id,container:media.Container,filename:file}),behaviorHints:{notWebReady:true,bingeGroup:neutralGroup(type,videoId,file),filename:file,...(Number(media.Size)>0?{videoSize:Number(media.Size)}:{})}}});}}return out.sort((a,b)=>b.rank-a.rank).map(row=>row.stream);}
+async function streamsFor(entitlement,type,videoId){const args=parseVideoId(type,videoId);if(!args)return[];const sources=await planExternalSources.forEntitlement(entitlement);if(!sources.length)return[];const settled=await Promise.allSettled(sources.map(source=>streamsFrom(source,args,type,videoId))),output=[];for(let i=0;i<settled.length;i+=1){const result=settled[i],source=sources[i];if(result.status==='fulfilled'){output.push(...result.value);await query(`UPDATE stremio_sources SET last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[source.id]).catch(()=>{});continue;}await query(`UPDATE stremio_sources SET auth_state=CASE WHEN $2 THEN 'reconnect_required' ELSE auth_state END,last_error=$3,updated_at=NOW() WHERE id=$1`,[source.id,result.reason?.code==='STREMIO_SOURCE_AUTH',String(result.reason?.message||result.reason).slice(0,1000)]).catch(()=>{});}return output;}
+async function playbackTargetFor(entitlement,sourceId,itemId,mediaSourceId){const sources=await planExternalSources.forEntitlement(entitlement),source=sources.find(candidate=>String(candidate.id)===String(sourceId));if(!source)return null;return directPlaybackUrl({source,itemId,mediaSourceId});}
+module.exports={parseVideoId,filename,quality,description,directPlaybackUrl,roots,itemDetails,exactEpisode,items,mediaSources,streamsFrom,streamsFor,playbackTargetFor};

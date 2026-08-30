@@ -79,12 +79,12 @@ assert(!leases.includes('remote_endpoint'),'generic lease persistence must not s
 
 assert(stremio.includes('claimHouseholdOrReject')&&stremio.includes("kind: 'direct_stream_result'"),'Stremio raw-file results must preserve household admission and compatibility-route checks');
 assert(stremio.includes('managedRuntime.streamsFor(entitlement, type, videoId)')&&stremio.includes('externalRuntime.streamsFor(entitlement, type, videoId)'),'both Stremio source classes must return direct stream results from their source runtimes');
-assert(managed.includes("url.searchParams.set('Static','true')")&&external.includes("url.searchParams.set('Static', 'true')"),'both Stremio source classes must construct Jellyfin static/original-file URLs');
+assert(managed.includes("url.searchParams.set('Static','true')")&&/url\.searchParams\.set\(\s*['"]Static['"]\s*,\s*['"]true['"]\s*\)/.test(external)&&external.includes('source.media_server_type'),'both Stremio source classes must construct provider-aware static/original-file URLs');
 assert(stremio.includes("'/stremio/:token/external-play/:sourceId/:itemId/:mediaSourceId'"),'legacy external Stremio playback-start links must remain compatible');
 assert(stremio.includes('const PLAYBACK_REDIRECT_STATUS = 302')&&(stremio.match(/res\.redirect\(PLAYBACK_REDIRECT_STATUS, target\)/g)||[]).length>=2,'legacy managed and external control links must exit through plain temporary redirects');
 assert(!stremio.includes('pipe(res)')&&!external.includes('pipe(res)'),'CAPTAiNFiN must never relay Stremio media bytes');
-assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external compatibility links must resolve to direct Jellyfin delivery');
-assert(!stremio.includes("require('./managed-playback-lifecycle')")&&!managed.includes('/PlaybackInfo'),'normal Stremio raw-file delivery must not create Jellyfin playback sessions');
+assert(external.includes('playbackTargetFor')&&external.includes('directPlaybackUrl'),'external compatibility links must resolve to direct provider delivery');
+assert(!stremio.includes("require('./managed-playback-lifecycle')")&&!managed.includes('/PlaybackInfo'),'normal Stremio raw-file delivery must not create media-server playback sessions');
 
 assert(jellyfin.includes("scope: 'jellyfin'"),'Jellyfin household access must use the shared lease engine');
 assert(jellyfin.includes('SELECT s.id AS subscription_id'),'Jellyfin household enforcement must use a narrow least-privilege entitlement projection');
