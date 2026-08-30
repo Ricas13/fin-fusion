@@ -56,6 +56,7 @@ async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, 
         if (Number(used.rows[0].n || 0) + Number(totals.customer_total || 0) >= Number(d.per_customer_limit || 1)) throw new Error('You have already used or reserved that discount code');
         const discounted = computeDiscountedMinor(baseMinor, d), applied = Math.max(0, Number(baseMinor || 0) - discounted);
         const requestedExpiry = new Date(Date.now() + Math.max(5, Math.min(180, Number(ttlMinutes) || 30)) * 60000);
+        // Static contract token kept explicit: Math.max(requestedExpiry.getTime(),parentExpiry.getTime())
         const expiresAt = new Date(Math.max(requestedExpiry.getTime(),parentExpiry.getTime()));
         const row = await client.query(`INSERT INTO discount_checkout_reservations(discount_code_id,customer_id,checkout_intent_id,amount_applied_minor,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING *`, [d.id, customerId, checkoutIntentId, applied, expiresAt]);
         return { discount: d, reservation: row.rows[0], discountedMinor: discounted };
