@@ -10,8 +10,8 @@ const credit=['cred','it'].join('');
 const retiredCryptoBrand=['coin','gate'].join('');
 const forbiddenPatterns=[
   new RegExp(`${reseller}[_ -]?${credit}s?`,'i'),
-  new RegExp(`${reseller}[^\n]{0,80}${credit}\s*(?:balance|based|model|system|wallet|ledger)`,'i'),
-  new RegExp(`${credit}\s*(?:balance|based)[^\n]{0,80}${reseller}`,'i'),
+  new RegExp(`${reseller}[^\n]{0,80}${credit}\\s*(?:balance|based|model|system|wallet|ledger)`,'i'),
+  new RegExp(`${credit}\\s*(?:balance|based)[^\n]{0,80}${reseller}`,'i'),
   new RegExp(retiredCryptoBrand,'i')
 ];
 const retiredRootArtifacts=[
@@ -55,9 +55,15 @@ function walk(dir){
 }
 
 walk(root);
+if(hits.length){
+  const files=[...new Set(hits.map(hit=>hit.replace(/:\d+$/,'')))].sort();
+  console.error(`Retired commercial/provider traces remain in ${files.length} files (${hits.length} occurrences):`);
+  for(const file of files) console.error(`  ${file}`);
+}
+assert.deepStrictEqual(hits,[],'Retired commercial credit model and retired crypto-provider brand must have no source, route, UI, documentation, test, configuration, or migration traces');
 for(const artifact of retiredRootArtifacts){
   assert.strictEqual(fs.existsSync(path.join(root,artifact)),false,`${artifact} is a retired compatibility artifact and must not return`);
 }
 assert.deepStrictEqual(retiredArtifactReferences,[],'Retired compatibility entry points/preloads must not remain referenced by source, scripts, configuration, documentation, or tests');
 assert.strictEqual(fs.existsSync(path.join(root,'src/application.js')),true,'src/application.js must remain the canonical application entry point');
-console.log(`retired compatibility-artifact trace diagnostic: ok (${hits.length} commercial/provider trace hits ignored for this diagnostic run)`);
+console.log('retired commercial/provider and compatibility-artifact trace audit: ok');
