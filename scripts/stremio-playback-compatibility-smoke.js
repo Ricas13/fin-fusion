@@ -15,7 +15,7 @@ const external=require('../src/stremio/external-direct-runtime');
 
 const mapping={media_server_type:'jellyfin',public_url:'https://media.example/jellyfin',base_url:'http://jellyfin:8096/jellyfin',access_token_encrypted:null};
 const direct=new URL(managed.directUrl(mapping,'item','source','token','mkv','Movie.2026.1080p.mkv'));
-assert.strictEqual(direct.pathname,'/jellyfin/Videos/item/stream.mkv','raw managed Jellyfin playback should preserve the original container extension for player detection');
+assert.strictEqual(direct.pathname,'/jellyfin/Videos/item/stream.mkv','raw managed Jellyfin playback must preserve configured reverse-proxy prefixes');
 assert.strictEqual(direct.searchParams.get('Static'),'true','managed Stremio must request original/static media bytes');
 assert.strictEqual(direct.searchParams.get('MediaSourceId'),'source');
 assert.strictEqual(direct.searchParams.get('api_key'),'token');
@@ -28,6 +28,10 @@ assert.strictEqual(embyDirect.pathname,'/emby/Videos/item/stream.mkv','managed E
 assert.strictEqual(embyDirect.searchParams.get('Static'),'true');
 assert.strictEqual(embyDirect.searchParams.get('MediaSourceId'),'source');
 assert.strictEqual(embyDirect.searchParams.get('api_key'),'emby-user-token','Stremio direct URLs must carry the restricted Emby user token because the player cannot attach X-Emby-Token headers');
+const embyProxyMapping={...embyMapping,public_url:'https://media.example/proxy'};
+assert.strictEqual(new URL(managed.directUrl(embyProxyMapping,'item','','token','mkv','x.mkv')).pathname,'/proxy/emby/Videos/item/stream.mkv','managed Emby playback must retain non-Emby reverse-proxy prefixes');
+const embyApiRootMapping={...embyMapping,public_url:'https://media.example/proxy/emby'};
+assert.strictEqual(new URL(managed.directUrl(embyApiRootMapping,'item','','token','mkv','x.mkv')).pathname,'/proxy/emby/Videos/item/stream.mkv','an Emby API-root URL must not produce a duplicate /emby/emby prefix');
 
 assert.strictEqual(managed.pathExtension('Movie.2026.1080p.mkv'),'mkv');
 assert.strictEqual(managed.pathExtension('Movie.2026.1080p.mkv.strm'),'mkv','double-extension STRM paths must preserve the underlying video container');
@@ -49,8 +53,8 @@ assert(!managedSource.includes('DeviceProfile:'),'managed raw-file delivery must
 assert(!managedSource.includes('TranscodingUrl'),'managed Stremio delivery must never switch to a transcoding session');
 assert(managedSource.includes("Fields:'Path,MediaSources,MediaStreams'"),'managed stream discovery must resolve media metadata without PlaybackInfo');
 assert(managedSource.includes("url.searchParams.set('Static','true')"),'managed playback must return static/original-file URLs');
-assert(managedSource.includes('mediaServer.apiPath(type,`/Videos/'),'managed direct URLs must route through the Jellyfin/Emby path adapter');
-assert(restrictedSource.includes('registry.mediaProvider.userTokenHeaders')&&restrictedSource.includes('registry.mediaProvider.apiPath'),'restricted metadata requests must use provider-aware user-token headers and paths');
+assert(managedSource.includes('mediaServer.apiUrl(base,type,`/Videos/'),'managed direct URLs must route through the prefix-preserving Jellyfin/Emby URL adapter');
+assert(restrictedSource.includes('registry.mediaProvider.userTokenHeaders')&&restrictedSource.includes('registry.mediaProvider.apiUrl'),'restricted metadata requests must use provider-aware user-token headers and prefix-preserving URLs');
 assert(mediaIndexSource.includes('async function lookupAll')&&!mediaIndexSource.includes('item_type=$3 ORDER BY updated_at DESC LIMIT 1'),'managed IMDb lookup must preserve separate media items such as 1080p and 4K copies');
 assert(managedSource.includes('mediaIndex.lookupAll(mapping.server_id,args.imdb,args.type)'),'managed result resolution must fan out across every indexed item with the same IMDb id');
 assert(managedSource.includes("`${item.id}:${source.Id||'file'}:${filename}`"),'separate items/media sources must keep distinct Stremio binge groups');
