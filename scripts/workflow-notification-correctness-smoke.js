@@ -133,9 +133,14 @@ assert.strictEqual(eventLabel('customer.claim.completed'), 'Claim completed');
 assert.strictEqual(eventLabel('some.future.event'), 'Some · Future · Event', 'unknown real events must still have a useful label');
 
 // Every other durable lifecycle notification is reconciled from committed DB
-// state. The automation worker discovers the job automatically from jobs.names().
+// state. Failed dispatch windows must retain their previous cursor so a transient
+// enqueue/configuration failure cannot permanently skip lifecycle events.
 assert(jobs.includes("const notificationLifecycle=require('./notification-lifecycle');"), 'notification lifecycle reconciler must be registered');
-assert(jobs.includes('async notification_lifecycle(){return notificationLifecycle.run()}'), 'notification lifecycle automation job is missing');
+assert(jobs.includes('async notification_lifecycle(){return notificationLifecycleSafeRun()}'), 'notification lifecycle automation must use the failure-aware checkpoint owner');
+assert(jobs.includes('const checkpoint=await notificationLifecycle.loadState(new Date())'), 'notification lifecycle must capture its prior durable checkpoint before dispatch');
+assert(jobs.includes('if(Number(result?.failed||0)>0)'), 'notification lifecycle must detect failed dispatch passes before accepting the new cursor');
+assert(jobs.includes('cursorRetained:true'), 'failed lifecycle passes must report that the previous cursor was retained');
+assert(jobs.includes('cursor:checkpoint.cursor.toISOString()'), 'failed lifecycle passes must restore the previous cursor rather than advancing past undelivered events');
 assert(lifecycleNotifications.includes("const STATE_KEY = 'notification_lifecycle_cursor_v1'"), 'notification lifecycle must persist a cursor');
 assert(lifecycleNotifications.includes("event_type='invoice.paid'"), 'Stripe paid invoices must produce renewal payment receipts');
 assert(lifecycleNotifications.includes("a.action='payment.subscription.activate'"), 'committed payment activations must produce payment receipts');
@@ -178,17 +183,21 @@ assert(retirementMigration.includes("SET event_scope='customer'"), 'payment.fail
 assert(retirementMigration.includes("WHERE event_type='payment.failed'"), 'payment.failed scope migration is missing');
 
 // Email and secondary messaging use one physical table. Each worker must claim,
-// retry and report only its own rows or the workers can steal incompatible
-// encrypted payloads from one another.
+// retry and report only its own rows. Both workers must also reclaim stale
+// `sending` leases after a crash, otherwise one interrupted delivery is lost forever.
 assert(emailOutbox.includes("INSERT INTO notification_outbox(channel,message_type,recipient_email"), 'email enqueue must identify its channel explicitly');
 assert(emailOutbox.includes("VALUES('email',$1,$2,$3,$4,'pending',NOW())"), 'email rows must be persisted with channel=email');
 for (const fragment of [
-    "WHERE channel='email' AND status IN ('pending','failed')",
+    "WHERE channel='email' AND (",
+    "status IN ('pending','failed')",
+    "status='sending' AND last_attempt_at<=NOW()-make_interval(mins=>$1)",
     "WHERE id=$1 AND channel='email'",
     "FROM notification_outbox WHERE channel='email' ORDER BY created_at DESC",
     "WHERE channel='email'"
-]) assert(emailOutbox.includes(fragment), `email outbox is missing channel isolation: ${fragment}`);
-assert(secondaryOutbox.includes("WHERE channel<>'email' AND status IN('pending','failed')"), 'secondary worker must remain isolated from email rows');
+]) assert(emailOutbox.includes(fragment), `email outbox is missing durable channel/lease handling: ${fragment}`);
+assert(emailOutbox.includes('const STALE_SENDING_MINUTES = 15'), 'email sending leases must have a bounded stale threshold');
+assert(secondaryOutbox.includes("WHERE channel<>'email' AND (((status IN('pending','failed')) AND next_attempt_at<=NOW()) OR (status='sending'"), 'secondary worker must reclaim stale sending rows while remaining isolated from email');
+assert(secondaryOutbox.includes('make_interval(mins=>$2)'), 'secondary notification sending leases must have an explicit stale timeout');
 assert(secondaryOutbox.includes("WHERE channel<>'email' ORDER BY created_at DESC"), 'secondary delivery history must remain isolated from email rows');
 
 console.log('workflow notification correctness smoke: ok');
