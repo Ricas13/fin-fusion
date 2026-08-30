@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const registry = require('../src/jellyfin/registry');
 const fleetMetrics = require('../src/jellyfin/fleet-metrics');
 const scopedInactivity = require('../src/automation/customer-inactivity-scoped');
@@ -106,6 +107,7 @@ try {
     assert.deepStrictEqual(safeRows.map(row => row.customer_id),['free-customer'],'An unrelated offline server must not block eligible users on a healthy target server');
     assert.deepStrictEqual(scopedInactivity.eligibleOnReadyServers([{server_id:'free-server',eligible:true}],{'free-server':{ready:false,error:'activity unavailable'}}),[],'If the target Free Server activity refresh fails, enforcement must fail safe for that server');
 
+    execFileSync(process.execPath,[path.join(root,'scripts/emby-registry-runtime-smoke.js')],{stdio:'inherit',env:process.env});
     console.log('Jellyfin/Emby registry URL/auth/activity validation smoke test passed.');
 } finally {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
