@@ -2,6 +2,7 @@
 
 const {query,transaction}=require('../db');
 const client=require('./source-client');
+const operationLock=require('./operation-lock');
 
 const DEFAULT_ROTATION_HOURS=4;
 const TOKEN_GRACE_HOURS=1;
@@ -9,36 +10,52 @@ const TOKEN_GRACE_HOURS=1;
 function rotationHours(value){return Math.max(1,Math.min(168,Number.parseInt(value,10)||DEFAULT_ROTATION_HOURS));}
 function graceHours(value){return Math.max(1,Math.min(24,Number.parseInt(value,10)||TOKEN_GRACE_HOURS));}
 
-async function retireEncryptedToken(source,{encryptedToken=null,actorUserId=null,reason='rotation',grace=TOKEN_GRACE_HOURS}={}){
+async function retireEncryptedTokenTx(db,source,{encryptedToken=null,actorUserId=null,reason='rotation',grace=TOKEN_GRACE_HOURS}={}){
   const token=encryptedToken||source?.access_token_encrypted;
   if(!source?.id||!source?.base_url||!token)return false;
   const hours=graceHours(grace);
-  await transaction(async db=>{
-    await db.query(`INSERT INTO stremio_source_retired_tokens(source_id,base_url,source_name,token_encrypted,revoke_at)
-      VALUES($1,$2,$3,$4,NOW()+($5||' hours')::interval)`,[source.id,source.base_url,source.name||null,token,String(hours)]);
-    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-      VALUES($1,'admin.stremio.source.token_retired','stremio_source',$2,$3::jsonb)`,[actorUserId,source.id,JSON.stringify({reason,graceHours:hours})]);
-  });
-  return true;
+  const inserted=await db.query(`INSERT INTO stremio_source_retired_tokens(source_id,base_url,source_name,token_encrypted,revoke_at)
+    SELECT $1,$2,$3,$4,NOW()+($5||' hours')::interval
+    WHERE NOT EXISTS(
+      SELECT 1 FROM stremio_source_retired_tokens
+      WHERE source_id=$1 AND token_encrypted=$4
+    ) RETURNING id`,[source.id,source.base_url,source.name||null,token,String(hours)]);
+  if(inserted.rowCount)await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+    VALUES($1,'admin.stremio.source.token_retired','stremio_source',$2,$3::jsonb)`,[actorUserId,source.id,JSON.stringify({reason,graceHours:hours})]);
+  return Boolean(inserted.rowCount);
+}
+
+async function retireEncryptedToken(source,options={}){
+  return transaction(db=>retireEncryptedTokenTx(db,source,options));
 }
 
 async function rotateSourceToken(source,actorUserId=null){
-  if(!source?.password_encrypted)throw new Error('Automatic token rotation requires an encrypted source password. Reconnect this source and enable token rotation.');
-  if(!source?.access_token_encrypted)throw new Error('External Jellyfin source has no current token to rotate.');
-  const password=client.decryptPassword(source.password_encrypted);
-  const auth=await client.authenticate(source.base_url,source.jellyfin_username,password);
-  const encrypted=client.encryptToken(auth.accessToken),hours=rotationHours(source.token_rotation_hours);
-  await transaction(async db=>{
-    await db.query(`INSERT INTO stremio_source_retired_tokens(source_id,base_url,source_name,token_encrypted,revoke_at)
-      VALUES($1,$2,$3,$4,NOW()+($5||' hours')::interval)`,[source.id,source.base_url,source.name||null,source.access_token_encrypted,String(TOKEN_GRACE_HOURS)]);
-    await db.query(`UPDATE stremio_sources SET public_url=$2,jellyfin_user_id=$3,jellyfin_username=$4,access_token_encrypted=$5,
-      auth_state='connected',last_connected_at=NOW(),last_auth_check_at=NOW(),last_success_at=NOW(),last_error=NULL,
-      token_last_rotated_at=NOW(),token_rotates_at=NOW()+($6||' hours')::interval,updated_at=NOW() WHERE id=$1`,
-      [source.id,auth.publicUrl,auth.jellyfinUserId,auth.jellyfinUsername,encrypted,String(hours)]);
-    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-      VALUES($1,'admin.stremio.source.token_rotate','stremio_source',$2,$3::jsonb)`,[actorUserId,source.id,JSON.stringify({jellyfinUsername:auth.jellyfinUsername,tokenRotationHours:hours,oldTokenGraceHours:TOKEN_GRACE_HOURS})]);
+  if(!source?.id)throw new Error('External Stremio source id is required for token rotation.');
+  return operationLock.withLock(`external-token:${source.id}`,async()=>{
+    const currentResult=await query('SELECT * FROM stremio_sources WHERE id=$1',[source.id]);
+    if(!currentResult.rowCount)throw new Error('External Stremio source no longer exists.');
+    const current=currentResult.rows[0];
+    if(source.access_token_encrypted&&current.access_token_encrypted!==source.access_token_encrypted)return{sourceId:source.id,ok:true,skipped:true,reason:'already_rotated'};
+    if(!current.password_encrypted)throw new Error('Automatic token rotation requires an encrypted source password. Reconnect this source and enable token rotation.');
+    if(!current.access_token_encrypted)throw new Error('External Jellyfin source has no current token to rotate.');
+    const password=client.decryptPassword(current.password_encrypted);
+    const auth=await client.authenticate(current.base_url,current.jellyfin_username,password,current.media_server_type||null);
+    const encrypted=client.encryptToken(auth.accessToken),hours=rotationHours(current.token_rotation_hours);
+    await transaction(async db=>{
+      const locked=await db.query('SELECT * FROM stremio_sources WHERE id=$1 FOR UPDATE',[current.id]);
+      if(!locked.rowCount)throw new Error('External Stremio source disappeared during token rotation.');
+      const latest=locked.rows[0];
+      if(latest.access_token_encrypted!==current.access_token_encrypted)throw new Error('External Stremio source token changed during rotation; retry from current state.');
+      await retireEncryptedTokenTx(db,latest,{actorUserId,reason:'rotation',grace:TOKEN_GRACE_HOURS});
+      await db.query(`UPDATE stremio_sources SET public_url=$2,jellyfin_user_id=$3,jellyfin_username=$4,access_token_encrypted=$5,
+        auth_state='connected',last_connected_at=NOW(),last_auth_check_at=NOW(),last_success_at=NOW(),last_error=NULL,
+        token_last_rotated_at=NOW(),token_rotates_at=NOW()+($6||' hours')::interval,updated_at=NOW() WHERE id=$1`,
+        [latest.id,auth.publicUrl,auth.jellyfinUserId,auth.jellyfinUsername,encrypted,String(hours)]);
+      await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+        VALUES($1,'admin.stremio.source.token_rotate','stremio_source',$2,$3::jsonb)`,[actorUserId,latest.id,JSON.stringify({jellyfinUsername:auth.jellyfinUsername,tokenRotationHours:hours,oldTokenGraceHours:TOKEN_GRACE_HOURS})]);
+    });
+    return{sourceId:current.id,ok:true,rotationHours:hours,graceHours:TOKEN_GRACE_HOURS};
   });
-  return{sourceId:source.id,ok:true,rotationHours:hours,graceHours:TOKEN_GRACE_HOURS};
 }
 
 async function rotateDueTokens({limit=25}={}){
@@ -46,12 +63,12 @@ async function rotateDueTokens({limit=25}={}){
     WHERE enabled=TRUE AND token_rotation_enabled=TRUE AND password_encrypted IS NOT NULL
       AND (token_rotates_at IS NULL OR token_rotates_at<=NOW())
     ORDER BY COALESCE(token_rotates_at,'1970-01-01'::timestamptz),priority,name LIMIT $1`,[Math.max(1,Math.min(100,Number(limit)||25))])).rows;
-  let rotated=0,failed=0;
+  let rotated=0,failed=0,skipped=0;
   for(const source of rows){
-    try{await rotateSourceToken(source);rotated++;}
+    try{const result=await rotateSourceToken(source);if(result?.skipped)skipped++;else rotated++;}
     catch(error){failed++;await query(`UPDATE stremio_sources SET auth_state='error',last_auth_check_at=NOW(),last_error=$2,token_rotates_at=NOW()+INTERVAL '1 hour',updated_at=NOW() WHERE id=$1`,[source.id,String(error.message||error).slice(0,1000)]).catch(()=>{});console.error(`Stremio source token rotation failed for ${source.name}:`,error.message);}
   }
-  return{total:rows.length,rotated,failed};
+  return{total:rows.length,rotated,skipped,failed};
 }
 
 async function revokeRetiredTokens({limit=100,sourceId=null,force=false}={}){
@@ -84,4 +101,4 @@ async function maintain({rotateLimit=25,revokeLimit=100}={}){
   return{total:Number(revocation.total||0)+Number(rotation.total||0),processed:Number(revocation.revoked||0)+Number(rotation.rotated||0),failed:Number(revocation.failed||0)+Number(rotation.failed||0),rotation,revocation};
 }
 
-module.exports={DEFAULT_ROTATION_HOURS,TOKEN_GRACE_HOURS,rotationHours,graceHours,retireEncryptedToken,rotateSourceToken,rotateDueTokens,revokeRetiredTokens,maintain};
+module.exports={DEFAULT_ROTATION_HOURS,TOKEN_GRACE_HOURS,rotationHours,graceHours,retireEncryptedTokenTx,retireEncryptedToken,rotateSourceToken,rotateDueTokens,revokeRetiredTokens,maintain};
