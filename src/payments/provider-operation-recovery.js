@@ -95,7 +95,7 @@ async function recoverImmediate(op) {
   }
   if (op.state === 'planned') await providerOps.providerApplied(op.id, { providerReference:remote.id, result:{priceId:observedPrice,status:remote.status||null,recovered:true} });
   if (op.state !== 'local_applied') await finishImmediateLocal(op, subscription, target, mapping);
-  const synced = await billingControl.syncSubscription(subscription.id);
+  const synced = await billingControl.syncSubscription(subscription.id, { expectedProviderPriceId:request.targetPriceId });
   if (!synced.ok) throw new Error(`Recovered local plan change but provider verification is still failing: ${synced.error}`);
   await providerOps.reconciled(op.id, { result:{subscriptionId:subscription.id,targetPlanId:target.id,targetPlanPriceId:mapping.plan_price_id,recovered:true} });
   return { ok:true,type:op.operation_type,id:op.id };

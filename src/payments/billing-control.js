@@ -28,7 +28,7 @@ function providerMissing(error) {
     const status = Number(error?.status || error?.statusCode || 0);
     const code = String(error?.code || '').toLowerCase();
     const detail = String(error?.message || error || '');
-    return status === 404 || code === 'resource_missing' || /\b404\b|no such subscription|not found|does not exist/i.test(detail);
+    return status === 404 || code === 'resource_missing' || /no such subscription|\b404\b[^\n]*\bsubscription\b|\bsubscription\b[^\n]*\b404\b/i.test(detail);
 }
 
 function stripeTerminalStatus(status) {
@@ -51,6 +51,11 @@ function stripePeriod(subscription) {
     return Number.isFinite(end) ? new Date(end * 1000) : null;
 }
 
+function stripePriceId(subscription) {
+    const price = subscription?.items?.data?.[0]?.price;
+    return typeof price === 'string' ? price : price?.id || null;
+}
+
 async function stripeAdapter() {
     const cfg = await providerSettings.get('stripe');
     const key = cfg.restrictedKey || cfg.apiKey || '';
@@ -70,7 +75,8 @@ async function stripeAdapter() {
             return {
                 status: subscription.status,
                 periodEnd: stripePeriod(subscription),
-                cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end)
+                cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+                priceId: stripePriceId(subscription)
             };
         },
         async stopRenewal(row, { idempotencyKey = null } = {}) {
@@ -198,13 +204,25 @@ async function applyRemoteState(row, remote) {
     if (!updated || String(updated.id) !== String(row.id)) throw new Error('Subscription disappeared during provider sync.');
     return updated;
 }
-async function syncSubscription(subscriptionId, { adapter = null } = {}) {
+function verifyExpectedRemote(row, remote, { expectedCancelAtPeriodEnd = null, expectedProviderPriceId = null } = {}) {
+    if (expectedCancelAtPeriodEnd !== null) {
+        if (typeof remote?.cancelAtPeriodEnd !== 'boolean') throw new Error('Provider did not return a verifiable renewal state.');
+        if (remote.cancelAtPeriodEnd !== Boolean(expectedCancelAtPeriodEnd)) throw new Error(`Provider renewal verification mismatch: expected cancel_at_period_end=${Boolean(expectedCancelAtPeriodEnd)} but observed ${remote.cancelAtPeriodEnd}.`);
+    }
+    if (expectedProviderPriceId !== null) {
+        if (row.source !== 'stripe') throw new Error('Provider price verification is only supported for Stripe recurring subscriptions.');
+        const observed = String(remote?.priceId || '');
+        if (!observed || observed !== String(expectedProviderPriceId)) throw new Error(`Stripe price verification mismatch: expected ${String(expectedProviderPriceId)} but observed ${observed || 'missing'}.`);
+    }
+}
+async function syncSubscription(subscriptionId, { adapter = null, expectedCancelAtPeriodEnd = null, expectedProviderPriceId = null } = {}) {
     const row = await subscriptionById(subscriptionId);
     if (!row) throw new Error('Subscription not found.');
     if (!isRecurring(row)) throw new Error('This subscription is not a recurring Stripe/PayPal subscription.');
     try {
         const remoteAdapter = adapter || await defaultAdapter(row.source), remote = await remoteAdapter.fetchRemote(row);
         if (!remote || !remote.status) throw new Error('Provider returned an invalid subscription state.');
+        verifyExpectedRemote(row, remote, { expectedCancelAtPeriodEnd, expectedProviderPriceId });
         await applyRemoteState(row, remote); await recordSuccess(row, remote);
         return { ok:true,subscriptionId:row.id,provider:row.source,remote };
     } catch (error) {
@@ -232,7 +250,7 @@ async function setRenewal(subscriptionId, enabled, actorUserId = null, { adapter
         const remoteAdapter = adapter || await defaultAdapter(row.source);
         if (enabled) await remoteAdapter.resumeRenewal(row, { idempotencyKey:op.idempotency_key }); else await remoteAdapter.stopRenewal(row, { idempotencyKey:op.idempotency_key });
         await providerOps.providerApplied(op.id, { providerReference:row.provider_subscription_id,result:{desiredCancelAtPeriodEnd:!enabled} });
-        const synced = await syncSubscription(row.id, { adapter:remoteAdapter });
+        const synced = await syncSubscription(row.id, { adapter:remoteAdapter, expectedCancelAtPeriodEnd:!enabled });
         if (!synced.ok) throw new Error(`Provider accepted the renewal change, but verification failed: ${synced.error}`);
         await providerOps.localApplied(op.id, { localReference:row.id,result:{cancelAtPeriodEnd:synced.remote?.cancelAtPeriodEnd ?? null} });
         await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'subscription',$3,$4::jsonb)`, [actorUserId,enabled?'billing.renewal.resume':'billing.renewal.stop',row.id,JSON.stringify({provider:row.source,providerSubscriptionId:row.provider_subscription_id,providerOperationId:op.id})]);
@@ -259,6 +277,7 @@ async function recoverProviderOperation(op) {
         if (!remote || remote.cancelAtPeriodEnd !== desired) throw new Error('Provider renewal state remains ambiguous after idempotent recovery.');
     }
     if (op.state === 'planned') await providerOps.providerApplied(op.id, { providerReference:row.provider_subscription_id,result:{desiredCancelAtPeriodEnd:desired,recovered:true} });
+    verifyExpectedRemote(row, remote, { expectedCancelAtPeriodEnd:desired });
     await applyRemoteState(row, remote); await recordSuccess(row, remote);
     if (op.state !== 'local_applied') await providerOps.localApplied(op.id, { localReference:row.id,result:{cancelAtPeriodEnd:desired,recovered:true} });
     await providerOps.reconciled(op.id, { result:{subscriptionId:row.id,recovered:true} });
@@ -273,4 +292,4 @@ async function dashboardData() {
     return { subscriptions:rows,events:events.rows,stats:{recurring:rows.filter(row=>row.recurring).length,active:rows.filter(row=>row.recurring&&['active','trialing'].includes(row.status)).length,pastDue:rows.filter(row=>row.recurring&&row.status==='past_due').length,cancelling:rows.filter(row=>row.recurring&&row.cancel_at_period_end).length,syncProblems:rows.filter(row=>row.recurring&&row.last_error).length} };
 }
 
-module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,recoverProviderOperation,dashboardData,subscriptionById,stripePeriod,applyRemoteState };
+module.exports = { HEALTHY_SYNC_MS,MIN_RETRY_MS,MAX_RETRY_MS,isRecurring,providerMissing,stripeTerminalStatus,paypalTerminalStatus,retryDelayMs,terminateRecurringForDeletion,syncSubscription,syncDue,setRenewal,recoverProviderOperation,dashboardData,subscriptionById,stripePeriod,stripePriceId,applyRemoteState,verifyExpectedRemote };

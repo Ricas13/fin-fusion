@@ -168,6 +168,117 @@ async function capacitySettlementInvariant() {
     return { planId: plan.id, customerIds: [lateCustomer.id, occupyingCustomer.id], incidentId: openIncident.id };
 }
 
+function replaySnapshot(plan, priceId) {
+    return {
+        kind: 'direct_plan',
+        provider: 'stripe',
+        planId: plan.id,
+        planPriceId: null,
+        planCode: plan.code,
+        planName: plan.name,
+        priceMinor: Number(plan.price_minor),
+        discountedMinor: Number(plan.price_minor),
+        currency: 'GBP',
+        billingInterval: 'month',
+        durationDays: 30,
+        checkoutMode: 'subscription',
+        providerMappingId: priceId,
+        providerMappingRecordId: null,
+        streams: 1
+    };
+}
+
+async function historicalCheckoutReplayInvariant() {
+    const planA = (await query(`
+        INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,visible,active,streams,server_class)
+        VALUES($1,$2,'jellyfin','direct','month',30,900,'GBP',TRUE,TRUE,1,'custom') RETURNING *
+    `, [unique('replay-plan-a'), `Replay plan A ${suffix}`])).rows[0];
+    const planB = (await query(`
+        INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,visible,active,streams,server_class)
+        VALUES($1,$2,'jellyfin','direct','month',30,1500,'GBP',TRUE,TRUE,1,'custom') RETURNING *
+    `, [unique('replay-plan-b'), `Replay plan B ${suffix}`])).rows[0];
+    const replayCustomer = await customer('historical-replay');
+    const providerSubscriptionId = `sub_replay_${suffix}`;
+    const priceA = `price_replay_a_${suffix}`;
+    const priceB = `price_replay_b_${suffix}`;
+    const currentProviderCustomerId = `cus_current_${suffix}`;
+    const recoveryProviderCustomerId = `cus_recovery_${suffix}`;
+    const snapshotA = replaySnapshot(planA, priceA);
+    const oldIntent = await checkoutIntents.createIntent({
+        scope: 'customer', customerId: replayCustomer.id, planId: planA.id, provider: 'stripe', checkoutMode: 'subscription', commercialSnapshot: snapshotA
+    });
+    const oldCheckoutId = `cs_replay_old_${suffix}`;
+    await checkoutIntents.attachProviderCheckout(oldIntent.id, oldCheckoutId);
+    await checkoutIntents.completeVerifiedProvider('stripe', oldCheckoutId, 'completed');
+
+    const currentEnd = new Date(Date.now() + 60 * 86400000);
+    const currentSnapshot = replaySnapshot(planB, priceB);
+    const existing = (await query(`
+        INSERT INTO subscriptions(
+            customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,
+            provider_customer_id,provider_subscription_id,provider_price_id_snapshot,
+            plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,
+            billing_interval_snapshot,duration_days_snapshot,commercial_snapshot
+        ) VALUES($1,$2,'active','stripe',NOW()-INTERVAL '5 days',$3,FALSE,$4,$5,$6,$7,$8,$9,'GBP','month',30,$10::jsonb)
+        RETURNING *
+    `, [replayCustomer.id, planB.id, currentEnd, currentProviderCustomerId, providerSubscriptionId, priceB, planB.name, planB.code, Number(planB.price_minor), JSON.stringify(currentSnapshot)])).rows[0];
+    const initialPaymentCustomer = (await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rows[0];
+    assert(initialPaymentCustomer, 'subscription/payment-customer synchronization did not create the current provider identity');
+    assert.strictEqual(initialPaymentCustomer.provider_customer_id, currentProviderCustomerId, 'pre-replay provider-customer mapping is wrong');
+
+    const replayed = await lifecycle.activatePurchase({
+        customerId: replayCustomer.id,
+        planId: planA.id,
+        provider: 'stripe',
+        providerCustomerId: `cus_old_${suffix}`,
+        providerSubscriptionId,
+        providerStatus: 'past_due',
+        periodStart: new Date(Date.now() - 90 * 86400000),
+        periodEnd: new Date(Date.now() - 60 * 86400000),
+        cancelAtPeriodEnd: true,
+        commercialSnapshot: { ...snapshotA, checkoutIntentId: oldIntent.id }
+    });
+    assert.strictEqual(String(replayed.id), String(existing.id), 'historical replay created a duplicate provider subscription');
+    const afterReplay = (await query('SELECT * FROM subscriptions WHERE id=$1', [existing.id])).rows[0];
+    assert.strictEqual(String(afterReplay.plan_id), String(planB.id), 'completed historical checkout replay reverted the current plan');
+    assert.strictEqual(afterReplay.status, 'active', 'completed historical checkout replay regressed current provider status');
+    assert.strictEqual(afterReplay.cancel_at_period_end, false, 'completed historical checkout replay regressed renewal state');
+    assert.strictEqual(afterReplay.provider_customer_id, currentProviderCustomerId, 'completed historical checkout replay regressed provider-customer identity');
+    assert.strictEqual(afterReplay.provider_price_id_snapshot, priceB, 'completed historical checkout replay regressed provider price snapshot');
+    assert.strictEqual(afterReplay.plan_code_snapshot, planB.code, 'completed historical checkout replay regressed commercial snapshot');
+    assert.strictEqual(new Date(afterReplay.current_period_end).toISOString(), currentEnd.toISOString(), 'completed historical checkout replay regressed paid-through time');
+    const paymentCustomerAfterReplay = (await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rows[0];
+    assert(paymentCustomerAfterReplay, 'historical replay removed the current provider-customer mapping');
+    assert.strictEqual(paymentCustomerAfterReplay.provider_customer_id, currentProviderCustomerId, 'historical replay replaced the current provider-customer mapping with stale checkout identity');
+
+    const openIntent = await checkoutIntents.createIntent({
+        scope: 'customer', customerId: replayCustomer.id, planId: planA.id, provider: 'stripe', checkoutMode: 'subscription', commercialSnapshot: snapshotA
+    });
+    const openCheckoutId = `cs_replay_open_${suffix}`;
+    await checkoutIntents.attachProviderCheckout(openIntent.id, openCheckoutId);
+    const recoveredEnd = new Date(Date.now() + 30 * 86400000);
+    await lifecycle.activatePurchase({
+        customerId: replayCustomer.id,
+        planId: planA.id,
+        provider: 'stripe',
+        providerCustomerId: recoveryProviderCustomerId,
+        providerSubscriptionId,
+        providerStatus: 'active',
+        periodEnd: recoveredEnd,
+        commercialSnapshot: { ...snapshotA, checkoutIntentId: openIntent.id }
+    });
+    const afterOpenRecovery = (await query('SELECT * FROM subscriptions WHERE id=$1', [existing.id])).rows[0];
+    assert.strictEqual(String(afterOpenRecovery.plan_id), String(planA.id), 'open checkout crash-recovery path was incorrectly blocked by replay protection');
+    assert.strictEqual(afterOpenRecovery.provider_price_id_snapshot, priceA, 'open checkout recovery did not restore its verified provider price snapshot');
+    assert.strictEqual(afterOpenRecovery.plan_code_snapshot, planA.code, 'open checkout recovery did not restore its verified commercial snapshot');
+    assert.strictEqual(afterOpenRecovery.provider_customer_id, recoveryProviderCustomerId, 'open checkout recovery did not update the subscription provider-customer identity');
+    const paymentCustomerAfterRecovery = (await query(`SELECT * FROM payment_customers WHERE customer_id=$1 AND provider='stripe'`, [replayCustomer.id])).rows[0];
+    assert(paymentCustomerAfterRecovery, 'open checkout recovery lost the provider-customer mapping');
+    assert.strictEqual(paymentCustomerAfterRecovery.provider_customer_id, recoveryProviderCustomerId, 'open checkout recovery did not converge the provider-customer mapping');
+
+    return { customerId: replayCustomer.id, planIds: [planA.id, planB.id] };
+}
+
 async function main() {
     const cleanup = { customerIds: [], planIds: [], jobIds: [] };
     try {
@@ -179,12 +290,17 @@ async function main() {
         cleanup.customerIds.push(...capacity.customerIds);
         cleanup.planIds.push(capacity.planId);
 
-        console.log('Residual temporal invariant DB smoke passed: affiliate deletion + late settlement capacity.');
+        const replay = await historicalCheckoutReplayInvariant();
+        cleanup.customerIds.push(replay.customerId);
+        cleanup.planIds.push(...replay.planIds);
+
+        console.log('Residual temporal invariant DB smoke passed: affiliate deletion + late settlement capacity + historical checkout replay.');
     } finally {
         for (const customerId of cleanup.customerIds) {
             await query('DELETE FROM payment_incidents WHERE customer_id=$1', [customerId]).catch(() => {});
             await query('DELETE FROM billing_checkout_intents WHERE customer_id=$1', [customerId]).catch(() => {});
             await query('DELETE FROM subscriptions WHERE customer_id=$1', [customerId]).catch(() => {});
+            await query('DELETE FROM payment_customers WHERE customer_id=$1', [customerId]).catch(() => {});
             await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
         }
         for (const planId of cleanup.planIds) await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});

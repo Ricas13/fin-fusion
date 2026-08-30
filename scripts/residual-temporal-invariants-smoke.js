@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const paypal = require('../src/payments/paypal');
+const billingControl = require('../src/payments/billing-control');
 const provisioning = require('../src/jellyfin/resilient-provisioning');
 
 function source(relative) {
@@ -41,10 +42,17 @@ function main() {
         "error?.code === 'PLAN_CAPACITY_EXHAUSTED'",
         'recordCapacitySettlementIncident',
         "incident_type='checkout_completion'",
-        'paidButUnfulfilled'
+        'paidButUnfulfilled',
+        'historicalCheckoutReplay',
+        "settlementIntent.state !== 'open'",
+        'effectivePlanId: row.plan_id'
     ]) {
         assert(activation.includes(required) || lifecycle.includes(required), `Paid activation is missing ${required}`);
     }
+    assert(lifecycle.includes('SELECT id,customer_id,plan_id,provider,state FROM billing_checkout_intents'), 'Settlement verification must load checkout state so terminal historical replays can be distinguished from open crash recovery.');
+    assert(activation.indexOf('const settlementIntent = await assertSettlementCheckout') < activation.indexOf('historicalCheckoutReplay = Boolean'), 'Existing provider-subscription replay must lock and classify its settlement intent before deciding whether commercial state may be rewritten.');
+    assert(activation.includes('if (historicalCheckoutReplay) {\n                    row = existingSubscription;'), 'A terminal historical checkout replay can still rewrite a later subscription contract.');
+    assert(activation.includes('if (providerCustomerId && !historicalCheckoutReplay)'), 'Historical checkout replay can still regress provider-customer identity.');
     const checkout = source('src/payments/checkout-intents.js');
     assert(checkout.includes('checkoutIntentId:row.id'), 'Verified checkout contract does not carry exact settlement identity.');
     const capacity = source('src/entitlements/plan-capacity.js');
@@ -66,12 +74,23 @@ function main() {
     assert(denied.includes('failedRenewals.record'), 'Current PayPal delinquency is not durably recorded through the canonical failed-renewal owner.');
     assert(!denied.includes("providerStatus:'suspended'"), 'Delayed PayPal sale denial can still force local suspension from event order alone.');
 
+    assert.strictEqual(billingControl.providerMissing({ statusCode: 404 }), true, 'Structured provider 404 must still count as confirmed missing.');
+    assert.strictEqual(billingControl.providerMissing({ code: 'resource_missing' }), true, 'Stripe resource_missing must still count as confirmed missing.');
+    assert.strictEqual(billingControl.providerMissing(new Error('No such subscription: sub_dead')), true, 'Stripe no-such-subscription must still count as confirmed missing.');
+    assert.strictEqual(billingControl.providerMissing(new Error('upstream host not found')), false, 'Network/DNS not-found text must never be mistaken for a deleted billing subscription.');
+    assert.strictEqual(billingControl.providerMissing(new Error('provider service does not exist')), false, 'Generic service errors must never authorize destructive local billing cleanup.');
+    const billingSource = source('src/payments/billing-control.js');
+    const renewal = section(billingSource, 'async function setRenewal', 'function recoveryManual');
+    assert(renewal.includes('expectedCancelAtPeriodEnd:!enabled'), 'Renewal stop/resume can still reconcile without verifying the exact requested final provider state.');
+    assert(billingSource.includes('priceId: stripePriceId(subscription)'), 'Stripe provider sync cannot verify the recurring Price actually attached to the subscription.');
+    assert(billingSource.includes('expectedProviderPriceId') && billingSource.includes('Stripe price verification mismatch'), 'Canonical provider sync cannot enforce an expected Stripe Price.');
+
     const planChange = source('src/payments/customer-plan-change.js');
     assert(planChange.includes("timeout:providerHttp.timeoutMs('stripe')"), 'Stripe plan-change calls must use the canonical provider HTTP deadline.');
     const immediate = section(planChange, 'async function setStripePlan', 'async function createLocalChange');
     assert(immediate.includes('let providerMutationAttempted=false'), 'Immediate Stripe plan changes must track whether a remote mutation may have happened.');
     assert(immediate.includes('providerMutationAttempted=true;const updated=await client.subscriptions.update'), 'Immediate Stripe mutation ambiguity is not marked before the provider call.');
-    assert(immediate.includes('const synced=await billingControl.syncSubscription(subscriptionId);if(!synced.ok)throw new Error'), 'Immediate Stripe plan change can still be declared reconciled after provider verification fails.');
+    assert(immediate.includes('billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id})'), 'Immediate Stripe plan change can still reconcile after merely proving the subscription is readable rather than proving the target Price.');
     assert(immediate.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Ambiguous post-provider Stripe plan-change failures are still forced terminal instead of entering recovery.');
     const scheduled = section(planChange, 'async function scheduleStripeProvider', 'async function requestChange');
     assert(scheduled.includes('let providerMutationAttempted=false'), 'Scheduled Stripe plan changes must track possible provider mutation.');
@@ -92,7 +111,13 @@ function main() {
     assert(dueStripe.includes('billingControl.providerMissing(error)'), 'A provider-confirmed missing Stripe schedule must not remain waiting forever.');
     assert(dueStripe.includes('scheduleTargetPrice(schedule)'), 'Due Stripe schedule verification must prove the remote target still matches the intended plan price.');
     assert(dueStripe.includes('String(schedule.id)!==String(change.provider_schedule_id)'), 'Due Stripe convergence must refuse a different remote schedule from the locally recorded one.');
-    assert(dueStripe.includes('const synced=await billingControl.syncSubscription(current.subscription_id);'), 'Applied scheduled Stripe changes must enter canonical provider verification.');
+    const dueVerification = dueStripe.indexOf('billingControl.syncSubscription(current.subscription_id,{expectedProviderPriceId:targetPrice})');
+    const dueApplied = dueStripe.indexOf("SET state='applied',provider_schedule_state='applied'");
+    assert(dueVerification >= 0 && dueApplied >= 0 && dueVerification < dueApplied, 'Scheduled Stripe convergence can still mark the local plan change applied before exact provider Price verification succeeds.');
+
+    const recoverySource = source('src/payments/provider-operation-recovery.js');
+    const recoverImmediate = section(recoverySource, 'async function recoverImmediate', 'async function matchingSchedule');
+    assert(recoverImmediate.includes('billingControl.syncSubscription(subscription.id, { expectedProviderPriceId:request.targetPriceId })'), 'Recovered immediate Stripe plan changes can still reconcile without exact target-Price verification.');
 
     assert.deepStrictEqual(provisioning.assertDiscordSyncResult({ added: [], removed: [], errors: [] }).errors, []);
     const discordError = expectThrows(() => provisioning.assertDiscordSyncResult({ errors: ['remove role: HTTP 503'] }), 'DISCORD_ROLE_SYNC_FAILED');
