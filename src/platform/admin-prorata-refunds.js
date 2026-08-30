@@ -27,7 +27,7 @@ function noStore(_req, res, next) {
 }
 function money(minor, currency) {
   const code = String(currency || 'GBP').toUpperCase();
-  try { return new Intl.NumberFormat('en-GB', { style:'currency', currency:code }).format(Number(minor || 0) / 100); }
+  try { return new Intl.NumberFormat('en-GB', { style:'currency', currency:code, currencyDisplay:'narrowSymbol' }).format(Number(minor || 0) / 100); }
   catch { return `${code} ${(Number(minor || 0) / 100).toFixed(2)}`; }
 }
 function when(value) {
