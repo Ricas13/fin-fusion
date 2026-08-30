@@ -23,29 +23,34 @@ function authHeaders(type, apiKey, { jsonBody = false } = {}) {
   return { ...auth, Accept:'application/json', ...(jsonBody ? { 'Content-Type':'application/json' } : {}) };
 }
 
+function canonicalPath(endpoint) {
+  const value=String(endpoint||'');
+  const parsed=new URL(value,'http://media.invalid');
+  return parsed.pathname.replace(/^\/emby(?=\/|$)/, '') || '/';
+}
+
 function apiPath(type, endpoint) {
   const provider = normalizeType(type);
   const path = String(endpoint || '');
   if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Invalid media server API endpoint.');
   if (provider !== 'emby') return path;
-  if (path === '/emby' || path.startsWith('/emby/')) return path;
-  return `/emby${path}`;
+  const parsed=new URL(path,'http://media.invalid');
+  const canonical=parsed.pathname.replace(/^\/emby(?=\/|$)/,'')||'/';
+  // Jellyfin supports activeWithinSeconds on /Sessions. Emby's documented
+  // SessionService does not, so CAPTAiNFiN applies the same freshness filter
+  // locally in responseBody instead of sending an undocumented query option.
+  if(canonical==='/Sessions')parsed.searchParams.delete('activeWithinSeconds');
+  const normalized=`${parsed.pathname}${parsed.search}${parsed.hash}`;
+  if (normalized === '/emby' || normalized.startsWith('/emby/')) return normalized;
+  return `/emby${normalized}`;
 }
 
 function healthEndpoint(type) {
   return normalizeType(type) === 'emby' ? '/System/Info' : '/System/Info/Public';
 }
 
-function canonicalPath(endpoint) {
-  return String(endpoint || '').replace(/^\/emby(?=\/|$)/, '') || '/';
-}
-
 function userPolicyOverrides(type) {
   if (normalizeType(type) !== 'emby') return null;
-  // Emby and Jellyfin share the MediaBrowser user-policy shape, but Jellyfin's
-  // concrete authentication provider IDs are not portable to Emby. Keeping
-  // these overrides provider-owned avoids sprinkling implementation checks
-  // through the entitlement/provisioning layer.
   return {
     AuthenticationProviderId: undefined,
     PasswordResetProviderId: undefined
@@ -70,10 +75,6 @@ function requestBody(type, endpoint, body) {
   const provider = normalizeType(type), path = canonicalPath(endpoint);
   if (/^\/Users\/[^/]+\/Policy$/.test(path)) return userPolicy(provider, body);
   if (provider === 'emby' && path === '/Users/New' && body && typeof body === 'object' && !Array.isArray(body)) {
-    // Emby's CreateUserByName accepts Name (and copy options), while password
-    // setup is a separate /Users/{Id}/Password operation. Keep the caller's
-    // Password available to registry.request for the post-create bootstrap,
-    // but do not send the unsupported field in the create payload itself.
     const result = { ...body };
     delete result.Password;
     return result;
@@ -88,4 +89,21 @@ function needsPostCreatePassword(type, endpoint, originalBody) {
     && originalBody.Password.length > 0;
 }
 
-module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword };
+function responseBody(type, endpoint, body, { now = Date.now() } = {}) {
+  if (normalizeType(type) !== 'emby' || canonicalPath(endpoint) !== '/Sessions' || !Array.isArray(body)) return body;
+  const parsed=new URL(String(endpoint||''),'http://media.invalid');
+  const activeWithinSeconds=Number(parsed.searchParams.get('activeWithinSeconds'));
+  const cutoff=Number.isFinite(activeWithinSeconds)&&activeWithinSeconds>0 ? Number(now)-activeWithinSeconds*1000 : null;
+  return body
+    .filter(session=>{
+      if(cutoff===null)return true;
+      const activity=new Date(session?.LastActivityDate||0).getTime();
+      return Number.isFinite(activity)&&activity>=cutoff;
+    })
+    .map(session=>({
+      ...session,
+      SupportsMediaControl: session?.SupportsMediaControl===true || session?.SupportsRemoteControl===true
+    }));
+}
+
+module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword, responseBody };
