@@ -80,7 +80,7 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
         }
     }
 
-    return parsed??{};
+    return mediaProvider.responseBody(server.media_server_type,endpoint,parsed??{});
 }
 
 async function healthcheckServer(serverId){
@@ -92,9 +92,6 @@ async function healthcheckServer(serverId){
         await query(`UPDATE jellyfin_servers SET health_status='healthy',last_health_check=NOW(),updated_at=NOW() WHERE id=$1`,[serverId]);
         return{ok:true,latencyMs:Date.now()-started,provider:server.media_server_type,info};
     }catch(err){
-        // A single 5-second miss is not enough evidence to call the server
-        // offline. Mark the first miss degraded; the next consecutive failed
-        // health run promotes it to offline. A success always resets healthy.
         await query(`UPDATE jellyfin_servers SET health_status=CASE WHEN health_status IN('degraded','offline') THEN 'offline' ELSE 'degraded' END,last_health_check=NOW(),updated_at=NOW() WHERE id=$1`,[serverId]);
         return{ok:false,latencyMs:Date.now()-started,error:err.message};
     }
