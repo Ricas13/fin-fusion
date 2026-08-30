@@ -5,7 +5,7 @@
 // sidebar is the single, predictable place to discover navigation.
 const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Dashboard','/admin']]},
-  {key:'jellyfin',label:'Jellyfin',pages:[['servers','Servers','/admin/servers'],['activity','Playback','/admin/activity']]},
+  {key:'jellyfin',label:'Jellyfin / Emby',pages:[['servers','Servers','/admin/servers'],['activity','Playback','/admin/activity']]},
   {key:'stremio',label:'Stremio',pages:[['stremio-sources','Stremio','/admin/servers/stremio']]},
   {key:'people',label:'Customers',pages:[['users','Customers','/admin/users'],['tickets','Support','/admin/tickets']]},
   {key:'commerce',label:'Commerce',pages:[['plans','Plans & Storefront','/admin/plans'],['orders','Orders & Growth','/admin/commerce/orders'],['payments','Payments & Billing','/admin/payments']]},
