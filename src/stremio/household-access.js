@@ -1,6 +1,6 @@
 'use strict';
 
-const { query } = require('../db');
+const { query, transaction } = require('../db');
 const modules = require('../modules/registry');
 const planComponents = require('../access/plan-components');
 const leases = require('../access/network-leases');
@@ -146,13 +146,17 @@ function cooldownMessage(state) {
 async function release(entitlement, { actorUserId = null, reason = 'manual_reset', customerInitiated = false } = {}) {
   const state = await replacementState(entitlement);
   if (customerInitiated && !state.allowed) throw new Error(cooldownMessage(state));
-  const released = await leases.releaseSubject({ scope: 'stremio', subjectKey: subjectKey(entitlement) });
-  await query(
-    `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-     VALUES($1,'stremio.household_lease.reset','stremio_entitlement',$2,$3::jsonb)`,
-    [actorUserId, entitlement.id, JSON.stringify({ subscriptionId: entitlement.subscription_id || null, released, reason: String(reason || 'manual_reset').slice(0, 80), customerInitiated: Boolean(customerInitiated), replacementPolicy: state.policy })]
-  );
-  return released;
+  return transaction(async client => {
+    const key = subjectKey(entitlement);
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`default|stremio|${key}`]);
+    const released = await leases.releaseSubject({ scope: 'stremio', subjectKey: key }, { client });
+    await client.query(
+      `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+       VALUES($1,'stremio.household_lease.reset','stremio_entitlement',$2,$3::jsonb)`,
+      [actorUserId, entitlement.id, JSON.stringify({ subscriptionId: entitlement.subscription_id || null, released, reason: String(reason || 'manual_reset').slice(0, 80), customerInitiated: Boolean(customerInitiated), replacementPolicy: state.policy })]
+    );
+    return released;
+  });
 }
 
 module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, blockedMediaIsWebReady, deniedStream, applyDeniedResponse, replacementState, cooldownMessage, release };
