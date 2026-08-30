@@ -15,7 +15,11 @@ expect(!inactivity.includes("health_status='offline'")&&!inactivity.includes("la
 expect(scoped.includes('activityTrust.serverTelemetry(candidateServerIds(rows))'),'Scoped inactivity must request playback telemetry only for candidate servers.');
 expect(scoped.includes('fleetMetrics.refreshServerUserActivity(serverId)'),'Inactivity must retain the authoritative Jellyfin /Users freshness check.');
 expect(scoped.includes('if (!poll?.ready) continue;'),'A /Users refresh must never promote a failed/stale /Sessions poll back to trusted.');
-expect(scoped.indexOf('refreshCandidateUserActivity([row], serverTelemetry)')<scoped.indexOf('const freshRows = await base.candidates(globalCfg, { customerId: row.customer_id })'),'Final inactivity eligibility must refresh Jellyfin user activity before re-reading the candidate.');
+const finalEligibilityIndex=scoped.indexOf('async function finalEligibility');
+const finalTrustIndex=scoped.indexOf('let serverTelemetry = await refreshCandidateServers([row]);',finalEligibilityIndex);
+const finalUserRefreshIndex=scoped.indexOf('serverTelemetry = await refreshCandidateUserActivity([row], serverTelemetry);',finalTrustIndex);
+const finalCandidateReadIndex=scoped.indexOf('await base.candidates(globalCfg, { customerId: row.customer_id })',finalUserRefreshIndex);
+expect(finalEligibilityIndex>=0&&finalTrustIndex>finalEligibilityIndex&&finalUserRefreshIndex>finalTrustIndex&&finalCandidateReadIndex>finalUserRefreshIndex,'Final inactivity eligibility must refresh server trust and Jellyfin /Users activity before re-reading the candidate.');
 expect(scoped.includes('eligibleOnReadyServers')&&scoped.includes("serverTelemetry[String(row.server_id)]"),'Each inactivity candidate must be gated by its own server.');
 expect(scoped.includes("customer.inactivity.skipped_telemetry")&&scoped.includes('Free Server inactivity enforcement skipped'),'A failed Free Server sample must produce an explicit skip reason.');
 expect(scoped.includes('finalEligibility(original, globalCfg)')&&scoped.includes('usage_no_longer_eligible'),'Enforcement must re-read playback evidence immediately before disabling access.');
