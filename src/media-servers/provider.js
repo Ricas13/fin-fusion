@@ -58,8 +58,11 @@ function credentialProbeEndpoint(_type) {
 function userPolicyOverrides(type) {
   if (normalizeType(type) !== 'emby') return null;
   return {
+    // The shared policy fields are kept; only values that are Jellyfin-specific
+    // or absent from Emby's documented UserPolicy contract are removed.
     AuthenticationProviderId: undefined,
-    PasswordResetProviderId: undefined
+    PasswordResetProviderId: undefined,
+    SyncPlayAccess: undefined
   };
 }
 
