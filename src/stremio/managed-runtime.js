@@ -3,6 +3,7 @@
 const crypto=require('crypto');
 const {query}=require('../db');
 const foundation=require('./foundation');
+const mediaServer=require('../jellyfin/registry').mediaProvider;
 const jellyfin=require('./jellyfin-runtime');
 const mediaIndex=require('./media-index');
 const episodeResolution=require('./episode-resolution');
@@ -16,21 +17,19 @@ function neutralGroup(type,videoId,filename){return `cf-${crypto.createHash('sha
 function containerExtension(value){const container=String(value||'').split(',')[0].trim().toLowerCase();return VIDEO_CONTAINERS.has(container)?container:'';}
 function pathExtension(value){const raw=String(value||'').split(/[?#]/)[0].replace(/\.strm$/i,''),match=raw.match(/\.([a-z0-9]{2,5})$/i);return match&&VIDEO_CONTAINERS.has(match[1].toLowerCase())?match[1].toLowerCase():'';}
 
-// Jellyfin's Static=true video endpoint returns the original media bytes rather
-// than creating a negotiated/transcoded playback. Deliberately omit
-// PlaySessionId and DeviceId: Stremio is consuming a raw authenticated file URL,
-// not participating in Jellyfin's playback-session lifecycle.
 function directUrl(mapping,itemId,mediaSourceId='',accessTokenOverride='',container='',filename=''){
-  const base=String(mapping.public_url||'').replace(/\/$/,'');if(!base)throw new Error('Managed Jellyfin public URL is missing.');
-  const extension=containerExtension(container)||pathExtension(filename),url=new URL(`${base}/Videos/${encodeURIComponent(String(itemId))}/stream${extension?`.${extension}`:''}`);
+  const base=String(mapping.public_url||'').replace(/\/$/,'');if(!base)throw new Error('Managed media-server public URL is missing.');
+  const extension=containerExtension(container)||pathExtension(filename),type=mediaServer.normalizeType(mapping.media_server_type),path=mediaServer.apiPath(type,`/Videos/${encodeURIComponent(String(itemId))}/stream${extension?`.${extension}`:''}`),url=new URL(path,`${base}/`);
   url.searchParams.set('Static','true');
   if(mediaSourceId)url.searchParams.set('MediaSourceId',String(mediaSourceId));
   const token=String(accessTokenOverride||'')||entitlements.accessToken({jellyfin_access_token_encrypted:mapping.access_token_encrypted});if(!token)throw new Error('Managed Stremio raw-file token is unavailable.');
+  // Stremio cannot attach per-stream HTTP headers. Both Jellyfin and Emby
+  // accept access tokens on media URLs via api_key; keep the token out of logs.
   url.searchParams.set('api_key',token);
   return url.toString();
 }
 
-function runtimeEntitlement(mapping){return{server_id:mapping.server_id,base_url:mapping.base_url,public_url:mapping.public_url,server_name:mapping.server_name,jellyfin_user_id:mapping.jellyfin_user_id,jellyfin_access_token_encrypted:mapping.access_token_encrypted};}
+function runtimeEntitlement(mapping){return{server_id:mapping.server_id,base_url:mapping.base_url,public_url:mapping.public_url,server_name:mapping.server_name,media_server_type:mapping.media_server_type,jellyfin_user_id:mapping.jellyfin_user_id,jellyfin_access_token_encrypted:mapping.access_token_encrypted};}
 
 async function itemDetails(mapping,runtime,item){
   const id=String(item?.id||item?.Id||'');if(!id)return item;
@@ -43,9 +42,6 @@ async function itemDetails(mapping,runtime,item){
 function mediaSources(item){
   const sources=(Array.isArray(item?.MediaSources)?item.MediaSources:[]).filter(source=>source?.Id);
   if(sources.length)return sources;
-  // Ordinary single-file items can still be statically streamed without an
-  // explicit MediaSourceId. This fallback is important for older Jellyfin
-  // responses while keeping delivery raw and non-negotiated.
   return[{Id:'',Path:item?.Path||item?.path||'',Container:pathExtension(item?.Path||item?.path||''),MediaStreams:[],Size:null,Bitrate:null}];
 }
 
@@ -75,9 +71,6 @@ async function streamsFromMapping(mapping,args,type,videoId){
   }));
   const output=[],failures=[];let successfulItems=0;
   for(const result of settled){if(result.status==='fulfilled'){successfulItems+=1;output.push(...result.value);}else failures.push(result.reason);}
-  // Retain the existing compatibility timestamp as a local CAPTAiNFiN signal.
-  // It now means that raw stream URLs were resolved; it no longer corresponds
-  // to a Jellyfin PlaybackInfo/session report.
   if(successfulItems)await query(`UPDATE stremio_managed_accounts SET last_playback_info_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=$1`,[mapping.id]).catch(()=>{});
   if(!successfulItems&&failures.length)throw failures[0];
   for(const error of failures)console.warn(`Managed Stremio raw-file resolution failed for one matching item on ${mapping.server_name}:`,error?.message||error);
