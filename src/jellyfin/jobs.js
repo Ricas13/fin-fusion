@@ -96,7 +96,11 @@ async function reconcileActiveEntitlements(options = {}) {
         }
     }
     const warning = summarizeFailureReasons(failureReasons, failed);
-    return { total: rows.length, succeeded, blocked, failed, ...(warning ? { warning } : {}) };
+    const blockedWarning = blocked
+        ? `${blocked} entitlement reconciliation${blocked === 1 ? '' : 's'} blocked pending recovery.`
+        : null;
+    const combinedWarning = [blockedWarning, warning].filter(Boolean).join('; ').slice(0, 1000) || null;
+    return { total: rows.length, succeeded, blocked, failed, ...(combinedWarning ? { warning: combinedWarning } : {}) };
 }
 
 async function healthcheckAllServers() {

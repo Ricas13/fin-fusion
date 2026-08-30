@@ -10,10 +10,12 @@ function intEnv(name, fallback, min, max) {
 
 function timing() {
     const pollSeconds = intEnv('STREAM_POLICY_POLL_SECONDS', 20, 15, 300);
+    const heartbeatMs = intEnv('ACTIVITY_WORKER_HEARTBEAT_MS', 15000, 5000, 60000);
     return {
         pollSeconds,
         slackSeconds: intEnv('STREAM_POLICY_POLL_SLACK_SECONDS', Math.max(10, Math.ceil(pollSeconds / 2)), 5, 120),
-        workerMaxAgeSeconds: 120
+        heartbeatMs,
+        workerMaxAgeSeconds: Math.max(120, Math.ceil(heartbeatMs / 1000) * 4)
     };
 }
 

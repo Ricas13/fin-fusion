@@ -21,6 +21,7 @@ const streamPolicy = require('../src/jellyfin/stream-policy-settings');
 
 const intervalSeconds = Math.max(15, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 20)));
 const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
+const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.ACTIVITY_WORKER_HEARTBEAT_MS || 15000)));
 const HEARTBEAT_FILE = process.env.ACTIVITY_HEARTBEAT_FILE || '/tmp/activity-heartbeat';
 const INSTANCE_ID = String(process.env.HOSTNAME || `activity-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = String(process.env.COMMIT_SHA || process.env.CAPTAINFIN_BUILD_SHA || process.env.GITHUB_SHA || '').slice(0, 80) || null;
@@ -28,6 +29,7 @@ let lastFleetRun = 0;
 let shuttingDown = false;
 let sleepTimer = null;
 let sleepResolve = null;
+let heartbeatTimer = null;
 let lastPolicyReload = 0;
 let cycleState = {
   outcome: 'starting',
@@ -50,6 +52,7 @@ function operationalMetadata() {
   return {
     pollSeconds: intervalSeconds,
     fleetIntervalSeconds,
+    heartbeatMs: HEARTBEAT_MS,
     lastCycleAt: cycleState.completedAt,
     lastCycleDurationMs: cycleState.durationMs,
     lastCycleOutcome: cycleState.outcome,
@@ -68,6 +71,20 @@ async function operationalHeartbeat({ draining = false } = {}) {
     return { recorded: true };
   }, { skipIfBusy: true });
   return guarded?.skipped ? { recorded: false, reason: guarded.reason } : guarded;
+}
+
+async function refreshOperationalHeartbeat({ draining = false } = {}) {
+  try {
+    const result = await operationalHeartbeat({ draining });
+    // The local Docker heartbeat is evidence that the database heartbeat path
+    // is healthy. During an intentional restore the shared lock proves DB
+    // reachability even though writes are deliberately skipped.
+    if (result?.recorded || result?.reason === 'database_maintenance') heartbeat();
+    return result;
+  } catch (error) {
+    console.warn('Activity operational heartbeat unavailable:', error.message);
+    return { recorded: false, reason: 'error' };
+  }
 }
 
 async function refreshPolicyIfDue() {
@@ -119,8 +136,12 @@ async function recordAbortedActivityCycle(error) {
 }
 
 async function run() {
-  heartbeat();
-  await operationalHeartbeat().catch(error => console.warn('Activity operational heartbeat unavailable:', error.message));
+  await refreshOperationalHeartbeat();
+  heartbeatTimer = setInterval(
+    () => refreshOperationalHeartbeat({ draining: shuttingDown }),
+    HEARTBEAT_MS
+  );
+  heartbeatTimer.unref?.();
   while (!shuttingDown) {
     const started = Date.now();
     const current = {
@@ -186,12 +207,12 @@ async function run() {
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - started
     };
-    heartbeat();
-    await operationalHeartbeat().catch(error => console.warn('Activity operational heartbeat unavailable:', error.message));
+    await refreshOperationalHeartbeat();
     if (!shuttingDown) await sleep(intervalSeconds * 1000);
   }
-  heartbeat();
-  await operationalHeartbeat({ draining: true }).catch(() => {});
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  await refreshOperationalHeartbeat({ draining: true });
   try { await getPool().end(); } catch (_) {}
 }
 
@@ -213,7 +234,9 @@ process.on('SIGINT', () => requestShutdown('SIGINT'));
 run().catch(async error => {
   console.error('Activity worker fatal error:', error.message);
   cycleState = { ...cycleState, outcome: 'failed', completedAt: new Date().toISOString() };
-  await operationalHeartbeat({ draining: true }).catch(() => {});
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  await refreshOperationalHeartbeat({ draining: true });
   process.exitCode = 1;
   try { await getPool().end(); } catch (_) {}
 });
