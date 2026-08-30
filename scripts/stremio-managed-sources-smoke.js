@@ -56,6 +56,13 @@ assert(managedEntitlements.includes("SET status='error',last_error=$2"),'failed 
 assert(managedEntitlements.includes("sma.status IN('active','error')"),'managed cleanup reconciliation must retry prior error mappings');
 assert(managedEntitlements.includes('if(!loggedOut)throw new Error'),'managed token replacement/suspension must fail closed when remote token revocation cannot be confirmed');
 assert(managedEntitlements.includes("SET status='suspended',last_error=$2"),'managed mapping may become suspended only after remote cleanup succeeds');
+const recoverScope=managedEntitlements.slice(managedEntitlements.indexOf('async function recoverMapping'),managedEntitlements.indexOf('async function otherActiveMappingOwns'));
+assert(recoverScope.indexOf('logoutRestrictedToken')>=0&&recoverScope.indexOf('logoutRestrictedToken')<recoverScope.indexOf('applyPolicy(account,effective,false)'),'managed recovery must revoke the stale token before re-enabling the hidden account');
+assert(managedEntitlements.includes('async function otherActiveMappingOwns(accountId,mappingId)'),'managed cleanup must detect other active mappings that share the hidden account');
+const disableScope=managedEntitlements.slice(managedEntitlements.indexOf('async function disableMapping'),managedEntitlements.indexOf('async function disableStale'));
+assert(disableScope.includes('const shared=await otherActiveMappingOwns(row.jellyfin_account_id,row.mapping_id)'),'managed cleanup must check shared ownership before disabling the hidden account');
+assert(disableScope.includes('if(!shared)await provisioning.disableJellyfinAccount(account)'),'one ending mapping must not disable a hidden account still owned by another active mapping');
+assert(disableScope.indexOf('logoutRestrictedToken')<disableScope.indexOf('otherActiveMappingOwns'),'the ending mapping token must be revoked even when the shared hidden account stays enabled');
 
 assert(admin.includes("router.use('/admin/servers/stremio/managed',gate,noStore)"),'managed source compatibility route must stay authenticated and no-store');
 assert(admin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed page must redirect to the single Stremio control centre');
