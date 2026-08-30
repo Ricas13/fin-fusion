@@ -49,6 +49,12 @@ function healthEndpoint(type) {
   return normalizeType(type) === 'emby' ? '/System/Info' : '/System/Info/Public';
 }
 
+function credentialProbeEndpoint(_type) {
+  // Unlike Jellyfin's public health endpoint, /System/Info requires the supplied
+  // server credential and therefore proves both reachability and API-key validity.
+  return '/System/Info';
+}
+
 function userPolicyOverrides(type) {
   if (normalizeType(type) !== 'emby') return null;
   return {
@@ -106,4 +112,4 @@ function responseBody(type, endpoint, body, { now = Date.now() } = {}) {
     }));
 }
 
-module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword, responseBody };
+module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, credentialProbeEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword, responseBody };
