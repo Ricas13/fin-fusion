@@ -3,10 +3,20 @@
 require('dotenv').config();
 process.env.REQUIRE_EMAIL_VERIFICATION = 'false';
 
+const fs = require('fs');
 const customers = require('../src/customers');
 const lifecycle = require('../src/payments/lifecycle');
 const runtimeSettings = require('../src/platform/runtime-settings');
 const { getPool, query } = require('../src/db');
+
+function assertPasswordPolicySurfaces() {
+    const register = fs.readFileSync('views/customer/register.ejs', 'utf8');
+    const reset = fs.readFileSync('views/customer/reset-password.ejs', 'utf8');
+    const security = fs.readFileSync('src/platform/customer-security.js', 'utf8');
+    if (!register.includes('name="password" minlength="8"')) throw new Error('Registration form does not expose the 8-character portal password minimum');
+    if ((reset.match(/minlength="8"/g) || []).length < 2) throw new Error('Password-reset form does not expose the 8-character portal password minimum');
+    if ((security.match(/minlength=\\"8\\"/g) || []).length < 2) throw new Error('Account-security form does not expose the 8-character portal password minimum');
+}
 
 async function verifyPaymentEventClaims(suffix) {
     const eventId = `smoke-concurrent-${suffix}`;
@@ -49,7 +59,17 @@ async function verifyPaymentEventClaims(suffix) {
 
 async function main() {
     const suffix = Date.now().toString(36);
-    const password = `Smoke-Test-${suffix}-Password`;
+    const password = `S${suffix.slice(-6)}!`;
+    if (password.length !== 8) throw new Error('Password smoke fixture must remain exactly 8 characters');
+    assertPasswordPolicySurfaces();
+    let shortRejected = false;
+    try {
+        await customers.validateNewPassword('Ab1!xy7');
+    } catch (error) {
+        shortRejected = String(error.message || '').includes('between 8 and 200 characters');
+    }
+    if (!shortRejected) throw new Error('Seven-character customer password was not rejected by the canonical policy');
+    await customers.validateNewPassword(password);
 
     // Clean installs intentionally start with registration disabled and zero plans.
     // The smoke test configures only the fixtures it needs instead of relying on
