@@ -107,6 +107,32 @@ async function main() {
   assert(paypalSource.includes('async function paypalRefundContext'), 'PayPal refund handling must verify the originating sale');
   assert(paypalSource.includes('cumulativeRefundMinor') && paypalSource.includes('fullRefund:ctx.fullRefund'), 'PayPal refund incidents must carry cumulative/full-refund evidence');
 
+  // Multi-service plan-change ownership must follow the target service instead of LIMIT 1 Jellyfin ownership.
+  const planChangeSource = read('src/payments/customer-plan-change.js');
+  assert(planChangeSource.includes('effectiveStremioSubscription(customerId,{includeBlocked:true})'), 'plan changes must inspect the Stremio entitlement lane');
+  assert(planChangeSource.includes('effectiveAddons(customerId,{includeBlocked:true})'), 'plan changes must inspect recurring add-ons');
+  assert(planChangeSource.includes('serviceScope.overlaps(row,target)'), 'plan changes must choose a recurring subscription by target service overlap');
+  assert(planChangeSource.includes('current=await currentRecurring(customerId,target)'), 'plan-change requests must pass the target contract into ownership selection');
+
+  const entitlement = require('../src/entitlements/subscription-state');
+  const planChange = require('../src/payments/customer-plan-change');
+  const originalEntitlementFns = {
+    effectiveSubscription:entitlement.effectiveSubscription,
+    effectiveStremioSubscription:entitlement.effectiveStremioSubscription,
+    effectiveAddons:entitlement.effectiveAddons
+  };
+  try {
+    entitlement.effectiveSubscription = async () => ({ subscription_id:'j-sub',id:'j-sub',source:'stripe',provider_subscription_id:'sub_jellyfin',is_addon:false,is_free_tier:false,service_type:'jellyfin' });
+    entitlement.effectiveStremioSubscription = async () => ({ subscription_id:'s-sub',id:'s-sub',source:'paypal',provider_subscription_id:'I-STREMIO',is_addon:false,is_free_tier:false,service_type:'stremio' });
+    entitlement.effectiveAddons = async () => [];
+    const stremioCurrent = await planChange.currentRecurring('customer-a',{id:'stremio-target',is_addon:false,service_type:'stremio'});
+    assert.equal(stremioCurrent.subscription_id,'s-sub','a Stremio plan change must not mutate an unrelated Jellyfin billing agreement');
+    const jellyfinCurrent = await planChange.currentRecurring('customer-a',{id:'jellyfin-target',is_addon:false,service_type:'jellyfin'});
+    assert.equal(jellyfinCurrent.subscription_id,'j-sub','a Jellyfin plan change must retain the Jellyfin recurring agreement');
+  } finally {
+    Object.assign(entitlement,originalEntitlementFns);
+  }
+
   console.log('post-441 ten-bug smoke: ok');
 }
 
