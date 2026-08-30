@@ -119,7 +119,7 @@ function connectionPolicyMessage(error,baseUrl,type='jellyfin'){
 async function probeCredentials(baseUrl, apiKey, type='jellyfin') {
     const provider=mediaServerType(type),providerLabel=registry.mediaProvider.label(provider);
     try {
-        const path=registry.mediaProvider.apiPath(provider, registry.mediaProvider.healthEndpoint(provider));
+        const path=registry.mediaProvider.apiPath(provider, registry.mediaProvider.credentialProbeEndpoint(provider));
         const response = await outbound.safeFetch(new URL(path, `${baseUrl}/`), { purpose: `${providerLabel} server validation`, method: 'GET', timeoutMs: 5000, maxBytes: 1024*1024, headers: registry.authHeaders(apiKey,{mediaServerType:provider}) });
         if (response.status === 401) throw invalidField('apiKey', `${providerLabel} returned HTTP 401 — API key was not accepted.`);
         if (response.status === 403) throw invalidField('baseUrl', `${providerLabel} returned HTTP 403 — request was blocked by the ${providerLabel} server or reverse proxy.`);
