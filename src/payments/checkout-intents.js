@@ -384,7 +384,7 @@ async function verifiedProviderContract({
     if (actualCurrency && expectedCurrency && actualCurrency !== expectedCurrency) {
         throw new Error(`Provider currency ${actualCurrency} does not match checkout contract currency ${expectedCurrency}.`);
     }
-    return { intent: row, snapshot: { ...snapshot, checkoutIntentId: row.id } };
+    return { intent: row, snapshot: { ...snapshot, checkoutIntentId:row.id } };
 }
 
 async function alreadyCompletedByOwner({ intentId, nonce, scope = null, provider = null, ownerId = null }) {
