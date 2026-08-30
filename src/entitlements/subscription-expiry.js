@@ -198,7 +198,10 @@ async function expireDueSubscriptions({ syncRecurring = null } = {}) {
 
 async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null, syncRecurring = null } = {}) {
     if (typeof reconcileCustomer !== 'function') throw new Error('A subscription-expiry reconcile callback is required.');
-    const expired = await expireDueSubscriptions({ syncRecurring });
+    const verifyRecurring = typeof syncRecurring === 'function'
+        ? syncRecurring
+        : subscriptionId => require('../payments/billing-control').syncSubscription(subscriptionId);
+    const expired = await expireDueSubscriptions({ syncRecurring: verifyRecurring });
     for (const row of expired) {
         const customerId = row.customer_id;
         let downgraded = null;
