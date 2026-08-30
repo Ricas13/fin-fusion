@@ -8,6 +8,7 @@ const scripts = packageJson.scripts || {};
 const scriptName = process.argv[2] || 'check:fast';
 const timeoutArg = process.argv.find(arg => arg.startsWith('--timeout-ms='));
 const timeoutMs = Math.max(1000, Number(timeoutArg?.split('=')[1] || process.env.CHECK_COMMAND_TIMEOUT_MS || 180000));
+const failureFile = process.env.CHECK_FAILURE_FILE || '.check-failure.txt';
 
 function expand(command, stack = []) {
   return String(command || '').split(/\s+&&\s+/).flatMap(part => {
@@ -52,10 +53,17 @@ function run(command, index, total) {
     const timer = setTimeout(() => {
       terminate(child);
       const seconds = Math.round((Date.now() - started) / 1000);
-      reject(new Error(`Timed out after ${seconds}s: ${command}`));
+      const error = new Error(`Timed out after ${seconds}s: ${command}`);
+      error.failedCommand = command;
+      error.commandIndex = index;
+      error.commandTotal = total;
+      reject(error);
     }, timeoutMs);
     child.once('error', error => {
       clearTimeout(timer);
+      error.failedCommand = command;
+      error.commandIndex = index;
+      error.commandTotal = total;
       reject(error);
     });
     child.once('exit', (code, signal) => {
@@ -65,19 +73,66 @@ function run(command, index, total) {
         console.log(`[${index}/${total}] completed in ${seconds}s`);
         resolve();
       } else {
-        reject(new Error(`${command} failed with ${signal || `exit ${code}`} after ${seconds}s`));
+        const error = new Error(`${command} failed with ${signal || `exit ${code}`} after ${seconds}s`);
+        error.failedCommand = command;
+        error.commandIndex = index;
+        error.commandTotal = total;
+        reject(error);
       }
     });
   });
 }
 
+function annotationEscape(value) {
+  return String(value || '').replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+}
+
+function selectedCommands(all) {
+  if (!fs.existsSync('.check-bisect')) return { commands:all, offset:0, originalTotal:all.length, mode:'full' };
+  const mode = fs.readFileSync('.check-bisect','utf8').trim().toLowerCase();
+  const choices = mode.split(/[:/]/).map(value=>value.trim()).filter(Boolean);
+  let start = 0;
+  let end = all.length;
+  for (const choice of choices) {
+    const midpoint = start + Math.ceil((end - start) / 2);
+    if (choice === 'first') end = midpoint;
+    else if (choice === 'second') start = midpoint;
+    else throw new Error(`Unsupported .check-bisect choice: ${choice}`);
+  }
+  return { commands:all.slice(start,end), offset:start, originalTotal:all.length, mode };
+}
+
 async function main() {
   if (!scripts[scriptName]) throw new Error(`Unknown npm script: ${scriptName}`);
-  const commands = expand(scripts[scriptName], [scriptName]);
-  for (let i = 0; i < commands.length; i += 1) await run(commands[i], i + 1, commands.length);
+  try { fs.rmSync(failureFile, { force:true }); } catch (_) {}
+  const all = expand(scripts[scriptName], [scriptName]);
+  const selected = selectedCommands(all);
+  console.log(`check suite mode=${selected.mode}; running ${selected.commands.length}/${selected.originalTotal} commands from ${selected.offset+1}`);
+  for (let i = 0; i < selected.commands.length; i += 1) {
+    try {
+      await run(selected.commands[i], selected.offset + i + 1, selected.originalTotal);
+    } catch (error) {
+      error.commandIndex = selected.offset + i + 1;
+      error.commandTotal = selected.originalTotal;
+      throw error;
+    }
+  }
 }
 
 main().catch(error => {
+  const diagnostic = [
+    `suite=${scriptName}`,
+    `index=${error.commandIndex || ''}`,
+    `total=${error.commandTotal || ''}`,
+    `command=${error.failedCommand || ''}`,
+    `error=${String(error.message || error).replace(/\r?\n/g, ' ')}`
+  ].join('\n') + '\n';
+  try { fs.writeFileSync(failureFile, diagnostic, 'utf8'); } catch (_) {}
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    const title = `Check ${error.commandIndex || '?'} of ${error.commandTotal || '?'} failed`;
+    const message = `${error.failedCommand || scriptName}: ${error.message || error}`;
+    console.error(`::error title=${annotationEscape(title)}::${annotationEscape(message)}`);
+  }
   console.error(error.message || error);
   process.exit(1);
 });

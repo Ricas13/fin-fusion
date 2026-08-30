@@ -30,9 +30,9 @@ async function main(){
   const directRefundCalls=[];
   for(const file of productionJs(path.join(__dirname,'..','src'))){
     const text=fs.readFileSync(file,'utf8');
-    if(/\.refunds\.create\s*\(/.test(text)||/\/v2\/payments\/captures\/[^'"`]+\/refund/.test(text))directRefundCalls.push(path.relative(path.join(__dirname,'..'),file));
+    if(/\.refunds\.create\s*\(/.test(text)||/\/v2\/payments\/captures\/[^'"`]+\/refund/.test(text))directRefundCalls.push(path.relative(path.join(__dirname,'..'),file).split(path.sep).join('/'));
   }
-  assert.deepEqual(directRefundCalls,[],'CAPTAiNFiN must not gain a direct provider-refund mutation outside an explicitly reviewed canonical refund owner');
+  assert.deepEqual(directRefundCalls,['src/payments/prorata-refunds.js'],'all direct provider-refund mutation must remain concentrated in the explicitly reviewed canonical pro-rata refund owner');
 
   const suffix=crypto.randomBytes(8).toString('hex');
   const ok=await query(`INSERT INTO payment_incidents(provider,provider_event_id,provider_case_id,incident_type,incident_status,scope,amount_minor,currency,access_action,metadata)
@@ -64,7 +64,7 @@ async function main(){
   const warnings=await expiry.expiringSubscriptions({days:7});
   assert(warnings.some(row=>String(row.id)===String(plain.id)),'a genuinely expiring prepaid account must still receive its expiry warning');
 
-  console.log('refund cash-basis smoke: ok — provider-cash cap, future full-refund removal/queue compaction, and continuous paid-through warning suppression');
+  console.log('refund cash-basis smoke: ok — provider-cash cap, canonical refund owner, future removal/queue compaction, and paid-through warning suppression');
 }
 
 main().then(()=>getPool().end()).catch(async error=>{console.error(error.stack||error);try{await getPool().end();}catch(_){}process.exit(1);});

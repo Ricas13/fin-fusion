@@ -24,6 +24,7 @@ const planCreateClient = read('public/js/admin-plan-create-v2.js');
 const runtimeRoles = read('scripts/configure-runtime-db-roles.js');
 const { overflowRows } = require('../src/jellyfin/lane-stream-policy');
 const { restrictedImpersonationAction } = require('../src/platform/admin-impersonation');
+const { assertAdminRouteOrder } = require('../src/platform/admin-route-manifest');
 
 // Lane-scoped policy storage and migration safety.
 assert(/CREATE TABLE IF NOT EXISTS customer_lane_policy_overrides/.test(migration), 'lane policy table migration missing');
@@ -70,14 +71,16 @@ assert(/getPolicyOverride/.test(laneOverrides)&&/setPolicyOverrideField/.test(la
 assert(/Premium Jellyfin policy/.test(adminLane)&&/Free Access policy/.test(adminLane), 'Customer 360 must show separate Premium and Free policy sections');
 assert(/name="accessLane" value="\$\{esc\(accessLane\)\}"/.test(adminLane), 'policy mutation forms must submit the lane explicitly');
 assert(/setPolicyOverrideField\(req\.params\.customerId,\s*accessLane/.test(adminLane), 'admin override writes must be lane scoped');
-const lanePos = composition.indexOf('app.use(createAdminLanePolicyRouter())');
-const customer360Pos = composition.indexOf('app.use(createAdminCustomer360Router())');
-const impersonationCompositionPos = composition.indexOf('app.use(createAdminImpersonationRouter())');
-const usersDashboardPos = composition.indexOf('app.use(createAdminUsersDashboardRouter())');
+const lanePos = composition.indexOf("mountCritical('lanePolicy', createAdminLanePolicyRouter())");
+const customer360Pos = composition.indexOf("mountCritical('customer360', createAdminCustomer360Router())");
+const impersonationCompositionPos = composition.indexOf("mountCritical('impersonation', createAdminImpersonationRouter())");
+const usersDashboardPos = composition.indexOf("mountCritical('usersDashboard', createAdminUsersDashboardRouter())");
 assert(lanePos >= 0 && customer360Pos >= 0 && lanePos < customer360Pos, 'lane policy middleware must wrap Customer 360 before it owns the response');
 assert(impersonationCompositionPos >= 0 && usersDashboardPos >= 0 && customer360Pos >= 0
     && usersDashboardPos < impersonationCompositionPos && impersonationCompositionPos < customer360Pos,
     'the impersonate/exit routes and Customer 360 button-injection wildcard must stay after the specific /admin/users/dashboard route (so they never shadow it) and before Customer 360');
+assert(assertAdminRouteOrder(['usersDashboard','settingsCommerce','originalSettings','planAccess','plans','impersonation','lanePolicy','customer360']), 'declarative route ownership contract must remain valid');
+assert(composition.includes('assertAdminRouteOrder(criticalOrder)'), 'production startup must enforce critical admin route precedence');
 
 // Impersonation's audit-and-banner middleware must run before ANY /account
 // router that can terminate the response itself -- otherwise customer

@@ -4,6 +4,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const { ownerBoundary } = require('../auth/owner-guard');
 const dashboard = require('./admin-dashboard');
 require('./admin-commerce-expense-widgets');
+const { assertAdminRouteOrder } = require('./admin-route-manifest');
 const { createAdminProductModulesRouter } = require('./admin-product-modules');
 const { createAdminAttentionRouter } = require('./admin-attention');
 const { createAdminSupportTicketsRouter } = require('./admin-support-tickets');
@@ -32,6 +33,7 @@ const { createAdminEmailRouter } = require('./admin-email');
 const { createAdminNotificationPreferencesRouter } = require('./admin-notification-preferences');
 const { createAdminPaymentSettingsRouter } = require('./admin-payment-settings');
 const { createAdminTransactionsRouter } = require('./admin-transactions');
+const { createAdminProrataRefundsRouter } = require('./admin-prorata-refunds');
 const { createAdminDataExportRouter } = require('./admin-data-export');
 const { createAdminLegacyCustomerImportRouter } = require('./admin-legacy-customer-import');
 const { createAdminProviderMappingsRouter } = require('./admin-provider-mappings');
@@ -86,15 +88,20 @@ function adminMutationRateLimit(req, res, next) {
 }
 
 function mountAdminRoutes(app) {
+  const criticalOrder = [];
+  const mountCritical = (name, router) => {
+    criticalOrder.push(name);
+    app.use(router);
+  };
+
   app.use('/admin', adminMutationRateLimit);
   app.use('/admin', ownerBoundary);
   app.get('/admin', dashboard.dashboardPage);
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
-  // Literal customer overview routes must be mounted before any /admin/users/:id
-  // owner so reserved page names such as "dashboard" can never be interpreted
-  // as customer UUIDs by Customer 360 or legacy customer-management routes.
-  app.use(createAdminUsersDashboardRouter());
+
+  // Literal /admin/users destinations must precede the customer UUID owners.
+  mountCritical('usersDashboard', createAdminUsersDashboardRouter());
   app.use(createAdminSupportTicketsRouter());
   app.use(createAdminOrdersRouter());
   app.use(createAdminSetupRouter());
@@ -106,10 +113,10 @@ function mountAdminRoutes(app) {
   app.use(createAdminConfigurationTransferRouter());
   app.use(createAdminCurrencySettingsRouter());
   app.use(createAdminIntegrationsOverviewRouter());
-  // Settings owns a stable Commerce directory. Mount it before the legacy
-  // settings router so ?section=commerce no longer escapes into /admin/commerce.
-  app.use(createAdminSettingsCommerceRouter());
-  app.use(createAdminOriginalSettingsRouter());
+
+  // The stable Commerce settings owner must precede the compatibility settings router.
+  mountCritical('settingsCommerce', createAdminSettingsCommerceRouter());
+  mountCritical('originalSettings', createAdminOriginalSettingsRouter());
   app.use(createAdminBrandingRouter());
   app.use(createAdminCommercialPoliciesRouter());
   app.use(createAdminServerUsersRouter());
@@ -124,32 +131,26 @@ function mountAdminRoutes(app) {
   app.use(createAdminNotificationPreferencesRouter());
   app.use(createAdminPaymentSettingsRouter());
   app.use(createAdminTransactionsRouter());
+  app.use(createAdminProrataRefundsRouter());
   app.use(createAdminDataExportRouter());
   app.use(createAdminLegacyCustomerImportRouter());
   app.use(createAdminProviderMappingsRouter());
   app.use(createAdminBillingRouter());
   app.use(createAdminExpensesRouter());
   app.use(createAdminCustomerCreateRouter());
-  // These three remaining administrative mutations used to arrive indirectly
-  // through the runtime compatibility router. They are real admin routes, so
-  // keep them in the canonical admin composition instead of a legacy tail.
   app.use(createAdminActionsRouter());
-  // Stremio keeps its dedicated adaptive editor. Jellyfin/free plans are then
-  // dispatched into the unified control room before legacy configuration
-  // routes, which remain available as compatibility/save backstops.
   app.use(createAdminStremioPlanDispatchRouter());
   app.use(createAdminJellyfinPlanEditorRouter());
   app.use(createAdminPlanCreateV2Router());
-  // Mount the access-driver editor before the legacy Plans controller so the
-  // established /admin/plans/:id/jellyfin URL gains household-aware semantics
-  // without duplicating or weakening the older plan-management routes.
-  app.use(createAdminPlanAccessRouter());
+
+  // Access-driver ownership must precede the legacy plan controller.
+  mountCritical('planAccess', createAdminPlanAccessRouter());
   app.use(createAdminPlanInventoryRouter());
   app.use(createAdminPlansListRouter());
   app.use(createAdminPlanStreamVariantsRouter());
   app.use(createAdminPlanPaymentOptionsRouter());
   app.use(createAdminPlanOrderRouter());
-  app.use(createAdminPlansRouter());
+  mountCritical('plans', createAdminPlansRouter());
   app.use(createAdminPlanPlacementFleetRouter());
   app.use(createAdminPlanPlacementRouter());
   app.use(createAdminJobsRouter());
@@ -163,25 +164,20 @@ function mountAdminRoutes(app) {
   app.use(createAdminActivityRouter());
   app.use(createAdminLibrariesRouter());
   app.use(createAdminCustomerManagementRouter());
-  // Manual grants own only the first-current-entitlement path and inject their
-  // form into Customer 360 Access/Billing before the canonical page renders.
   app.use(createAdminManualEntitlementRouter());
-  // These middleware-owning routers must precede Customer 360. They wrap the
-  // canonical page response and own the lane-scoped mutation paths before the
-  // legacy customer-wide handlers can match them. Impersonation's own
-  // audit/banner catch-all middleware is mounted separately, much earlier in
-  // application.js (before every /account router) -- see the comment there.
-  // This router (the impersonate/exit routes plus the Customer 360
-  // button-injection middleware) stays here, after the more specific
-  // /admin/users/dashboard route above, so its /admin/users/:customerId
-  // wildcard never shadows it.
-  app.use(createAdminImpersonationRouter());
-  app.use(createAdminLanePolicyRouter());
-  app.use(createAdminCustomer360Router());
+
+  // Middleware-owning customer routers must wrap Customer 360 in this order.
+  mountCritical('impersonation', createAdminImpersonationRouter());
+  mountCritical('lanePolicy', createAdminLanePolicyRouter());
+  mountCritical('customer360', createAdminCustomer360Router());
   app.use(createAdminUsersRouter());
   app.use(createAdminDiscountsRouter());
   app.use(createAdminReferralsRouter());
   app.use(createAdminMarketingRouter());
+
+  // Fail startup if a future edit violates one of the known wildcard/literal
+  // route ownership constraints instead of relying on comments or source order.
+  assertAdminRouteOrder(criticalOrder);
 }
 
 module.exports = { mountAdminRoutes, adminMutationRateLimit };

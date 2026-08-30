@@ -10,8 +10,8 @@ const credit=['cred','it'].join('');
 const retiredCryptoBrand=['coin','gate'].join('');
 const forbiddenPatterns=[
   new RegExp(`${reseller}[_ -]?${credit}s?`,'i'),
-  new RegExp(`${reseller}[^\\n]{0,80}${credit}\\s*(?:balance|based|model|system|wallet|ledger)`,'i'),
-  new RegExp(`${credit}\\s*(?:balance|based)[^\\n]{0,80}${reseller}`,'i'),
+  new RegExp(`${reseller}[^\n]{0,80}${credit}\\s*(?:balance|based|model|system|wallet|ledger)`,'i'),
+  new RegExp(`${credit}\\s*(?:balance|based)[^\n]{0,80}${reseller}`,'i'),
   new RegExp(retiredCryptoBrand,'i')
 ];
 const retiredRootArtifacts=[
