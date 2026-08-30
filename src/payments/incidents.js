@@ -39,10 +39,16 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
     SELECT * FROM existing WHERE NOT EXISTS(SELECT 1 FROM inserted)
     LIMIT 1
   `,[provider,String(eventId),caseId?String(caseId):null,kind,status,resolvedIdentity.scope||'unresolved',resolvedIdentity.customerId||null,providerSubscriptionId||null,amountMinor==null?null:Number(amountMinor),currency?String(currency).toUpperCase().slice(0,3):null,action,JSON.stringify(metadata||{})]);
-  const incident=selected.rows[0];
+  let incident=selected.rows[0];
   if(!incident)throw new Error('Payment incident could not be recorded or reloaded.');
+  if(incident.scope==='unresolved'&&resolvedIdentity.scope!=='unresolved'&&resolvedIdentity.customerId){
+    const upgraded=await query(`UPDATE payment_incidents SET scope=$2,customer_id=COALESCE(customer_id,$3),provider_subscription_id=COALESCE(provider_subscription_id,$4),metadata=COALESCE(metadata,'{}'::jsonb)||$5::jsonb,updated_at=NOW() WHERE id=$1 AND scope='unresolved' RETURNING *`,[incident.id,resolvedIdentity.scope,resolvedIdentity.customerId,providerSubscriptionId||null,JSON.stringify(metadata||{})]);
+    if(upgraded.rowCount)incident={...upgraded.rows[0],duplicate:incident.duplicate};
+  }
   const effectiveAction=incident.access_action||action;
-  let effectIdentity={scope:incident.scope||resolvedIdentity.scope||'unresolved',customerId:incident.customer_id||resolvedIdentity.customerId||null};
+  let effectIdentity=incident.scope==='unresolved'&&resolvedIdentity.scope!=='unresolved'
+    ? resolvedIdentity
+    : {scope:incident.scope||resolvedIdentity.scope||'unresolved',customerId:incident.customer_id||resolvedIdentity.customerId||null};
   let affected=0;
   if(effectiveAction==='suspend'&&incident.provider_case_id&&effectIdentity.scope!=='unresolved')affected=await applyHold(effectIdentity,provider,incident.provider_case_id,`${provider} ${kind} is under review`);
   else if(effectiveAction==='restore'&&incident.provider_case_id){
