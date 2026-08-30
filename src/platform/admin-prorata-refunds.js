@@ -4,9 +4,17 @@ const express = require('express');
 const csrf = require('../auth/csrf');
 const { query } = require('../db');
 const refunds = require('../payments/prorata-refunds');
+const routeRateLimit = require('../security/route-rate-limit');
 const runtimeSettings = require('./runtime-settings');
 const ui = require('./admin-ui');
 const { esc, layout } = require('./admin-html');
+
+const refundRouteLimit = routeRateLimit.middleware({
+  scope: 'admin-prorata-refunds',
+  max: 120,
+  windowSeconds: 60,
+  reason: 'admin_prorata_refund'
+});
 
 function gate(req, res, next) {
   if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -91,7 +99,7 @@ async function previewPage(req, subscriptionId) {
 
 function createAdminProrataRefundsRouter() {
   const router = express.Router();
-  router.use('/admin/refunds', gate, noStore);
+  router.use('/admin/refunds', refundRouteLimit, gate, noStore);
   router.get('/admin/refunds', async (req,res,next) => { try { return res.send(await listPage(req)); } catch (error) { return next(error); } });
   router.get('/admin/refunds/:subscriptionId', async (req,res,next) => { try { return res.send(await previewPage(req, req.params.subscriptionId)); } catch (error) { return next(error); } });
   router.post('/admin/refunds/:subscriptionId', csrf.requireCsrf, async (req,res,next) => {
