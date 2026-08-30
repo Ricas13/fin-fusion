@@ -9,6 +9,9 @@ const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 const migration=read('db/migrations/016_stremio_managed_source_foundation.sql');
 const managed=read('src/stremio/managed-sources.js');
 const managedEntitlements=read('src/stremio/managed-entitlements.js');
+const entitlements=read('src/stremio/entitlements.js');
+const installRecovery=read('src/stremio/install-credential-recovery.js');
+const customerStremio=read('src/platform/customer-stremio.js');
 const sourcePool=read('src/stremio/source-pool.js');
 const tokenMaintenance=read('src/stremio/external-token-maintenance.js');
 const operationLock=read('src/stremio/operation-lock.js');
@@ -63,6 +66,17 @@ const disableScope=managedEntitlements.slice(managedEntitlements.indexOf('async 
 assert(disableScope.includes('const shared=await otherActiveMappingOwns(row.jellyfin_account_id,row.mapping_id)'),'managed cleanup must check shared ownership before disabling the hidden account');
 assert(disableScope.includes('if(!shared)await provisioning.disableJellyfinAccount(account)'),'one ending mapping must not disable a hidden account still owned by another active mapping');
 assert(disableScope.indexOf('logoutRestrictedToken')<disableScope.indexOf('otherActiveMappingOwns'),'the ending mapping token must be revoked even when the shared hidden account stays enabled');
+
+// Installation credential publication is also externalized state: the new hash
+// must never commit unless the encrypted recovery secret commits with it.
+const installScope=entitlements.slice(entitlements.indexOf('async function issueInstallation'),entitlements.indexOf('async function revoke'));
+assert(installScope.includes('const entitlement=await transaction(async client=>'),'install credential activation must own one database transaction');
+assert(installScope.includes('await client.query(`UPDATE stremio_entitlements SET token_hash=$2'),'install token hash must be written through that transaction client');
+assert(installScope.includes('await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client})'),'recoverable install secret must be saved through the same transaction client');
+assert(installScope.indexOf('client.query(`UPDATE stremio_entitlements')<installScope.indexOf('installRecovery.save'),'recovery persistence must happen before the token transaction can commit');
+assert(installRecovery.includes('const db=client||{query}'),'credential recovery save must accept the canonical caller transaction');
+assert(customerStremio.includes('stremio.issueInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer install route must delegate actor-aware persistence to the canonical issuance owner');
+assert(!customerStremio.includes("require('../stremio/install-credential-recovery')"),'customer route must not perform a second non-atomic credential recovery write');
 
 assert(admin.includes("router.use('/admin/servers/stremio/managed',gate,noStore)"),'managed source compatibility route must stay authenticated and no-store');
 assert(admin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed page must redirect to the single Stremio control centre');
