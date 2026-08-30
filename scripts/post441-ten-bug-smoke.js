@@ -77,6 +77,36 @@ async function main() {
   assert.match(mismatch.reason, /provider reference does not match/i);
   assert.equal(mismatch.severity, 'bad');
 
+  // Post-#443 commercial invariant regression coverage.
+  const billingPeriods = require('../src/payments/billing-periods');
+  assert.equal(billingPeriods.addPlanDuration({billing_interval:'month'}, new Date('2026-01-31T12:00:00Z')).toISOString(), '2026-02-28T12:00:00.000Z', 'monthly billing must use calendar months');
+  assert.equal(billingPeriods.addPlanDuration({billing_interval:'6_months'}, new Date('2026-08-31T12:00:00Z')).toISOString(), '2027-02-28T12:00:00.000Z', 'six-month billing must use calendar months');
+  const expirySource = read('src/entitlements/plan-expiry.js');
+  assert(expirySource.includes("['month','6_months','year'].includes(interval)"), 'manual/local plan expiry must share calendar billing semantics');
+
+  assert(lifecycle.includes("await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client)"), 'paid checkout fulfillment incident resolution must be in the activation transaction');
+  assert(!lifecycle.includes("SAVEPOINT discount_redemption"), 'discount accounting divergence must not be swallowed behind a savepoint');
+  const discountSource = read('src/payments/discounts.js');
+  assert(discountSource.includes("error.code='DISCOUNT_REDEMPTION_DIVERGENCE'"), 'discount divergence must fail closed with a durable error class');
+
+  const affiliateSource = read('src/affiliate-credits.js');
+  assert(affiliateSource.includes('UNION SELECT currency FROM affiliate_credit_renewal_reservations'), 'service-credit balance currencies must include renewal reservations');
+  assert(affiliateSource.includes("state IN('reserved','provider_applied')"), 'displayed service-credit spendable balance must subtract provider-applied renewal reservations');
+  assert(affiliateSource.includes('effective_stremio_entitlements') && affiliateSource.includes('serviceScope.overlaps'), 'service-credit redemption must reject only overlapping service contracts, not unrelated active service');
+  assert(affiliateSource.includes('billingPeriods.addPlanDuration(plan,starts)'), 'service-credit activation must use calendar billing periods');
+
+  assert(incidents.includes("incident.access_action==='suspend'") && incidents.includes('reappliedSuspension'), 'reopening a suspensive incident must restore its payment-risk hold');
+
+  assert(stripeSource.includes('captainfin-discount-coupon-${String(discount.id)}'), 'Stripe stored discount coupon creation must be idempotent');
+  assert(stripeSource.includes('captainfin-checkout-adjustment-'), 'Stripe checkout adjustment coupon creation must be idempotent');
+  const incidentContextSlice = stripeSource.slice(stripeSource.indexOf('async function incidentContextForCharge'), stripeSource.indexOf('async function reverseReferralForDirectIdentity'));
+  assert(!incidentContextSlice.includes('catch(_)'), 'Stripe incident identity lookup failures must propagate into webhook retry');
+  const disputeSlice = stripeSource.slice(stripeSource.indexOf('async function recordStripeDispute'), stripeSource.indexOf('async function handleWebhookEvent'));
+  assert(!disputeSlice.includes('catch(_)'), 'Stripe dispute charge lookup failures must propagate into webhook retry');
+
+  assert(paypalSource.includes('async function paypalRefundContext'), 'PayPal refund handling must verify the originating sale');
+  assert(paypalSource.includes('cumulativeRefundMinor') && paypalSource.includes('fullRefund:ctx.fullRefund'), 'PayPal refund incidents must carry cumulative/full-refund evidence');
+
   console.log('post-441 ten-bug smoke: ok');
 }
 

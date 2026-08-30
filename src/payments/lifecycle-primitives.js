@@ -6,30 +6,14 @@ const accessHolds = require('../entitlements/access-holds');
 const capacity = require('../entitlements/plan-capacity');
 const discounts = require('./discounts');
 const referrals = require('../referrals');
+const billingPeriods = require('./billing-periods');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
 const PAYMENT_DELINQUENCY_HOLD_TYPE = 'payment_delinquency';
 
-function addCalendarMonths(from, months) {
-    const start = new Date(from), result = new Date(start.getTime());
-    if (!Number.isFinite(start.getTime())) return result;
-    const originalDay = start.getUTCDate();
-    const absoluteMonth = start.getUTCMonth() + Number(months);
-    const targetYear = start.getUTCFullYear() + Math.floor(absoluteMonth / 12);
-    const targetMonth = ((absoluteMonth % 12) + 12) % 12;
-    const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
-    result.setUTCFullYear(targetYear, targetMonth, Math.min(originalDay, lastDay));
-    return result;
-}
-
 function addPlanDuration(plan, from = new Date()) {
-    const interval = String(plan?.billing_interval || plan?.billingInterval || '').toLowerCase();
-    if (interval === 'month') return addCalendarMonths(from, 1);
-    if (interval === '6_months') return addCalendarMonths(from, 6);
-    if (interval === 'year') return addCalendarMonths(from, 12);
-    const days = Number(plan?.duration_days || plan?.durationDays || 30);
-    return new Date(new Date(from).getTime() + days * 86400000);
+    return billingPeriods.addPlanDuration(plan, from);
 }
 
 function mapProviderStatus(provider, status) {
@@ -190,9 +174,10 @@ async function recordCapacitySettlementIncident({ customerId, planId, provider, 
     return result.rows[0] || null;
 }
 
-async function resolveCapacitySettlementIncident({ provider, checkoutIntentId }) {
+async function resolveCapacitySettlementIncident({ provider, checkoutIntentId }, client = null) {
     if (!checkoutIntentId) return 0;
-    const result = await query(`
+    const db = client || { query };
+    const result = await db.query(`
         UPDATE payment_incidents
         SET incident_status='resolved',resolved_at=COALESCE(resolved_at,NOW()),
             resolution_note=COALESCE(resolution_note,'Provider payment was applied after capacity became available.'),
@@ -265,14 +250,10 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
             if (effectiveDiscountCodeId && !historicalCheckoutReplay) {
-                await client.query('SAVEPOINT discount_redemption');
-                try {
-                    await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
-                    await client.query('RELEASE SAVEPOINT discount_redemption');
-                } catch (error) {
-                    console.error('Discount redemption bookkeeping failed; subscription is still being activated:', error.message);
-                    await client.query('ROLLBACK TO SAVEPOINT discount_redemption');
-                }
+                await discounts.redeemForSubscriptionTx(client, { discountCodeId: effectiveDiscountCodeId, customerId, subscriptionId: row.id, amountAppliedMinor: appliedMinor });
+            }
+            if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
+                await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
             await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay })]);
             return row;
@@ -287,10 +268,6 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             }
         }
         throw error;
-    }
-    if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
-        try { await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }); }
-        catch (error) { console.error('Capacity settlement incident resolution deferred:', error.message); }
     }
     if (providerCustomerId && !historicalCheckoutReplay) await ensurePaymentCustomer({ customerId, provider, providerCustomerId });
     await reconcileCommittedCustomer(customerId, historicalCheckoutReplay ? 'Historical checkout replay' : 'Paid subscription');

@@ -47,6 +47,12 @@ async function incidentReplay(customer, suffix) {
   assert.equal(replay.duplicate, true);
   assert((await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'duplicate incident replay must restore missing payment-risk hold');
 
+  // A resolved incident that is reopened must restore its original suspensive side effect.
+  await accessHolds.releaseHold({ customerId:customer.id, type:'payment_risk', sourceKey:incidents.holdSource('stripe', caseId) });
+  await query(`UPDATE payment_incidents SET incident_status='resolved',resolved_at=NOW() WHERE id=$1`, [first.incident.id]);
+  await incidents.reopen(first.incident.id, null);
+  assert((await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk' && h.source_key === incidents.holdSource('stripe', caseId)), 'reopening a suspensive incident must reapply the payment-risk hold');
+
   const unresolvedCustomer = await createCustomer('incident-upgrade', suffix);
   const unresolvedEvent = `evt_unresolved_${suffix}`;
   const unresolvedCase = `dp_unresolved_${suffix}`;
@@ -110,6 +116,21 @@ async function affiliateFirstHistoricalPurchase(suffix) {
   assert.equal(String(earned.qualifying_subscription_id), String(first.id), 'expired historical first paid purchase must remain the affiliate basis');
 }
 
+async function renewalReservationBalance(suffix) {
+  const customer = await createCustomer('renewal-balance', suffix);
+  await query(`INSERT INTO affiliate_profiles(customer_id,active) VALUES($1,TRUE)`, [customer.id]);
+  await query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,reference_id,note)
+    VALUES($1,'GBP',1000,'adjustment','available',$2,'test grant')`, [customer.id, `renewal-balance-grant-${suffix}`]);
+  const plan = (await query(`INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,capacity_limit,visible,active,streams,server_class)
+    VALUES($1,$1,'jellyfin','direct','month',30,1000,'GBP',100,TRUE,TRUE,1,'premium') RETURNING *`, [`renewal-balance-plan-${suffix}`])).rows[0];
+  const sub = (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,starts_at,current_period_end,price_minor_snapshot,currency_snapshot,service_type_snapshot)
+    VALUES($1,$2,'active','stripe',$3,NOW(),NOW()+INTERVAL '30 days',1000,'GBP','jellyfin') RETURNING id`, [customer.id, plan.id, `sub_renewal_balance_${suffix}`])).rows[0];
+  await query(`INSERT INTO affiliate_credit_renewal_reservations(customer_id,subscription_id,provider,provider_invoice_id,currency,amount_minor,state,provider_adjustment_id)
+    VALUES($1,$2,'stripe',$3,'GBP',300,'provider_applied',$4)`, [customer.id, sub.id, `in_balance_${suffix}`, `ii_balance_${suffix}`]);
+  const balance = (await credits.balances(customer.id)).find(row => row.currency === 'GBP');
+  assert.equal(balance.available_minor, 700, 'displayed spendable balance must subtract provider-applied renewal credit');
+}
+
 async function main() {
   const suffix = Date.now().toString(36);
   const customer = await createCustomer('post441-bugs', suffix);
@@ -117,6 +138,7 @@ async function main() {
   await incidentReplay(customer, suffix);
   await providerOperationFence(customer, suffix);
   await affiliateFirstHistoricalPurchase(suffix);
+  await renewalReservationBalance(suffix);
   console.log('post-441 ten-bug DB smoke: ok');
 }
 

@@ -47,7 +47,7 @@ async function ensureStripeCoupon(discount,plan) {
     const stripe=await getStripe(),params={duration:'once',name:discount.code};
     if(discount.discount_type==='percent')params.percent_off=discount.percent_off;
     else {params.amount_off=discount.fixed_off_minor;params.currency=String(discount.currency||plan.currency||'usd').toLowerCase();}
-    const coupon=await stripe.coupons.create(params);await query('UPDATE discount_codes SET stripe_coupon_id=$1,updated_at=NOW() WHERE id=$2',[coupon.id,discount.id]);return coupon.id;
+    const coupon=await stripe.coupons.create(params,{idempotencyKey:`captainfin-discount-coupon-${String(discount.id)}`});await query('UPDATE discount_codes SET stripe_coupon_id=$1,updated_at=NOW() WHERE id=$2',[coupon.id,discount.id]);return coupon.id;
 }
 async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,discountCode=null,checkoutMode=null,idempotencyKey=null,resolvedPlan=null,currency=null,finalAmountMinor=null,checkoutExpiresAt=null,commercialSnapshot=null}) {
     const plan=resolvedPlan||await providerPricing.getProviderPlan(planCode,'stripe',checkoutMode,currency);if(!plan)throw new Error('This plan is not configured for the selected Stripe payment type and currency');
@@ -57,7 +57,12 @@ async function createCheckout({customerId,planCode,email,successUrl,cancelUrl,di
     const metadata={internal_customer_id:customerId,internal_plan_id:plan.id,internal_plan_code:plan.code,...(plan.plan_price_id?{internal_plan_price_id:String(plan.plan_price_id)}:{}),...(plan.provider_mapping_id?{internal_provider_mapping_id:String(plan.provider_mapping_id)}:{}),...(idempotencyKey?{internal_checkout_intent_id:String(idempotencyKey)}:{})};
     const lineItem=mode==='payment'?{price_data:{currency:String(plan.currency||'GBP').toLowerCase(),unit_amount:baseMinor,product_data:{name:plan.name}},quantity:1}:{price:plan.external_id,quantity:1};
     const params={mode,customer:stripeCustomerId,line_items:[lineItem],success_url:successUrl,cancel_url:cancelUrl,metadata,integration_identifier:randomIntegrationIdentifier()};
-    if(finalMinor!=null&&finalMinor<baseMinor){const coupon=await stripe.coupons.create({duration:'once',name:'CAPTAiNFiN checkout adjustment',amount_off:baseMinor-finalMinor,currency:String(plan.currency||'GBP').toLowerCase()});params.discounts=[{coupon:coupon.id}];if(commercialSnapshot?.discountCodeId)metadata.internal_discount_code_id=String(commercialSnapshot.discountCodeId);}
+    if(finalMinor!=null&&finalMinor<baseMinor){
+        const stableAdjustmentKey=idempotencyKey
+            ? `captainfin-checkout-adjustment-${String(idempotencyKey)}`
+            : `captainfin-checkout-adjustment-${crypto.createHash('sha256').update(`${customerId}:${plan.id}:${baseMinor}:${finalMinor}:${String(plan.currency||'GBP').toUpperCase()}`).digest('hex')}`;
+        const coupon=await stripe.coupons.create({duration:'once',name:'CAPTAiNFiN checkout adjustment',amount_off:baseMinor-finalMinor,currency:String(plan.currency||'GBP').toLowerCase()},{idempotencyKey:stableAdjustmentKey});params.discounts=[{coupon:coupon.id}];if(commercialSnapshot?.discountCodeId)metadata.internal_discount_code_id=String(commercialSnapshot.discountCodeId);
+    }
     else if(discountCode){const discount=await discounts.validateForCheckout({code:discountCode,planId:plan.id,planCode,customerId});if(discount.discount_type==='fixed'&&discount.currency&&String(discount.currency).toUpperCase()!==String(plan.currency).toUpperCase())throw new Error("That discount code's currency does not match this plan");const couponId=await ensureStripeCoupon(discount,plan);params.discounts=[{coupon:couponId}];metadata.internal_discount_code_id=discount.id;}
     if(checkoutExpiresAt){const epoch=Math.floor(new Date(checkoutExpiresAt).getTime()/1000),now=Math.floor(Date.now()/1000);if(Number.isFinite(epoch)&&epoch>=now+30*60&&epoch<=now+24*60*60)params.expires_at=epoch;}
     if(mode==='subscription')params.subscription_data={metadata};else params.payment_intent_data={metadata};
@@ -212,12 +217,16 @@ async function syncSubscription(subscriptionId,statusOverride=null) {
 
 async function incidentContextForCharge(stripe,charge) {
     let metadata={...(charge?.metadata||{})},providerSubscriptionId=null;
-    const paymentIntentId=typeof charge?.payment_intent==='string'?charge.payment_intent:charge?.payment_intent?.id||null;
+    const paymentIntent=charge?.payment_intent||null,paymentIntentId=typeof paymentIntent==='string'?paymentIntent:paymentIntent?.id||null;
     if(paymentIntentId){
-        try{const pi=await stripe.paymentIntents.retrieve(paymentIntentId);metadata={...(pi?.metadata||{}),...metadata};}catch(_){}
+        const pi=typeof paymentIntent==='object'?paymentIntent:await stripe.paymentIntents.retrieve(paymentIntentId);
+        metadata={...(pi?.metadata||{}),...metadata};
     }
-    const invoiceId=typeof charge?.invoice==='string'?charge.invoice:charge?.invoice?.id||null;
-    if(invoiceId){try{const invoice=await stripe.invoices.retrieve(invoiceId);providerSubscriptionId=extractInvoiceSubscriptionId(invoice);}catch(_){} }
+    const invoiceRef=charge?.invoice||null,invoiceId=typeof invoiceRef==='string'?invoiceRef:invoiceRef?.id||null;
+    if(invoiceId){
+        const invoice=typeof invoiceRef==='object'?invoiceRef:await stripe.invoices.retrieve(invoiceId);
+        providerSubscriptionId=extractInvoiceSubscriptionId(invoice);
+    }
     if(!providerSubscriptionId&&paymentIntentId)providerSubscriptionId=paymentIntentId;
     let identity=await incidents.identityFromMetadata(metadata);
     if(identity.scope==='unresolved'&&providerSubscriptionId)identity=await incidents.identityFromProviderSubscription('stripe',providerSubscriptionId);
@@ -229,7 +238,7 @@ async function recordStripeRefund(event,stripe,charge) {
     await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:refund:${event.id}`,{amountMinor:refunded,fullLoss:fullRefund});return recorded;
 }
 async function recordStripeDispute(event,stripe,dispute) {
-    let charge=null;try{charge=typeof dispute?.charge==='string'?await stripe.charges.retrieve(dispute.charge):dispute?.charge||null;}catch(_){}
+    const charge=typeof dispute?.charge==='string'?await stripe.charges.retrieve(dispute.charge):dispute?.charge||null;
     const ctx=await incidentContextForCharge(stripe,charge||{}),won=String(dispute?.status||'').toLowerCase()==='won',lost=String(dispute?.status||'').toLowerCase()==='lost',recorded=await incidents.record({provider:'stripe',eventId:event.id,caseId:dispute?.id||charge?.id,kind:lost?'chargeback':'dispute',status:won?'won':lost?'lost':'open',identity:ctx.identity,providerSubscriptionId:ctx.providerSubscriptionId,amountMinor:dispute?.amount,currency:dispute?.currency,metadata:{...ctx.metadata,disputeId:dispute?.id||null,reason:dispute?.reason||null,stripeStatus:dispute?.status||null}});
     if(lost)await reverseReferralForDirectIdentity(ctx.identity,recorded,`stripe:chargeback:${event.id}`,{amountMinor:dispute?.amount,fullLoss:true});return recorded;
 }

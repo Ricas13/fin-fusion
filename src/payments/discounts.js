@@ -3,6 +3,11 @@
 const { query, transaction } = require('../db');
 
 function normalizeCode(raw) { return String(raw || '').trim().toUpperCase(); }
+function redemptionDivergence(message) {
+    const error = new Error(message);
+    error.code = 'DISCOUNT_REDEMPTION_DIVERGENCE';
+    return error;
+}
 function discountConflict(message) {
     const error = new Error(message);
     error.code = 'DISCOUNT_SETTLEMENT_RESERVATION_MISMATCH';
@@ -56,6 +61,8 @@ async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, 
         if (Number(used.rows[0].n || 0) + Number(totals.customer_total || 0) >= Number(d.per_customer_limit || 1)) throw new Error('You have already used or reserved that discount code');
         const discounted = computeDiscountedMinor(baseMinor, d), applied = Math.max(0, Number(baseMinor || 0) - discounted);
         const requestedExpiry = new Date(Date.now() + Math.max(5, Math.min(180, Number(ttlMinutes) || 30)) * 60000);
+        // Reservation coverage is an invariant: a still-valid checkout may never
+        // outlive the limited-code capacity it froze into commercial_snapshot.
         // Static contract token kept explicit: Math.max(requestedExpiry.getTime(),parentExpiry.getTime())
         const expiresAt = new Date(Math.max(requestedExpiry.getTime(),parentExpiry.getTime()));
         const row = await client.query(`INSERT INTO discount_checkout_reservations(discount_code_id,customer_id,checkout_intent_id,amount_applied_minor,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING *`, [d.id, customerId, checkoutIntentId, applied, expiresAt]);
@@ -108,10 +115,7 @@ async function recordRedemption(client, { discountCodeId, customerId, subscripti
 async function redeemForSubscriptionTx(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor = 0 }) {
     if (!discountCodeId) return { redeemed: false, reason: 'no_code' };
     const discount = await client.query('SELECT * FROM discount_codes WHERE id=$1 FOR UPDATE', [discountCodeId]);
-    if (!discount.rowCount) {
-        console.error(`Discount code ${discountCodeId} was removed before redemption could be recorded; granting access anyway.`);
-        return { redeemed: false, reason: 'code_missing' };
-    }
+    if (!discount.rowCount) throw redemptionDivergence(`Discount code ${discountCodeId} was removed before its paid checkout could be accounted for.`);
     const row = discount.rows[0];
     const frozen = await frozenReservationForSubscription(client, { discountCodeId, customerId, subscriptionId });
     if (frozen) {
@@ -124,18 +128,12 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
         return { ...result, frozenReservation: true, reservationId: frozen.id };
     }
 
-    if (row.max_redemptions !== null && row.redemption_count >= row.max_redemptions) {
-        console.error(`Discount ${row.code} exceeded its redemption limit at activation time; granting access anyway.`);
-        return { redeemed: false, reason: 'max_redemptions' };
-    }
+    if (row.max_redemptions !== null && row.redemption_count >= row.max_redemptions) throw redemptionDivergence(`Discount ${row.code} no longer has redemption capacity for this paid checkout.`);
     if (customerId) {
         const used = await client.query('SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2', [discountCodeId, customerId]);
-        if (used.rows[0].n >= row.per_customer_limit) {
-            console.error(`Discount ${row.code} exceeded its per-customer limit for customer ${customerId} at activation time; granting access anyway.`);
-            return { redeemed: false, reason: 'per_customer_limit' };
-        }
+        if (used.rows[0].n >= row.per_customer_limit) throw redemptionDivergence(`Discount ${row.code} can no longer be attributed to this customer without exceeding its per-customer limit.`);
     }
     return recordRedemption(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor });
 }
 
-module.exports = { normalizeCode, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, releaseIntentReservation, redeemForSubscriptionTx, frozenReservationForSubscription };
+module.exports = { normalizeCode, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, releaseIntentReservation, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };

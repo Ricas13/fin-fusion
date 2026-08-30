@@ -6,7 +6,9 @@ const planPricing=require('./payments/plan-pricing');
 const serviceCreditReservations=require('./payments/service-credit-reservations');
 const accounting=require('./payments/service-credit-accounting');
 const commerce=require('./payments/commerce-control');
+const billingPeriods=require('./payments/billing-periods');
 const planCapacity=require('./entitlements/plan-capacity');
+const serviceScope=require('./entitlements/service-scope');
 const provisioning=require('./jellyfin/resilient-provisioning');
 
 function cleanCurrency(value){return planPricing.cleanCurrency(value,'GBP');}
@@ -54,9 +56,12 @@ async function balances(customerId){
   const r=await query(`WITH currencies AS (
       SELECT currency FROM affiliate_credit_ledger WHERE customer_id=$1
       UNION SELECT currency FROM affiliate_credit_checkout_reservations WHERE customer_id=$1
+      UNION SELECT currency FROM affiliate_credit_renewal_reservations WHERE customer_id=$1
       UNION SELECT currency FROM affiliate_credit_recoveries WHERE customer_id=$1
     ) SELECT c.currency,
-      (COALESCE((SELECT SUM(l.amount_minor) FROM affiliate_credit_ledger l WHERE l.customer_id=$1 AND l.currency=c.currency AND l.state='available'),0)-COALESCE((SELECT SUM(r.amount_minor) FROM affiliate_credit_checkout_reservations r WHERE r.customer_id=$1 AND r.currency=c.currency AND r.state='reserved' AND r.expires_at>NOW()),0))::int AS available_minor,
+      (COALESCE((SELECT SUM(l.amount_minor) FROM affiliate_credit_ledger l WHERE l.customer_id=$1 AND l.currency=c.currency AND l.state='available'),0)
+       -COALESCE((SELECT SUM(r.amount_minor) FROM affiliate_credit_checkout_reservations r WHERE r.customer_id=$1 AND r.currency=c.currency AND r.state='reserved' AND r.expires_at>NOW()),0)
+       -COALESCE((SELECT SUM(r.amount_minor) FROM affiliate_credit_renewal_reservations r WHERE r.customer_id=$1 AND r.currency=c.currency AND r.state IN('reserved','provider_applied')),0))::int AS available_minor,
       COALESCE((SELECT SUM(l.amount_minor) FROM affiliate_credit_ledger l WHERE l.customer_id=$1 AND l.currency=c.currency AND l.state='pending'),0)::int AS pending_minor,
       COALESCE((SELECT SUM(x.amount_minor-x.recovered_minor) FROM affiliate_credit_recoveries x WHERE x.customer_id=$1 AND x.currency=c.currency),0)::int AS recoverable_minor
     FROM currencies c ORDER BY c.currency`,[customerId]);
@@ -196,8 +201,18 @@ async function redeemPlan({customerId,planCode,currency}){
     const plan=(await client.query(`SELECT * FROM plans WHERE code=$1 AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND audience IN('direct','both') LIMIT 1`,[String(planCode||'').trim()])).rows[0];if(!plan)throw new Error('That plan is not available.');
     const price=(await client.query(`SELECT * FROM plan_prices WHERE plan_id=$1 AND currency=$2 AND active=TRUE LIMIT 1`,[plan.id,wanted])).rows[0];if(!price)throw new Error(`That plan is not available in ${wanted}.`);
     const cost=Number(price.price_minor||0);if(cost<=0)throw new Error('Free plans do not use affiliate credit.');const available=await serviceCreditReservations.availableMinorForClient(client,customerId,wanted);if(available<cost)throw new Error(`You need ${cost-available} more ${wanted} minor units of service credit for this plan.`);
-    const live=await client.query(`SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);if(live.rowCount)throw new Error('You already have active service. Use your existing subscription controls before activating another plan.');
-    await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan');const days=Math.max(1,Number(plan.duration_days||30)),starts=new Date(),ends=new Date(starts.getTime()+days*86400000);
+    const live=await client.query(`WITH live_ids AS (
+        SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1
+        UNION SELECT subscription_id FROM effective_stremio_entitlements WHERE customer_id=$1
+        UNION SELECT subscription_id FROM effective_customer_addons WHERE customer_id=$1
+      ) SELECT s.id AS subscription_id,s.plan_id,COALESCE(p.is_addon,FALSE) AS is_addon,COALESCE(p.is_free_tier,FALSE) AS is_free_tier,
+          COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') AS service_type
+        FROM live_ids e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id`,[customerId]);
+    const conflict=plan.is_addon
+      ? live.rows.find(row=>row.is_addon&&String(row.plan_id)===String(plan.id))
+      : live.rows.find(row=>!row.is_addon&&!row.is_free_tier&&serviceScope.overlaps(row,plan));
+    if(conflict)throw new Error(`You already have active ${serviceScope.label(conflict)} service that overlaps this plan. Use your existing subscription controls before activating another overlapping plan.`);
+    await planCapacity.lockAndAssert(client,plan.id,plan.name||'This plan');const starts=new Date(),ends=billingPeriods.addPlanDuration(plan,starts);
     const sub=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,price_minor_snapshot,currency_snapshot,plan_name_snapshot,service_type_snapshot) VALUES($1,$2,'active','service_credit',$3,$4,$5,$6,$7,$8) RETURNING id`,[customerId,plan.id,starts,ends,cost,wanted,plan.name,plan.service_type||'jellyfin'])).rows[0];
     const debit=(await client.query(`INSERT INTO affiliate_credit_ledger(customer_id,currency,amount_minor,entry_type,state,applied_subscription_id,reference_id,note,metadata) VALUES($1,$2,$3,'redeemed','available',$4,$5,$6,$7::jsonb) RETURNING *`,[customerId,wanted,-cost,sub.id,`subscription:${sub.id}`,`Redeemed service credit for ${plan.name}`,JSON.stringify({planId:plan.id,planCode:plan.code,planPriceId:price.id,costMinor:cost})])).rows[0];await accounting.allocateOneDebit(client,debit);
     await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('affiliate.credit.redeem','subscription',$1,$2::jsonb)`,[sub.id,JSON.stringify({customerId,planId:plan.id,planCode:plan.code,currency:wanted,costMinor:cost})]);return{subId:sub.id,planId:plan.id,costMinor:cost,currency:wanted,balanceAfter:available-cost};
