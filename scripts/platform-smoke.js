@@ -15,7 +15,7 @@ function assertPasswordPolicySurfaces() {
     const security = fs.readFileSync('src/platform/customer-security.js', 'utf8');
     if (!register.includes('name="password" minlength="8"')) throw new Error('Registration form does not expose the 8-character portal password minimum');
     if ((reset.match(/minlength="8"/g) || []).length < 2) throw new Error('Password-reset form does not expose the 8-character portal password minimum');
-    if ((security.match(/minlength=\\"8\\"/g) || []).length < 2) throw new Error('Account-security form does not expose the 8-character portal password minimum');
+    if ((security.match(/minlength="8"/g) || []).length < 2) throw new Error('Account-security form does not expose the 8-character portal password minimum');
 }
 
 async function verifyPaymentEventClaims(suffix) {
