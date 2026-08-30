@@ -25,10 +25,18 @@ async function applyRestorationGrace(rows, { now = Date.now() } = {}) {
     const accountIds = [...new Set(candidates.map(row => row?.account_id).filter(Boolean).map(String))];
     if (!accountIds.length) return candidates;
 
+    // Only an explicit admin re-enable starts a fresh observation window. Other
+    // lifecycle restorations (playback recovery, policy changes, manual remote
+    // toggles, cleanup changes) are evidence about the existing policy episode,
+    // not permission to reset the inactivity clock for days.
     const restored = await query(`
         SELECT account_id,MAX(restored_at) restored_at
         FROM jellyfin_account_lifecycle
-        WHERE account_id=ANY($1::uuid[]) AND category='free' AND restored_at IS NOT NULL
+        WHERE account_id=ANY($1::uuid[])
+          AND category='free'
+          AND restored_at IS NOT NULL
+          AND metadata->>'restoredReason'='admin_reenable'
+          AND metadata->>'explicitRestore'='true'
         GROUP BY account_id
     `, [accountIds]);
     const byAccount = new Map(restored.rows.map(row => [String(row.account_id), row.restored_at]));

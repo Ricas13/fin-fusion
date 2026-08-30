@@ -108,7 +108,18 @@ try {
     assert(fleetSource.includes('incoming.activity_at > ja.last_activity_at'),'Fleet activity persistence must keep a monotonic last_activity_at guard');
     assert(fleetSource.includes("registry.request(serverId, '/Users'") && fleetSource.includes('await persistUserActivity(serverId, users)'),'The regular fleet poll must refresh managed media-server user activity from /Users');
     assert(jobsSource.includes("require('./customer-inactivity-scoped')"),'Automation must use server-scoped inactivity safety checks');
-    assert(inactivitySource.indexOf('refreshCandidateServers(discovered)') < inactivitySource.indexOf('await base.candidates(globalCfg) : discovered'),'Inactivity enforcement must refresh target media-server activity before its final candidate decision');
+
+    const discoveryIndex=inactivitySource.indexOf('const discovered = await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg));');
+    const discoveryTrustIndex=inactivitySource.indexOf('let serverTelemetry = await refreshCandidateServers(discovered);',discoveryIndex);
+    const discoveryUsersIndex=inactivitySource.indexOf('serverTelemetry = await refreshCandidateUserActivity(discovered, serverTelemetry);',discoveryTrustIndex);
+    const recandidateIndex=inactivitySource.indexOf('const rows = discovered.length ? await restorationGrace.applyRestorationGrace(await base.candidates(globalCfg)) : discovered;',discoveryUsersIndex);
+    assert(discoveryIndex>=0&&discoveryTrustIndex>discoveryIndex&&discoveryUsersIndex>discoveryTrustIndex&&recandidateIndex>discoveryUsersIndex,'Inactivity enforcement must refresh target media-server trust and /Users activity before rebuilding final candidates');
+
+    const finalEligibilityIndex=inactivitySource.indexOf('async function finalEligibility');
+    const finalTrustIndex=inactivitySource.indexOf('let serverTelemetry = await refreshCandidateServers([row]);',finalEligibilityIndex);
+    const finalUsersIndex=inactivitySource.indexOf('serverTelemetry = await refreshCandidateUserActivity([row], serverTelemetry);',finalTrustIndex);
+    const finalCandidateIndex=inactivitySource.indexOf('await base.candidates(globalCfg, { customerId: row.customer_id })',finalUsersIndex);
+    assert(finalEligibilityIndex>=0&&finalTrustIndex>finalEligibilityIndex&&finalUsersIndex>finalTrustIndex&&finalCandidateIndex>finalUsersIndex,'Each final inactivity decision must refresh that account server trust and /Users activity immediately before re-evaluating eligibility');
 
     const rows = [
         { server_id: 'free-server', eligible: true, customer_id: 'free-customer' },

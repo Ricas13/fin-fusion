@@ -52,6 +52,13 @@ const grace = require('../src/entitlements/jellyfin-inactivity-grace');
         return { customerId, planId, accountId, oldActivity, holdId: hold.id };
     }
 
+    const candidate = accountId => ({
+        account_id: accountId,
+        eligible: true,
+        reasons: [],
+        policy: { minimumObservationHours: 24, noPlaybackDays: 7, minimumPlaybackMinutes: null, playbackWindowDays: 7 }
+    });
+
     try {
         const normal = await fixture('normal');
         const normalResult = await restore.restoreDisabledFreeAccess(normal.customerId, {
@@ -69,18 +76,53 @@ const grace = require('../src/entitlements/jellyfin-inactivity-grace');
         const normalLifecycle = await query(`SELECT restored_at,metadata FROM jellyfin_account_lifecycle WHERE account_id=$1`, [normal.accountId]);
         assert(normalLifecycle.rows[0].restored_at, 'pending Free lifecycle must be closed by explicit admin restore');
         assert.strictEqual(normalLifecycle.rows[0].metadata.restoredReason, 'admin_reenable');
+        assert.strictEqual(normalLifecycle.rows[0].metadata.reenableReconcilePending, false, 'successful reconciliation must clear the durable retry marker');
         const activityAfter = (await query(`SELECT last_activity_at FROM jellyfin_accounts WHERE id=$1`, [normal.accountId])).rows[0].last_activity_at;
         assert.strictEqual(new Date(activityAfter).getTime(), normal.oldActivity.getTime(), 'admin restore must not fabricate Jellyfin activity timestamps');
 
-        const graceRows = await grace.applyRestorationGrace([{
-            account_id: normal.accountId,
-            eligible: true,
-            reasons: [],
-            policy: { minimumObservationHours: 24, noPlaybackDays: 7, minimumPlaybackMinutes: null, playbackWindowDays: 7 }
-        }]);
+        const graceRows = await grace.applyRestorationGrace([candidate(normal.accountId)]);
         assert.strictEqual(graceRows[0].eligible, false, 'freshly restored account must not be immediately disabled again');
         assert.strictEqual(graceRows[0].restoration_grace, true);
         assert(new Date(graceRows[0].restoration_grace_until).getTime() > Date.now() + 6 * 86400000, 'restore grace must honor the plan observation window');
+
+        const retry = await fixture('retry');
+        await assert.rejects(
+            restore.restoreDisabledFreeAccess(retry.customerId, {
+                actorUserId: null,
+                reconcile: async () => { throw new Error('simulated Jellyfin outage'); }
+            }),
+            /simulated Jellyfin outage/,
+            'a remote reconciliation failure must surface to the operator'
+        );
+        const afterFailure = await query(`SELECT disabled FROM jellyfin_accounts WHERE id=$1`, [retry.accountId]);
+        assert.strictEqual(afterFailure.rows[0].disabled, true, 'failed remote reconciliation must leave the actual account disabled');
+        assert.strictEqual((await query(`SELECT released_at FROM customer_access_holds WHERE id=$1`, [retry.holdId])).rows[0].released_at != null, true, 'the local inactivity hold transition may already be committed when remote reconciliation fails');
+        const failedLifecycle = await query(`SELECT restored_at,metadata FROM jellyfin_account_lifecycle WHERE account_id=$1`, [retry.accountId]);
+        assert(failedLifecycle.rows[0].restored_at, 'the local lifecycle transition must remain durable after a remote failure');
+        assert.strictEqual(failedLifecycle.rows[0].metadata.reenableReconcilePending, true, 'failed remote reconciliation must leave a durable retry marker');
+
+        const retryResult = await restore.restoreDisabledFreeAccess(retry.customerId, {
+            actorUserId: null,
+            reconcile: async customerId => {
+                await query(`UPDATE jellyfin_accounts SET disabled=FALSE WHERE customer_id=$1 AND account_purpose='jellyfin' AND access_lane='free'`, [customerId]);
+                return { active: true };
+            }
+        });
+        assert.strictEqual(retryResult.resumed, true, 'second admin action must resume the already-prepared restore instead of requiring the released hold');
+        assert.strictEqual(retryResult.enabled, true, 'retry must be able to finish enabling Jellyfin');
+        const retriedLifecycle = await query(`SELECT metadata FROM jellyfin_account_lifecycle WHERE account_id=$1`, [retry.accountId]);
+        assert.strictEqual(retriedLifecycle.rows[0].metadata.reenableReconcilePending, false, 'successful retry must clear the durable retry marker');
+
+        const automatic = await fixture('automatic');
+        await accessHolds.releaseHold({ customerId: automatic.customerId, type: 'inactivity_policy', sourceKey: `plan:${automatic.planId}` });
+        await query(`
+            UPDATE jellyfin_account_lifecycle
+            SET restored_at=NOW(),metadata=metadata||$2::jsonb,updated_at=NOW()
+            WHERE account_id=$1
+        `, [automatic.accountId, JSON.stringify({ restoredReason: 'activity_after_disable' })]);
+        const automaticRows = await grace.applyRestorationGrace([candidate(automatic.accountId)]);
+        assert.strictEqual(automaticRows[0].eligible, true, 'automatic/non-admin lifecycle restoration must not receive the admin observation grace');
+        assert.strictEqual(Boolean(automaticRows[0].restoration_grace), false, 'only explicit admin re-enables may reset the inactivity observation window');
 
         const blocked = await fixture('blocked', { unrelatedHold: true });
         const blockedResult = await restore.restoreDisabledFreeAccess(blocked.customerId, {
