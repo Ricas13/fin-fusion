@@ -28,7 +28,7 @@ try {
     );
     assert.throws(
         () => registry.normalizeBaseUrl('file:///etc/passwd'),
-        /Only http and https Jellyfin URLs/
+        /Only http and https media-server URLs/
     );
     assert.throws(
         () => registry.normalizeBaseUrl('http://user:pass@jellyfin.internal:8096'),
@@ -39,12 +39,26 @@ try {
     const headers = registry.authHeaders(token);
     assert.strictEqual(headers.Authorization, `MediaBrowser Token="${token}"`);
     assert.strictEqual(headers.Accept, 'application/json');
-    assert.strictEqual(headers['X-Emby-Token'], undefined, 'Deprecated X-Emby-Token header must not be used');
+    assert.strictEqual(headers['X-Emby-Token'], undefined, 'Jellyfin requests must retain the MediaBrowser Authorization header');
     assert.strictEqual(registry.authHeaders(token, { jsonBody: true })['Content-Type'], 'application/json');
+
+    const embyHeaders = registry.authHeaders(token, { mediaServerType:'emby', jsonBody:true });
+    assert.strictEqual(embyHeaders['X-Emby-Token'], token, 'Emby server-to-server requests must use X-Emby-Token');
+    assert.strictEqual(embyHeaders.Authorization, undefined, 'Emby adapter must not inherit the Jellyfin Authorization header');
+    assert.strictEqual(embyHeaders['Content-Type'], 'application/json');
+    assert.strictEqual(registry.mediaProvider.apiPath('emby', '/Users'), '/emby/Users');
+    assert.strictEqual(registry.mediaProvider.apiPath('emby', '/emby/Users'), '/emby/Users');
+    assert.strictEqual(registry.mediaProvider.apiPath('jellyfin', '/Users'), '/Users');
+    assert.strictEqual(registry.mediaProvider.healthEndpoint('emby'), '/System/Info');
+    assert.strictEqual(registry.mediaProvider.healthEndpoint('jellyfin'), '/System/Info/Public');
+    assert.strictEqual(registry.mediaProvider.normalizeType(undefined), 'jellyfin', 'legacy rows must default to Jellyfin semantics');
+    assert.throws(() => registry.mediaProvider.normalizeType('plex'), /Unsupported media server type/);
 
     // Jellyfin /Users activity is the authoritative freshness signal for managed
     // accounts. LastActivityDate wins, with LastLoginDate as the compatibility
-    // fallback used by older/less active Jellyfin records.
+    // fallback used by older/less active Jellyfin records. Emby exposes the same
+    // MediaBrowser activity fields, so the higher-level freshness logic remains
+    // provider-neutral.
     const preferred = fleetMetrics.userActivityDate({
         LastActivityDate: '2026-08-26T21:30:00.000Z',
         LastLoginDate: '2026-08-20T10:00:00.000Z'
@@ -58,7 +72,7 @@ try {
     assert.strictEqual(
         fleetMetrics.isNewerActivity('2026-08-26T12:00:00.000Z', '2026-08-25T12:00:00.000Z'),
         false,
-        'An older Jellyfin timestamp must never regress stored account activity'
+        'An older media-server timestamp must never regress stored account activity'
     );
     assert.strictEqual(
         fleetMetrics.isNewerActivity('2026-08-25T12:00:00.000Z', '2026-08-26T12:00:00.000Z'),
@@ -75,7 +89,7 @@ try {
     );
     assert(
         fleetSource.includes("registry.request(serverId, '/Users'") && fleetSource.includes('await persistUserActivity(serverId, users)'),
-        'The regular fleet poll must refresh managed Jellyfin user activity from /Users'
+        'The regular fleet poll must refresh managed media-server user activity from /Users'
     );
     assert(
         jobsSource.includes("require('./customer-inactivity-scoped')"),
@@ -83,7 +97,7 @@ try {
     );
     assert(
         inactivitySource.indexOf('refreshCandidateServers(discovered)') < inactivitySource.indexOf('await base.candidates(globalCfg) : discovered'),
-        'Inactivity enforcement must refresh target Jellyfin activity before its final candidate decision'
+        'Inactivity enforcement must refresh target media-server activity before its final candidate decision'
     );
 
     const rows = [
@@ -108,7 +122,7 @@ try {
         'If the target Free Server activity refresh fails, enforcement must fail safe for that server'
     );
 
-    console.log('Jellyfin registry URL/auth/activity validation smoke test passed.');
+    console.log('Jellyfin/Emby registry URL/auth/activity validation smoke test passed.');
 } finally {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
