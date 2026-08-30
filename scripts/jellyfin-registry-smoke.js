@@ -32,6 +32,18 @@ try {
     assert.strictEqual(embyHeaders['X-Emby-Token'], token, 'Emby server-to-server requests must use X-Emby-Token');
     assert.strictEqual(embyHeaders.Authorization, undefined, 'Emby adapter must not inherit the Jellyfin Authorization header');
     assert.strictEqual(embyHeaders['Content-Type'], 'application/json');
+
+    const jellyfinUserHeaders=registry.mediaProvider.userTokenHeaders('jellyfin',token,{jsonBody:true});
+    assert.strictEqual(jellyfinUserHeaders.Authorization,`MediaBrowser Token="${token}"`,'Restricted Jellyfin user tokens must retain MediaBrowser Authorization');
+    assert.strictEqual(jellyfinUserHeaders['X-Emby-Token'],undefined);
+    const embyUserHeaders=registry.mediaProvider.userTokenHeaders('emby',token,{jsonBody:true});
+    assert.strictEqual(embyUserHeaders['X-Emby-Token'],token,'Restricted Emby user tokens must use X-Emby-Token');
+    assert.strictEqual(embyUserHeaders.Authorization,undefined,'Restricted Emby user tokens must not be sent using Jellyfin Authorization syntax');
+    assert.strictEqual(embyUserHeaders['Content-Type'],'application/json');
+    assert.match(registry.mediaProvider.clientAuthorization('jellyfin'),/^MediaBrowser\s/,'Jellyfin restricted login must use MediaBrowser client authorization');
+    assert.match(registry.mediaProvider.clientAuthorization('emby'),/^Emby\s/,'Emby restricted login must use Emby client authorization');
+    assert(registry.mediaProvider.clientAuthorization('emby').includes('Version="2.0"'),'Restricted media-server login must identify the current CAPTAiNFiN client version');
+
     assert.strictEqual(registry.mediaProvider.apiPath('emby', '/Users'), '/emby/Users');
     assert.strictEqual(registry.mediaProvider.apiPath('emby', '/emby/Users'), '/emby/Users');
     assert.strictEqual(registry.mediaProvider.apiPath('jellyfin', '/Users'), '/Users');
@@ -41,7 +53,7 @@ try {
     assert.throws(() => registry.mediaProvider.normalizeType('plex'), /Unsupported media server type/);
 
     const jellyfinPolicy = {
-        IsAdministrator:false, IsDisabled:false, EnableRemoteAccess:true,
+        IsAdministrator:false, IsDisabled:false, EnableRemoteAccess:true, SyncPlayAccess:'JoinGroups',
         AuthenticationProviderId:'Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider',
         PasswordResetProviderId:'Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider'
     };
@@ -49,6 +61,7 @@ try {
     const embyPolicy = registry.mediaProvider.requestBody('emby', '/Users/u1/Policy', jellyfinPolicy);
     assert.strictEqual(embyPolicy.AuthenticationProviderId, undefined, 'Emby policy must not receive Jellyfin authentication provider IDs');
     assert.strictEqual(embyPolicy.PasswordResetProviderId, undefined, 'Emby policy must not receive Jellyfin password-reset provider IDs');
+    assert.strictEqual(embyPolicy.SyncPlayAccess, undefined, 'Emby policy must not receive Jellyfin SyncPlayAccess');
     assert.strictEqual(embyPolicy.EnableRemoteAccess, true, 'Shared entitlement policy fields must survive Emby adaptation');
     assert.strictEqual(jellyfinPolicy.AuthenticationProviderId.includes('Jellyfin.Server'), true, 'Provider adaptation must not mutate the caller-owned policy object');
 
@@ -81,7 +94,6 @@ try {
     const jellyfinSessions=[{Id:'jf',LastActivityDate:'2020-01-01T00:00:00.000Z',SupportsMediaControl:true}];
     assert.strictEqual(registry.mediaProvider.responseBody('jellyfin','/Sessions?activeWithinSeconds=120',jellyfinSessions,{now:sessionNow}),jellyfinSessions,'Jellyfin session responses must remain untouched');
 
-    // Jellyfin and Emby expose the same MediaBrowser activity fields.
     const preferred = fleetMetrics.userActivityDate({LastActivityDate:'2026-08-26T21:30:00.000Z',LastLoginDate:'2026-08-20T10:00:00.000Z'});
     assert.strictEqual(preferred.toISOString(), '2026-08-26T21:30:00.000Z');
     const fallback = fleetMetrics.userActivityDate({LastActivityDate:'not-a-date',LastLoginDate:'2026-08-25T12:00:00.000Z'});
