@@ -4,6 +4,24 @@ const { query } = require('../db');
 const registry = require('./registry');
 const provisioning = require('./resilient-provisioning');
 
+function cleanFailureMessage(value) {
+    return String(value || 'Unknown entitlement reconciliation failure')
+        .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 300) || 'Unknown entitlement reconciliation failure';
+}
+
+function summarizeFailureReasons(reasons, failed) {
+    if (!failed) return null;
+    const ranked = [...reasons.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const shown = ranked.slice(0, 2);
+    const shownCount = shown.reduce((sum, [, count]) => sum + count, 0);
+    const detail = shown.map(([message, count]) => `${count}× ${message}`).join('; ');
+    const remainder = Math.max(0, failed - shownCount);
+    return `${failed} entitlement reconciliation${failed === 1 ? '' : 's'} failed${detail ? `: ${detail}` : ''}${remainder ? `; ${remainder} other failure${remainder === 1 ? '' : 's'}` : ''}`.slice(0, 1000);
+}
+
 // A customer is due when either:
 //  1. they currently have an active entitlement and have never been reconciled
 //     (or their next scheduled verification/retry time has arrived), OR
@@ -61,6 +79,7 @@ async function reconcileActiveEntitlements(options = {}) {
     let succeeded = 0;
     let blocked = 0;
     let failed = 0;
+    const failureReasons = new Map();
     for (const row of rows) {
         try {
             await provisioning.reconcileCustomer(row.customer_id);
@@ -68,11 +87,16 @@ async function reconcileActiveEntitlements(options = {}) {
         } catch (error) {
             const state = await provisioning.control.getCustomerState(row.customer_id).catch(() => null);
             if (state?.status === 'blocked') blocked += 1;
-            else failed += 1;
+            else {
+                failed += 1;
+                const reason = cleanFailureMessage(error?.message || error);
+                failureReasons.set(reason, Number(failureReasons.get(reason) || 0) + 1);
+            }
             console.error(`Entitlement reconcile failed for ${row.customer_id}:`, error.message);
         }
     }
-    return { total: rows.length, succeeded, blocked, failed };
+    const warning = summarizeFailureReasons(failureReasons, failed);
+    return { total: rows.length, succeeded, blocked, failed, ...(warning ? { warning } : {}) };
 }
 
 async function healthcheckAllServers() {
@@ -84,4 +108,4 @@ async function healthcheckAllServers() {
     return results;
 }
 
-module.exports = { dueCustomers, dueActiveCustomers, reconcileActiveEntitlements, healthcheckAllServers };
+module.exports = { dueCustomers, dueActiveCustomers, reconcileActiveEntitlements, healthcheckAllServers, cleanFailureMessage, summarizeFailureReasons };
