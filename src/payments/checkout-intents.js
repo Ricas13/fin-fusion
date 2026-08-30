@@ -121,9 +121,9 @@ async function createIntent({
         if (existing.rowCount) throw new Error('A checkout is already in progress. Finish or cancel it before starting another one.');
 
         if (planId) {
-            await capacity.lockAndAssert(client, planId, snapshot.planName || 'This plan', {
-                streams: snapshot.streams,
-                households: snapshot.stremioHouseholdNetworkLimit
+            await capacity.lockAndAssert(client,planId,snapshot.planName || 'This plan', {
+                streams:snapshot.streams,
+                households:snapshot.stremioHouseholdNetworkLimit
             });
         }
         const created = await client.query(`
