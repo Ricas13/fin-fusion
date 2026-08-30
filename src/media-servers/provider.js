@@ -36,6 +36,10 @@ function healthEndpoint(type) {
   return normalizeType(type) === 'emby' ? '/System/Info' : '/System/Info/Public';
 }
 
+function canonicalPath(endpoint) {
+  return String(endpoint || '').replace(/^\/emby(?=\/|$)/, '') || '/';
+}
+
 function userPolicyOverrides(type) {
   if (normalizeType(type) !== 'emby') return null;
   // Emby and Jellyfin share the MediaBrowser user-policy shape, but Jellyfin's
@@ -63,9 +67,25 @@ function userPolicy(type, policy) {
 
 function requestBody(type, endpoint, body) {
   if (body === null || body === undefined) return body;
-  const path = String(endpoint || '').replace(/^\/emby(?=\/|$)/, '') || '/';
-  if (/^\/Users\/[^/]+\/Policy$/.test(path)) return userPolicy(type, body);
+  const provider = normalizeType(type), path = canonicalPath(endpoint);
+  if (/^\/Users\/[^/]+\/Policy$/.test(path)) return userPolicy(provider, body);
+  if (provider === 'emby' && path === '/Users/New' && body && typeof body === 'object' && !Array.isArray(body)) {
+    // Emby's CreateUserByName accepts Name (and copy options), while password
+    // setup is a separate /Users/{Id}/Password operation. Keep the caller's
+    // Password available to registry.request for the post-create bootstrap,
+    // but do not send the unsupported field in the create payload itself.
+    const result = { ...body };
+    delete result.Password;
+    return result;
+  }
   return body;
 }
 
-module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, userPolicyOverrides, userPolicy, requestBody };
+function needsPostCreatePassword(type, endpoint, originalBody) {
+  return normalizeType(type) === 'emby'
+    && canonicalPath(endpoint) === '/Users/New'
+    && typeof originalBody?.Password === 'string'
+    && originalBody.Password.length > 0;
+}
+
+module.exports = { TYPES, normalizeType, label, authHeaders, apiPath, healthEndpoint, canonicalPath, userPolicyOverrides, userPolicy, requestBody, needsPostCreatePassword };
