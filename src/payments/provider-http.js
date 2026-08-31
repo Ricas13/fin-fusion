@@ -74,24 +74,85 @@ async function readJsonBounded(response, maxBytes = DEFAULT_MAX_RESPONSE_BYTES) 
   try { return JSON.parse(text); } catch { return {}; }
 }
 
+function clean(value, max = 500) { return String(value == null ? '' : value).trim().slice(0, max); }
+function normalizeLegacyPayPalAgreement(agreement) {
+  const state = clean(agreement?.state, 60).toUpperCase();
+  const nextBillingTime = clean(agreement?.agreement_details?.next_billing_date, 100) || null;
+  const payer = agreement?.payer?.payer_info || {};
+  return {
+    id: clean(agreement?.id, 255),
+    status: state,
+    plan_id: clean(agreement?.plan?.id, 255) || null,
+    start_time: clean(agreement?.start_date, 100) || null,
+    subscriber: {
+      payer_id: clean(payer?.payer_id, 255) || null,
+      email_address: clean(payer?.email, 320) || null
+    },
+    billing_info: nextBillingTime ? { next_billing_time: nextBillingTime } : {},
+    legacy_api_family: 'billing-agreements-v1'
+  };
+}
+function paypalLegacyFallback(url, options, status) {
+  if (![404, 422].includes(Number(status))) return null;
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (!['api-m.paypal.com', 'api-m.sandbox.paypal.com'].includes(parsed.hostname)) return null;
+  const match = parsed.pathname.match(/^\/v1\/billing\/subscriptions\/(I-[A-Za-z0-9-]+)(\/cancel)?$/i);
+  if (!match) return null;
+  const method = String(options?.method || 'GET').toUpperCase();
+  const id = match[1], cancel = Boolean(match[2]);
+  if (!cancel && method === 'GET') {
+    return {
+      url: `${parsed.origin}/v1/payments/billing-agreements/${encodeURIComponent(id)}`,
+      options,
+      normalize: normalizeLegacyPayPalAgreement
+    };
+  }
+  if (cancel && method === 'POST') {
+    let reason = 'Recurring payment cancelled by CAPTAiNFiN';
+    try {
+      const body = typeof options?.body === 'string' ? JSON.parse(options.body) : options?.body;
+      reason = clean(body?.reason || body?.note || reason, 128) || reason;
+    } catch {}
+    return {
+      url: `${parsed.origin}/v1/payments/billing-agreements/${encodeURIComponent(id)}/cancel`,
+      options: { ...options, body: JSON.stringify({ note: reason }) },
+      normalize: value => value || {}
+    };
+  }
+  return null;
+}
+
+async function oneFetch(provider, url, options, { maxResponseBytes, fetchImpl, signal }) {
+  const response = await fetchImpl(url, { ...options, signal });
+  const requestId = requestIdFromHeaders(provider, response.headers);
+  let data;
+  try {
+    data = await readJsonBounded(response, maxResponseBytes);
+  } catch (error) {
+    if (error instanceof ProviderHttpError) {
+      error.provider = provider;
+      error.requestId = error.requestId || requestId;
+    }
+    throw error;
+  }
+  return { response, data, requestId };
+}
+
 async function fetchJson(provider, url, options = {}, { timeout = timeoutMs(provider), maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES, fetchImpl = global.fetch } = {}) {
   const controller = new AbortController();
   const deadline = boundedTimeout(timeout);
   const timer = setTimeout(() => controller.abort(), deadline);
   try {
-    const response = await fetchImpl(url, { ...options, signal: controller.signal });
-    const requestId = requestIdFromHeaders(provider, response.headers);
-    let data;
-    try {
-      data = await readJsonBounded(response, maxResponseBytes);
-    } catch (error) {
-      if (error instanceof ProviderHttpError) {
-        error.provider = provider;
-        error.requestId = error.requestId || requestId;
+    let result = await oneFetch(provider, url, options, { maxResponseBytes, fetchImpl, signal: controller.signal });
+    if (String(provider || '').toLowerCase() === 'paypal' && !result.response.ok) {
+      const fallback = paypalLegacyFallback(url, options, result.response.status);
+      if (fallback) {
+        const legacy = await oneFetch(provider, fallback.url, fallback.options, { maxResponseBytes, fetchImpl, signal: controller.signal });
+        result = { ...legacy, data: legacy.response.ok ? fallback.normalize(legacy.data) : legacy.data, legacyFallback: true };
       }
-      throw error;
     }
-    return { response, data, requestId, deadlineMs: deadline };
+    return { ...result, deadlineMs: deadline };
   } catch (error) {
     const timedOut = controller.signal.aborted || error?.name === 'AbortError';
     if (timedOut) throw new ProviderHttpError(`${provider} request timed out.`, { provider, code: 'timeout', retryable: true, cause: error });
@@ -131,4 +192,4 @@ function safeErrorFields(error) {
   };
 }
 
-module.exports = { DEFAULT_TIMEOUT_MS, DEFAULT_MAX_RESPONSE_BYTES, ProviderHttpError, boundedTimeout, timeoutMs, retryableStatus, requestIdFromHeaders, readTextBounded, readJsonBounded, fetchJson, responseError, classifySdkError, safeErrorFields };
+module.exports = { DEFAULT_TIMEOUT_MS, DEFAULT_MAX_RESPONSE_BYTES, ProviderHttpError, boundedTimeout, timeoutMs, retryableStatus, requestIdFromHeaders, readTextBounded, readJsonBounded, fetchJson, responseError, classifySdkError, safeErrorFields, normalizeLegacyPayPalAgreement, paypalLegacyFallback };
