@@ -82,6 +82,7 @@ assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptio
 
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
 const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
+const manualSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'manual-subscription-link.js'), 'utf8');
 assert.ok(discoverySource.includes("e.server_class='premium'"), 'discovery must be scoped to active Premium Server entitlements');
 assert.ok(discoverySource.includes("IN ('jellyfin','bundle')"), 'discovery must only cover Jellyfin-capable premium entitlements');
 assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must inspect all subscriptions before selecting current states');
@@ -94,11 +95,26 @@ assert.ok(lifecycleSource.includes('attachDiscoveredProviderSubscription'), 'lif
 assert.ok(lifecycleSource.includes('assertNoOtherLiveRecurring'), 'lifecycle attachment must preserve the one-live-recurring-primary invariant');
 assert.ok(/plan_id=\$2[\s\S]*external_id=ANY\(\$3::text\[\]\)/.test(lifecycleSource), 'lifecycle must snapshot the exact remote price/plan that maps to the existing premium plan');
 
+assert.ok(manualSource.includes("require('./subscription-discovery')"), 'manual recovery must reuse canonical premium/discovery normalization');
+assert.ok(manualSource.includes("require('./lifecycle')"), 'manual recovery must delegate the write to lifecycle');
+assert.ok(manualSource.includes('attachDiscoveredProviderSubscription'), 'manual recovery must use the same canonical attachment owner as automatic discovery');
+assert.ok(manualSource.includes("checkout_mode='subscription' AND plan_id=$2"), 'manual recovery must verify exact local plan mapping');
+assert.ok(manualSource.includes('provider_subscription_id=$2'), 'manual recovery must reject already-owned provider subscriptions');
+assert.ok(manualSource.includes('operatorConfirmed'), 'manual recovery must require explicit operator ownership confirmation');
+assert.ok(manualSource.includes("discovery.currentRemote(remote)"), 'manual recovery must refuse non-current provider subscriptions');
+assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(manualSource), 'manual recovery must not mutate subscriptions outside lifecycle');
+
 const adminSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-billing.js'), 'utf8');
 assert.ok(adminSource.includes('/admin/billing/discover/preview'), 'Billing must expose preview-first subscription discovery');
 assert.ok(adminSource.includes('/admin/billing/discover/apply'), 'Billing must expose an explicit safe-link action');
-assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'bulk provider linking must require explicit confirmation');
-assert.ok(adminSource.includes('Premium subscription integrity'), 'Billing must permanently surface premium users missing provider links');
-assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery mutations must be CSRF protected');
+assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'provider linking must require explicit confirmation');
+assert.ok(adminSource.includes('Missing provider links'), 'Billing must permanently name the missing-provider operator queue');
+assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.recurringId(row.source,row.provider_subscription_id))"), 'Billing must list unlinked premium customers instead of hiding them from the recurring table');
+assert.ok(adminSource.includes('/admin/billing/:id/manual-preview'), 'each missing link must support read-only provider verification');
+assert.ok(adminSource.includes('/admin/billing/:id/manual-link'), 'each missing link must support explicit verified attachment');
+assert.ok(adminSource.includes('Verify provider subscription'), 'manual resolution must show provider truth before attachment');
+assert.ok(adminSource.includes("filter(item=>item.state!=='linked')"), 'automatic discovery results must focus on unresolved work instead of healthy rows');
+assert.ok(adminSource.includes('Healthy / linked recurring subscriptions'), 'healthy recurring subscriptions must be secondary/reference information');
+assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
 
 console.log('Subscription discovery smoke passed.');
