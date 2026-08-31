@@ -28,9 +28,16 @@ assert(!/credit wallet|buy credits/i.test(plans),'Unified Plans must not revive 
 for(const title of ['Payments','Provider mappings','Billing','Transactions','Export data','Payment Risk Policy','Payment History','Migrate paid users'])assert.strictEqual(adminShell.paymentTabsFor({title}),'',`Shared admin shell must not render a payment workflow tab row for ${title}`);
 assert.deepStrictEqual(
   nav.childPages('payments').map(page=>page[1]),
-  ['Billing','Transactions','Prepaid refunds','Export data','Expenses & Profitability','Provider mappings','Payment risk'],
-  'Payments & Billing must expose every durable payment workflow directly in the sidebar'
+  ['Billing','Expenses & Profitability'],
+  'Payments & Billing sidebar must stay focused on routine provider/customer billing work'
 );
+for(const [key,url] of [
+  ['transactions','/admin/payments/transactions'],
+  ['refunds','/admin/refunds'],
+  ['provider-mappings','/admin/provider-mappings'],
+  ['payment-risk-policy','/admin/payments/risk-policy']
+])assert.strictEqual(nav.hiddenPages[key]?.page?.[2],url,`${key} specialist workflow must remain routable even when excluded from permanent Payments navigation`);
+assert.strictEqual(nav.hiddenPages['data-export']?.page?.[2],'/admin/payments/export','Export data must remain routable from its Backups & Recovery ownership context');
 
 assert(settings.includes("/users/@me/channels"),'Discord delivery must use the bot DM API');
 assert(!settings.includes("scope','identify"),'Discord OAuth scope belongs in linking routes, not notification settings');
