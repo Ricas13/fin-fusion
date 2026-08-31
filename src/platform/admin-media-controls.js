@@ -5,7 +5,11 @@ const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const registry = require('../jellyfin/registry');
+const mediaProvider = require('../media-servers/provider');
+const mediaPlanPolicy = require('../jellyfin/media-plan-policy-settings');
 const { POLICY_REASON } = require('../jellyfin/four-k-transcode-policy');
+const { IP_REASON, DEVICE_REASON, COMBINED_REASON } = require('../jellyfin/media-identity-policy');
+const { SENT_REASON, FAILED_REASON } = require('../jellyfin/payg-expiry-messages');
 
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const readLimit = routeRateLimit.middleware({ scope: 'admin-jellyfin-media-controls-read', max: 180, windowSeconds: 60, reason: 'admin_jellyfin_media_controls_read' });
@@ -32,6 +36,13 @@ function safeInt(value, min, max, fallback) {
   const n = Number(value);
   return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
+function optionalLimit(value, label) {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '0') return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || String(parsed) !== raw || parsed < 1 || parsed > 200) throw new Error(`${label} must be 0 for unlimited or a whole number from 1 to 200.`);
+  return parsed;
+}
 function redirectWith(res, path, kind, message, hash = '') {
   return res.redirect(`${path}?${kind}=${encodeURIComponent(message)}${hash ? `#${hash}` : ''}`);
 }
@@ -50,9 +61,9 @@ async function planState(planId) {
                AND s.starts_at<=NOW()
                AND (
                  (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
-                 OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+                 OR (s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW())
                  OR (COALESCE(s.service_extension_days,0)>0
-                     AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
+                     AND s.status IN('active','trialing','past_due','paused','cancelled','expired')
                      AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW())
                )
            )::int AS live_entitlements
@@ -67,9 +78,10 @@ async function planState(planId) {
 }
 
 async function planLogs(planId) {
+  const reasons = [POLICY_REASON, IP_REASON, DEVICE_REASON, COMBINED_REASON, SENT_REASON, FAILED_REASON];
   const [audit, policy] = await Promise.all([
     query(`SELECT action,created_at,metadata FROM audit_log WHERE entity_type='plan' AND entity_id::text=$1 ORDER BY created_at DESC LIMIT 40`, [String(planId)]),
-    query(`SELECT decision,mode,reason,created_at,detail FROM stream_policy_events WHERE reason=$2 AND detail->>'planId'=$1 ORDER BY created_at DESC LIMIT 40`, [String(planId), POLICY_REASON])
+    query(`SELECT decision,mode,reason,created_at,detail FROM stream_policy_events WHERE detail->>'planId'=$1 AND reason=ANY($2::text[]) ORDER BY created_at DESC LIMIT 80`, [String(planId), reasons])
   ]);
   return { audit: audit.rows, policy: policy.rows };
 }
@@ -94,16 +106,17 @@ async function managedAccounts(serverId) {
 async function activeManagedSessions(serverId) {
   const server = await serverInfo(serverId);
   if (!server) throw new Error('Server not found.');
-  if (String(server.media_server_type) !== 'jellyfin') return { server, sessions: [], targets: [], supportsMessaging: false, messagingError: null };
+  const type = mediaProvider.normalizeType(server.media_server_type || 'jellyfin');
+  const providerLabel = mediaProvider.label(type);
   const accounts = await managedAccounts(serverId);
   let sessions;
   try {
     sessions = await registry.request(serverId, '/Sessions');
   } catch (_) {
-    console.warn('Jellyfin message audience lookup failed for a configured server.');
-    return { server, sessions: [], targets: [], supportsMessaging: true, messagingError: 'Active Jellyfin sessions could not be loaded. Check server connectivity and trusted-network settings.' };
+    console.warn('Media-server message audience lookup failed for a configured server.');
+    return { server, providerLabel, sessions: [], targets: [], supportsMessaging: true, messagingError: `Active ${providerLabel} sessions could not be loaded. Check server connectivity and trusted-network settings.` };
   }
-  if (!Array.isArray(sessions)) return { server, sessions: [], targets: [], supportsMessaging: true, messagingError: 'Jellyfin returned an unexpected sessions response.' };
+  if (!Array.isArray(sessions)) return { server, providerLabel, sessions: [], targets: [], supportsMessaging: true, messagingError: `${providerLabel} returned an unexpected sessions response.` };
   const managed = sessions.filter(session => session?.Id && session?.UserId && accounts.has(String(session.UserId).toLowerCase())).map(session => {
     const account = accounts.get(String(session.UserId).toLowerCase());
     return {
@@ -120,13 +133,13 @@ async function activeManagedSessions(serverId) {
     if (!grouped.has(session.customerId)) grouped.set(session.customerId, { customerId: session.customerId, label: session.label, sessions: 0 });
     grouped.get(session.customerId).sessions += 1;
   }
-  return { server, sessions: managed, targets: [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label)), supportsMessaging: true, messagingError: null };
+  return { server, providerLabel, sessions: managed, targets: [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label)), supportsMessaging: true, messagingError: null };
 }
 
 async function serverLogs(serverId) {
   const [audit, policy] = await Promise.all([
     query(`SELECT action,created_at,metadata FROM audit_log WHERE entity_type='jellyfin_server' AND entity_id::text=$1 ORDER BY created_at DESC LIMIT 40`, [String(serverId)]),
-    query(`SELECT decision,mode,reason,created_at,detail FROM stream_policy_events WHERE server_id=$1 ORDER BY created_at DESC LIMIT 40`, [serverId])
+    query(`SELECT decision,mode,reason,created_at,detail FROM stream_policy_events WHERE server_id=$1 ORDER BY created_at DESC LIMIT 80`, [serverId])
   ]);
   return { audit: audit.rows, policy: policy.rows };
 }
@@ -151,12 +164,16 @@ function createAdminMediaControlsRouter() {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).json({ error: 'Plan not found.' });
-      if (!jellyfinPlanState(state)) return res.status(400).json({ error: '4K transcode policy applies only to Jellyfin media plans.' });
+      if (!jellyfinPlanState(state)) return res.status(400).json({ error: 'Media playback policy applies only to Jellyfin/Emby plans.' });
+      const connectionPolicy = await mediaPlanPolicy.get(req.params.planId);
       return res.json({
         id: state.id,
         name: state.name,
         code: state.code,
         kick4kTranscodes: Boolean(state.kick_4k_transcodes),
+        ipLimit: connectionPolicy.ipLimit,
+        deviceLimit: connectionPolicy.deviceLimit,
+        paygExpiryMessagesEnabled: connectionPolicy.paygExpiryMessagesEnabled !== false,
         liveEntitlements: Number(state.live_entitlements || 0)
       });
     } catch (error) { return next(error); }
@@ -166,9 +183,33 @@ function createAdminMediaControlsRouter() {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).json({ error: 'Plan not found.' });
-      if (!jellyfinPlanState(state)) return res.status(400).json({ error: 'Media-policy logs apply only to Jellyfin media plans.' });
+      if (!jellyfinPlanState(state)) return res.status(400).json({ error: 'Media-policy logs apply only to Jellyfin/Emby plans.' });
       return res.json(await planLogs(req.params.planId));
     } catch (error) { return next(error); }
+  });
+
+  router.post(`/admin/media-controls/plan/:planId(${UUID})/connection-policy`, writeLimit, async (req, res) => {
+    if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+    const back = `/admin/plans/${encodeURIComponent(req.params.planId)}/edit`;
+    try {
+      const state = await planState(req.params.planId);
+      if (!state) return res.status(404).send('Plan not found');
+      if (!jellyfinPlanState(state)) throw new Error('Media connection policy applies only to Jellyfin/Emby plans.');
+      const previous = await mediaPlanPolicy.get(req.params.planId);
+      const next = {
+        ipLimit: optionalLimit(req.body.ipLimit, 'Active IP limit'),
+        deviceLimit: optionalLimit(req.body.deviceLimit, 'Active device limit'),
+        paygExpiryMessagesEnabled: bool(req.body.paygExpiryMessagesEnabled)
+      };
+      const destructiveChange = previous.ipLimit !== next.ipLimit || previous.deviceLimit !== next.deviceLimit;
+      if (destructiveChange && Number(state.live_entitlements || 0) > 0 && String(req.body.confirmation || '').trim() !== String(state.code)) {
+        throw new Error(`This plan has ${Number(state.live_entitlements)} live entitlement${Number(state.live_entitlements) === 1 ? '' : 's'}. Type ${state.code} exactly to confirm connection-limit changes.`);
+      }
+      await mediaPlanPolicy.save(req.params.planId, next, req.session.authUserId);
+      return redirectWith(res, back, 'message', 'Media connection limits and Pay As You Go reminders saved.', 'access-advanced-settings');
+    } catch (error) {
+      return redirectWith(res, back, 'error', error.message || 'Media connection policy could not be saved.', 'access-advanced-settings');
+    }
   });
 
   router.post(`/admin/media-controls/plan/:planId(${UUID})/4k-transcode`, writeLimit, async (req, res) => {
@@ -177,7 +218,7 @@ function createAdminMediaControlsRouter() {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).send('Plan not found');
-      if (!jellyfinPlanState(state)) throw new Error('4K transcode policy applies only to Jellyfin media plans.');
+      if (!jellyfinPlanState(state)) throw new Error('4K transcode policy applies only to Jellyfin/Emby media plans.');
       const enabled = bool(req.body.enabled);
       const changing = Boolean(state.kick_4k_transcodes) !== enabled;
       if (changing && Number(state.live_entitlements || 0) > 0 && String(req.body.confirmation || '').trim() !== String(state.code)) {
@@ -191,9 +232,9 @@ function createAdminMediaControlsRouter() {
           JSON.stringify({ enabled, previous: Boolean(state.kick_4k_transcodes), liveEntitlements: Number(state.live_entitlements || 0) })
         ]);
       });
-      return redirectWith(res, back, 'message', `4K video transcoding kick ${enabled ? 'enabled' : 'disabled'} for ${state.name}. Direct-play 4K is unaffected.`, 'advanced-settings');
+      return redirectWith(res, back, 'message', `4K video transcoding kick ${enabled ? 'enabled' : 'disabled'} for ${state.name}. Direct-play 4K is unaffected.`, 'access-advanced-settings');
     } catch (error) {
-      return redirectWith(res, back, 'error', error.message || '4K transcode policy could not be saved.', 'advanced-settings');
+      return redirectWith(res, back, 'error', error.message || '4K transcode policy could not be saved.', 'access-advanced-settings');
     }
   });
 
@@ -202,6 +243,7 @@ function createAdminMediaControlsRouter() {
       const state = await activeManagedSessions(req.params.serverId);
       return res.json({
         server: state.server,
+        providerLabel: state.providerLabel,
         supportsMessaging: state.supportsMessaging,
         messagingError: state.messagingError,
         activeSessions: state.sessions.length,
@@ -228,10 +270,9 @@ function createAdminMediaControlsRouter() {
       if (requestedCustomer && !(new RegExp(`^${UUID}$`)).test(requestedCustomer)) throw new Error('Choose a valid message audience.');
 
       const state = await activeManagedSessions(req.params.serverId);
-      if (!state.supportsMessaging) throw new Error('In-client messaging is currently available for Jellyfin servers only.');
-      if (state.messagingError) throw new Error('Active Jellyfin sessions could not be loaded. Check server connectivity first.');
+      if (state.messagingError) throw new Error(`Active ${state.providerLabel} sessions could not be loaded. Check server connectivity first.`);
       const targets = state.sessions.filter(session => !requestedCustomer || session.customerId === requestedCustomer).slice(0, 200);
-      if (!targets.length) throw new Error(requestedCustomer ? 'That customer has no active Jellyfin session on this server.' : 'There are no active managed Jellyfin sessions on this server.');
+      if (!targets.length) throw new Error(requestedCustomer ? `That customer has no active ${state.providerLabel} session on this server.` : `There are no active managed ${state.providerLabel} sessions on this server.`);
 
       const results = await sendInBatches(targets, target => registry.request(req.params.serverId, `/Sessions/${encodeURIComponent(target.sessionId)}/Message`, {
         method: 'POST', timeoutMs: 5000, body: { Header: header, Text: text, TimeoutMs: timeoutMs }
@@ -241,15 +282,15 @@ function createAdminMediaControlsRouter() {
       await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.jellyfin.message.send','jellyfin_server',$2,$3::jsonb)`, [
         req.session.authUserId,
         req.params.serverId,
-        JSON.stringify({ header, text, timeoutMs, audience: requestedCustomer ? 'customer' : 'all_active', customerId: requestedCustomer || null, attempted: results.length, sent, failed })
+        JSON.stringify({ provider: String(state.server.media_server_type || 'jellyfin'), header, text, timeoutMs, audience: requestedCustomer ? 'customer' : 'all_active', customerId: requestedCustomer || null, attempted: results.length, sent, failed })
       ]);
-      if (!sent) throw new Error(`Jellyfin did not accept the message on ${failed} active session${failed === 1 ? '' : 's'}.`);
+      if (!sent) throw new Error(`${state.providerLabel} did not accept the message on ${failed} active session${failed === 1 ? '' : 's'}.`);
       const resultMessage = failed
-        ? `Message delivered to ${sent} active Jellyfin session${sent === 1 ? '' : 's'}; ${failed} failed.`
-        : `Message delivered to ${sent} active Jellyfin session${sent === 1 ? '' : 's'}.`;
+        ? `Message delivered to ${sent} active ${state.providerLabel} session${sent === 1 ? '' : 's'}; ${failed} failed.`
+        : `Message delivered to ${sent} active ${state.providerLabel} session${sent === 1 ? '' : 's'}.`;
       return redirectWith(res, back, failed ? 'error' : 'message', resultMessage, 'basic-settings');
     } catch (error) {
-      return redirectWith(res, back, 'error', error.message || 'Jellyfin message could not be sent.', 'basic-settings');
+      return redirectWith(res, back, 'error', error.message || 'Media-server message could not be sent.', 'basic-settings');
     }
   });
 
@@ -265,6 +306,7 @@ module.exports = {
   createAdminMediaControlsRouter,
   cleanMessage,
   safeInt,
+  optionalLimit,
   jellyfinPlanState,
   planState,
   activeManagedSessions,
