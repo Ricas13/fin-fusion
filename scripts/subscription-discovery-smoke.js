@@ -132,6 +132,11 @@ assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.recurringId(r
 assert.ok(adminSource.includes('/admin/billing/:id/manual-preview'), 'each missing link must support read-only provider verification');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-link'), 'each missing link must support explicit verified attachment');
 assert.ok(adminSource.includes('Verify provider subscription'), 'manual resolution must show provider truth before attachment');
+assert.ok(adminSource.includes('/manual-preview#manual-provider-preview'), 'manual verification submissions must target the rendered verification feedback instead of returning the operator to the page top');
+assert.ok(adminSource.includes('Subscription verification failed'), 'manual verification failures must be visibly rendered in the same operator workflow');
+assert.ok(adminSource.includes('Provider verification succeeded.'), 'successful provider verification must have explicit visible feedback before linking');
+assert.ok(adminSource.includes('manualAttempt'), 'manual verification errors must preserve enough attempted-provider context to explain what failed');
+assert.ok(adminSource.includes('${verification}${table}'), 'manual verification feedback must render before the missing-subscription table, not after the full page');
 assert.ok(adminSource.includes("filter(item=>item.state!=='linked')"), 'automatic discovery results must focus on unresolved work instead of healthy rows');
 assert.ok(adminSource.includes('Healthy / linked recurring subscriptions'), 'healthy recurring subscriptions must be secondary/reference information');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
