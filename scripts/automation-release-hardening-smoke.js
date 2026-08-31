@@ -70,6 +70,17 @@ assert(maintenanceLock.includes('availableForLocks = AUTOMATION_ROLE_CONNECTION_
 assert(maintenanceLock.includes('Unsafe automation database pool budget') && maintenanceLock.includes('Unsafe automation maintenance-lock pool'),
     'Unsafe custom automation pool sizes must fail fast instead of exhausting the role during jobs');
 
+const managedStremio = read('src/stremio/managed-entitlements.js');
+const managedSyncScope = managedStremio.slice(managedStremio.indexOf('async function syncActive'), managedStremio.indexOf('module.exports'));
+assert(managedSyncScope.includes('await mappings(entitlement)'),
+    'managed Stremio automation must reuse policy-ready mappings instead of rewriting every active account policy on every run');
+assert(!managedSyncScope.includes('for(const account of accounts)await applyPolicy(account,effective,false)'),
+    'managed Stremio automation must not unconditionally POST policy for every active hidden account');
+assert(managedStremio.includes('const failureReasons=new Map()') && managedStremio.includes('summarizeFailures(failureReasons'),
+    'managed Stremio automation must preserve concrete sub-operation failure reasons');
+assert(managedStremio.includes('warning=[revocation.warning,syncWarning].filter(Boolean)'),
+    'managed Stremio automation must return a warning that job health can display');
+
 const admin = read('src/platform/admin-automation.js');
 assert(admin.includes("state==='degraded'"), 'Automation UI must render degraded state');
 assert(admin.includes('Failed sub-operations'), 'Automation UI must expose partial failure count');
