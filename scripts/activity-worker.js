@@ -19,6 +19,8 @@ const householdNetworkPolicy = require('../src/jellyfin/household-network-policy
 const fleetMetrics = require('../src/jellyfin/fleet-metrics');
 const streamPolicy = require('../src/jellyfin/stream-policy-settings');
 const fourKTranscodePolicy = require('../src/jellyfin/four-k-transcode-policy');
+const mediaIdentityPolicy = require('../src/jellyfin/media-identity-policy');
+const paygExpiryMessages = require('../src/jellyfin/payg-expiry-messages');
 
 const intervalSeconds = Math.max(15, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 20)));
 const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
@@ -77,9 +79,6 @@ async function operationalHeartbeat({ draining = false } = {}) {
 async function refreshOperationalHeartbeat({ draining = false } = {}) {
   try {
     const result = await operationalHeartbeat({ draining });
-    // The local Docker heartbeat is evidence that the database heartbeat path
-    // is healthy. During an intentional restore the shared lock proves DB
-    // reachability even though writes are deliberately skipped.
     if (result?.recorded || result?.reason === 'database_maintenance') heartbeat();
     return result;
   } catch (error) {
@@ -168,9 +167,28 @@ async function run() {
           }
           if (!result.skipped) {
             console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now() - started}`);
-            const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ pollsReliable: !result.serverFailures?.length });
+            const failedServerIds = (result.serverFailures || []).map(item => item.serverId).filter(Boolean);
+            const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ pollsReliable: !failedServerIds.length });
             if (!household.skipped && household.customers) {
               console.log(`Household network cycle customers=${household.customers} sessions=${household.observedSessions} denied=${household.denied} stopped=${household.stopped} safetySkipped=${household.safetySkipped}`);
+            }
+            try {
+              const identity = await mediaIdentityPolicy.runMediaIdentityPolicyCycle({ failedServerIds });
+              if (!identity.skipped && (identity.violations || identity.stopped || identity.skipped)) {
+                console.log(`Media identity policy mode=${identity.mode} violations=${identity.violations} stopped=${identity.stopped} safetySkipped=${identity.skipped}`);
+              }
+            } catch (error) {
+              if (current.outcome === 'healthy') current.outcome = 'degraded';
+              console.error('Media identity policy cycle failed:', error.message);
+            }
+            try {
+              const reminders = await paygExpiryMessages.runPaygExpiryMessageCycle({ failedServerIds });
+              if (!reminders.skipped && (reminders.sent || reminders.failed || reminders.safetySkipped)) {
+                console.log(`Pay As You Go reminders eligible=${reminders.eligible} sent=${reminders.sent} failed=${reminders.failed} safetySkipped=${reminders.safetySkipped}`);
+              }
+            } catch (error) {
+              if (current.outcome === 'healthy') current.outcome = 'degraded';
+              console.error('Pay As You Go expiry reminder cycle failed:', error.message);
             }
           }
         } catch (error) {
