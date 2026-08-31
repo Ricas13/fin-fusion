@@ -1,6 +1,8 @@
 'use strict';
 
 (function () {
+  let fieldSequence = 0;
+
   function node(tag, className, text) {
     const item = document.createElement(tag);
     if (className) item.className = className;
@@ -168,9 +170,12 @@
     }
   }
 
-  function formGroup(label, input) {
+  function formGroup(labelText, input) {
     const group = node('div', 'formGroup');
-    group.append(node('label', '', label), input);
+    if (!input.id) input.id = `admin-setting-${++fieldSequence}`;
+    const label = node('label', '', labelText);
+    label.htmlFor = input.id;
+    group.append(label, input);
     return group;
   }
 
@@ -178,7 +183,7 @@
     const connection = node('section', 'adminSettingsInlinePanel');
     connection.append(
       node('h3', '', 'Playback connection limits'),
-      node('p', '', 'Optional active IP and connected-device caps. The active playback-session limit remains the Basic Settings value above. Missing or uncertain identity data is never kicked.')
+      node('p', '', 'Optional active-IP and persistent authorised-device limits. Concurrent streams remain a separate plan limit. Missing or uncertain IP/device identity data is never used to guess an enforcement decision.')
     );
     advancedBody.prepend(connection);
 
@@ -200,10 +205,10 @@
 
       const ip = node('input', 'input'); ip.type = 'number'; ip.name = 'ipLimit'; ip.min = '0'; ip.max = '200'; ip.value = state.ipLimit == null ? '0' : String(state.ipLimit);
       const ipGroup = formGroup('Active IP addresses', ip);
-      ipGroup.append(node('div', 'inlineHelp', '0 = unlimited. Only distinct IPs currently playing count.'));
+      ipGroup.append(node('div', 'inlineHelp', '0 = unlimited. Distinct public IPs with active playback count; excess playback is warned and stopped.'));
       const device = node('input', 'input'); device.type = 'number'; device.name = 'deviceLimit'; device.min = '0'; device.max = '200'; device.value = state.deviceLimit == null ? '0' : String(state.deviceLimit);
-      const deviceGroup = formGroup('Connected devices', device);
-      deviceGroup.append(node('div', 'inlineHelp', '0 = unlimited. Distinct active Device IDs count while playing.'));
+      const deviceGroup = formGroup('Authorised devices', device);
+      deviceGroup.append(node('div', 'inlineHelp', '0 = unlimited. The first Jellyfin/Emby Device IDs to use the account claim persistent slots. The server then blocks other devices until an administrator resets registered devices from Customer → Access.'));
       const limits = node('div', 'formGrid'); limits.append(ipGroup, deviceGroup); connectionForm.append(limits);
 
       const reminder = node('label', 'toggleRow');
@@ -218,7 +223,7 @@
       if (Number(state.liveEntitlements || 0) > 0) {
         const confirmation = node('input', 'input'); confirmation.name = 'confirmation'; confirmation.autocomplete = 'off'; confirmation.placeholder = `Type ${state.code} when changing an IP/device limit`;
         const confirmationGroup = formGroup('Confirm live-plan limit change', confirmation);
-        confirmationGroup.append(node('div', 'inlineHelp', `${state.liveEntitlements} live entitlement${state.liveEntitlements === 1 ? '' : 's'} use this plan. Confirmation is required only when an IP or device limit changes.`));
+        confirmationGroup.append(node('div', 'inlineHelp', `${state.liveEntitlements} live entitlement${state.liveEntitlements === 1 ? '' : 's'} use this plan. Confirmation is required only when an IP or registered-device limit changes.`));
         connectionForm.append(confirmationGroup);
       }
       const connectionButtons = node('div', 'buttonRow');
@@ -254,13 +259,13 @@
     const input = accessCard?.querySelector('input[name="streams"]');
     const group = input?.closest('.formGroup');
     const label = group?.querySelector('label');
-    if (label) label.textContent = 'Active playback sessions';
+    if (label) label.textContent = 'Concurrent streams';
     const help = group?.querySelector('.inlineHelp');
-    if (help) help.textContent = 'Maximum simultaneous playing sessions when the concurrent-session access model is selected.';
+    if (help) help.textContent = 'Maximum simultaneous playing sessions. This limit is independent of the IP and registered-device limits in Advanced Settings.';
     const mode = accessCard?.querySelector('select[name="jellyfinAccessModel"]');
     for (const option of mode?.options || []) {
-      if (option.value === 'concurrent_streams') option.textContent = 'Active playback sessions';
-      if (option.value === 'household_network') option.textContent = 'Household network / IP lease';
+      if (option.value === 'concurrent_streams') option.textContent = 'Concurrent streams';
+      if (option.value === 'household_network') option.textContent = 'Legacy household network lease';
     }
   }
 
@@ -314,20 +319,21 @@
       }
       const form = node('form'); form.method = 'post'; form.action = `/admin/media-controls/server/${encodeURIComponent(serverId)}/message`;
       const csrf = node('input'); csrf.type = 'hidden'; csrf.name = '_csrf'; csrf.value = csrfToken(); form.append(csrf);
-      const audience = node('div', 'formGroup'); audience.append(node('label', '', 'Audience'));
       const select = node('select', 'input'); select.name = 'customerId';
       const all = node('option', '', `All active managed users (${state.activeSessions})`); all.value = ''; select.append(all);
       for (const target of state.targets || []) {
         const option = node('option', '', `${target.label} · ${target.sessions} active session${target.sessions === 1 ? '' : 's'}`);
         option.value = target.customerId; select.append(option);
       }
-      audience.append(select, node('div', 'adminMessageAudienceMeta', `${providerLabel} messages are live client pop-ups, not an offline inbox. Users without an active session will not receive them.`));
-      const titleGroup = node('div', 'formGroup'); titleGroup.append(node('label', '', 'Message title'));
-      const messageTitle = node('input', 'input'); messageTitle.name = 'header'; messageTitle.maxLength = 80; messageTitle.value = 'Message from administrator'; messageTitle.required = true; titleGroup.append(messageTitle);
-      const textGroup = node('div', 'formGroup'); textGroup.append(node('label', '', 'Message'));
-      const text = node('textarea', 'input'); text.name = 'text'; text.rows = 4; text.maxLength = 500; text.required = true; text.placeholder = `Type the message shown in ${providerLabel}…`; textGroup.append(text);
-      const timeoutGroup = node('div', 'formGroup'); timeoutGroup.append(node('label', '', 'Display time'));
-      const timeout = node('input', 'input'); timeout.type = 'number'; timeout.name = 'timeoutSeconds'; timeout.min = '3'; timeout.max = '30'; timeout.value = '8'; timeoutGroup.append(timeout, node('div', 'inlineHelp', `Seconds before ${providerLabel} dismisses the pop-up.`));
+      const audience = formGroup('Audience', select);
+      audience.append(node('div', 'adminMessageAudienceMeta', `${providerLabel} messages are live client pop-ups, not an offline inbox. Users without an active session will not receive them.`));
+      const messageTitle = node('input', 'input'); messageTitle.name = 'header'; messageTitle.maxLength = 80; messageTitle.value = 'Message from administrator'; messageTitle.required = true;
+      const titleGroup = formGroup('Message title', messageTitle);
+      const text = node('textarea', 'input'); text.name = 'text'; text.rows = 4; text.maxLength = 500; text.required = true; text.placeholder = `Type the message shown in ${providerLabel}…`;
+      const textGroup = formGroup('Message', text);
+      const timeout = node('input', 'input'); timeout.type = 'number'; timeout.name = 'timeoutSeconds'; timeout.min = '3'; timeout.max = '30'; timeout.value = '8';
+      const timeoutGroup = formGroup('Display time', timeout);
+      timeoutGroup.append(node('div', 'inlineHelp', `Seconds before ${providerLabel} dismisses the pop-up.`));
       const fields = node('div', 'formGrid'); fields.append(audience, titleGroup, textGroup, timeoutGroup); form.append(fields);
       const row = node('div', 'buttonRow'); const submit = node('button', 'button', 'Send message'); submit.type = 'submit'; row.append(submit); form.append(row); formPanel.append(form);
     } catch (error) {
@@ -363,6 +369,84 @@
     lazyLogs(logs, `/admin/media-controls/server/${encodeURIComponent(match[1])}/logs`);
   }
 
+  function deviceLabel(device) {
+    const name = device.deviceName || 'Unknown device';
+    const client = device.clientName ? ` · ${device.clientName}` : '';
+    const id = String(device.deviceId || '');
+    const compactId = id.length > 18 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
+    return { name: `${name}${client}`, id: compactId || '—' };
+  }
+
+  function registeredDeviceTable(devices) {
+    const wrap = node('div', 'tableWrap');
+    const table = node('table', 'dataTable responsiveTable');
+    const thead = node('thead');
+    const hr = node('tr');
+    for (const heading of ['Device', 'Device ID', 'Registered', 'Last seen']) hr.append(node('th', '', heading));
+    thead.append(hr); table.append(thead);
+    const tbody = node('tbody');
+    for (const device of devices) {
+      const label = deviceLabel(device);
+      const row = node('tr');
+      for (const [heading, value] of [['Device', label.name], ['Device ID', label.id], ['Registered', formatDate(device.registeredAt)], ['Last seen', formatDate(device.lastSeenAt)]]) {
+        const cell = node('td', '', value); cell.dataset.label = heading; row.append(cell);
+      }
+      tbody.append(row);
+    }
+    table.append(tbody); wrap.append(table); return wrap;
+  }
+
+  async function customerDeviceAccess() {
+    const match = location.pathname.match(/^\/admin\/users\/([0-9a-f-]{36})$/i);
+    if (!match || new URLSearchParams(location.search).get('tab') !== 'access') return;
+    const content = document.querySelector('.content');
+    if (!content || document.getElementById('media-device-access')) return;
+    try {
+      const payload = await json(`/admin/media-controls/customer/${encodeURIComponent(match[1])}/devices`);
+      const accounts = (payload.accounts || []).filter(account => account.deviceLimit != null || account.managed || (account.devices || []).some(device => !device.revokedAt));
+      if (!accounts.length) return;
+      const section = node('section', 'section'); section.id = 'media-device-access';
+      const head = node('div', 'sectionHead');
+      const copy = node('div'); copy.append(node('h2', '', 'Registered media devices'), node('div', 'muted', 'Persistent Jellyfin/Emby device slots. A registered device stays authorised until an administrator resets the slots.'));
+      head.append(copy); section.append(head);
+
+      for (const account of accounts) {
+        const active = (account.devices || []).filter(device => !device.revokedAt);
+        const panel = node('div', 'formPanel');
+        const provider = String(account.provider || 'jellyfin').toLowerCase() === 'emby' ? 'Emby' : 'Jellyfin';
+        const title = node('div', 'sectionHead');
+        const identity = node('div'); identity.append(node('strong', '', `${provider} · ${account.serverName || 'Media server'}`), node('div', 'muted', account.username || 'Managed account'));
+        const status = account.deviceLimit == null ? 'Unlimited' : `${active.length} / ${account.deviceLimit} registered`;
+        title.append(identity, node('span', `pill ${account.lastError ? 'bad' : active.length && account.enforced ? 'good' : 'accent'}`, status));
+        panel.append(title);
+        if (account.lastError) panel.append(node('div', 'notice warn', `Last device-policy sync failed: ${account.lastError}`));
+        if (active.length) panel.append(registeredDeviceTable(active));
+        else if (account.deviceLimit != null) panel.append(node('div', 'emptyCompact', `Awaiting the first ${provider} device. The next device to connect will claim the first available slot.`));
+        else panel.append(node('div', 'emptyCompact', 'This plan does not restrict registered devices.'));
+
+        if (account.deviceLimit != null && (account.managed || active.length)) {
+          const form = node('form', 'compactAction'); form.method = 'post'; form.action = `/admin/media-controls/customer/${encodeURIComponent(match[1])}/devices/${encodeURIComponent(account.accountId)}/reset`;
+          const csrf = node('input'); csrf.type = 'hidden'; csrf.name = '_csrf'; csrf.value = csrfToken(); form.append(csrf);
+          const row = node('div', 'buttonRow');
+          const reset = node('button', 'button secondary', 'Reset registered devices'); reset.type = 'submit';
+          reset.addEventListener('click', event => {
+            if (!window.confirm('Reset registered devices? The current device allowlist will be released and the next device(s) used will claim the available slots.')) event.preventDefault();
+          });
+          row.append(reset); form.append(row, node('div', 'inlineHelp', 'Use this when a customer replaces a TV, phone or other client. The reset is audited.'));
+          panel.append(form);
+        }
+        section.append(panel);
+      }
+
+      const history = [...content.querySelectorAll('section.section')].find(item => item.querySelector('.sectionHead h2')?.textContent?.trim() === 'Provisioning history');
+      if (history) history.insertAdjacentElement('beforebegin', section); else content.append(section);
+    } catch (error) {
+      const section = node('section', 'section'); section.id = 'media-device-access';
+      const head = node('div', 'sectionHead'); head.append(node('h2', '', 'Registered media devices')); section.append(head, node('div', 'notice warn', error.message || 'Registered device state could not be loaded.'));
+      content.append(section);
+    }
+  }
+
   function groupPayments() {
     if (location.pathname !== '/admin/payments') return;
     const provider = document.getElementById('provider-setup');
@@ -394,6 +478,7 @@
     groupIntegrationsLanguage();
     groupPlanEditor();
     groupServerEditor();
+    customerDeviceAccess();
     groupPayments();
     requestAnimationFrame(revealHashTarget);
     setTimeout(revealHashTarget, 200);
