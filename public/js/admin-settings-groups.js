@@ -123,21 +123,10 @@
     if (location.pathname !== '/admin/settings' || new URLSearchParams(location.search).get('section') !== 'security') return;
     const cards = [...document.querySelectorAll('section.settings-card')];
     if (!cards.length) return;
-    // Session lifetimes, registration rate limits and private-network trust are
-    // core Security settings and remain visible. Only infrequent housekeeping
-    // is progressive disclosure here.
-    const advancedTitles = new Set(['Abandoned activation cleanup']);
-    const advancedCards = cards.filter(card => advancedTitles.has(card.querySelector('h3')?.textContent?.trim()));
-    const first = cards[0];
-    first.insertAdjacentElement('beforebegin', basicHeader('Basic Settings', 'Registration, verification, staff sign-in, session and network security controls used in normal administration.'));
-    if (!advancedCards.length) return;
-    const advanced = disclosure('advanced-settings', 'Advanced Settings', 'Infrequent security housekeeping and cleanup policy.', `${advancedCards.length} area`);
-    const body = bodyOf(advanced);
-    // Insert the disclosure while every original card is still in its original
-    // parent. Moving the final card first can otherwise make that card a child
-    // of `advanced`, and inserting `advanced` after its own descendant throws.
-    cards[cards.length - 1].insertAdjacentElement('afterend', advanced);
-    advancedCards.forEach(card => body.append(card));
+    // All controls on the canonical Security page are operator-facing security
+    // boundaries and stay visible. Advanced disclosure is used on pages where
+    // hiding specialist controls does not hide the owning workflow itself.
+    cards[0].insertAdjacentElement('beforebegin', basicHeader('Basic Settings', 'Registration, verification, staff sign-in, session, network security and activation-cleanup controls.'));
   }
 
   function groupIntegrationsLanguage() {
