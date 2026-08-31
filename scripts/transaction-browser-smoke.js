@@ -19,12 +19,13 @@ assert(service.includes("LEFT JOIN customers c ON c.id=t.customer_id")&&service.
 assert(service.includes('historyAccounting.historyKind(row)'),'Transactions browser must reuse Payment History accounting classification');
 assert(service.includes('MAX_CLASSIFIED_SCAN')&&service.includes('truncated'),'Large classified searches must surface a completeness warning instead of silently truncating');
 const admin=read('src/platform/admin-transactions.js');
-assert(admin.includes("/admin/payments/transactions")&&admin.includes("active:'transactions'"),'Transactions must be a first-class Payments destination');
+assert(admin.includes("/admin/payments/transactions")&&admin.includes("active:'transactions'"),'Transactions archive must remain a routable specialist Payments destination');
 assert(admin.includes('reportingCurrency.convertMinor'),'Visible transaction amounts must normalize into the configured portal currency');
 assert(admin.includes('Original'),'Original currency must remain visible');
 assert(!admin.includes('/admin/payments/history'),'Import history was removed; Transactions must not link to a deleted page');
 const routes=read('src/platform/admin-route-composition.js');
 assert(routes.includes('createAdminTransactionsRouter')&&routes.includes('app.use(createAdminTransactionsRouter())'),'Transactions router must be mounted canonically');
 const nav=require('../src/platform/admin-nav');
-assert(nav.childPages('payments').some(page=>page[0]==='transactions'&&page[2]==='/admin/payments/transactions'),'Transactions must be reachable from Payments & Billing sidebar');
+assert(nav.hiddenPages.transactions?.page?.[2]==='/admin/payments/transactions','Imported transaction archive must remain registered and routable');
+assert(!nav.childPages('payments').some(page=>page[0]==='transactions'),'Imported transaction archive must stay out of permanent Payments & Billing sidebar navigation');
 console.log('transaction browser smoke: ok');
