@@ -8,6 +8,7 @@ const registry = require('../jellyfin/registry');
 const { POLICY_REASON } = require('../jellyfin/four-k-transcode-policy');
 
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+const readLimit = routeRateLimit.middleware({ scope: 'admin-jellyfin-media-controls-read', max: 180, windowSeconds: 60, reason: 'admin_jellyfin_media_controls_read' });
 const writeLimit = routeRateLimit.middleware({ scope: 'admin-jellyfin-media-controls', max: 30, windowSeconds: 60, reason: 'admin_jellyfin_media_controls' });
 
 function gate(req, res, next) {
@@ -98,8 +99,8 @@ async function activeManagedSessions(serverId) {
   let sessions;
   try {
     sessions = await registry.request(serverId, '/Sessions');
-  } catch (error) {
-    console.warn(`Jellyfin message audience unavailable for server ${serverId}: ${error.message}`);
+  } catch (_) {
+    console.warn('Jellyfin message audience lookup failed for a configured server.');
     return { server, sessions: [], targets: [], supportsMessaging: true, messagingError: 'Active Jellyfin sessions could not be loaded. Check server connectivity and trusted-network settings.' };
   }
   if (!Array.isArray(sessions)) return { server, sessions: [], targets: [], supportsMessaging: true, messagingError: 'Jellyfin returned an unexpected sessions response.' };
@@ -146,7 +147,7 @@ function createAdminMediaControlsRouter() {
   const router = express.Router();
   router.use('/admin/media-controls', gate, noStore);
 
-  router.get(`/admin/media-controls/plan/:planId(${UUID})/state`, async (req, res, next) => {
+  router.get(`/admin/media-controls/plan/:planId(${UUID})/state`, readLimit, async (req, res, next) => {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).json({ error: 'Plan not found.' });
@@ -161,7 +162,7 @@ function createAdminMediaControlsRouter() {
     } catch (error) { return next(error); }
   });
 
-  router.get(`/admin/media-controls/plan/:planId(${UUID})/logs`, async (req, res, next) => {
+  router.get(`/admin/media-controls/plan/:planId(${UUID})/logs`, readLimit, async (req, res, next) => {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).json({ error: 'Plan not found.' });
@@ -196,7 +197,7 @@ function createAdminMediaControlsRouter() {
     }
   });
 
-  router.get(`/admin/media-controls/server/:serverId(${UUID})/state`, async (req, res, next) => {
+  router.get(`/admin/media-controls/server/:serverId(${UUID})/state`, readLimit, async (req, res, next) => {
     try {
       const state = await activeManagedSessions(req.params.serverId);
       return res.json({
@@ -209,7 +210,7 @@ function createAdminMediaControlsRouter() {
     } catch (error) { return next(error); }
   });
 
-  router.get(`/admin/media-controls/server/:serverId(${UUID})/logs`, async (req, res, next) => {
+  router.get(`/admin/media-controls/server/:serverId(${UUID})/logs`, readLimit, async (req, res, next) => {
     try {
       if (!(await serverInfo(req.params.serverId))) return res.status(404).json({ error: 'Server not found.' });
       return res.json(await serverLogs(req.params.serverId));
@@ -252,8 +253,8 @@ function createAdminMediaControlsRouter() {
     }
   });
 
-  router.use('/admin/media-controls', (error, _req, res, _next) => {
-    console.error('Admin media controls error:', error.message);
+  router.use('/admin/media-controls', (_error, _req, res, _next) => {
+    console.error('Admin media controls request failed.');
     if (res.headersSent) return;
     return res.status(500).json({ error: 'Media controls are temporarily unavailable.' });
   });
