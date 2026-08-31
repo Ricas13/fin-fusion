@@ -4,6 +4,7 @@ const crypto=require('crypto');
 const {query}=require('../db');
 const provisioning=require('../jellyfin/provisioning');
 const registry=require('../jellyfin/registry');
+const policyControl=require('../jellyfin/reconciliation-control');
 const {encryptWithEnv,decryptWithEnv}=require('../security/purpose-crypto');
 const managedSources=require('./managed-sources');
 const entitlements=require('./entitlements');
@@ -23,8 +24,10 @@ async function planFor(entitlement){const result=await query('SELECT * FROM plan
 async function serverFor(serverId){const result=await query('SELECT * FROM jellyfin_servers WHERE id=$1',[serverId]);if(!result.rowCount)throw new Error('Managed media server not found.');return result.rows[0];}
 async function internalAccount(customerId,serverId){const result=await query(`SELECT * FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 AND account_purpose='stremio_internal' ORDER BY created_at LIMIT 1`,[customerId,serverId]);return result.rows[0]||null;}
 async function applyPolicy(account,effective,disabled=false){
-  const access=await provisioning.resolveLibraryAccessForServer(account.server_id,effective.unrestricted,effective.visibleNames,disabled),body={...provisioning.policyBody(effective.technical,disabled,access),EnableRemoteAccess:!disabled,MaxActiveSessions:0,EnableContentDownloading:false,EnableSyncTranscoding:false,EnableMediaConversion:false,EnableLiveTvManagement:false,EnableUserPreferenceAccess:false};
-  await registry.request(account.server_id,`/Users/${account.jellyfin_user_id}/Policy`,{method:'POST',body});const key=policyKey(account);if(disabled)policyReady.delete(key);else policyReady.add(key);return access;
+  const access=await provisioning.resolveLibraryAccessForServer(account.server_id,effective.unrestricted,effective.visibleNames,disabled),body={...provisioning.policyBody(effective.technical,disabled,access),EnableRemoteAccess:!disabled,MaxActiveSessions:0,EnableContentDownloading:false,EnableSyncTranscoding:false,EnableMediaConversion:false,EnableLiveTvManagement:false,EnableUserPreferenceAccess:false},key=policyKey(account);
+  const remote=await registry.request(account.server_id,`/Users/${encodeURIComponent(account.jellyfin_user_id)}`,{method:'GET',timeoutMs:5000});
+  if(remote&&typeof remote==='object'&&remote.Policy&&policyControl.policyMatches(remote,body)){if(disabled)policyReady.delete(key);else policyReady.add(key);return{...access,unchanged:true};}
+  await registry.request(account.server_id,`/Users/${account.jellyfin_user_id}/Policy`,{method:'POST',body});if(disabled)policyReady.delete(key);else policyReady.add(key);return access;
 }
 async function createMapping(entitlement,server,effective){
   const bootstrap=password(),account=await provisioning.createJellyfinAccount(entitlement.customer_id,server,effective,{preferredUsername:hiddenUsername(entitlement.customer_id),bootstrapPassword:bootstrap,makePrimary:false});
