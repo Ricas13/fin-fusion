@@ -45,8 +45,6 @@ function normalizedOptions(options = {}) {
 async function recordEvent(client, cfg, decision, activeNetworkCount, expiresAt) {
   const params = [cfg.tenantKey, cfg.scope, cfg.subjectKey, cfg.customerId, cfg.networkFamily, decision, activeNetworkCount, cfg.networkLimit, expiresAt, JSON.stringify(cfg.metadata)];
   if (decision === 'denied') {
-    // A denied household session may be observed every polling cycle. Keep a
-    // useful audit signal without writing the same denial every 30 seconds.
     await client.query(
       `INSERT INTO access_network_events(tenant_key,scope,subject_key,customer_id,network_family,decision,active_network_count,network_limit,lease_expires_at,detail)
        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb
@@ -71,9 +69,6 @@ async function claim(options = {}) {
   return transaction(async client => {
     const lockKey = `${cfg.tenantKey}|${cfg.scope}|${cfg.subjectKey}`;
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [lockKey]);
-    // Expired rows are ignored below and physically removed by the canonical
-    // retention owner. The web runtime intentionally does not need DELETE on
-    // access_network_leases just to claim or refresh household access.
     const active = await client.query(
       `SELECT network_hash,network_family,first_seen_at,last_seen_at,expires_at
        FROM access_network_leases
@@ -154,8 +149,9 @@ async function preview(options = {}) {
   return { allowed: true, decision: 'available', activeNetworkCount: activeSameFamily.length, networkLimit: cfg.networkLimit, networkFamily: cfg.networkFamily, expiresAt: null };
 }
 
-async function activeForSubject({ tenantKey = 'default', scope, subjectKey }) {
-  const result = await query(
+async function activeForSubject({ tenantKey = 'default', scope, subjectKey }, { client = null } = {}) {
+  const db = client || { query };
+  const result = await db.query(
     `SELECT network_hash,network_family,first_seen_at,last_seen_at,expires_at
      FROM access_network_leases
      WHERE tenant_key=$1 AND scope=$2 AND subject_key=$3 AND expires_at>NOW()
