@@ -80,6 +80,16 @@ assert(managedStremio.includes('const failureReasons=new Map()') && managedStrem
     'managed Stremio automation must preserve concrete sub-operation failure reasons');
 assert(managedStremio.includes('warning=[revocation.warning,syncWarning].filter(Boolean)'),
     'managed Stremio automation must return a warning that job health can display');
+const managedApplyScope = managedStremio.slice(
+    managedStremio.indexOf('async function applyPolicy'),
+    managedStremio.indexOf('async function createMapping')
+);
+assert(managedApplyScope.includes("method:'GET',timeoutMs:5000"),
+    'managed Stremio policy maintenance must read the remote hidden-account policy before writing');
+assert(managedApplyScope.includes('policyControl.policyMatches(remote,body)'),
+    'managed Stremio policy maintenance must suppress unchanged remote policy writes');
+assert(managedApplyScope.indexOf('policyControl.policyMatches(remote,body)') < managedApplyScope.indexOf("method:'POST',body"),
+    'managed Stremio policy comparison must happen before the policy mutation');
 
 const resilientProvisioning = read('src/jellyfin/resilient-provisioning.js');
 const policyGuardScope = resilientProvisioning.slice(
