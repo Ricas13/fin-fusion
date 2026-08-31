@@ -50,18 +50,47 @@ async function paypalToken(cfg) {
     }
     return result.data.access_token;
 }
+function normalizeLegacyPayPalAgreement(agreement) {
+    const next = agreement?.agreement_details?.next_billing_date ? new Date(agreement.agreement_details.next_billing_date) : null;
+    return {
+        provider: 'paypal',
+        id: clean(agreement?.id, 255),
+        providerCustomerId: clean(agreement?.payer?.payer_info?.payer_id, 255) || null,
+        email: clean(agreement?.payer?.payer_info?.email, 320) || null,
+        status: clean(agreement?.state, 60).toUpperCase(),
+        periodEnd: next && !Number.isNaN(next.getTime()) ? next : null,
+        cancelAtPeriodEnd: ['CANCELLED', 'CANCELED', 'EXPIRED'].includes(clean(agreement?.state, 60).toUpperCase()),
+        externalPlanIds: clean(agreement?.plan?.id, 255) ? [clean(agreement.plan.id, 255)] : [],
+        apiFamily: 'billing-agreements-v1'
+    };
+}
+async function paypalRead(cfg, token, path) {
+    return providerHttp.fetchJson('paypal', `${paypalHost(cfg)}${path}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'PayPal-Enforce-ISO8601-Format': 'true' }
+    });
+}
 async function paypalRemote(providerSubscriptionId) {
     if (!/^I-/i.test(providerSubscriptionId)) throw new Error('PayPal recurring subscription IDs must start with I-.');
     const cfg = await providerSettings.getRaw('paypal');
     const token = await paypalToken(cfg);
-    const result = await providerHttp.fetchJson('paypal', `${paypalHost(cfg)}/v1/billing/subscriptions/${encodeURIComponent(providerSubscriptionId)}?fields=plan`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'PayPal-Enforce-ISO8601-Format': 'true' }
-    });
-    if (!result.response.ok) {
-        const detail = result.data?.message || result.data?.name || `HTTP ${result.response.status}`;
-        throw new Error(`PayPal subscription lookup failed: ${detail}`);
+
+    const modern = await paypalRead(cfg, token, `/v1/billing/subscriptions/${encodeURIComponent(providerSubscriptionId)}?fields=plan`);
+    if (modern.response.ok) return discovery.normalizePayPalSubscription(modern.data || {});
+
+    // Migrated subscriptions can pre-date PayPal's current Subscriptions API. Those
+    // I- profile IDs are exposed through the deprecated Billing Agreements v1 API.
+    // Try that API only when the current subscription endpoint says the resource is
+    // absent/invalid; do not hide authentication, permission or provider outages.
+    if ([404, 422].includes(Number(modern.response.status))) {
+        const legacy = await paypalRead(cfg, token, `/v1/payments/billing-agreements/${encodeURIComponent(providerSubscriptionId)}`);
+        if (legacy.response.ok) return normalizeLegacyPayPalAgreement(legacy.data || {});
+        const legacyDetail = legacy.data?.message || legacy.data?.name || `HTTP ${legacy.response.status}`;
+        const modernDetail = modern.data?.message || modern.data?.name || `HTTP ${modern.response.status}`;
+        throw new Error(`PayPal could not read this recurring profile through either Subscriptions v1 (${modernDetail}) or legacy Billing Agreements v1 (${legacyDetail}).`);
     }
-    return discovery.normalizePayPalSubscription(result.data || {});
+
+    const detail = modern.data?.message || modern.data?.name || `HTTP ${modern.response.status}`;
+    throw new Error(`PayPal subscription lookup failed: ${detail}`);
 }
 
 async function remoteSubscription(provider, providerSubscriptionId) {
@@ -83,7 +112,10 @@ async function verifyPlan(local, remote) {
          ORDER BY active DESC,updated_at DESC
          LIMIT 1
     `, [remote.provider, local.plan_id, externalPlanIds]);
-    if (!mapping.rowCount) throw new Error(`${providerLabel(remote.provider)} subscription plan does not map to this customer's local plan.`);
+    if (!mapping.rowCount) {
+        if (remote.apiFamily === 'billing-agreements-v1') throw new Error(`PayPal found this legacy billing agreement, but its legacy Billing Plan ID does not map to this customer's local plan.`);
+        throw new Error(`${providerLabel(remote.provider)} subscription plan does not map to this customer's local plan.`);
+    }
     return { mapping: mapping.rows[0], externalPlanIds };
 }
 
@@ -130,4 +162,4 @@ async function apply({ subscriptionId, provider, providerSubscriptionId, actorUs
     });
 }
 
-module.exports = { preview, apply, remoteSubscription, localPremium, providerLabel };
+module.exports = { preview, apply, remoteSubscription, localPremium, providerLabel, normalizeLegacyPayPalAgreement };

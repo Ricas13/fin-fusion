@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const discovery = require('../src/payments/subscription-discovery');
+const manualLink = require('../src/payments/manual-subscription-link');
 
 assert(discovery.recurringId('stripe', 'sub_123'));
 assert(discovery.recurringId('paypal', 'I-ABC123'));
@@ -29,6 +30,21 @@ assert.strictEqual(paypal.providerCustomerId, 'PAYER-1');
 assert.deepStrictEqual(paypal.externalPlanIds, ['P-PREMIUM']);
 assert(discovery.currentRemote(paypal));
 assert(!discovery.currentRemote({ ...paypal, status: 'CANCELLED' }), 'cancelled PayPal subscriptions must never be auto-linked');
+
+const legacyPaypal = manualLink.normalizeLegacyPayPalAgreement({
+    id: 'I-LEGACY1', state: 'Active',
+    payer: { payer_info: { payer_id: 'PAYER-LEGACY', email: 'legacy@example.com' } },
+    agreement_details: { next_billing_date: '2027-02-01T00:00:00Z' },
+    plan: { id: 'P-LEGACY' }
+});
+assert.strictEqual(legacyPaypal.provider, 'paypal');
+assert.strictEqual(legacyPaypal.id, 'I-LEGACY1');
+assert.strictEqual(legacyPaypal.providerCustomerId, 'PAYER-LEGACY');
+assert.strictEqual(legacyPaypal.email, 'legacy@example.com');
+assert.strictEqual(legacyPaypal.status, 'ACTIVE');
+assert.deepStrictEqual(legacyPaypal.externalPlanIds, ['P-LEGACY']);
+assert.strictEqual(legacyPaypal.apiFamily, 'billing-agreements-v1');
+assert(discovery.currentRemote(legacyPaypal), 'active legacy PayPal billing agreements must be eligible for verified manual recovery');
 
 function baseContext() {
     return {
@@ -102,6 +118,9 @@ assert.ok(manualSource.includes("checkout_mode='subscription' AND plan_id=$2"), 
 assert.ok(manualSource.includes('provider_subscription_id=$2'), 'manual recovery must reject already-owned provider subscriptions');
 assert.ok(manualSource.includes('operatorConfirmed'), 'manual recovery must require explicit operator ownership confirmation');
 assert.ok(manualSource.includes("discovery.currentRemote(remote)"), 'manual recovery must refuse non-current provider subscriptions');
+assert.ok(manualSource.includes('/v1/billing/subscriptions/'), 'manual PayPal recovery must try the current Subscriptions API first');
+assert.ok(manualSource.includes('/v1/payments/billing-agreements/'), 'manual PayPal recovery must fall back to legacy Billing Agreements v1 for migrated I- profiles');
+assert.ok(manualSource.includes("apiFamily: 'billing-agreements-v1'"), 'legacy PayPal normalization must remain distinguishable for operator diagnostics');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(manualSource), 'manual recovery must not mutate subscriptions outside lifecycle');
 
 const adminSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-billing.js'), 'utf8');
