@@ -2,6 +2,7 @@
 
 const { query } = require('../db');
 const base = require('./provisioning');
+const registry = require('./registry');
 const control = require('./reconciliation-control');
 const reconciliationLock = require('./reconciliation-lock');
 const accessHolds = require('../entitlements/access-holds');
@@ -17,6 +18,24 @@ function stateDetail(primaryEntitlement,outcome){const account=outcome?.account|
 function assertDiscordSyncResult(result){const errors=Array.isArray(result?.errors)?result.errors.filter(Boolean):[];if(errors.length){const error=new Error(`Discord role synchronization failed: ${errors.join('; ').slice(0,800)}`);error.code='DISCORD_ROLE_SYNC_FAILED';error.discordErrors=errors;throw error;}return result||{skipped:'no_result'};}
 
 async function normalAccounts(customerId){const rows=await query(`SELECT ja.*,js.enabled AS server_enabled,js.server_class,js.name AS server_name,js.public_url FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at ASC`,[customerId]);return rows.rows;}
+async function applyPolicyIfChanged(account,effective,disabled=false){
+    const libraryAccess=await base.resolveLibraryAccessForServer(account.server_id,effective.unrestricted,effective.visibleNames,disabled);
+    const desired=base.policyBody(effective.technical,disabled,libraryAccess);
+    const desiredHash=control.policyHash(desired);
+    const remote=await registry.request(account.server_id,`/Users/${encodeURIComponent(account.jellyfin_user_id)}`,{method:'GET',timeoutMs:5000});
+    if(remote&&typeof remote==='object'&&remote.Policy&&control.policyMatches(remote,desired)){
+        if(libraryAccess.missing.length){
+            const message=`Missing on server: ${libraryAccess.missing.join(', ')}`;
+            const error=new Error(`Jellyfin policy applied with a narrowed library set -- ${message}`);
+            await control.markAccountFailure(account.id,account.customer_id,desiredHash,error).catch(()=>{});
+            throw error;
+        }
+        await query(`UPDATE jellyfin_accounts SET disabled=$1,last_policy_sync=NOW(),updated_at=NOW() WHERE id=$2`,[disabled,account.id]);
+        await control.markAccountSuccess(account.id,account.customer_id,desiredHash,{verified:true});
+        return{missing:[],unchanged:true};
+    }
+    return base.applyPolicy(account,effective,disabled);
+}
 async function disableAccounts(accounts){for(const account of accounts){if(!account.disabled&&account.server_enabled)await base.disableJellyfinAccount(account);}}
 
 async function entitlementForAccount(customerId,account){
@@ -66,7 +85,7 @@ async function adoptExistingFreeAccount(customerId,accounts,freeEntitlement,prim
 
 async function createLaneAccount(customerId,entitlement,lane,makePrimary){const server=await base.selectServerForPlan(entitlement);if(!server)throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.contract_plan_code||entitlement.code}`);const effective=await libraryPolicy.effectiveForAccount(customerId,entitlement,{id:null,server_id:server.id});const account=await base.createJellyfinAccount(customerId,server,effective,{makePrimary});await query(`UPDATE jellyfin_accounts SET access_lane=$2,updated_at=NOW() WHERE id=$1`,[account.id,lane]);account.access_lane=lane;account.server_name=server.name;account.public_url=server.public_url;base.notifyNewJellyfinAccess(customerId,account).catch(()=>{});return{account,effective};}
 
-async function reconcileLane(customerId,entitlement,lane,accounts,{makePrimary=false}={}){const laneAccounts=accounts.filter(account=>account.access_lane===lane);if(!entitlement||entitlement.blocked){await disableAccounts(laneAccounts);return{active:false,blocked:Boolean(entitlement?.blocked),entitlement:entitlement||null,account:null};}let account=laneAccounts.find(a=>a.is_primary&&a.server_class===entitlement.server_class&&a.server_enabled)||laneAccounts.find(a=>!a.disabled&&a.server_class===entitlement.server_class&&a.server_enabled)||laneAccounts.find(a=>a.server_class===entitlement.server_class&&a.server_enabled),effective;if(!account){const created=await createLaneAccount(customerId,entitlement,lane,makePrimary);account=created.account;effective=created.effective;accounts.push(account);}else{effective=await libraryPolicy.effectiveForAccount(customerId,entitlement,account);await base.applyPolicy(account,effective,false);account.disabled=false;if(makePrimary&&!account.is_primary){await base.markPrimaryAccount(customerId,account.id);for(const existing of accounts)existing.is_primary=existing.id===account.id;account.is_primary=true;}}await disableAccounts(laneAccounts.filter(old=>old.id!==account.id));await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('entitlement.reconcile_lane','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({lane,subscriptionId:entitlement.subscription_id,planCode:entitlement.contract_plan_code||entitlement.code,serverId:account.server_id,jellyfinAccountId:account.id})]);return{active:true,blocked:false,entitlement,account,effective};}
+async function reconcileLane(customerId,entitlement,lane,accounts,{makePrimary=false}={}){const laneAccounts=accounts.filter(account=>account.access_lane===lane);if(!entitlement||entitlement.blocked){await disableAccounts(laneAccounts);return{active:false,blocked:Boolean(entitlement?.blocked),entitlement:entitlement||null,account:null};}let account=laneAccounts.find(a=>a.is_primary&&a.server_class===entitlement.server_class&&a.server_enabled)||laneAccounts.find(a=>!a.disabled&&a.server_class===entitlement.server_class&&a.server_enabled)||laneAccounts.find(a=>a.server_class===entitlement.server_class&&a.server_enabled),effective;if(!account){const created=await createLaneAccount(customerId,entitlement,lane,makePrimary);account=created.account;effective=created.effective;accounts.push(account);}else{effective=await libraryPolicy.effectiveForAccount(customerId,entitlement,account);await applyPolicyIfChanged(account,effective,false);account.disabled=false;if(makePrimary&&!account.is_primary){await base.markPrimaryAccount(customerId,account.id);for(const existing of accounts)existing.is_primary=existing.id===account.id;account.is_primary=true;}}await disableAccounts(laneAccounts.filter(old=>old.id!==account.id));await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('entitlement.reconcile_lane','customer',$1,$2::jsonb)`,[customerId,JSON.stringify({lane,subscriptionId:entitlement.subscription_id,planCode:entitlement.contract_plan_code||entitlement.code,serverId:account.server_id,jellyfinAccountId:account.id})]);return{active:true,blocked:false,entitlement,account,effective};}
 
 async function recordRun(customerId,subscriptionId,fn){const started=await query(`INSERT INTO provisioning_runs(customer_id,subscription_id,action,status,detail) VALUES($1,$2,'reconcile','started',$3::jsonb) RETURNING id`,[customerId,subscriptionId||null,JSON.stringify({mode:'multi_access'})]),id=started.rows[0].id;try{const value=await fn();await query(`UPDATE provisioning_runs SET status='succeeded',completed_at=NOW() WHERE id=$1`,[id]);return value;}catch(error){await query(`UPDATE provisioning_runs SET status='failed',detail=COALESCE(detail,'{}'::jsonb)||$2::jsonb,completed_at=NOW() WHERE id=$1`,[id,JSON.stringify({error:error.message})]);throw error;}}
 
@@ -80,4 +99,4 @@ async function setJellyfinPassword(customerId,accountId,newPassword){const accou
 async function renameJellyfinAccount(customerId,accountId,newUsername,options={}){const account=await query(`SELECT account_purpose FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2`,[accountId,customerId]);if(account.rows[0]?.account_purpose==='stremio_internal')throw new Error('Internal Stremio Jellyfin credentials cannot be renamed through customer controls.');return base.renameJellyfinAccount(customerId,accountId,newUsername,options);}
 async function maybeAutoDowngrade(customerId){const lifecycle=require('../payments/lifecycle');try{return await lifecycle.autoDowngradeEligibleCustomer(customerId)}catch(error){console.error(`Automatic free-tier downgrade failed for ${customerId}:`,error.message);return null}}
 async function expireSubscriptionsAndReconcile(){return subscriptionExpiry.expireAndReconcile({reconcileCustomer,autoDowngrade:maybeAutoDowngrade,onReconcileError:(customerId,error)=>console.error(`Entitlement reconcile failed for ${customerId}:`,error.message)});}
-module.exports={...base,reconcileCustomer,reconcileAccount,holdAccess,releaseAccess,setJellyfinPassword,renameJellyfinAccount,expireSubscriptionsAndReconcile,normalAccounts,reconcileLane,adoptExistingFreeAccount,control,libraryPolicyForAccount,setLibrarySelectionForAccount,reconciliationLock,assertDiscordSyncResult};
+module.exports={...base,reconcileCustomer,reconcileAccount,holdAccess,releaseAccess,setJellyfinPassword,renameJellyfinAccount,expireSubscriptionsAndReconcile,normalAccounts,applyPolicyIfChanged,reconcileLane,adoptExistingFreeAccount,control,libraryPolicyForAccount,setLibrarySelectionForAccount,reconciliationLock,assertDiscordSyncResult};
