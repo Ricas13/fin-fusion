@@ -70,6 +70,49 @@ assert(maintenanceLock.includes('availableForLocks = AUTOMATION_ROLE_CONNECTION_
 assert(maintenanceLock.includes('Unsafe automation database pool budget') && maintenanceLock.includes('Unsafe automation maintenance-lock pool'),
     'Unsafe custom automation pool sizes must fail fast instead of exhausting the role during jobs');
 
+const managedStremio = read('src/stremio/managed-entitlements.js');
+const managedSyncScope = managedStremio.slice(managedStremio.indexOf('async function syncActive'), managedStremio.indexOf('module.exports'));
+assert(managedSyncScope.includes('await mappings(entitlement)'),
+    'managed Stremio automation must reuse policy-ready mappings instead of rewriting every active account policy on every run');
+assert(!managedSyncScope.includes('for(const account of accounts)await applyPolicy(account,effective,false)'),
+    'managed Stremio automation must not unconditionally POST policy for every active hidden account');
+assert(managedStremio.includes('const failureReasons=new Map()') && managedStremio.includes('summarizeFailures(failureReasons'),
+    'managed Stremio automation must preserve concrete sub-operation failure reasons');
+assert(managedStremio.includes('warning=[revocation.warning,syncWarning].filter(Boolean)'),
+    'managed Stremio automation must return a warning that job health can display');
+const managedApplyScope = managedStremio.slice(
+    managedStremio.indexOf('async function applyPolicy'),
+    managedStremio.indexOf('async function createMapping')
+);
+assert(managedApplyScope.includes("method:'GET',timeoutMs:5000"),
+    'managed Stremio policy maintenance must read the remote hidden-account policy before writing');
+assert(managedApplyScope.includes('policyControl.policyMatches(remote,body)'),
+    'managed Stremio policy maintenance must suppress unchanged remote policy writes');
+assert(managedApplyScope.indexOf('policyControl.policyMatches(remote,body)') < managedApplyScope.indexOf("method:'POST',body"),
+    'managed Stremio policy comparison must happen before the policy mutation');
+
+const resilientProvisioning = read('src/jellyfin/resilient-provisioning.js');
+const policyGuardScope = resilientProvisioning.slice(
+    resilientProvisioning.indexOf('async function applyPolicyIfChanged'),
+    resilientProvisioning.indexOf('async function disableAccounts')
+);
+assert(policyGuardScope.includes("method:'GET',timeoutMs:5000"),
+    'entitlement reconciliation must probe the current remote policy before issuing a write');
+assert(policyGuardScope.includes('control.policyMatches(remote,desired)'),
+    'entitlement reconciliation must recognize an unchanged remote policy');
+assert(policyGuardScope.includes('return{missing:[],unchanged:true}'),
+    'unchanged entitlement policy must complete without a remote policy POST');
+assert(policyGuardScope.indexOf('control.policyMatches(remote,desired)') < policyGuardScope.indexOf('return base.applyPolicy(account,effective,disabled)'),
+    'policy comparison must happen before the fallback policy mutation');
+const laneScope = resilientProvisioning.slice(
+    resilientProvisioning.indexOf('async function reconcileLane'),
+    resilientProvisioning.indexOf('async function recordRun')
+);
+assert(laneScope.includes('await applyPolicyIfChanged(account,effective,false)'),
+    'active entitlement lanes must use the read-before-write policy guard');
+assert(!laneScope.includes('await base.applyPolicy(account,effective,false)'),
+    'active entitlement lanes must not unconditionally POST policy on every verification run');
+
 const admin = read('src/platform/admin-automation.js');
 assert(admin.includes("state==='degraded'"), 'Automation UI must render degraded state');
 assert(admin.includes('Failed sub-operations'), 'Automation UI must expose partial failure count');

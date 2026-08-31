@@ -24,6 +24,12 @@ registry.request = async (serverId, endpoint, options = {}) => {
         s.users.set(id, { id, name, disabled: false, password: options.body?.Password || '' });
         return { Id: id, Name: name };
     }
+    const userRecord = endpoint.match(/^\/Users\/([^/]+)$/);
+    if (userRecord && (!options.method || options.method === 'GET')) {
+        const user = s.users.get(userRecord[1]);
+        if (!user) throw new Error(`remote user ${userRecord[1]} missing`);
+        return { Id: user.id, Name: user.name, Policy: user.policy || {} };
+    }
     const policy = endpoint.match(/^\/Users\/([^/]+)\/Policy$/);
     if (policy && options.method === 'POST') {
         const user = s.users.get(policy[1]);
