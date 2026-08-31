@@ -43,7 +43,7 @@ const hiddenPages=Object.freeze({
   'payment-risk-policy':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
 
   // Portability/export is an operational backup/migration concern rather than a
-  // day-to-day payment workflow, so it lives with Backups & Recovery.
+  // day-to-day payment workflow, so it belongs to Backups & Recovery context.
   'data-export':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['data-export','Export data','/admin/payments/export'])}),
 
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Customer moves','/admin/provisioning/migrations'])}),
@@ -77,11 +77,11 @@ const aliases=Object.freeze({
 
 // Search already has a persistent command-palette launcher, while personal
 // account pages have their own fixed My account block. Diagnostics and niche
-// payment recovery screens stay routable but do not occupy permanent sidebar
+// recovery/export screens stay routable but do not occupy permanent sidebar
 // space; their owning workflows link to them only when relevant.
 const SIDEBAR_EXCLUDED_CHILDREN=new Set([
   'search','libraries','my-profile','my-notifications','my-security','server-migrations',
-  'transactions','refunds','provider-mappings','payment-risk-policy'
+  'transactions','refunds','provider-mappings','payment-risk-policy','data-export'
 ]);
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
