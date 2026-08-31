@@ -8,7 +8,8 @@ const DEFAULT_WARNING_DAYS = Math.max(...expiryPolicy.DEFAULT_POLICY.milestones)
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function recurringAutoRenewal(row) {
-    if (String(row?.status || '').toLowerCase() !== 'active') return false;
+    const status = String(row?.status || '').toLowerCase();
+    if (!['active', 'trialing'].includes(status) || row?.cancel_at_period_end === true) return false;
     const source = String(row?.source || '').toLowerCase();
     const providerId = String(row?.provider_subscription_id || '');
     return (source === 'stripe' && providerId.startsWith('sub_')) ||
@@ -70,7 +71,7 @@ async function dueRecurringSubscriptions() {
 async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
     const warningDays = Math.max(0, Math.min(30, Number(days) || 0));
     const result = await query(`
-        SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,
+        SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,s.cancel_at_period_end,
                COALESCE(s.plan_name_snapshot,p.name,'Your subscription') AS plan_name,
                s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at,
                COALESCE(c.display_name,au.username,c.email,'Customer') AS customer_name
@@ -191,12 +192,13 @@ async function expireDueSubscriptions({ syncRecurring = null } = {}) {
     });
 }
 
-async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null, syncRecurring = null } = {}) {
+async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null, syncRecurring = null, detail = false } = {}) {
     if (typeof reconcileCustomer !== 'function') throw new Error('A subscription-expiry reconcile callback is required.');
     const verifyRecurring = typeof syncRecurring === 'function'
         ? syncRecurring
         : subscriptionId => require('../payments/billing-control').syncSubscription(subscriptionId);
     const expired = await expireDueSubscriptions({ syncRecurring: verifyRecurring });
+    let failed = 0;
     for (const row of expired) {
         const customerId = row.customer_id;
         let downgraded = null;
@@ -204,11 +206,12 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onR
         if (downgraded) continue;
         try { await reconcileCustomer(customerId); }
         catch (error) {
+            failed += 1;
             if (typeof onReconcileError === 'function') onReconcileError(customerId, error);
             else throw error;
         }
     }
-    return expired.length;
+    return detail ? { expired: expired.length, failed } : expired.length;
 }
 
 module.exports = { DEFAULT_WARNING_DAYS, recurringAutoRenewal, expiryDate, daysUntilExpiry, selectExpiryMilestone, expiryDedupeKey, providerExpiryProtected, dueRecurringSubscriptions, expiringSubscriptions, notifyExpiringSubscriptions, expireDueSubscriptions, expireAndReconcile };

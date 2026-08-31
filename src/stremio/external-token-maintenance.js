@@ -10,6 +10,12 @@ const TOKEN_GRACE_HOURS=1;
 function rotationHours(value){return Math.max(1,Math.min(168,Number.parseInt(value,10)||DEFAULT_ROTATION_HOURS));}
 function graceHours(value){return Math.max(1,Math.min(24,Number.parseInt(value,10)||TOKEN_GRACE_HOURS));}
 
+async function cleanupIssuedAuth(auth,{sourceName='Media server',mediaServerType=null}={}){
+  if(!auth?.baseUrl||!auth?.accessToken)return false;
+  try{return await client.logoutToken(auth.baseUrl,auth.accessToken,sourceName||'Media server',mediaServerType||auth.mediaServerType||'jellyfin');}
+  catch(error){console.error(`Stremio newly issued token cleanup failed for ${sourceName||'Media server'}:`,error.message);return false;}
+}
+
 async function retireEncryptedTokenTx(db,source,{encryptedToken=null,actorUserId=null,reason='rotation',grace=TOKEN_GRACE_HOURS}={}){
   const token=encryptedToken||source?.access_token_encrypted;
   if(!source?.id||!source?.base_url||!token)return false;
@@ -41,19 +47,24 @@ async function rotateSourceToken(source,actorUserId=null){
     const password=client.decryptPassword(current.password_encrypted);
     const auth=await client.authenticate(current.base_url,current.jellyfin_username,password,current.media_server_type||null);
     const encrypted=client.encryptToken(auth.accessToken),hours=rotationHours(current.token_rotation_hours);
-    await transaction(async db=>{
-      const locked=await db.query('SELECT * FROM stremio_sources WHERE id=$1 FOR UPDATE',[current.id]);
-      if(!locked.rowCount)throw new Error('External Stremio source disappeared during token rotation.');
-      const latest=locked.rows[0];
-      if(latest.access_token_encrypted!==current.access_token_encrypted)throw new Error('External Stremio source token changed during rotation; retry from current state.');
-      await retireEncryptedTokenTx(db,latest,{actorUserId,reason:'rotation',grace:TOKEN_GRACE_HOURS});
-      await db.query(`UPDATE stremio_sources SET public_url=$2,jellyfin_user_id=$3,jellyfin_username=$4,access_token_encrypted=$5,
-        auth_state='connected',last_connected_at=NOW(),last_auth_check_at=NOW(),last_success_at=NOW(),last_error=NULL,
-        token_last_rotated_at=NOW(),token_rotates_at=NOW()+($6||' hours')::interval,updated_at=NOW() WHERE id=$1`,
-        [latest.id,auth.publicUrl,auth.jellyfinUserId,auth.jellyfinUsername,encrypted,String(hours)]);
-      await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
-        VALUES($1,'admin.stremio.source.token_rotate','stremio_source',$2,$3::jsonb)`,[actorUserId,latest.id,JSON.stringify({jellyfinUsername:auth.jellyfinUsername,tokenRotationHours:hours,oldTokenGraceHours:TOKEN_GRACE_HOURS})]);
-    });
+    try{
+      await transaction(async db=>{
+        const locked=await db.query('SELECT * FROM stremio_sources WHERE id=$1 FOR UPDATE',[current.id]);
+        if(!locked.rowCount)throw new Error('External Stremio source disappeared during token rotation.');
+        const latest=locked.rows[0];
+        if(latest.access_token_encrypted!==current.access_token_encrypted)throw new Error('External Stremio source token changed during rotation; retry from current state.');
+        await retireEncryptedTokenTx(db,latest,{actorUserId,reason:'rotation',grace:TOKEN_GRACE_HOURS});
+        await db.query(`UPDATE stremio_sources SET public_url=$2,jellyfin_user_id=$3,jellyfin_username=$4,access_token_encrypted=$5,
+          auth_state='connected',last_connected_at=NOW(),last_auth_check_at=NOW(),last_success_at=NOW(),last_error=NULL,
+          token_last_rotated_at=NOW(),token_rotates_at=NOW()+($6||' hours')::interval,updated_at=NOW() WHERE id=$1`,
+          [latest.id,auth.publicUrl,auth.jellyfinUserId,auth.jellyfinUsername,encrypted,String(hours)]);
+        await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+          VALUES($1,'admin.stremio.source.token_rotate','stremio_source',$2,$3::jsonb)`,[actorUserId,latest.id,JSON.stringify({jellyfinUsername:auth.jellyfinUsername,tokenRotationHours:hours,oldTokenGraceHours:TOKEN_GRACE_HOURS})]);
+      });
+    }catch(error){
+      await cleanupIssuedAuth(auth,{sourceName:current.name||current.jellyfin_username,mediaServerType:current.media_server_type});
+      throw error;
+    }
     return{sourceId:current.id,ok:true,rotationHours:hours,graceHours:TOKEN_GRACE_HOURS};
   });
 }
@@ -101,4 +112,4 @@ async function maintain({rotateLimit=25,revokeLimit=100}={}){
   return{total:Number(revocation.total||0)+Number(rotation.total||0),processed:Number(revocation.revoked||0)+Number(rotation.rotated||0),failed:Number(revocation.failed||0)+Number(rotation.failed||0),rotation,revocation};
 }
 
-module.exports={DEFAULT_ROTATION_HOURS,TOKEN_GRACE_HOURS,rotationHours,graceHours,retireEncryptedTokenTx,retireEncryptedToken,rotateSourceToken,rotateDueTokens,revokeRetiredTokens,maintain};
+module.exports={DEFAULT_ROTATION_HOURS,TOKEN_GRACE_HOURS,rotationHours,graceHours,cleanupIssuedAuth,retireEncryptedTokenTx,retireEncryptedToken,rotateSourceToken,rotateDueTokens,revokeRetiredTokens,maintain};
