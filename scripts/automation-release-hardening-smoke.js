@@ -81,6 +81,28 @@ assert(managedStremio.includes('const failureReasons=new Map()') && managedStrem
 assert(managedStremio.includes('warning=[revocation.warning,syncWarning].filter(Boolean)'),
     'managed Stremio automation must return a warning that job health can display');
 
+const resilientProvisioning = read('src/jellyfin/resilient-provisioning.js');
+const policyGuardScope = resilientProvisioning.slice(
+    resilientProvisioning.indexOf('async function applyPolicyIfChanged'),
+    resilientProvisioning.indexOf('async function disableAccounts')
+);
+assert(policyGuardScope.includes("method:'GET',timeoutMs:5000"),
+    'entitlement reconciliation must probe the current remote policy before issuing a write');
+assert(policyGuardScope.includes('control.policyMatches(remote,desired)'),
+    'entitlement reconciliation must recognize an unchanged remote policy');
+assert(policyGuardScope.includes('return{missing:[],unchanged:true}'),
+    'unchanged entitlement policy must complete without a remote policy POST');
+assert(policyGuardScope.indexOf('control.policyMatches(remote,desired)') < policyGuardScope.indexOf('return base.applyPolicy(account,effective,disabled)'),
+    'policy comparison must happen before the fallback policy mutation');
+const laneScope = resilientProvisioning.slice(
+    resilientProvisioning.indexOf('async function reconcileLane'),
+    resilientProvisioning.indexOf('async function recordRun')
+);
+assert(laneScope.includes('await applyPolicyIfChanged(account,effective,false)'),
+    'active entitlement lanes must use the read-before-write policy guard');
+assert(!laneScope.includes('await base.applyPolicy(account,effective,false)'),
+    'active entitlement lanes must not unconditionally POST policy on every verification run');
+
 const admin = read('src/platform/admin-automation.js');
 assert(admin.includes("state==='degraded'"), 'Automation UI must render degraded state');
 assert(admin.includes('Failed sub-operations'), 'Automation UI must expose partial failure count');
