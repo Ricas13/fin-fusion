@@ -212,8 +212,12 @@ async function claimFreePlan(customerId, planCode, { automatic = false, reservat
 async function autoDowngradeEligibleCustomer(customerId) {
     const policy = await trialPolicy();
     if (!policy.downgradeToFree || !policy.downgradeFreePlanCode) return null;
-    const live = await query(`SELECT 1 FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`, [customerId]);
-    if (live.rowCount) return null;
+    // The configured downgrade target is always a Jellyfin free plan (enforced
+    // by admin-jellyfin-plan-editor.js), so eligibility must be scoped to the
+    // customer's Jellyfin/bundle lane. An unrelated live Stremio-only
+    // entitlement must never suppress a Jellyfin free-tier downgrade.
+    const live = await state.effectiveSubscription(customerId, { includeBlocked: true });
+    if (live) return null;
     try { return await claimFreePlan(customerId, policy.downgradeFreePlanCode, { automatic: true }); }
     catch (error) {
         if (/already been claimed|sold out|not available/i.test(error.message)) return null;
