@@ -93,7 +93,6 @@ function effectiveStreamLimit(row, entitlements, overrideMap) {
     const accessLane = lane(row.access_lane);
     const entitlement = entitlements.get(`${row.customer_id}:${accessLane}`) || null;
     if (!entitlement) return null;
-    if (entitlement.jellyfin_access_model === 'household_network') return null;
     const override = overrideMap.get(`${row.customer_id}:${accessLane}`);
     const raw = override === null || override === undefined ? entitlement.streams : override;
     const limit = Number(raw);
