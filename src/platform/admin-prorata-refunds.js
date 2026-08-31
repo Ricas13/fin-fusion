@@ -35,8 +35,10 @@ function when(value) {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('en-GB', { dateStyle:'medium', timeStyle:'short' });
 }
 function csrfInput(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
+function cleanCustomerId(value) { const v=String(value||'').trim(); return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)?v:null; }
 
-async function eligibleRows() {
+async function eligibleRows(customerId=null) {
+  const id=cleanCustomerId(customerId);
   const result = await query(`
     SELECT s.id,s.customer_id,s.source,s.provider_subscription_id,s.status,s.starts_at,s.current_period_end,
            s.plan_name_snapshot,s.currency_snapshot,c.display_name,c.email,u.username AS portal_username
@@ -44,6 +46,7 @@ async function eligibleRows() {
     JOIN customers c ON c.id=s.customer_id
     LEFT JOIN app_users u ON u.id=c.user_id
     WHERE s.superseded_by IS NULL
+      AND ($1::uuid IS NULL OR s.customer_id=$1::uuid)
       AND s.source IN ('stripe','paypal')
       AND s.status IN ('active','trialing','past_due','paused','cancelled')
       AND s.current_period_end>NOW()
@@ -51,13 +54,13 @@ async function eligibleRows() {
       AND NOT (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-')
     ORDER BY s.starts_at,c.display_name,s.created_at
     LIMIT 250
-  `);
+  `,[id]);
   return result.rows;
 }
 
 async function listPage(req) {
   await runtimeSettings.ensureLoaded();
-  const rows = await eligibleRows();
+  const customerId=cleanCustomerId(req.query.customerId),rows=await eligibleRows(customerId);
   const bodyRows = rows.map(row => `<tr>
     <td data-label="Customer"><a href="/admin/users/${encodeURIComponent(row.customer_id)}?tab=billing"><strong>${esc(row.portal_username || row.display_name || row.email || 'Customer')}</strong></a><div class="subText">${esc(row.email || '')}</div></td>
     <td data-label="Plan"><strong>${esc(row.plan_name_snapshot || 'Prepaid plan')}</strong><div class="subText">${esc(String(row.source).toUpperCase())}</div></td>
@@ -67,9 +70,10 @@ async function listPage(req) {
   </tr>`).join('');
   const table = rows.length
     ? `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Customer</th><th>Plan</th><th>Service period</th><th>State</th><th class="right">Action</th></tr></thead><tbody>${bodyRows}</tbody></table></div>`
-    : '<div class="empty">No Stripe or PayPal prepaid purchases currently have refundable unused service.</div>';
-  const body = `${ui.noticesFromRequest(req)}<section class="section">${ui.sectionHeader({title:'Prepaid refunds',description:'Preview the maximum voluntary cash refund for unused prepaid service. Recurring subscriptions and disputes are deliberately handled elsewhere.'})}<div class="operatorCallout"><strong>Cash-only rule:</strong> affiliate/service credit is never converted back into cash. The final amount is recalculated under a database lock when you confirm.</div>${table}</section>`;
-  return layout({siteName:runtimeSettings.siteName(),active:'refunds',title:'Prepaid refunds',subtitle:'Unused-time refund quotes and execution',body});
+    : `<div class="empty">${customerId?'This customer has no Stripe or PayPal prepaid purchase with refundable unused service.':'No Stripe or PayPal prepaid purchases currently have refundable unused service.'}</div>`;
+  const back=customerId?`<a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(customerId)}?tab=billing">Back to customer billing</a>`:'';
+  const body = `${ui.noticesFromRequest(req)}<section class="section">${ui.sectionHeader({title:'Prepaid refund',description:customerId?'Customer-specific unused-time refund workflow.':'Specialist unused-time refund workflow; normally opened from a customer Billing page.'})}<div class="sectionHead"><div class="operatorCallout"><strong>Cash-only rule:</strong> affiliate/service credit is never converted back into cash. The final amount is recalculated under a database lock when you confirm.</div>${back}</div>${table}</section>`;
+  return layout({siteName:runtimeSettings.siteName(),active:'refunds',title:'Prepaid refund',subtitle:'Unused-time refund quotes and execution',body});
 }
 
 async function previewPage(req, subscriptionId) {
@@ -91,7 +95,7 @@ async function previewPage(req, subscriptionId) {
     <form class="formPanel" method="post" action="/admin/refunds/${encodeURIComponent(subscriptionId)}" data-confirm="Refund ${esc(money(quote.refundMinor, quote.currency))} through ${esc(String(quote.provider).toUpperCase())} and remove the corresponding unused prepaid time?">
       ${csrfInput(req)}
       <div class="formGroup"><label>Reason</label><textarea class="input" name="reason" maxlength="500" required placeholder="Customer requested refund of unused prepaid service"></textarea></div>
-      <div class="buttonRow"><button class="button danger" type="submit">Refund unused time</button><a class="button secondary" href="/admin/refunds">Cancel</a></div>
+      <div class="buttonRow"><button class="button danger" type="submit">Refund unused time</button><a class="button secondary" href="/admin/users/${encodeURIComponent(quote.customerId)}?tab=billing">Cancel</a></div>
     </form>
   </section>`;
   return layout({siteName:runtimeSettings.siteName(),active:'refunds',title:'Refund preview',subtitle:'Provider cash only · recalculated on confirmation',body});
@@ -106,10 +110,10 @@ function createAdminProrataRefundsRouter() {
     try {
       const result = await refunds.execute({ subscriptionId:req.params.subscriptionId, actorUserId:req.session.authUserId, reason:req.body.reason });
       const message = result.alreadyCompleted ? 'That refund was already completed.' : `Refund completed: ${money(result.quote.refundMinor, result.quote.currency)} returned through ${String(result.quote.provider).toUpperCase()}.`;
-      return res.redirect(`/admin/refunds?message=${encodeURIComponent(message)}`);
+      return res.redirect(`/admin/users/${encodeURIComponent(result.quote.customerId)}?tab=billing&message=${encodeURIComponent(message)}`);
     } catch (error) { return next(error); }
   });
   return router;
 }
 
-module.exports = { createAdminProrataRefundsRouter, eligibleRows, listPage, previewPage };
+module.exports = { createAdminProrataRefundsRouter, eligibleRows, listPage, previewPage, cleanCustomerId };

@@ -13,7 +13,8 @@ const base=require('../src/platform/admin-html-core-base');
 
 const labels=rows=>rows.map(row=>row[1]);
 
-// Every durable specialist destination belongs to its owning sidebar page.
+// Every routine destination belongs to its owning sidebar page. Specialist
+// diagnostics/recovery routes remain registered but do not clutter permanent navigation.
 assert.deepStrictEqual(
   labels(nav.childPages('plans')),
   ['Storefront order','Access rules'],
@@ -26,14 +27,18 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   labels(nav.childPages('payments')),
-  ['Billing','Transactions','Prepaid refunds','Export data','Expenses & Profitability','Provider mappings','Payment risk'],
-  'Payments & Billing must expose every billing tool in the sidebar'
+  ['Billing','Expenses & Profitability'],
+  'Payments & Billing must stay focused on routine billing and profitability work'
 );
 assert.deepStrictEqual(
   labels(nav.childPages('backups')),
   ['Configuration Transfer','Migrate paid users'],
-  'Migrate paid users belongs beside Configuration Transfer: it is the import half of that export/restore round-trip, not a Payments & Billing tool'
+  'Backups & Recovery must expose the routine transfer/migration tools without turning Export data into permanent sidebar clutter'
 );
+for(const key of ['transactions','refunds','provider-mappings','payment-risk-policy']){
+  assert(nav.hiddenPages[key]?.parentKey==='payments'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has(key),`${key} must remain routable under Payments without occupying permanent sidebar navigation`);
+}
+assert(nav.hiddenPages['data-export']?.parentKey==='backups'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has('data-export'),'Export data must remain owned by Backups & Recovery while staying out of permanent sidebar navigation');
 assert(nav.hiddenPages['server-migrations']?.parentKey==='provisioning'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has('server-migrations'),'Customer moves is reached from Customer 360 and must not duplicate that entry point in the sidebar');
 assert.deepStrictEqual(
   labels(nav.childPages('servers')),
@@ -50,22 +55,30 @@ assert.deepStrictEqual(
 );
 
 // Specialist pages keep their owning main page highlighted while highlighting
-// their own nested destination as the exact current location.
+// their own nested destination only when that destination is intentionally visible.
 assert.strictEqual(nav.sidebarKey('expenses'),'payments');
 assert.strictEqual(nav.sidebarKey('transactions'),'payments');
 assert.strictEqual(nav.sidebarKey('refunds'),'payments');
-assert.strictEqual(nav.sidebarKey('data-export'),'payments');
+assert.strictEqual(nav.sidebarKey('data-export'),'backups');
 assert.strictEqual(nav.sidebarKey('legacy-paid-import'),'backups');
 assert.strictEqual(nav.sidebarKey('discounts'),'orders');
 assert.strictEqual(nav.sidebarKey('libraries'),'servers');
 const expenseHeader=base.header('expenses','CAPTAiNFiN');
 assert(/adminTab active[^>]*href="\/admin\/payments"/.test(expenseHeader),'Expenses must keep Payments & Billing highlighted as its parent');
 assert(/adminSubTab active[^>]*href="\/admin\/expenses"[^>]*aria-current="page"/.test(expenseHeader),'Expenses must be directly highlighted as the current nested sidebar destination');
-assert(expenseHeader.includes('href="/admin/billing"')&&expenseHeader.includes('href="/admin/payments/transactions"')&&expenseHeader.includes('href="/admin/refunds"')&&expenseHeader.includes('href="/admin/payments/export"')&&expenseHeader.includes('href="/admin/provider-mappings"')&&expenseHeader.includes('href="/admin/payments/risk-policy"'),'Sibling payment tools must remain visible without scrolling through page content');
+assert(expenseHeader.includes('href="/admin/billing"'),'Routine Billing must remain visible beside Expenses');
+for(const hiddenHref of ['/admin/payments/transactions','/admin/refunds','/admin/payments/export','/admin/provider-mappings','/admin/payments/risk-policy']){
+  assert(!expenseHeader.includes(`href="${hiddenHref}"`),`${hiddenHref} must not reappear as permanent Payments sidebar clutter`);
+}
 const migrationHeader=base.header('legacy-paid-import','CAPTAiNFiN');
 assert(/adminTab active[^>]*href="\/admin\/backups"/.test(migrationHeader),'Paid-user migration must keep Backups & Recovery highlighted as its parent, beside Configuration Transfer');
 assert(/adminSubTab active[^>]*href="\/admin\/payments\/legacy-import"[^>]*aria-current="page"/.test(migrationHeader),'Paid-user migration must highlight its nested entry');
-assert(migrationHeader.includes('href="/admin/configuration"'),'Paid-user migration must render beside Configuration Transfer, its export/restore counterpart');
+assert(migrationHeader.includes('href="/admin/configuration"'),'Paid-user migration must render beside Configuration Transfer, its routine portability counterpart');
+assert(!migrationHeader.includes('href="/admin/payments/export"'),'Export data must not reappear as a permanent Backups sidebar entry');
+
+const exportHeader=base.header('data-export','CAPTAiNFiN');
+assert(/adminTab active[^>]*href="\/admin\/backups"/.test(exportHeader),'Export data must still retain Backups & Recovery as its owning context');
+assert(!/adminSubTab active[^>]*href="\/admin\/payments\/export"/.test(exportHeader),'Hidden Export data must not manufacture a permanent nested sidebar entry for itself');
 
 const discountHeader=base.header('discounts','CAPTAiNFiN');
 assert(/adminTab active[^>]*href="\/admin\/commerce\/orders"/.test(discountHeader),'Discounts must keep Orders & Growth highlighted');
@@ -84,9 +97,10 @@ const rendered=html.layout({
   body:'<section id="navigation-coherence-sentinel">sentinel</section><section class="coherenceOwnedTools"><a href="/admin/expenses">old hidden directory</a></section>'
 });
 assert(rendered.includes('href="/admin/expenses"'),'Expenses must be reachable from the canonical sidebar');
-assert(rendered.includes('href="/admin/payments/transactions"'),'Transactions must be reachable from the canonical sidebar');
-assert(rendered.includes('href="/admin/refunds"'),'Prepaid refunds must be reachable from the canonical sidebar');
-assert(rendered.includes('href="/admin/payments/export"'),'Export data must be reachable from the canonical sidebar');
+assert(rendered.includes('href="/admin/billing"'),'Billing must be reachable from the canonical sidebar');
+for(const hiddenHref of ['/admin/payments/transactions','/admin/refunds','/admin/payments/export','/admin/provider-mappings','/admin/payments/risk-policy']){
+  assert(!rendered.includes(`href="${hiddenHref}"`),`${hiddenHref} must stay out of permanent Payments navigation`);
+}
 assert(!rendered.includes('old hidden directory'),'Legacy bottom-of-page navigation directories must be stripped');
 assert(!rendered.includes('class="workflowCardGrid coherenceSectionTabs"'),'Main section tabs must not duplicate the sidebar');
 assert(!rendered.includes('class="coherenceSubTabs"'),'Secondary tab rows must not survive');

@@ -46,15 +46,60 @@
     observer.observe(topActions,{childList:true});
   }
 
+  function pageAction(label,href,marker){
+    const pageHeader=document.querySelector('.content > .pageHeader')||document.querySelector('.pageHeader');
+    if(!pageHeader||pageHeader.querySelector(`[${marker}]`))return;
+    let actions=pageHeader.querySelector(':scope > .pageHeaderActions');
+    if(!actions){
+      actions=document.createElement('div');
+      actions.className='pageHeaderActions';
+      actions.setAttribute('aria-label','Page actions');
+      pageHeader.appendChild(actions);
+    }
+    const link=document.createElement('a');
+    link.className='button secondary';
+    link.href=href;
+    link.textContent=label;
+    link.setAttribute(marker,'');
+    actions.appendChild(link);
+  }
+
+  // Prepaid refunds are intentionally not permanent sidebar navigation. They
+  // are a customer support action, so expose the specialist workflow only from
+  // the customer's Billing context and pre-filter it to that customer.
+  function installCustomerBillingActions(){
+    const match=path.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+    if(!match||new URLSearchParams(location.search).get('tab')!=='billing')return;
+    pageAction('Prepaid refund',`/admin/refunds?customerId=${encodeURIComponent(match[1])}`,'data-prepaid-refund-action');
+  }
+
+  function installBackupExportAction(){
+    if(path!=='/admin/backups')return;
+    pageAction('Export data','/admin/payments/export','data-backup-export-action');
+  }
+
   function installMobileAdminDrawer(){
     const header=document.querySelector('.adminHeader');
     const headerMain=header?.querySelector('.headerMain');
     const tabsWrap=header?.querySelector('.adminTabsWrap');
     const nav=tabsWrap?.querySelector('.adminTabs');
+    const account=header?.querySelector('[data-header-actions]');
     if(!header||!headerMain||!tabsWrap||!nav)return;
 
     const mobile=window.matchMedia('(max-width:860px)');
     if(!tabsWrap.id)tabsWrap.id='adminMobileNavigation';
+
+    const accountHome=account?.parentNode||null;
+    const accountNext=account?.nextSibling||null;
+    function placeAccountMenu(){
+      if(!account||!accountHome)return;
+      if(mobile.matches){
+        if(account.parentNode!==tabsWrap)tabsWrap.appendChild(account);
+      }else if(account.parentNode!==accountHome){
+        if(accountNext&&accountNext.parentNode===accountHome)accountHome.insertBefore(account,accountNext);
+        else accountHome.appendChild(account);
+      }
+    }
 
     let toggle=headerMain.querySelector('[data-admin-mobile-nav-toggle]');
     if(!toggle){
@@ -91,6 +136,7 @@
     }
 
     function setOpen(open,{restoreFocus=false}={}){
+      placeAccountMenu();
       const next=Boolean(open&&mobile.matches);
       header.classList.toggle('mobileNavOpen',next);
       document.body.classList.toggle('mobileNavLocked',next);
@@ -98,6 +144,8 @@
       toggle.setAttribute('aria-label',next?'Close administration menu':'Open administration menu');
       backdrop.hidden=!next;
       if(next){
+        // Keep the active destination visible, but do not prevent the drawer
+        // itself from scrolling when a large section such as Commerce expands.
         const active=nav.querySelector('.adminSubTab.active,.adminTab.active,.navSectionLabel');
         if(active&&typeof active.focus==='function')active.focus({preventScroll:true});
       }else if(restoreFocus&&typeof toggle.focus==='function')toggle.focus({preventScroll:true});
@@ -105,15 +153,17 @@
 
     toggle.addEventListener('click',()=>setOpen(!header.classList.contains('mobileNavOpen')));
     backdrop.addEventListener('click',()=>setOpen(false,{restoreFocus:true}));
-    nav.addEventListener('click',event=>{
+    tabsWrap.addEventListener('click',event=>{
       if(event.target.closest('a[href]'))setOpen(false);
     });
     document.addEventListener('keydown',event=>{
       if(event.key==='Escape'&&header.classList.contains('mobileNavOpen'))setOpen(false,{restoreFocus:true});
     });
     const onViewportChange=()=>{
+      placeAccountMenu();
       if(!mobile.matches)setOpen(false);
     };
+    placeAccountMenu();
     if(typeof mobile.addEventListener==='function')mobile.addEventListener('change',onViewportChange);
     else if(typeof mobile.addListener==='function')mobile.addListener(onViewportChange);
   }
@@ -121,6 +171,8 @@
   enforceSidebarOnlyNavigation();
   movePageActionsToHeading();
   watchLatePageActions();
+  installCustomerBillingActions();
+  installBackupExportAction();
   installMobileAdminDrawer();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
