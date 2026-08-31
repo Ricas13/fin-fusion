@@ -34,15 +34,22 @@ function safeInt(value, min, max, fallback) {
 function redirectWith(res, path, kind, message, hash = '') {
   return res.redirect(`${path}?${kind}=${encodeURIComponent(message)}${hash ? `#${hash}` : ''}`);
 }
+function jellyfinPlanState(state) {
+  return Boolean(state)
+    && !Boolean(state.is_addon)
+    && ['jellyfin', 'bundle'].includes(String(state.service_type || 'jellyfin'));
+}
 
 async function planState(planId) {
   const result = await query(`
     SELECT p.id,p.name,p.code,p.kick_4k_transcodes,
+           COALESCE(p.service_type,'jellyfin') AS service_type,COALESCE(p.is_addon,FALSE) AS is_addon,
            COUNT(DISTINCT s.customer_id) FILTER (
              WHERE s.superseded_by IS NULL
                AND s.starts_at<=NOW()
                AND (
-                 (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
+                 (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                 OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
                  OR (COALESCE(s.service_extension_days,0)>0
                      AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
                      AND s.current_period_end+((s.service_extension_days||' days')::interval)>NOW())
@@ -50,6 +57,8 @@ async function planState(planId) {
            )::int AS live_entitlements
     FROM plans p
     LEFT JOIN subscriptions s ON s.plan_id=p.id
+    LEFT JOIN customer_entitlement_overrides o
+           ON o.customer_id=s.customer_id AND o.subscription_id=s.id
     WHERE p.id=$1
     GROUP BY p.id
   `, [planId]);
@@ -132,6 +141,7 @@ function createAdminMediaControlsRouter() {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).json({ error: 'Plan not found.' });
+      if (!jellyfinPlanState(state)) return res.status(400).json({ error: '4K transcode policy applies only to Jellyfin media plans.' });
       return res.json({
         id: state.id,
         name: state.name,
@@ -144,7 +154,9 @@ function createAdminMediaControlsRouter() {
 
   router.get(`/admin/media-controls/plan/:planId(${UUID})/logs`, async (req, res, next) => {
     try {
-      if (!(await planState(req.params.planId))) return res.status(404).json({ error: 'Plan not found.' });
+      const state = await planState(req.params.planId);
+      if (!state) return res.status(404).json({ error: 'Plan not found.' });
+      if (!jellyfinPlanState(state)) return res.status(400).json({ error: 'Media-policy logs apply only to Jellyfin media plans.' });
       return res.json(await planLogs(req.params.planId));
     } catch (error) { return next(error); }
   });
@@ -155,6 +167,7 @@ function createAdminMediaControlsRouter() {
     try {
       const state = await planState(req.params.planId);
       if (!state) return res.status(404).send('Plan not found');
+      if (!jellyfinPlanState(state)) throw new Error('4K transcode policy applies only to Jellyfin media plans.');
       const enabled = bool(req.body.enabled);
       const changing = Boolean(state.kick_4k_transcodes) !== enabled;
       if (changing && Number(state.live_entitlements || 0) > 0 && String(req.body.confirmation || '').trim() !== String(state.code)) {
@@ -240,6 +253,7 @@ module.exports = {
   createAdminMediaControlsRouter,
   cleanMessage,
   safeInt,
+  jellyfinPlanState,
   planState,
   activeManagedSessions,
   sendInBatches
