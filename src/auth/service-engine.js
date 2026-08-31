@@ -88,10 +88,44 @@ async function getStaffById(userId) {
     return result.rows[0] || null;
 }
 
+async function incrementFailureCounter(userId) {
+    return transaction(async client => {
+        const current = await client.query(`
+            SELECT failed_login_count,locked_until
+            FROM app_users
+            WHERE id=$1 AND role='admin'
+            FOR UPDATE
+        `, [userId]);
+        if (!current.rowCount) return { locked: true, failures: FAILURE_LIMIT, until: null };
+        const row = current.rows[0];
+        const now = Date.now();
+        if (row.locked_until && new Date(row.locked_until).getTime() > now) {
+            return { locked: true, failures: Number(row.failed_login_count || FAILURE_LIMIT), until: row.locked_until };
+        }
+        const previousExpiredLock = row.locked_until && new Date(row.locked_until).getTime() <= now;
+        const failed = (previousExpiredLock ? 0 : Number(row.failed_login_count || 0)) + 1;
+        const lock = failed >= FAILURE_LIMIT;
+        const updated = await client.query(`
+            UPDATE app_users
+            SET failed_login_count=$2,
+                locked_until=CASE WHEN $3 THEN NOW()+($4::text||' minutes')::interval ELSE NULL END,
+                updated_at=NOW()
+            WHERE id=$1
+            RETURNING locked_until
+        `, [userId, failed, lock, LOCK_MINUTES]);
+        return { locked: lock, failures: failed, until: updated.rows[0]?.locked_until || null };
+    });
+}
+
+async function clearFailureCounter(userId) {
+    await query(`
+        UPDATE app_users
+        SET failed_login_count=0,locked_until=NULL,updated_at=NOW()
+        WHERE id=$1 AND role='admin'
+    `, [userId]);
+}
+
 async function authenticateStaff(identity, password, req) {
-    // Load the database-backed security policy before deciding whether this
-    // login needs 2FA. If settings are temporarily unavailable, the getter
-    // safely falls back to the explicit environment setting.
     await runtimeSettings.ensureLoaded().catch(() => {});
     const cleanIdentity = String(identity || '').trim().slice(0, 160);
     const supplied = typeof password === 'string' ? password : '';
@@ -117,33 +151,27 @@ async function authenticateStaff(identity, password, req) {
 
     const passwordOk = await bcrypt.compare(supplied, user.password_hash);
     if (!passwordOk) {
-        const previousExpiredLock = user.locked_until && new Date(user.locked_until).getTime() <= now;
-        const failed = (previousExpiredLock ? 0 : Number(user.failed_login_count || 0)) + 1;
-        const lock = failed >= FAILURE_LIMIT;
-        await query(`
-            UPDATE app_users
-            SET failed_login_count=$2,
-                locked_until=CASE WHEN $3 THEN NOW() + ($4::text || ' minutes')::interval ELSE NULL END,
-                updated_at=NOW()
-            WHERE id=$1
-        `, [user.id, failed, lock, LOCK_MINUTES]);
+        const failure = await incrementFailureCounter(user.id);
         await recordEvent({
             userId: user.id,
             identityHint: cleanIdentity,
-            eventType: lock ? 'login.account_locked' : 'login.password_failed',
+            eventType: failure.locked ? 'login.account_locked' : 'login.password_failed',
             success: false,
             req,
-            metadata: { failures: failed }
+            metadata: { failures: failure.failures }
         });
         return null;
     }
 
+    const needsTwoFactor = requiresTwoFactor(user);
     const updated = await query(`
         UPDATE app_users
-        SET failed_login_count=0,locked_until=NULL,last_login_at=NOW(),updated_at=NOW()
+        SET failed_login_count=CASE WHEN $2 THEN failed_login_count ELSE 0 END,
+            locked_until=CASE WHEN $2 THEN locked_until ELSE NULL END,
+            last_login_at=NOW(),updated_at=NOW()
         WHERE id=$1
         RETURNING session_version,last_login_at
-    `, [user.id]);
+    `, [user.id, needsTwoFactor]);
     user.session_version = updated.rows[0].session_version;
     user.last_login_at = updated.rows[0].last_login_at;
     await recordEvent({ userId: user.id, identityHint: cleanIdentity, eventType: 'login.password_accepted', success: true, req });
@@ -152,10 +180,7 @@ async function authenticateStaff(identity, password, req) {
 
 function requiresTwoFactor(user) {
     if (!user) return false;
-    // Individual enrollment always wins: a user who opts in keeps 2FA at login.
     if (user.totp_enabled) return true;
-    // Administrator enforcement is optional by default and is controlled by
-    // the runtime setting (with REQUIRE_ADMIN_2FA=true as an env fallback).
     if (user.role === 'admin') return runtimeSettings.requireAdminTwoFactor();
     return false;
 }
@@ -241,7 +266,17 @@ async function disableTotp(userId, currentPassword, req) {
         await recordEvent({ userId, eventType: '2fa.disable_failed', success: false, req });
         return false;
     }
-    await transaction(async client => {
+    return transaction(async client => {
+        const locked = await client.query(`
+            SELECT password_hash,totp_enabled
+            FROM app_users
+            WHERE id=$1 AND role='admin'
+            FOR UPDATE
+        `, [userId]);
+        if (!locked.rowCount || !locked.rows[0].totp_enabled || locked.rows[0].password_hash !== user.password_hash) {
+            await recordEvent({ userId, eventType: '2fa.disable_failed', success: false, req }, client);
+            return false;
+        }
         await client.query(`
             UPDATE app_users
             SET totp_enabled=FALSE,totp_secret_encrypted=NULL,totp_enrolled_at=NULL,updated_at=NOW()
@@ -250,17 +285,18 @@ async function disableTotp(userId, currentPassword, req) {
         await client.query('DELETE FROM auth_recovery_codes WHERE user_id=$1', [userId]);
         await client.query('DELETE FROM auth_totp_enrollments WHERE user_id=$1', [userId]);
         await recordEvent({ userId, eventType: '2fa.disabled', success: true, req }, client);
+        return true;
     });
-    return true;
 }
 
 async function verifySecondFactor(userId, token, req) {
     const user = await getStaffById(userId);
     if (!user) return false;
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+        await recordEvent({ userId, eventType: '2fa.challenge_locked', success: false, req });
+        return false;
+    }
 
-    // 2FA is a sign-in factor, not a code prompt repeated throughout the admin
-    // UI. Once a native staff session is established, legacy step-up callers
-    // are allowed through without consuming a TOTP/recovery code.
     if (req?.session?.authUserId && String(req.session.authUserId) === String(userId) && !req.session?.pendingStaffAuth) {
         await recordEvent({
             userId,
@@ -289,8 +325,14 @@ async function verifySecondFactor(userId, token, req) {
 
     if (/^\d{6}$/.test(value.replace(/\s+/g, ''))) {
         const ok = totp.verifyTotp(secret, value);
-        await recordEvent({ userId, eventType: ok ? '2fa.totp_accepted' : '2fa.totp_failed', success: ok, req });
-        return ok;
+        if (ok) {
+            await clearFailureCounter(userId);
+            await recordEvent({ userId, eventType: '2fa.totp_accepted', success: true, req });
+            return true;
+        }
+        const failure = await incrementFailureCounter(userId);
+        await recordEvent({ userId, eventType: failure.locked ? '2fa.challenge_locked' : '2fa.totp_failed', success: false, req, metadata: { failures: failure.failures } });
+        return false;
     }
 
     const hash = recoveryHash(value);
@@ -306,14 +348,20 @@ async function verifySecondFactor(userId, token, req) {
         RETURNING id
     `, [userId, hash]);
     const ok = used.rowCount === 1;
-    await recordEvent({ userId, eventType: ok ? '2fa.recovery_accepted' : '2fa.recovery_failed', success: ok, req });
-    return ok;
+    if (ok) {
+        await clearFailureCounter(userId);
+        await recordEvent({ userId, eventType: '2fa.recovery_accepted', success: true, req });
+        return true;
+    }
+    const failure = await incrementFailureCounter(userId);
+    await recordEvent({ userId, eventType: failure.locked ? '2fa.challenge_locked' : '2fa.recovery_failed', success: false, req, metadata: { failures: failure.failures } });
+    return false;
 }
 
 async function lockAfterSecondFactorFailures(userId, req) {
     await query(`
         UPDATE app_users
-        SET failed_login_count=$2,locked_until=NOW()+($3::text || ' minutes')::interval,updated_at=NOW()
+        SET failed_login_count=GREATEST(failed_login_count,$2),locked_until=NOW()+($3::text || ' minutes')::interval,updated_at=NOW()
         WHERE id=$1
     `, [userId, FAILURE_LIMIT, LOCK_MINUTES]);
     await recordEvent({ userId, eventType: '2fa.challenge_locked', success: false, req });
@@ -407,9 +455,13 @@ async function changePassword(userId, currentPassword, newPassword, currentSessi
             UPDATE app_users
             SET password_hash=$2,password_changed_at=NOW(),session_version=session_version+1,
                 failed_login_count=0,locked_until=NULL,updated_at=NOW()
-            WHERE id=$1
+            WHERE id=$1 AND password_hash=$3
             RETURNING session_version,password_changed_at
-        `, [userId, hash]);
+        `, [userId, hash, user.password_hash]);
+        if (!updated.rowCount) {
+            await recordEvent({ userId, eventType: 'password.change_failed', success: false, req, metadata: { reason: 'credential_changed_concurrently' } }, client);
+            return null;
+        }
         const version = updated.rows[0].session_version;
         await client.query(`
             UPDATE auth_sessions SET revoked_at=NOW()
@@ -437,6 +489,7 @@ async function regenerateRecoveryCodes(userId, currentTotpCode, req) {
     }
     const codes = makeRecoveryCodes();
     await transaction(async client => {
+        await client.query(`SELECT id FROM app_users WHERE id=$1 AND role='admin' FOR UPDATE`, [userId]);
         await replaceRecoveryCodes(client, userId, codes);
         await recordEvent({ userId, eventType: '2fa.recovery_regenerated', success: true, req }, client);
     });
