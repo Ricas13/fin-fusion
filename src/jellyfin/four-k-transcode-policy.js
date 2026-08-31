@@ -70,7 +70,6 @@ async function enabledPolicies() {
         AND ja.disabled=FALSE
         AND js.enabled=TRUE
         AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-        AND p.kick_4k_transcodes=TRUE
         AND COALESCE(p.is_addon,FALSE)=FALSE
         AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
         AND s.superseded_by IS NULL
@@ -87,7 +86,7 @@ async function enabledPolicies() {
     )
     SELECT server_id,jellyfin_account_id,customer_id,jellyfin_user_id,access_lane,plan_id,plan_name
     FROM eligible
-    WHERE rn=1
+    WHERE rn=1 AND kick_4k_transcodes=TRUE
   `);
   return result.rows;
 }
