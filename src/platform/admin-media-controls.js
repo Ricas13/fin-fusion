@@ -7,6 +7,7 @@ const routeRateLimit = require('../security/route-rate-limit');
 const registry = require('../jellyfin/registry');
 const mediaProvider = require('../media-servers/provider');
 const mediaPlanPolicy = require('../jellyfin/media-plan-policy-settings');
+const deviceAccessPolicy = require('../jellyfin/device-access-policy');
 const { POLICY_REASON } = require('../jellyfin/four-k-transcode-policy');
 const { IP_REASON, DEVICE_REASON, COMBINED_REASON } = require('../jellyfin/media-identity-policy');
 const { SENT_REASON, FAILED_REASON } = require('../jellyfin/payg-expiry-messages');
@@ -46,6 +47,9 @@ function optionalLimit(value, label) {
 function redirectWith(res, path, kind, message, hash = '') {
   return res.redirect(`${path}?${kind}=${encodeURIComponent(message)}${hash ? `#${hash}` : ''}`);
 }
+function customerAccessRedirect(res, customerId, kind, message) {
+  return res.redirect(`/admin/users/${encodeURIComponent(customerId)}?tab=access&${kind}=${encodeURIComponent(message)}#media-device-access`);
+}
 function jellyfinPlanState(state) {
   return Boolean(state)
     && !Boolean(state.is_addon)
@@ -78,7 +82,13 @@ async function planState(planId) {
 }
 
 async function planLogs(planId) {
-  const reasons = [POLICY_REASON, IP_REASON, DEVICE_REASON, COMBINED_REASON, SENT_REASON, FAILED_REASON];
+  const reasons = [
+    POLICY_REASON, IP_REASON, DEVICE_REASON, COMBINED_REASON, SENT_REASON, FAILED_REASON,
+    deviceAccessPolicy.DEVICE_REGISTERED_REASON,
+    deviceAccessPolicy.DEVICE_ALLOWLIST_REASON,
+    deviceAccessPolicy.DEVICE_ALLOWLIST_ERROR_REASON,
+    deviceAccessPolicy.DEVICE_RESET_REASON
+  ];
   const [audit, policy] = await Promise.all([
     query(`SELECT action,created_at,metadata FROM audit_log WHERE entity_type='plan' AND entity_id::text=$1 ORDER BY created_at DESC LIMIT 40`, [String(planId)]),
     query(`SELECT decision,mode,reason,created_at,detail FROM stream_policy_events WHERE detail->>'planId'=$1 AND reason=ANY($2::text[]) ORDER BY created_at DESC LIMIT 80`, [String(planId), reasons])
@@ -198,15 +208,15 @@ function createAdminMediaControlsRouter() {
       const previous = await mediaPlanPolicy.get(req.params.planId);
       const next = {
         ipLimit: optionalLimit(req.body.ipLimit, 'Active IP limit'),
-        deviceLimit: optionalLimit(req.body.deviceLimit, 'Active device limit'),
+        deviceLimit: optionalLimit(req.body.deviceLimit, 'Registered device limit'),
         paygExpiryMessagesEnabled: bool(req.body.paygExpiryMessagesEnabled)
       };
       const destructiveChange = previous.ipLimit !== next.ipLimit || previous.deviceLimit !== next.deviceLimit;
       if (destructiveChange && Number(state.live_entitlements || 0) > 0 && String(req.body.confirmation || '').trim() !== String(state.code)) {
-        throw new Error(`This plan has ${Number(state.live_entitlements)} live entitlement${Number(state.live_entitlements) === 1 ? '' : 's'}. Type ${state.code} exactly to confirm connection-limit changes.`);
+        throw new Error(`This plan has ${Number(state.live_entitlements)} live entitlement${Number(state.live_entitlements) === 1 ? '' : 's'}. Type ${state.code} exactly to confirm IP/device-limit changes.`);
       }
       await mediaPlanPolicy.save(req.params.planId, next, req.session.authUserId);
-      return redirectWith(res, back, 'message', 'Media connection limits and Pay As You Go reminders saved.', 'access-advanced-settings');
+      return redirectWith(res, back, 'message', 'Media IP/device limits and Pay As You Go reminders saved.', 'access-advanced-settings');
     } catch (error) {
       return redirectWith(res, back, 'error', error.message || 'Media connection policy could not be saved.', 'access-advanced-settings');
     }
@@ -235,6 +245,32 @@ function createAdminMediaControlsRouter() {
       return redirectWith(res, back, 'message', `4K video transcoding kick ${enabled ? 'enabled' : 'disabled'} for ${state.name}. Direct-play 4K is unaffected.`, 'access-advanced-settings');
     } catch (error) {
       return redirectWith(res, back, 'error', error.message || '4K transcode policy could not be saved.', 'access-advanced-settings');
+    }
+  });
+
+  router.get(`/admin/media-controls/customer/:customerId(${UUID})/devices`, readLimit, async (req, res, next) => {
+    try {
+      return res.json({ accounts: await deviceAccessPolicy.customerDeviceState(req.params.customerId) });
+    } catch (error) { return next(error); }
+  });
+
+  router.post(`/admin/media-controls/customer/:customerId(${UUID})/devices/:accountId(${UUID})/reset`, writeLimit, async (req, res) => {
+    if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
+    try {
+      const result = await deviceAccessPolicy.resetAccountDevices(req.params.customerId, req.params.accountId);
+      await query(`
+        INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+        VALUES($1,'admin.media_device_access.reset','jellyfin_account',$2,$3::jsonb)
+      `, [req.session.authUserId, req.params.accountId, JSON.stringify({
+        customerId: req.params.customerId,
+        serverId: result.account.server_id,
+        provider: result.account.media_server_type || 'jellyfin',
+        previousDeviceCount: result.previousDevices.length,
+        previousDeviceIds: result.previousDevices.map(row => row.device_id)
+      })]);
+      return customerAccessRedirect(res, req.params.customerId, 'message', `Registered device access reset. The next device${Number(result.account.device_limit || 0) === 1 ? '' : 's'} used will claim the available slot${Number(result.account.device_limit || 0) === 1 ? '' : 's'}.`);
+    } catch (error) {
+      return customerAccessRedirect(res, req.params.customerId, 'error', error.message || 'Registered device access could not be reset.');
     }
   });
 
