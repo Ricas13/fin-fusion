@@ -36,12 +36,15 @@ const hiddenPages=Object.freeze({
   'storefront-order':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['storefront-order','Storefront order','/admin/plans/order'])}),
   'plan-access-rules':Object.freeze({groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
   billing:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['billing','Billing','/admin/billing'])}),
-  transactions:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['transactions','Transactions','/admin/payments/transactions'])}),
+  transactions:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['transactions','Imported payment archive','/admin/payments/transactions'])}),
   refunds:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['refunds','Prepaid refunds','/admin/refunds'])}),
-  'data-export':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['data-export','Export data','/admin/payments/export'])}),
   expenses:Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['expenses','Expenses & Profitability','/admin/expenses'])}),
   'provider-mappings':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['provider-mappings','Provider mappings','/admin/provider-mappings'])}),
   'payment-risk-policy':Object.freeze({groupKey:'commerce',parentKey:'payments',page:Object.freeze(['payment-risk-policy','Payment risk','/admin/payments/risk-policy'])}),
+
+  // Portability/export is an operational backup/migration concern rather than a
+  // day-to-day payment workflow, so it lives with Backups & Recovery.
+  'data-export':Object.freeze({groupKey:'automation',parentKey:'backups',page:Object.freeze(['data-export','Export data','/admin/payments/export'])}),
 
   'server-migrations':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['server-migrations','Customer moves','/admin/provisioning/migrations'])}),
   'policy-drift':Object.freeze({groupKey:'automation',parentKey:'provisioning',page:Object.freeze(['policy-drift','Access consistency','/admin/provisioning/drift'])}),
@@ -73,12 +76,13 @@ const aliases=Object.freeze({
 });
 
 // Search already has a persistent command-palette launcher, while personal
-// account pages have their own fixed My account block. Everything else that is
-// a durable admin destination is allowed to appear as a nested sidebar item.
-// server-migrations is reached from Customer 360's own move-to-another-server
-// action, so it keeps its hiddenPages entry (for breadcrumb/group identity)
-// without a second, redundant sidebar link.
-const SIDEBAR_EXCLUDED_CHILDREN=new Set(['search','libraries','my-profile','my-notifications','my-security','server-migrations']);
+// account pages have their own fixed My account block. Diagnostics and niche
+// payment recovery screens stay routable but do not occupy permanent sidebar
+// space; their owning workflows link to them only when relevant.
+const SIDEBAR_EXCLUDED_CHILDREN=new Set([
+  'search','libraries','my-profile','my-notifications','my-security','server-migrations',
+  'transactions','refunds','provider-mappings','payment-risk-policy'
+]);
 
 function activeKey(value){return aliases[value]||value||'dashboard';}
 function sidebarKey(value){const key=activeKey(value);return hiddenPages[key]?.parentKey||key;}
