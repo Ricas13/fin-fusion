@@ -80,9 +80,11 @@ async function serverInfo(serverId) {
 
 async function managedAccounts(serverId) {
   const result = await query(`
-    SELECT ja.jellyfin_user_id,ja.customer_id,c.email,c.username
+    SELECT ja.jellyfin_user_id,ja.customer_id,ja.jellyfin_username,
+           c.email,c.display_name,au.username AS login_username
     FROM jellyfin_accounts ja
     JOIN customers c ON c.id=ja.customer_id
+    LEFT JOIN app_users au ON au.id=c.user_id
     WHERE ja.server_id=$1 AND ja.account_purpose='jellyfin' AND ja.disabled=FALSE
   `, [serverId]);
   return new Map(result.rows.map(row => [String(row.jellyfin_user_id || '').toLowerCase(), row]));
@@ -91,15 +93,22 @@ async function managedAccounts(serverId) {
 async function activeManagedSessions(serverId) {
   const server = await serverInfo(serverId);
   if (!server) throw new Error('Server not found.');
-  if (String(server.media_server_type) !== 'jellyfin') return { server, sessions: [], targets: [], supportsMessaging: false };
-  const [accounts, sessions] = await Promise.all([managedAccounts(serverId), registry.request(serverId, '/Sessions')]);
-  if (!Array.isArray(sessions)) throw new Error('Jellyfin returned an unexpected sessions response.');
+  if (String(server.media_server_type) !== 'jellyfin') return { server, sessions: [], targets: [], supportsMessaging: false, messagingError: null };
+  const accounts = await managedAccounts(serverId);
+  let sessions;
+  try {
+    sessions = await registry.request(serverId, '/Sessions');
+  } catch (error) {
+    console.warn(`Jellyfin message audience unavailable for server ${serverId}: ${error.message}`);
+    return { server, sessions: [], targets: [], supportsMessaging: true, messagingError: 'Active Jellyfin sessions could not be loaded. Check server connectivity and trusted-network settings.' };
+  }
+  if (!Array.isArray(sessions)) return { server, sessions: [], targets: [], supportsMessaging: true, messagingError: 'Jellyfin returned an unexpected sessions response.' };
   const managed = sessions.filter(session => session?.Id && session?.UserId && accounts.has(String(session.UserId).toLowerCase())).map(session => {
     const account = accounts.get(String(session.UserId).toLowerCase());
     return {
       sessionId: String(session.Id),
       customerId: String(account.customer_id),
-      label: account.email || account.username || String(account.customer_id),
+      label: account.display_name || account.email || account.login_username || account.jellyfin_username || String(account.customer_id),
       client: String(session.Client || ''),
       device: String(session.DeviceName || session.DeviceId || ''),
       playing: session?.NowPlayingItem?.Name ? String(session.NowPlayingItem.Name) : null
@@ -110,7 +119,7 @@ async function activeManagedSessions(serverId) {
     if (!grouped.has(session.customerId)) grouped.set(session.customerId, { customerId: session.customerId, label: session.label, sessions: 0 });
     grouped.get(session.customerId).sessions += 1;
   }
-  return { server, sessions: managed, targets: [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label)), supportsMessaging: true };
+  return { server, sessions: managed, targets: [...grouped.values()].sort((a, b) => a.label.localeCompare(b.label)), supportsMessaging: true, messagingError: null };
 }
 
 async function serverLogs(serverId) {
@@ -193,6 +202,7 @@ function createAdminMediaControlsRouter() {
       return res.json({
         server: state.server,
         supportsMessaging: state.supportsMessaging,
+        messagingError: state.messagingError,
         activeSessions: state.sessions.length,
         targets: state.targets
       });
@@ -218,6 +228,7 @@ function createAdminMediaControlsRouter() {
 
       const state = await activeManagedSessions(req.params.serverId);
       if (!state.supportsMessaging) throw new Error('In-client messaging is currently available for Jellyfin servers only.');
+      if (state.messagingError) throw new Error('Active Jellyfin sessions could not be loaded. Check server connectivity first.');
       const targets = state.sessions.filter(session => !requestedCustomer || session.customerId === requestedCustomer).slice(0, 200);
       if (!targets.length) throw new Error(requestedCustomer ? 'That customer has no active Jellyfin session on this server.' : 'There are no active managed Jellyfin sessions on this server.');
 
