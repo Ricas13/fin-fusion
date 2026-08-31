@@ -32,12 +32,13 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   labels(nav.childPages('backups')),
-  ['Export data','Configuration Transfer','Migrate paid users'],
-  'Export and paid-user migration belong with Backups & Recovery rather than routine Payments navigation'
+  ['Configuration Transfer','Migrate paid users'],
+  'Backups & Recovery must expose the routine transfer/migration tools without turning Export data into permanent sidebar clutter'
 );
 for(const key of ['transactions','refunds','provider-mappings','payment-risk-policy']){
   assert(nav.hiddenPages[key]?.parentKey==='payments'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has(key),`${key} must remain routable under Payments without occupying permanent sidebar navigation`);
 }
+assert(nav.hiddenPages['data-export']?.parentKey==='backups'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has('data-export'),'Export data must remain owned by Backups & Recovery while staying out of permanent sidebar navigation');
 assert(nav.hiddenPages['server-migrations']?.parentKey==='provisioning'&&nav.SIDEBAR_EXCLUDED_CHILDREN.has('server-migrations'),'Customer moves is reached from Customer 360 and must not duplicate that entry point in the sidebar');
 assert.deepStrictEqual(
   labels(nav.childPages('servers')),
@@ -72,7 +73,12 @@ for(const hiddenHref of ['/admin/payments/transactions','/admin/refunds','/admin
 const migrationHeader=base.header('legacy-paid-import','CAPTAiNFiN');
 assert(/adminTab active[^>]*href="\/admin\/backups"/.test(migrationHeader),'Paid-user migration must keep Backups & Recovery highlighted as its parent, beside Configuration Transfer');
 assert(/adminSubTab active[^>]*href="\/admin\/payments\/legacy-import"[^>]*aria-current="page"/.test(migrationHeader),'Paid-user migration must highlight its nested entry');
-assert(migrationHeader.includes('href="/admin/configuration"')&&migrationHeader.includes('href="/admin/payments/export"'),'Paid-user migration must render beside Configuration Transfer and Export data in the portability workflow');
+assert(migrationHeader.includes('href="/admin/configuration"'),'Paid-user migration must render beside Configuration Transfer, its routine portability counterpart');
+assert(!migrationHeader.includes('href="/admin/payments/export"'),'Export data must not reappear as a permanent Backups sidebar entry');
+
+const exportHeader=base.header('data-export','CAPTAiNFiN');
+assert(/adminTab active[^>]*href="\/admin\/backups"/.test(exportHeader),'Export data must still retain Backups & Recovery as its owning context');
+assert(!/adminSubTab active[^>]*href="\/admin\/payments\/export"/.test(exportHeader),'Hidden Export data must not manufacture a permanent nested sidebar entry for itself');
 
 const discountHeader=base.header('discounts','CAPTAiNFiN');
 assert(/adminTab active[^>]*href="\/admin\/commerce\/orders"/.test(discountHeader),'Discounts must keep Orders & Growth highlighted');
