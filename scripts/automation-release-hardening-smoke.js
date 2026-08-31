@@ -48,6 +48,28 @@ const worker = read('scripts/automation-worker.js');
 assert(worker.includes('DB_CONTROL_HEADROOM'), 'Automation worker must reserve database control headroom');
 assert(worker.includes('Math.min(REQUESTED_CONCURRENCY, DB_POOL_SIZE - DB_CONTROL_HEADROOM)'), 'Worker concurrency must be bounded by its DB pool');
 
+const compose = read('docker-compose.yml');
+const roleScript = read('scripts/configure-runtime-db-roles.js');
+const maintenanceLock = read('src/security/maintenance-lock.js');
+const automationRoleLimit = Number(/automation:\s*\{[^}]*connectionLimit:\s*(\d+)/s.exec(roleScript)?.[1]);
+const automationPoolDefault = Number(/AUTOMATION_DB_POOL_SIZE:-([0-9]+)/.exec(compose)?.[1]);
+const automationLockDefault = Number(/AUTOMATION_DEFAULT_LOCK_POOL_MAX\s*=\s*(\d+)/.exec(maintenanceLock)?.[1]);
+const automationNonPoolReserve = Number(/AUTOMATION_NON_POOL_RESERVE\s*=\s*(\d+)/.exec(maintenanceLock)?.[1]);
+assert(Number.isFinite(automationRoleLimit), 'Automation database role must have an explicit connection limit');
+assert(Number.isFinite(automationPoolDefault), 'Compose must expose the automation primary pool default');
+assert(Number.isFinite(automationLockDefault), 'Maintenance lock owner must expose the automation lock-pool default');
+assert(Number.isFinite(automationNonPoolReserve), 'Maintenance lock owner must reserve direct/control automation connections');
+assert.strictEqual(Number(/AUTOMATION_ROLE_CONNECTION_LIMIT\s*=\s*(\d+)/.exec(maintenanceLock)?.[1]), automationRoleLimit,
+    'Maintenance-lock safety budget must track the PostgreSQL automation role connection limit');
+assert(automationPoolDefault + automationLockDefault + automationNonPoolReserve <= automationRoleLimit,
+    'Default automation primary + maintenance-lock + direct connection budget must fit inside the role limit');
+assert(maintenanceLock.includes("role === AUTOMATION_ROLE ? AUTOMATION_DEFAULT_LOCK_POOL_MAX : 12"),
+    'Automation worker must use its smaller maintenance-lock pool default without reducing the web mutation guard pool');
+assert(maintenanceLock.includes('availableForLocks = AUTOMATION_ROLE_CONNECTION_LIMIT - primaryPoolMax - AUTOMATION_NON_POOL_RESERVE'),
+    'Automation maintenance-lock capacity must be derived from remaining role headroom');
+assert(maintenanceLock.includes('Unsafe automation database pool budget') && maintenanceLock.includes('Unsafe automation maintenance-lock pool'),
+    'Unsafe custom automation pool sizes must fail fast instead of exhausting the role during jobs');
+
 const admin = read('src/platform/admin-automation.js');
 assert(admin.includes("state==='degraded'"), 'Automation UI must render degraded state');
 assert(admin.includes('Failed sub-operations'), 'Automation UI must expose partial failure count');
