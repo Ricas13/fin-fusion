@@ -18,6 +18,7 @@ const activityTrust = require('../src/jellyfin/activity-trust');
 const householdNetworkPolicy = require('../src/jellyfin/household-network-policy');
 const fleetMetrics = require('../src/jellyfin/fleet-metrics');
 const streamPolicy = require('../src/jellyfin/stream-policy-settings');
+const fourKTranscodePolicy = require('../src/jellyfin/four-k-transcode-policy');
 
 const intervalSeconds = Math.max(15, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 20)));
 const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
@@ -180,6 +181,16 @@ async function run() {
             console.error('Activity aborted-cycle trust update failed:', trustError.message);
           }
           console.error('Activity cycle failed:', error.message);
+        }
+        try {
+          const fourK = await fourKTranscodePolicy.runFourKTranscodeCycle();
+          if (!fourK.skipped && (fourK.violations || fourK.failedServers)) {
+            console.log(`4K transcode policy mode=${fourK.mode} violations=${fourK.violations} stopped=${fourK.stopped} failedServers=${fourK.failedServers}`);
+          }
+          if (Number(fourK.failedServers || 0) > 0 && current.outcome === 'healthy') current.outcome = 'degraded';
+        } catch (error) {
+          if (current.outcome === 'healthy') current.outcome = 'degraded';
+          console.error('4K transcode policy cycle failed:', error.message);
         }
         try {
           const fleet = await refreshFleetMetricsIfDue();
