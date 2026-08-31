@@ -216,6 +216,10 @@
         formPanel.append(node('div', 'adminSettingsEmpty', 'In-client messaging is currently available for Jellyfin servers only.'));
         return;
       }
+      if (state.messagingError) {
+        formPanel.append(node('div', 'notice warn', state.messagingError));
+        return;
+      }
       const form = node('form'); form.method = 'post'; form.action = `/admin/media-controls/server/${encodeURIComponent(serverId)}/message`;
       const csrf = node('input'); csrf.type = 'hidden'; csrf.name = '_csrf'; csrf.value = csrfToken(); form.append(csrf);
       const audience = node('div', 'formGroup'); audience.append(node('label', '', 'Audience'));
