@@ -104,7 +104,7 @@ async function event(row, decision, reason, detail) {
     JSON.stringify({ planId: String(row.plan_id), subscriptionId: String(row.subscription_id), accessLane: lane(row.access_lane), ...detail })]);
 }
 
-async function runPaygExpiryMessageCycle() {
+async function runPaygExpiryMessageCycle({ failedServerIds = [] } = {}) {
   const pool = getPool();
   const client = await pool.connect();
   let locked = false;
@@ -113,14 +113,19 @@ async function runPaygExpiryMessageCycle() {
     locked = Boolean(lock.rows[0]?.locked);
     if (!locked) return { skipped: true, reason: 'another_payg_reminder_cycle_is_running' };
 
+    const failedServers = new Set((failedServerIds || []).map(String));
     const now = new Date();
     const operations = await operationsSettings.get();
     const timeZone = operations.timezone || 'Europe/London';
     const rows = await candidates();
     const policies = await mediaPlanPolicy.getMany(rows.map(row => row.plan_id));
-    const summary = { skipped: false, eligible: 0, sent: 0, failed: 0 };
+    const summary = { skipped: false, eligible: 0, sent: 0, failed: 0, safetySkipped: 0 };
 
     for (const row of rows) {
+      if (failedServers.has(String(row.server_id))) {
+        summary.safetySkipped += 1;
+        continue;
+      }
       const policy = policies.get(String(row.plan_id)) || mediaPlanPolicy.DEFAULTS;
       if (policy.paygExpiryMessagesEnabled === false) continue;
       const expiresAt = new Date(row.access_expires_at);
