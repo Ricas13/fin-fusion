@@ -46,6 +46,29 @@
     observer.observe(topActions,{childList:true});
   }
 
+  // Prepaid refunds are intentionally not permanent sidebar navigation. They
+  // are a customer support action, so expose the specialist workflow only from
+  // the customer's Billing context and pre-filter it to that customer.
+  function installCustomerBillingActions(){
+    const match=path.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+    if(!match||new URLSearchParams(location.search).get('tab')!=='billing')return;
+    const pageHeader=document.querySelector('.content > .pageHeader')||document.querySelector('.pageHeader');
+    if(!pageHeader||pageHeader.querySelector('[data-prepaid-refund-action]'))return;
+    let actions=pageHeader.querySelector(':scope > .pageHeaderActions');
+    if(!actions){
+      actions=document.createElement('div');
+      actions.className='pageHeaderActions';
+      actions.setAttribute('aria-label','Page actions');
+      pageHeader.appendChild(actions);
+    }
+    const link=document.createElement('a');
+    link.className='button secondary';
+    link.href=`/admin/refunds?customerId=${encodeURIComponent(match[1])}`;
+    link.textContent='Prepaid refund';
+    link.setAttribute('data-prepaid-refund-action','');
+    actions.appendChild(link);
+  }
+
   function installMobileAdminDrawer(){
     const header=document.querySelector('.adminHeader');
     const headerMain=header?.querySelector('.headerMain');
@@ -139,6 +162,7 @@
   enforceSidebarOnlyNavigation();
   movePageActionsToHeading();
   watchLatePageActions();
+  installCustomerBillingActions();
   installMobileAdminDrawer();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
