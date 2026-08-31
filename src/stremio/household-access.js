@@ -92,9 +92,6 @@ function deniedStream(decision, options = {}) {
     title,
     description,
     behaviorHints: {
-      // The local explanation is a real HTTPS MP4 in production, so it must
-      // remain web-ready. Marking an HTTPS MP4 as notWebReady makes Stremio Web
-      // hide the only denial result and fall back to "no addons provided streams".
       notWebReady: url ? !blockedMediaIsWebReady(url) : true,
       bingeGroup: 'captainfin-household-ip-block',
       filename: 'CAPTAiNFiN household connection blocked.mp4'
@@ -117,12 +114,11 @@ function applyDeniedResponse(res, decision) {
   return res.status(429).json({ error: deniedTitle(), message: deniedMessage(decision) });
 }
 
-async function replacementState(entitlement) {
-  const { component } = await configForEntitlement(entitlement);
+async function replacementStateWithComponent(entitlement, component, { client = null } = {}) {
   const policy = component.config.replacementPolicy || 'auto_inactive';
   const cooldownMinutes = Number(component.config.cooldownMinutes || 1440);
   if (policy !== 'customer_cooldown') return { allowed: true, policy, cooldownMinutes, retryAfterSeconds: 0, nextAllowedAt: null };
-  const active = await leases.activeForSubject({ scope: 'stremio', subjectKey: subjectKey(entitlement) });
+  const active = await leases.activeForSubject({ scope: 'stremio', subjectKey: subjectKey(entitlement) }, { client });
   if (!active.length) return { allowed: true, policy, cooldownMinutes, retryAfterSeconds: 0, nextAllowedAt: null };
   const newestClaimAt = active.reduce((latest, row) => {
     const value = new Date(row.first_seen_at).getTime();
@@ -132,6 +128,11 @@ async function replacementState(entitlement) {
   const nextAllowedAt = new Date(newestClaimAt + cooldownMinutes * 60_000);
   const retryAfterSeconds = Math.max(0, Math.ceil((nextAllowedAt.getTime() - Date.now()) / 1000));
   return { allowed: retryAfterSeconds === 0, policy, cooldownMinutes, retryAfterSeconds, nextAllowedAt };
+}
+
+async function replacementState(entitlement) {
+  const { component } = await configForEntitlement(entitlement);
+  return replacementStateWithComponent(entitlement, component);
 }
 
 function cooldownMessage(state) {
@@ -144,11 +145,12 @@ function cooldownMessage(state) {
 }
 
 async function release(entitlement, { actorUserId = null, reason = 'manual_reset', customerInitiated = false } = {}) {
-  const state = await replacementState(entitlement);
-  if (customerInitiated && !state.allowed) throw new Error(cooldownMessage(state));
+  const { component } = await configForEntitlement(entitlement);
   return transaction(async client => {
     const key = subjectKey(entitlement);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`default|stremio|${key}`]);
+    const state = await replacementStateWithComponent(entitlement, component, { client });
+    if (customerInitiated && !state.allowed) throw new Error(cooldownMessage(state));
     const released = await leases.releaseSubject({ scope: 'stremio', subjectKey: key }, { client });
     await client.query(
       `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
@@ -159,4 +161,4 @@ async function release(entitlement, { actorUserId = null, reason = 'manual_reset
   });
 }
 
-module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, blockedMediaIsWebReady, deniedStream, applyDeniedResponse, replacementState, cooldownMessage, release };
+module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, blockedMediaIsWebReady, deniedStream, applyDeniedResponse, replacementState, replacementStateWithComponent, cooldownMessage, release };
