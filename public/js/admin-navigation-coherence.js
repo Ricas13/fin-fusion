@@ -168,12 +168,22 @@
     else if(typeof mobile.addListener==='function')mobile.addListener(onViewportChange);
   }
 
+  function loadSettingsGroups(){
+    if(document.querySelector('script[data-admin-settings-groups]'))return;
+    const script=document.createElement('script');
+    script.src='/js/admin-settings-groups.js';
+    script.defer=true;
+    script.setAttribute('data-admin-settings-groups','');
+    document.head.appendChild(script);
+  }
+
   enforceSidebarOnlyNavigation();
   movePageActionsToHeading();
   watchLatePageActions();
   installCustomerBillingActions();
   installBackupExportAction();
   installMobileAdminDrawer();
+  loadSettingsGroups();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');
