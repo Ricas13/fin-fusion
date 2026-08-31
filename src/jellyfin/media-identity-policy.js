@@ -5,9 +5,12 @@ const { getPool, query } = require('../db');
 const registry = require('./registry');
 const activity = require('./activity');
 const mediaPlanPolicy = require('./media-plan-policy-settings');
+const deviceAccessPolicy = require('./device-access-policy');
 
 const IDENTITY_ADVISORY_LOCK_ID = 637441016;
 const IP_REASON = 'confirmed_active_ip_limit';
+// Retained for historical log compatibility. Device limits are now persistent
+// native Jellyfin/Emby allowlists rather than simultaneous-device counters.
 const DEVICE_REASON = 'confirmed_active_device_limit';
 const COMBINED_REASON = 'confirmed_media_identity_limits';
 
@@ -114,7 +117,9 @@ async function observedGroups() {
     const entitlement = entitlements.get(`${row.customer_id}:${lane(row.access_lane)}`);
     if (!entitlement) continue;
     const policy = policies.get(String(entitlement.plan_id)) || mediaPlanPolicy.DEFAULTS;
-    if (!policy.ipLimit && !policy.deviceLimit) continue;
+    // Device limits are intentionally absent here: they are persistent native
+    // per-user device allowlists, not counts of simultaneously playing devices.
+    if (!policy.ipLimit) continue;
     const item = {
       ...row,
       sessionId: String(row.jellyfin_session_id),
@@ -127,7 +132,7 @@ async function observedGroups() {
       accessLane: lane(row.access_lane),
       planId: String(entitlement.plan_id),
       ipLimit: policy.ipLimit,
-      deviceLimit: policy.deviceLimit
+      deviceLimit: null
     };
     if (!groups.has(item.accountId)) groups.set(item.accountId, []);
     groups.get(item.accountId).push(item);
@@ -154,7 +159,7 @@ async function liveGroup(group, cfg) {
         sessionId: String(session.Id),
         isPaused: Boolean(session?.PlayState?.IsPaused),
         firstSeenAt: persisted.get(String(session.Id)) || new Date(),
-        deviceIdentity: String(session.DeviceId || '').trim() || null,
+        deviceIdentity: null,
         ipIdentity: canonicalRemoteIp(session.RemoteEndPoint)
       }))
   };
@@ -163,32 +168,24 @@ async function liveGroup(group, cfg) {
 function violationsFor(rows, group, cfg) {
   const first = group[0];
   const ip = identityOverflow(rows, 'ipIdentity', first.ipLimit, cfg);
-  const device = identityOverflow(rows, 'deviceIdentity', first.deviceLimit, cfg);
+  const device = { count: 0, overflow: [] };
   const map = new Map();
-  for (const row of ip.overflow) map.set(row.sessionId, { sessionId: row.sessionId, ip: true, device: false, ipCount: ip.count, deviceCount: device.count });
-  for (const row of device.overflow) {
-    const existing = map.get(row.sessionId) || { sessionId: row.sessionId, ip: false, device: false, ipCount: ip.count, deviceCount: device.count };
-    existing.device = true;
-    map.set(row.sessionId, existing);
-  }
+  for (const row of ip.overflow) map.set(row.sessionId, { sessionId: row.sessionId, ip: true, device: false, ipCount: ip.count, deviceCount: 0 });
   return { ip, device, map };
 }
 
 async function policyEvent(row, cfg, decision, violation, reason, detail = {}) {
-  const count = violation.ip ? violation.ipCount : violation.deviceCount;
-  const limit = violation.ip ? row.ipLimit : row.deviceLimit;
+  const count = violation.ipCount;
+  const limit = row.ipLimit;
   await query(`
     INSERT INTO stream_policy_events(customer_id,server_id,jellyfin_account_id,jellyfin_session_id,mode,decision,stream_count,stream_limit,reason,detail)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
   `, [row.customerId,row.serverId,row.accountId,row.sessionId,cfg.effectiveMode,decision,count || null,limit || null,reason,
-    JSON.stringify({ planId: row.planId, accessLane: row.accessLane, ipLimit: row.ipLimit, deviceLimit: row.deviceLimit, ...detail })]);
+    JSON.stringify({ planId: row.planId, accessLane: row.accessLane, ipLimit: row.ipLimit, ...detail })]);
 }
 
-function warningText(row, violation) {
-  const parts = [];
-  if (violation.ip) parts.push(`${row.ipLimit} active IP address${row.ipLimit === 1 ? '' : 'es'}`);
-  if (violation.device) parts.push(`${row.deviceLimit} active device${row.deviceLimit === 1 ? '' : 's'}`);
-  return `This plan allows up to ${parts.join(' and ')} at once. This playback is an excess connection and will stop now.`;
+function warningText(row) {
+  return `This plan allows up to ${row.ipLimit} active IP address${row.ipLimit === 1 ? '' : 'es'} at once. This playback is from an excess IP and will stop now.`;
 }
 
 async function stopCandidate(row, group, cfg, originalViolation) {
@@ -208,7 +205,7 @@ async function stopCandidate(row, group, cfg, originalViolation) {
   try {
     await registry.request(row.serverId, `/Sessions/${encodeURIComponent(row.sessionId)}/Message`, {
       method: 'POST', timeoutMs: 5000,
-      body: { Header: 'Plan connection limit reached', Text: warningText(row, violation), TimeoutMs: 8000 }
+      body: { Header: 'Plan IP limit reached', Text: warningText(row), TimeoutMs: 8000 }
     });
     notice = { attempted: true, accepted: true };
   } catch (error) {
@@ -235,8 +232,7 @@ async function stopCandidate(row, group, cfg, originalViolation) {
 
   await query(`UPDATE playback_history SET ended_at=NOW(),ended_reason='policy_stop',last_seen_at=NOW() WHERE server_id=$1 AND playback_key=$2`, [row.serverId,row.playback_key]);
   await query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND jellyfin_session_id=$2`, [row.serverId,row.sessionId]);
-  const reason = violation.ip && violation.device ? COMBINED_REASON : violation.ip ? IP_REASON : DEVICE_REASON;
-  await policyEvent(row, cfg, 'stopped', violation, reason, { notice });
+  await policyEvent(row, cfg, 'stopped', violation, IP_REASON, { notice });
   return true;
 }
 
@@ -285,7 +281,21 @@ async function runMediaIdentityPolicyCycle({ failedServerIds = [] } = {}) {
     if (!locked) return { skipped: true, reason: 'another_media_identity_monitor_is_running' };
     const cfg = activity.config();
     const groups = await observedGroups();
-    return { skipped: false, mode: cfg.effectiveMode, ...(await evaluate(groups, new Set((failedServerIds || []).map(String)), cfg)) };
+    const failed = new Set((failedServerIds || []).map(String));
+    const ipSummary = await evaluate(groups, failed, cfg);
+    const deviceSummary = await deviceAccessPolicy.runDeviceAccessPolicyCycle({ failedServerIds });
+    return {
+      skipped: false,
+      mode: cfg.effectiveMode,
+      ...ipSummary,
+      deviceAccounts: deviceSummary.accounts,
+      deviceRegistered: deviceSummary.registered,
+      deviceEnforced: deviceSummary.enforced,
+      deviceReleased: deviceSummary.released,
+      deviceStopped: deviceSummary.stopped,
+      deviceFailed: deviceSummary.failed,
+      deviceSafetySkipped: deviceSummary.safetySkipped
+    };
   } finally {
     if (locked) {
       try { await client.query('SELECT pg_advisory_unlock($1)', [IDENTITY_ADVISORY_LOCK_ID]); } catch (_) {}
