@@ -3,6 +3,63 @@
 const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('../db-locks');
 
+const AUTOMATION_ROLE = 'steamfusion_automation';
+const AUTOMATION_ROLE_CONNECTION_LIMIT = 12;
+const AUTOMATION_DEFAULT_LOCK_POOL_MAX = 4;
+// The automation container healthcheck opens its own pg.Client. Keep one more
+// connection free for transient/control work so the role never runs exactly at
+// its PostgreSQL CONNECTION LIMIT during a normal worker cycle.
+const AUTOMATION_NON_POOL_RESERVE = 2;
+
+function boundedInt(value, fallback, min, max) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function databaseRole(connectionString) {
+    try {
+        return decodeURIComponent(new URL(String(connectionString || '')).username || '');
+    } catch (_) {
+        return '';
+    }
+}
+
+function maintenanceLockPoolMax() {
+    const role = databaseRole(process.env.DATABASE_URL);
+    const explicit = String(process.env.MAINTENANCE_LOCK_POOL_MAX || '').trim();
+    const requested = boundedInt(
+        explicit || (role === AUTOMATION_ROLE ? AUTOMATION_DEFAULT_LOCK_POOL_MAX : 12),
+        role === AUTOMATION_ROLE ? AUTOMATION_DEFAULT_LOCK_POOL_MAX : 12,
+        2,
+        32
+    );
+
+    if (role !== AUTOMATION_ROLE) return requested;
+
+    // The automation role is deliberately connection-limited. Its normal pg
+    // pool, this independent advisory-lock pool, and the Docker healthcheck all
+    // authenticate as the same role. Previously the lock pool defaulted to 12
+    // by itself while the role limit was also 12, so real automation load could
+    // exhaust the role and make unrelated jobs fail together.
+    const primaryPoolMax = boundedInt(process.env.DB_POOL_SIZE, 6, 1, 50);
+    const availableForLocks = AUTOMATION_ROLE_CONNECTION_LIMIT - primaryPoolMax - AUTOMATION_NON_POOL_RESERVE;
+    if (availableForLocks < 2) {
+        throw new Error(
+            `Unsafe automation database pool budget: DB_POOL_SIZE=${primaryPoolMax} leaves fewer than 2 maintenance-lock connections under the ${AUTOMATION_ROLE_CONNECTION_LIMIT}-connection role limit.`
+        );
+    }
+    if (requested > availableForLocks) {
+        if (explicit) {
+            throw new Error(
+                `Unsafe automation maintenance-lock pool: MAINTENANCE_LOCK_POOL_MAX=${requested} with DB_POOL_SIZE=${primaryPoolMax} exceeds the ${AUTOMATION_ROLE_CONNECTION_LIMIT}-connection role budget.`
+            );
+        }
+        return availableForLocks;
+    }
+    return requested;
+}
+
 // Whole-request / whole-job advisory locks are intentionally kept off the main
 // application pool. A state-changing request can need several normal DB queries
 // while it holds this session-level lock; using the same finite pool for both
@@ -13,7 +70,7 @@ const { RESTORE_MAINTENANCE_LOCK } = require('../db-locks');
 // not leave a checkout or admin mutation waiting forever.
 const lockPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    max: Math.max(2, Math.min(32, Number(process.env.MAINTENANCE_LOCK_POOL_MAX || 12))),
+    max: maintenanceLockPoolMax(),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: Math.max(1000, Math.min(30000, Number(process.env.MAINTENANCE_LOCK_CONNECTION_TIMEOUT_MS || 5000))),
     allowExitOnIdle: true
