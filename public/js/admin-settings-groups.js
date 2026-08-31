@@ -123,12 +123,15 @@
     if (location.pathname !== '/admin/settings' || new URLSearchParams(location.search).get('section') !== 'security') return;
     const cards = [...document.querySelectorAll('section.settings-card')];
     if (!cards.length) return;
-    const advancedTitles = new Set(['Session & registration limits', 'Abandoned activation cleanup']);
+    // Session lifetimes, registration rate limits and private-network trust are
+    // core Security settings and remain visible. Only infrequent housekeeping
+    // is progressive disclosure here.
+    const advancedTitles = new Set(['Abandoned activation cleanup']);
     const advancedCards = cards.filter(card => advancedTitles.has(card.querySelector('h3')?.textContent?.trim()));
     const first = cards[0];
-    first.insertAdjacentElement('beforebegin', basicHeader('Basic Settings', 'Registration, verification and staff sign-in controls used in normal administration.'));
+    first.insertAdjacentElement('beforebegin', basicHeader('Basic Settings', 'Registration, verification, staff sign-in, session and network security controls used in normal administration.'));
     if (!advancedCards.length) return;
-    const advanced = disclosure('advanced-settings', 'Advanced Settings', 'Rate limits, session boundaries, private-network trust and cleanup policy.', `${advancedCards.length} areas`);
+    const advanced = disclosure('advanced-settings', 'Advanced Settings', 'Infrequent security housekeeping and cleanup policy.', `${advancedCards.length} area`);
     const body = bodyOf(advanced);
     // Insert the disclosure while every original card is still in its original
     // parent. Moving the final card first can otherwise make that card a child
