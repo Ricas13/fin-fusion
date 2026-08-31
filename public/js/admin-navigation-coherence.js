@@ -46,14 +46,9 @@
     observer.observe(topActions,{childList:true});
   }
 
-  // Prepaid refunds are intentionally not permanent sidebar navigation. They
-  // are a customer support action, so expose the specialist workflow only from
-  // the customer's Billing context and pre-filter it to that customer.
-  function installCustomerBillingActions(){
-    const match=path.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-    if(!match||new URLSearchParams(location.search).get('tab')!=='billing')return;
+  function pageAction(label,href,marker){
     const pageHeader=document.querySelector('.content > .pageHeader')||document.querySelector('.pageHeader');
-    if(!pageHeader||pageHeader.querySelector('[data-prepaid-refund-action]'))return;
+    if(!pageHeader||pageHeader.querySelector(`[${marker}]`))return;
     let actions=pageHeader.querySelector(':scope > .pageHeaderActions');
     if(!actions){
       actions=document.createElement('div');
@@ -63,10 +58,24 @@
     }
     const link=document.createElement('a');
     link.className='button secondary';
-    link.href=`/admin/refunds?customerId=${encodeURIComponent(match[1])}`;
-    link.textContent='Prepaid refund';
-    link.setAttribute('data-prepaid-refund-action','');
+    link.href=href;
+    link.textContent=label;
+    link.setAttribute(marker,'');
     actions.appendChild(link);
+  }
+
+  // Prepaid refunds are intentionally not permanent sidebar navigation. They
+  // are a customer support action, so expose the specialist workflow only from
+  // the customer's Billing context and pre-filter it to that customer.
+  function installCustomerBillingActions(){
+    const match=path.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+    if(!match||new URLSearchParams(location.search).get('tab')!=='billing')return;
+    pageAction('Prepaid refund',`/admin/refunds?customerId=${encodeURIComponent(match[1])}`,'data-prepaid-refund-action');
+  }
+
+  function installBackupExportAction(){
+    if(path!=='/admin/backups')return;
+    pageAction('Export data','/admin/payments/export','data-backup-export-action');
   }
 
   function installMobileAdminDrawer(){
@@ -163,6 +172,7 @@
   movePageActionsToHeading();
   watchLatePageActions();
   installCustomerBillingActions();
+  installBackupExportAction();
   installMobileAdminDrawer();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
