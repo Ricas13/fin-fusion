@@ -87,7 +87,7 @@ assert(formFeedback.includes("'X-CSRF-Token': csrfToken"),'Enhanced admin POSTs 
 assert(formFeedback.includes('async function responseMessage(response)'),'Admin form errors must surface the server rejection reason instead of a generic HTTP status');
 assert(libraries.includes('Library controls')&&libraries.includes('Reset filters'),'Deep library diagnostics must retain labelled filtering controls');
 assert(libraries.includes('aria-label="Sort libraries by')&&libraryJs.includes('data-sort-state'),'Library diagnostic sort buttons must have accessible labels and visible state text');
-assert(payments.includes('id="provider-setup"')&&payments.includes('id="payment-operations"')&&payments.includes('Payment control room'),'Payments page must keep provider setup separate from operational monitoring while leading with operator state');
+assert(payments.includes('id="provider-setup"')&&payments.includes('Provider diagnostics')&&payments.includes('Payment control room')&&!payments.includes('Operational payment state'),'Payments page must lead with provider state, keep setup distinct from diagnostic callback history and avoid exposing raw subscription-state tables');
 assert(commerce.includes('Payment incidents to resolve')&&commerce.includes('/admin/payments'),'Commerce must keep customer-impacting incident work separate from provider infrastructure setup');
 assert(typoMigration.includes('Stremio Montly Addon')&&typoMigration.includes('Stremio Monthly Addon'),'Plan typo migration must correct the live Stremio plan name');
 
