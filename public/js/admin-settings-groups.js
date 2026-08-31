@@ -130,8 +130,11 @@
     if (!advancedCards.length) return;
     const advanced = disclosure('advanced-settings', 'Advanced Settings', 'Rate limits, session boundaries, private-network trust and cleanup policy.', `${advancedCards.length} areas`);
     const body = bodyOf(advanced);
-    advancedCards.forEach(card => body.append(card));
+    // Insert the disclosure while every original card is still in its original
+    // parent. Moving the final card first can otherwise make that card a child
+    // of `advanced`, and inserting `advanced` after its own descendant throws.
     cards[cards.length - 1].insertAdjacentElement('afterend', advanced);
+    advancedCards.forEach(card => body.append(card));
   }
 
   function groupIntegrationsLanguage() {
