@@ -1,6 +1,7 @@
 'use strict';
 require('dotenv').config();
 const assert = require('assert');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query, getPool } = require('../src/db');
 const auth = require('../src/auth/service');
@@ -13,7 +14,7 @@ const networkLeases = require('../src/access/network-leases');
 const FAILURE_LIMIT = Math.max(3, Math.min(10, Number(process.env.AUTH_FAILURE_LIMIT || 5)));
 
 function mockReq(sessionID) {
-  return { ip: '127.0.0.1', sessionID: sessionID || `ci-post451-${Math.random().toString(36).slice(2)}`, get(name) { return String(name).toLowerCase() === 'user-agent' ? 'steam-fusion-post451-smoke/1' : ''; } };
+  return { ip: '127.0.0.1', sessionID: sessionID || `ci-post451-${crypto.randomBytes(8).toString('hex')}`, get(name) { return String(name).toLowerCase() === 'user-agent' ? 'steam-fusion-post451-smoke/1' : ''; } };
 }
 
 async function createCustomer(label, suffix) {
