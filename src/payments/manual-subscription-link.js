@@ -19,6 +19,12 @@ async function localPremium(subscriptionId) {
     return local;
 }
 
+function stripeLookupError(error) {
+    const status = Number(error?.statusCode || error?.status || error?.raw?.statusCode || 0);
+    const detail = clean(error?.raw?.message || error?.message || error?.raw?.error?.message || 'request failed', 900);
+    return new Error(`Stripe subscription lookup failed${status ? ` (${status})` : ''}: ${detail}`);
+}
+
 async function stripeRemote(providerSubscriptionId) {
     if (!/^sub_/i.test(providerSubscriptionId)) throw new Error('Stripe recurring subscription IDs must start with sub_.');
     const cfg = await providerSettings.getRaw('stripe');
@@ -30,8 +36,31 @@ async function stripeRemote(providerSubscriptionId) {
         maxNetworkRetries: 2,
         timeout: providerHttp.timeoutMs('stripe')
     });
-    const subscription = await stripe.subscriptions.retrieve(providerSubscriptionId, { expand: ['customer', 'items.data.price'] });
-    const customer = subscription?.customer && typeof subscription.customer === 'object' ? subscription.customer : null;
+
+    let subscription;
+    try {
+        // The subscription itself is authoritative. Do not require the restricted
+        // key to have Customers-read permission just to verify an imported link.
+        // Customer email is enrichment and is fetched separately on a best-effort
+        // basis; provider customer ID remains available on the subscription.
+        subscription = await stripe.subscriptions.retrieve(providerSubscriptionId, { expand: ['items.data.price'] });
+    } catch (error) {
+        throw stripeLookupError(error);
+    }
+
+    let customer = subscription?.customer && typeof subscription.customer === 'object' ? subscription.customer : null;
+    const customerId = typeof subscription?.customer === 'string' ? subscription.customer : subscription?.customer?.id;
+    if (!customer && customerId) {
+        try {
+            const fetched = await stripe.customers.retrieve(customerId);
+            if (fetched && !fetched.deleted) customer = fetched;
+        } catch (_) {
+            // A restricted key can legitimately read subscriptions without being
+            // allowed to read Customers. Manual recovery remains safe because the
+            // operator must explicitly confirm ownership when identity enrichment
+            // is unavailable.
+        }
+    }
     return discovery.normalizeStripeSubscription(subscription, customer);
 }
 

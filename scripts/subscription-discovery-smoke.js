@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const discovery = require('../src/payments/subscription-discovery');
 const manualLink = require('../src/payments/manual-subscription-link');
+const adminBilling = require('../src/platform/admin-billing');
 
 assert(discovery.recurringId('stripe', 'sub_123'));
 assert(discovery.recurringId('paypal', 'I-ABC123'));
@@ -96,6 +97,10 @@ assert.strictEqual(matches[0].state, 'linked', 'already-linked premium users mus
 matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }], baseContext());
 assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptions must not be used to justify premium access');
 
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:true,last_error:null }] }).length, 0, 'past-due subscriptions intentionally ending after the current period must not stay in the operator problem queue');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:false,last_error:null }] }).length, 1, 'past-due subscriptions still expected to renew must remain operator work');
+assert.strictEqual(adminBilling.recurringProblems({ subscriptions: [{ recurring:true,status:'past_due',cancel_at_period_end:true,last_error:'provider sync failed' }] }).length, 1, 'provider sync failures must remain operator work even when renewal is stopped');
+
 const discoverySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'subscription-discovery.js'), 'utf8');
 const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'lifecycle.js'), 'utf8');
 const manualSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'manual-subscription-link.js'), 'utf8');
@@ -121,6 +126,10 @@ assert.ok(manualSource.includes("discovery.currentRemote(remote)"), 'manual reco
 assert.ok(manualSource.includes('/v1/billing/subscriptions/'), 'manual PayPal recovery must try the current Subscriptions API first');
 assert.ok(manualSource.includes('/v1/payments/billing-agreements/'), 'manual PayPal recovery must fall back to legacy Billing Agreements v1 for migrated I- profiles');
 assert.ok(manualSource.includes("apiFamily: 'billing-agreements-v1'"), 'legacy PayPal normalization must remain distinguishable for operator diagnostics');
+assert.ok(manualSource.includes("expand: ['items.data.price']"), 'manual Stripe recovery must retrieve subscription truth without requiring Customer expansion permission');
+assert.ok(!manualSource.includes("expand: ['customer', 'items.data.price']"), 'manual Stripe recovery must not require restricted-key Customer expansion permission');
+assert.ok(manualSource.includes('stripe.customers.retrieve(customerId)'), 'manual Stripe recovery may enrich customer identity separately when permission allows');
+assert.ok(manualSource.includes('Stripe subscription lookup failed'), 'manual Stripe lookup failures must retain provider detail instead of collapsing to a generic 400');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(manualSource), 'manual recovery must not mutate subscriptions outside lifecycle');
 
 const adminSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-billing.js'), 'utf8');
@@ -133,12 +142,14 @@ assert.ok(adminSource.includes('/admin/billing/:id/manual-preview'), 'each missi
 assert.ok(adminSource.includes('/admin/billing/:id/manual-link'), 'each missing link must support explicit verified attachment');
 assert.ok(adminSource.includes('Verify provider subscription'), 'manual resolution must show provider truth before attachment');
 assert.ok(adminSource.includes('/manual-preview#manual-provider-preview'), 'manual verification submissions must target the rendered verification feedback instead of returning the operator to the page top');
+assert.ok(adminSource.includes('data-native-submit="true"'), 'manual provider verification must use native navigation so server-rendered 400 details are not swallowed by generic AJAX form feedback');
 assert.ok(adminSource.includes('Subscription verification failed'), 'manual verification failures must be visibly rendered in the same operator workflow');
 assert.ok(adminSource.includes('Provider verification succeeded.'), 'successful provider verification must have explicit visible feedback before linking');
 assert.ok(adminSource.includes('manualAttempt'), 'manual verification errors must preserve enough attempted-provider context to explain what failed');
 assert.ok(adminSource.includes('${verification}${table}'), 'manual verification feedback must render before the missing-subscription table, not after the full page');
+assert.ok(adminSource.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'intentional end-of-period cancellations must not remain in the urgent past-due queue');
 assert.ok(adminSource.includes("filter(item=>item.state!=='linked')"), 'automatic discovery results must focus on unresolved work instead of healthy rows');
-assert.ok(adminSource.includes('Healthy / linked recurring subscriptions'), 'healthy recurring subscriptions must be secondary/reference information');
+assert.ok(adminSource.includes('Linked recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
 
 console.log('Subscription discovery smoke passed.');
