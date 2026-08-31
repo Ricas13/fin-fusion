@@ -18,6 +18,12 @@ const densityCss = read('public/css/admin-card-density.css');
 const capability = read('public/css/admin-capability.css');
 const attention = read('src/platform/admin-attention.js');
 const baseline = read('db/migrations/000_database_baseline.sql');
+const settingsGroups = read('public/js/admin-settings-groups.js');
+const navigationCoherence = read('public/js/admin-navigation-coherence.js');
+const mediaControls = read('src/platform/admin-media-controls.js');
+const fourKPolicySource = read('src/jellyfin/four-k-transcode-policy.js');
+const activityWorker = read('scripts/activity-worker.js');
+const fourKMigration = read('db/migrations/20260831190000_plan_4k_transcode_policy.sql');
 
 assert(routes.includes('createAdminJellyfinPlanEditorRouter'), 'route composition must mount the unified Jellyfin plan editor');
 assert(routes.indexOf('createAdminJellyfinPlanEditorRouter()') < routes.indexOf('createAdminPlanAccessRouter()'), 'unified Jellyfin dispatch must run before legacy plan GET owners');
@@ -78,5 +84,40 @@ assert(css.includes('.section.bulkBar{overflow:visible}'), 'bulk-action sections
 assert(css.includes('.attentionBulkBar .input.compact,.attentionActionGrid .input.compact{min-width:0!important'), 'attention workflow inputs must be allowed to shrink instead of forcing horizontal overflow');
 assert(css.includes('.attentionActionGrid{grid-template-columns:minmax(92px'), 'attention row workflow must use bounded responsive columns');
 assert(attention.includes('responsiveTable attentionTable'), 'Needs Attention table must opt into the constrained workflow layout');
+
+// Basic / Advanced / Logs admin grouping.
+assert(capability.includes("@import url('/css/admin-settings-groups.css')"), 'shared admin capability stylesheet must load the settings-group styles');
+assert(navigationCoherence.includes("script.src='/js/admin-settings-groups.js'"), 'all admin shells must load the settings grouping enhancer through the shared navigation script');
+assert(settingsGroups.includes("basicHeader('Basic Settings'"), 'settings grouping must expose a Basic Settings heading');
+assert(settingsGroups.includes("disclosure('advanced-settings', 'Advanced Settings'"), 'settings grouping must expose Advanced Settings as a disclosure');
+assert(settingsGroups.includes("disclosure('logs', 'Logs'"), 'settings grouping must expose Logs as a disclosure');
+const disclosureStart = settingsGroups.indexOf('function disclosure(');
+const disclosureEnd = settingsGroups.indexOf('function bodyOf(', disclosureStart);
+const disclosureSource = settingsGroups.slice(disclosureStart, disclosureEnd);
+assert(disclosureStart >= 0 && disclosureEnd > disclosureStart, 'settings disclosure helper must exist');
+assert(!/\.open\s*=|setAttribute\(\s*['"]open['"]/.test(disclosureSource), 'Advanced Settings and Logs disclosures must be collapsed by default');
+assert(settingsGroups.includes('if (!details.open || loaded) return;'), 'log history must load lazily only after the collapsed Logs disclosure is opened');
+assert(settingsGroups.includes('revealHashTarget'), 'a deliberate post-save anchor may reopen the relevant collapsed disclosure');
+
+// RTR0-style Jellyfin media controls.
+assert(routes.includes("const { createAdminMediaControlsRouter } = require('./admin-media-controls')"), 'route composition must import the Jellyfin media controls owner');
+assert(routes.includes('app.use(createAdminMediaControlsRouter());'), 'Jellyfin media controls must be mounted in the production admin router');
+assert(fourKMigration.includes('kick_4k_transcodes boolean NOT NULL DEFAULT FALSE'), '4K transcode kick must be opt-in and default off');
+assert(activityWorker.includes("require('../src/jellyfin/four-k-transcode-policy')") && activityWorker.includes('runFourKTranscodeCycle()'), 'the activity worker must execute the 4K transcode policy cycle');
+assert(mediaControls.includes('/4k-transcode') && mediaControls.includes("admin.plan.4k_transcode_policy"), 'plan media controls must persist and audit 4K transcode policy changes');
+assert(mediaControls.includes('/message') && mediaControls.includes('/Message') && mediaControls.includes('activeManagedSessions'), 'server media controls must send messages only to active managed Jellyfin sessions');
+assert(mediaControls.includes('attempted: results.length, sent, failed'), 'Jellyfin message delivery must be audited with attempted/sent/failed counts');
+assert(settingsGroups.includes('4K Video Transcoding Kick') && settingsGroups.includes('Send Jellyfin message'), 'operator UI must surface the new 4K kick and Jellyfin message controls');
+assert(fourKPolicySource.includes("const POLICY_REASON = 'plan_4k_transcode_kick'"), '4K policy events must use a stable log reason');
+
+const fourKPolicy = require('../src/jellyfin/four-k-transcode-policy');
+const directPlay4k = { Id: 's1', NowPlayingItem: { Id: 'i1', Width: 3840, Height: 2160 }, PlayState: { PlayMethod: 'DirectPlay' } };
+const transcode4kSource = { Id: 's2', NowPlayingItem: { Id: 'i2', Width: 3840, Height: 2160 }, PlayState: { PlayMethod: 'Transcode' }, TranscodingInfo: { Width: 1920, Height: 1080 } };
+const transcode1080 = { Id: 's3', NowPlayingItem: { Id: 'i3', Width: 1920, Height: 1080 }, PlayState: { PlayMethod: 'Transcode' }, TranscodingInfo: { Width: 1280, Height: 720 } };
+const transcode4kOutput = { Id: 's4', NowPlayingItem: { Id: 'i4', Width: 1920, Height: 1080 }, PlayState: { PlayMethod: 'Transcode' }, TranscodingInfo: { Width: 3840, Height: 2160 } };
+assert.strictEqual(fourKPolicy.isFourKVideoTranscode(directPlay4k), false, '4K Direct Play must never be kicked');
+assert.strictEqual(fourKPolicy.isFourKVideoTranscode(transcode4kSource), true, 'a 4K source being down-transcoded must be detected');
+assert.strictEqual(fourKPolicy.isFourKVideoTranscode(transcode1080), false, 'ordinary 1080p transcoding must not be kicked');
+assert.strictEqual(fourKPolicy.isFourKVideoTranscode(transcode4kOutput), true, '4K transcode output must be detected');
 
 console.log('unified plan control room smoke: ok');
