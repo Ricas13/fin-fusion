@@ -18,6 +18,7 @@ assert(v2Source.includes('options.skipAccessSections'),'v2 must keep the explici
 assert(wrapperSource.includes("accessCards=require('./customer-360-access-cards')"),'Customer 360 must have one dedicated card Access renderer');
 assert(!wrapperSource.includes('manage.portalSection'),'Portal account/onboarding must not be duplicated on the Access tab');
 assert(!adminSource.includes('Preview customer portal'),'The redundant Preview customer portal action must be removed');
+assert(wrapperSource.includes('jellyfinPasswordSupport(safe)+accessCards.render'),'compact Access must keep Jellyfin password support reachable after top-action normalization');
 
 assert(cardsSource.includes('accessOverviewGrid'),'Access summary must use compact overview cards');
 assert(cardsSource.includes('accessControlGrid'),'Technical access controls must use a responsive card grid');
@@ -80,6 +81,9 @@ const historyDisclosure=failedHtml.indexOf('class="section accessDisclosure acce
 const activityDisclosure=failedHtml.indexOf('class="section accessDisclosure accessActivity"');
 assert(historyDisclosure>=0&&activityDisclosure>historyDisclosure,'Activity disclosure must sit at the bottom after provisioning history');
 assert(!/<details class="section accessDisclosure"[^>]* open/.test(failedHtml),'Access disclosures must be collapsed by default');
+
+const activeHtml=view.body(fixture({accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Free Server',jellyfin_username:'testcustomer'}]}),'access','token',{currentPlan:plan,effective:effectiveFixture(),assignment:null},{householdOverrides:{}});
+assert(activeHtml.includes('/admin/customer-jellyfin-password?customerId=cust-1')&&activeHtml.includes('Change Jellyfin password'),'active Jellyfin customers must retain password support inside the compact Access workspace');
 
 const manualHtml=view.manualServerAssignmentForm('token','cust-1',assignment);
 assert(manualHtml.includes('50/50 · FULL')&&manualHtml.includes('1000/50 · OVER +950'),'manual assignment helper must preserve over-capacity options');
