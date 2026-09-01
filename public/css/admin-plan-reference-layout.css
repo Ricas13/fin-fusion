@@ -1,0 +1,617 @@
+/* CAPTAiNFiN plan editor reference layout
+ *
+ * This layer is intentionally scoped to the unified Jellyfin plan editor.
+ * It does not touch the application sidebar/navigation and it does not hide,
+ * rename or remove any plan setting. The existing forms remain the source of
+ * truth; this file only changes their presentation and responsive layout.
+ */
+
+.content.planReferencePage{
+  --plan-ref-bg:#07111b;
+  --plan-ref-panel:#0d1925;
+  --plan-ref-panel-2:#101e2b;
+  --plan-ref-panel-3:#0a1520;
+  --plan-ref-border:#203142;
+  --plan-ref-border-soft:rgba(135,171,199,.14);
+  --plan-ref-text:#f2f6fa;
+  --plan-ref-copy:#b6c2cf;
+  --plan-ref-muted:#748597;
+  --plan-ref-green:#32c978;
+  --plan-ref-green-soft:rgba(50,201,120,.12);
+  --plan-ref-red:#ef6570;
+  --plan-ref-purple:#a874ff;
+  --plan-ref-blue:#69b9ff;
+  --plan-ref-yellow:#f2b84b;
+  width:min(100%,1580px);
+  margin:0 auto;
+  padding:22px 28px 92px;
+}
+
+/* Page heading ---------------------------------------------------------- */
+.content.planReferencePage .pageHeader{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:18px;
+  margin:0 0 16px;
+}
+.content.planReferencePage .pageHeader>div:first-child{min-width:0}
+.content.planReferencePage .pageHeader h1{
+  margin:4px 0 0;
+  color:var(--plan-ref-text);
+  font-size:25px;
+  font-weight:760;
+  letter-spacing:-.025em;
+}
+.content.planReferencePage .pageHeader .muted{
+  margin-top:5px;
+  color:var(--plan-ref-muted);
+  font-size:11px;
+}
+.planReferenceBreadcrumb{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color:#7e8fa1;
+  font-size:10px;
+  font-weight:650;
+}
+.planReferenceBreadcrumb strong{color:#d8e1e8;font-weight:700}
+.planReferenceBreadcrumb b{color:#405163;font-weight:500}
+
+/* Existing top-bar action remains; the new save button is only an alternate
+   control for the same existing forms. */
+.planReferenceTopSave{
+  min-height:34px!important;
+  padding:7px 14px!important;
+  border:1px solid rgba(61,220,134,.46)!important;
+  border-radius:7px!important;
+  background:linear-gradient(180deg,#28bb6d,#1c9c58)!important;
+  box-shadow:0 6px 18px rgba(28,156,88,.18),inset 0 1px 0 rgba(255,255,255,.16)!important;
+  color:#fff!important;
+  font-size:11px!important;
+  font-weight:780!important;
+}
+.planReferenceTopSave:hover:not(:disabled){filter:brightness(1.08)}
+.planReferenceTopSave:disabled{opacity:.48;cursor:not-allowed;box-shadow:none!important}
+
+/* Plan identity banner ------------------------------------------------- */
+.content.planReferencePage .planControlRoom{display:grid;gap:13px}
+.content.planReferencePage .planControlHeader{
+  display:flex!important;
+  align-items:center;
+  justify-content:space-between;
+  min-width:0;
+  min-height:82px;
+  gap:18px;
+  padding:13px 16px;
+  border:1px solid var(--plan-ref-border);
+  border-radius:10px;
+  background:linear-gradient(110deg,rgba(16,31,44,.97),rgba(11,24,35,.98));
+  box-shadow:0 1px 0 rgba(255,255,255,.015),0 12px 35px rgba(0,0,0,.10);
+}
+.content.planReferencePage .planControlIdentity{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  flex-wrap:wrap;
+}
+.content.planReferencePage .planControlIdentity:first-child>strong{
+  color:var(--plan-ref-text);
+  font-size:20px;
+  line-height:1.1;
+  letter-spacing:-.02em;
+}
+.content.planReferencePage .planControlIdentity .muted{color:#8292a2;font-size:10px}
+.planReferenceSummaryIcon{
+  width:46px;
+  height:46px;
+  display:grid;
+  place-items:center;
+  flex:0 0 46px;
+  margin-right:3px;
+  border:1px solid rgba(50,201,120,.16);
+  border-radius:9px;
+  background:rgba(50,201,120,.10);
+  color:var(--plan-ref-green);
+}
+.planReferenceSummaryIcon svg{width:22px;height:22px}
+
+.content.planReferencePage .pill{
+  min-height:20px;
+  padding:3px 7px;
+  border-radius:999px;
+  border-color:rgba(140,168,191,.16);
+  background:rgba(125,151,173,.08);
+  color:#aebcca;
+  font-size:9px;
+  line-height:1.2;
+  font-weight:760;
+}
+.content.planReferencePage .pill.good{
+  border-color:rgba(50,201,120,.27);
+  background:rgba(50,201,120,.10);
+  color:#6fe2a1;
+}
+.content.planReferencePage .pill.warn{
+  border-color:rgba(239,101,112,.26);
+  background:rgba(239,101,112,.09);
+  color:#f38a93;
+}
+.content.planReferencePage .pill.accent{
+  border-color:rgba(105,185,255,.25);
+  background:rgba(105,185,255,.08);
+  color:#94ccff;
+}
+
+/* Three-column card system --------------------------------------------- */
+.content.planReferencePage .planControlGrid{
+  display:grid!important;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:13px!important;
+  align-items:start!important;
+}
+.content.planReferencePage .planControlGrid>.planConfigCard,
+.content.planReferencePage .planControlGrid>.requestPlanCard{
+  min-width:0;
+  grid-column:auto!important;
+  align-self:start!important;
+  height:auto!important;
+  overflow:hidden;
+  border:1px solid var(--plan-ref-border)!important;
+  border-radius:10px!important;
+  background:linear-gradient(180deg,var(--plan-ref-panel) 0%,#0b1722 100%)!important;
+  box-shadow:0 1px 0 rgba(255,255,255,.014),0 12px 28px rgba(0,0,0,.08)!important;
+}
+
+/* Product carries several existing storefront fields, so it remains a wide
+   card but its form is internally compact. Everything else starts as a single
+   card and expands only when its existing advanced disclosure is opened. */
+.content.planReferencePage .planControlGrid>#product{
+  grid-column:1/-1!important;
+  order:0;
+}
+.content.planReferencePage .planControlGrid>#commerce{order:1}
+.content.planReferencePage .planControlGrid>#availability{order:2}
+.content.planReferencePage .planControlGrid>#access{order:3}
+.content.planReferencePage .planControlGrid>#delivery{order:4}
+.content.planReferencePage .planControlGrid>#libraries{order:5}
+.content.planReferencePage .planControlGrid>#lifecycle{order:6}
+.content.planReferencePage .planControlGrid>#requests{order:7}
+
+@media(min-width:1180px){
+  .content.planReferencePage .planControlGrid>#access:has(details[open]),
+  .content.planReferencePage .planControlGrid>#delivery:has(details[open]),
+  .content.planReferencePage .planControlGrid>#libraries:has(details[open]),
+  .content.planReferencePage .planControlGrid>#commerce:has(details[open]),
+  .content.planReferencePage .planControlGrid>#requests:has(details[open]){
+    grid-column:1/-1!important;
+  }
+  .content.planReferencePage .planControlGrid>#access:has(details[open]) .planPermissionGrid,
+  .content.planReferencePage .planControlGrid>#requests:has(details[open]) .planPermissionGrid{
+    grid-template-columns:repeat(5,minmax(0,1fr))!important;
+  }
+  .content.planReferencePage .planControlGrid>#libraries:has(details[open]) .planLibraryChoices{
+    grid-template-columns:repeat(4,minmax(0,1fr))!important;
+    max-height:330px;
+  }
+  .content.planReferencePage .planControlGrid>#delivery:has(details[open]) .planServerChoices{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .content.planReferencePage .planControlGrid>#commerce:has(details[open]) .planPaymentOptions{
+    grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  }
+}
+
+/* Card heads ----------------------------------------------------------- */
+.content.planReferencePage .planConfigHead,
+.content.planReferencePage .requestPlanCard>.sectionHead{
+  position:relative;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:10px!important;
+  min-height:51px;
+  margin:0!important;
+  padding:10px 12px!important;
+  border:0!important;
+  border-bottom:1px solid var(--plan-ref-border-soft)!important;
+  background:rgba(255,255,255,.008)!important;
+}
+.planReferenceHeading{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  flex:1 1 auto;
+}
+.planReferenceHeading>div{min-width:0}
+.content.planReferencePage .planConfigHead h2,
+.content.planReferencePage .planConfigHead h3,
+.content.planReferencePage .requestPlanCard>.sectionHead h2{
+  margin:0!important;
+  color:#f1f5f8!important;
+  font-size:12px!important;
+  line-height:1.25!important;
+  font-weight:760!important;
+  letter-spacing:-.01em;
+}
+.content.planReferencePage .planConfigHead p,
+.content.planReferencePage .requestPlanCard>.sectionHead p{
+  margin:2px 0 0!important;
+  color:#738496!important;
+  font-size:8.5px!important;
+  line-height:1.3!important;
+}
+.planReferenceTitleIcon{
+  --plan-icon:#78a9cd;
+  width:25px;
+  height:25px;
+  display:grid;
+  place-items:center;
+  flex:0 0 25px;
+  border:1px solid color-mix(in srgb,var(--plan-icon) 20%,transparent);
+  border-radius:7px;
+  background:color-mix(in srgb,var(--plan-icon) 8%,transparent);
+  color:var(--plan-icon);
+}
+.planReferenceTitleIcon svg{width:14px;height:14px}
+[data-plan-reference-kind="product"] .planReferenceTitleIcon{--plan-icon:#35ce7d}
+[data-plan-reference-kind="commerce"] .planReferenceTitleIcon{--plan-icon:#4bd48a}
+[data-plan-reference-kind="availability"] .planReferenceTitleIcon{--plan-icon:#80c5f5}
+[data-plan-reference-kind="access"] .planReferenceTitleIcon{--plan-icon:#b78cff}
+[data-plan-reference-kind="delivery"] .planReferenceTitleIcon{--plan-icon:#a978ff}
+[data-plan-reference-kind="libraries"] .planReferenceTitleIcon{--plan-icon:#f0b84a}
+[data-plan-reference-kind="lifecycle"] .planReferenceTitleIcon{--plan-icon:#b081ff}
+[data-plan-reference-kind="requests"] .planReferenceTitleIcon{--plan-icon:#777cff}
+.planReferenceHeadActions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  flex:0 0 auto;
+}
+.planReferenceAdvancedButton{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  min-height:24px;
+  padding:2px 4px;
+  border:0;
+  border-radius:5px;
+  background:transparent;
+  color:#93a4b5;
+  font:inherit;
+  font-size:8.5px;
+  font-weight:720;
+  cursor:pointer;
+}
+.planReferenceAdvancedButton:hover{color:#d8e4ec;background:rgba(255,255,255,.035)}
+.planReferenceAdvancedButton svg{width:10px;height:10px;transition:transform .16s ease}
+.planReferenceAdvancedButton[aria-expanded="true"] svg{transform:rotate(180deg)}
+
+/* Form density --------------------------------------------------------- */
+.content.planReferencePage .planConfigBody,
+.content.planReferencePage .requestPlanBody{
+  padding:11px 12px 12px!important;
+}
+.content.planReferencePage .planConfigBody .formGroup,
+.content.planReferencePage .requestPlanBody .formGroup{
+  min-width:0;
+  margin:0 0 9px!important;
+}
+.content.planReferencePage .formGroup>label,
+.content.planReferencePage .subText{
+  display:block;
+  margin:0 0 4px!important;
+  color:#8796a6!important;
+  font-size:9px!important;
+  line-height:1.25!important;
+  font-weight:650!important;
+}
+.content.planReferencePage .input,
+.content.planReferencePage select.input,
+.content.planReferencePage textarea.input{
+  width:100%;
+  min-width:0!important;
+  min-height:34px!important;
+  padding:6px 8px!important;
+  border:1px solid #223447!important;
+  border-radius:6px!important;
+  background:#091520!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.012)!important;
+  color:#e8eef4!important;
+  font-size:10px!important;
+  line-height:1.35!important;
+}
+.content.planReferencePage textarea.input{min-height:66px!important;resize:vertical}
+.content.planReferencePage .input:focus,
+.content.planReferencePage select.input:focus,
+.content.planReferencePage textarea.input:focus{
+  border-color:#3e7893!important;
+  outline:0!important;
+  box-shadow:0 0 0 2px rgba(65,157,199,.10)!important;
+}
+.content.planReferencePage .inputUnit{min-width:0}
+.content.planReferencePage .inputUnit>span{font-size:9px;color:#7e8d9c}
+.content.planReferencePage .inlineHelp,
+.content.planReferencePage .fieldHelp,
+.content.planReferencePage .planSaveHint{
+  margin-top:4px!important;
+  color:#657688!important;
+  font-size:8px!important;
+  line-height:1.38!important;
+}
+.content.planReferencePage .formGrid{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:8px!important;
+}
+.content.planReferencePage .toggleGrid{gap:6px!important;margin:6px 0!important}
+
+/* Product card is the editable equivalent of the compact identity area in the
+   reference. It uses columns instead of stacking every current option. */
+@media(min-width:900px){
+  .content.planReferencePage #product>.planConfigBody{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:9px 12px;
+    align-items:start;
+  }
+  .content.planReferencePage #product>.planConfigBody>.formGroup,
+  .content.planReferencePage #product>.planConfigBody>.toggleGrid,
+  .content.planReferencePage #product>.planConfigBody>.planFreeStatement,
+  .content.planReferencePage #product>.planConfigBody>.notice,
+  .content.planReferencePage #product>.planConfigBody>.buttonRow{margin:0!important}
+  .content.planReferencePage #product>.planConfigBody>.formGroup:has(textarea),
+  .content.planReferencePage #product>.planConfigBody>.formGroup:has(input[name^="feature"]){grid-column:span 2}
+  .content.planReferencePage #product>.planConfigBody>.buttonRow{grid-column:1/-1}
+}
+
+/* Toggles -------------------------------------------------------------- */
+.content.planReferencePage .toggleRow{
+  min-width:0;
+  min-height:36px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0!important;
+  padding:7px 8px!important;
+  border:1px solid var(--plan-ref-border-soft)!important;
+  border-radius:6px!important;
+  background:#0a1621!important;
+}
+.content.planReferencePage .toggleRow:has(input:checked){
+  border-color:rgba(50,201,120,.32)!important;
+  background:rgba(50,201,120,.085)!important;
+}
+.content.planReferencePage .toggleRow>span{min-width:0;color:#b9c4ce;font-size:9px!important}
+.content.planReferencePage .toggleRow strong{color:#dce4eb!important;font-size:9px!important;line-height:1.25!important}
+.content.planReferencePage .toggleRow small{display:block;margin-top:2px;color:#708193!important;font-size:7.5px!important;line-height:1.28!important}
+.content.planReferencePage .toggleRow:has(input:checked) strong{color:#e6f8ed!important}
+.content.planReferencePage .toggleRow:has(input:checked) input{accent-color:var(--plan-ref-green)}
+
+/* Compact facts / availability ---------------------------------------- */
+.content.planReferencePage .planConfigFacts{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:5px!important;
+  margin:0 0 8px!important;
+}
+.content.planReferencePage .planConfigFact{
+  min-width:0;
+  padding:6px 7px!important;
+  border:1px solid var(--plan-ref-border-soft)!important;
+  border-radius:6px!important;
+  background:#0a1621!important;
+}
+.content.planReferencePage .planConfigFact span{color:#66788a!important;font-size:7px!important}
+.content.planReferencePage .planConfigFact strong{margin-top:2px!important;color:#e7edf2!important;font-size:13px!important}
+
+/* Existing advanced disclosures --------------------------------------- */
+.content.planReferencePage details.planCardDetails{
+  margin:7px 0 0!important;
+  border:1px solid var(--plan-ref-border-soft)!important;
+  border-radius:7px!important;
+  background:rgba(7,16,25,.34)!important;
+  overflow:hidden;
+}
+.content.planReferencePage details.planCardDetails>summary{
+  min-height:31px;
+  padding:8px 9px!important;
+  color:#93a7b8!important;
+  background:rgba(255,255,255,.01)!important;
+  font-size:8.5px!important;
+  font-weight:720!important;
+  list-style:none!important;
+}
+.content.planReferencePage details.planCardDetails>summary:after{
+  content:'›'!important;
+  float:right;
+  color:#607487!important;
+  font-size:13px!important;
+  line-height:10px;
+  text-transform:none!important;
+  transform:rotate(90deg);
+}
+.content.planReferencePage details.planCardDetails[open]>summary:after{transform:rotate(-90deg)}
+.content.planReferencePage details.planCardDetails .planDetailsBody{padding:8px 9px 9px!important;border-top:1px solid var(--plan-ref-border-soft)}
+
+.content.planReferencePage .planPermissionGrid{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:5px!important;
+}
+.content.planReferencePage .planLibraryChoices{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:5px!important;
+  max-height:270px;
+}
+.content.planReferencePage .libraryChoice,
+.content.planReferencePage .planServerChoice,
+.content.planReferencePage .planPaymentOption{
+  border:1px solid var(--plan-ref-border-soft)!important;
+  border-radius:7px!important;
+  background:#0a1621!important;
+}
+.content.planReferencePage .libraryChoice{padding:7px 8px!important}
+.content.planReferencePage .libraryChoice strong,
+.content.planReferencePage .planServerChoice strong{color:#dce4eb;font-size:9px!important}
+.content.planReferencePage .libraryChoice small,
+.content.planReferencePage .planServerChoice small{color:#68798a!important;font-size:7.5px!important}
+.content.planReferencePage .planServerChoices{gap:5px!important}
+.content.planReferencePage .planServerChoice{padding:6px 7px!important}
+.content.planReferencePage .planPaymentOptions{gap:6px!important}
+.content.planReferencePage .planPaymentOption{padding:8px!important}
+
+/* Requests ------------------------------------------------------------- */
+.content.planReferencePage .requestQuotaGrid{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+}
+.content.planReferencePage .requestPermissionMode{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:6px!important;
+  margin:7px 0!important;
+  padding:7px!important;
+  border-color:var(--plan-ref-border-soft)!important;
+  border-radius:7px!important;
+}
+.content.planReferencePage .requestPermissionMode legend{color:#7f8fa0!important;font-size:8px!important}
+.content.planReferencePage .requestPermissionMode .choice{
+  padding:7px!important;
+  border-color:var(--plan-ref-border-soft)!important;
+  border-radius:6px!important;
+  background:#0a1621!important;
+}
+.content.planReferencePage .requestPermissionMode .choice strong{font-size:8.5px!important}
+.content.planReferencePage .requestPermissionMode .choice small{font-size:7.5px!important}
+.content.planReferencePage .requestPermissionGroup>strong{font-size:7.5px!important}
+
+/* Notices and safety text --------------------------------------------- */
+.content.planReferencePage .notice,
+.content.planReferencePage .securityNote,
+.content.planReferencePage .operatorCallout,
+.content.planReferencePage .planFreeStatement{
+  padding:7px 8px!important;
+  border-radius:7px!important;
+  font-size:8px!important;
+  line-height:1.4!important;
+}
+.content.planReferencePage .planFreeStatement{
+  border-color:rgba(50,201,120,.20)!important;
+  background:rgba(50,201,120,.055)!important;
+}
+.content.planReferencePage .securityNote.standalone{margin:0!important}
+
+/* Existing per-card submit buttons remain in the DOM as a no-JS fallback.
+   Once the page-level save controller is confirmed ready, only the duplicate
+   submit controls are visually collapsed; links and every setting remain. */
+.content.planReferencePage.planReferenceSaveReady .planControlGrid form>button[type="submit"],
+.content.planReferencePage.planReferenceSaveReady .planControlGrid .buttonRow>button[type="submit"]{
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  margin:-1px!important;
+  padding:0!important;
+  overflow:hidden!important;
+  clip:rect(0 0 0 0)!important;
+  white-space:nowrap!important;
+  border:0!important;
+}
+.content.planReferencePage .buttonRow{gap:6px!important;margin-top:8px!important}
+.content.planReferencePage .button,
+.content.planReferencePage button.button{
+  min-height:32px;
+  padding:6px 10px;
+  border-radius:6px;
+  font-size:9px;
+}
+
+/* Dirty-state save bar ------------------------------------------------- */
+.planReferenceSaveBar{
+  position:fixed;
+  z-index:92;
+  left:calc(var(--sidebar-w,248px) + 28px);
+  right:28px;
+  bottom:14px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  min-height:54px;
+  padding:9px 10px 9px 13px;
+  border:1px solid #26384a;
+  border-radius:9px;
+  background:rgba(15,29,42,.94);
+  box-shadow:0 18px 55px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.03);
+  backdrop-filter:blur(14px);
+  opacity:0;
+  transform:translateY(14px);
+  pointer-events:none;
+  transition:opacity .16s ease,transform .16s ease;
+}
+.planReferenceSaveBar.isVisible{opacity:1;transform:translateY(0);pointer-events:auto}
+.planReferenceSaveStatus{display:flex;align-items:center;gap:9px;min-width:0}
+.planReferenceSaveStatusIcon{
+  width:27px;height:27px;display:grid;place-items:center;flex:0 0 27px;
+  border:1px solid rgba(242,184,75,.22);border-radius:7px;
+  background:rgba(242,184,75,.08);color:var(--plan-ref-yellow);
+}
+.planReferenceSaveStatusIcon svg{width:14px;height:14px}
+.planReferenceSaveCopy{display:grid;gap:1px;min-width:0}
+.planReferenceSaveCopy strong{color:#eef3f7;font-size:10px}
+.planReferenceSaveCopy span{color:#718294;font-size:8px}
+.planReferenceSaveActions{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.planReferenceDiscard,
+.planReferenceSaveAll{
+  min-height:34px;padding:7px 13px;border-radius:7px;font:inherit;font-size:9px;font-weight:760;cursor:pointer;
+}
+.planReferenceDiscard{border:1px solid #2b3c4d;background:#0a1621;color:#cbd5dd}
+.planReferenceSaveAll{border:1px solid rgba(61,220,134,.45);background:linear-gradient(180deg,#28bb6d,#1c9c58);color:#fff;box-shadow:0 5px 16px rgba(28,156,88,.17)}
+.planReferenceSaveAll:disabled,.planReferenceDiscard:disabled{opacity:.5;cursor:wait}
+
+/* Breakpoints ---------------------------------------------------------- */
+@media(max-width:1179px){
+  .content.planReferencePage .planControlGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .content.planReferencePage .planControlGrid>#product{grid-column:1/-1!important}
+  .content.planReferencePage .planControlGrid>#access:has(details[open]),
+  .content.planReferencePage .planControlGrid>#delivery:has(details[open]),
+  .content.planReferencePage .planControlGrid>#libraries:has(details[open]),
+  .content.planReferencePage .planControlGrid>#commerce:has(details[open]),
+  .content.planReferencePage .planControlGrid>#requests:has(details[open]){grid-column:1/-1!important}
+}
+@media(max-width:860px){
+  .content.planReferencePage{width:100%;padding:18px 15px 82px}
+  .content.planReferencePage .planControlHeader{min-height:72px;padding:11px 12px}
+  .planReferenceSaveBar{left:15px;right:15px;bottom:10px}
+}
+@media(max-width:720px){
+  .content.planReferencePage .planControlGrid{grid-template-columns:1fr!important;gap:10px!important}
+  .content.planReferencePage .planControlGrid>*{grid-column:1!important}
+  .content.planReferencePage .planControlHeader{align-items:flex-start;flex-direction:column;gap:9px}
+  .content.planReferencePage .planControlIdentity:first-child>strong{font-size:17px}
+  .planReferenceSummaryIcon{width:40px;height:40px;flex-basis:40px}
+  .content.planReferencePage .formGrid,
+  .content.planReferencePage .planPermissionGrid,
+  .content.planReferencePage .planLibraryChoices,
+  .content.planReferencePage .planPaymentOptions,
+  .content.planReferencePage .requestPermissionMode,
+  .content.planReferencePage .requestQuotaGrid{grid-template-columns:1fr!important}
+  .content.planReferencePage #product>.planConfigBody{display:block}
+  .planReferenceSaveBar{align-items:stretch;flex-direction:column;gap:8px}
+  .planReferenceSaveActions{justify-content:flex-end}
+}
+@media(max-width:480px){
+  .content.planReferencePage .planConfigHead,
+  .content.planReferencePage .requestPlanCard>.sectionHead{align-items:flex-start!important}
+  .planReferenceHeadActions{flex-wrap:wrap}
+  .content.planReferencePage .planConfigFacts{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .planReferenceSaveActions>*{flex:1 1 0}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .planReferenceSaveBar,
+  .planReferenceAdvancedButton svg{transition:none!important}
+}
