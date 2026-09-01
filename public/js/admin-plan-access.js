@@ -13,8 +13,7 @@
   }
   function sync(){
     const isHousehold=model?.value==='household_network';
-    stream.forEach(el=>{
-      el.hidden=false;
+    stream.forEach(el=>{el.hidden=false;
       const input=el.querySelector('input[name="streams"]');
       if(input)input.min='0';
       help(input?.closest('.formGroup'),'0 = unlimited. Maximum simultaneous playing sessions; independent of IP, registered-device and legacy household limits.');
