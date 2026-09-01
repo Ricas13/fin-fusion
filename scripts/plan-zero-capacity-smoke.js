@@ -147,7 +147,7 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert.strictEqual(sent.length,1,'persistent availability must create exactly one Discord message');
   assert.strictEqual(edited.length,0,'unchanged availability must not issue a redundant PATCH');
   assert.strictEqual(sent[0].allowEveryone,false,'persistent availability must never create @everyone spam');
-  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='https://portal.example')&&sent[0].text.includes('10 minutes'),'open status must expose exact remaining places, portal URL and reservation duration');
+  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='Reserve / Create Free Account: https://portal.example')&&sent[0].text.includes('10 minutes'),'open status must expose exact remaining places, portal URL and reservation duration');
   assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'),'status updater must choose the same first public Free Server plan as the storefront');
   const fullStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:0}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example'}});
   assert.strictEqual(fullStatus.updated,1,'capacity transition to full must edit the existing Discord status');
