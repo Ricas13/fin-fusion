@@ -278,6 +278,24 @@ async function reconcileAccount(account, sessions, cfg) {
     return { released: 0, registered: 0, stopped: 0, awaitingFirstDevice: true };
   }
 
+  // Do not close the media server's native device allowlist until every slot
+  // has actually been claimed. Jellyfin/Emby cannot approve a new device that
+  // has never connected, so applying EnabledDevices after the first claim on a
+  // multi-device plan would make the remaining slots impossible to fill.
+  if (ids.length < limit) {
+    if (currentlyEnforced) {
+      try {
+        await releaseRemoteRestriction({ ...account, effectiveDeviceLimit: limit }, { revokeDevices: false });
+      } catch (error) {
+        await markApplied(account.account_id,limit,ids,{enforced:true,error:error.message});
+        return { released:0,registered:state.claimed.length,stopped:0,error:error.message };
+      }
+    } else {
+      await markApplied(account.account_id,limit,ids,{enforced:false});
+    }
+    return { released: currentlyEnforced ? 1 : 0, registered: state.claimed.length, stopped: 0, awaitingAdditionalDevices: true };
+  }
+
   try {
     const applied = await applyRemoteAllowlist(account, ids);
     await markApplied(account.account_id,limit,ids,{enforced:Boolean(applied.applied)});
