@@ -132,23 +132,30 @@ async function affectedCustomerIdsForPlan(planId) {
     return result.rows.map(r => r.customer_id);
 }
 
-async function queuePlanCustomerJob(jobType, planId, actorUserId, auditAction) {
+async function queuePlanCustomerJob(jobType, planId, actorUserId, auditAction, jobParams = {}) {
     const customerIds = await affectedCustomerIdsForPlan(planId);
     if (!customerIds.length) return null;
-    const { job } = await createJob(jobType, { planId }, { createdBy: actorUserId });
+    const params = { ...(jobParams || {}), planId };
+    const { job } = await createJob(jobType, params, { createdBy: actorUserId });
     await enqueueItems(job.id, customerIds);
     await query(`
         INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
         VALUES($1,$2,'plan',$3,$4::jsonb)
-    `, [actorUserId, auditAction, planId, JSON.stringify({ jobId: job.id, affected: customerIds.length })]);
+    `, [actorUserId, auditAction, planId, JSON.stringify({ jobId: job.id, affected: customerIds.length, params })]);
     return getJob(job.id);
 }
 
 // Full Jellyfin reconciliation. Use this only when the plan change is meant
 // to re-apply the Jellyfin account policy (including an intentional Libraries
 // card change). Request-service policy is reconciled by the same worker item.
-async function queuePlanReconciliation(planId, actorUserId) {
-    return queuePlanCustomerJob('plan_reconcile', planId, actorUserId, 'admin.plan.reconcile_queued');
+async function queuePlanReconciliation(planId, actorUserId, jobParams = {}) {
+    return queuePlanCustomerJob('plan_reconcile', planId, actorUserId, 'admin.plan.reconcile_queued', jobParams);
+}
+
+// Discord-only fanout for plan role mapping changes. This deliberately avoids
+// touching Jellyfin account policy just because an operator changed a Discord role.
+async function queuePlanDiscordReconciliation(planId, actorUserId, jobParams = {}) {
+    return queuePlanCustomerJob('discord_plan_reconcile', planId, actorUserId, 'admin.plan.discord_reconcile_queued', jobParams);
 }
 
 // Request-only fanout for settings that do not need to touch Jellyfin account
@@ -169,5 +176,6 @@ module.exports = {
     newIdempotencyKey,
     affectedCustomerIdsForPlan,
     queuePlanReconciliation,
+    queuePlanDiscordReconciliation,
     queuePlanRequestReconciliation
 };

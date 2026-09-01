@@ -12,7 +12,8 @@ const planPricing = require('../payments/plan-pricing');
 const paymentOptions = require('./admin-plan-payment-options');
 const requestPlanPolicy = require('./admin-request-plan-policy');
 const placement = require('../jellyfin/placement');
-const { queuePlanReconciliation } = require('./bulk-jobs');
+const discordRoles = require('../integrations/discord-roles');
+const { queuePlanReconciliation, queuePlanDiscordReconciliation } = require('./bulk-jobs');
 const { esc, layout } = require('./admin-html');
 const planPolicy = require('../entitlements/plan-lifecycle-policy');
 const lifecyclePolicy = require('../entitlements/jellyfin-lifecycle-policy');
@@ -84,15 +85,42 @@ async function serverChoices(plan) {
 }
 async function loadData(plan) {
   const free = freePlan(plan);
-  const [affected, usage, payment, servers, libraries, lifecycleGlobal] = await Promise.all([
+  const [affected, usage, payment, servers, libraries, lifecycleGlobal, discordCatalogue] = await Promise.all([
     accessEditor.subscriberCount(plan.id),
     capacity.usage(plan.id),
     free ? Promise.resolve(null) : paymentOptions.mappings(plan.id),
     serverChoices(plan),
     libraryEditor.discoverLibraries(plan).catch(error => ({ servers: [], catalog: [], failed: [], error: error.message })),
-    lifecyclePolicy.get()
+    lifecyclePolicy.get(),
+    discordRoles.roleCatalogue()
   ]);
-  return { plan, free, affected, usage, payment, servers, libraries, access: accessEditor.values(plan), lifecycleGlobal };
+  return { plan, free, affected, usage, payment, servers, libraries, access: accessEditor.values(plan), lifecycleGlobal, discordCatalogue };
+}
+
+function discordRoleReason(reason) {
+  return ({
+    bot_not_configured: 'Configure and enable the Discord bot first.',
+    guild_not_configured: 'Add the Discord server (guild) ID in Notification settings.',
+    discord_unavailable: 'CAPTAiNFiN could not read roles from Discord right now.',
+    missing_manage_roles: 'The Discord bot is connected, but it does not have Manage Roles.',
+    bot_role_hierarchy: 'Move the CAPTAiNFiN bot role above the customer roles you want it to manage.',
+    no_assignable_roles: 'No assignable server roles are currently below the CAPTAiNFiN bot role.'
+  })[reason] || 'Discord role assignment is not ready.';
+}
+function discordRoleControl(plan, catalogue = {}) {
+  const current = discordRoles.snowflake(plan.discord_role_id) || '';
+  const allRoles = Array.isArray(catalogue.roles) ? catalogue.roles : [];
+  const assignable = Array.isArray(catalogue.assignableRoles) ? catalogue.assignableRoles : [];
+  const currentRole = allRoles.find(role => String(role.id) === current) || null;
+  const currentAssignable = assignable.some(role => String(role.id) === current);
+  if (catalogue.ready) {
+    const preserved = current && !currentAssignable ? `<option value="${esc(current)}" selected>Current mapping — ${esc(currentRole?.name || current)} · unavailable</option>` : '';
+    const options = assignable.map(role => `<option value="${esc(role.id)}" ${String(role.id) === current ? 'selected' : ''}>${esc(role.name)}</option>`).join('');
+    const warning = current && !currentAssignable ? `<div class="notice warn"><strong>Current mapping needs attention.</strong> ${currentRole ? `${esc(currentRole.name)} cannot currently be assigned by the bot (${esc(currentRole.reason || 'role hierarchy')}).` : `Role ${esc(current)} was not returned by this Discord server.`} Saving another role replaces it; leaving it selected preserves the existing mapping.</div>` : '';
+    return `<div class="formGroup"><label>Discord plan role</label><select class="input" name="discordRoleId"><option value="" ${current ? '' : 'selected'}>No automatic Discord role</option>${preserved}${options}</select><div class="inlineHelp"><span class="pill good">Discord roles ready</span> ${assignable.length} assignable role${assignable.length === 1 ? '' : 's'} from the configured server. CAPTAiNFiN only adds/removes roles mapped to plans.</div>${warning}</div>`;
+  }
+  const detail = catalogue.error ? ` ${esc(catalogue.error)}` : '';
+  return `<div class="formGroup"><label>Discord plan role</label><div class="notice warn"><strong>Role names unavailable.</strong> ${esc(discordRoleReason(catalogue.reason))}${detail}</div><label class="subText" for="discordRoleId">Manual role ID fallback</label><input id="discordRoleId" class="input" name="discordRoleId" maxlength="40" value="${esc(current)}" placeholder="Discord role snowflake ID"><div class="inlineHelp">The existing mapping is preserved while Discord is unavailable. You can also enter a valid role ID manually. <a href="/admin/notifications/preferences#messaging-settings">Open Discord settings</a>.</div></div>`;
 }
 
 function productCard(data, req) {
@@ -101,7 +129,7 @@ function productCard(data, req) {
   const catalogue = data.free
     ? `<div class="planFreeStatement"><strong>Free product.</strong><span>No billing cycle or payment provider applies. It stays active and visible; set Availability to 0 whenever free acquisition should close.</span></div>`
     : `<div class="toggleGrid">${toggle('visible', 'Visible on storefront', p.visible)}${toggle('active', 'Available for acquisition', p.active)}</div>`;
-  return `<section class="planConfigCard span2" id="product"><div class="planConfigHead"><div><h2>Product & storefront</h2><p>Customer-facing identity and catalogue state.</p></div><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free' : 'Paid Jellyfin'}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-product">${token(req)}<div class="formGroup"><label>Name</label><input class="input" name="name" maxlength="80" required value="${esc(p.name)}"></div><div class="formGroup"><label>Description</label><textarea class="input" name="description" maxlength="500" rows="3">${esc(p.description || '')}</textarea></div><div class="formGroup"><label>Homepage features</label><div class="formGrid">${[0, 1, 2, 3].map(i => `<input class="input" name="feature${i + 1}" aria-label="Homepage feature ${i + 1}" maxlength="90" value="${esc(features[i] || '')}" placeholder="Feature ${i + 1}">`).join('')}</div></div>${catalogue}${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save product</button>${data.free ? '' : `<a class="button secondary" href="/admin/plans/order">Storefront order</a>`}</div></form></section>`;
+  return `<section class="planConfigCard span2" id="product"><div class="planConfigHead"><div><h2>Product & storefront</h2><p>Customer-facing identity and catalogue state.</p></div><span class="pill ${data.free ? 'good' : 'accent'}">${data.free ? 'Free' : 'Paid Jellyfin'}</span></div><form class="planConfigBody" method="post" action="/admin/plans/${esc(p.id)}/editor-product">${token(req)}<div class="formGroup"><label>Name</label><input class="input" name="name" maxlength="80" required value="${esc(p.name)}"></div><div class="formGroup"><label>Description</label><textarea class="input" name="description" maxlength="500" rows="3">${esc(p.description || '')}</textarea></div><div class="formGroup"><label>Homepage features</label><div class="formGrid">${[0, 1, 2, 3].map(i => `<input class="input" name="feature${i + 1}" aria-label="Homepage feature ${i + 1}" maxlength="90" value="${esc(features[i] || '')}" placeholder="Feature ${i + 1}">`).join('')}</div></div>${discordRoleControl(p, data.discordCatalogue)}${catalogue}${impactField(p, data.affected)}<div class="buttonRow"><button class="button" type="submit">Save product</button>${data.free ? '' : `<a class="button secondary" href="/admin/plans/order">Storefront order</a>`}</div></form></section>`;
 }
 
 function accessCard(data, req) {
@@ -198,15 +226,21 @@ async function saveProduct(req, plan, data) {
   const description = text(req.body.description, 500);
   const features = [1, 2, 3, 4].map(i => text(req.body[`feature${i}`], 90)).filter(Boolean).filter((v, i, all) => all.indexOf(v) === i);
   const visible = data.free ? true : bool(req.body.visible), active = data.free ? true : bool(req.body.active);
+  const discordRoleIdRaw = text(req.body.discordRoleId, 40);
+  const discordRoleId = discordRoleIdRaw ? discordRoles.snowflake(discordRoleIdRaw) : null;
+  if (discordRoleIdRaw && !discordRoleId) throw new Error('Choose a Discord role or enter a valid Discord role ID.');
+  const previousDiscordRoleId = discordRoles.snowflake(plan.discord_role_id);
+  const discordRoleChanged = previousDiscordRoleId !== discordRoleId;
   if (!data.free && !active && plan.active) {
     const setting = await query(`SELECT setting_value FROM platform_settings WHERE setting_key='trial_free_policy'`);
     const value = setting.rows[0]?.setting_value || {};
     if (value.downgradeToFree === true && String(value.downgradeFreePlanCode || '') === String(plan.code)) throw new Error('This plan is the configured automatic free-downgrade target. Choose another target under Plans → Access rules before disabling it.');
   }
   await transaction(async client => {
-    await client.query(`UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],visible=$5,active=$6,updated_at=NOW() WHERE id=$1`, [plan.id, name, description, features, visible, active]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.product.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ name, visible, active, freeTier: data.free })]);
+    await client.query(`UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],visible=$5,active=$6,discord_role_id=$7,updated_at=NOW() WHERE id=$1`, [plan.id, name, description, features, visible, active, discordRoleId]);
+    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.plan.product.update','plan',$2,$3::jsonb)`, [req.session.authUserId, plan.id, JSON.stringify({ name, visible, active, freeTier: data.free, discordRoleId, previousDiscordRoleId, discordRoleChanged })]);
   });
+  if (discordRoleChanged && data.affected) await queuePlanDiscordReconciliation(plan.id, req.session.authUserId, { discordExtraManagedRoleIds: previousDiscordRoleId ? [previousDiscordRoleId] : [] });
 }
 async function saveAccess(req, plan, data) {
   requireImpact(plan, data.affected, req.body.impactConfirmation);
@@ -371,4 +405,4 @@ function createAdminJellyfinPlanEditorRouter() {
   return router;
 }
 
-module.exports = { createAdminJellyfinPlanEditorRouter, loadData, page, freePlan, jellyfinPlan, lifecycleFormInput };
+module.exports = { createAdminJellyfinPlanEditorRouter, loadData, page, freePlan, jellyfinPlan, lifecycleFormInput, discordRoleControl };

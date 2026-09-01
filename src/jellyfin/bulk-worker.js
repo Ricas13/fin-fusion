@@ -158,9 +158,19 @@ async function reconcileRequestUser(customerId) {
 // item. Libraries are only changed here when the plan's Libraries card (or an
 // explicit customer library action) actually changed their effective policy.
 registerHandler('plan_reconcile', async item => {
-    const outcome = await provisioning.reconcileCustomer(item.customer_id);
+    const extraManagedRoleIds=Array.isArray(item.params?.discordExtraManagedRoleIds)?item.params.discordExtraManagedRoleIds:[];
+    const outcome = await provisioning.reconcileCustomer(item.customer_id,{discordExtraManagedRoleIds:extraManagedRoleIds});
     const request = await reconcileRequestUser(item.customer_id);
     return { active: Boolean(outcome?.active), requestStatus: request.status || null };
+});
+
+// A plan-role mapping change only needs entitlement-aware Discord sync. Keep
+// Jellyfin and request-service mutations out of this job so a presentation
+// change cannot generate unrelated provider traffic.
+registerHandler('discord_plan_reconcile', async item => {
+    const extraManagedRoleIds=Array.isArray(item.params?.discordExtraManagedRoleIds)?item.params.discordExtraManagedRoleIds:[];
+    const discord=await provisioning.reconcileDiscordRoles(item.customer_id,{discordExtraManagedRoleIds:extraManagedRoleIds});
+    return { discord };
 });
 
 // Request-only fanout is used by request quota/permission changes and by

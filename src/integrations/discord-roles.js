@@ -109,12 +109,13 @@ async function currentGuildRoles(guildId,discordUserId){
     throw error;
   }
 }
-async function syncRoleForCustomer(customerId,activePlanIds=[]){
+async function syncRoleForCustomer(customerId,activePlanIds=[],{extraManagedRoleIds=[]}={}){
   const status=await notificationSettings.status();
   if(!status.discordConfigured||!status.discordGuildId)return{skipped:'not_configured'};
   const discordUserId=await customerDiscordUserId(customerId);
   if(!discordUserId)return{skipped:'not_linked'};
   const managed=await managedRoleIds();
+  for(const candidate of extraManagedRoleIds||[]){const roleId=snowflake(candidate);if(roleId)managed.add(roleId);}
   if(!managed.size)return{skipped:'no_roles_configured'};
   // A destructive deletion hold is authoritative. Generic role reconciliation
   // may help remove access, but it must never re-add a managed role while the
