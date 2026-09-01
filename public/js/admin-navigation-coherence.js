@@ -165,7 +165,16 @@
     };
     placeAccountMenu();
     if(typeof mobile.addEventListener==='function')mobile.addEventListener('change',onViewportChange);
-    else if(typeof mobile.addListener==='function')mobile.addListener(onViewportChange);
+    else if(typeof mobile.addListener==='function')mobile.addListener('change',onViewportChange);
+  }
+
+  function loadScript(src,marker){
+    if(document.querySelector(`script[${marker}]`))return;
+    const script=document.createElement('script');
+    script.src=src;
+    script.defer=true;
+    script.setAttribute(marker,'');
+    document.head.appendChild(script);
   }
 
   function loadSettingsGroups(){
@@ -177,6 +186,11 @@
     document.head.appendChild(script);
   }
 
+  function loadPlanAccessEnhancer(){
+    if(!/^\/admin\/plans\/[0-9a-f-]{36}\/(?:edit|access|jellyfin)$/i.test(path))return;
+    loadScript('/js/admin-plan-access.js','data-admin-plan-access');
+  }
+
   enforceSidebarOnlyNavigation();
   movePageActionsToHeading();
   watchLatePageActions();
@@ -184,6 +198,7 @@
   installBackupExportAction();
   installMobileAdminDrawer();
   loadSettingsGroups();
+  loadPlanAccessEnhancer();
 
   if(path==='/admin/settings/integrations')document.body.classList.add('page-connections-directory');
   if(path==='/admin/settings/commerce')document.body.classList.add('page-settings-commerce');

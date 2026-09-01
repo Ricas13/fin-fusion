@@ -50,6 +50,27 @@
     if(days){duration.value=days;duration.readOnly=true;if(durationGroup)durationGroup.hidden=false;}
     else{duration.readOnly=false;if(durationGroup)durationGroup.hidden=false;}
   }
+  function syncAccessCopy(){
+    for(const block of streamFields){
+      const input=block.querySelector('input[name="streams"]');
+      if(input)input.min='0';
+      const group=input?.closest('.formGroup');
+      let help=group?.querySelector('.inlineHelp');
+      if(group&&!help){help=document.createElement('div');help.className='inlineHelp';group.appendChild(help);}
+      if(help)help.textContent='0 = unlimited. Concurrent streams are independent of IP, registered-device and legacy household limits.';
+    }
+    if(accessModel){
+      const group=accessModel.closest('.formGroup');
+      const label=group?.querySelector('label');
+      if(label)label.textContent='Legacy household lease';
+      for(const option of accessModel.options||[]){
+        if(option.value==='concurrent_streams')option.textContent='Off';
+        if(option.value==='household_network')option.textContent='Also enforce household network lease';
+      }
+      const help=group?.querySelector('.inlineHelp');
+      if(help)help.textContent='Optional legacy network lease. It does not replace the concurrent-stream limit.';
+    }
+  }
   function sync(){
     const kind=selectedKind();
     const free=kind==='free_jellyfin',paid=kind==='paid_jellyfin',stremio=kind==='stremio',jellyfin=!stremio;
@@ -59,10 +80,11 @@
     setVisible(paidJellyfin,paid);
     toggleAll(jellyfinBlocks,jellyfin);
     toggleAll(stremioBlocks,stremio);
-    toggleAll(streamFields,jellyfin&&!household);
+    toggleAll(streamFields,jellyfin);
     toggleAll(householdFields,household);
     setVisible(lifecycle,free);
     setVisible(replacementCooldown,stremio&&replacement?.value==='customer_cooldown');
+    syncAccessCopy();
     const label=free?'FREE JELLYFIN':paid?'PAID JELLYFIN':'STREMIO';
     if(kindLabel)kindLabel.textContent=label;
     if(saveSummary)saveSummary.textContent=free?'Free Jellyfin plan':paid?'Paid Jellyfin plan':'Stremio plan';

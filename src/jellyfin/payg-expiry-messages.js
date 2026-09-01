@@ -53,8 +53,14 @@ async function candidates() {
         AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
         AND CASE WHEN p.is_free_tier THEN 'free' ELSE 'primary' END = CASE WHEN ja.access_lane='free' THEN 'free' ELSE 'primary' END
         AND NOT (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
-        AND s.source IN ('stripe','paypal')
-        AND s.provider_subscription_id IS NULL
+        -- Paid one-time purchases still carry a provider transaction/payment ID
+        -- in provider_subscription_id. Only the provider-specific recurring ID
+        -- shapes are recurring: Stripe sub_* and PayPal I-*. Plisio is PAYG-only.
+        AND s.source IN ('stripe','paypal','plisio')
+        AND NOT (
+          (s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_')
+          OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-')
+        )
         AND (
           (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
           OR (COALESCE(s.service_extension_days,0)>0
