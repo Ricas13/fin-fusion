@@ -41,7 +41,12 @@ assert.match(registrationTransaction,/transaction\(async client=>[\s\S]*?client\
 assert.match(registrationTransaction,/customer_communication_preferences[\s\S]*?audit_log[\s\S]*?return\{user,customer,referralCodeId\}/,'communication preferences and referral attribution must be persisted before the registration transaction returns the identity');
 assert.match(registrationTransaction,/referrals\.attributionEnabled\(client\)[\s\S]*?referrals\.attributeReferral\(customer\.id,referralCode,client\)/,'direct registration referral attribution must use the same transaction client as customer creation');
 assert.doesNotMatch(registrationTransaction,/Referral attribution failed|referrals\.attributeReferral\(created\.customer\.id/,'direct registration must not defer referral attribution until after commit');
-assert.match(publicAuth,/pendingRegistrations\.begin\(\{[\s\S]*?communicationPreferences,[\s\S]*?freeAccess:wantsFree\}\)/,'public registration must persist communication preferences in the pending verification transition');
+const pendingBeginCall=publicAuth.match(/pendingRegistrations\.begin\(\{[\s\S]*?\}\);/)?.[0]||'';
+assert(pendingBeginCall,'public registration must create pending verification state');
+assert.match(pendingBeginCall,/communicationPreferences/,'public registration must persist communication preferences in pending verification state');
+assert.match(pendingBeginCall,/freeAccess:wantsFree/,'public registration must persist free intent in pending verification state');
+assert.match(pendingBeginCall,/freeReservationId:freeReservation\?\.id\|\|null/,'Free Server registration must attach the held reservation instead of creating capacity during form submission');
+assert.match(pendingBeginCall,/freeReservationSessionId:req\.sessionID/,'Free Server registration must prove session ownership of the held reservation');
 assert.doesNotMatch(publicAuth,/customers\.registerCustomer\(/,'public registration must not create a customer before email verification completes');
 assert.doesNotMatch(publicAuth,/function saveCommunication|await saveCommunication\(/,'the public registration route must not perform a second communication-preferences write after identity creation');
 
