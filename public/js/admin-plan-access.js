@@ -157,7 +157,6 @@
     if(pageHeader){
       const title=pageHeader.querySelector('h1');
       const titleContainer=title?.parentElement;
-      if(title&&title.textContent!=='Edit Plan')title.textContent='Edit Plan';
       if(titleContainer&&!titleContainer.querySelector('.planReferenceBreadcrumb')){
         const crumb=document.createElement('div');
         crumb.className='planReferenceBreadcrumb';
@@ -196,7 +195,7 @@
     return planForms(root).filter(form=>baseline.has(form)&&baseline.get(form)!==formState(form));
   }
 
-  function installSaveController(root,content){
+  function installSaveController(root){
     if(saveController)return;
     const forms=planForms(root);
     if(!forms.length)return;
@@ -286,7 +285,6 @@
     discard.addEventListener('click',discardAll);
     topSave?.addEventListener('click',saveAll);
 
-    content.classList.add('planReferenceSaveReady');
     saveController={refresh,saveAll};
     refresh();
   }
@@ -297,7 +295,7 @@
     if(!room)return;
     const content=decoratePage(room);
     if(!content)return;
-    installSaveController(room,content);
+    installSaveController(room);
 
     const observer=new MutationObserver(()=>{
       decorateCards(room);
