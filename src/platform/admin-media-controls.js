@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { query, transaction } = require('../db');
+const { getPool, query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
 const routeRateLimit = require('../security/route-rate-limit');
 const registry = require('../jellyfin/registry');
@@ -9,7 +9,7 @@ const mediaProvider = require('../media-servers/provider');
 const mediaPlanPolicy = require('../jellyfin/media-plan-policy-settings');
 const deviceAccessPolicy = require('../jellyfin/device-access-policy');
 const { POLICY_REASON } = require('../jellyfin/four-k-transcode-policy');
-const { IP_REASON, DEVICE_REASON, COMBINED_REASON } = require('../jellyfin/media-identity-policy');
+const { IDENTITY_ADVISORY_LOCK_ID, IP_REASON, DEVICE_REASON, COMBINED_REASON } = require('../jellyfin/media-identity-policy');
 const { SENT_REASON, FAILED_REASON } = require('../jellyfin/payg-expiry-messages');
 
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
@@ -166,6 +166,28 @@ async function sendInBatches(items, send, concurrency = 10) {
   return results;
 }
 
+async function withMediaIdentityLock(work, { waitMs = 10000, pollMs = 100 } = {}) {
+  const client = await getPool().connect();
+  let locked = false;
+  const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
+  try {
+    do {
+      const result = await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked', [IDENTITY_ADVISORY_LOCK_ID]);
+      locked = Boolean(result.rows[0]?.locked);
+      if (locked) break;
+      if (Date.now() >= deadline) break;
+      await new Promise(resolve => setTimeout(resolve, Math.max(10, Number(pollMs) || 100)));
+    } while (!locked);
+    if (!locked) throw new Error('Playback/device policy reconciliation is busy. Try resetting registered devices again in a moment.');
+    return await work();
+  } finally {
+    if (locked) {
+      try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [IDENTITY_ADVISORY_LOCK_ID]); } catch (_) {}
+    }
+    client.release();
+  }
+}
+
 function createAdminMediaControlsRouter() {
   const router = express.Router();
   router.use('/admin/media-controls', gate, noStore);
@@ -257,7 +279,7 @@ function createAdminMediaControlsRouter() {
   router.post(`/admin/media-controls/customer/:customerId(${UUID})/devices/:accountId(${UUID})/reset`, writeLimit, async (req, res) => {
     if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
     try {
-      const result = await deviceAccessPolicy.resetAccountDevices(req.params.customerId, req.params.accountId);
+      const result = await withMediaIdentityLock(() => deviceAccessPolicy.resetAccountDevices(req.params.customerId, req.params.accountId));
       await query(`
         INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
         VALUES($1,'admin.media_device_access.reset','jellyfin_account',$2,$3::jsonb)
@@ -346,5 +368,6 @@ module.exports = {
   jellyfinPlanState,
   planState,
   activeManagedSessions,
-  sendInBatches
+  sendInBatches,
+  withMediaIdentityLock
 };
