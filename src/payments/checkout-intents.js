@@ -7,6 +7,7 @@ const serviceCreditReservations = require('./service-credit-reservations');
 const capacity = require('../entitlements/plan-capacity');
 
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
+const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
 
 function hash(raw) { return crypto.createHash('sha256').update(String(raw)).digest('hex'); }
 function rawNonce() { return crypto.randomBytes(32).toString('base64url'); }
@@ -31,19 +32,52 @@ function identityError(message, code = 'PROVIDER_CHECKOUT_IDENTITY_CONFLICT') {
     return error;
 }
 
+function providerCapacityHoldMinutes(provider) {
+    return PROVIDER_CAPACITY_HOLD_MINUTES[provider] || 70;
+}
+
+function attachedCapacityHoldUntil(intent, now = Date.now()) {
+    const localExpiry = new Date(intent?.expires_at || 0).getTime();
+    const providerBackstop = Number(now) + providerCapacityHoldMinutes(intent?.provider) * 60000;
+    return new Date(Math.max(Number.isFinite(localExpiry) ? localExpiry : 0, providerBackstop));
+}
+
 async function lockCheckoutOwner(client, customerId) {
     if (!customerId) throw new Error('Checkout owner is required.');
     const row = await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE', [customerId]);
     if (!row.rowCount) throw new Error('Checkout owner no longer exists.');
 }
 
+async function extendAttachedCapacityHold(client, intent, holdUntil = attachedCapacityHoldUntil(intent)) {
+    const updated = (await client.query(`
+        UPDATE billing_checkout_intents
+        SET capacity_hold_until=GREATEST(COALESCE(capacity_hold_until,expires_at),$2),
+            provider_terminal_at=NULL,
+            updated_at=NOW()
+        WHERE id=$1
+        RETURNING *
+    `, [intent.id, holdUntil])).rows[0] || intent;
+    await client.query(`
+        UPDATE discount_checkout_reservations
+        SET expires_at=GREATEST(expires_at,$2),updated_at=NOW()
+        WHERE checkout_intent_id=$1 AND state='reserved'
+    `, [intent.id, holdUntil]);
+    await client.query(`
+        UPDATE affiliate_credit_checkout_reservations
+        SET expires_at=GREATEST(expires_at,$2),updated_at=NOW()
+        WHERE checkout_intent_id=$1 AND state='reserved'
+    `, [intent.id, holdUntil]);
+    return updated;
+}
+
 async function settleReservation(client, intentId, state) {
     if (!intentId) return;
     const intent = (await client.query(
-        'SELECT provider_checkout_id FROM billing_checkout_intents WHERE id=$1',
+        'SELECT provider_checkout_id,provider_terminal_at FROM billing_checkout_intents WHERE id=$1',
         [intentId]
     )).rows[0];
     const attached = Boolean(String(intent?.provider_checkout_id || '').trim());
+    const providerUnresolved = attached && !intent?.provider_terminal_at;
 
     if (state === 'completed') {
         await client.query(`
@@ -55,6 +89,18 @@ async function settleReservation(client, intentId, state) {
         return;
     }
 
+    if (providerUnresolved && ['expired', 'cancelled', 'failed'].includes(state)) {
+        // Local abandonment/expiry is not provider proof that an attached checkout
+        // can no longer take money. Keep every frozen commercial reservation intact
+        // until provider-terminal truth or the shared safety backstop expires.
+        await serviceCreditReservations.settle(
+            client,
+            intentId,
+            state === 'cancelled' ? 'cancelled_attached' : 'expired'
+        );
+        return;
+    }
+
     if (state === 'expired') {
         await client.query(`
             UPDATE discount_checkout_reservations
@@ -62,14 +108,6 @@ async function settleReservation(client, intentId, state) {
             WHERE checkout_intent_id=$1 AND state='reserved'
         `, [intentId]);
         await serviceCreditReservations.settle(client, intentId, 'expired');
-        return;
-    }
-
-    if (state === 'cancelled' && attached) {
-        // A browser-side cancellation is not provider proof that an already-created
-        // checkout cannot still settle. Keep frozen discounts/service credit protected
-        // until provider truth or the reservation expiry closes that race.
-        await serviceCreditReservations.settle(client, intentId, 'cancelled_attached');
         return;
     }
 
@@ -129,8 +167,8 @@ async function createIntent({
         const created = await client.query(`
             INSERT INTO billing_checkout_intents(
                 scope,customer_id,plan_id,plan_price_id,provider,checkout_mode,
-                nonce_hash,expires_at,commercial_snapshot
-            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+                nonce_hash,expires_at,capacity_hold_until,commercial_snapshot
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9::jsonb)
             RETURNING *
         `, [scope, customerId, planId, planPriceId, provider, checkoutMode, hash(nonce), expires, JSON.stringify(snapshot)]);
         return created.rows[0];
@@ -149,7 +187,7 @@ async function attachProviderCheckout(intentId, providerCheckoutId) {
 
         const current = String(intent.provider_checkout_id || '').trim();
         if (current) {
-            if (current === externalId) return intent;
+            if (current === externalId) return extendAttachedCapacityHold(client, intent);
             throw identityError(
                 `Checkout intent ${intentId} is already bound to a different provider checkout.`,
                 'PROVIDER_CHECKOUT_REBIND_CONFLICT'
@@ -170,12 +208,12 @@ async function attachProviderCheckout(intentId, providerCheckoutId) {
         try {
             const result = await client.query(`
                 UPDATE billing_checkout_intents
-                SET provider_checkout_id=$2,updated_at=NOW()
+                SET provider_checkout_id=$2,provider_terminal_at=NULL,updated_at=NOW()
                 WHERE id=$1 AND provider_checkout_id IS NULL AND state='open'
                 RETURNING *
             `, [intent.id, externalId]);
             if (!result.rowCount) throw identityError('Checkout provider binding changed concurrently.');
-            return result.rows[0];
+            return extendAttachedCapacityHold(client, result.rows[0]);
         } catch (error) {
             if (error?.code === '23505') {
                 throw identityError('Provider checkout is already bound to a different local checkout intent.');
@@ -231,6 +269,8 @@ async function consume({
             UPDATE billing_checkout_intents
             SET state=$2,
                 completed_at=CASE WHEN $2='completed' THEN NOW() ELSE completed_at END,
+                provider_terminal_at=CASE WHEN $2='completed' THEN COALESCE(provider_terminal_at,NOW()) ELSE provider_terminal_at END,
+                capacity_hold_until=CASE WHEN $2='completed' THEN NOW() ELSE capacity_hold_until END,
                 updated_at=NOW()
             WHERE id=$1
             RETURNING *
@@ -261,17 +301,19 @@ async function completeVerifiedProvider(provider, providerCheckoutId, state = 'c
         `, [candidate.id, provider, externalId]);
         if (!result.rowCount) return null;
         const row = result.rows[0];
-        if (row.state === state) return row;
         if (row.state === 'completed') return row;
-        if (state !== 'completed' && row.state !== 'open') return row;
+        if (state !== 'completed' && row.provider_terminal_at) return row;
+        const nextState = state === 'completed' || row.state === 'open' ? state : row.state;
         const updated = await client.query(`
             UPDATE billing_checkout_intents
             SET state=$2,
-                completed_at=CASE WHEN $2='completed' THEN COALESCE(completed_at,NOW()) ELSE completed_at END,
+                completed_at=CASE WHEN $3='completed' THEN COALESCE(completed_at,NOW()) ELSE completed_at END,
+                provider_terminal_at=COALESCE(provider_terminal_at,NOW()),
+                capacity_hold_until=NOW(),
                 updated_at=NOW()
             WHERE id=$1
             RETURNING *
-        `, [row.id, state]);
+        `, [row.id, nextState, state]);
         await settleReservation(client, row.id, state);
         return updated.rows[0];
     });
@@ -329,11 +371,11 @@ async function findOrAttachProviderIntent({
         try {
             const attached = await client.query(`
                 UPDATE billing_checkout_intents
-                SET provider_checkout_id=$2,updated_at=NOW()
+                SET provider_checkout_id=$2,provider_terminal_at=NULL,updated_at=NOW()
                 WHERE id=$1 AND state='open' AND provider_checkout_id IS NULL
                 RETURNING *
             `, [candidate.rows[0].id, externalId]);
-            return attached.rows[0] || null;
+            return attached.rowCount ? extendAttachedCapacityHold(client, attached.rows[0]) : null;
         } catch (error) {
             if (error?.code === '23505') throw identityError('Provider checkout is already bound to a different local checkout intent.');
             throw error;
@@ -431,6 +473,7 @@ async function cancelForOwner(scope, ownerId) {
 
 module.exports = {
     CHECKOUT_PROVIDERS,
+    PROVIDER_CAPACITY_HOLD_MINUTES,
     createIntent,
     attachProviderCheckout,
     findById,
@@ -446,5 +489,8 @@ module.exports = {
     hash,
     settleReservation,
     providerMaxTtl,
+    providerCapacityHoldMinutes,
+    attachedCapacityHoldUntil,
+    extendAttachedCapacityHold,
     cleanProviderCheckoutId
 };
