@@ -163,6 +163,15 @@ registerHandler('plan_reconcile', async item => {
     return { active: Boolean(outcome?.active), requestStatus: request.status || null };
 });
 
+// A plan-role mapping change only needs entitlement-aware Discord sync. Keep
+// Jellyfin and request-service mutations out of this job so a presentation
+// change cannot generate unrelated provider traffic.
+registerHandler('discord_plan_reconcile', async item => {
+    const extraManagedRoleIds=Array.isArray(item.params?.discordExtraManagedRoleIds)?item.params.discordExtraManagedRoleIds:[];
+    const discord=await provisioning.reconcileDiscordRoles(item.customer_id,{discordExtraManagedRoleIds:extraManagedRoleIds});
+    return { discord };
+});
+
 // Request-only fanout is used by request quota/permission changes and by
 // Stremio plan changes. It deliberately never touches Jellyfin libraries.
 registerHandler('request_plan_reconcile', async item => {

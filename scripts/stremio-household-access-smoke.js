@@ -3,8 +3,10 @@
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
+const {execFileSync}=require('child_process');
 const root=path.resolve(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const compact=value=>String(value||'').replace(/\s+/g,'');
 
 const runtime=read('src/stremio/runtime.js');
 const externalRuntime=read('src/stremio/external-direct-runtime.js');
@@ -126,7 +128,7 @@ assert(policyMigration.includes('stremio_household_network_limit_snapshot')&&pol
 // every current plan member; stale/new-purchases-only grandfathering is retired.
 assert(!fs.existsSync(path.join(root,'src/platform/admin-stremio-plan-create.js')),'retired standalone Stremio plan creator must stay removed; adaptive plan creation owns this flow');
 assert(!stremioPlanEditor.includes('New purchases only')&&!stremioPlanEditor.includes('Existing customers too'),'Stremio plan edits must not offer stale-policy grandfathering for current members');
-assert(stremioPlanEditor.includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must update all current household snapshots and queue current members for request-policy reconciliation');
+assert(compact(stremioPlanEditor).includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioPlanEditor.includes('queuePlanRequestReconciliation'),'Stremio access edits must update all current household snapshots and queue current members for request-policy reconciliation');
 assert(stremioPlanEditor.includes("UPDATE access_network_leases SET expires_at=NOW() WHERE scope='stremio'")&&!stremioPlanEditor.includes("DELETE FROM access_network_leases WHERE scope='stremio'"),'changed household policy must expire current Stremio leases without requiring web-role DELETE');
 assert(!stremioPlanEditor.includes('Delivery service'),'normal Stremio editor must hide delivery internals');
 assert(plansList.includes('planComponents.accessLabel(plan)')&&storefront.includes('planComponents.accessLabel(plan)'),'admin/storefront Stremio labels must share the household-aware formatter');
@@ -140,4 +142,5 @@ assert(!sourcePool.includes("const http=require('http')")&&!sourcePool.includes(
 assert(!jobs.includes('source-admission'),'automation must not maintain retired stream-admission leases');
 for(const retired of ['src/stremio/source-admission.js','src/stremio/managed-session-reconciler.js','src/stremio/source-capability.js','src/stremio/source-playback.js'])assert(!fs.existsSync(path.join(root,retired)),`${retired} must remain removed`);
 
+execFileSync(process.execPath,[require.resolve('./mounted-stremio-plan-discord-role-smoke')],{stdio:'inherit'});
 console.log('stremio household access smoke: ok');
