@@ -190,7 +190,7 @@ async function grantActivity(client) {
     await client.query(`GRANT SELECT(id,customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,created_at) ON jellyfin_accounts TO ${role}`);
     await client.query(`GRANT UPDATE(last_activity_at,updated_at) ON jellyfin_accounts TO ${role}`);
     await client.query(`GRANT SELECT(id,customer_id,plan_id,status,source,provider_subscription_id,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot) ON subscriptions TO ${role}`);
-    await client.query(`GRANT SELECT(id,code,streams,active,service_type,is_free_tier,is_addon,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes) ON plans TO ${role}`);
+    await client.query(`GRANT SELECT(id,name,code,streams,active,service_type,is_free_tier,is_addon,kick_4k_transcodes,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes) ON plans TO ${role}`);
     await client.query(`GRANT SELECT(id,access_paused_at) ON customers TO ${role}`);
     await client.query(`GRANT SELECT(customer_id,access_lane,streams) ON customer_lane_policy_overrides TO ${role}`);
     await client.query(`GRANT SELECT(customer_id,subscription_id,permanent_access,revoked_at) ON customer_entitlement_overrides TO ${role}`);
