@@ -16,12 +16,52 @@
   }
 }
 
+/* Reference card headers are deliberately terse. The explanatory copy still
+   exists in the document but the card itself keeps the one-line visual rhythm. */
+.content.planReferencePage .planConfigHead p,
+.content.planReferencePage .requestPlanCard>.sectionHead p{
+  display:none!important;
+}
+.content.planReferencePage .adminSettingsCardGrade{
+  display:none!important;
+}
+
+/* Advanced controls are driven by the compact header affordance. The original
+   native details/summary remains in the DOM for no-JS fallback, but once this
+   JS-scoped design is active it does not consume a second row in every card. */
+.content.planReferencePage details.planCardDetails:not([open]){
+  height:0!important;
+  min-height:0!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  overflow:hidden!important;
+}
+.content.planReferencePage details.planCardDetails>summary{
+  display:none!important;
+}
+.content.planReferencePage details.planCardDetails[open]{
+  height:auto!important;
+  margin:8px 0 0!important;
+  border:1px solid rgba(135,171,199,.14)!important;
+  background:rgba(7,16,25,.34)!important;
+}
+.content.planReferencePage details.planCardDetails[open]>.planDetailsBody,
+.content.planReferencePage details.planCardDetails[open]>.adminSettingsDisclosureBody{
+  display:block!important;
+  padding:9px!important;
+  border-top:0!important;
+}
+
 .content.planReferencePage .planReferenceProductAdvanced{
   grid-column:1/-1!important;
   margin-top:0!important;
 }
+.content.planReferencePage .planReferenceProductAdvanced[open]{
+  margin-top:4px!important;
+}
 .content.planReferencePage .planReferenceProductAdvancedBody{
-  display:grid;
+  display:grid!important;
   grid-template-columns:repeat(2,minmax(0,1fr));
   gap:8px 10px;
 }
