@@ -30,21 +30,32 @@ function scarcity(state){
   if(n<=10)return{label:`Only ${n} ${plural} left`,kind:'limited'};
   return{label:'Available',kind:'available'};
 }
+function checkoutReservationSql(alias='i'){
+  return `(${alias}.state<>'completed' AND ((
+    ${alias}.state='open' AND ${alias}.expires_at>NOW()
+  ) OR (
+    ${alias}.provider_checkout_id IS NOT NULL
+    AND ${alias}.provider_terminal_at IS NULL
+    AND COALESCE(${alias}.capacity_hold_until,${alias}.expires_at)>NOW()
+  )))`;
+}
 async function loadPlan(planId,db=query){
   const result=await db(`SELECT id,capacity_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,streams,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
   return result.rows[0];
 }
 async function legacyUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
+  const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
       (SELECT COUNT(DISTINCT s.customer_id)::int FROM subscriptions s WHERE s.plan_id=$1 AND s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()) AS used,
       ((SELECT COUNT(*)::int FROM free_access_registration_reservations r WHERE r.plan_id=$1 AND ${RESERVATION_SQL} AND ($3::uuid IS NULL OR r.id<>$3::uuid)) +
-       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW() AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+       (SELECT COUNT(*)::int FROM billing_checkout_intents i WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},limit=plan.capacity_limit==null?null:Number(plan.capacity_limit),used=Number(row.used||0),reserved=Number(row.reserved||0),occupied=used+reserved;
   const state={planId:plan.id,plan,model:'manual_plan',pool:null,limit,used,reserved,remaining:limit==null?null:Math.max(0,limit-occupied),soldOut:limit!=null&&occupied>=limit,manualLimit:limit,manualUsed:used,manualReserved:reserved};
   return{...state,...scarcity(state)};
 }
 async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+  const checkoutHold=checkoutReservationSql('i');
   const result=await db(`SELECT
       (SELECT COALESCE(SUM(GREATEST(1,COALESCE(
         CASE WHEN jsonb_typeof(s.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (s.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
@@ -58,7 +69,7 @@ async function stremioHouseholdUsage(plan,db=query,{excludeReservationId=null,ex
           CASE WHEN jsonb_typeof(i.commercial_snapshot->'stremioHouseholdNetworkLimit')='number' THEN (i.commercial_snapshot->>'stremioHouseholdNetworkLimit')::int END,
           p.stremio_household_network_limit,1))),0)::int
         FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
-        WHERE i.plan_id=$1 AND i.state='open' AND i.expires_at>NOW() AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
+        WHERE i.plan_id=$1 AND ${checkoutHold} AND ($4::uuid IS NULL OR i.id<>$4::uuid))) AS household_reserved`,[plan.id,LIVE_STATUSES,excludeReservationId,excludeCheckoutIntentId]);
   const row=result.rows[0]||{},householdLimit=plan.capacity_limit==null?null:Number(plan.capacity_limit),householdUsed=Number(row.household_used||0),householdReserved=Number(row.household_reserved||0),householdRemaining=householdLimit==null?null:Math.max(0,householdLimit-householdUsed-householdReserved),requiredHouseholds=positiveInt(households,positiveInt(plan.stremio_household_network_limit,1));
   const limit=householdLimit==null?null:Math.floor(householdLimit/requiredHouseholds),remaining=householdRemaining==null?null:Math.floor(householdRemaining/requiredHouseholds),used=limit==null?householdUsed:Math.max(0,limit-remaining),state={planId:plan.id,plan,model:'manual_households',pool:'stremio',requiredHouseholds,householdLimit,householdUsed,householdReserved,householdRemaining,limit,used,reserved:0,remaining,soldOut:remaining!=null&&remaining<=0,manualLimit:householdLimit,manualUsed:householdUsed,manualReserved:householdReserved};
   return{...state,...scarcity(state)};
@@ -111,9 +122,10 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeChec
     WHERE s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()
       AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
       AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)`,[cls,FLEET_OCCUPANT_STATUSES,FLEET_ACCESS_HOLD_TYPES]);
+  const checkoutHold=checkoutReservationSql('i');
   const checkout=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(i.commercial_snapshot->'streams')='number' THEN (i.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_reserved
     FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
-    WHERE i.state='open' AND i.expires_at>NOW() AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
+    WHERE ${checkoutHold} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
       AND ($2::uuid IS NULL OR i.id<>$2::uuid)`,[cls,excludeCheckoutIntentId]);
   const freeHolds=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.streams,1))),0)::int AS stream_reserved
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
@@ -155,6 +167,7 @@ async function lockAndAssert(client,planId,label='This plan',{excludeReservation
 }
 
 function legacyAcquisitionSql(alias='p'){
+  const checkoutHold=checkoutReservationSql('ci');
   return `(${alias}.capacity_limit IS NULL OR ${alias}.capacity_limit > ((
     SELECT COUNT(DISTINCT cs.customer_id) FROM subscriptions cs
     WHERE cs.plan_id=${alias}.id AND cs.superseded_by IS NULL
@@ -165,7 +178,7 @@ function legacyAcquisitionSql(alias='p'){
     WHERE cr.plan_id=${alias}.id AND cr.consumed_at IS NULL AND cr.released_at IS NULL AND cr.expires_at>NOW()
   ) + (
     SELECT COUNT(*) FROM billing_checkout_intents ci
-    WHERE ci.plan_id=${alias}.id AND ci.state='open' AND ci.expires_at>NOW()
+    WHERE ci.plan_id=${alias}.id AND ${checkoutHold}
   )))`;
 }
 function fleetRestrictionSql(planAlias,serverAlias){
@@ -243,13 +256,14 @@ function fleetAvailableSql(alias='p'){
         OR (${alias}.billing_interval='trial' AND account_server.trial_enabled=TRUE)
         OR (${alias}.billing_interval<>'trial' AND account_server.paid_enabled=TRUE))
   )`;
+  const checkoutHold=checkoutReservationSql('capacity_checkout');
   const checkoutHolds=`(
     SELECT COALESCE(SUM(GREATEST(1,COALESCE(
       CASE WHEN jsonb_typeof(capacity_checkout.commercial_snapshot->'streams')='number' THEN (capacity_checkout.commercial_snapshot->>'streams')::int END,
       checkout_plan.streams,1))),0)
     FROM billing_checkout_intents capacity_checkout
     JOIN plans checkout_plan ON checkout_plan.id=capacity_checkout.plan_id
-    WHERE capacity_checkout.state='open' AND capacity_checkout.expires_at>NOW()
+    WHERE ${checkoutHold}
       AND checkout_plan.service_type IN('jellyfin','bundle')
       AND checkout_plan.server_class=${alias}.server_class
   )`;
@@ -270,4 +284,4 @@ function acquisitionSql(alias='p'){
   return `((NOT ${fleetConfigured} AND ${manualAvailable}) OR (${fleetConfigured} AND ${fleetAvailable} AND (${alias}.billing_interval<>'trial' OR ${manualAvailable})))`;
 }
 
-module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage};
+module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql};
