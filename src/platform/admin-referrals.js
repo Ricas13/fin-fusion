@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
@@ -12,7 +14,7 @@ function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole===
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function csrfInput(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?`<div class="notice error">${esc(req.query.error)}</div>`:''}`;}
-function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency,currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`;}}
+function money(minor,currency){return moneyFormat.formatMinor(minor,currency||'GBP');}
 function balanceText(row){const balances=Array.isArray(row.balances)?row.balances:[];if(!balances.length)return'No credit yet';return balances.map(b=>`${b.currency}: ${money(b.available_minor,b.currency)} available · ${money(b.pending_minor,b.currency)} pending · ${money(b.lifetime_earned_minor,b.currency)} referral rewards`).join(' | ');}
 function currencyTotals(balances,key){const grouped=new Map();for(const row of balances){const currency=String(row.currency||'GBP').toUpperCase();grouped.set(currency,(grouped.get(currency)||0)+Number(row[key]||0));}return [...grouped.entries()].filter(([,amount])=>amount!==0).map(([currency,amount])=>money(amount,currency)).join(' + ')||'—';}
 function majorToMinor(value){const raw=String(value??'').trim();if(!/^-?\d+(?:\.\d{1,2})?$/.test(raw))throw new Error('Enter the credit adjustment as an amount such as 10.00 or -5.00.');const minor=Math.round(Number(raw)*100);if(!Number.isSafeInteger(minor)||minor===0)throw new Error('Enter a non-zero credit adjustment.');return minor;}

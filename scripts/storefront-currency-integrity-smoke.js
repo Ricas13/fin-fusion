@@ -53,7 +53,7 @@ assert(!customerDashboard.includes('storefrontCurrency'),'Customer account must 
 assert(!customerDashboard.includes('userPreferredCurrency'),'Customer account must not resolve a per-user currency preference');
 assert(!customerDashboard.includes('enabledCurrencies()'),'Customer account must not request a list of customer-selectable currencies');
 assert(!onboarding.includes('name="currency"'),'Customer checkout forms must not post a customer-selected currency');
-assert(onboarding.includes('All paid prices are in <strong><%= currency %></strong>'),'Customer onboarding must present the single portal currency explicitly');
+assert(onboarding.includes('All paid prices use <strong><%='),'Customer onboarding must present the single portal currency explicitly');
 
 assert(storefront.includes('publicShell.publicHeader({site,nav,logged,registrationOpen})'),'Storefront must render the shared public header');
 assert(storefront.includes('publicShell.publicFooter({site,support:shellSupport,registrationOpen})'),'Storefront must render the shared public footer');

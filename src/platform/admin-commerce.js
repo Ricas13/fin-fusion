@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express=require('express');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
@@ -16,7 +18,7 @@ function gate(req,res,next){return req.session?.authUserId&&req.session?.authRol
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
 function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`}
 function dt(v){return v?new Date(v).toLocaleString('en-GB'):'—'}
-function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),currencyDisplay:'narrowSymbol',minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`}}
+function money(minor,currency){return moneyFormat.formatMinor(minor,currency||'GBP');}
 function multi(rows,multiplier=1){return rows.length?rows.map(r=>money(Number(r.amount_minor||0)*multiplier,r.currency)).join(' + '):'—'}
 
 async function commerceData(){

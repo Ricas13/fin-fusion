@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express = require('express');
 const { query } = require('../db');
 const { esc, layout } = require('./admin-html');
@@ -29,7 +31,7 @@ function durationLabel(plan) {
 }
 function priceLabel(plan) {
   const minor = Number(plan?.price_minor || 0);
-  return minor === 0 ? 'Free' : `${String(plan?.currency || '').toUpperCase()} ${(minor / 100).toFixed(2)}`.trim();
+  return minor === 0 ? 'Free' : moneyFormat.formatMinor(minor,plan?.currency||'GBP');
 }
 function billingLabel(value) {
   return ({ trial: 'Trial', month: 'Monthly', '6_months': '6 months', year: 'Yearly', custom: 'Custom' })[value] || 'Custom';

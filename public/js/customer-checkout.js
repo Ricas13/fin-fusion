@@ -30,7 +30,7 @@
   function normalized(){return field?String(field.value||'').trim().toUpperCase().slice(0,40):'';}
   function targets(){return Array.from(document.querySelectorAll('[data-promo-target]'));}
   function cards(){return Array.from(document.querySelectorAll('[data-plan-code]'));}
-  function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:currency||'USD',currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}catch(_){return `${currency||'USD'} ${(Number(minor||0)/100).toFixed(2)}`;}}
+  function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:currency||'USD',currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}catch(_){return `${({'GBP':'£','USD':'$','EUR':'€'})[String(currency||'USD').toUpperCase()]||'¤'}${(Number(minor||0)/100).toFixed(2)}`;}}
   function sync(){const value=normalized();if(field)field.value=value;for(const input of targets())input.value=value;}
   function setStatus(message,state){if(!status)return;status.textContent=message||'';status.dataset.state=state||'';}
   function prepareCard(card){const price=card.querySelector('[data-plan-price]');if(price&&!price.dataset.originalPrice)price.dataset.originalPrice=price.textContent.trim();}

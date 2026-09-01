@@ -51,7 +51,7 @@ assert.strictEqual(plansList.durationLabel({ billing_interval: '6_months', durat
 assert.strictEqual(plansList.durationLabel({ billing_interval: 'year', duration_days: 365 }), '1 year');
 assert.strictEqual(plansList.durationLabel({ billing_interval: 'custom', duration_days: 45 }), '45 days');
 assert.strictEqual(plansList.priceLabel({ price_minor: 0, currency: 'USD' }), 'Free');
-assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), 'USD 6.00');
+assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), '$6.00');
 
 const capacitySource=fs.readFileSync('src/entitlements/plan-capacity.js','utf8');
 const pendingRegistrationSource=fs.readFileSync('src/security/pending-registration.js','utf8');

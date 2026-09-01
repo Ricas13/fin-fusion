@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express = require('express');
 const { query, transaction } = require('../db');
 const csrf = require('../auth/csrf');
@@ -57,7 +59,7 @@ async function selectablePlans(){
 
 function amountLabel(row) {
     if (row.discount_type === 'percent') return `${row.percent_off}% off`;
-    return `${(Number(row.fixed_off_minor) / 100).toFixed(2)} ${row.currency || ''} off`.trim();
+    return `${moneyFormat.formatMinor(row.fixed_off_minor,row.currency||'GBP')} off`;
 }
 
 function codeCard(req, row) {
@@ -107,7 +109,7 @@ async function page(req) {
                     <div class="formGroup"><label>Percent off (1-100)</label><input class="input" type="number" name="percentOff" min="1" max="100"></div>
                     <div class="formGroup"><label>Fixed amount off</label><input class="input" type="number" step="0.01" min="0.01" name="fixedOff"></div>
                     <div class="formGroup"><label>Currency (for fixed)</label><select class="input" name="currency"><option value="GBP">GBP</option><option value="USD">USD</option><option value="EUR">EUR</option></select><div class="inlineHelp">Percentage discounts work naturally across currencies. Fixed discounts apply only in the selected currency.</div></div>
-                    <div class="formGroup"><label>Eligible plans</label><select class="input" name="planCodes" multiple size="6">${plans.map(plan=>`<option value="${esc(plan.code)}">${esc(plan.name)} · ${esc(plan.currency)} ${(Number(plan.price_minor||0)/100).toFixed(2)} · ${esc(plan.billing_interval)}</option>`).join('')}</select><div class="inlineHelp">Leave all plans unselected to allow the code on any plan. Use Ctrl/Cmd-click to choose several.</div></div>
+                    <div class="formGroup"><label>Eligible plans</label><select class="input" name="planCodes" multiple size="6">${plans.map(plan=>`<option value="${esc(plan.code)}">${esc(plan.name)} · ${esc(moneyFormat.formatMinor(plan.price_minor,plan.currency||'GBP'))} · ${esc(plan.billing_interval)}</option>`).join('')}</select><div class="inlineHelp">Leave all plans unselected to allow the code on any plan. Use Ctrl/Cmd-click to choose several.</div></div>
                     <div class="formGroup"><label>Max redemptions <span class="muted">(blank = unlimited)</span></label><input class="input" type="number" min="1" name="maxRedemptions"></div>
                     <div class="formGroup"><label>Per-customer limit</label><input class="input" type="number" min="1" max="1000" name="perCustomerLimit" value="1"></div>
                     <div class="formGroup"><label>Expires</label><input class="input" type="date" name="expiresAt"></div>
