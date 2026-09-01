@@ -2,6 +2,7 @@
 
 const {query}=require('../db');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const manualAssignment=require('../jellyfin/manual-assignment');
 
 function seconds(value){return Number(value||0)}
 function bytes(value){return Number(value||0)}
@@ -79,8 +80,11 @@ async function customer360(customerId){
 // on Jellyfin server availability to render.
 async function customerAccessDetail(customerId){
     const currentPlan=await provisioning.currentEntitlement(customerId);
-    const effective=await provisioning.effectivePolicyForCustomer(customerId,currentPlan);
-    return{currentPlan,effective};
+    const [effective,assignment]=await Promise.all([
+        provisioning.effectivePolicyForCustomer(customerId,currentPlan),
+        manualAssignment.candidates(customerId)
+    ]);
+    return{currentPlan,effective,assignment};
 }
 
 module.exports={customer360,customerAccessDetail,primaryFirst};
