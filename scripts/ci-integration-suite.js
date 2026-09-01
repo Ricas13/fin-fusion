@@ -95,6 +95,10 @@ const suites = [
     commands: [['node', ['scripts/fleet-live-metrics-smoke.js']]],
   },
   {
+    name: 'Activity runtime role least privilege',
+    commands: [['node', ['scripts/activity-runtime-role-db-smoke.js']]],
+  },
+  {
     name: 'Free Server lifecycle end to end',
     commands: [['node', ['scripts/free-server-lifecycle-smoke.js']]],
   },
