@@ -7,6 +7,8 @@ const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const nav=require('../src/platform/admin-nav');
 const adminShell=require('../src/platform/admin-html-core-base');
 const discordRoles=require('../src/integrations/discord-roles');
+const telegramNotification=require('../src/integrations/telegram-notification');
+const telegramMessage=require('../src/integrations/telegram-message');
 
 const plans=read('src/platform/admin-plans-list.js');
 const adminPlans=read('src/platform/admin-plans.js');
@@ -59,6 +61,26 @@ assert(dispatch.includes("if(['admin','both'].includes(pref.event_scope))await q
 assert(!/customer.*telegramAdminChatId/i.test(dispatch),'Customer delivery must never fall back to the legacy admin Telegram destination');
 assert(!/customer.*discordAdminUserId/i.test(dispatch),'Customer delivery must never fall back to the legacy admin Discord destination');
 assert(outbox.includes("settings.sendDiscord")&&outbox.includes("userId:row.destination"),'Outbox must pass each Discord destination to bot DM delivery');
+assert(outbox.includes("telegramMessage.send(settings")&&outbox.includes("chatId:row.destination"),'Structured Telegram delivery must preserve each verified chat destination through the durable outbox');
+assert(dispatch.includes('message:telegramNotification.render'),'Telegram dispatch must enqueue the same structured notification model used for native rich delivery');
+
+const telegramCard=telegramNotification.render({
+  eventType:'payment.received',
+  payload:{customerName:'Ricardo',planName:'Premium Jellyfin',amount:6,currency:'GBP',accountUrl:'https://captainfin.example.test/account'},
+  emailSpec:{title:'Payment received',eventLabel:'Payment confirmation',facts:[{label:'Plan',value:'Premium Jellyfin'},{label:'Amount',value:'£6.00'},{label:'Next step',value:'No action is required'}],actionLabel:'Open your account',actionUrl:'https://captainfin.example.test/account'},
+  subject:'Payment received',
+  text:'Payment received.',
+  audience:'customer'
+});
+assert.strictEqual(telegramCard.parse_mode,'HTML','Telegram rich notifications must use HTML mode for predictable escaping and emphasis');
+assert(telegramCard.text.includes('<b>✅ Payment received</b>'),'Telegram notification must expose the shared status/title hierarchy');
+assert(telegramCard.text.includes('Thanks, <b>Ricardo</b>!'),'Telegram must translate shared bold emphasis instead of leaking Discord markdown');
+assert(telegramCard.text.includes('<b>Plan</b>\nPremium Jellyfin')&&telegramCard.text.includes('<b>Amount</b>\n£6.00'),'Telegram notification must expose important structured facts');
+assert.strictEqual(telegramCard.reply_markup.inline_keyboard[0][0].url,'https://captainfin.example.test/account','Telegram notification must include the safe account action button');
+const telegramApiBody=telegramMessage.body(telegramCard,{chatId:'123456789',fallbackText:'fallback'});
+assert.strictEqual(telegramApiBody.chat_id,'123456789','Telegram structured delivery must bind the intended chat id');
+assert.strictEqual(telegramApiBody.parse_mode,'HTML','Telegram structured delivery must preserve safe HTML parse mode');
+
 assert(registration.includes('name="whatsappOptIn"')&&registration.includes('name="telegramOptIn"')&&registration.includes('name="discordOptIn"'),'Registration must collect secondary-channel preferences');
 assert(registration.includes('+447700900123')&&registration.toLowerCase().includes('international format'),'Registration must explain the WhatsApp country-code destination format');
 assert(adminNotifications.includes('Notification control room')&&adminNotifications.includes('Global event catalogue'),'Global Notifications must remain the operator control centre for shared messaging infrastructure and event routing');

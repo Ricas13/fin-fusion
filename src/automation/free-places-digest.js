@@ -3,6 +3,7 @@
 const {query,transaction}=require('../db');
 const capacity=require('../entitlements/plan-capacity');
 const notificationSettings=require('../integrations/notification-settings');
+const discordMessage=require('../integrations/discord-message');
 const operations=require('../platform/operations-settings');
 
 const STATE_KEY='discord_free_places_status_v1';
@@ -32,7 +33,36 @@ function persistentText(remaining,publicBaseUrl){
   const noun=count===1?'place':'places';
   return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nReserve / Create Free Account: ${base}\n\nPressing Reserve holds one place exclusively for 10 minutes while registration and email verification are completed.`;
 }
+function persistentMessage(remaining,publicBaseUrl){
+  const count=Math.max(0,Math.floor(Number(remaining)||0));
+  const base=String(publicBaseUrl||'').replace(/\/+$/,'');
+  const open=count>0;
+  const noun=count===1?'place':'places';
+  return discordMessage.card({
+    title:`${open?'🟢':'🔴'} Free Server availability`,
+    description:open
+      ? `**${count} free ${noun}** currently available.`
+      : 'No free places currently available.',
+    tone:open?'success':'bad',
+    fields:[{
+      name:'How reservations work',
+      value:open
+        ? 'Pressing Reserve holds one place exclusively for 10 minutes while you complete registration and email verification.'
+        : 'A place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after 10 minutes.',
+      inline:false
+    }],
+    url:base,
+    footer:'CAPTAiN FiN • Live Free Server availability',
+    buttonLabel:open?'Reserve / Create Free Account':'View Free Server',
+    buttonUrl:base
+  });
+}
 function discordMissing(error){return /(?:HTTP|Discord)\s*404|unknown message/i.test(String(error?.message||error||''));}
+async function sendDiscordMessage({channelId,text,message=null,allowEveryone=false}){
+  const channel=notificationSettings.snowflake(channelId);
+  if(!channel)throw new Error('Discord channel ID is required.');
+  return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages`,{method:'POST',body:discordMessage.body(message,{fallbackText:text,allowEveryone})});
+}
 async function loadState(db=query){
   const result=await db('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[STATE_KEY]);
   const value=result.rows[0]?.setting_value||{};
@@ -41,12 +71,12 @@ async function loadState(db=query){
 async function saveState(db,state){
   await db(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[STATE_KEY,JSON.stringify({...state,updatedAt:new Date().toISOString()})]);
 }
-async function editDiscordMessage({channelId,messageId,text}){
-  const channel=notificationSettings.snowflake(channelId),message=notificationSettings.snowflake(messageId);
-  if(!channel||!message)throw new Error('Discord channel/message ID is invalid.');
-  return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(message)}`,{method:'PATCH',body:{content:String(text||'').trim().slice(0,1900),allowed_mentions:{parse:[]}}});
+async function editDiscordMessage({channelId,messageId,text,message=null}){
+  const channel=notificationSettings.snowflake(channelId),messageIdSafe=notificationSettings.snowflake(messageId);
+  if(!channel||!messageIdSafe)throw new Error('Discord channel/message ID is invalid.');
+  return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(messageIdSafe)}`,{method:'PATCH',body:discordMessage.body(message,{fallbackText:text,allowEveryone:false})});
 }
-async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=notificationSettings.sendDiscordChannel,edit=editDiscordMessage,transactionFn=transaction}={}){
+async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,transactionFn=transaction}={}){
   const cfg=settings||await notificationSettings.status();
   if(!cfg.discordFreePlacesDigestEnabled)return{processed:0,updated:0,skipped:'disabled'};
   if(!cfg.discordConfigured)return{processed:0,updated:0,skipped:'discord_not_configured'};
@@ -62,26 +92,26 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     if(!plan)return{processed:1,updated:0,skipped:'free_plan_not_found'};
     const state=await usage(plan.id,db);
     if(state.remaining==null||!Number.isFinite(Number(state.remaining)))return{processed:1,updated:0,skipped:'remaining_unavailable'};
-    const remaining=Math.max(0,Math.floor(Number(state.remaining))),text=persistentText(remaining,publicBaseUrl),channelId=String(cfg.discordFreePlacesChannelId);
+    const remaining=Math.max(0,Math.floor(Number(state.remaining))),text=persistentText(remaining,publicBaseUrl),message=persistentMessage(remaining,publicBaseUrl),signature=JSON.stringify(message),channelId=String(cfg.discordFreePlacesChannelId);
     let stored=await loadState(db);
     if(stored.channelId!==channelId)stored={channelId,messageId:'',text:'',remaining:null,updatedAt:null};
-    if(stored.messageId&&stored.text===text)return{processed:1,updated:0,remaining,messageId:stored.messageId,unchanged:true};
+    if(stored.messageId&&stored.text===signature)return{processed:1,updated:0,remaining,messageId:stored.messageId,unchanged:true};
 
-    let message=null,created=false;
+    let sentMessage=null,created=false;
     if(stored.messageId){
-      try{message=await edit({channelId,messageId:stored.messageId,text});}
+      try{sentMessage=await edit({channelId,messageId:stored.messageId,text,message});}
       catch(error){if(!discordMissing(error))throw error;}
     }
-    if(!message){
-      message=await send({channelId,text,allowEveryone:false});
+    if(!sentMessage){
+      sentMessage=await send({channelId,text,message,allowEveryone:false});
       created=true;
     }
-    const messageId=String(message?.id||stored.messageId||'');
+    const messageId=String(sentMessage?.id||stored.messageId||'');
     if(!messageId)throw new Error('Discord did not return an availability message ID.');
-    await saveState(db,{channelId,messageId,text,remaining});
+    await saveState(db,{channelId,messageId,text:signature,remaining});
     return{processed:1,updated:1,created:created?1:0,remaining,messageId};
   });
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,digestText,persistentText,loadState,saveState,editDiscordMessage,discordMissing};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,sendDiscordMessage,discordMissing};
