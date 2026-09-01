@@ -13,7 +13,7 @@ function reenableJellyfinForm(token,customerId){return `<form class="plainForm" 
 function jellyfinPasswordSupport(detail){
   const customerId=detail?.customer?.id,accounts=(detail?.accounts||[]).filter(account=>!account.disabled&&String(account.account_purpose||'jellyfin')!=='stremio_internal');
   if(!customerId||!accounts.length)return'';
-  return `<section class="section"><div class="sectionHead"><div><h2>Jellyfin password support</h2><div class="muted">Help this customer change a Jellyfin password without exposing or storing the plaintext password in CAPTAiNFiN.</div></div><a class="button secondary" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}">Change Jellyfin password</a></div></section>`;
+  return `<div class="buttonRow accessPasswordQuickAction"><span class="muted">Jellyfin password support</span><a class="button secondary" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(customerId)}">Change Jellyfin password</a></div>`;
 }
 function stremioAccessPanel(detail){
   const entitlement=detail.primaryEntitlement||detail.subscriptions?.[0]||{},name=entitlement.name||entitlement.plan_name||entitlement.plan_name_snapshot||'Stremio access';
@@ -39,7 +39,7 @@ function body(detail,tab,token,accessDetail,options={}){
   // single owner of Jellyfin policy, libraries, history and activity on this tab.
   const chrome=v2.body(safe,'access',token,accessDetail,{...options,skipAccessSections:true});
   if(type==='stremio')return chrome+stremioAccessPanel(safe)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+stremioInstallSection(safe,token,options);
-  const jellyfin=chrome+accessCards.render(safe,token,accessDetail,options);
+  const jellyfin=chrome+jellyfinPasswordSupport(safe)+accessCards.render(safe,token,accessDetail,options);
   return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
