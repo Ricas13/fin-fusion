@@ -1,0 +1,68 @@
+/* Final fidelity pass for the compact plan editor reference.
+ * Scoped to the plan editor only; shared sidebar/navigation is untouched. */
+
+@media(min-width:1180px){
+  .content.planReferencePage .planControlGrid>#product{
+    grid-column:span 2!important;
+  }
+  .content.planReferencePage .planControlGrid>#product:has(details[open]){
+    grid-column:1/-1!important;
+  }
+  .content.planReferencePage #product>.planConfigBody{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+  .content.planReferencePage #product:has(details[open])>.planConfigBody{
+    grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  }
+}
+
+.content.planReferencePage .planReferenceProductAdvanced{
+  grid-column:1/-1!important;
+  margin-top:0!important;
+}
+.content.planReferencePage .planReferenceProductAdvancedBody{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px 10px;
+}
+.content.planReferencePage .planReferenceProductAdvancedBody>.formGroup{
+  margin:0!important;
+}
+
+/* The reference keeps native section actions available but visually quiet.
+   This preserves every existing save/workflow action and browser contract. */
+.content.planReferencePage .planControlGrid .buttonRow{
+  padding-top:2px;
+  border-top:0;
+}
+.content.planReferencePage .planControlGrid .buttonRow>.button,
+.content.planReferencePage .planControlGrid form>button.button[type="submit"]{
+  min-height:29px!important;
+  padding:5px 9px!important;
+  border-radius:6px!important;
+  font-size:8.5px!important;
+}
+
+/* Match the screenshot's restrained header proportions while leaving the
+   current application top navigation and sidebar intact. */
+.content.planReferencePage .pageHeader{
+  min-height:58px;
+}
+.content.planReferencePage .pageHeader h1{
+  font-size:25px!important;
+  line-height:1.08!important;
+}
+.content.planReferencePage .planControlHeader{
+  margin-bottom:0!important;
+}
+
+@media(max-width:1179px){
+  .content.planReferencePage .planControlGrid>#product{
+    grid-column:1/-1!important;
+  }
+}
+@media(max-width:720px){
+  .content.planReferencePage .planReferenceProductAdvancedBody{
+    grid-template-columns:1fr;
+  }
+}
