@@ -6,6 +6,7 @@ const path=require('path');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 const pricing=read('src/payments/plan-pricing.js');
 const providerPricing=read('src/payments/provider-plan-pricing.js');
+const discounts=read('src/payments/discounts.js');
 const reporting=read('src/platform/reporting-currency.js');
 const storefront=read('src/platform/storefront.js');
 const publicPages=read('src/platform/public-pages.js');
@@ -34,6 +35,9 @@ assert(reporting.includes('async function getForUser(_userId)'),'Per-admin repor
 assert(storefront.includes('async function selectedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Storefront must ignore query/session currency overrides');
 assert(storefront.includes('function currencySwitcher(_currency,_currencies){return\'\';}'),'Storefront must not expose a customer currency switcher');
 assert(checkout.includes('async function requestedCurrency(_req){return planPricing.platformDefaultCurrency();}'),'Checkout must ignore client/session currency overrides');
+assert(checkout.includes('currency:choice.currency'),'Discount reservation must use the immutable resolved checkout currency');
+assert(discounts.includes('DISCOUNT_CURRENCY_MISMATCH')&&discounts.includes('assertDiscountCurrency'),'Fixed-value discounts must reject a different plan currency before settlement');
+assert(customerDashboard.includes('customerId,currency:plan.currency'),'Customer promo preview must validate fixed discounts against each displayed plan currency');
 assert(currencySettings.includes('changes the denomination of the current catalogue'),'Admin currency UI must explain switch semantics');
 
 assert(/const\s+reportingCurrency\s*=\s*require\(['"]\.\/reporting-currency['"]\)/.test(planCreate),'Plan creation must load the portal currency server-side');
@@ -54,7 +58,7 @@ assert(onboarding.includes('All paid prices are in <strong><%= currency %></stro
 assert(storefront.includes('publicShell.publicHeader({site,nav,logged,registrationOpen})'),'Storefront must render the shared public header');
 assert(storefront.includes('publicShell.publicFooter({site,support:shellSupport,registrationOpen})'),'Storefront must render the shared public footer');
 assert(publicPages.includes('publicShell.publicHeader({site,nav,active,logged,registrationOpen})'),'Information pages must render the same shared public header');
-assert(publicPages.includes('publicShell.publicFooter({site,support,registrationOpen})'),'Information pages must render the same shared public footer');
+assert(publicPages.includes('publicShell.publicFooter({site,support,registrationOpen})'),'Information pages must render the shared public footer');
 assert(!publicPages.includes('<header class="storeHeader">'),'Information pages must not maintain a separate public header implementation');
 assert(!publicPages.includes('<footer class="storeFooter">'),'Information pages must not maintain a separate public footer implementation');
 assert(publicShellSource.includes("['trust','Trust','/trust']"),'Trust must be part of the permanent public navigation');
