@@ -16,7 +16,7 @@ const migration = source('db/migrations/20260830173000_checkout_provider_identit
 
 assert(checkout.includes('PROVIDER_CHECKOUT_ID_REQUIRED'), 'blank provider checkout identities must fail closed');
 assert(checkout.includes('PROVIDER_CHECKOUT_REBIND_CONFLICT'), 'an attached checkout must not be rebound');
-assert(checkout.includes("state === 'cancelled' && attached"), 'attached browser cancellation must preserve frozen financial reservations');
+assert(checkout.includes("providerUnresolved && ['expired', 'cancelled', 'failed'].includes(state)"), 'attached local abandonment must preserve frozen financial reservations until provider-terminal truth');
 assert(checkout.includes("state IN('reserved','released','expired')"), 'late paid provider settlement must consume its frozen discount reservation');
 assert(credit.includes('SERVICE_CREDIT_LATE_SETTLEMENT_CONFLICT'), 'late service-credit settlement must fail explicitly when its backing credit was reused');
 assert(credit.includes("state === 'cancelled_attached'"), 'service credit must stay reserved after local cancellation of an attached provider checkout');
