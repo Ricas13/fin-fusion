@@ -39,7 +39,8 @@ function body(detail,tab,token,accessDetail,options={}){
   // single owner of Jellyfin policy, libraries, history and activity on this tab.
   const chrome=v2.body(safe,'access',token,accessDetail,{...options,skipAccessSections:true});
   if(type==='stremio')return chrome+stremioAccessPanel(safe)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+stremioInstallSection(safe,token,options);
-  return chrome+accessCards.render(safe,token,accessDetail,options);
+  const jellyfin=chrome+accessCards.render(safe,token,accessDetail,options);
+  return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm};
