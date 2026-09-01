@@ -96,6 +96,11 @@
 .dataTable{max-width:none}
 .operatorDetails,.section,.card{min-width:0}
 
+/* Plan rows reserve the reclaimed subscriber column for actions. */
+.planActionsCell{min-width:310px;white-space:nowrap}
+.planActionsRow{flex-wrap:nowrap!important;justify-content:flex-end}
+.planActionsRow .button{white-space:nowrap}
+
 @media (max-width:1180px){
   .page-commerce .quick-actions,.page-commerce .operatorQuickActions,.page-automation .serverGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
