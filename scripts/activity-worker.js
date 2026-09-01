@@ -154,8 +154,13 @@ async function run() {
       const guarded = await withMaintenanceSharedLock(async () => {
         await refreshPolicyIfDue();
         current.policyMode = cycleState.policyMode;
+
+        // Playback poll trust describes the Jellyfin sampling cycle only. A
+        // secondary policy failure must degrade the worker without rewriting a
+        // successful /Sessions sample as a failed playback poll.
+        let result = null;
         try {
-          const result = await activity.runActivityPolicyCycle();
+          result = await activity.runActivityPolicyCycle();
           current.observedStreams = Number(result?.observedStreams || 0);
           current.serverFailures = Array.isArray(result?.serverFailures) ? result.serverFailures.length : 0;
           if (current.serverFailures) current.outcome = 'degraded';
@@ -165,32 +170,6 @@ async function run() {
             current.outcome = 'degraded';
             console.error('Activity poll trust ledger update failed:', error.message);
           }
-          if (!result.skipped) {
-            console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now() - started}`);
-            const failedServerIds = (result.serverFailures || []).map(item => item.serverId).filter(Boolean);
-            const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ pollsReliable: !failedServerIds.length });
-            if (!household.skipped && household.customers) {
-              console.log(`Household network cycle customers=${household.customers} sessions=${household.observedSessions} denied=${household.denied} stopped=${household.stopped} safetySkipped=${household.safetySkipped}`);
-            }
-            try {
-              const identity = await mediaIdentityPolicy.runMediaIdentityPolicyCycle({ failedServerIds });
-              if (!identity.skipped && (identity.violations || identity.stopped || identity.skipped)) {
-                console.log(`Media identity policy mode=${identity.mode} violations=${identity.violations} stopped=${identity.stopped} safetySkipped=${identity.skipped}`);
-              }
-            } catch (error) {
-              if (current.outcome === 'healthy') current.outcome = 'degraded';
-              console.error('Media identity policy cycle failed:', error.message);
-            }
-            try {
-              const reminders = await paygExpiryMessages.runPaygExpiryMessageCycle({ failedServerIds });
-              if (!reminders.skipped && (reminders.sent || reminders.failed || reminders.safetySkipped)) {
-                console.log(`Pay As You Go reminders eligible=${reminders.eligible} sent=${reminders.sent} failed=${reminders.failed} safetySkipped=${reminders.safetySkipped}`);
-              }
-            } catch (error) {
-              if (current.outcome === 'healthy') current.outcome = 'degraded';
-              console.error('Pay As You Go expiry reminder cycle failed:', error.message);
-            }
-          }
         } catch (error) {
           current.outcome = 'failed';
           try {
@@ -199,6 +178,38 @@ async function run() {
             console.error('Activity aborted-cycle trust update failed:', trustError.message);
           }
           console.error('Activity cycle failed:', error.message);
+        }
+
+        if (result && !result.skipped) {
+          console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now() - started}`);
+          const failedServerIds = (result.serverFailures || []).map(item => item.serverId).filter(Boolean);
+          try {
+            const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ pollsReliable: !failedServerIds.length });
+            if (!household.skipped && household.customers) {
+              console.log(`Household network cycle customers=${household.customers} sessions=${household.observedSessions} denied=${household.denied} stopped=${household.stopped} safetySkipped=${household.safetySkipped}`);
+            }
+          } catch (error) {
+            if (current.outcome === 'healthy') current.outcome = 'degraded';
+            console.error('Household network policy cycle failed:', error.message);
+          }
+          try {
+            const identity = await mediaIdentityPolicy.runMediaIdentityPolicyCycle({ failedServerIds });
+            if (!identity.skipped && (identity.violations || identity.stopped || identity.skipped)) {
+              console.log(`Media identity policy mode=${identity.mode} violations=${identity.violations} stopped=${identity.stopped} safetySkipped=${identity.skipped}`);
+            }
+          } catch (error) {
+            if (current.outcome === 'healthy') current.outcome = 'degraded';
+            console.error('Media identity policy cycle failed:', error.message);
+          }
+          try {
+            const reminders = await paygExpiryMessages.runPaygExpiryMessageCycle({ failedServerIds });
+            if (!reminders.skipped && (reminders.sent || reminders.failed || reminders.safetySkipped)) {
+              console.log(`Pay As You Go reminders eligible=${reminders.eligible} sent=${reminders.sent} failed=${reminders.failed} safetySkipped=${reminders.safetySkipped}`);
+            }
+          } catch (error) {
+            if (current.outcome === 'healthy') current.outcome = 'degraded';
+            console.error('Pay As You Go expiry reminder cycle failed:', error.message);
+          }
         }
         try {
           const fourK = await fourKTranscodePolicy.runFourKTranscodeCycle();
