@@ -28,6 +28,7 @@ const embyEditor=read('src/platform/admin-emby-plan-editor.js');
 const routeComposition=read('src/platform/admin-route-composition.js');
 const mediaReconciliation=read('src/jellyfin/media-service-reconciliation.js');
 const serviceScope=require('../src/entitlements/service-scope');
+require('./customer-access-variants-smoke');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
 assert(/stremioEntitlements\.entitledSubscription\(customerId\)/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use the unified multi-access Home');
