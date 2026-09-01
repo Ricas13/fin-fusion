@@ -1,0 +1,65 @@
+name: Resolve PR 473 against main
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    if: github.head_ref == 'fix/payment-provider-readiness' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/payment-provider-readiness
+          fetch-depth: 0
+      - name: Merge current main and resolve regression-test overlap
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          if git merge --no-ff --no-edit origin/main; then
+            git push origin HEAD:fix/payment-provider-readiness
+            exit 0
+          fi
+
+          conflicts="$(git diff --name-only --diff-filter=U)"
+          if [ "$conflicts" != "scripts/checkout-abandonment-smoke.js" ]; then
+            echo "Unexpected conflicts:"
+            printf '%s\n' "$conflicts"
+            exit 1
+          fi
+
+          git show origin/main:scripts/checkout-abandonment-smoke.js > scripts/checkout-abandonment-smoke.js
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/checkout-abandonment-smoke.js')
+          s=p.read_text()
+          def rep(old,new):
+              global s
+              if old not in s:
+                  raise SystemExit(f'missing fragment: {old[:120]}')
+              s=s.replace(old,new,1)
+          rep("const intents = require('../src/payments/checkout-intents');\nconst capacity = require('../src/entitlements/plan-capacity');",
+              "const intents = require('../src/payments/checkout-intents');\nconst providerSettings = require('../src/payments/provider-settings');\nconst capacity = require('../src/entitlements/plan-capacity');")
+          rep("    expect(retried && retried.id, 'customer must be able to start a fresh checkout after cancelling the stuck one.');\n    await intents.consume({ intentId: retried.id, nonce: retried.nonce, state: 'cancelled', scope: 'customer', provider: 'stripe', ownerId: customer.id });",
+              "    expect(retried && retried.id, 'customer must be able to start a fresh checkout after cancelling the stuck one.');\n\n    // Credentials alone are not enough to accept money. Customer checkout must\n    // require both the provider to be enabled/configured and its callback path.\n    expect(providerSettings.checkoutReady('stripe', { enabled:true, restrictedKey:'rk_test_example', webhookSecret:'whsec_test' }), 'Stripe should be checkout-ready with enabled credentials and webhook secret.');\n    expect(!providerSettings.checkoutReady('stripe', { enabled:true, restrictedKey:'rk_test_example', webhookSecret:'' }), 'Stripe checkout must fail closed without a webhook secret.');\n    expect(!providerSettings.checkoutReady('stripe', { enabled:false, restrictedKey:'rk_test_example', webhookSecret:'whsec_test' }), 'An explicitly disabled Stripe provider must remain unavailable.');\n    expect(providerSettings.checkoutReady('paypal', { enabled:true, clientId:'client', clientSecret:'secret', webhookId:'WH-test' }), 'PayPal should be checkout-ready with credentials and webhook ID.');\n    expect(!providerSettings.checkoutReady('paypal', { enabled:true, clientId:'client', clientSecret:'secret', webhookId:'' }), 'PayPal checkout must fail closed without a webhook ID.');\n    expect(providerSettings.checkoutReady('plisio', { enabled:true, secretKey:'secret' }), 'Plisio merchant secret authenticates both checkout and signed callbacks.');\n\n    await intents.consume({ intentId: retried.id, nonce: retried.nonce, state: 'cancelled', scope: 'customer', provider: 'stripe', ownerId: customer.id });")
+          rep("    const capacitySource = fs.readFileSync(path.join(root, 'src', 'entitlements', 'plan-capacity.js'), 'utf8');",
+              "    const capacitySource = fs.readFileSync(path.join(root, 'src', 'entitlements', 'plan-capacity.js'), 'utf8');\n    const providerSource = fs.readFileSync(path.join(root, 'src', 'payments', 'provider-settings.js'), 'utf8');\n    const checkoutJs = fs.readFileSync(path.join(root, 'public', 'js', 'customer-checkout.js'), 'utf8');")
+          rep("    expect(routeSource.includes('checkoutStartLimit'), 'checkout-session creation must be rate limited.');",
+              "    expect(routeSource.includes('checkoutStartLimit'), 'checkout-session creation must be rate limited.');\n    expect(routeSource.includes('await assertProviderCheckoutReady(provider);'), 'server-side checkout must enforce provider callback readiness before starting a checkout.');\n    expect(routeSource.includes(\"router.get('/account/checkout/readiness',requireCustomer\"), 'customer UI must receive authenticated provider checkout readiness.');\n    expect(routeSource.indexOf('await assertProviderCheckoutReady(provider);') < routeSource.indexOf('const intent=await intents.createIntent'), 'provider readiness must be checked before a local checkout intent is created.');\n    expect(checkoutJs.includes(\"fetch('/account/checkout/readiness'\"), 'customer checkout UI must consume provider readiness.');\n    expect(checkoutJs.includes('form.checkoutForm[action='), 'customer checkout UI must hide unavailable provider forms.');\n    expect(providerSource.includes(\"restricted=/^rk_/i.test(key)\"), 'Stripe connection diagnostics must identify restricted keys.');\n    expect(providerSource.includes('does not prove the Customer, Checkout Session or Coupon write permissions'), 'restricted Stripe key diagnostics must not imply a Prices read proves checkout write readiness.');")
+          rep("    console.log('Checkout abandonment, provider-truth capacity retention, and Stripe confirmed-return smoke test passed.');",
+              "    console.log('Checkout abandonment, provider-truth capacity retention, provider readiness, and Stripe confirmed-return smoke test passed.');")
+          p.write_text(s)
+          PY
+
+          git add scripts/checkout-abandonment-smoke.js
+          git commit --no-edit
+          git push origin HEAD:fix/payment-provider-readiness
