@@ -62,6 +62,11 @@ function familyMatches(plan, type) {
 function plural(value, singular, pluralValue=`${singular}s`) {
   return Number(value) === 1 ? singular : pluralValue;
 }
+/*
+ * The capacity owner still distinguishes `${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer`
+ * and the underlying drill-down remains equivalent to `View shared ${esc(state.pool)} capacity`.
+ * Those stream-unit details are intentionally converted to customer places on this catalogue page.
+ */
 function capacityCell(plan) {
   const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{},customers=Math.max(0,Number(plan.live_subscriber_count||0));
   if(state.model==='fleet_streams'){
