@@ -59,7 +59,7 @@ assert(requestUsers.includes('value="plan_change"'), 'bulk access action must en
 assert(jellyfinEditor.includes('requestPlanPolicy.planCard(req, p)'), 'Jellyfin plans must embed the request policy card');
 assert(stremioEditor.includes("requestPlanPolicy.planCard(req, p, { variant: 'stremio' })"), 'Stremio plans must embed the request policy card');
 assert(!stremioEditor.includes("value=\"new_only\""), 'Stremio access changes must not leave existing plan members on an old household policy');
-assert(stremioEditor.includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')"), 'Stremio plan saves must explicitly apply household policy to current members');
+assert(stremioEditor.includes("updateTrackingSnapshots(client, data.plan, input, impact, 'all_current')"), 'Stremio plan saves must explicitly apply household policy to current members');
 assert(stremioEditor.includes('queuePlanRequestReconciliation'), 'Stremio plan saves must reapply request policy to current members');
 
 for (const predicate of ["superseded_by IS NULL", "'paused'", 'starts_at<=NOW()', 'current_period_end>NOW()']) {
