@@ -64,7 +64,7 @@ assert(editor.includes('[plan.id, name, description, features, visible, active')
 
 // Discord plan roles are ordinary per-plan settings, while reconciliation stays a bounded specialist job.
 assert(editor.includes('Discord plan role') && editor.includes('discord_role_id=$7'), 'Jellyfin product settings must expose and persist the plan Discord role');
-assert(stremioEditor.includes('discordRoleUi.control') && stremioEditor.includes('discord_role_id=$8'), 'Stremio product settings must expose and persist the same plan Discord role contract');
+assert(stremioEditor.includes('discordRoleUi.control') && stremioEditor.includes('discord_role_id=$7'), 'Stremio product settings must expose and persist the same plan Discord role contract');
 assert(discordRoleUi.includes('function control(') && discordRoleUi.includes('function parse(') && discordRoleUi.includes('CAPTAiNFiN only adds/removes roles mapped to plans'), 'shared Discord plan-role UI must keep safe parsing and explain its managed-role boundary');
 assert(discordRoleSource.includes('extraManagedRoleIds') && discordRoleSource.includes('managed.add(roleId)'), 'Discord reconciliation must be able to remove a replaced old managed role without treating unrelated Discord roles as managed');
 assert(bulkJobsSource.includes('queuePlanDiscordReconciliation') && bulkJobsSource.includes("'discord_plan_reconcile'"), 'plan-role changes must queue a dedicated bounded Discord reconciliation job');
