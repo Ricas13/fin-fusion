@@ -69,7 +69,6 @@ async function enabledPolicies() {
       WHERE ja.account_purpose='jellyfin'
         AND ja.disabled=FALSE
         AND js.enabled=TRUE
-        AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
         AND COALESCE(p.is_addon,FALSE)=FALSE
         AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
         AND s.superseded_by IS NULL
@@ -184,7 +183,7 @@ async function stopConfirmedFourKTranscode(policy, candidate, cfg) {
   try {
     await registry.request(policy.server_id, `/Sessions/${encodeURIComponent(candidate.Id)}/Playing/Stop`, { method: 'POST' });
   } catch (error) {
-    await recordEvent(policy, candidate, cfg, 'stop_failed', { enforcementReason: 'jellyfin_stop_failed', error: error.message });
+    await recordEvent(policy, candidate, cfg, 'stop_failed', { enforcementReason: 'media_server_stop_failed', error: error.message });
     return false;
   }
 
@@ -195,7 +194,7 @@ async function stopConfirmedFourKTranscode(policy, candidate, cfg) {
     return false;
   }
   if (verified.session && isFourKVideoTranscode(verified.session)) {
-    await recordEvent(policy, candidate, cfg, 'stop_failed', { enforcementReason: 'jellyfin_stop_did_not_end_session' });
+    await recordEvent(policy, candidate, cfg, 'stop_failed', { enforcementReason: 'media_server_stop_did_not_end_session' });
     return false;
   }
 
