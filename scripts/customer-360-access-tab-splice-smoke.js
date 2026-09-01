@@ -54,18 +54,21 @@ assert(jellyfinHtml.includes('Jellyfin access'), 'Jellyfin customer must still s
 assert(!jellyfinHtml.includes('Stremio access'), 'Jellyfin customer must not see the Stremio access panel');
 
 const failedDetail=fixture({provisioningState:{status:'failed',last_error:'No eligible free server'},subscriptions:[{status:'active',current_period_end:new Date(Date.now()+86400000),plan_name:'Free Server',streams:1,is_free_tier:true,service_type:'jellyfin',server_class:'free'}]});
+const failedProvisioningHtml=view.body(failedDetail,'access','token',null);
+assert(failedProvisioningHtml.includes('Provisioning failed / Needs attention.'),'failed Jellyfin provisioning must be explicit on Customer 360');
+assert(failedProvisioningHtml.includes('Free Server place remains allocated'),'failed Free Server provisioning must explain that the scarce place remains allocated');
+assert(failedProvisioningHtml.includes('Needs attention')&&!failedProvisioningHtml.includes('<div class="summaryValue">0</div><div class="summarySub">0 Jellyfin accounts'),'failed provisioning must not look like a normal zero-account state');
+assert(failedProvisioningHtml.indexOf('Access assignment & customer overrides')<failedProvisioningHtml.indexOf('Jellyfin access'),'administrator repair controls must be above Jellyfin policy/provisioning detail');
+
 const assignment={entitlement:{id:'free-plan'},activeAccounts:[],servers:[
   {id:'free-1',name:'Free Server',health_status:'healthy',assigned_users:50,max_users:50,full:true},
   {id:'free-2',name:'Overflow Free',health_status:'healthy',assigned_users:1000,max_users:50,full:true}
 ]};
-const failedProvisioningHtml=view.body(failedDetail,'access','token',{currentPlan:failedDetail.subscriptions[0],effective:null,assignment});
-assert(failedProvisioningHtml.includes('Provisioning failed / Needs attention.'),'failed Jellyfin provisioning must be explicit on Customer 360');
-assert(failedProvisioningHtml.includes('Free Server place remains allocated'),'failed Free Server provisioning must explain that the scarce place remains allocated');
-assert(failedProvisioningHtml.includes('Needs attention')&&!failedProvisioningHtml.includes('<div class="summaryValue">0</div><div class="summarySub">0 Jellyfin accounts'),'failed provisioning must not look like a normal zero-account state');
-assert(failedProvisioningHtml.includes('Assign Jellyfin server'),'fresh failed provisioning must expose direct manual server assignment');
-assert(failedProvisioningHtml.includes('50/50 · FULL')&&failedProvisioningHtml.includes('1000/50 · OVER +950'),'full and arbitrarily overfilled servers must remain selectable by an administrator');
-assert(failedProvisioningHtml.includes('does not create public Free Server availability'),'manual override UI must state that public availability is not reopened');
-assert(failedProvisioningHtml.indexOf('Access assignment & customer overrides')<failedProvisioningHtml.indexOf('Jellyfin access'),'administrator repair controls must be above Jellyfin policy/provisioning detail');
+const manualHtml=view.manualServerAssignmentForm('token','cust-1',assignment);
+assert(manualHtml.includes('Assign Jellyfin server'),'fresh failed provisioning must expose direct manual server assignment');
+assert(manualHtml.includes('50/50 · FULL')&&manualHtml.includes('1000/50 · OVER +950'),'full and arbitrarily overfilled servers must remain selectable by an administrator');
+assert(manualHtml.includes('does not create public Free Server availability'),'manual override UI must state that public availability is not reopened');
+assert(manualHtml.includes('name="serverId"')&&manualHtml.includes('value="free-1"')&&manualHtml.includes('value="free-2"'),'full and overfull servers must remain actual select options');
 
 const stremioHtml = view.body(fixture({ primaryEntitlement: { service_type: 'stremio', name: 'Stremio Plan', status: 'active' } }), 'access', 'token', null);
 assert(stremioHtml.includes('Stremio access'), 'Stremio-only customer must see the Stremio access panel');
