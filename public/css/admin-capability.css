@@ -21,6 +21,7 @@
 @import url('/css/admin-navigation-coherence.css');
 @import url('/css/admin-settings-groups.css');
 @import url('/css/admin-plan-reference-layout.css');
+@import url('/css/admin-plan-reference-fidelity.css');
 
 /* Contract reference: wide library grids originate in the base layer as
    grid-template-columns:repeat(5,minmax(0,1fr)) and then collapse responsively. */
