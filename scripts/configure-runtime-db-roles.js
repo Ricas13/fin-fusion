@@ -179,15 +179,17 @@ async function grantActivity(client) {
         to_regclass('public.access_network_events') AS network_events,
         to_regclass('public.customer_lane_policy_overrides') AS lane_overrides,
         to_regclass('public.customer_entitlement_overrides') AS entitlement_overrides,
+        to_regclass('public.media_account_device_policy') AS media_device_policy,
+        to_regclass('public.media_account_devices') AS media_devices,
         to_regprocedure('public.record_activity_worker_heartbeat(text,text,text,boolean,jsonb)') AS heartbeat_function`);
-    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].activity_poll_state || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].lane_overrides || !required.rows[0].entitlement_overrides || !required.rows[0].heartbeat_function) {
+    if (!required.rows[0].active || !required.rows[0].history || !required.rows[0].events || !required.rows[0].metrics || !required.rows[0].activity_poll_state || !required.rows[0].network_leases || !required.rows[0].network_events || !required.rows[0].lane_overrides || !required.rows[0].entitlement_overrides || !required.rows[0].media_device_policy || !required.rows[0].media_devices || !required.rows[0].heartbeat_function) {
         throw new Error('Run database migrations before configuring the activity role');
     }
     await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
-    await client.query(`GRANT SELECT(id,name,slug,server_class,base_url,public_url,enabled,priority,max_users,health_status,last_health_check,api_key_encrypted) ON jellyfin_servers TO ${role}`);
-    await client.query(`GRANT SELECT(id,customer_id,server_id,jellyfin_user_id,disabled,account_purpose,access_lane,last_activity_at) ON jellyfin_accounts TO ${role}`);
+    await client.query(`GRANT SELECT(id,name,slug,server_class,media_server_type,base_url,public_url,enabled,priority,max_users,health_status,last_health_check,api_key_encrypted) ON jellyfin_servers TO ${role}`);
+    await client.query(`GRANT SELECT(id,customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,created_at) ON jellyfin_accounts TO ${role}`);
     await client.query(`GRANT UPDATE(last_activity_at,updated_at) ON jellyfin_accounts TO ${role}`);
-    await client.query(`GRANT SELECT(id,customer_id,plan_id,status,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot) ON subscriptions TO ${role}`);
+    await client.query(`GRANT SELECT(id,customer_id,plan_id,status,source,provider_subscription_id,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot) ON subscriptions TO ${role}`);
     await client.query(`GRANT SELECT(id,code,streams,active,service_type,is_free_tier,is_addon,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes) ON plans TO ${role}`);
     await client.query(`GRANT SELECT(id,access_paused_at) ON customers TO ${role}`);
     await client.query(`GRANT SELECT(customer_id,access_lane,streams) ON customer_lane_policy_overrides TO ${role}`);
@@ -200,6 +202,8 @@ async function grantActivity(client) {
     await client.query(`GRANT SELECT,INSERT,UPDATE ON jellyfin_activity_poll_state TO ${role}`);
     await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON access_network_leases TO ${role}`);
     await client.query(`GRANT SELECT,INSERT ON access_network_events TO ${role}`);
+    await client.query(`GRANT SELECT,INSERT,UPDATE ON media_account_device_policy TO ${role}`);
+    await client.query(`GRANT SELECT,INSERT,UPDATE ON media_account_devices TO ${role}`);
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE playback_history_id_seq TO ${role}`);
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE stream_policy_events_id_seq TO ${role}`);
     await client.query(`GRANT USAGE,SELECT ON SEQUENCE access_network_leases_id_seq TO ${role}`);

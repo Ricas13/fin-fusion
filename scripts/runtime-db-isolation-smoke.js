@@ -13,6 +13,7 @@ const verifyBackup = read('scripts/verify-backup.js');
 const sessionMigration = read('db/migrations/002_add_runtime_session_store.sql');
 const deletionMigration = read('db/migrations/100_customer_deletion_saga.sql');
 const hardeningMigration = read('db/migrations/20260829170000_database_operational_hardening.sql');
+const deviceMigration = read('db/migrations/20260901000000_media_device_allowlist.sql');
 const retentionOwner = read('src/automation/data-retention.js');
 const automationJobs = read('src/automation/jobs.js');
 
@@ -82,12 +83,17 @@ assert(retentionOwner.includes('batchSize: 500') && retentionOwner.includes('pay
 assert(!hardeningMigration.includes('DELETE FROM affiliate_credit_ledger') && !hardeningMigration.includes('DELETE FROM subscriptions'), 'financial/accounting ledgers and subscriptions are not housekeeping data');
 
 assert(/GRANT UPDATE\(last_activity_at,updated_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must be able to advance only Jellyfin activity bookkeeping columns');
-assert(/GRANT SELECT\(id,customer_id,server_id,jellyfin_user_id,disabled,account_purpose,access_lane,last_activity_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must read the lane on managed Jellyfin accounts without broad table access');
-assert(/GRANT SELECT\(id,customer_id,plan_id,status,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot\) ON subscriptions TO \$\{role\}/.test(roleScript), 'activity role must read only subscription fields needed to reconstruct contractual lane limits');
+assert(/GRANT SELECT\(id,customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,created_at\) ON jellyfin_accounts TO \$\{role\}/.test(roleScript), 'activity role must read only managed-account identity fields needed for lane and device policy');
+assert(/GRANT SELECT\(id,name,slug,server_class,media_server_type,base_url,public_url,enabled,priority,max_users,health_status,last_health_check,api_key_encrypted\) ON jellyfin_servers TO \$\{role\}/.test(roleScript), 'activity role must read provider type only alongside the media-server fields required for trusted API calls');
+assert(/GRANT SELECT\(id,customer_id,plan_id,status,source,provider_subscription_id,current_period_end,created_at,starts_at,superseded_by,service_extension_days,service_type_snapshot,commercial_snapshot\) ON subscriptions TO \$\{role\}/.test(roleScript), 'activity role must read contractual lane fields plus the minimum provider identity needed to distinguish one-time access from recurring access');
 assert(/GRANT SELECT\(id,code,streams,active,service_type,is_free_tier,is_addon,jellyfin_access_model,jellyfin_household_network_limit,jellyfin_household_lease_minutes\) ON plans TO \$\{role\}/.test(roleScript), 'activity role must distinguish free and primary plan lanes');
 assert(/GRANT SELECT\(customer_id,access_lane,streams\) ON customer_lane_policy_overrides TO \$\{role\}/.test(roleScript), 'activity role must read only lane stream overrides, not unrelated customer policy');
 assert(/GRANT SELECT\(customer_id,subscription_id,permanent_access,revoked_at\) ON customer_entitlement_overrides TO \$\{role\}/.test(roleScript), 'activity role must honour permanent access without broad entitlement mutation rights');
+assert(/GRANT SELECT,INSERT,UPDATE ON media_account_device_policy TO \$\{role\}/.test(roleScript), 'activity role must own only the managed device-policy state it reconciles');
+assert(/GRANT SELECT,INSERT,UPDATE ON media_account_devices TO \$\{role\}/.test(roleScript), 'activity role must persist registered device slots without DELETE privileges');
+assert(!/GRANT SELECT,INSERT,UPDATE,DELETE ON media_account_devices TO \$\{role\}/.test(roleScript), 'device registration history must not be deletable by the activity role');
 assert(!/GRANT (SELECT,)?INSERT.*customer_lane_policy_overrides TO \$\{role\}/.test(roleScript), 'activity role must never mutate lane policy overrides');
+assert(deviceMigration.includes('media_account_devices') && deviceMigration.includes('revoked_at') && deviceMigration.includes('media_account_device_policy'), 'device allowlist persistence must retain reset history instead of deleting registrations');
 
 assert(/CREATE TABLE IF NOT EXISTS user_sessions/.test(sessionMigration), 'runtime session table must be migration-owned');
 for (const column of ['sid VARCHAR','sess JSON','expire TIMESTAMP']) assert(sessionMigration.includes(column), `session migration is missing ${column}`);

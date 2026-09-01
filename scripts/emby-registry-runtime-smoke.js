@@ -35,6 +35,7 @@ async function main(){
           base_url:`http://127.0.0.1:${address.port}`,public_url:'https://emby.example',enabled:true,priority:100,max_users:100,
           api_key_encrypted:'jf1:runtime-smoke'
         }]};
+        if(String(sql).includes('SELECT mdp.enforced,mdp.device_limit'))return{rowCount:0,rows:[]};
         throw new Error(`Unexpected DB query in Emby runtime smoke: ${String(sql).slice(0,120)}`);
       }
     }};

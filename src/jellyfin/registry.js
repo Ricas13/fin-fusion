@@ -35,11 +35,36 @@ function operationError(server,method,url,timeoutMs,error){
     return wrapped;
 }
 
-async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000}={}){
+async function managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevicePolicy=false}={}){
+    if(bypassDevicePolicy||String(method||'GET').toUpperCase()!=='POST'||!body||typeof body!=='object'||Array.isArray(body))return body;
+    const match=String(endpoint||'').match(/^\/Users\/([^/]+)\/Policy(?:\?.*)?$/i);
+    if(!match||body.IsDisabled===true)return body;
+    let userId;
+    try{userId=decodeURIComponent(match[1]);}catch{return body;}
+    const result=await query(`
+        SELECT mdp.enforced,mdp.device_limit,
+               COALESCE(array_agg(mad.device_id ORDER BY mad.registered_at,mad.device_id) FILTER (WHERE mad.revoked_at IS NULL),'{}'::text[]) AS device_ids
+        FROM jellyfin_accounts ja
+        JOIN media_account_device_policy mdp ON mdp.jellyfin_account_id=ja.id
+        LEFT JOIN media_account_devices mad ON mad.jellyfin_account_id=ja.id
+        WHERE ja.server_id=$1 AND lower(ja.jellyfin_user_id)=lower($2)
+        GROUP BY mdp.enforced,mdp.device_limit
+        LIMIT 1
+    `,[serverId,userId]);
+    const row=result.rows[0];
+    if(!row?.enforced)return body;
+    const limit=Number(row.device_limit||0);
+    const ids=(Array.isArray(row.device_ids)?row.device_ids:[]).map(value=>String(value||'').trim()).filter(Boolean).slice(0,Math.max(0,limit));
+    if(!ids.length)return body;
+    return{...body,EnableAllDevices:false,EnabledDevices:ids};
+}
+
+async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000,bypassDevicePolicy=false}={}){
     const server=await getServerSecret(serverId);
     if(!server||!server.enabled)throw new Error('Media server is unavailable or disabled');
+    const policySafeBody=await managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevicePolicy});
     const apiPath=mediaProvider.apiPath(server.media_server_type,endpoint);
-    const requestBody=mediaProvider.requestBody(server.media_server_type,endpoint,body);
+    const requestBody=mediaProvider.requestBody(server.media_server_type,endpoint,policySafeBody);
     const url=new URL(apiPath,`${server.base_url}/`);
     if(url.origin!==new URL(server.base_url).origin)throw new Error('Media-server API endpoint escaped the configured server origin.');
     let response;
@@ -57,7 +82,7 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
         throw err;
     }
 
-    if(mediaProvider.needsPostCreatePassword(server.media_server_type,endpoint,body)){
+    if(mediaProvider.needsPostCreatePassword(server.media_server_type,endpoint,policySafeBody)){
         const userId=parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed.Id:null;
         if(!userId){
             const error=new Error('Emby user creation succeeded without returning a user ID; bootstrap password could not be applied safely.');
@@ -65,7 +90,7 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
             throw error;
         }
         try{
-            await request(serverId,`/Users/${encodeURIComponent(userId)}/Password`,{method:'POST',body:{Id:String(userId),NewPw:body.Password},timeoutMs});
+            await request(serverId,`/Users/${encodeURIComponent(userId)}/Password`,{method:'POST',body:{Id:String(userId),NewPw:policySafeBody.Password},timeoutMs});
         }catch(passwordError){
             let cleanupError=null;
             try{await request(serverId,`/Users/${encodeURIComponent(userId)}`,{method:'DELETE',timeoutMs});}catch(error){cleanupError=error;}
@@ -96,4 +121,4 @@ async function healthcheckServer(serverId){
         return{ok:false,latencyMs:Date.now()-started,error:err.message};
     }
 }
-module.exports={normalizeBaseUrl,authHeaders,listServers,getServerSecret,request,healthcheckServer,decryptJellyfinKey,operationError,mediaProvider};
+module.exports={normalizeBaseUrl,authHeaders,listServers,getServerSecret,request,healthcheckServer,decryptJellyfinKey,operationError,managedDevicePolicyBody,mediaProvider};
