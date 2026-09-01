@@ -12,13 +12,15 @@ assert.match(originBlock,/operations\.absoluteUrl\(req, '\/'\)/,'Stremio public 
 assert.doesNotMatch(originBlock,/x-forwarded-host|x-forwarded-proto|req\.get\(['"]host['"]\)|req\.headers\.host/i,'Stremio must not maintain a route-local forwarded Host/Proto origin policy');
 assert.doesNotMatch(runtimeSource,/x-forwarded-host|x-forwarded-proto/i,'Stremio runtime must not construct public URLs directly from forwarded headers');
 
-assert.deepStrictEqual(foundation.SERVICE_TYPES,['jellyfin','stremio','bundle']);
+assert.deepStrictEqual(foundation.SERVICE_TYPES,['jellyfin','stremio','emby','bundle']);
 assert.strictEqual(foundation.allowsJellyfin('jellyfin'),true);
 assert.strictEqual(foundation.allowsJellyfin('bundle'),true);
 assert.strictEqual(foundation.allowsJellyfin('stremio'),false);
+assert.strictEqual(foundation.allowsJellyfin('emby'),false,'Emby must not be treated as Jellyfin delivery by Stremio foundation helpers');
 assert.strictEqual(foundation.allowsStremio('stremio'),true);
 assert.strictEqual(foundation.allowsStremio('bundle'),true);
 assert.strictEqual(foundation.allowsStremio('jellyfin'),false);
+assert.strictEqual(foundation.allowsStremio('emby'),false,'Emby must remain independent from Stremio delivery');
 
 const credential=foundation.issueInstallCredential();
 assert(credential.token.length>=40,'Install credential must have high entropy');

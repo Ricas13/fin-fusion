@@ -67,7 +67,7 @@ assert(settingsRegistry.search('transcode').some(x=>x.key==='plan.jellyfinPolicy
 assert(settingsRegistry.search('2fa').some(x=>x.domain?.href==='/admin/settings/admin-2fa'),'2FA search must open its canonical policy page');
 assert(settingsRegistry.search('payment provider').some(x=>x.domain?.href==='/admin/payments'),'payment-provider search must open Payments, not a broad commerce landing');
 assert(settingsRegistry.search('captcha').some(x=>x.domain?.href==='/admin/settings/abuse-protection'),'captcha search must resolve to Turnstile / abuse protection');
-assert(/outcome\?\.active&&outcome\?\.account\?\.id/.test(customerDashboard),'customer provisioning retry must only announce ready when an active Jellyfin account exists');
+assert(/outcome\?\.active&&\(outcome\?\.account\?\.id\|\|outcome\?\.emby\?\.account\?\.id\|\|outcome\?\.stremio\?\.status==='active'\)/.test(customerDashboard),'customer provisioning retry must only announce ready when a concrete Jellyfin, Emby or Stremio service is active');
 assert(/getCustomerState/.test(customerDashboard)&&/has not completed yet/.test(customerDashboard),'customer provisioning retry must preserve pending/blocked state instead of false success');
 assert(/ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
 assert(/controlCentreSummary/.test(css),'customer control centre styling missing');

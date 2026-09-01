@@ -7,10 +7,37 @@ const subscriptionState=require('../entitlements/subscription-state');
 const subscriptionExpiry=require('../entitlements/subscription-expiry');
 const accessHolds=require('../entitlements/access-holds');
 const inactivityHoldReconciliation=require('../entitlements/inactivity-hold-reconciliation');
+const planServers=require('./plan-servers');
+const placement=require('./placement');
 function safeLog(value,max=500){return String(value==null?'':value).replace(/[\r\n\t\u2028\u2029]+/g,' ').slice(0,max)}
 async function currentEntitlement(customerId){return subscriptionState.effectiveSubscription(customerId)}
 async function syncAccess(customerId){await accessHolds.syncLegacySummary(customerId)}
 async function markPasswordSetupRequired(accountId){if(!accountId)return;await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,password_reset_required=TRUE,updated_at=NOW() WHERE id=$1`,[accountId]);}
+async function selectServerForPlan(plan){
+  const accessKind=String(plan?.billing_interval||plan?.contract_billing_interval||'')==='trial'?'trial':Number(plan?.price_minor??plan?.contract_price_minor??0)===0?'free':'paid';
+  const available=(await planServers.eligibleServersForPlan(plan,{enabledOnly:true,forPlacement:true}))
+    .filter(server=>Boolean(server.allow_new_users))
+    .filter(server=>accessKind==='trial'?Boolean(server.trial_enabled):accessKind==='paid'?Boolean(server.paid_enabled):true);
+  if(!available.length)return null;
+  const ids=available.map(server=>server.id);
+  const usage=await query(`
+    SELECT js.id,
+           COUNT(DISTINCT ja.id)::int AS assigned_users,
+           COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams
+    FROM jellyfin_servers js
+    LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id AND ja.disabled=FALSE
+    LEFT JOIN active_playback_sessions aps ON aps.server_id=js.id
+    WHERE js.id=ANY($1::uuid[])
+    GROUP BY js.id
+  `,[ids]);
+  const counts=new Map(usage.rows.map(row=>[String(row.id),row]));
+  const candidates=available.map(server=>({
+    ...server,
+    assigned_users:Number(counts.get(String(server.id))?.assigned_users||0),
+    active_streams:Number(counts.get(String(server.id))?.active_streams||0)
+  })).filter(server=>server.max_users==null||Number(server.max_users)===0||server.assigned_users<Number(server.max_users));
+  return placement.selectServer(candidates,plan?.placement_strategy);
+}
 async function notifyNewJellyfinAccess(customerId,account){
   try{
     const notifications=require('../integrations/notification-dispatch');
@@ -64,4 +91,4 @@ async function releaseAccess(customerId,actorUserId=null){await accessHolds.rele
 async function maybeAutoDowngrade(customerId){const lifecycle=require('../payments/lifecycle');try{return await lifecycle.autoDowngradeEligibleCustomer(customerId)}catch(error){console.error('Automatic free-tier downgrade failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});return null}}
 async function notifyExpiringSubscriptions(){return subscriptionExpiry.notifyExpiringSubscriptions()}
 async function expireSubscriptionsAndReconcile(){return subscriptionExpiry.expireAndReconcile({reconcileCustomer,autoDowngrade:maybeAutoDowngrade,onReconcileError:(customerId,error)=>console.error('Entitlement reconcile failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)})})}
-module.exports={...core,currentEntitlement,reconcileCustomer,reconcileAccount,createJellyfinAccount,setJellyfinPassword,holdAccess,releaseAccess,notifyExpiringSubscriptions,expireSubscriptionsAndReconcile,notifyNewJellyfinAccess,reconciliationLock};
+module.exports={...core,currentEntitlement,selectServerForPlan,reconcileCustomer,reconcileAccount,createJellyfinAccount,setJellyfinPassword,holdAccess,releaseAccess,notifyExpiringSubscriptions,expireSubscriptionsAndReconcile,notifyNewJellyfinAccess,reconciliationLock};
