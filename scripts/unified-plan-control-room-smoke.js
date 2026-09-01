@@ -35,6 +35,10 @@ const activityWorker = read('scripts/activity-worker.js');
 const runtimeRoles = read('scripts/configure-runtime-db-roles.js');
 const fourKMigration = read('db/migrations/20260831190000_plan_4k_transcode_policy.sql');
 const deviceMigration = read('db/migrations/20260901000000_media_device_allowlist.sql');
+const discordRoleUi = read('src/platform/admin-plan-discord-role.js');
+const discordRoleSource = read('src/integrations/discord-roles.js');
+const bulkWorkerSource = read('src/jellyfin/bulk-worker.js');
+const bulkJobsSource = read('src/platform/bulk-jobs.js');
 
 assert(routes.includes('createAdminJellyfinPlanEditorRouter'), 'route composition must mount the unified Jellyfin plan editor');
 assert(routes.indexOf('createAdminJellyfinPlanEditorRouter()') < routes.indexOf('createAdminPlanAccessRouter()'), 'unified Jellyfin dispatch must run before legacy plan GET owners');
@@ -52,11 +56,20 @@ assert(editor.includes('editor-commerce') && editor.includes('editor-payments'),
 assert(editor.includes('data-jellyfin-access-model'), 'Jellyfin access card must preserve the optional legacy household policy switch');
 assert(editor.includes('Maximum plan slots'), 'availability must be configurable directly in the unified editor');
 assert(editor.includes('Delivery & server placement'), 'server class and placement must be configured in the unified editor');
-assert(editor.includes('Library access'), 'library access must be configured in the unified editor');
+assert(editor.includes('Library access'), 'library access must be configured directly in the unified editor');
 assert(baseline.includes("marketing_features text[] DEFAULT '{}'::text[] NOT NULL"), 'baseline must keep marketing features as a PostgreSQL text array');
 assert(editor.includes('marketing_features=$4::text[]'), 'product editor must persist homepage features using the schema text-array type');
 assert(!editor.includes('marketing_features=$4::jsonb'), 'product editor must never cast marketing features to jsonb');
-assert(editor.includes('[plan.id, name, description, features, visible, active]'), 'product editor must bind the feature array directly instead of JSON-encoding it');
+assert(editor.includes('[plan.id, name, description, features, visible, active'), 'product editor must bind the feature array directly instead of JSON-encoding it');
+
+// Discord plan roles are ordinary per-plan settings, while reconciliation stays a bounded specialist job.
+assert(editor.includes('Discord plan role') && editor.includes('discord_role_id=$7'), 'Jellyfin product settings must expose and persist the plan Discord role');
+assert(stremioEditor.includes('discordRoleUi.control') && stremioEditor.includes('discord_role_id=$8'), 'Stremio product settings must expose and persist the same plan Discord role contract');
+assert(discordRoleUi.includes('function control(') && discordRoleUi.includes('function parse(') && discordRoleUi.includes('CAPTAiNFiN only adds/removes roles mapped to plans'), 'shared Discord plan-role UI must keep safe parsing and explain its managed-role boundary');
+assert(discordRoleSource.includes('extraManagedRoleIds') && discordRoleSource.includes('managed.add(roleId)'), 'Discord reconciliation must be able to remove a replaced old managed role without treating unrelated Discord roles as managed');
+assert(bulkJobsSource.includes('queuePlanDiscordReconciliation') && bulkJobsSource.includes("'discord_plan_reconcile'"), 'plan-role changes must queue a dedicated bounded Discord reconciliation job');
+assert(bulkWorkerSource.includes("registerHandler('discord_plan_reconcile'") && bulkWorkerSource.includes('reconcileDiscordRoles'), 'bulk worker must own the dedicated Discord-only reconciliation handler');
+assert(!bulkWorkerSource.slice(bulkWorkerSource.indexOf("registerHandler('discord_plan_reconcile'"), bulkWorkerSource.indexOf("registerHandler('plan_source_rebuild'")).includes('effective_customer_entitlements'), 'Discord-only fanout must not regress to a broad entitlement-view mutation path');
 
 assert(stremioEditor.includes('Plan, storefront & commerce') && stremioEditor.includes('name="description"') && stremioEditor.includes('name="feature${i+1}"'), 'Stremio must edit storefront copy inside its existing product/commerce card');
 assert(stremioEditor.includes('UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],billing_interval=$5,duration_days=$6'), 'the Stremio product/commerce save must persist storefront copy in the same mutation');
