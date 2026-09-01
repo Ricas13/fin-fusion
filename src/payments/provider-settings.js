@@ -35,6 +35,7 @@ function webhookConfigured(provider, cfg) {
     if (provider === 'plisio') return Boolean(cfg?.secretKey);
     return Boolean(cfg?.webhookId);
 }
+function checkoutReady(provider,cfg){return Boolean(configured(provider,cfg)&&webhookConfigured(provider,cfg));}
 function decodeRow(row) {
     const secrets = JSON.parse(decryptString(row.secrets_encrypted) || '{}'), settings = row.settings || {};
     return { ...secrets, ...settings, enabled:typeof settings.enabled==='boolean'?settings.enabled:credentialsConfigured(row.provider,secrets), source:'database', updatedAt:row.updated_at||null };
@@ -61,9 +62,10 @@ function peek(provider){return effective(provider,raw(provider));}
 async function get(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return peek(provider);}
 async function getRaw(provider){if(!PROVIDERS.includes(provider))throw new Error('Unsupported payment provider');await ensureLoaded();return raw(provider);}
 async function status(provider){
-    const cfg=await getRaw(provider);
-    return { provider,source:cfg.source||'environment',enabled:Boolean(cfg.enabled),credentialsConfigured:credentialsConfigured(provider,cfg),configured:configured(provider,cfg),webhookConfigured:webhookConfigured(provider,cfg),environment:provider==='paypal'?(cfg.environment==='live'?'live':'sandbox'):null,updatedAt:cfg.updatedAt||null };
+    const cfg=await getRaw(provider),credentials=credentialsConfigured(provider,cfg),webhook=webhookConfigured(provider,cfg),ready=checkoutReady(provider,cfg);
+    return { provider,source:cfg.source||'environment',enabled:Boolean(cfg.enabled),credentialsConfigured:credentials,configured:configured(provider,cfg),webhookConfigured:webhook,checkoutReady:ready,environment:provider==='paypal'?(cfg.environment==='live'?'live':'sandbox'):null,updatedAt:cfg.updatedAt||null };
 }
+async function checkoutStatus(){const rows=await Promise.all(PROVIDERS.map(status));return Object.fromEntries(rows.map(row=>[row.provider,row]));}
 function clean(value,max=1000){return String(value==null?'':value).trim().slice(0,max);}
 
 async function save(provider,input,actorUserId=null){
@@ -91,11 +93,12 @@ async function fetchWithTimeout(url,options,timeoutMs=10000){
 }
 async function testStripe(cfg){
     const key=cfg.restrictedKey||cfg.apiKey||'';if(!key)throw new Error('Stripe API credentials are not configured.');
-    const response=await fetchWithTimeout('https://api.stripe.com/v1/prices?limit=1',{method:'GET',headers:{Authorization:`Bearer ${key}`,Accept:'application/json'}}),body=await response.json().catch(()=>({}));
+    const response=await fetchWithTimeout('https://api.stripe.com/v1/prices?limit=1',{method:'GET',headers:{Authorization:`Bearer ${key}`,Accept:'application/json'}}),body=await response.json().catch(()=>({})),restricted=/^rk_/i.test(key);
     if(response.status===401)throw new Error(body?.error?.message||'Stripe rejected the API key.');
-    if(response.status===403){const detail=clean(body?.error?.message,500),suffix='Check Prices: Read and any IP/network restrictions configured on the restricted key.';return{ok:true,limited:true,message:detail?`Stripe denied the Prices request (HTTP 403): ${detail} ${suffix}`:`Stripe denied the Prices request (HTTP 403). ${suffix}`};}
+    if(response.status===403){const detail=clean(body?.error?.message,500),suffix='The credential was recognized, but this read probe cannot prove the Customer/Checkout/Coupon write permissions CAPTAiNFiN needs. Check restricted-key permissions and IP restrictions, then complete a test checkout.';return{ok:true,limited:true,message:detail?`Stripe Prices probe was denied (HTTP 403): ${detail} ${suffix}`:`Stripe Prices probe was denied (HTTP 403). ${suffix}`};}
     if(!response.ok)throw new Error(body?.error?.message||`Stripe returned HTTP ${response.status}.`);
-    return{ok:true,limited:false,message:'Stripe connection successful. API credentials were accepted.'};
+    if(restricted)return{ok:true,limited:true,message:'Stripe restricted key authenticated and Prices: Read works. This does not prove the Customer, Checkout Session or Coupon write permissions used by real checkout; complete a test checkout before accepting payments.'};
+    return{ok:true,limited:false,message:'Stripe secret key authenticated successfully. Complete a test checkout to verify the full browser and webhook path.'};
 }
 async function testPayPal(cfg){
     if(!cfg.clientId||!cfg.clientSecret)throw new Error('PayPal client ID and secret are not configured.');
@@ -113,4 +116,4 @@ async function testPlisio(cfg){
 }
 async function testConnection(provider){const cfg=await getRaw(provider);if(provider==='stripe')return testStripe(cfg);if(provider==='paypal')return testPayPal(cfg);if(provider==='plisio')return testPlisio(cfg);throw new Error('Unsupported payment provider');}
 
-module.exports={PROVIDERS,ensureLoaded,get,getRaw,peek,status,save,remove,configured,credentialsConfigured,webhookConfigured,testConnection};
+module.exports={PROVIDERS,ensureLoaded,get,getRaw,peek,status,checkoutStatus,save,remove,configured,credentialsConfigured,webhookConfigured,checkoutReady,testConnection};
