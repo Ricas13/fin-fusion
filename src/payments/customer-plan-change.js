@@ -25,12 +25,13 @@ function selectedTarget(target,mapping,requestedKind=null,requestedQuantity=null
 function targetAccessLabel(target){const kind=normalizedKind(target,target,target.variant_kind),quantity=mappingQuantity(target,target,target.access_quantity,target.variant_kind);return kind==='households'?`${quantity} household${quantity===1?'':'s'}`:`${quantity} stream${quantity===1?'':'s'}`;}
 
 async function currentRecurring(customerId,target=null){
-    const [jellyfin,stremio,addons]=await Promise.all([
+    const [jellyfin,stremio,emby,addons]=await Promise.all([
         entitlement.effectiveSubscription(customerId,{includeBlocked:true}),
         entitlement.effectiveStremioSubscription(customerId,{includeBlocked:true}),
+        entitlement.effectiveEmbySubscription(customerId,{includeBlocked:true}),
         entitlement.effectiveAddons(customerId,{includeBlocked:true})
     ]);
-    const candidates=[jellyfin,stremio,...(addons||[])].filter(row=>row&&entitlement.recurringProvider(row));
+    const candidates=[jellyfin,stremio,emby,...(addons||[])].filter(row=>row&&entitlement.recurringProvider(row));
     if(!target)return candidates[0]||null;
     let matches;
     if(target.is_addon){matches=candidates.filter(row=>Boolean(row.is_addon)&&String(row.plan_id)===String(target.id));}

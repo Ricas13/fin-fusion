@@ -43,6 +43,7 @@ const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
 const { createAdminActionsRouter } = require('./admin-actions');
 const { createAdminMediaControlsRouter } = require('./admin-media-controls');
 const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-dispatch');
+const { createAdminEmbyPlanEditorRouter } = require('./admin-emby-plan-editor');
 const { createAdminJellyfinPlanEditorRouter } = require('./admin-jellyfin-plan-editor');
 const { createAdminPlanCreateV2Router } = require('./admin-plan-create-v2');
 const { createAdminPlanAccessRouter } = require('./admin-plan-access');
@@ -102,7 +103,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminProductModulesRouter());
   app.use(createAdminAttentionRouter());
 
-  // Literal /admin/users destinations must precede the customer UUID owners.
   mountCritical('usersDashboard', createAdminUsersDashboardRouter());
   app.use(createAdminSupportTicketsRouter());
   app.use(createAdminOrdersRouter());
@@ -116,7 +116,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminCurrencySettingsRouter());
   app.use(createAdminIntegrationsOverviewRouter());
 
-  // The stable Commerce settings owner must precede the compatibility settings router.
   mountCritical('settingsCommerce', createAdminSettingsCommerceRouter());
   mountCritical('originalSettings', createAdminOriginalSettingsRouter());
   app.use(createAdminBrandingRouter());
@@ -143,10 +142,10 @@ function mountAdminRoutes(app) {
   app.use(createAdminActionsRouter());
   app.use(createAdminMediaControlsRouter());
   app.use(createAdminStremioPlanDispatchRouter());
+  app.use(createAdminEmbyPlanEditorRouter());
   app.use(createAdminJellyfinPlanEditorRouter());
   app.use(createAdminPlanCreateV2Router());
 
-  // Access-driver ownership must precede the legacy plan controller.
   mountCritical('planAccess', createAdminPlanAccessRouter());
   app.use(createAdminPlanInventoryRouter());
   app.use(createAdminPlansListRouter());
@@ -170,7 +169,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminCustomerManagementRouter());
   app.use(createAdminManualEntitlementRouter());
 
-  // Middleware-owning customer routers must wrap Customer 360 in this order.
   mountCritical('impersonation', createAdminImpersonationRouter());
   mountCritical('lanePolicy', createAdminLanePolicyRouter());
   mountCritical('customer360', createAdminCustomer360Router());
@@ -179,8 +177,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminReferralsRouter());
   app.use(createAdminMarketingRouter());
 
-  // Fail startup if a future edit violates one of the known wildcard/literal
-  // route ownership constraints instead of relying on comments or source order.
   assertAdminRouteOrder(criticalOrder);
 }
 

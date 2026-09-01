@@ -124,10 +124,10 @@ assert(serverLibraries.includes("serverTabs(data.server.id,'libraries')"),'Libra
 
 // Storefront remains plan-first and sold-out products stay visible.
 for(const removed of ['Everything you need to watch your way','Your account follows you from screen to screen','From account to watching in minutes'])assert(!storefront.includes(removed),`Removed storefront section returned: ${removed}`);
-assert(storefront.includes('Stremio plans')&&storefront.includes('Paid server plans')&&storefront.includes('Standalone Stremio access.'),'Storefront must retain explicit standalone service sections');
+assert(storefront.includes('serviceCatalog.storefrontSections(plans)')&&storefront.includes("section.serviceType==='jellyfin'")&&storefront.includes("section.serviceType==='stremio'")&&storefront.includes("section.serviceType==='emby'"),'Storefront must retain catalogue-driven Jellyfin, Stremio and Emby service sections');
 assert(storefront.includes('Currently full')&&storefront.includes("sold?'soldOut':''")&&storefront.includes('planAvailability'),'Sold-out product cards must remain visible, use the real scarcity state and be visually disabled');
 assert(plansList.includes('capacityMeter')&&plansList.includes('Manage inventory'),'Unified Plans must expose customer inventory state and its management entry point');
-assert(plansList.includes('stream entitlements allocated or held'),'Unified Plans must explain shared Jellyfin capacity in stream-entitlement terms');
+assert(plansList.includes('occupying · ${held} held · ${limit} sellable')&&plansList.includes('per new customer')&&plansList.includes('shared Free server stream-capacity pool')&&plansList.includes('share Premium server stream capacity'),'Unified Plans must explain shared Jellyfin capacity with occupying, held, sellable and per-customer stream signals');
 
 // Current workflow routes own customer-plan and server actions.
 assert(composition.includes('createAdminPlanCreateV2Router()'),'Full-policy plan creation must be mounted');

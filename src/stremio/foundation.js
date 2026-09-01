@@ -3,8 +3,9 @@
 const crypto=require('crypto');
 const path=require('path');
 const runtimeSettings=require('./runtime-settings');
+const serviceCatalog=require('../catalog/service-catalog');
 
-const SERVICE_TYPES=Object.freeze(['jellyfin','stremio','bundle']);
+const SERVICE_TYPES=serviceCatalog.SERVICE_TYPES;
 
 function normalizeServiceType(value){
     const type=String(value||'jellyfin').trim().toLowerCase();

@@ -110,6 +110,7 @@ async function main() {
   // Multi-service plan-change ownership must follow the target service instead of LIMIT 1 Jellyfin ownership.
   const planChangeSource = read('src/payments/customer-plan-change.js');
   assert(planChangeSource.includes('effectiveStremioSubscription(customerId,{includeBlocked:true})'), 'plan changes must inspect the Stremio entitlement lane');
+  assert(planChangeSource.includes('effectiveEmbySubscription(customerId,{includeBlocked:true})'), 'plan changes must inspect the Emby entitlement lane');
   assert(planChangeSource.includes('effectiveAddons(customerId,{includeBlocked:true})'), 'plan changes must inspect recurring add-ons');
   assert(planChangeSource.includes('serviceScope.overlaps(row,target)'), 'plan changes must choose a recurring subscription by target service overlap');
   assert(planChangeSource.includes('current=await currentRecurring(customerId,target)'), 'plan-change requests must pass the target contract into ownership selection');
@@ -119,16 +120,20 @@ async function main() {
   const originalEntitlementFns = {
     effectiveSubscription:entitlement.effectiveSubscription,
     effectiveStremioSubscription:entitlement.effectiveStremioSubscription,
+    effectiveEmbySubscription:entitlement.effectiveEmbySubscription,
     effectiveAddons:entitlement.effectiveAddons
   };
   try {
     entitlement.effectiveSubscription = async () => ({ subscription_id:'j-sub',id:'j-sub',source:'stripe',provider_subscription_id:'sub_jellyfin',is_addon:false,is_free_tier:false,service_type:'jellyfin' });
     entitlement.effectiveStremioSubscription = async () => ({ subscription_id:'s-sub',id:'s-sub',source:'paypal',provider_subscription_id:'I-STREMIO',is_addon:false,is_free_tier:false,service_type:'stremio' });
+    entitlement.effectiveEmbySubscription = async () => ({ subscription_id:'e-sub',id:'e-sub',source:'stripe',provider_subscription_id:'sub_emby',is_addon:false,is_free_tier:false,service_type:'emby' });
     entitlement.effectiveAddons = async () => [];
     const stremioCurrent = await planChange.currentRecurring('customer-a',{id:'stremio-target',is_addon:false,service_type:'stremio'});
-    assert.equal(stremioCurrent.subscription_id,'s-sub','a Stremio plan change must not mutate an unrelated Jellyfin billing agreement');
+    assert.equal(stremioCurrent.subscription_id,'s-sub','a Stremio plan change must not mutate an unrelated Jellyfin or Emby billing agreement');
     const jellyfinCurrent = await planChange.currentRecurring('customer-a',{id:'jellyfin-target',is_addon:false,service_type:'jellyfin'});
     assert.equal(jellyfinCurrent.subscription_id,'j-sub','a Jellyfin plan change must retain the Jellyfin recurring agreement');
+    const embyCurrent = await planChange.currentRecurring('customer-a',{id:'emby-target',is_addon:false,service_type:'emby'});
+    assert.equal(embyCurrent.subscription_id,'e-sub','an Emby plan change must retain the Emby recurring agreement without mutating Jellyfin or Stremio');
   } finally {
     Object.assign(entitlement,originalEntitlementFns);
   }

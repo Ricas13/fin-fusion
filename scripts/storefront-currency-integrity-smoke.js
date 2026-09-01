@@ -68,14 +68,19 @@ const nav=publicShell.navFromPlans([
   {service_type:'jellyfin',is_free_tier:false},
   {service_type:'stremio',is_free_tier:false}
 ]);
-assert.deepStrictEqual(nav,{free:true,plans:true,stremio:true},'Shared public shell must discover all storefront sections');
+assert.deepStrictEqual(nav,{free:true,plans:true,stremio:true,emby:false},'Shared public shell must discover present storefront sections and keep absent Emby hidden');
 const header=publicShell.publicHeader({site:'CAPTAiNFiN',nav,active:'faq',registrationOpen:true});
 const permanent=['Free','Plans','Stremio','About','FAQ','Contact','Trust'];
 let previous=-1;
 for(const label of permanent){const index=header.indexOf(`>${label}</a>`);assert(index>previous,`Public header is missing or reorders ${label}`);previous=index;}
+assert(!header.includes('>Emby Shares</a>'),'Emby navigation must stay hidden when no Emby plan exists');
 assert(header.includes('href="/#free-access"')&&header.includes('href="/#plans"')&&header.includes('href="/#stremio"'),'Section links must work from both the homepage and information pages');
 assert(header.includes('aria-current="page" href="/faq">FAQ</a>'),'Only the current information destination should receive page-current state');
 assert(header.includes('>Sign in</a>')&&header.includes('>Get started</a>'),'Public header actions must remain consistent on information pages');
+const embyNav=publicShell.navFromPlans([{service_type:'emby',is_free_tier:false}]);
+assert.deepStrictEqual(embyNav,{free:false,plans:false,stremio:false,emby:true},'Emby navigation must appear automatically when an Emby plan exists');
+const embyHeader=publicShell.publicHeader({site:'CAPTAiNFiN',nav:embyNav,registrationOpen:true});
+assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence must expose the Emby Shares section link');
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 

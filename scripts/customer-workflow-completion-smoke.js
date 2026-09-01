@@ -35,10 +35,10 @@ function renderDashboard(cancelAtPeriodEnd=false,openPlanChange={state:'pending'
     portal:{customer:{login_username:'workflow-smoke'},subscriptions:[recurring],accounts:[],providers:[{provider:'paypal'}],referralsEnabled:false,referralCode:null},
     plans:[current,next],
     currentPlan:{...recurring,subscription_id:'sub-current',plan_id:'plan-current'},
-    freePlan:null,stremioPlan:null,renewalSubscription:recurring,openPlanChange,
+    freePlan:null,stremioPlan:null,embyPlan:null,renewalSubscription:recurring,openPlanChange,
     stripeEnabled:false,paypalEnabled:true,plisioEnabled:false,currency:'GBP',navOptions:{},overseerrUrl:null,
     requestAccess:null,requestSyncConfigured:false,libraryProfiles:[],provisioningState:null,csrfToken:'csrf-smoke',
-    message:null,error:null,openCheckout:null,welcome:false,hasJellyfin:true,hasStremio:false,stremioHousehold:null,
+    message:null,error:null,openCheckout:null,welcome:false,hasJellyfin:true,hasStremio:false,hasEmby:false,jellyfinAccounts:[],embyAccounts:[],stremioHousehold:null,
     stremioInstallUrl:null,stremioManifestUrl:null
   },{filename:dashboardPath});
 }

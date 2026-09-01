@@ -1,20 +1,16 @@
 'use strict';
 
 const branding=require('./branding');
+const serviceCatalog=require('../catalog/service-catalog');
 const{esc}=require('./admin-html');
 
-function serviceType(plan){
-  const value=String(plan?.service_type||'jellyfin').toLowerCase();
-  return value==='stremio'?'stremio':value==='bundle'?'bundle':'jellyfin';
-}
-
 function navFromPlans(plans=[]){
-  const publicPlans=(plans||[]).filter(plan=>!plan?.is_addon);
-  const jellyfin=publicPlans.filter(plan=>serviceType(plan)==='jellyfin');
+  const groups=serviceCatalog.storefrontGroups(plans);
   return{
-    free:jellyfin.some(plan=>Boolean(plan.is_free_tier)),
-    plans:jellyfin.some(plan=>!plan.is_free_tier),
-    stremio:publicPlans.some(plan=>serviceType(plan)==='stremio')
+    free:groups.free.length>0,
+    plans:groups.plans.length>0,
+    stremio:groups.stremio.length>0,
+    emby:groups.emby.length>0
   };
 }
 
@@ -23,6 +19,7 @@ function navItems(nav={}){
     nav.free&&['free','Free','/#free-access'],
     nav.plans&&['plans','Plans','/#plans'],
     nav.stremio&&['stremio','Stremio','/#stremio'],
+    nav.emby&&['emby','Emby Shares','/#emby'],
     ['about','About','/about'],
     ['faq','FAQ','/faq'],
     ['help','Help','/help'],

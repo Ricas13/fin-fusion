@@ -2,11 +2,9 @@
 
 const modules = require('../modules/registry');
 const drivers = require('./drivers');
+const serviceCatalog = require('../catalog/service-catalog');
 
-function serviceType(plan) {
-  const value = String(plan?.service_type_snapshot || plan?.service_type || 'jellyfin').toLowerCase();
-  return value === 'stremio' || value === 'bundle' ? value : 'jellyfin';
-}
+function serviceType(plan) { return serviceCatalog.serviceType(plan); }
 
 function jellyfinHouseholdConfig(plan) {
   return drivers.householdConfig({
@@ -34,20 +32,23 @@ function stremioHouseholdConfig(plan) {
   };
 }
 
+function mediaComponent(plan, type) {
+  const driver = drivers.normalizeDriver(plan.jellyfin_access_model, 'concurrent_streams');
+  return {
+    module: type,
+    capability: driver === 'household_network' ? `${type}.household_network` : `${type}.concurrent_streams`,
+    driver,
+    config: driver === 'household_network' ? jellyfinHouseholdConfig(plan) : drivers.concurrentStreamConfig(plan)
+  };
+}
+
 function componentsForPlan(plan) {
   if (!plan) return [];
   const type = serviceType(plan);
   const output = [];
 
-  if (type === 'jellyfin' || type === 'bundle') {
-    const driver = drivers.normalizeDriver(plan.jellyfin_access_model, 'concurrent_streams');
-    output.push({
-      module: 'jellyfin',
-      capability: driver === 'household_network' ? 'jellyfin.household_network' : 'jellyfin.concurrent_streams',
-      driver,
-      config: driver === 'household_network' ? jellyfinHouseholdConfig(plan) : drivers.concurrentStreamConfig(plan)
-    });
-  }
+  if (type === 'jellyfin' || type === 'bundle') output.push(mediaComponent(plan, 'jellyfin'));
+  if (type === 'emby') output.push(mediaComponent(plan, 'emby'));
 
   if (type === 'stremio' || type === 'bundle') {
     output.push({
@@ -76,8 +77,9 @@ function accessLabel(plan) {
       const households = component.config.networkLimit;
       return `Unlimited streams · Unlimited devices · ${households} household connection${households === 1 ? '' : 's'}`;
     }
-    if (component.driver === 'household_network') return `${component.config.networkLimit} Jellyfin household network${component.config.networkLimit === 1 ? '' : 's'}`;
-    return `${component.config.streamLimit} Jellyfin stream${component.config.streamLimit === 1 ? '' : 's'}`;
+    const serviceLabel = component.module === 'emby' ? 'Emby' : 'Jellyfin';
+    if (component.driver === 'household_network') return `${component.config.networkLimit} ${serviceLabel} household network${component.config.networkLimit === 1 ? '' : 's'}`;
+    return `${component.config.streamLimit} ${serviceLabel} stream${component.config.streamLimit === 1 ? '' : 's'}`;
   });
   return parts.join(' · ');
 }

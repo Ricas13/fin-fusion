@@ -26,7 +26,7 @@ assert(!nav.includes('>Setup</a>')&&!nav.includes('Plan &amp; billing'),'custome
 assert(nav.includes('navBenefits')&&nav.includes('navOverseerrUrl'),'Benefits and Request content must remain conditional customer navigation');
 assert(/Your active access/.test(view)&&/Everything you have, in one place/.test(view),'multi-access account summary missing');
 assert(/access_lane==='free'/.test(view)&&/Premium Jellyfin/.test(view),'dashboard must distinguish Free and Premium Jellyfin access lanes');
-assert(/Free Server, Premium Jellyfin and Stremio can stay active independently/.test(view),'dashboard must explain independent simultaneous access');
+assert(/Free Server, Premium Jellyfin, Stremio and Emby Shares can stay active independently/.test(view),'dashboard must explain independent simultaneous access across Free Server, Premium Jellyfin, Stremio and Emby');
 assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jellyfin_username/.test(view),'dashboard must expose each ready Jellyfin server and username');
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');

@@ -4,6 +4,7 @@ const MODULES = Object.freeze({
   core: Object.freeze({ id: 'core', label: 'CAPTAiNFiN Core', free: true, capabilities: ['platform.core'] }),
   jellyfin: Object.freeze({ id: 'jellyfin', label: 'Jellyfin', free: false, capabilities: ['jellyfin.access', 'jellyfin.concurrent_streams', 'jellyfin.household_network'] }),
   stremio: Object.freeze({ id: 'stremio', label: 'Stremio', free: false, capabilities: ['stremio.access', 'stremio.household_network'] }),
+  emby: Object.freeze({ id: 'emby', label: 'Emby', free: false, capabilities: ['emby.access', 'emby.concurrent_streams', 'emby.household_network'] }),
   affiliate: Object.freeze({ id: 'affiliate', label: 'Affiliate', free: false, capabilities: ['affiliate.access'] })
 });
 
