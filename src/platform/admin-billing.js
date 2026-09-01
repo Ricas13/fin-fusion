@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express = require('express');
 const csrf = require('../auth/csrf');
 const billing = require('../payments/billing-control');
@@ -36,7 +38,7 @@ function statusPill(status) {
 }
 function money(row) {
     if (!Number.isFinite(Number(row.price_minor))) return '—';
-    return `${String(row.currency || 'USD').toUpperCase()} ${(Number(row.price_minor) / 100).toFixed(2)}`;
+    return moneyFormat.formatMinor(row.price_minor,row.currency||'USD');
 }
 function providerLabel(value) { return value === 'stripe' ? 'Stripe' : value === 'paypal' ? 'PayPal' : value; }
 

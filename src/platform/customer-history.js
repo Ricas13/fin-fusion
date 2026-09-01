@@ -1,4 +1,6 @@
 'use strict';
+
+const moneyFormat=require('./money-format');
 const express=require('express');
 const {query}=require('../db');
 const runtimeSettings=require('./runtime-settings');
@@ -9,7 +11,7 @@ const {esc}=require('./admin-html');
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account/history'))}
 function noStore(_q,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next()}
 function dt(v){return v?new Date(v).toLocaleString('en-GB'):'—'}
-function money(minor,currency='GBP'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),currencyDisplay:'narrowSymbol',minimumFractionDigits:2}).format(Number(minor||0)/100)}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`}}
+function money(minor,currency='GBP'){return moneyFormat.formatMinor(minor,currency);}
 function statusLabel(value){return({active:'Active',trialing:'Trial',past_due:'Payment needs attention',paused:'Paused',cancelled:'Cancelled',expired:'Ended',pending:'Pending',applied:'Completed',failed:'Needs attention',cancelled_change:'Cancelled',awaiting_checkout:'Action needed'})[String(value||'')]||String(value||'Unknown').replaceAll('_',' ')}
 function billingLabel(value){return({stripe:'Stripe',paypal:'PayPal',plisio:'Plisio',manual:'Manual',service_credit:'Service credit',trial:'Trial',free:'Free Access',migration:'Imported history',admin:'Administrator'})[String(value||'')]||String(value||'Account')}
 function changeMode(value){return String(value)==='period_end'?'Next renewal':String(value)==='immediate'?'Immediate':'Scheduled'}

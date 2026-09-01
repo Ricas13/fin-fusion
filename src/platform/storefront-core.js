@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const { query } = require('../db');
 const customers = require('../customers');
 const { esc } = require('./admin-html');
@@ -32,19 +34,8 @@ async function settings() {
 }
 
 function money(minor, currency = 'USD') {
-    const amount = Number(minor || 0) / 100;
-    if (!amount) return 'Free';
-    try {
-        return new Intl.NumberFormat('en', {
-            style: 'currency',
-            currency: currency || 'USD',
-            currencyDisplay: 'narrowSymbol',
-            minimumFractionDigits: Number(minor) % 100 ? 2 : 0,
-            maximumFractionDigits: 2
-        }).format(amount);
-    } catch (_) {
-        return `${currency || 'USD'} ${amount.toFixed(Number(minor) % 100 ? 2 : 0)}`;
-    }
+    if (!Number(minor || 0)) return 'Free';
+    return moneyFormat.formatMinor(minor,currency,{trimZeroDecimals:true});
 }
 
 function intervalLabel(plan) {

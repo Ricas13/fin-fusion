@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const { esc } = require('./admin-html');
 
 function number(value, digits = 0) {
@@ -7,19 +9,8 @@ function number(value, digits = 0) {
 }
 
 function money(minor, currency = 'USD') {
-    try {
-        return new Intl.NumberFormat('en-GB', {
-            style: 'currency',
-            currency: String(currency || 'USD').toUpperCase(),
-            currencyDisplay: 'narrowSymbol',
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 2
-        }).format(Number(minor || 0) / 100);
-    } catch (_) {
-        return `${esc(currency || 'USD')} ${(Number(minor || 0) / 100).toFixed(2)}`;
-    }
+    return moneyFormat.formatMinor(minor,currency,{trimZeroDecimals:true});
 }
-
 function hours(seconds) {
     const value = Number(seconds || 0) / 3600;
     if (value < 1 && value > 0) return `${Math.round(value * 60)}m`;

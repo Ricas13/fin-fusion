@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const core=require('./storefront-core');
 const customers=require('../customers');
 const runtimeSettings=require('./runtime-settings');
@@ -15,7 +17,7 @@ const branding=require('./branding');
 const publicShell=require('./public-shell');
 const{esc}=require('./admin-html');
 
-function money(minor,currency='GBP'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),currencyDisplay:'narrowSymbol',minimumFractionDigits:Number(minor)%100?2:0,maximumFractionDigits:2}).format(Number(minor||0)/100)}catch(_){return `${currency} ${(Number(minor||0)/100).toFixed(2)}`}}
+function money(minor,currency='GBP'){return moneyFormat.formatMinor(minor,currency,{trimZeroDecimals:true});}
 function interval(plan){const labels={trial:'trial',month:'month','6_months':'6 months',year:'year',custom:`${Number(plan.duration_days||30)} days`};return labels[plan.billing_interval]||String(plan.billing_interval||'access');}
 function currentlyEffective(items){const now=Date.now();return(items||[]).filter(item=>(!item.effective_from||new Date(item.effective_from).getTime()<=now)&&(!item.effective_until||new Date(item.effective_until).getTime()>now));}
 function normalizedPlans(plans){return(plans||[]).map(plan=>({...plan,movie_request_limit:plan.request_movie_quota_limit,movie_request_days:plan.request_movie_quota_days,tv_request_limit:plan.request_tv_quota_limit,tv_request_days:plan.request_tv_quota_days}));}

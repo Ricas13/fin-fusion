@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express = require('express');
 const csrf = require('../auth/csrf');
 const legacyImport = require('../payments/legacy-customer-import');
@@ -9,7 +11,7 @@ const { esc, layout } = require('./admin-html');
 function gate(req, res, next) { return req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId ? next() : res.redirect('/login?session=expired'); }
 function noStore(_req, res, next) { res.setHeader('Cache-Control', 'no-store, private, max-age=0'); res.setHeader('Pragma', 'no-cache'); next(); }
 function csrfInput(req) { return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`; }
-function money(minor, currency) { try { return new Intl.NumberFormat('en-GB', { style: 'currency', currency: String(currency || 'USD').toUpperCase(), currencyDisplay: 'narrowSymbol' }).format(Number(minor || 0) / 100); } catch (_) { return `${currency || ''} ${(Number(minor || 0) / 100).toFixed(2)}`; } }
+function money(minor,currency){return moneyFormat.formatMinor(minor,currency||'USD');}
 function when(value) { const d = value instanceof Date ? value : new Date(value); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }); }
 function provider(value) { return value === 'paypal' ? 'PayPal' : value === 'stripe' ? 'Stripe' : value === 'manual' ? 'Manual' : String(value || '—'); }
 function stateLabel(state) { return ({ ready_current: 'Activate now', ready_future: 'Schedule', covered: 'Already covered', already_imported: 'Already imported', review: 'Review', expired: 'Expired', excluded: 'Excluded' })[state] || state; }

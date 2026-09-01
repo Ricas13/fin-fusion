@@ -1,5 +1,7 @@
 'use strict';
 
+const moneyFormat=require('./money-format');
+
 const express = require('express');
 const { query } = require('../db');
 const runtimeSettings = require('./runtime-settings');
@@ -85,7 +87,7 @@ async function results(term){
 }
 
 function statusPill(value){const v=String(value||'—');const kind=['active','trialing','healthy'].includes(v)?'good':['past_due','degraded','scheduled'].includes(v)?'warn':['cancelled','expired','offline','archived'].includes(v)?'bad':'';return `<span class="pill ${kind}">${esc(v)}</span>`;}
-function money(minor,currency='GBP'){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP').trim(),currencyDisplay:'narrowSymbol',minimumFractionDigits:2}).format(Number(minor||0)/100);}catch{return `${currency} ${(Number(minor||0)/100).toFixed(2)}`;}}
+function money(minor,currency='GBP'){return moneyFormat.formatMinor(minor,currency);}
 
 async function page(req){
     await runtimeSettings.ensureLoaded();
