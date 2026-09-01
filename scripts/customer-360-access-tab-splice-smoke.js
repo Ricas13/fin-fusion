@@ -76,7 +76,9 @@ assert(failedHtml.includes('accessControlGrid')&&failedHtml.includes('Concurrent
 assert(failedHtml.includes('Inherit')&&failedHtml.includes('Allow')&&failedHtml.includes('Deny'),'rendered controls must expose tri-state choices');
 assert(failedHtml.includes('Manage libraries')&&!failedHtml.includes('<h2>Free Access policy</h2>'),'libraries must be compact and duplicate Free Access policy tables must be absent');
 assert(!failedHtml.includes('Portal account & onboarding'),'Access must not contain portal onboarding controls');
-assert(failedHtml.indexOf('Provisioning history')<failedHtml.indexOf('Activity'),'Activity must sit at the bottom after provisioning history');
+const historyDisclosure=failedHtml.indexOf('class="section accessDisclosure accessHistory"');
+const activityDisclosure=failedHtml.indexOf('class="section accessDisclosure accessActivity"');
+assert(historyDisclosure>=0&&activityDisclosure>historyDisclosure,'Activity disclosure must sit at the bottom after provisioning history');
 assert(!/<details class="section accessDisclosure"[^>]* open/.test(failedHtml),'Access disclosures must be collapsed by default');
 
 const manualHtml=view.manualServerAssignmentForm('token','cust-1',assignment);
