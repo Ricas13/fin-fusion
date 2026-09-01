@@ -13,6 +13,13 @@ function cleanUsername(value){const username=String(value||'').trim();if(!/^[A-Z
 async function validatePassword(password){return customers.validateNewPassword(password);}
 function tokenHash(raw){return crypto.createHash('sha256').update(String(raw||''),'utf8').digest('hex');}
 function sessionHash(sessionId){const value=String(sessionId||'').trim();if(!value)throw new Error('A browser session is required to reserve Free Access.');return tokenHash(`free-access-hold:${value}`);}
+function refreshFreePlacesStatus(reason='capacity_changed'){
+    setImmediate(()=>{
+        let digest;
+        try{digest=require('../automation/free-places-digest');}catch(error){console.warn(`Free Server Discord refresh load failed (${reason}):`,error.message);return;}
+        Promise.resolve(digest.syncPersistent()).catch(error=>console.warn(`Free Server Discord refresh failed (${reason}):`,error.message));
+    });
+}
 function cleanCommunicationPreferences(value={}){
     const phone=String(value.phone_e164||value.phone||'').trim().slice(0,32);
     const telegram=String(value.telegram_handle||value.telegram||'').trim().replace(/^@/,'').slice(0,64);
@@ -44,7 +51,7 @@ function expiredHoldError(){const error=new Error(`Your ${FREE_HOLD_MINUTES}-min
 async function reserveFreeAccess({sessionId}){
     const holderSessionHash=sessionHash(sessionId);
     try{
-        return await transaction(async client=>{
+        const reservation=await transaction(async client=>{
             await serialize(client);
             await client.query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()),updated_at=NOW() WHERE holder_session_hash=$1 AND consumed_at IS NULL AND released_at IS NULL AND expires_at<=NOW()`,[holderSessionHash]);
             const plan=await canonicalFreePlan(client);
@@ -54,10 +61,12 @@ async function reserveFreeAccess({sessionId}){
             await client.query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()),updated_at=NOW() WHERE holder_session_hash=$1 AND consumed_at IS NULL AND released_at IS NULL`,[holderSessionHash]);
             await planCapacity.lockAndAssert(client,plan.id,plan.name||'Free Access');
             const expiresAt=new Date(Date.now()+FREE_HOLD_MINUTES*60000);
-            const reservation=(await client.query(`INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at,holder_session_hash) VALUES(NULL,$1,NULL,$2,$3) RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email,created_at`,[plan.id,expiresAt,holderSessionHash])).rows[0];
-            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.free_reserved','free_access_registration_reservation',$1,$2::jsonb)`,[reservation.id,JSON.stringify({planId:plan.id,expiresAt:reservation.expires_at,holdMinutes:FREE_HOLD_MINUTES})]);
-            return reservation;
+            const created=(await client.query(`INSERT INTO free_access_registration_reservations(pending_registration_id,plan_id,normalized_email,expires_at,holder_session_hash) VALUES(NULL,$1,NULL,$2,$3) RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email,created_at`,[plan.id,expiresAt,holderSessionHash])).rows[0];
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.free_reserved','free_access_registration_reservation',$1,$2::jsonb)`,[created.id,JSON.stringify({planId:plan.id,expiresAt:created.expires_at,holdMinutes:FREE_HOLD_MINUTES})]);
+            return created;
         });
+        refreshFreePlacesStatus('reservation_created');
+        return reservation;
     }catch(error){if(error?.code==='PLAN_CAPACITY_EXHAUSTED'||/currently sold out/i.test(String(error?.message||'')))throw noFreePlacesError();throw error;}
 }
 async function reservationForSession(reservationId,sessionId,db=query){
@@ -119,11 +128,17 @@ async function consume(rawToken){
         return{user,customer,referralCodeId,pendingRegistrationId:pending.id,freeAccessRequested:Boolean(pending.free_access_requested),freeReservation:reservation};
     });
     if(!created)return null;
-    if(created.terminalError)throw new Error(created.terminalError);
+    if(created.terminalError){refreshFreePlacesStatus('reservation_released');throw new Error(created.terminalError);}
     return created;
 }
 
-async function cleanupExpired(limit=500){const max=Math.max(1,Math.min(5000,Number(limit)||500));await query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()),updated_at=NOW() WHERE consumed_at IS NULL AND released_at IS NULL AND expires_at<=NOW()`);const result=await query(`WITH doomed AS (SELECT id FROM pending_registrations WHERE consumed_at IS NULL AND expires_at<=NOW() ORDER BY expires_at LIMIT $1) DELETE FROM pending_registrations p USING doomed d WHERE p.id=d.id RETURNING p.id`,[max]);return{processed:result.rowCount,removed:result.rowCount};}
+async function cleanupExpired(limit=500){
+    const max=Math.max(1,Math.min(5000,Number(limit)||500));
+    const released=await query(`UPDATE free_access_registration_reservations SET released_at=COALESCE(released_at,NOW()),updated_at=NOW() WHERE consumed_at IS NULL AND released_at IS NULL AND expires_at<=NOW() RETURNING id`);
+    const result=await query(`WITH doomed AS (SELECT id FROM pending_registrations WHERE consumed_at IS NULL AND expires_at<=NOW() ORDER BY expires_at LIMIT $1) DELETE FROM pending_registrations p USING doomed d WHERE p.id=d.id RETURNING p.id`,[max]);
+    if(released.rowCount)refreshFreePlacesStatus('reservation_expired');
+    return{processed:result.rowCount,removed:result.rowCount,releasedReservations:released.rowCount};
+}
 async function recent(limit=50){const result=await query(`SELECT id,email,username,expires_at,consumed_at,free_access_requested,created_at FROM pending_registrations ORDER BY created_at DESC LIMIT $1`,[Math.max(1,Math.min(200,Number(limit)||50))]);return result.rows;}
 async function stats(){const result=await query(`SELECT COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at>NOW())::int pending,COUNT(*) FILTER(WHERE consumed_at IS NULL AND expires_at<=NOW())::int expired FROM pending_registrations`);return result.rows[0]||{pending:0,expired:0};}
-module.exports={FREE_HOLD_MINUTES,begin,consume,reserveFreeAccess,reservationForSession,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,sessionHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername};
+module.exports={FREE_HOLD_MINUTES,begin,consume,reserveFreeAccess,reservationForSession,cleanupExpired,recent,stats,cleanEmail,cleanUsername,validatePassword,tokenHash,sessionHash,cleanCommunicationPreferences,canonicalFreePlan,assertNoUnclaimedJellyfinUsername,refreshFreePlacesStatus};
