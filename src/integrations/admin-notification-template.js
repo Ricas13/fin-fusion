@@ -74,7 +74,8 @@ function enrichAdminPayload(eventType, payload, fallback) {
     return enriched;
 }
 
-function titleFor(eventType, fallbackSubject) {
+function titleFor(eventType, fallbackSubject, payload = {}) {
+    if (eventType === 'support.ticket.needs_staff' && payload.ticketEventKind === 'reply') return 'Support ticket updated';
     const titles = {
         'payment.received': 'Payment received',
         'payment.renewal_failed': 'Renewal failed',
@@ -150,7 +151,9 @@ function summaryFor(eventType, payload, fallbackText) {
         case 'server.offline': return `${server || 'A Jellyfin server'} is offline.`;
         case 'commercial.discount.redeemed': return `${user} redeemed a discount${plan ? ` for ${plan}` : ''}.`;
         case 'customer.claimed': return `${user} claimed an imported account.`;
-        case 'support.ticket.needs_staff': return `${user} needs staff attention on a support ticket.`;
+        case 'support.ticket.needs_staff': return payload.ticketEventKind === 'reply'
+            ? `${user} replied to a support ticket that needs staff attention.`
+            : `${user} needs staff attention on a new support ticket.`;
         case 'login.customer.succeeded': return `${user} signed in to the customer portal.`;
         default: return clean(fallbackText, 12000) || 'An account or platform event was recorded.';
     }
@@ -165,7 +168,7 @@ function renderAdminNotification({ eventType, payload = {}, subject = '', text =
     const safeEventType = clean(eventType, 160);
     const fallback = { subject, text };
     const enrichedPayload = enrichAdminPayload(safeEventType, payload, fallback);
-    const title = titleFor(safeEventType, subject);
+    const title = titleFor(safeEventType, subject, enrichedPayload);
     const body = summaryFor(safeEventType, enrichedPayload, text);
     const factRows = factsFor(safeEventType, enrichedPayload);
     const actionUrl = first(enrichedPayload.ticketUrl, enrichedPayload.adminUrl);
