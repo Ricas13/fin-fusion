@@ -99,14 +99,23 @@ assert.ok(page.indexOf('id="plans"') < page.indexOf('id="stremio"'), 'main plans
 for(const removed of ['featureGrid','experienceSection','stepsGrid','Everything you need to watch your way','From account to watching in minutes'])assert.ok(!page.includes(removed),`old marketing section should be gone: ${removed}`);
 
 const openPlans=plans.map(plan=>plan.is_free_tier?{...plan,capacity:{limit:20,used:3,remaining:17,soldOut:false,label:'Available',kind:'available'}}:plan);
-const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans:openPlans, store, registrationOpen: true, logged: false, paymentMethods:[methods[1]] });
+const openPage = renderStorefront({ site: 'CAPTAiNFiN', plans:openPlans, store, registrationOpen: true, logged: false, paymentMethods:[methods[1]],csrfToken:'csrf-test' });
 assert.ok(openPage.includes('Create account'));
 assert.ok(openPage.includes('Free places are available now.'));
-assert.ok(openPage.includes('Claim free access'));
-assert.ok(openPage.includes('href="/account/register"'));
+assert.ok(openPage.includes('Reserve / Create Free Account'));
+assert.ok(openPage.includes('method="post" action="/account/register"'));
+assert.ok(openPage.includes('name="reserveFree" value="1"'));
+assert.ok(openPage.includes('name="_csrf" value="csrf-test"'));
+assert.ok(!openPage.includes('href="/account/register?intent=free">Reserve / Create Free Account'), 'opening a GET must not reserve free capacity');
 assert.ok(openPage.includes('PayPal'));
 assert.ok(!openPage.includes('Card payments'),'disabled/unconfigured methods must not be advertised when omitted by provider status');
 assert.ok(!openPage.includes('New customers can currently join by invitation.'));
+
+const captchaPage = renderStorefront({ site:'CAPTAiNFiN',plans:openPlans,store,registrationOpen:true,logged:false,turnstileEnabled:true,turnstileSiteKey:'site-key',turnstileAction:'customer_registration' });
+assert.ok(captchaPage.includes('https://challenges.cloudflare.com/turnstile/v0/api.js'),'Turnstile script should load on reservable storefront when enabled');
+assert.ok(captchaPage.includes('class="cf-turnstile"'),'Free Server reservation form should include Turnstile challenge');
+assert.ok(captchaPage.includes('data-sitekey="site-key"'));
+assert.ok(captchaPage.includes('data-action="customer_registration"'));
 
 const empty = renderStorefront({ site: 'Blank Install', plans: [], store: { copy: {}, features: [] }, registrationOpen: false, logged: false, paymentMethods:[] });
 assert.ok(empty.includes('Blank Install'));

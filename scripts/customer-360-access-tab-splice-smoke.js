@@ -18,6 +18,10 @@ assert(!/indexOf\(marker\)|const marker=/.test(wrapperSource), 'Customer 360 acc
 assert(wrapperSource.includes('skipAccessSections:true'), 'Stremio-only customers must skip Jellyfin access sections via an explicit flag');
 const v2Source = read('src/platform/customer-360-view-v2.js');
 assert(v2Source.includes('options.skipAccessSections'), 'customer-360-view-v2.js must expose the skip flag it is given');
+assert(/function compactDisclosure/.test(v2Source)&&/<details class=\"section compactDisclosure\">/.test(v2Source),'Customer 360 must use native compact disclosure controls instead of HTML post-processing');
+assert(/compactDisclosure\('Access policy'/.test(v2Source),'Access policy must be a compact disclosure');
+assert(/compactDisclosure\('Library entitlement'/.test(v2Source),'Library entitlement must be a compact disclosure');
+assert(!/<details class=\"section compactDisclosure\" open/.test(v2Source),'Access policy and Library entitlement must be collapsed by default');
 
 function fixture(overrides = {}) {
     return {
@@ -29,6 +33,7 @@ function fixture(overrides = {}) {
         downloadSummary: { downloads_30d: 0 },
         runs: [],
         primaryEntitlement: null,
+        provisioningState: null,
         ...overrides
     };
 }
@@ -36,6 +41,11 @@ function fixture(overrides = {}) {
 const jellyfinHtml = view.body(fixture(), 'access', 'token', null);
 assert(jellyfinHtml.includes('Jellyfin access'), 'Jellyfin customer must still see the Jellyfin access section');
 assert(!jellyfinHtml.includes('Stremio access'), 'Jellyfin customer must not see the Stremio access panel');
+
+const failedProvisioningHtml=view.body(fixture({provisioningState:{status:'failed',last_error:'No eligible free server'},subscriptions:[{status:'active',current_period_end:new Date(Date.now()+86400000),plan_name:'Free Server',streams:1,is_free_tier:true}]}),'access','token',null);
+assert(failedProvisioningHtml.includes('Provisioning failed / Needs attention.'),'failed Jellyfin provisioning must be explicit on Customer 360');
+assert(failedProvisioningHtml.includes('Free Server place remains allocated'),'failed Free Server provisioning must explain that the scarce place remains allocated');
+assert(failedProvisioningHtml.includes('Needs attention')&&!failedProvisioningHtml.includes('<div class="summaryValue">0</div><div class="summarySub">0 Jellyfin accounts'),'failed provisioning must not look like a normal zero-account state');
 
 const stremioHtml = view.body(fixture({ primaryEntitlement: { service_type: 'stremio', name: 'Stremio Plan', status: 'active' } }), 'access', 'token', null);
 assert(stremioHtml.includes('Stremio access'), 'Stremio-only customer must see the Stremio access panel');

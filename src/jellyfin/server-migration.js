@@ -64,7 +64,7 @@ async function migrationForId(migrationId) {
     return result.rows[0] || null;
 }
 
-async function preflight(customerId, targetServerId, { expectedSourceAccountId = null } = {}) {
+async function preflight(customerId, targetServerId, { expectedSourceAccountId = null, allowOverCapacity = false } = {}) {
     const entitlement = await provisioning.currentEntitlement(customerId);
     if (!entitlement) throw new ServerMigrationError('NO_ACTIVE_ENTITLEMENT', 'Customer has no active entitlement to migrate.', 'preflight');
 
@@ -88,7 +88,8 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
 
     const assignedUsers = await activeAccountCount(target.id);
     const maxUsers = Number(target.max_users || 0);
-    if (maxUsers > 0 && assignedUsers >= maxUsers) {
+    const targetAtCapacity = maxUsers > 0 && assignedUsers >= maxUsers;
+    if (targetAtCapacity && !allowOverCapacity) {
         throw new ServerMigrationError('TARGET_AT_CAPACITY', 'Target server has reached its configured user capacity.', 'preflight');
     }
 
@@ -118,6 +119,8 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
         target,
         effective,
         libraryAccess,
+        allowOverCapacity: Boolean(allowOverCapacity),
+        overCapacityOverride: targetAtCapacity && Boolean(allowOverCapacity),
         capacity: {
             assignedUsers,
             maxUsers: maxUsers || null,
@@ -126,8 +129,8 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     };
 }
 
-async function createMigration(customerId, targetServerId, actorUserId) {
-    const check = await preflight(customerId, targetServerId);
+async function createMigration(customerId, targetServerId, actorUserId, { allowOverCapacity = false } = {}) {
+    const check = await preflight(customerId, targetServerId, { allowOverCapacity });
     try {
         const result = await query(`
             INSERT INTO customer_server_migrations(
@@ -145,7 +148,8 @@ async function createMigration(customerId, targetServerId, actorUserId) {
                 username: check.source.jellyfin_username,
                 effectiveStreams: check.effective.technical.streams,
                 visibleLibraryCount: check.effective.visibleNames.length,
-                passwordSetupRequiredAfterMove: true
+                passwordSetupRequiredAfterMove: true,
+                allowOverCapacity: Boolean(allowOverCapacity)
             }),
             actorUserId || null
         ]);
@@ -206,7 +210,11 @@ async function executeMigration(migrationId) {
     let targetAccount = null;
     let sourceMayBeDisabled = false;
     try {
-        const check = await preflight(migration.customer_id, migration.target_server_id, { expectedSourceAccountId: migration.source_account_id });
+        const allowOverCapacity = Boolean(migration.detail?.allowOverCapacity);
+        const check = await preflight(migration.customer_id, migration.target_server_id, {
+            expectedSourceAccountId: migration.source_account_id,
+            allowOverCapacity
+        });
 
         stage = 'create_target';
         targetAccount = await provisioning.createJellyfinAccount(migration.customer_id, check.target, check.effective, {
@@ -252,7 +260,8 @@ async function executeMigration(migrationId) {
             targetServerId: migration.target_server_id,
             sourceAccountId: migration.source_account_id,
             targetAccountId: targetAccount.id,
-            username: targetAccount.jellyfin_username
+            username: targetAccount.jellyfin_username,
+            allowOverCapacity
         })]);
         await markProvisioningDue(migration.customer_id, targetAccount.id, migration.target_server_id);
         return migrationForId(migrationId);

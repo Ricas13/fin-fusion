@@ -58,9 +58,9 @@ assert(notificationSettings.includes('async function sendDiscordChannel({channel
 assert(notificationSettings.includes("allowed_mentions:{parse:allowEveryone?['everyone']:[]}"),'Discord channel delivery must suppress @everyone unless explicitly enabled');
 assert(notificationOutbox.includes('enqueueDiscordChannel')&&notificationOutbox.includes('payload?.discordChannel')&&notificationOutbox.includes('settings.sendDiscord(payload?.text||row.message_type,{userId:row.destination})'),'durable channel delivery must coexist with the existing Discord DM outbox path');
 assert(adminNotifications.includes('discordInviteUrl')&&adminNotifications.includes('discordFreePlacesDigestEnabled')&&adminNotifications.includes('discordFreePlacesChannelId')&&adminNotifications.includes('discordFreePlacesTimezone')&&adminNotifications.includes('discordFreePlacesTime1')&&adminNotifications.includes('discordFreePlacesTime2')&&adminNotifications.includes('discordFreePlacesMinRemaining')&&adminNotifications.includes('discordFreePlacesMentionEveryone')&&adminNotifications.includes('stremioMetadataAddonUrl'),'Discord community and onboarding fields must live with the existing notification delivery settings');
-assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_places_digest:30')&&automationWorker.includes('VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING')&&automationWorker.includes('DEFAULT_JOB_INTERVALS[jobKey]||300'),'free-place digest must be inserted enabled at its 30-second default instead of the generic five-minute interval');
-assert(notificationSettings.includes('communityForLoad')&&notificationSettings.includes('extras=communityForLoad'),'persisted incomplete community settings must load without throwing and leave the digest disabled');
-assert(!inactivity.includes('free-places-digest')&&!inactivity.includes('free_places_digest'),'inactivity handling must never post a Discord free-place digest directly');
+assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_places_digest:30')&&automationWorker.includes('VALUES($1,TRUE,$2,NOW()) ON CONFLICT(job_key) DO NOTHING')&&automationWorker.includes('DEFAULT_JOB_INTERVALS[jobKey]||300'),'Free Server availability status must be inserted enabled at its 30-second default instead of the generic five-minute interval');
+assert(notificationSettings.includes('communityForLoad')&&notificationSettings.includes('extras=communityForLoad'),'persisted incomplete community settings must load without throwing and leave the status updater disabled');
+assert(!inactivity.includes('free-places-digest')&&!inactivity.includes('free_places_digest'),'inactivity handling must never post Discord Free Server availability directly');
 
 // /account reuses assigned credentials and private Stremio URLs; no reversible Jellyfin password is introduced.
 assert(customerDashboard.includes("notificationSettings.status().catch(()=>({}))")&&customerDashboard.includes("discordInviteUrl:deliverySettings.discordInviteUrl||''")&&customerDashboard.includes('stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl'),'both /account render paths must receive the shared Discord invite and the ready dashboard must receive the optional Stremio metadata addon');
@@ -126,27 +126,35 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert(occupantSql.includes('NOT EXISTS(SELECT 1 FROM customer_access_holds h')&&occupantSql.includes('h.released_at IS NULL'),'open access holds must exclude the customer from streamUsed');
   assert.deepStrictEqual(occupantParams,['free',['active','trialing'],['inactivity_policy','jellyfin_cleanup']],'runtime fleet occupancy must bind only occupant statuses and inactivity/cleanup hold types');
 
-  let freePlanQuery='';
-  const freePlanDb=async sql=>{
+  let freePlanQuery='',storedStatus=null;
+  const statusClient={query:async(sql,params=[])=>{
+    if(sql.includes('pg_advisory_xact_lock'))return{rowCount:1,rows:[{}]};
     if(sql.includes("is_free_tier=TRUE")&&sql.includes("service_type='jellyfin'")){freePlanQuery=sql;return{rowCount:1,rows:[{id:'free-plan'}]};}
-    throw new Error(`Unexpected free-place digest query: ${sql.slice(0,120)}`);
-  };
+    if(sql.includes('SELECT setting_value FROM platform_settings WHERE setting_key=$1'))return storedStatus?{rowCount:1,rows:[{setting_value:storedStatus}]}:{rowCount:0,rows:[]};
+    if(sql.includes('INSERT INTO platform_settings(setting_key,setting_value)')){storedStatus=JSON.parse(params[1]);return{rowCount:1,rows:[]};}
+    throw new Error(`Unexpected Free Server status query: ${sql.slice(0,120)}`);
+  }};
+  const transactionFn=async fn=>fn(statusClient);
   const digestSettings={discordFreePlacesDigestEnabled:true,discordConfigured:true,discordFreePlacesChannelId:'123456789012345678',discordFreePlacesTimezone:'UTC',discordFreePlacesTime1:'06:00',discordFreePlacesTime2:'18:00',discordFreePlacesMinRemaining:1,discordFreePlacesMentionEveryone:false};
-  const deduped=new Set(),messages=[];
-  const enqueue=async input=>{if(deduped.has(input.dedupeKey))return{queued:false};deduped.add(input.dedupeKey);messages.push(input);return{queued:true};};
-  const firstDigest=await digest.run({now:new Date('2026-08-29T18:02:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
-  const duplicateDigest=await digest.run({now:new Date('2026-08-29T20:17:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:3}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
-  assert.strictEqual(firstDigest.queued,1,'18:02 with three free places must enqueue the 18:00 digest');
-  assert.strictEqual(firstDigest.slot,'18:00','the latest started local slot must remain due after its exact minute');
-  assert.strictEqual(duplicateDigest.queued,0,'a later tick the same evening must not enqueue the same slot twice');
-  assert.strictEqual(messages.length,1,'the durable dedupe key must produce one Discord channel message per slot');
-  assert.strictEqual(messages[0].dedupeKey,'free-places-digest:123456789012345678:2026-08-29:18:00','free-place digest dedupe key must be channel/date/slot scoped');
-  assert.strictEqual(messages[0].text,'Free Server — 3 places open\nhttps://portal.example','digest copy must expose only free-place count and the public portal URL');
-  assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'),'digest must choose the same first public Free Server plan as the storefront');
-  const beforeMorning=messages.length;
-  const morning=await digest.run({now:new Date('2026-08-30T06:02:00Z'),settings:digestSettings,db:freePlanDb,usage:async()=>({remaining:0}),enqueue,operationsConfig:{publicBaseUrl:'https://portal.example'}});
-  assert.strictEqual(morning.queued,0,'06:02 with zero remaining must stay silent');
-  assert.strictEqual(messages.length,beforeMorning,'zero remaining must not enqueue a Discord digest');
+  const sent=[],edited=[];
+  const send=async input=>{sent.push(input);return{id:'987654321098765432'};};
+  const edit=async input=>{edited.push(input);return{id:input.messageId};};
+  const firstStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:3}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
+  const duplicateStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:3}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example/'}});
+  assert.strictEqual(firstStatus.created,1,'first live-capacity reconciliation must create the canonical Discord status message');
+  assert.strictEqual(firstStatus.remaining,3,'persistent status must report live remaining capacity');
+  assert.strictEqual(duplicateStatus.unchanged,true,'unchanged capacity must not edit or append another Discord message');
+  assert.strictEqual(sent.length,1,'persistent availability must create exactly one Discord message');
+  assert.strictEqual(edited.length,0,'unchanged availability must not issue a redundant PATCH');
+  assert.strictEqual(sent[0].allowEveryone,false,'persistent availability must never create @everyone spam');
+  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='Reserve / Create Free Account: https://portal.example')&&sent[0].text.includes('10 minutes'),'open status must expose exact remaining places, portal URL and reservation duration');
+  assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'),'status updater must choose the same first public Free Server plan as the storefront');
+  const fullStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:0}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example'}});
+  assert.strictEqual(fullStatus.updated,1,'capacity transition to full must edit the existing Discord status');
+  assert.strictEqual(sent.length,1,'capacity transition must not append a second Discord message');
+  assert.strictEqual(edited.length,1,'capacity transition must PATCH the canonical Discord message once');
+  assert.strictEqual(edited[0].messageId,'987654321098765432','capacity transition must edit the stored canonical Discord message ID');
+  assert(edited[0].text.includes('No free places currently available.')&&edited[0].text.includes('10 minutes'),'full status must explain both unavailability and automatic hold expiry');
 
   const soldPlan={id:'free-plan',name:'Free Server',description:'Free access',service_type:'jellyfin',billing_interval:'month',price_minor:0,streams:1,capacity:{soldOut:true,label:'Currently full',kind:'sold'}};
   const soldWithInvite=storefrontRuntime.freeTierPanel(soldPlan,{logged:false,registrationOpen:true,discordInviteUrl:'https://discord.gg/captainfin'});
@@ -156,5 +164,5 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert.strictEqual(notificationSettingsRuntime.discordInviteUrl('https://discord.com/invite/captainfin'),'https://discord.com/invite/captainfin','supported Discord invite URLs must normalize cleanly');
   assert.throws(()=>notificationSettingsRuntime.discordInviteUrl('https://example.com/invite/captainfin'),/Discord invite URL/,'non-Discord invite hosts must be rejected');
 
-  console.log('plan zero-capacity, fleet scarcity and Discord free-place onboarding smoke: OK');
+  console.log('plan zero-capacity, fleet scarcity and persistent Discord Free Server status smoke: OK');
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});

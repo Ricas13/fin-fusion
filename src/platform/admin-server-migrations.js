@@ -86,6 +86,7 @@ function form(req, d) {
             <div class="formGroup"><label>Customer</label><select class="input" name="customerId" required><option value="">Choose customer…</option>${customerOptions}</select></div>
             <div class="formGroup"><label>Move to</label><select class="input" name="targetServerId" required><option value="">Choose target server…</option>${serverOptions}</select></div>
         </div>
+        <div class="notice warn" style="margin:14px 0"><strong>Admin capacity override:</strong> leave this off for normal moves. Enable it only when you deliberately want to place this customer on a target that is already at or above its configured user limit. All other eligibility, health, library and username checks still apply.<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" name="allowOverCapacity" value="1" style="margin-top:3px"><span><strong>Allow this move to exceed target server capacity</strong></span></label></div>
         <button class="button">Check move safely</button>
     </form>`;
 }
@@ -94,13 +95,16 @@ function previewCard(req, preview) {
     if (!preview) return '';
     const c = preview.check;
     const cap = c.capacity.maxUsers ? `${c.capacity.assignedUsers} / ${c.capacity.maxUsers} users` : `${c.capacity.assignedUsers} users · unlimited capacity`;
+    const overrideNotice = c.overCapacityOverride ? '<div class="notice warn" style="margin-top:14px"><strong>Capacity override is active.</strong> The target is already at or above its configured user limit. This admin-only move will deliberately exceed that limit. Public registration and automatic placement remain blocked by the normal capacity rules.</div>' : '';
+    const capacityPill = c.overCapacityOverride ? '<span class="pill warn">Admin override</span>' : '<span class="pill good">Available</span>';
     return `<section class="card" style="margin-top:16px">
-        <div class="card-header"><div><h2 class="card-title">Move check passed</h2><div class="muted">This preview expires in 10 minutes and every safety condition is checked again at cutover.</div></div><span class="pill good">Ready</span></div>
+        <div class="card-header"><div><h2 class="card-title">${c.overCapacityOverride ? 'Move check passed with capacity override' : 'Move check passed'}</h2><div class="muted">This preview expires in 10 minutes and every safety condition is checked again at cutover.</div></div><span class="pill ${c.overCapacityOverride ? 'warn' : 'good'}">${c.overCapacityOverride ? 'Override armed' : 'Ready'}</span></div>
         <div class="card-body">
             <div class="compact-item"><div><div class="compact-title">${esc(c.source.jellyfin_username)}</div><div class="compact-meta">${esc(c.source.server_name)} → ${esc(c.target.name)}</div></div><span class="pill">Same username</span></div>
             <div class="compact-item"><div><div class="compact-title">${esc(c.entitlement.name || c.entitlement.code)}</div><div class="compact-meta">${esc(c.entitlement.server_class)} · ${esc(c.effective.technical.streams)} stream(s)</div></div><span class="pill good">Plan eligible</span></div>
-            <div class="compact-item"><div><div class="compact-title">Target capacity</div><div class="compact-meta">${esc(cap)}</div></div><span class="pill good">Available</span></div>
+            <div class="compact-item"><div><div class="compact-title">Target capacity</div><div class="compact-meta">${esc(cap)}</div></div>${capacityPill}</div>
             <div class="compact-item"><div><div class="compact-title">Libraries</div><div class="compact-meta">${esc(c.effective.visibleNames.length)} customer libraries found on the target</div></div><span class="pill good">Matched</span></div>
+            ${overrideNotice}
             <div class="notice warn" style="margin-top:14px"><strong>Customer action after the move:</strong> Jellyfin passwords cannot be read from the source server. The target account receives a random bootstrap password, so the customer must set a new Jellyfin password from their CAPTAiNFiN account.</div>
             <div class="notice" style="margin-top:10px"><strong>What does not move:</strong> Jellyfin-native watch history, playlists, favourites and other server-local user metadata stay on the original server. CAPTAiNFiN transfers access policy, username and library entitlement.</div>
             <form method="post" action="/admin/provisioning/migrations/apply" style="margin-top:14px">
@@ -183,7 +187,8 @@ function createAdminServerMigrationsRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid security token');
         const d = await data();
         try {
-            const check = await migrations.preflight(req.body.customerId, req.body.targetServerId);
+            const allowOverCapacity = String(req.body.allowOverCapacity || '') === '1';
+            const check = await migrations.preflight(req.body.customerId, req.body.targetServerId, { allowOverCapacity });
             const key = require('crypto').randomBytes(18).toString('base64url');
             req.session.serverMigrationPreview = {
                 actorUserId: req.session.authUserId,
@@ -191,6 +196,7 @@ function createAdminServerMigrationsRouter() {
                 targetServerId: check.target.id,
                 sourceAccountId: check.source.id,
                 planId: check.entitlement.plan_id,
+                allowOverCapacity: check.allowOverCapacity,
                 key,
                 createdAt: Date.now()
             };
@@ -210,9 +216,13 @@ function createAdminServerMigrationsRouter() {
             return res.redirect('/admin/provisioning/migrations?error=' + encodeURIComponent('Type MOVE exactly to perform the customer move.'));
         }
         try {
-            const check = await migrations.preflight(preview.customerId, preview.targetServerId, { expectedSourceAccountId: preview.sourceAccountId });
+            const allowOverCapacity = Boolean(preview.allowOverCapacity);
+            const check = await migrations.preflight(preview.customerId, preview.targetServerId, {
+                expectedSourceAccountId: preview.sourceAccountId,
+                allowOverCapacity
+            });
             if (String(check.entitlement.plan_id) !== String(preview.planId)) throw new Error('The customer plan changed after preview. Run the safety check again.');
-            const created = await migrations.createMigration(preview.customerId, preview.targetServerId, req.session.authUserId);
+            const created = await migrations.createMigration(preview.customerId, preview.targetServerId, req.session.authUserId, { allowOverCapacity });
             await migrations.executeMigration(created.id);
             delete req.session.serverMigrationPreview;
             return res.redirect('/admin/provisioning/migrations?message=' + encodeURIComponent('Customer moved successfully. Ask them to set a new Jellyfin password from their account portal.'));

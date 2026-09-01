@@ -8,6 +8,13 @@ const provision = fs.readFileSync('src/jellyfin/provisioning-engine.js', 'utf8')
 const dash = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
 const view = fs.readFileSync('views/customer/dashboard.ejs', 'utf8');
 const nav = fs.readFileSync('views/customer/_nav.ejs', 'utf8');
+const pendingRegistration = fs.readFileSync('src/security/pending-registration.js', 'utf8');
+const publicAuth = fs.readFileSync('src/platform/customer-public-auth.js', 'utf8');
+const storefront = fs.readFileSync('src/platform/storefront.js', 'utf8');
+const register = fs.readFileSync('views/customer/register.ejs', 'utf8');
+const freePlaces = fs.readFileSync('src/automation/free-places-digest.js', 'utf8');
+const serverMigration = fs.readFileSync('src/jellyfin/server-migration.js', 'utf8');
+const adminServerMigration = fs.readFileSync('src/platform/admin-server-migrations.js', 'utf8');
 
 assert(/accessKind\s*=\s*isTrial\s*\?\s*['"]trial['"]/.test(provision), 'placement must classify trial/free/paid');
 assert(/\$2::text='free'\s+THEN TRUE/.test(provision), 'free access must not require paid_enabled');
@@ -23,5 +30,28 @@ assert(/Free Server, Premium Jellyfin and Stremio can stay active independently/
 assert(/readyAccounts\.forEach/.test(view)&&/a\.public_url/.test(view)&&/a\.jellyfin_username/.test(view),'dashboard must expose each ready Jellyfin server and username');
 assert(/without giving up your Free Server access/.test(view),'paid access changes must preserve existing Free Server access');
 assert(/provisioningState&&provisioningState\.last_error/.test(view), 'customer provisioning failure reason missing');
+
+assert(/const FREE_HOLD_MINUTES=10;/.test(pendingRegistration),'Free Server reservation must last exactly 10 minutes');
+assert(/async function reserveFreeAccess/.test(pendingRegistration)&&/holder_session_hash/.test(pendingRegistration),'Free Server must have a session-bound pre-registration hold');
+assert(/FREE_ACCESS_CAPACITY_EXHAUSTED/.test(pendingRegistration)&&/No free places currently available/.test(pendingRegistration),'last-place loser must receive the canonical no-capacity result');
+assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server hold must be created only by the explicit registration POST');
+assert(/method=\"post\" action=\"\/account\/register\"/.test(storefront)&&/name=\"reserveFree\" value=\"1\"/.test(storefront),'storefront Free Server CTA must be an explicit POST reservation action');
+assert(/Reserve \/ Create Free Account/.test(register)&&/freeIntent && !hasFreeReservation/.test(register),'Free registration page must require reservation before showing signup details');
+assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'reserve-only registration must carry the same Turnstile protection as account creation');
+assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/cf-turnstile/.test(storefront),'storefront reservation POST must remain Turnstile fail-closed when CAPTCHA is enabled');
+assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrogate-Control','no-store/.test(storefront),'storefront capacity must be no-store at browser and surrogate caches');
+assert(!/public, max-age=60/.test(storefront),'storefront must not retain the old one-minute public capacity cache');
+
+assert(/STATE_KEY='discord_free_places_status_v1'/.test(freePlaces),'Discord Free Server availability must persist the canonical message identity');
+assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===text/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged capacity');
+assert(/No free places currently available/.test(freePlaces)&&/10 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
+assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
+assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
+assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');
+
+assert(/allowOverCapacity = false/.test(serverMigration)&&/targetAtCapacity && !allowOverCapacity/.test(serverMigration),'normal customer moves must still fail closed at target capacity');
+assert(/overCapacityOverride: targetAtCapacity && Boolean\(allowOverCapacity\)/.test(serverMigration),'server migration preflight must explicitly report an armed over-capacity override');
+assert(/Allow this move to exceed target server capacity/.test(adminServerMigration),'only the guarded admin migration UI should expose the capacity override');
+assert(/allowOverCapacity: check\.allowOverCapacity/.test(adminServerMigration)&&/confirmation[^\n]*MOVE/.test(adminServerMigration),'admin override must survive preview and still require typed MOVE confirmation');
 
 console.log('free access customer portal smoke: ok');

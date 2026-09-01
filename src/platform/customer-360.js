@@ -24,10 +24,11 @@ async function customer360(customerId){
     const customer=base.rows[0];
     const userId=customer.app_user_id;
 
-    const [subscriptions,primaryEntitlement,accounts,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
+    const [subscriptions,primaryEntitlement,accounts,provisioningState,paymentCustomers,activeStreams,activitySummary,playback,policyEvents,downloadSummary,downloads,requests,runs,authSessions,authEvents,audit]=await Promise.all([
         query(`SELECT s.id,s.status,s.source,s.starts_at,CASE WHEN p.is_free_tier AND NOT ((s.source='stripe' AND COALESCE(s.provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\') OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') LIKE 'I-%')) THEN NULL ELSE s.current_period_end END AS current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.id plan_id,COALESCE(s.plan_code_snapshot,p.code) plan_code,COALESCE(s.plan_name_snapshot,p.name) plan_name,COALESCE(s.price_minor_snapshot,p.price_minor) price_minor,COALESCE(s.currency_snapshot,p.currency) currency,p.streams,p.allow_downloads,p.allow_video_transcoding,p.allow_audio_transcoding,p.allow_live_tv,p.server_class,p.library_access_mode,p.library_names,COALESCE(s.service_type_snapshot,p.service_type) service_type,p.is_addon,p.is_free_tier,COALESCE(s.billing_interval_snapshot,p.billing_interval) billing_interval,COALESCE(s.duration_days_snapshot,p.duration_days) duration_days FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 ORDER BY s.created_at DESC LIMIT 50`,[customerId]),
         provisioning.currentEntitlement(customerId),
         query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.account_purpose,ja.is_primary,ja.created_at,ja.last_activity_at,ja.last_policy_sync,js.id server_id,js.name server_name,js.server_class,js.location,js.public_url,js.health_status,jpr.status recon_status,jpr.last_error recon_last_error,jpr.attempt_count recon_attempts,jpr.last_attempt_at recon_last_attempt FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id LEFT JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja.id WHERE ja.customer_id=$1 ORDER BY ja.created_at`,[customerId]),
+        query(`SELECT status,attempt_count,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at FROM customer_provisioning_state WHERE customer_id=$1 LIMIT 1`,[customerId]),
         query(`SELECT provider,provider_customer_id,created_at,updated_at FROM payment_customers WHERE customer_id=$1 ORDER BY provider`,[customerId]),
         query(`SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,aps.playback_method,aps.is_paused,aps.first_seen_at,aps.last_seen_at,js.name server_name FROM active_playback_sessions aps LEFT JOIN jellyfin_servers js ON js.id=aps.server_id WHERE aps.customer_id=$1 ORDER BY aps.last_seen_at DESC`,[customerId]),
         query(`SELECT COUNT(*)::int sessions_30d,COUNT(*) FILTER(WHERE playback_method='transcode')::int transcodes_30d,COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at,last_seen_at)-started_at))),0)::bigint watch_seconds_30d,MAX(last_seen_at) last_playback_at FROM playback_history WHERE customer_id=$1 AND started_at>=NOW()-INTERVAL '30 days'`,[customerId]),
@@ -56,6 +57,7 @@ async function customer360(customerId){
         primaryEntitlement,
         subscriptions:orderedSubscriptions,
         accounts:accounts.rows,
+        provisioningState:provisioningState.rows[0]||null,
         paymentCustomers:paymentCustomers.rows,
         activeStreams:activeStreams.rows,
         activitySummary:{...activitySummary.rows[0],watch_seconds_30d:seconds(activitySummary.rows[0]?.watch_seconds_30d)},

@@ -58,7 +58,7 @@ const pendingRegistrationSource=fs.readFileSync('src/security/pending-registrati
 const acquisition=capacity.acquisitionSql('p');
 assert(capacitySource.includes('enabledAccountFloor')&&capacitySource.includes('capacityGap'),'fleet runtime capacity must expose the enabled-account floor and divergence');
 assert(acquisition.includes('jellyfin_accounts capacity_account')&&acquisition.includes('COUNT(DISTINCT capacity_account.id)')&&acquisition.includes('GREATEST(('),'fleet acquisition SQL must not advertise capacity below the enabled Jellyfin-account floor');
-assert(pendingRegistrationSource.includes('const capacityState=await planCapacity.lockAndAssert')&&pendingRegistrationSource.includes('if(capacityState.limit!=null)'),'Free Access registration must reserve derived fleet capacity even when plans.capacity_limit is null');
+assert(pendingRegistrationSource.includes('async function reserveFreeAccess')&&pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,plan.id')&&pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),'Free Access reservation must consume derived fleet capacity even when plans.capacity_limit is null');
 
 (async()=>{
     const fakeDb=async sql=>{
