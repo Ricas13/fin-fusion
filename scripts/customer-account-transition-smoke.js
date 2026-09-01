@@ -45,8 +45,8 @@ const pendingBeginCall=publicAuth.match(/pendingRegistrations\.begin\(\{[\s\S]*?
 assert(pendingBeginCall,'public registration must create pending verification state');
 assert.match(pendingBeginCall,/communicationPreferences/,'public registration must persist communication preferences in pending verification state');
 assert.match(pendingBeginCall,/freeAccess:wantsFree/,'public registration must persist free intent in pending verification state');
-assert.match(pendingBeginCall,/freeReservationId:freeReservation\?\.id\|\|null/,'Free Server registration must attach the held reservation instead of creating capacity during form submission');
-assert.match(pendingBeginCall,/freeReservationSessionId:req\.sessionID/,'Free Server registration must prove session ownership of the held reservation');
+assert.match(pendingBeginCall,/freeReservationId:reservation\?\.id\|\|null/,'Free Server registration must attach the held reservation instead of creating capacity during form submission');
+assert.match(pendingBeginCall,/freeReservationSessionId:wantsFree\?req\.sessionID:null/,'Free Server registration must prove session ownership of the held reservation');
 assert.doesNotMatch(publicAuth,/customers\.registerCustomer\(/,'public registration must not create a customer before email verification completes');
 assert.doesNotMatch(publicAuth,/function saveCommunication|await saveCommunication\(/,'the public registration route must not perform a second communication-preferences write after identity creation');
 
