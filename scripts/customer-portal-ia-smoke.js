@@ -126,7 +126,7 @@ assert(/\/account\/claim-free\/:planCode[\s\S]*welcome=1/.test(router),'Free Acc
 assert(paymentReturn.includes('/account?welcome=1'),'PayPal completion must enter welcome flow');
 assert(paymentReturn.includes("'/account/stripe/return'")&&paymentReturn.includes('stripe.confirmCheckout(sessionId,row)')&&paymentReturn.includes("completedRedirect(res,'Stripe payment confirmed."),'Stripe completion must enter welcome flow only after provider confirmation');
 assert(storefront.includes('/account/register?intent=free'),'public Free Access CTA must carry explicit free intent into registration');
-assert(pending.includes('FREE_HOLD_MINUTES=20')&&pending.includes('free_access_registration_reservations'),'verified Free Access registration must create a real expiring capacity hold');
+assert(pending.includes('FREE_HOLD_MINUTES=10')&&pending.includes('async function reserveFreeAccess')&&pending.includes('free_access_registration_reservations'),'explicit Free Access reservation must create a real 10-minute expiring capacity hold before registration details are entered');
 assert(capacity.includes('free_access_registration_reservations')&&capacity.includes('reserved'),'plan capacity must count live registration holds');
 assert(publicAuth.includes('await establish(req,created)')&&publicAuth.includes('activateRequestedFreeAccess(created)'),'verified registration must establish the customer session and continue onboarding automatically');
 assert(publicAuth.includes('hold expired before verification'),'expired Free Access holds must preserve the new account and explain the next step');
