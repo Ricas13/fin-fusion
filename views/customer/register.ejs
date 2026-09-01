@@ -24,6 +24,7 @@
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="freeIntent" value="1">
     <input type="hidden" name="reserveFree" value="1">
+    <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
     <button type="submit">Reserve / Create Free Account</button>
   </form>
   <% } %>
