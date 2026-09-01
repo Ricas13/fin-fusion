@@ -165,7 +165,7 @@
     };
     placeAccountMenu();
     if(typeof mobile.addEventListener==='function')mobile.addEventListener('change',onViewportChange);
-    else if(typeof mobile.addListener==='function')mobile.addListener(onViewportChange);
+    else if(typeof mobile.addListener==='function')mobile.addListener('change',onViewportChange);
   }
 
   function loadScript(src,marker){
@@ -178,7 +178,12 @@
   }
 
   function loadSettingsGroups(){
-    loadScript('/js/admin-settings-groups.js','data-admin-settings-groups');
+    if(document.querySelector('script[data-admin-settings-groups]'))return;
+    const script=document.createElement('script');
+    script.src='/js/admin-settings-groups.js';
+    script.defer=true;
+    script.setAttribute('data-admin-settings-groups','');
+    document.head.appendChild(script);
   }
 
   function loadPlanAccessEnhancer(){
