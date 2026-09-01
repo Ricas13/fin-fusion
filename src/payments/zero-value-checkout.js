@@ -13,8 +13,7 @@ function snapshotObject(value){return value&&typeof value==='object'&&!Array.isA
 
 async function activateFullyDiscountedPayment({customerId,intentId,nonce,provider}){
     if(!customerId||!intentId||!nonce)throw new Error('Fully discounted checkout identity is incomplete.');
-    let subscription;
-    subscription=await transaction(async client=>{
+    const subscription=await transaction(async client=>{
         await client.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customerId]);
         const intent=(await client.query('SELECT * FROM billing_checkout_intents WHERE id=$1 FOR UPDATE',[intentId])).rows[0];
         if(!intent)throw new Error('Checkout intent not found.');
@@ -61,7 +60,7 @@ async function activateFullyDiscountedPayment({customerId,intentId,nonce,provide
         await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.discount_fully_covered','subscription',$1,$2::jsonb)`,[row.id,JSON.stringify({customerId,planId:plan.id,checkoutIntentId:intent.id,discountCodeId:snapshot.discountCodeId,originalProvider:provider,amountDueMinor:0})]);
         return row;
     });
-    await inactivityHolds.releaseObsoleteForCustomer(customerId);
+    try{await inactivityHolds.releaseObsoleteForCustomer(customerId);}catch(error){console.error('Fully discounted purchase hold cleanup pending:',error.message);}
     await lifecyclePrimitives.reconcileCommittedCustomer(customerId,'Fully discounted purchase');
     return subscription;
 }
