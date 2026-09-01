@@ -50,10 +50,11 @@ function enrichAdminPayload(eventType, payload, fallback) {
     }
     if (!enriched.planName) {
         if (eventType === 'payment.received') {
-            const match = combined.match(/(?:payment (?:was )?confirmed|confirmed payment) for\s+(.+?)(?:\s+via\s+|\.|$)/i);
-            if (match) enriched.planName = clean(match[1], 200);
+            const match = text.match(/payment confirmed for\s+(.+?)\s+[—-]\s+(.+?)(?:\s+via\s+|\.|$)/i)
+                || text.match(/(?:payment (?:was )?confirmed|confirmed payment) for\s+(.+?)(?:\s+via\s+|\.|$)/i);
+            if (match) enriched.planName = clean(match[2] || match[1], 200);
         } else if (eventType === 'subscription.activated') {
-            const match = combined.match(/^(.+?)\s+activated\b/i) || combined.match(/activated\s+(.+?)(?:\.|$)/i);
+            const match = subject.match(/^(.+?)\s+activated$/i) || text.match(/\bactivated\s+(.+?)(?:\.|$)/i);
             if (match) enriched.planName = clean(match[1], 200);
         }
     }
