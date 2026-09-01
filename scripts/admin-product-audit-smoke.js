@@ -3,11 +3,13 @@
 const assert=require('assert');
 const fs=require('fs');
 const path=require('path');
+const {execFileSync}=require('child_process');
 const nav=require('../src/platform/admin-nav');
 const registry=require('../src/platform/admin-dashboard-registry');
 require('../src/platform/admin-dashboard-main');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const compact=value=>String(value||'').replace(/\s+/g,'');
 const commerce=read('src/platform/admin-commerce.js');
 const backupTabs=read('src/platform/backup-workflow-tabs.js');
 const settings=read('src/platform/admin-original-settings.js');
@@ -100,7 +102,7 @@ assert(customerFilterUi.includes("['accountStatus', 'paymentProvider', 'reconcil
 
 assert(stremioEditor.includes('Unlimited streams/devices')&&stremioEditor.includes('<span>Devices</span><strong>Unlimited</strong>')&&stremioEditor.includes('Household IPs')&&stremioEditor.includes('IP replacement'),'Stremio editor must expose household-first UX with unlimited streams/devices and household controls');
 assert(!stremioEditor.includes('New purchases only')&&!stremioEditor.includes('Existing customers too'),'Stremio access changes must no longer support grandfathering current members onto stale household limits');
-assert(stremioEditor.includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioEditor.includes('queuePlanRequestReconciliation'),'Stremio plan saves must propagate access/request policy to all current plan members');
+assert(compact(stremioEditor).includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioEditor.includes('queuePlanRequestReconciliation'),'Stremio plan saves must propagate access/request policy to all current plan members');
 assert(!stremioEditor.includes('Delivery service'),'ordinary Stremio plan editing must not expose internal delivery-service terminology');
 assert(!stremioEditor.includes('server_class')&&!stremioEditor.includes('allow_video_transcoding'),'ordinary Stremio plan editing must not expose Jellyfin placement or transcoding controls');
 assert(planCreateV2.includes("['free_jellyfin', 'Free Jellyfin'")&&planCreateV2.includes("['paid_jellyfin', 'Paid Jellyfin'")&&planCreateV2.includes("['stremio', 'Stremio'")&&planCreateV2.includes('name="stremioHouseholdNetworkLimit"'),'Canonical plan creation must adapt across Free Jellyfin, Paid Jellyfin and Stremio and expose configurable Stremio household connections');
@@ -125,4 +127,5 @@ assert(discountUi.includes("type.value === 'fixed'")&&discountUi.includes('perce
 assert(adminSettingsGuide.includes('Invitation onboarding is retired'),'Administrator guide must not describe invitation onboarding as live');
 assert(!gettingStartedGuide.includes('Planned Stremio service')&&gettingStartedGuide.includes('## Stremio service'),'Getting-started guide must describe the current Stremio service rather than the retired roadmap state');
 
+execFileSync(process.execPath,[require.resolve('./mounted-plan-discord-role-smoke')],{stdio:'inherit'});
 console.log('admin product audit smoke: ok');
