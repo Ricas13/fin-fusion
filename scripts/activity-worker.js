@@ -168,7 +168,7 @@ async function run() {
           if (!result.skipped) {
             console.log(`Activity cycle mode=${result.mode} streams=${result.observedStreams} violations=${result.violations} durationMs=${Date.now() - started}`);
             const failedServerIds = (result.serverFailures || []).map(item => item.serverId).filter(Boolean);
-            const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ pollsReliable: !failedServerIds.length });
+            const household = await householdNetworkPolicy.runHouseholdNetworkCycle({ failedServerIds });
             if (!household.skipped && household.customers) {
               console.log(`Household network cycle customers=${household.customers} sessions=${household.observedSessions} denied=${household.denied} stopped=${household.stopped} safetySkipped=${household.safetySkipped}`);
             }
