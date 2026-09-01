@@ -11,6 +11,20 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;');
 }
 
+function formatInline(value) {
+    const input = clean(value, 5000);
+    let output = '';
+    let cursor = 0;
+    const pattern = /\*\*(.+?)\*\*/g;
+    let match;
+    while ((match = pattern.exec(input))) {
+        output += escapeHtml(input.slice(cursor, match.index));
+        output += `<b>${escapeHtml(match[1])}</b>`;
+        cursor = match.index + match[0].length;
+    }
+    return output + escapeHtml(input.slice(cursor));
+}
+
 function safeUrl(value) {
     const raw = clean(value, 1000);
     if (!raw) return '';
@@ -43,10 +57,10 @@ function card({
 } = {}) {
     const sections = [`<b>${escapeHtml(clean(title, 220) || 'CAPTAiN FiN')}</b>`];
     const body = clean(description, 1800);
-    if (body) sections.push(escapeHtml(body));
+    if (body) sections.push(formatInline(body));
     const safeFields = normaliseFields(fields);
     if (safeFields.length) {
-        sections.push(safeFields.map(row => `<b>${escapeHtml(row.name)}</b>\n${escapeHtml(row.value)}`).join('\n\n'));
+        sections.push(safeFields.map(row => `<b>${escapeHtml(row.name)}</b>\n${formatInline(row.value)}`).join('\n\n'));
     }
     const footerText = clean(footer, 260);
     if (footerText) sections.push(`<i>${escapeHtml(footerText)}</i>`);
@@ -101,4 +115,4 @@ async function send(settings, { chatId = '', message = null, fallbackText = '' }
     }
 }
 
-module.exports = { clean, escapeHtml, safeUrl, normaliseFields, card, body, send };
+module.exports = { clean, escapeHtml, formatInline, safeUrl, normaliseFields, card, body, send };
