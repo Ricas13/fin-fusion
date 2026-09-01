@@ -91,6 +91,10 @@ async function main(){
     assert.strictEqual(before.status,200,'mounted Stremio plan edit route should render');
     assert(before.body.includes('Discord plan role'),'mounted Stremio plan edit route must visibly render Discord plan role');
     assert(before.body.includes(`value="${oldRole}" selected`),'existing Stremio Discord role mapping must be selected');
+    assert.strictEqual((before.body.match(/name="impactConfirmation"/g)||[]).length,1,'a live Stremio plan must render exactly one plan-code confirmation field');
+    const impactInput=(before.body.match(/<input[^>]+name="impactConfirmation"[^>]*>/)||[])[0]||'';
+    assert(impactInput&&!/\srequired(?:\s|>)/.test(impactInput),'unchanged Stremio access saves must not be blocked by browser-level confirmation');
+    assert(before.body.includes('only when Household IPs, IP replacement or replacement cooldown actually changes'),'Stremio confirmation copy must explain when the plan code is genuinely required');
 
     const form=new URLSearchParams({name:'Stremio',description:'Stremio plan',price:'6.00',billingInterval:'month',durationDays:'30',discordRoleId:newRole}).toString();
     const saved=await call(server,'POST',`/admin/plans/${planId}/editor-commerce`,form);
