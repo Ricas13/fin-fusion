@@ -68,25 +68,34 @@ async function accountsForDevicePolicy(customerId = null) {
   return result.rows;
 }
 
-async function activeDevices(accountId, subscriptionId, client = null) {
+async function activeDevices(subscriptionId, client = null) {
   if (!subscriptionId) return [];
   const runner = client || { query };
   const result = await runner.query(`
-    SELECT id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
+    SELECT id,jellyfin_account_id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
     FROM media_account_devices
-    WHERE jellyfin_account_id=$1 AND subscription_id=$2 AND revoked_at IS NULL
+    WHERE subscription_id=$1 AND revoked_at IS NULL
     ORDER BY registered_at,device_id
-  `, [accountId,subscriptionId]);
+  `, [subscriptionId]);
   return result.rows;
 }
 
 async function allDevices(accountId, subscriptionId = null) {
+  if (subscriptionId) {
+    const result = await query(`
+      SELECT id,jellyfin_account_id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
+      FROM media_account_devices
+      WHERE subscription_id=$1
+      ORDER BY COALESCE(revoked_at,'infinity'::timestamptz),registered_at,device_id
+    `, [subscriptionId]);
+    return result.rows;
+  }
   const result = await query(`
-    SELECT id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
+    SELECT id,jellyfin_account_id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
     FROM media_account_devices
-    WHERE jellyfin_account_id=$1 AND ($2::uuid IS NULL OR subscription_id=$2)
+    WHERE jellyfin_account_id=$1
     ORDER BY COALESCE(revoked_at,'infinity'::timestamptz),registered_at,device_id
-  `, [accountId,subscriptionId || null]);
+  `, [accountId]);
   return result.rows;
 }
 
@@ -131,7 +140,7 @@ async function registerObserved(account, deviceLimit, sessions) {
       ON CONFLICT(jellyfin_account_id) DO UPDATE SET subscription_id=EXCLUDED.subscription_id,managed=TRUE,device_limit=EXCLUDED.device_limit,updated_at=NOW()
     `, [account.account_id,account.subscription_id,deviceLimit]);
 
-    let registered = await activeDevices(account.account_id, account.subscription_id, client);
+    let registered = await activeDevices(account.subscription_id, client);
     if (registered.length > deviceLimit) {
       const revoke = registered.slice(deviceLimit).map(row => row.id);
       await client.query(`UPDATE media_account_devices SET revoked_at=NOW(),updated_at=NOW() WHERE id=ANY($1::uuid[])`, [revoke]);
@@ -142,9 +151,9 @@ async function registerObserved(account, deviceLimit, sessions) {
     for (const item of observed) {
       if (!byId.has(item.deviceId)) continue;
       await client.query(`
-        UPDATE media_account_devices SET device_name=COALESCE($4,device_name),client_name=COALESCE($5,client_name),last_seen_at=NOW(),updated_at=NOW()
-        WHERE jellyfin_account_id=$1 AND subscription_id=$2 AND device_id=$3 AND revoked_at IS NULL
-      `, [account.account_id,account.subscription_id,item.deviceId,item.deviceName,item.clientName]);
+        UPDATE media_account_devices SET device_name=COALESCE($3,device_name),client_name=COALESCE($4,client_name),last_seen_at=NOW(),updated_at=NOW()
+        WHERE subscription_id=$1 AND device_id=$2 AND revoked_at IS NULL
+      `, [account.subscription_id,item.deviceId,item.deviceName,item.clientName]);
     }
 
     let capacity = Math.max(0, deviceLimit - registered.length);
@@ -154,12 +163,12 @@ async function registerObserved(account, deviceLimit, sessions) {
       const inserted = await client.query(`
         INSERT INTO media_account_devices(jellyfin_account_id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at,updated_at)
         VALUES($1,$2,$3,$4,$5,NOW(),NOW(),NULL,NOW())
-        ON CONFLICT(jellyfin_account_id,subscription_id,device_id) WHERE subscription_id IS NOT NULL DO UPDATE SET
+        ON CONFLICT(subscription_id,device_id) WHERE subscription_id IS NOT NULL DO UPDATE SET
           device_name=COALESCE(EXCLUDED.device_name,media_account_devices.device_name),
           client_name=COALESCE(EXCLUDED.client_name,media_account_devices.client_name),
           registered_at=CASE WHEN media_account_devices.revoked_at IS NOT NULL THEN NOW() ELSE media_account_devices.registered_at END,
           last_seen_at=NOW(),revoked_at=NULL,updated_at=NOW()
-        RETURNING id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
+        RETURNING id,jellyfin_account_id,subscription_id,device_id,device_name,client_name,registered_at,last_seen_at,revoked_at
       `, [account.account_id,account.subscription_id,item.deviceId,item.deviceName,item.clientName]);
       const row = inserted.rows[0];
       byId.set(item.deviceId, row);
@@ -209,7 +218,7 @@ async function releaseRemoteRestriction(account, { revokeDevices = false, subscr
   const revokeSubscriptionId = subscriptionId || account.stored_subscription_id || account.subscription_id || null;
   await transaction(async client => {
     if (revokeDevices && revokeSubscriptionId) {
-      await client.query(`UPDATE media_account_devices SET revoked_at=COALESCE(revoked_at,NOW()),updated_at=NOW() WHERE jellyfin_account_id=$1 AND subscription_id=$2 AND revoked_at IS NULL`, [account.account_id,revokeSubscriptionId]);
+      await client.query(`UPDATE media_account_devices SET revoked_at=COALESCE(revoked_at,NOW()),updated_at=NOW() WHERE subscription_id=$1 AND revoked_at IS NULL`, [revokeSubscriptionId]);
     }
     await client.query(`
       INSERT INTO media_account_device_policy(jellyfin_account_id,subscription_id,managed,enforced,device_limit,last_applied_devices,last_applied_at,last_error,updated_at)
@@ -254,8 +263,8 @@ async function reconcileAccount(account, sessions, cfg) {
   const entitlementChanged = currentlyManaged && !sameId(account.stored_subscription_id, account.subscription_id);
 
   // A registered-device allowance belongs to one entitlement, not forever to
-  // the Jellyfin account. A renewal/re-purchase/replacement subscription starts
-  // with fresh slots and must not inherit the old contract's native allowlist.
+  // the Jellyfin account. A new subscription starts with fresh slots. A server
+  // move under the SAME subscription reuses the subscription-scoped slots.
   if (entitlementChanged) {
     try {
       await releaseRemoteRestriction(account, { revokeDevices: true, subscriptionId: account.stored_subscription_id });
@@ -414,13 +423,13 @@ async function resetAccountDevices(customerId, accountId) {
   `, [accountId,customerId]);
   const account = found.rows[0];
   if (!account) throw new Error('Media account not found for this customer.');
-  if (!account.managed && !(await activeDevices(account.account_id, account.subscription_id)).length) throw new Error('This account does not have CAPTAiNFiN-managed registered devices to reset.');
+  if (!account.managed && !(await activeDevices(account.subscription_id)).length) throw new Error('This account does not have CAPTAiNFiN-managed registered devices to reset.');
 
-  const previous = await activeDevices(account.account_id, account.subscription_id);
+  const previous = await activeDevices(account.subscription_id);
   await applyRemoteAllowlist(account, []);
   await transaction(async client => {
     if (account.subscription_id) {
-      await client.query(`UPDATE media_account_devices SET revoked_at=COALESCE(revoked_at,NOW()),updated_at=NOW() WHERE jellyfin_account_id=$1 AND subscription_id=$2 AND revoked_at IS NULL`, [account.account_id,account.subscription_id]);
+      await client.query(`UPDATE media_account_devices SET revoked_at=COALESCE(revoked_at,NOW()),updated_at=NOW() WHERE subscription_id=$1 AND revoked_at IS NULL`, [account.subscription_id]);
     }
     await client.query(`
       INSERT INTO media_account_device_policy(jellyfin_account_id,subscription_id,managed,enforced,device_limit,last_applied_devices,last_applied_at,last_error,reset_at,updated_at)
