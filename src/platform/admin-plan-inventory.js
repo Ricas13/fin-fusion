@@ -11,6 +11,14 @@ const {esc,layout}=require('./admin-html');
 
 const inventoryWriteLimit=routeRateLimit.middleware({scope:'admin-plan-inventory',max:30,windowSeconds:60,reason:'admin_plan_inventory'});
 
+/*
+ * Technical capacity invariants deliberately stay below the customer-first UI:
+ * - Maximum simultaneous trials remains a manual acquisition cap.
+ * - Stremio household capacity is still measured in household units; Sold / held households
+ *   are accounted by plan-capacity and multi-household purchases consume the correct amount.
+ * - Paid/free Jellyfin availability remains controlled by server stream capacity internally.
+ *   Fleet stream capacity and Sold / held streams are converted into customer places for display.
+ */
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 async function plan(id){return(await query('SELECT id,code,name,capacity_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,streams,stremio_household_network_limit FROM plans WHERE id=$1 AND archived_at IS NULL',[id])).rows[0]||null;}
