@@ -9,6 +9,9 @@ const planPolicyRuntime=require('../src/entitlements/plan-lifecycle-policy');
 const inactivityRuntime=require('../src/automation/customer-inactivity');
 const planLifecyclePage=require('../src/platform/admin-jellyfin-plan-editor');
 const globalLifecyclePage=require('../src/platform/admin-jellyfin-lifecycle');
+const accessEditorRuntime=require('../src/platform/admin-plan-access');
+const laneStreamRuntime=require('../src/jellyfin/lane-stream-policy');
+const jellyfinPolicyRuntime=require('../src/jellyfin/policy');
 
 const nav=read('src/platform/admin-nav.js');
 const application=read('src/application.js');
@@ -27,6 +30,11 @@ const serverLibraries=read('src/platform/admin-server-library-dashboard.js');
 const plansList=read('src/platform/admin-plans-list.js');
 const planLifecycleSource=read('src/platform/admin-jellyfin-plan-editor.js');
 const globalLifecycleSource=read('src/platform/admin-jellyfin-lifecycle.js');
+const planAccessSource=read('src/platform/admin-plan-access.js');
+const planAccessClient=read('public/js/admin-plan-access.js');
+const navigationCoherence=read('public/js/admin-navigation-coherence.js');
+const laneStreamSource=read('src/jellyfin/lane-stream-policy.js');
+const devicePolicySource=read('src/jellyfin/device-access-policy.js');
 
 // Customers owns customer records and Jellyfin import/claim discovery. Invitation
 // onboarding is retired; imported-user claims remain a subordinate import flow.
@@ -127,5 +135,28 @@ assert(!composition.includes('createAdminCatalogShellRouter'),'Legacy catalogue 
 assert(composition.includes('createAdminCustomerCreateRouter()'),'The non-plan Add Customer route must remain available after removing the legacy catalogue router');
 assert(composition.includes('createLegacyJellyfinImportRedirectRouter()')&&!composition.includes('createAdminJellyfinImportRouter'),'Only the server-guidance landing route may own the legacy Jellyfin Import URL');
 assert(composition.includes('createAdminServerUsersRouter()')&&composition.includes('createAdminJellyfinPlanEditorRouter()')&&composition.includes('createAdminPlanInventoryRouter()'),'Plan lifecycle (now part of the unified Jellyfin plan editor)/inventory and server import routes must be mounted');
+
+// Jellyfin/Emby playback limits must be independently selectable. Explicit 0
+// is the persisted "unlimited/off" sentinel for concurrent streams, while bad
+// legacy data still falls back to the conservative one-stream default.
+const jellyfinPlan={service_type:'jellyfin',streams:1};
+assert.strictEqual(accessEditorRuntime.parse(jellyfinPlan,{streams:'0',jellyfinAccessModel:'concurrent_streams'}).streams,0,'Jellyfin plans must accept 0 concurrent streams as unlimited');
+const entitlementMap=new Map([['customer-1:primary',{streams:0}]]);
+assert.strictEqual(laneStreamRuntime.effectiveStreamLimit({customer_id:'customer-1',access_lane:'primary'},entitlementMap,new Map()),null,'an explicit plan stream value of 0 must disable concurrent-stream enforcement');
+assert.strictEqual(laneStreamRuntime.effectiveStreamLimit({customer_id:'customer-1',access_lane:'primary'},new Map([['customer-1:primary',{streams:2}]]),new Map()),2,'positive concurrent-stream limits must remain enforced');
+assert.strictEqual(laneStreamRuntime.effectiveStreamLimit({customer_id:'customer-1',access_lane:'primary'},new Map([['customer-1:primary',{streams:'broken'}]]),new Map()),1,'malformed legacy stream data must retain the conservative fallback');
+assert.strictEqual(jellyfinPolicyRuntime.effectiveTechnicalPolicy({streams:0,jellyfin_access_model:'household_network'},null).streams.effective,0,'legacy household mode must not erase the independent concurrent-stream setting');
+assert(planAccessSource.includes("int(body.streams, 0, 50, 'Concurrent streams')"),'plan access persistence must accept the unlimited stream sentinel');
+assert(planAccessClient.includes("input.min='0'")&&planAccessClient.includes("el.hidden=false"),'the unified browser editor must expose concurrent streams independently and permit 0=unlimited');
+assert(navigationCoherence.includes("loadScript('/js/admin-plan-access.js','data-admin-plan-access')"),'the unified Jellyfin plan editor must load the independent access enhancer');
+assert(laneStreamSource.includes('if (Number(raw) === 0) return null;'),'runtime stream enforcement must skip only the explicit unlimited sentinel');
+
+// Persistent device slots stay open until all configured slots are claimed.
+// Otherwise a 25-device plan would close Jellyfin/Emby native device access
+// after the first registration and the remaining 24 devices could never join.
+const underCapacity=devicePolicySource.indexOf('if (ids.length < limit)');
+const nativeAllowlist=devicePolicySource.indexOf('const applied = await applyRemoteAllowlist(account, ids);');
+assert(underCapacity>=0&&nativeAllowlist>underCapacity,'native media-server device allowlisting must happen only after the configured persistent slots are full');
+assert(devicePolicySource.includes('awaitingAdditionalDevices: true'),'under-capacity device policies must deliberately keep the native allowlist open for later slot claims');
 
 console.log('plan-driven access lifecycle smoke: ok');
