@@ -24,6 +24,7 @@ async function queueNeedsStaff({ticket,messageId=null,kind='created',ticketUrl=n
       ticketNumber:ticket.ticket_number,
       ticketTitle:ticket.subject,
       ticketContent:safeContent,
+      ticketEventKind:isReply?'reply':'created',
       category:ticket.category,
       priority:ticket.priority,
       status:ticket.status,
