@@ -41,4 +41,5 @@ assert(/effective_stremio_entitlements/.test(migration),'database must expose an
 assert(/COALESCE\(p\.is_free_tier,FALSE\) ASC/.test(migration),'paid or trial Jellyfin access must overlay the permanent Free Server fallback');
 assert(/subscription_access_blocked/.test(migration)&&/payment_delinquency/.test(migration),'provider delinquency holds must be scoped to the affected recurring subscription');
 
+require('./customer-access-variants-smoke');
 console.log('service-aware portals smoke: ok');

@@ -89,13 +89,13 @@ function main() {
     assert(planChange.includes("timeout:providerHttp.timeoutMs('stripe')"), 'Stripe plan-change calls must use the canonical provider HTTP deadline.');
     const immediate = section(planChange, 'async function setStripePlan', 'async function createLocalChange');
     assert(immediate.includes('let providerMutationAttempted=false'), 'Immediate Stripe plan changes must track whether a remote mutation may have happened.');
-    assert(immediate.includes('providerMutationAttempted=true;const updated=await client.subscriptions.update'), 'Immediate Stripe mutation ambiguity is not marked before the provider call.');
+    assert(/providerMutationAttempted=true;\s*const updated=await client\.subscriptions\.update/.test(immediate), 'Immediate Stripe mutation ambiguity is not marked before the provider call.');
     assert(immediate.includes('billingControl.syncSubscription(subscriptionId,{expectedProviderPriceId:mapping.external_id})'), 'Immediate Stripe plan change can still reconcile after merely proving the subscription is readable rather than proving the target Price.');
     assert(immediate.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Ambiguous post-provider Stripe plan-change failures are still forced terminal instead of entering recovery.');
     const scheduled = section(planChange, 'async function scheduleStripeProvider', 'async function requestChange');
     assert(scheduled.includes('let providerMutationAttempted=false'), 'Scheduled Stripe plan changes must track possible provider mutation.');
     assert(scheduled.includes('providerMutationAttempted=true;schedule=await client.subscriptionSchedules.create'), 'Stripe schedule creation ambiguity is not routed into provider-operation recovery.');
-    assert(scheduled.includes('providerMutationAttempted=true;const updated=await client.subscriptionSchedules.update'), 'Stripe schedule update ambiguity is not routed into provider-operation recovery.');
+    assert(/providerMutationAttempted=true;\s*const updated=await client\.subscriptionSchedules\.update/.test(scheduled), 'Stripe schedule update ambiguity is not routed into provider-operation recovery.');
     assert(scheduled.includes('error.planChangeRefusal&&!providerMutationAttempted?{terminal:true}:{}'), 'Scheduled Stripe post-provider failures are still forced terminal.');
     assert(scheduled.includes("scheduleChangeId!==String(change.id)"), 'A new local plan change can still take over a Stripe schedule owned by an older CAPTAiNFiN change.');
     assert(scheduled.includes('error.planChangeMutationAttempted=providerMutationAttempted'), 'Schedule errors do not carry provider-mutation ambiguity back to the local plan-change owner.');
@@ -104,7 +104,7 @@ function main() {
     assert(requestChange.includes("state=CASE WHEN $3::boolean THEN 'failed' ELSE state END"), 'Retryable Stripe scheduling errors do not preserve the open local plan-change state.');
     const dueStripe = section(planChange, 'async function applyDueStripe', 'async function expireDuePaypal');
     assert(dueStripe.includes("throw planChangeRefusal('Scheduled Stripe target price is missing."), 'Deterministic scheduled Stripe invariants must be marked for manual failure.');
-    assert(dueStripe.includes('if(error.planChangeRefusal){') && dueStripe.includes("SET state='failed',error=$2"), 'Unrecoverable scheduled Stripe divergence must still become a visible failed plan change.');
+    assert(/if\(error\.planChangeRefusal\)(?:\{|\s*await query)/.test(dueStripe) && dueStripe.includes("SET state='failed',error=$2"), 'Unrecoverable scheduled Stripe divergence must still become a visible failed plan change.');
     assert(dueStripe.includes("UPDATE customer_plan_changes SET error=$2,updated_at=NOW() WHERE id=$1 AND state='pending'"), 'Transient scheduled Stripe failures must remain pending so the next automation cycle can converge them.');
     assert(dueStripe.includes("provider_schedule_state='applied',error=NULL"), 'Successful scheduled Stripe convergence must clear stale retry errors.');
     assert(dueStripe.includes('provider_schedule_id=COALESCE(provider_schedule_id,$2),provider_schedule_state=$3,error=NULL'), 'A healthy provider schedule observation must backfill missing local schedule identity and clear a previous transient error.');
