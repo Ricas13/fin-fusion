@@ -38,7 +38,7 @@ function renderDashboard(cancelAtPeriodEnd=false,openPlanChange={state:'pending'
     freePlan:null,stremioPlan:null,renewalSubscription:recurring,openPlanChange,
     stripeEnabled:false,paypalEnabled:true,plisioEnabled:false,currency:'GBP',navOptions:{},overseerrUrl:null,
     requestAccess:null,requestSyncConfigured:false,libraryProfiles:[],provisioningState:null,csrfToken:'csrf-smoke',
-    message:null,error:null,welcome:false,hasJellyfin:true,hasStremio:false,stremioHousehold:null,
+    message:null,error:null,openCheckout:null,welcome:false,hasJellyfin:true,hasStremio:false,stremioHousehold:null,
     stremioInstallUrl:null,stremioManifestUrl:null
   },{filename:dashboardPath});
 }
