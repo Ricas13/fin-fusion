@@ -95,6 +95,7 @@ function effectiveStreamLimit(row, entitlements, overrideMap) {
     if (!entitlement) return null;
     const override = overrideMap.get(`${row.customer_id}:${accessLane}`);
     const raw = override === null || override === undefined ? entitlement.streams : override;
+    if (Number(raw) === 0) return null;
     const limit = Number(raw);
     return Number.isInteger(limit) && limit > 0 ? limit : 1;
 }
