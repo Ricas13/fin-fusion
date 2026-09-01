@@ -38,4 +38,21 @@ async function stateForPlan(planId){
   };
 }
 
-module.exports={forEntitlement,authorized,stateForPlan};
+async function statesForAllPlans(){
+  const result=await query(`SELECT
+      p.id plan_id,
+      COUNT(ps.source_id) FILTER(WHERE ps.enabled=TRUE)::int selected,
+      COUNT(ps.source_id) FILTER(WHERE ps.enabled=TRUE AND s.enabled=TRUE AND s.auth_state='connected' AND i.status='ready' AND i.item_count>0)::int ready
+    FROM plans p
+    LEFT JOIN plan_stremio_sources ps ON ps.plan_id=p.id
+    LEFT JOIN stremio_sources s ON s.id=ps.source_id
+    LEFT JOIN stremio_source_index_state i ON i.source_id=s.id
+    WHERE p.service_type IN('stremio','bundle')
+    GROUP BY p.id`);
+  return Object.fromEntries(result.rows.map(row=>[String(row.plan_id),{
+    selected:Number(row.selected||0),
+    ready:Number(row.ready||0)
+  }]));
+}
+
+module.exports={forEntitlement,authorized,stateForPlan,statesForAllPlans};
