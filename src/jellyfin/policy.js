@@ -41,14 +41,6 @@ function hasValue(v) {
 function effectiveTechnicalPolicy(plan, override) {
     const rows = {};
     for (const field of TECHNICAL_FIELDS) {
-        // A household-network plan deliberately has no concurrent stream
-        // entitlement. Ignore historical/customer stream overrides here so an
-        // override cannot accidentally reactivate the retired enforcement
-        // driver after the plan has been switched to household access.
-        if (field === 'streams' && plan?.jellyfin_access_model === 'household_network') {
-            rows[field] = { plan: null, override: null, effective: null };
-            continue;
-        }
         const planValue = hasValue(plan?.[field]) ? plan[field] : DEFAULT_PLAN_VALUES[field];
         const overrideValue = hasValue(override?.[field]) ? override[field] : null;
         rows[field] = {
