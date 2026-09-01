@@ -20,7 +20,7 @@ const stremioEntitlements=read('src/stremio/entitlements.js');
 const checkout=read('src/platform/flexible-checkout.js');
 const planChange=read('src/payments/customer-plan-change.js');
 const migration=read('db/migrations/044_multi_service_subscriptions.sql');
-const embyMigration=read('db/migrations/20260901170000_emby_share_service_lane.sql');
+const embyMigration=read('db/migrations/20260901220000_emby_share_service_lane.sql');
 const serviceCatalog=read('src/catalog/service-catalog.js');
 const publicShell=read('src/platform/public-shell.js');
 const storefront=read('src/platform/storefront.js');
@@ -30,7 +30,6 @@ const mediaReconciliation=read('src/jellyfin/media-service-reconciliation.js');
 const serviceScope=require('../src/entitlements/service-scope');
 
 assert(/assertSellableCode/.test(readiness)&&/PLAN_/.test(readiness),'product readiness must expose a fail-closed sale assertion');
-
 assert(/stremioEntitlements\.entitledSubscription\(customerId\)/.test(customerDashboard)&&/res\.render\('customer\/dashboard',[\s\S]*stremioPlan/.test(customerDashboard),'Stremio-only and mixed-service customers must use the unified multi-access Home');
 assert(/sellablePlans/.test(customerDashboard)&&/productReadiness\.evaluatePlan/.test(customerDashboard),'customer acquisition catalogue must hide undeliverable products with plan-specific readiness');
 assert(/Create your private installation link/.test(customerDashboardView)&&/Keep this link private/.test(customerDashboardView)&&/Installation manifest/.test(customerDashboardView),'Account Home Stremio surface must explain the private installation delivery model safely');
@@ -40,7 +39,6 @@ assert(/admin\.plan\.delivery\.update/.test(planDelivery)&&/mutationLimit/.test(
 assert(/createAdminPlanDeliveryRouter/.test(router),'plan delivery router must be mounted');
 assert(/\/delivery/.test(planWorkflow)&&/Delivery/.test(planWorkflow)&&/\/delivery\$/.test(planWorkflow)&&!/>Delivery<\/a>/.test(plansList),'Plan workflow must expose delivery management after opening a plan without restoring arbitrary list shortcuts');
 assert(/registerHandler\('retry_failed'.*provisioning\.reconcileCustomer\(item\.customer_id\)/s.test(bulkOperations)&&/retriedThrough:'service-aware-reconciliation'/.test(bulkOperations),'Retry failed setup must use service-aware reconciliation for Jellyfin, Stremio and bundle customers');
-
 assert(/serviceScope\.overlaps/.test(lifecycle)&&/!serviceScope\.isFreeTier/.test(lifecycle),'trial eligibility must be scoped by overlapping service and ignore permanent Free Server fallback');
 assert(/effectiveStremioSubscription/.test(subscriptionState),'subscription state must expose a dedicated Stremio primary entitlement');
 assert(/effectiveStremioSubscription\(customerId\)/.test(stremioEntitlements),'Stremio entitlement resolution must not depend on the Jellyfin primary entitlement');
@@ -49,7 +47,6 @@ assert(/overlappingRecurring/.test(checkout)&&/serviceScope\.overlaps/.test(chec
 assert(/effective_stremio_entitlements/.test(migration),'database must expose an independent Stremio primary entitlement view');
 assert(/COALESCE\(p\.is_free_tier,FALSE\) ASC/.test(migration),'paid or trial Jellyfin access must overlay the permanent Free Server fallback');
 assert(/subscription_access_blocked/.test(migration)&&/payment_delinquency/.test(migration),'provider delinquency holds must be scoped to the affected recurring subscription');
-
 assert(serviceScope.overlaps({service_type:'emby'},{service_type:'emby'}),'Emby plans must overlap other Emby plans');
 assert(!serviceScope.overlaps({service_type:'emby'},{service_type:'jellyfin'}),'Emby and Jellyfin must remain independent service lanes');
 assert(!serviceScope.overlaps({service_type:'emby'},{service_type:'stremio'}),'Emby and Stremio must remain independent service lanes');
