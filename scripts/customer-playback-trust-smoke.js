@@ -31,7 +31,7 @@ expect(trust.includes('successMs < attemptMs')&&trust.includes("reason = 'last_p
 expect(trust.includes('cfg.pollSeconds + cfg.slackSeconds'),'Server trust must expire at poll interval plus slack.');
 expect(worker.includes("STREAM_POLICY_POLL_SECONDS || 20")&&worker.includes('Math.max(15'),'Playback poll default must be 20s with a 15s floor.');
 expect(worker.includes('activityTrust.recordCycle(serverIds, result.serverFailures || []'),'The activity worker must persist current-cycle per-server poll outcomes.');
-const abortedPollIndex=worker.indexOf('recordAbortedActivityCycle(error)');
+const abortedPollIndex=worker.indexOf('await recordAbortedActivityCycle(error)');
 const householdPolicyIndex=worker.indexOf('householdNetworkPolicy.runHouseholdNetworkCycle');
 expect(abortedPollIndex>=0&&householdPolicyIndex>abortedPollIndex,'Secondary household-policy failures must occur outside the playback-poll failure boundary and must not overwrite successful poll trust.');
 expect(worker.includes("Household network policy cycle failed:"),'Household policy failures must degrade the worker independently instead of failing the playback poll.');
