@@ -7,6 +7,7 @@ const paypal=require('../payments/paypal');
 const plisio=require('../payments/plisio');
 const discounts=require('../payments/discounts');
 const publicError=require('./public-error');
+const moneyFormat=require('./money-format');
 const planPricing=require('../payments/plan-pricing');
 const accessVariants=require('../payments/stream-variants');
 const variantCapacity=require('../payments/access-variant-capacity');
@@ -35,7 +36,7 @@ function recurringProvider(row){if(row?.source==='stripe'&&/^sub_/i.test(String(
 function livePlanIds(portal){return new Set((portal?.subscriptions||[]).filter(liveSubscription).map(row=>String(row.plan_id)).filter(Boolean));}
 function currentRecurringForPlan(plan,portal){const rows=(portal?.subscriptions||[]).filter(row=>liveSubscription(row)&&recurringProvider(row));const matches=rows.filter(row=>Boolean(row.is_addon)===Boolean(plan.is_addon)&&serviceScope.overlaps(row,plan));return matches.find(row=>String(row.plan_id)===String(plan.id))||matches[0]||null;}
 function variantPaymentOptions(variant,enabled){return(Array.isArray(variant?.payment_options)?variant.payment_options:[]).filter(option=>enabled[option.provider]).map(option=>({provider:option.provider,checkoutMode:option.checkoutMode||option.checkout_mode||'payment'}));}
-function priceLabel(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:currency||'GBP',currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}catch(_){return `${currency||'GBP'} ${(Number(minor||0)/100).toFixed(2)}`;}}
+function priceLabel(minor,currency){return moneyFormat.formatMinor(minor,currency||'GBP');}
 
 async function catalogPlans(){const currency=await planPricing.platformDefaultCurrency(),logical=await customers.listPublicPlans(),priced=await planPricing.decoratePlans(logical,null),decorated=await accessVariants.decoratePlans(priced,currency),ctx=await productReadiness.context(),ready=decorated.filter(plan=>productReadiness.evaluate(plan,ctx).sellable);return variantCapacity.decoratePlans(ready);}
 async function sellablePlans(includePlanIds=[]){const keep=new Set((includePlanIds||[]).map(String));return(await catalogPlans()).filter(plan=>plan.is_free_tier||!plan.capacity.soldOut||keep.has(String(plan.id)));}
