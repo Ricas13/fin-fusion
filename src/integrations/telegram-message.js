@@ -5,7 +5,7 @@ function clean(value, max = 500) {
 }
 
 function escapeHtml(value) {
-    return clean(value, 5000)
+    return String(value ?? '').slice(0, 5000)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
