@@ -18,13 +18,13 @@ assert(v2Source.includes('options.skipAccessSections'),'v2 must keep the explici
 assert(wrapperSource.includes("accessCards=require('./customer-360-access-cards')"),'Customer 360 must have one dedicated card Access renderer');
 assert(!wrapperSource.includes('manage.portalSection'),'Portal account/onboarding must not be duplicated on the Access tab');
 assert(!adminSource.includes('Preview customer portal'),'The redundant Preview customer portal action must be removed');
-assert(wrapperSource.includes('jellyfinPasswordSupport(safe)+accessCards.render'),'compact Access must keep Jellyfin password support reachable after top-action normalization');
 
 assert(cardsSource.includes('accessOverviewGrid'),'Access summary must use compact overview cards');
 assert(cardsSource.includes('accessControlGrid'),'Technical access controls must use a responsive card grid');
 assert(cardsSource.includes("grid-template-columns:repeat(3,minmax(0,1fr))"),'Desktop technical controls must use a 3-column grid');
 assert(cardsSource.includes("option('','Inherit'")&&cardsSource.includes("option('true','Allow'")&&cardsSource.includes("option('false','Deny'"),'Boolean access cards must preserve tri-state Inherit / Allow / Deny semantics');
 assert(cardsSource.includes('Save access changes'),'Technical cards must save together');
+assert(cardsSource.includes('/admin/customer-jellyfin-password?customerId=')&&cardsSource.includes('Change Jellyfin password'),'Jellyfin account details must retain password support inside the compact Access workspace');
 assert(/<details class=\"section accessDisclosure\"><summary class=\"accessDisclosureSummary\"><div><span class=\"accessEyebrow\">Libraries/.test(cardsSource),'Libraries must be collapsed behind a compact summary');
 assert(cardsSource.includes('Provisioning history')&&cardsSource.includes('accessHistory'),'Provisioning history must be a collapsed lower disclosure');
 assert(cardsSource.includes('accessActivity'),'Activity must be a collapsed lower disclosure');
