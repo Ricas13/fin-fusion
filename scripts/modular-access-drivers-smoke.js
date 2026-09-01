@@ -29,12 +29,12 @@ assert.strictEqual(streamComponent.driver,'concurrent_streams');
 assert.strictEqual(streamComponent.config.streamLimit,3);
 assert.strictEqual(components.accessLabel(streamPlan),'3 Jellyfin streams');
 
-const householdPlan={service_type:'jellyfin',jellyfin_access_model:'household_network',streams:null,jellyfin_household_network_limit:1,jellyfin_household_lease_minutes:180};
+const householdPlan={service_type:'jellyfin',jellyfin_access_model:'household_network',streams:1,jellyfin_household_network_limit:1,jellyfin_household_lease_minutes:180};
 const householdComponent=components.componentForPlan(householdPlan,'jellyfin');
 assert.strictEqual(householdComponent.driver,'household_network');
 assert.deepStrictEqual(householdComponent.config,{networkLimit:1,leaseMinutes:180});
 assert.strictEqual(components.accessLabel(householdPlan),'1 Jellyfin household network');
-assert.deepStrictEqual(policy.effectiveTechnicalPolicy(householdPlan,{streams:9}).streams,{plan:null,override:null,effective:null},'stream overrides must not reactivate concurrent limits on a household plan');
+assert.deepStrictEqual(policy.effectiveTechnicalPolicy(householdPlan,{streams:9}).streams,{plan:1,override:9,effective:9},'concurrent stream overrides must remain independent even when the optional household lease is enabled');
 
 const bundle={service_type:'bundle',jellyfin_access_model:'household_network',jellyfin_household_network_limit:2,jellyfin_household_lease_minutes:120,stremio_household_network_limit:3,stremio_household_lease_minutes:300};
 const bundleComponents=components.componentsForPlan(bundle);
@@ -69,7 +69,7 @@ const storefront=read('src/platform/storefront-core.js');
 const catalogVersioning=read('src/platform/catalog-versioning.js');
 
 for(const token of ['jellyfin_access_model','jellyfin_household_network_limit','jellyfin_household_lease_minutes','stremio_household_lease_minutes','access_network_leases','access_network_events'])assert(migration.includes(token),`migration is missing ${token}`);
-assert(migration.includes('ALTER COLUMN streams DROP NOT NULL'),'household Jellyfin plans must be able to represent a non-applicable stream count as NULL');
+assert(migration.includes('ALTER COLUMN streams DROP NOT NULL'),'legacy household-plan migrations must remain replayable even though new plan creation now keeps stream caps independent');
 assert(familyMigration.includes('network_family')&&familyMigration.includes('access_network_leases_subject_family_idx'),'dual-stack household enforcement must persist the normalized IP family');
 assert(leases.includes('pg_advisory_xact_lock'),'household lease claims must serialize per subject');
 assert(leases.includes("decision === 'denied'")&&leases.includes("INTERVAL '5 minutes'"),'repeated denials must be audit-throttled');
