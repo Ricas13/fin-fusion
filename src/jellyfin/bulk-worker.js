@@ -158,8 +158,7 @@ async function reconcileRequestUser(customerId) {
 // item. Libraries are only changed here when the plan's Libraries card (or an
 // explicit customer library action) actually changed their effective policy.
 registerHandler('plan_reconcile', async item => {
-    const extraManagedRoleIds=Array.isArray(item.params?.discordExtraManagedRoleIds)?item.params.discordExtraManagedRoleIds:[];
-    const outcome = await provisioning.reconcileCustomer(item.customer_id,{discordExtraManagedRoleIds:extraManagedRoleIds});
+    const outcome = await provisioning.reconcileCustomer(item.customer_id);
     const request = await reconcileRequestUser(item.customer_id);
     return { active: Boolean(outcome?.active), requestStatus: request.status || null };
 });
