@@ -7,7 +7,12 @@
 // guarantees called out in the Phase 3C spec.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const policy = require('../src/jellyfin/policy');
+const subscriptionState = require('../src/entitlements/subscription-state');
+const root = path.join(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 function main() {
     const plan = {
@@ -130,6 +135,33 @@ function main() {
         // (crafted/unknown) must be dropped, never applied.
         const addUnknown = policy.libraryOverridePlan('add', ['Totally Made Up'], catalog);
         assert.deepStrictEqual(addUnknown, [], 'Add must silently drop names outside the discovered catalog');
+    }
+
+    // Serious media-policy regressions: provider type, PAYG/recurring identity,
+    // and Free/Premium household lanes must never collapse into one another.
+    {
+        const fourK = read('src/jellyfin/four-k-transcode-policy.js');
+        const payg = read('src/jellyfin/payg-expiry-messages.js');
+        const household = read('src/jellyfin/household-network-policy.js');
+        const worker = read('scripts/activity-worker.js');
+
+        assert(!fourK.includes("COALESCE(js.media_server_type,'jellyfin')='jellyfin'"), '4K transcode enforcement must not silently exclude Emby servers');
+        assert(fourK.includes('/Sessions/${encodeURIComponent(candidate.Id)}/Playing/Stop'), '4K enforcement must continue through the shared media-server registry path');
+
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'stripe', provider_subscription_id: 'sub_123' }), true, 'Stripe sub_* is recurring');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'stripe', provider_subscription_id: 'pi_123' }), false, 'Stripe PaymentIntent is PAYG, not recurring');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'paypal', provider_subscription_id: 'I-ABC123' }), true, 'PayPal I-* is recurring');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'paypal', provider_subscription_id: 'PAY-123' }), false, 'PayPal one-time payment ID is PAYG');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'plisio', provider_subscription_id: 'txn-123' }), false, 'Plisio transactions are PAYG');
+        assert(payg.includes("s.source IN ('stripe','paypal','plisio')"), 'PAYG reminders must include Plisio one-time purchases');
+        assert(payg.includes("s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_'") && payg.includes("s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-'"), 'PAYG reminders must exclude only canonical provider recurring identifiers');
+        assert(!payg.includes('s.provider_subscription_id IS NULL'), 'PAYG reminders must not mistake non-null one-time payment IDs for recurring subscriptions');
+
+        assert(household.includes('aps.device_name,ja.access_lane'), 'household sessions must carry the owning Jellyfin lane');
+        assert(household.includes("(CASE WHEN p.is_free_tier THEN 'free' ELSE 'primary' END)=$2"), 'household entitlement lookup must be scoped to Free versus primary lane');
+        assert(household.includes('failedServerIds.has(String(session.server_id))'), 'household enforcement must skip only the server whose poll failed');
+        assert(worker.includes('runHouseholdNetworkCycle({ failedServerIds })'), 'activity worker must pass per-server failure identity to household enforcement');
+        assert(!worker.includes('runHouseholdNetworkCycle({ pollsReliable: !failedServerIds.length })'), 'one unrelated server failure must not disable household enforcement fleet-wide');
     }
 
     console.log('Policy engine smoke test passed.');
