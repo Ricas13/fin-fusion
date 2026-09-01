@@ -73,6 +73,31 @@
     return'product';
   }
 
+  function ensureProductAdvanced(card){
+    if(card.id!=='product'||card.dataset.planReferenceProductAdvanced==='1')return;
+    const form=card.querySelector(':scope > form.planConfigBody');
+    if(!form)return;
+    const candidates=[...form.children].filter(element=>element.classList?.contains('formGroup'));
+    const advanced=candidates.filter(element=>{
+      const label=String(element.querySelector(':scope > label')?.textContent||'').trim().toLowerCase();
+      return label==='homepage features'||label==='discord plan role';
+    });
+    if(!advanced.length){card.dataset.planReferenceProductAdvanced='1';return;}
+
+    const details=document.createElement('details');
+    details.className='planCardDetails planReferenceProductAdvanced';
+    const summary=document.createElement('summary');
+    summary.textContent='Product & storefront advanced settings';
+    const body=document.createElement('div');
+    body.className='planDetailsBody planReferenceProductAdvancedBody';
+    details.append(summary,body);
+    advanced.forEach(element=>body.appendChild(element));
+
+    const buttonRow=form.querySelector(':scope > .buttonRow');
+    form.insertBefore(details,buttonRow||null);
+    card.dataset.planReferenceProductAdvanced='1';
+  }
+
   function advancedDetails(card){
     return [...card.querySelectorAll('details.planCardDetails,details.adminSettingsAdvanced')];
   }
@@ -114,6 +139,7 @@
   function decorateCard(card){
     const kind=cardKind(card);
     card.dataset.planReferenceKind=kind;
+    ensureProductAdvanced(card);
     const head=card.querySelector(':scope > .planConfigHead,:scope > .sectionHead');
     if(!head)return;
 
@@ -157,6 +183,11 @@
     if(pageHeader){
       const title=pageHeader.querySelector('h1');
       const titleContainer=title?.parentElement;
+      if(title){
+        title.dataset.planReferencePlanName=planName;
+        title.setAttribute('aria-label',`Edit ${planName} plan`);
+        title.textContent='Edit Plan';
+      }
       if(titleContainer&&!titleContainer.querySelector('.planReferenceBreadcrumb')){
         const crumb=document.createElement('div');
         crumb.className='planReferenceBreadcrumb';
