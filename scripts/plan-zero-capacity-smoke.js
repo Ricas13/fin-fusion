@@ -147,13 +147,13 @@ ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
   assert.strictEqual(sent.length,1,'persistent availability must create exactly one Discord message');
   assert.strictEqual(edited.length,0,'unchanged availability must not issue a redundant PATCH');
   assert.strictEqual(sent[0].allowEveryone,false,'persistent availability must never create @everyone spam');
-  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.includes('https://portal.example')&&sent[0].text.includes('10 minutes'),'open status must expose exact remaining places, portal URL and reservation duration');
+  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='https://portal.example')&&sent[0].text.includes('10 minutes'),'open status must expose exact remaining places, portal URL and reservation duration');
   assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'),'status updater must choose the same first public Free Server plan as the storefront');
   const fullStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:0}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example'}});
   assert.strictEqual(fullStatus.updated,1,'capacity transition to full must edit the existing Discord status');
   assert.strictEqual(sent.length,1,'capacity transition must not append a second Discord message');
   assert.strictEqual(edited.length,1,'capacity transition must PATCH the canonical Discord message once');
-  assert.strictEqual(edited[0].messageId,'987654321098765432','capacity transition must edit the stored canonical message ID');
+  assert.strictEqual(edited[0].messageId,'987654321098765432','capacity transition must edit the stored canonical Discord message ID');
   assert(edited[0].text.includes('No free places currently available.')&&edited[0].text.includes('10 minutes'),'full status must explain both unavailability and automatic hold expiry');
 
   const soldPlan={id:'free-plan',name:'Free Server',description:'Free access',service_type:'jellyfin',billing_interval:'month',price_minor:0,streams:1,capacity:{soldOut:true,label:'Currently full',kind:'sold'}};
