@@ -71,7 +71,7 @@ assert(bulkJobsSource.includes('queuePlanDiscordReconciliation') && bulkJobsSour
 assert(bulkWorkerSource.includes("registerHandler('discord_plan_reconcile'") && bulkWorkerSource.includes('reconcileDiscordRoles'), 'bulk worker must own the dedicated Discord-only reconciliation handler');
 assert(!bulkWorkerSource.slice(bulkWorkerSource.indexOf("registerHandler('discord_plan_reconcile'"), bulkWorkerSource.indexOf("registerHandler('plan_source_rebuild'")).includes('effective_customer_entitlements'), 'Discord-only fanout must not regress to a broad entitlement-view mutation path');
 
-assert(stremioEditor.includes('Plan, storefront & commerce') && stremioEditor.includes('name="description"') && stremioEditor.includes('name="feature${i+1}"'), 'Stremio must edit storefront copy inside its existing product/commerce card');
+assert(stremioEditor.includes('Plan, storefront & commerce') && stremioEditor.includes('name="description"') && stremioEditor.includes('name="feature${i + 1}"'), 'Stremio must edit storefront copy inside its existing product/commerce card');
 assert(stremioEditor.includes('UPDATE plans SET name=$2,description=$3,marketing_features=$4::text[],billing_interval=$5,duration_days=$6'), 'the Stremio product/commerce save must persist storefront copy in the same mutation');
 assert(stremioEditor.includes("post('editor-storefront',saveStorefront,'Storefront saved.')"), 'legacy Storefront POST must remain accepted by the compatibility Stremio editor router');
 assert(stremioEditor.includes('UPDATE plans SET description=$2,marketing_features=$3::text[],updated_at=NOW() WHERE id=$1'), 'Storefront compatibility save must write the same description/features columns without changing commerce ownership');
