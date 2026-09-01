@@ -43,9 +43,10 @@ assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrog
 assert(!/public, max-age=60/.test(storefront),'storefront must not retain the old one-minute public capacity cache');
 
 assert(/STATE_KEY='discord_free_places_status_v1'/.test(freePlaces),'Discord Free Server availability must persist the canonical message identity');
-assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===text/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged capacity');
+assert(/persistentMessage\(remaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Reserve \/ Create Free Account/.test(freePlaces),'Discord Free Server availability must render a structured status card with a reservation action');
+assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===signature/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged structured capacity');
 assert(/No free places currently available/.test(freePlaces)&&/10 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
-assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
+assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
 assert(/free_places_digest:30/.test(fs.readFileSync('scripts/automation-worker.js','utf8')),'persistent Discord capacity must also reconcile at least every 30 seconds');
 
