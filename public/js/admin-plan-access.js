@@ -320,10 +320,19 @@
     refresh();
   }
 
+  function isJellyfinPlanEditor(room){
+    return Boolean(
+      room &&
+      room.querySelector('#access form[action*="/editor-access"]') &&
+      room.querySelector('#delivery form[action*="/editor-delivery"]') &&
+      room.querySelector('#libraries')
+    );
+  }
+
   function boot(){
     accessEditor();
     const room=document.querySelector('.planControlRoom');
-    if(!room)return;
+    if(!isJellyfinPlanEditor(room))return;
     const content=decoratePage(room);
     if(!content)return;
     installSaveController(room);
