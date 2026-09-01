@@ -10,15 +10,24 @@
   </style>
 </head>
 <body><main class="card">
+  <% const hasFreeReservation = Boolean(freeIntent && freeReservation && freeReservation.id); %>
   <h1><%= freeIntent ? 'Claim Free Access' : 'Create '+siteName+' account' %></h1>
-  <p class="muted"><%= freeIntent ? 'Create your portal account first. CAPTAiNFiN will then activate your Free Access place.' : 'Your portal account stays yours even when a trial or service access ends. You can return later to renew or choose another plan.' %></p>
+  <p class="muted"><%= freeIntent ? 'Reserve a Free Access place first, then create your portal account and verify your email before the hold expires.' : 'Your portal account stays yours even when a trial or service access ends. You can return later to renew or choose another plan.' %></p>
   <p class="muted">If you were emailed a claim link for an existing Jellyfin account, use that link instead — do not register again.</p>
   <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. Sign in if you already have an account, or contact support.</div><% } %>
-  <% if (registrationOpen && verificationRequired) { %><div class="notice"><strong>Email verification first.</strong> Your details are held temporarily; the customer account is created only after you open the verification link. After verification you are signed in automatically.</div><% } %>
-  <% if (registrationOpen && freeIntent && verificationRequired) { %><div class="notice freeHold"><strong>Your free place is protected while you verify.</strong> After you submit valid registration details, CAPTAiNFiN reserves one available Free Access place for <%= freeHoldMinutes %> minutes. Verify within that window and the hold converts into your real access automatically.</div><% } %>
-  <% if (registrationOpen && freeIntent && !verificationRequired) { %><div class="notice freeHold"><strong>Free Access will be claimed immediately.</strong> After the account is created, CAPTAiNFiN will activate the free place in the same onboarding flow.</div><% } %>
+  <% if (registrationOpen && verificationRequired && (!freeIntent || hasFreeReservation)) { %><div class="notice"><strong>Email verification first.</strong> Your details are held temporarily; the customer account is created only after you confirm the verification link. After verification you are signed in automatically.</div><% } %>
+  <% if (registrationOpen && freeIntent && !hasFreeReservation) { %><div class="notice"><strong>Reserve before entering your details.</strong> Opening this page does not consume a place. Press the button below to atomically reserve one available Free Access place for <%= freeHoldMinutes %> minutes. If somebody else gets the last place first, registration will not start.</div><% } %>
+  <% if (registrationOpen && freeIntent && hasFreeReservation) { %><div class="notice freeHold"><strong>Your Free Access place is reserved.</strong> This exclusive hold lasts <%= freeHoldMinutes %> minutes and expires at <%= new Date(freeReservation.expires_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %>. Complete registration and email verification before then.</div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
-  <% if (registrationOpen) { %>
+  <% if (registrationOpen && freeIntent && !hasFreeReservation) { %>
+  <form method="post" action="/account/register">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="freeIntent" value="1">
+    <input type="hidden" name="reserveFree" value="1">
+    <button type="submit">Reserve / Create Free Account</button>
+  </form>
+  <% } %>
+  <% if (registrationOpen && (!freeIntent || hasFreeReservation)) { %>
   <form method="post" action="/account/register">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="freeIntent" value="<%= freeIntent ? '1' : '0' %>">
@@ -36,7 +45,7 @@
       <div class="channel"><strong>Discord</strong><label class="check"><input type="checkbox" name="discordOptIn" value="1"><span>I want Discord bot DMs.</span></label><div class="hint">After account creation, use Connect Discord to authorize your Discord identity.</div></div>
     </details>
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
-    <button type="submit"><%= freeIntent ? (verificationRequired ? 'Reserve free place & verify email' : 'Create account & claim Free Access') : (verificationRequired ? 'Verify email & continue' : 'Create account & continue') %></button>
+    <button type="submit"><%= freeIntent ? 'Continue & verify email' : (verificationRequired ? 'Verify email & continue' : 'Create account & continue') %></button>
   </form>
   <% } %>
   <p class="muted">Already registered? <a href="/account/login">Sign in</a></p>
