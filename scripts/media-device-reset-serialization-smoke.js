@@ -12,9 +12,9 @@ const root = path.join(__dirname, '..');
 const deviceSource = fs.readFileSync(path.join(root, 'src/jellyfin/device-access-policy.js'), 'utf8');
 const entitlementMigration = fs.readFileSync(path.join(root, 'db/migrations/20260901103000_media_device_entitlement_scope.sql'), 'utf8');
 assert(entitlementMigration.includes('ADD COLUMN IF NOT EXISTS subscription_id uuid REFERENCES subscriptions(id)'), 'registered-device persistence must be scoped to a subscription/entitlement');
-assert(entitlementMigration.includes('media_account_devices_entitlement_device_unique') && entitlementMigration.includes('(jellyfin_account_id,subscription_id,device_id)'), 'each entitlement must own an independent stable-device slot set');
+assert(entitlementMigration.includes('media_account_devices_entitlement_device_unique') && entitlementMigration.includes('(subscription_id,device_id)'), 'each entitlement must own one stable-device slot set across media accounts/server moves');
 assert(deviceSource.includes('entitlement.subscription_id') && deviceSource.includes('stored_subscription_id') && deviceSource.includes('const entitlementChanged'), 'device reconciliation must detect when a media account moves to a different entitlement');
-assert(deviceSource.includes('subscription_id=$2 AND revoked_at IS NULL'), 'device slot reads/resets must not mix registrations from different entitlements');
+assert(deviceSource.includes('subscription_id=$1 AND revoked_at IS NULL'), 'device slot reads/resets must not mix registrations from different entitlements');
 
 const originalGetPool = db.getPool;
 const originalQuery = db.query;
