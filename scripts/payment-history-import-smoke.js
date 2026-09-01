@@ -94,7 +94,7 @@ const flexibleCheckoutSource = fs.readFileSync(path.join(__dirname, '..', 'src',
 const discountsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'payments', 'discounts.js'), 'utf8');
 assert.ok(flexibleCheckoutSource.includes('checkoutTtlMinutes=intents.providerMaxTtl(provider)'), 'checkout must derive one provider TTL for intent and reservation');
 assert.ok((flexibleCheckoutSource.match(/ttlMinutes:checkoutTtlMinutes/g) || []).length >= 2, 'discount reservation TTL must match the parent checkout TTL');
-assert.ok(discountsSource.includes('SELECT id,customer_id,state,expires_at FROM billing_checkout_intents'), 'reservation layer must verify its parent checkout expiry');
+assert.ok(discountsSource.includes('SELECT id,customer_id,state,expires_at') && discountsSource.includes('FROM billing_checkout_intents WHERE id=$1 FOR SHARE'), 'reservation layer must verify its parent checkout expiry');
 assert.ok(discountsSource.includes('Math.max(requestedExpiry.getTime(),parentExpiry.getTime())'), 'reservation may never expire before its parent checkout intent');
 
 const dashboardPageSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'platform', 'admin-dashboard-page.js'), 'utf8');

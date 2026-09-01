@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 
 function normalizeCode(raw) { return String(raw || '').trim().toUpperCase(); }
+function normalizeCurrency(raw) { return String(raw || '').trim().toUpperCase(); }
 function redemptionDivergence(message) {
     const error = new Error(message);
     error.code='DISCOUNT_REDEMPTION_DIVERGENCE';
@@ -13,17 +14,28 @@ function discountConflict(message) {
     error.code = 'DISCOUNT_SETTLEMENT_RESERVATION_MISMATCH';
     return error;
 }
+function assertDiscountCurrency(discount, currency) {
+    const wanted = normalizeCurrency(currency), fixed = normalizeCurrency(discount?.currency);
+    if (discount?.discount_type === 'fixed' && fixed && wanted && fixed !== wanted) {
+        const error = new Error("That discount code's currency does not match this plan");
+        error.code = 'DISCOUNT_CURRENCY_MISMATCH';
+        error.expose = true;
+        throw error;
+    }
+    return discount;
+}
 async function findActiveCode(code) {
     const normalized = normalizeCode(code);
     if (!normalized) return null;
     const result = await query(`SELECT * FROM discount_codes WHERE code=$1 AND active=TRUE AND (starts_at IS NULL OR starts_at<=NOW()) AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`, [normalized]);
     return result.rows[0] || null;
 }
-async function validateForCheckout({ code, planId, planCode, customerId }) {
+async function validateForCheckout({ code, planId, planCode, customerId, currency = null }) {
     if (!code) return null;
     const discount = await findActiveCode(code);
     if (!discount) throw new Error('That discount code is not valid or has expired');
     if (Array.isArray(discount.plan_codes) && discount.plan_codes.length && !discount.plan_codes.includes(planCode)) throw new Error('That discount code does not apply to this plan');
+    assertDiscountCurrency(discount, currency);
     if (discount.max_redemptions !== null && discount.redemption_count >= discount.max_redemptions) throw new Error('That discount code has reached its redemption limit');
     if (customerId) {
         const used = await query('SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2', [discount.id, customerId]);
@@ -38,22 +50,25 @@ function computeDiscountedMinor(baseMinor, discount) {
     return Math.max(0, base - Number(discount.fixed_off_minor || 0));
 }
 
-async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, baseMinor = 0, ttlMinutes = 30 }) {
+async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, baseMinor = 0, currency = null, ttlMinutes = 30 }) {
     if (!code) return null;
     return transaction(async client => {
         await client.query(`UPDATE discount_checkout_reservations SET state='expired',updated_at=NOW() WHERE state='reserved' AND expires_at<=NOW()`);
-        const intentResult = await client.query(`SELECT id,customer_id,state,expires_at FROM billing_checkout_intents WHERE id=$1 FOR SHARE`, [checkoutIntentId]);
+        const intentResult = await client.query(`SELECT id,customer_id,state,expires_at,commercial_snapshot FROM billing_checkout_intents WHERE id=$1 FOR SHARE`, [checkoutIntentId]);
         if (!intentResult.rowCount) throw new Error('Checkout intent was not found for this discount reservation');
         const intent = intentResult.rows[0];
         if (String(intent.customer_id) !== String(customerId)) throw new Error('Discount reservation customer does not match the checkout intent');
         if (intent.state !== 'open') throw new Error('Discounts can only be reserved for an open checkout intent');
         const parentExpiry = new Date(intent.expires_at);
         if (Number.isNaN(parentExpiry.getTime()) || parentExpiry <= new Date()) throw new Error('Checkout intent has already expired');
+        const contractCurrency = normalizeCurrency(intent.commercial_snapshot?.currency), requestedCurrency = normalizeCurrency(currency);
+        if (contractCurrency && requestedCurrency && contractCurrency !== requestedCurrency) throw discountConflict('Checkout currency changed before the discount reservation was created.');
 
         const found = await client.query(`SELECT * FROM discount_codes WHERE code=$1 AND active=TRUE AND (starts_at IS NULL OR starts_at<=NOW()) AND (expires_at IS NULL OR expires_at>NOW()) FOR UPDATE`, [normalizeCode(code)]);
         if (!found.rowCount) throw new Error('That discount code is not valid or has expired');
         const d = found.rows[0];
         if (Array.isArray(d.plan_codes) && d.plan_codes.length && !d.plan_codes.includes(planCode)) throw new Error('That discount code does not apply to this plan');
+        assertDiscountCurrency(d, contractCurrency || requestedCurrency);
         const reserved = await client.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE customer_id=$2)::int customer_total FROM discount_checkout_reservations WHERE discount_code_id=$1 AND state='reserved' AND expires_at>NOW()`, [d.id, customerId]);
         const totals = reserved.rows[0];
         if (d.max_redemptions !== null && Number(d.redemption_count || 0) + Number(totals.total || 0) >= Number(d.max_redemptions)) throw new Error('That discount code has reached its redemption limit');
@@ -136,4 +151,4 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
     return recordRedemption(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor });
 }
 
-module.exports = { normalizeCode, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, releaseIntentReservation, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
+module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, releaseIntentReservation, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
