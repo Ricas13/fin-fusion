@@ -61,7 +61,7 @@ function parse(body = {}, forcedCurrency = null) {
   if (b(body.isAddon)) throw new Error('Add-ons are retired. Create a standalone Stremio plan instead.');
   const isAddon = false;
   const jellyfinAccessModel = jellyfin && JELLYFIN_ACCESS_MODELS.includes(body.jellyfinAccessModel) ? body.jellyfinAccessModel : 'concurrent_streams';
-  const streams = stremio ? 1 : (jellyfinAccessModel === 'household_network' ? null : int(body.streams, 1, 50, 'Jellyfin concurrent streams'));
+  const streams = stremio ? 1 : int(body.streams ?? '1', 0, 50, 'Jellyfin concurrent streams');
   const jellyfinHouseholdNetworkLimit = jellyfinAccessModel === 'household_network' ? int(body.jellyfinHouseholdNetworkLimit ?? '1', 1, 10, 'Jellyfin household connections') : 1;
   const jellyfinHouseholdLeaseMinutes = jellyfinAccessModel === 'household_network' ? int(body.jellyfinHouseholdLeaseMinutes ?? '240', 15, 1440, 'Jellyfin household lease') : 240;
   const stremioHouseholdNetworkLimit = stremio ? int(body.stremioHouseholdNetworkLimit ?? '1', 1, 10, 'Stremio household connections') : 1;
