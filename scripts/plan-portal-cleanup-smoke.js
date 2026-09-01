@@ -21,9 +21,17 @@ const productModules = read('src/platform/admin-product-modules.js');
 const stremioRuntime = read('src/stremio/runtime.js');
 const migration = read('db/migrations/025_plan_portal_cleanup.sql');
 
-for (const label of ['Free Server Plans', 'Paid Plans', 'Stremio Plans', 'Emby Shares', 'Reseller Plans']) {
+for (const label of ['Free Server Plans', 'Jellyfin Shares', 'Emby Shares', 'Stremio Shares', 'Reseller Plans']) {
   assert(plansList.includes(label), `Plans page must render ${label}`);
 }
+const freeIndex=plansList.indexOf("sectionTable('free', 'Free Server Plans'");
+const jellyfinIndex=plansList.indexOf("sectionTable('paid', 'Jellyfin Shares'");
+const embyIndex=plansList.indexOf("sectionTable('emby', 'Emby Shares'");
+const stremioIndex=plansList.indexOf("sectionTable('stremio', 'Stremio Shares'");
+assert(freeIndex>=0&&jellyfinIndex>freeIndex&&embyIndex>jellyfinIndex&&stremioIndex>embyIndex,'Plans page must order Free Server, Jellyfin Shares, Emby Shares, then Stremio Shares');
+assert(!plansList.includes('Historical subscribers'),'Plans table must not restore the historical-subscriber column');
+assert(plansList.includes('Customer availability')&&plansList.includes('customers} ${plural(customers,\'customer\')} on this plan'),'Plans capacity must be presented in customer terms');
+assert(plansList.includes('planActionsCell')&&plansList.includes('planActionsRow'),'Plans table must reserve the reclaimed column width for one-line actions');
 assert(plansList.includes('Historical Bundles / Add-ons'), 'historical bundle/add-on rows must be isolated from current plan families');
 assert(!operatorExperience.includes("['Bundles','/admin/plans?type=bundle']"), 'client-side bundle plan tabs must not be reintroduced');
 assert(createPlan.includes("const SERVICE_TYPES = ['jellyfin', 'stremio']"), 'shared new-plan creation must remain limited to Jellyfin and Stremio while Emby uses its dedicated editor');
