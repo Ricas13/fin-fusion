@@ -13,15 +13,16 @@ function compact(parts) {
 
 function tone(eventType, emailSpec) {
     if (/support\./i.test(eventType)) return 'info';
-    if (/payment\.received|subscription\.activated|service\.provisioned|claim\.completed|plan_change\.applied/i.test(eventType)) return 'success';
-    if (/pending|expir|warning|attention|scheduled|capacity/i.test(eventType) || emailSpec?.tone === 'warn') return 'warn';
-    if (/failed|offline|disabled|removed|inactive|expired|chargeback|disput|error|security/i.test(eventType) || emailSpec?.tone === 'bad') return 'bad';
+    if (/payment\.received|subscription\.activated|service\.provisioned|claim\.completed|customer\.claimed|discount\.redeemed|plan_change\.applied/i.test(eventType)) return 'success';
+    if (/pending|expir|warning|attention|scheduled|capacity|renewal_failed/i.test(eventType) || emailSpec?.tone === 'warn') return 'warn';
+    if (/failed|offline|suspended|disabled|removed|inactive|expired|chargeback|disput|error|security/i.test(eventType) || emailSpec?.tone === 'bad') return 'bad';
     return 'info';
 }
 
 function icon(eventType, messageTone) {
     if (/support\./i.test(eventType)) return '💬';
     if (/server\.offline/i.test(eventType)) return '🔴';
+    if (/discount\.redeemed/i.test(eventType)) return '🏷️';
     if (messageTone === 'success') return '✅';
     if (messageTone === 'warn') return '⚠️';
     if (messageTone === 'bad') return '⛔';
@@ -85,18 +86,24 @@ function customerFields(payload, emailSpec) {
     return rows.slice(0, 8);
 }
 
-function adminFields(payload) {
+function adminFields(payload, emailSpec = {}) {
     const rows = [];
     const seen = new Set();
-    addField(rows, seen, 'Customer', payload.customerName || payload.email, true);
+    for (const row of emailSpec?.facts || []) {
+        const inline = ['User', 'Plan', 'Amount', 'Server', 'Status', 'Provider', 'Priority', 'Ticket ID', 'IP'].includes(row.label);
+        addField(rows, seen, row.label, row.value, inline);
+    }
+    if (!seen.has('user')) addField(rows, seen, 'User', payload.customerName || payload.email, true);
     addField(rows, seen, 'Plan', payload.planName, true);
     addField(rows, seen, 'Amount', formatAmount(payload.amount, payload.currency), true);
-    addField(rows, seen, 'Service', payload.service, true);
     addField(rows, seen, 'Server', payload.serverName || payload.serverUrl, true);
+    addField(rows, seen, 'Status', payload.status || payload.serverStatus, true);
+    addField(rows, seen, 'Ticket title', payload.ticketTitle || payload.ticketSubject, false);
+    addField(rows, seen, 'Content', payload.ticketContent || payload.content, false);
     addField(rows, seen, 'Provider', payload.provider || payload.source, true);
     addField(rows, seen, 'Reason', payload.reason, false);
     addField(rows, seen, 'IP', payload.ip, true);
-    return rows.slice(0, 8);
+    return rows.slice(0, 12);
 }
 
 function render({ eventType, payload = {}, emailSpec = {}, subject = '', text = '', audience = 'customer' } = {}) {
@@ -104,21 +111,21 @@ function render({ eventType, payload = {}, emailSpec = {}, subject = '', text = 
     const admin = audience === 'admin';
     const messageTone = tone(safeEventType, emailSpec);
     const titleText = admin
-        ? clean(subject, 220) || humanizeEventType(safeEventType)
+        ? clean(emailSpec.title || emailSpec.subject || subject, 220) || humanizeEventType(safeEventType)
         : clean(emailSpec.title || emailSpec.subject || subject, 220) || humanizeEventType(safeEventType);
     const description = admin
-        ? clean(text, 1800) || 'An account or platform event needs attention.'
+        ? clean(emailSpec.text || text, 1800) || 'An account or platform event needs attention.'
         : customerDescription(safeEventType, payload, emailSpec, text);
-    const actionUrl = admin ? clean(payload.adminUrl, 1000) : clean(emailSpec.actionUrl, 1000);
-    const actionLabel = admin ? 'Open customer' : clean(emailSpec.actionLabel || 'Open your account', 80);
+    const actionUrl = admin ? clean(emailSpec.actionUrl || payload.ticketUrl || payload.adminUrl, 1000) : clean(emailSpec.actionUrl, 1000);
+    const actionLabel = admin ? clean(emailSpec.actionLabel || (payload.ticketUrl ? 'Open ticket' : 'Open customer'), 80) : clean(emailSpec.actionLabel || 'Open your account', 80);
     const eventLabel = admin
-        ? humanizeEventType(safeEventType)
+        ? clean(emailSpec.eventLabel, 180) || humanizeEventType(safeEventType)
         : clean(emailSpec.eventLabel, 180) || humanizeEventType(safeEventType);
     return discordMessage.card({
         title: `${icon(safeEventType, messageTone)} ${titleText}`,
         description,
         tone: messageTone,
-        fields: admin ? adminFields(payload) : customerFields(payload, emailSpec),
+        fields: admin ? adminFields(payload, emailSpec) : customerFields(payload, emailSpec),
         url: actionUrl,
         footer: `CAPTAiN FiN • ${eventLabel}`,
         buttonLabel: actionUrl ? actionLabel : '',
