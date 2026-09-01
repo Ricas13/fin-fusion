@@ -7,6 +7,7 @@ if (skipIfNoDatabase('Checkout abandonment self-service smoke')) process.exit(0)
 const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const intents = require('../src/payments/checkout-intents');
+const providerSettings = require('../src/payments/provider-settings');
 const capacity = require('../src/entitlements/plan-capacity');
 const fs = require('fs');
 const path = require('path');
@@ -54,6 +55,16 @@ async function main() {
     // once the old provider checkout is conclusively terminal.
     const retried = await intents.createIntent({ scope: 'customer', customerId: customer.id, provider: 'stripe', checkoutMode: 'payment', commercialSnapshot: {} });
     expect(retried && retried.id, 'customer must be able to start a fresh checkout after cancelling the stuck one.');
+
+    // Credentials alone are not enough to accept money. Customer checkout must
+    // require both the provider to be enabled/configured and its callback path.
+    expect(providerSettings.checkoutReady('stripe', { enabled:true, restrictedKey:'rk_test_example', webhookSecret:'whsec_test' }), 'Stripe should be checkout-ready with enabled credentials and webhook secret.');
+    expect(!providerSettings.checkoutReady('stripe', { enabled:true, restrictedKey:'rk_test_example', webhookSecret:'' }), 'Stripe checkout must fail closed without a webhook secret.');
+    expect(!providerSettings.checkoutReady('stripe', { enabled:false, restrictedKey:'rk_test_example', webhookSecret:'whsec_test' }), 'An explicitly disabled Stripe provider must remain unavailable.');
+    expect(providerSettings.checkoutReady('paypal', { enabled:true, clientId:'client', clientSecret:'secret', webhookId:'WH-test' }), 'PayPal should be checkout-ready with credentials and webhook ID.');
+    expect(!providerSettings.checkoutReady('paypal', { enabled:true, clientId:'client', clientSecret:'secret', webhookId:'' }), 'PayPal checkout must fail closed without a webhook ID.');
+    expect(providerSettings.checkoutReady('plisio', { enabled:true, secretKey:'secret' }), 'Plisio merchant secret authenticates both checkout and signed callbacks.');
+
     await intents.consume({ intentId: retried.id, nonce: retried.nonce, state: 'cancelled', scope: 'customer', provider: 'stripe', ownerId: customer.id });
 
     // Natural local expiry has the same provider-truth rule. An attached PayPal
@@ -78,8 +89,17 @@ async function main() {
     const webhookSource = fs.readFileSync(path.join(root, 'src', 'platform', 'webhooks.js'), 'utf8');
     const stripeSource = fs.readFileSync(path.join(root, 'src', 'payments', 'stripe.js'), 'utf8');
     const capacitySource = fs.readFileSync(path.join(root, 'src', 'entitlements', 'plan-capacity.js'), 'utf8');
+    const providerSource = fs.readFileSync(path.join(root, 'src', 'payments', 'provider-settings.js'), 'utf8');
+    const checkoutJs = fs.readFileSync(path.join(root, 'public', 'js', 'customer-checkout.js'), 'utf8');
     expect(routeSource.includes("/account/checkout/cancel-open"), 'a self-service cancel-open route must exist.');
     expect(routeSource.includes('checkoutStartLimit'), 'checkout-session creation must be rate limited.');
+    expect(routeSource.includes('await assertProviderCheckoutReady(provider);'), 'server-side checkout must enforce provider callback readiness before starting a checkout.');
+    expect(routeSource.includes("router.get('/account/checkout/readiness',requireCustomer"), 'customer UI must receive authenticated provider checkout readiness.');
+    expect(routeSource.indexOf('await assertProviderCheckoutReady(provider);') < routeSource.indexOf('const intent=await intents.createIntent'), 'provider readiness must be checked before a local checkout intent is created.');
+    expect(checkoutJs.includes("fetch('/account/checkout/readiness'"), 'customer checkout UI must consume provider readiness.');
+    expect(checkoutJs.includes('form.checkoutForm[action='), 'customer checkout UI must hide unavailable provider forms.');
+    expect(providerSource.includes("restricted=/^rk_/i.test(key)"), 'Stripe connection diagnostics must identify restricted keys.');
+    expect(providerSource.includes('does not prove the Customer, Checkout Session or Coupon write permissions'), 'restricted Stripe key diagnostics must not imply a Prices read proves checkout write readiness.');
     expect(routeSource.includes("stateUrl(req,'/account/stripe/return',intent)"), 'Stripe success must return through the verified customer return route.');
     expect(routeSource.includes('session_id={CHECKOUT_SESSION_ID}'), 'Stripe success URL must bind the returned Checkout Session ID.');
     expect(!routeSource.includes('Payment%20received.%20Your%20access%20details%20are%20below.'), 'Stripe must not show optimistic success before provider confirmation.');
@@ -99,7 +119,7 @@ async function main() {
     expect(onboardingSource.includes('openCheckout'), 'the onboarding page must surface a stuck open checkout to the customer.');
     expect(capacitySource.includes('provider_terminal_at IS NULL')&&capacitySource.includes('capacity_hold_until'), 'capacity queries must retain attached locally-terminal checkouts until provider truth or backstop.');
 
-    console.log('Checkout abandonment, provider-truth capacity retention, and Stripe confirmed-return smoke test passed.');
+    console.log('Checkout abandonment, provider-truth capacity retention, provider readiness, and Stripe confirmed-return smoke test passed.');
 }
 
 async function expectReject(fn, pattern) {
