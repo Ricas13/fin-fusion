@@ -36,7 +36,8 @@ const CHECKOUT_SAFE=[
  'Checkout intent is not available for service credit.',
  'Checkout intent not found.','Checkout intent has expired or was already used.','Checkout state verification failed.',
  'Provider checkout does not match the local checkout intent.','Checkout intent belongs to a different billing scope.',
- 'Checkout intent belongs to a different provider.','Checkout intent belongs to a different account.','Invalid checkout completion state.'
+ 'Checkout intent belongs to a different provider.','Checkout intent belongs to a different account.','Invalid checkout completion state.',
+ 'A checkout is already in progress. Finish or cancel it before starting another one.'
 ];
 function checkoutErrorRedirect(res,error,context,fallback){const{message}=publicError.present(error,{context,fallback,safe:CHECKOUT_SAFE});return res.redirect('/account?error='+encodeURIComponent(message))}
 function requireCustomer(req,res,next){return req.session?.customerId&&req.session?.customerUserId?next():res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'))}
