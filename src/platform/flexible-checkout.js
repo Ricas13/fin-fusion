@@ -93,7 +93,8 @@ async function begin(req,res,provider){
   }
   if(provider==='stripe'){
    const portal=await customers.getCustomerPortal(req.session.customerId);
-   const checkout=await stripe.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,email:portal?.customer?.login_email||portal?.customer?.email,discountCode:req.body.discountCode||null,successUrl:await stripeSuccessUrl(req,intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:providerDue,checkoutExpiresAt:intent.expires_at});
+   const stripeFinalAmount=providerDue===0&&choice.mode==='subscription'&&req.body.discountCode?null:providerDue;
+   const checkout=await stripe.createCheckout({customerId:req.session.customerId,planCode:choice.planCode,checkoutMode:choice.mode,email:portal?.customer?.login_email||portal?.customer?.email,discountCode:req.body.discountCode||null,successUrl:await stripeSuccessUrl(req,intent),cancelUrl:await stateUrl(req,'/account/checkout/cancel',intent),idempotencyKey:intent.id,commercialSnapshot:intent.commercial_snapshot,resolvedPlan:choice.plan,finalAmountMinor:stripeFinalAmount,checkoutExpiresAt:intent.expires_at});
    await intents.attachProviderCheckout(intent.id,checkout.id);return checkout;
   }
   if(provider==='plisio'){
