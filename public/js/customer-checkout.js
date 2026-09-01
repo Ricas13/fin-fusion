@@ -1,5 +1,25 @@
 'use strict';
 (function(){
+  async function syncPaymentReadiness(){
+    try{
+      const response=await fetch('/account/checkout/readiness',{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'});
+      if(!response.ok)return;
+      const readiness=await response.json();
+      for(const provider of ['stripe','paypal','plisio']){
+        if(readiness?.[provider])continue;
+        const elements=new Set([
+          ...document.querySelectorAll(`form.checkoutForm[action="/account/checkout/${provider}"]`),
+          ...document.querySelectorAll(`[data-payment-key^="${provider}:"]`)
+        ]);
+        for(const element of elements){element.hidden=true;element.setAttribute('aria-hidden','true');element.querySelectorAll?.('button').forEach(button=>{button.disabled=true;});}
+      }
+    }catch(_){
+      // The server-side checkout gate remains authoritative. Avoid turning a
+      // transient readiness-probe failure into a misleading client-side outage.
+    }
+  }
+  syncPaymentReadiness();
+
   const field=document.querySelector('[data-shared-promo]');
   if(!field)return;
   let status=document.querySelector('[data-promo-status]');
