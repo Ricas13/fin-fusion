@@ -1,17 +1,6 @@
 /* Final PDF UX polish: visual hierarchy, responsive stability and compact operator layouts. */
 
-/* Keep the fixed desktop sidebar self-contained even with long navigation groups. */
-@media (min-width:861px){
-  .adminHeader{height:100dvh;min-height:0;overflow:hidden}
-  .adminTabsWrap{min-height:0;overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain;scrollbar-gutter:stable;padding-bottom:calc(var(--header-actions-h,230px) + 16px)!important}
-  .adminTabs,.navSection,.navSectionPages{min-width:0}
-  .adminTab{min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-  .headerActions{background:linear-gradient(180deg,rgba(13,18,24,0),#0d1218 18%);padding-top:18px}
-}
-@media (max-width:860px){
-  .adminHeader{height:auto;min-height:0;overflow:visible}
-  .adminTabsWrap{overflow-x:auto!important;overflow-y:hidden!important;scrollbar-gutter:auto}
-}
+/* Rail geometry now belongs to the canonical token-based shell. */
 
 /* Stronger, more graphical control-centre treatment for the two dashboards. */
 .page-dashboard .operatorHero,.page-users-dashboard .operatorHero{
