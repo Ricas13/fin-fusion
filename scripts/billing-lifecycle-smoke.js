@@ -128,12 +128,22 @@ async function activeDelinquencyHolds(customerId) {
     const dashboard = await billing.dashboardData();
     assert.strictEqual(dashboard.stats.recurring, 3);
     assert(dashboard.stats.pastDue >= 1);
-    assert.strictEqual(dashboard.stats.syncProblems, 1);
-    assert.strictEqual(dashboard.events.length, 1);
+    assert(dashboard.stats.cancelling >= 1);
+    assert(dashboard.stats.syncProblems >= 1);
+    assert(dashboard.events.some(event => event.provider_event_id === 'evt_failed_test' && event.processing_error));
+
+    const renewalAudits = await query(`SELECT action FROM audit_log WHERE entity_type='subscription' AND entity_id=$1 ORDER BY created_at`, [String(stripeSub.id)]);
+    assert(renewalAudits.rows.some(row => row.action === 'billing.renewal.stop'));
+    assert(renewalAudits.rows.some(row => row.action === 'billing.renewal.resume'));
+
+    stripeStatus = 'canceled';
+    const cancelled = await billing.syncSubscription(stripeSub.id, { adapter: stripeAdapter });
+    assert.strictEqual(cancelled.ok, true);
+    assert.strictEqual((await query(`SELECT status FROM subscriptions WHERE id=$1`, [stripeSub.id])).rows[0].status, 'cancelled');
+    assert.strictEqual((await activeDelinquencyHolds(stripeCustomer.id)).length, 0, 'cancelled subscription must not leave a stale delinquency hold');
 
     console.log('billing lifecycle smoke: ok');
-})().catch(async error => {
+})().finally(() => getPool().end()).catch(error => {
     console.error(error);
-    try { await getPool().end(); } catch (_) {}
     process.exit(1);
 });
