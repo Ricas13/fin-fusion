@@ -63,6 +63,13 @@ assert(routeManifest.assertAdminRouteOrder(actualCriticalOrder));
 assert(composition.includes('createAdminProrataRefundsRouter'), 'the staff pro-rata refund workflow must be mounted in canonical admin composition');
 assert(composition.includes('assertAdminRouteOrder(criticalOrder)'), 'production startup must enforce critical route precedence');
 
+const customer360View = read('src/platform/customer-360-view.js');
+assert(customer360View.includes('function accessTruthPanel(detail)'), 'Customer 360 overview must keep a dedicated access-truth explanation surface');
+assert(customer360View.includes('Commercial state') && customer360View.includes('Active blockers') && customer360View.includes('Observed state') && customer360View.includes('Reconciliation'),
+  'Customer 360 access truth must separate entitlement, blockers, observed state and reconciliation');
+assert(customer360View.includes("tab==='overview'?rendered.replace('</nav>',`</nav>${accessTruthPanel(safe)}`):rendered"),
+  'Customer 360 access truth must stay on Overview without duplicating the dedicated Access workspace');
+
 const nav = read('src/platform/admin-nav.js');
 const retiredProduct = ['re','seller'].join('');
 assert(!new RegExp(retiredProduct,'i').test(nav), 'retired product traces must not remain in admin navigation');
