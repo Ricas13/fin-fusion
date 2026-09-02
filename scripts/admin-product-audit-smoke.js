@@ -103,7 +103,8 @@ for(const term of ['customerFilterToolbar','More filters','customerFilterChips',
 assert(customerFilterUi.includes("['q', 'service', 'status', 'plan', 'server']"),'the default customer filter toolbar must keep only high-frequency filters visible');
 assert(customerFilterUi.includes("['accountStatus', 'paymentProvider', 'reconciliationStatus', 'hasOverride', 'library'"),'less-frequent filters must live in the advanced section');
 
-assert(stremioEditor.includes('Unlimited streams/devices')&&stremioEditor.includes('<span>Devices</span><strong>Unlimited</strong>')&&stremioEditor.includes('Household IPs')&&stremioEditor.includes('IP replacement'),'Stremio editor must expose household-first UX with unlimited streams/devices and household controls');
+assert(stremioEditor.includes('Unlimited streams/devices')&&stremioEditor.includes('<span>Devices</span><strong>Unlimited</strong>')&&stremioEditor.includes('Household IPs')&&stremioEditor.includes('Connection lease'),'Stremio editor must expose household-first UX with unlimited streams/devices, Household IPs and one connection lease');
+assert(!stremioEditor.includes('name="replacementPolicy"')&&!stremioEditor.includes('name="cooldownMinutes"'),'Stremio basic access must not expose a competing replacement policy or cooldown control');
 assert(!stremioEditor.includes('New purchases only')&&!stremioEditor.includes('Existing customers too'),'Stremio access changes must no longer support grandfathering current members onto stale household limits');
 assert(compact(stremioEditor).includes("updateTrackingSnapshots(client,data.plan,input,impact,'all_current')")&&stremioEditor.includes('queuePlanRequestReconciliation'),'Stremio plan saves must propagate access/request policy to all current plan members');
 assert(!stremioEditor.includes('Delivery service'),'ordinary Stremio plan editing must not expose internal delivery-service terminology');
