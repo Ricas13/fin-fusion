@@ -136,3 +136,39 @@
 .content.planReferencePage .planControlGrid>#delivery{order:5!important}
 .content.planReferencePage .planControlGrid>#availability{order:6!important}
 .content.planReferencePage .planControlGrid>#libraries{order:7!important}
+
+/* Plan editor type scale: the compact reference layout shrank body text
+   down to 7-10px across labels, inputs, buttons and help copy, well below
+   the ~14px used elsewhere in the admin. Bring it back to a comfortable
+   reading size now that cards share a row height and have room to grow a
+   little taller without re-breaking row alignment. */
+.content.planReferencePage .planConfigHead h2,
+.content.planReferencePage .planConfigHead h3,
+.content.planReferencePage .requestPlanCard>.sectionHead h2{font-size:14px!important}
+.content.planReferencePage .planConfigHead p,
+.content.planReferencePage .requestPlanCard>.sectionHead p{font-size:11px!important}
+.content.planReferencePage .formGroup>label,
+.content.planReferencePage .subText{font-size:12px!important}
+.content.planReferencePage .input,
+.content.planReferencePage select.input,
+.content.planReferencePage textarea.input{font-size:13px!important}
+.content.planReferencePage .inlineHelp,
+.content.planReferencePage .fieldHelp,
+.content.planReferencePage .planSaveHint{font-size:11px!important}
+.content.planReferencePage .buttonRow .button,
+.content.planReferencePage .planConfigBody>button.button,
+.content.planReferencePage button.button,
+.content.planReferencePage .planControlGrid .planConfigCard .buttonRow .button,
+.content.planReferencePage .planControlGrid .planConfigCard .planConfigBody .buttonRow .button,
+.content.planReferencePage .planControlGrid .planConfigCard .planConfigBody>button.button{font-size:13px!important}
+.content.planReferencePage .toggleRow strong,
+.content.planReferencePage .toggleRow>span{font-size:12px!important}
+.content.planReferencePage .toggleRow small{font-size:10px!important}
+.content.planReferencePage .planConfigFact strong{font-size:15px!important}
+.content.planReferencePage .planConfigFact span{font-size:10px!important}
+.content.planReferencePage .planReferenceAdvancedButton{font-size:11px!important}
+.content.planReferencePage details.planCardDetails>summary{font-size:11px!important}
+.content.planReferencePage .pill{font-size:11px!important}
+.content.planReferencePage .planReferenceBreadcrumb{font-size:12px!important}
+.content.planReferencePage .planReferenceSaveCopy strong{font-size:12px!important}
+.content.planReferencePage .planReferenceSaveCopy span{font-size:11px!important}
