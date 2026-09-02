@@ -2,6 +2,7 @@
 
 const {query,transaction}=require('../db');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const subscriptionState=require('./subscription-state');
 
 function reasonText(value){return String(value||'Permanent access granted by administrator').trim().slice(0,500)||'Permanent access granted by administrator';}
 function revokeReasonText(value){return String(value||'Permanent access removed by administrator').trim().slice(0,500)||'Permanent access removed by administrator';}
@@ -29,9 +30,12 @@ async function enable(customerId,{actorUserId=null,reason=''}={}){
     const saved=await transaction(async client=>{
         const customer=await client.query(`SELECT id,automation_protected,automation_protected_reason,automation_protected_at,automation_protected_by FROM customers WHERE id=$1 FOR UPDATE`,[customerId]);
         if(!customer.rowCount)throw new Error('Customer not found.');
-        const entitlement=await client.query(`SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1`,[customerId]);
-        if(!entitlement.rowCount)throw new Error('Give the customer an active plan before making access permanent.');
-        const subId=entitlement.rows[0].subscription_id;
+        // Permanent access must pin the same primary Jellyfin/bundle contract
+        // used by runtime reconciliation. In parallel Free + Premium access,
+        // the free lane is independent and must never win through view/row order.
+        const entitlement=await subscriptionState.effectiveSubscription(customerId,{client,includeBlocked:true});
+        if(!entitlement)throw new Error('Give the customer an active plan before making access permanent.');
+        const subId=entitlement.subscription_id;
         const existing=await client.query('SELECT * FROM customer_entitlement_overrides WHERE customer_id=$1 FOR UPDATE',[customerId]);
         if(existing.rowCount&&existing.rows[0].permanent_access&&!existing.rows[0].revoked_at){
             const prior=existing.rows[0],repinned=String(prior.subscription_id)!==String(subId);
