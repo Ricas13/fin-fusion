@@ -127,4 +127,13 @@ function workflowPages(active){
 }
 function landingFor(group){return group?.pages?.[0]?.[2]||'/admin';}
 for(const group of groups){for(const page of group.pages){if(!Object.prototype.hasOwnProperty.call(page,'children'))Object.defineProperty(page,'children',{value:Object.freeze([]),enumerable:false});}}
+
+// Express already exposes groupFor as adminNavGroupFor to legacy EJS screens.
+// Attach a lazy compatibility bridge to that existing local so the partial can
+// render the exact canonical header without importing modules from inside EJS.
+// The require is intentionally lazy: admin-html-core-base itself requires this
+// registry, so resolving it only when an EJS request renders avoids a cycle at
+// module initialization time.
+Object.defineProperty(groupFor,'renderHeader',{value:(active,site)=>require('./admin-html-core-base').header(active,site),enumerable:false});
+
 module.exports={groups,hiddenPages,aliases,activeKey,sidebarKey,groupFor,workflowParentPage,workflowPages,childPages,viewsFor,tasksFor,settingsFor,relatedPages,landingFor,SIDEBAR_EXCLUDED_CHILDREN};
