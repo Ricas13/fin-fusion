@@ -59,17 +59,25 @@ function familyMatches(plan, type) {
   if (type === 'emby') return family === 'emby';
   return family === type || service === type;
 }
+function plural(value, singular, pluralValue=`${singular}s`) {
+  return Number(value) === 1 ? singular : pluralValue;
+}
+/*
+ * The capacity owner still distinguishes `${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer`
+ * and the underlying drill-down remains equivalent to `View shared ${esc(state.pool)} capacity`.
+ * Those stream-unit details are intentionally converted to customer places on this catalogue page.
+ */
 function capacityCell(plan) {
-  const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{};
+  const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{},customers=Math.max(0,Number(plan.live_subscriber_count||0));
   if(state.model==='fleet_streams'){
-    const used=Math.max(0,Number(state.streamUsed||0)),held=Math.max(0,Number(state.streamReserved||0)),occupied=used+held,limit=Math.max(0,Number(state.streamLimit||0)),pct=limit?Math.min(100,Math.round((occupied/limit)*100)):100,near=pct>=85?' nearFull':'';
-    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':Number(state.remaining)<=10?'statusWarn':'statusGood'}">${esc(state.label||`${state.remaining} available`)}</strong><div class="subText">${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View shared ${esc(state.pool)} capacity →</a></div>`;
+    const remaining=Math.max(0,Number(state.remaining||0)),limit=state.limit==null?null:Math.max(0,Number(state.limit)),pct=limit?Math.min(100,Math.max(0,Math.round(((limit-remaining)/limit)*100))):100,near=pct>=85?' nearFull':'';
+    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${customers} ${plural(customers,'customer')} on this plan · ${remaining} new ${plural(remaining,'place')} available</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View shared ${esc(state.pool)} customer capacity →</a></div>`;
   }
   const limit=state.limit==null?null:Number(state.limit),used=Number(state.used||0)+Number(state.reserved||0);
-  if(limit==null)return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${used} active/held · legacy unlimited state</div><a class="subText" href="${esc(link)}">Set inventory →</a>`;
-  if(limit===0)return `<div class="capacityMeter"><strong class="statusBad">Closed · 0 available</strong><div class="subText">${Number(plan.live_subscriber_count||0)?`${Number(plan.live_subscriber_count||0)} existing active subscription${Number(plan.live_subscriber_count||0)===1?'':'s'} unaffected`:'No new acquisition'}</div><div class="capacityMeterLine"><span class="capacityMeterFill nearFull" style="width:100%"></span></div><a class="subText" href="${esc(link)}">Open availability →</a></div>`;
+  if(limit==null)return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${customers} ${plural(customers,'customer')} currently active · no customer limit configured</div><a class="subText" href="${esc(link)}">Set customer availability →</a>`;
+  if(limit===0)return `<div class="capacityMeter"><strong class="statusBad">Closed · 0 available</strong><div class="subText">${customers?`${customers} existing ${plural(customers,'customer')} unaffected`:'No new acquisition'}</div><div class="capacityMeterLine"><span class="capacityMeterFill nearFull" style="width:100%"></span></div><a class="subText" href="${esc(link)}">Open customer availability →</a></div>`;
   const remaining=Math.max(0,Number(state.remaining||0)),pct=Math.min(100,Math.round((used/limit)*100)),near=pct>=85?' nearFull':'';
-  return `<div class="capacityMeter"><strong class="${remaining===0?'statusBad':remaining<=Math.max(2,Math.ceil(limit*.1))?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${used} / ${limit} used or held</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage inventory →</a></div>`;
+  return `<div class="capacityMeter"><strong class="${remaining===0?'statusBad':remaining<=Math.max(2,Math.ceil(limit*.1))?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${customers} ${plural(customers,'customer')} on this plan · ${remaining} new ${plural(remaining,'place')} available</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage customer availability →</a></div>`;
 }
 function planRow(plan, ctx) {
   const href = `/admin/plans/${encodeURIComponent(plan.id)}/edit`;
@@ -79,11 +87,10 @@ function planRow(plan, ctx) {
   const soldOut = Boolean(plan.capacity_state?.soldOut);
   const s = soldOut ? { ...base, key: 'sold_out', kind: 'bad', label: 'Sold out', sellable: false } : base;
   const free = Number(plan.price_minor || 0) === 0;
-  const subs = Number(plan.subscription_count || 0);
   const delivery = readiness.deliveryLabel(plan);
   const type = readiness.serviceType(plan);
   const family = planFamily(plan);
-  return `<tr class="planListRow" tabindex="0" data-href="${esc(href)}"><td><strong>${esc(plan.name)}</strong> <span class="planTypeTag ${esc(type)}">${esc(serviceLabel(plan))}</span>${plan.is_free_tier ? ' <span class="planTypeTag">Free server plan</span>' : ''}${family === 'legacy' ? ' <span class="planTypeTag legacy">Historical</span>' : ''}<div class="subText">${esc(plan.code)} · v${esc(plan.version_number || 1)} · ${esc(plan.audience)}${type !== 'stremio' ? ` · ${esc(plan.server_class || 'custom')}` : ''}</div></td><td><strong>${esc(delivery)}</strong><div class="subText">${esc(accessModel(plan))}</div></td><td><span class="pill ${s.kind}">${esc(s.label)}</span><div class="subText">${s.sellable ? 'Available for acquisition' : 'New acquisition blocked'}</div></td><td><strong>${esc(priceLabel(plan))}</strong><div class="subText">${free && type === 'jellyfin' && plan.billing_interval !== 'trial' ? 'Usage rules, no billing period' : esc(billingLabel(plan.billing_interval))}</div></td><td>${capacityCell(plan)}</td><td class="right">${esc(subs)}</td><td class="right"><div class="buttonRow"><a class="button secondary btn-sm" href="${esc(href)}">Manage</a><a class="button secondary btn-sm" href="${esc(accessHref)}">Access</a>${free && type === 'jellyfin' && family === 'free' && plan.billing_interval !== 'trial' ? `<a class="button secondary btn-sm" href="${esc(lifecycleHref)}">Usage rules</a>` : ''}<a class="button secondary btn-sm" href="/admin/catalog/plan/${esc(plan.id)}/clone">Clone/version</a></div></td></tr>`;
+  return `<tr class="planListRow" tabindex="0" data-href="${esc(href)}"><td><strong>${esc(plan.name)}</strong> <span class="planTypeTag ${esc(type)}">${esc(serviceLabel(plan))}</span>${plan.is_free_tier ? ' <span class="planTypeTag">Free server plan</span>' : ''}${family === 'legacy' ? ' <span class="planTypeTag legacy">Historical</span>' : ''}<div class="subText">${esc(plan.code)} · v${esc(plan.version_number || 1)} · ${esc(plan.audience)}${type !== 'stremio' ? ` · ${esc(plan.server_class || 'custom')}` : ''}</div></td><td><strong>${esc(delivery)}</strong><div class="subText">${esc(accessModel(plan))}</div></td><td><span class="pill ${s.kind}">${esc(s.label)}</span><div class="subText">${s.sellable ? 'Available for acquisition' : 'New acquisition blocked'}</div></td><td><strong>${esc(priceLabel(plan))}</strong><div class="subText">${free && type === 'jellyfin' && plan.billing_interval !== 'trial' ? 'Usage rules, no billing period' : esc(billingLabel(plan.billing_interval))}</div></td><td>${capacityCell(plan)}</td><td class="right planActionsCell"><div class="buttonRow planActionsRow"><a class="button secondary btn-sm" href="${esc(href)}">Manage</a><a class="button secondary btn-sm" href="${esc(accessHref)}">Access</a>${free && type === 'jellyfin' && family === 'free' && plan.billing_interval !== 'trial' ? `<a class="button secondary btn-sm" href="${esc(lifecycleHref)}">Usage rules</a>` : ''}<a class="button secondary btn-sm" href="/admin/catalog/plan/${esc(plan.id)}/clone">Clone/version</a></div></td></tr>`;
 }
 async function withCapacity(rows) {
   if (!rows.length) return rows;
@@ -95,15 +102,15 @@ async function withCapacity(rows) {
 function sectionTable(key, title, description, rows, ctx, { keepEmpty = false, emptyHtml = '' } = {}) {
   if (!rows.length && !keepEmpty) return '';
   const content = rows.length
-    ? `<div class="tableWrap" data-plan-table-wrap><table class="dataTable responsiveTable" data-plan-table><thead><tr><th>Plan</th><th>Delivery</th><th>Sale readiness</th><th>Price</th><th>Capacity</th><th>Historical subscribers</th><th>Actions</th></tr></thead><tbody>${rows.map(row => planRow(row, ctx)).join('')}</tbody></table></div>`
+    ? `<div class="tableWrap" data-plan-table-wrap><table class="dataTable responsiveTable" data-plan-table><thead><tr><th>Plan</th><th>Delivery</th><th>Sale readiness</th><th>Price</th><th>Customer availability</th><th class="right planActionsCell">Actions</th></tr></thead><tbody>${rows.map(row => planRow(row, ctx)).join('')}</tbody></table></div>`
     : emptyHtml;
   return `<section class="section planFamilySection" data-plan-table-section="${esc(key)}"><div class="sectionHead"><div><h2>${esc(title)}</h2><div class="muted">${esc(description)}</div></div><span class="muted">${rows.length} plan${rows.length === 1 ? '' : 's'}</span></div>${content}</section>`;
 }
 function createAction(type) {
-  if (type === 'stremio') return { href: '/admin/plans/new?type=stremio', label: 'Add Stremio plan' };
+  if (type === 'stremio') return { href: '/admin/plans/new?type=stremio', label: 'Add Stremio Share plan' };
   if (type === 'emby') return { href: '/admin/plans/new?type=emby', label: 'Add Emby Share plan' };
   if (type === 'free') return { href: '/admin/plans/new?type=free', label: 'Add Free Server plan' };
-  if (type === 'paid' || type === 'jellyfin') return { href: '/admin/plans/new?type=paid', label: 'Add Paid Server plan' };
+  if (type === 'paid' || type === 'jellyfin') return { href: '/admin/plans/new?type=paid', label: 'Add Jellyfin Share plan' };
   return { href: '/admin/plans/new', label: 'Add plan' };
 }
 function planReadinessHero(rows, ctx, create) {
@@ -132,10 +139,10 @@ async function plansPage(req) {
   const showEmbyZeroState = !showArchived && (!type || type === 'emby');
   const embyEmpty = `<div class="emptyAction"><div><strong>No Emby Share plans yet.</strong><div>Create the first Emby Share when you want this product to appear on the public storefront.</div></div><a class="button" href="/admin/plans/new?type=emby">Add Emby Share plan</a></div>`;
   const sections = [
-    sectionTable('free', 'Free Server Plans', 'Free Jellyfin availability is derived from the shared Free server stream-capacity pool.', groups.free, ctx),
-    sectionTable('paid', 'Paid Plans', 'Paid Jellyfin plans share Premium server stream capacity; trials also keep their own manual concurrency cap.', groups.paid, ctx),
-    sectionTable('stremio', 'Stremio Plans', 'Standalone Stremio availability remains a manually configured place limit.', groups.stremio, ctx),
-    sectionTable('emby', 'Emby Shares', 'Standalone Emby Share plans use Emby-only server placement and an independent service entitlement.', groups.emby, ctx, { keepEmpty: showEmbyZeroState, emptyHtml: embyEmpty }),
+    sectionTable('free', 'Free Server Plans', 'Free Jellyfin availability is shown as customer places; stream allowances remain enforced automatically in the background.', groups.free, ctx),
+    sectionTable('paid', 'Jellyfin Shares', 'Paid Jellyfin shares use shared Premium server capacity, shown here as customers and new customer places.', groups.paid, ctx),
+    sectionTable('emby', 'Emby Shares', 'Standalone Emby Share plans use Emby-only server placement and an independent customer entitlement.', groups.emby, ctx, { keepEmpty: showEmbyZeroState, emptyHtml: embyEmpty }),
+    sectionTable('stremio', 'Stremio Shares', 'Standalone Stremio shares use a manually configured customer place limit.', groups.stremio, ctx),
     sectionTable('reseller', 'Reseller Plans', 'Reseller catalogue plans remain separated from direct customer plans.', groups.reseller, ctx),
     sectionTable('legacy', 'Historical Bundles / Add-ons', 'Historical rows kept for existing customer contracts; new bundle/add-on creation is retired.', groups.legacy, ctx)
   ].join('');
