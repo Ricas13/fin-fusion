@@ -12,7 +12,6 @@ const planPricing=require('../payments/plan-pricing');
 const accessVariants=require('../payments/stream-variants');
 const variantCapacity=require('../payments/access-variant-capacity');
 const billingMode=require('../payments/subscription-billing-mode');
-const serviceScope=require('../entitlements/service-scope');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const stremioEntitlements=require('../stremio/entitlements');
@@ -55,7 +54,6 @@ function canonicalizePortalSubscriptions(portal,accessRows){
   return portal;
 }
 function livePlanIds(rows){return new Set((Array.isArray(rows)?rows:[]).map(row=>String(row.plan_id||'')).filter(Boolean));}
-function currentRecurringForPlan(plan,portal){const rows=(portal?.subscriptions||[]).filter(row=>liveSubscription(row)&&recurringProvider(row));const matches=rows.filter(row=>Boolean(row.is_addon)===Boolean(plan.is_addon)&&serviceScope.overlaps(row,plan));return matches.find(row=>String(row.plan_id)===String(plan.id))||matches[0]||null;}
 function variantPaymentOptions(variant,enabled){return(Array.isArray(variant?.payment_options)?variant.payment_options:[]).filter(option=>enabled[option.provider]).map(option=>({provider:option.provider,checkoutMode:option.checkoutMode||option.checkout_mode||'payment'}));}
 function priceLabel(minor,currency){return moneyFormat.formatMinor(minor,currency||'GBP');}
 
@@ -80,7 +78,7 @@ async function customerVariantState(customerId){
   }));
 }
 
-function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));}
 function returningAccessPage(req,status){const site=runtimeSettings.siteName(),copy=status.canRestoreDeletedFree?'Your Free Server profile was removed after inactivity, but your Free Access entitlement is still available. Restore it to create fresh Jellyfin access.':'A previous Jellyfin profile was cleaned up while inactive. You can restore streaming access now.';return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Restore access · ${esc(site)}</title><link rel="icon" href="/branding/favicon"><link rel="stylesheet" href="/css/customer-portal.css"><style>body{margin:0;background:#0d1117;color:#e8edf3}.restoreMain{width:min(580px,calc(100% - 28px));margin:0 auto;padding:48px 0}.restoreCard{padding:24px}.restoreActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.plainForm{margin:0}</style></head><body><main class="restoreMain"><section class="panel restoreCard"><div class="eyebrow">Welcome back</div><h1>Restore Jellyfin access?</h1><p>${esc(copy)}</p><p class="accessMeta">Opening this page did not change your account or contact Jellyfin. Restoration only starts when you choose Restore access.</p><div class="restoreActions"><form class="plainForm" method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><button class="button primary" type="submit">Restore access</button></form><a class="button secondary" href="/account?skipRestore=1">Continue without restoring</a></div></section></main></body></html>`;}
 
 function createCustomerDashboardRouter(){
