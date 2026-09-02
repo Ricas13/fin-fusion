@@ -91,7 +91,7 @@ identityMismatch.providerIdentityToCustomers.set('stripe:cus_1', new Set(['diffe
 matches = discovery.matchPremiumRows([local], [stripe], identityMismatch);
 assert.strictEqual(matches[0].state, 'unresolved', 'a known provider-customer-ID mismatch must never be overridden by matching email');
 
-matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', provider_subscription_id: 'sub_existing' }], [stripe], baseContext());
+matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_existing' }], [stripe], baseContext());
 assert.strictEqual(matches[0].state, 'linked', 'already-linked premium users must not be rewritten');
 
 matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }], baseContext());
