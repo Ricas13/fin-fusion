@@ -15,36 +15,6 @@
     });
   }
 
-  function journey(active){
-    const nav=document.createElement('nav');
-    nav.className='stremioJourney';
-    nav.setAttribute('aria-label','Stremio setup journey');
-    const items=[
-      ['sources','1','Sources','/admin/servers/stremio','Choose where Stremio finds titles'],
-      ['plan','2','Plan delivery','/admin/plans?type=stremio','Choose access and optional fallbacks'],
-      ['customer','3','Customer install','/admin/users?service=stremio','Install and support customers']
-    ];
-    items.forEach(([key,step,label,href,help])=>{
-      const link=document.createElement('a');
-      link.className=`stremioJourneyStep${key===active?' active':''}`;
-      link.href=href;
-      if(key===active)link.setAttribute('aria-current','step');
-      const badge=document.createElement('span');badge.className='stremioJourneyNumber';badge.textContent=step;
-      const copy=document.createElement('span');copy.className='stremioJourneyCopy';
-      const strong=document.createElement('strong');strong.textContent=label;
-      const small=document.createElement('small');small.textContent=help;
-      copy.append(strong,small);link.append(badge,copy);nav.appendChild(link);
-    });
-    return nav;
-  }
-
-  function insertJourney(active,before=null){
-    if(document.querySelector('.stremioJourney'))return;
-    const node=journey(active);
-    if(before?.parentNode)before.parentNode.insertBefore(node,before);
-    else document.querySelector('.pageHeader')?.insertAdjacentElement('afterend',node);
-  }
-
   function wrapPriority(input,label='Advanced order'){
     if(!input||input.closest('.stremioOrderDetails'))return;
     const details=document.createElement('details');details.className='stremioOrderDetails';
@@ -56,7 +26,6 @@
 
   function polishSources(){
     if(path!=='/admin/servers/stremio')return;
-    insertJourney('sources');
     const title=document.querySelector('.pageHeader h1');if(title)title.textContent='Stremio sources';
     const subtitle=document.querySelector('.pageHeader .pageSubtitle');if(subtitle)subtitle.textContent='Choose the Jellyfin libraries Stremio can use, then connect them to plans.';
 
@@ -96,10 +65,6 @@
         heading.textContent='External Jellyfin fallbacks';
         if(copy)copy.textContent='Optional Jellyfin servers used when a plan needs an additional playback source.';
       }
-      if(heading.textContent.trim()==='Managed Stremio activity'){
-        heading.textContent='Customer Stremio activity';
-        if(copy)copy.textContent='See which customers have private playback access and jump straight to the customer when support is needed.';
-      }
     });
 
     document.querySelectorAll('.capabilityTable th').forEach(th=>{
@@ -131,13 +96,11 @@
       };
       const value=button.textContent.trim();if(map[value])button.textContent=map[value];
     });
-    replaceText(document.querySelector('#activity'),[['Internal Stremio account','Private playback account']]);
   }
 
   function polishPlan(){
     const hero=document.querySelector('[data-plan-service="stremio"]');
     if(!hero)return;
-    insertJourney('plan');
     replaceText(hero,[['household IPs','household connections'],['household IP','household connection']]);
     const form=document.querySelector('.stremioPlanForm');
     replaceText(form,[['Household IPs','Household connections'],['IP replacement','Connection replacement'],['inactive IP','inactive connection'],['household leases','household connections']]);
@@ -178,7 +141,6 @@
   function polishCustomer(){
     if(!/^\/admin\/users\/[0-9a-f-]+\/manage$/i.test(path))return;
     const section=document.querySelector('#stremio-installation');if(!section)return;
-    insertJourney('customer',section);
     const subtitle=section.querySelector('.sectionHead .muted');if(subtitle)subtitle.textContent='Private installation link and recent Stremio activity for this customer.';
     section.querySelectorAll('label').forEach(label=>{if(label.textContent.trim()==='Manifest / installation URL')label.textContent='Private installation link';});
     section.querySelectorAll('button,a').forEach(control=>{
