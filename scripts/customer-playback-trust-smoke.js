@@ -88,13 +88,23 @@ expect(enforcement.includes('jellyfin_stop_did_not_end_session'),'A 204/no-op Je
 const dashboard=source('views/customer/dashboard.ejs');
 expect(dashboard.includes('/account/activity')&&dashboard.includes('View playback activity'),'Dashboard must provide a direct playback-activity shortcut.');
 const nav=source('views/customer/_nav.ejs');
-expect(nav.includes('/account/service-passwords')&&nav.includes('Service passwords'),'Signed-in customers with service access must have a dedicated service-password surface.');
+expect(!nav.includes('>Service passwords</a>')&&nav.includes('data-customer-now-playing'),'Service passwords must be embedded in Account while the shared navigation owns the live-session strip.');
 const passwordSync=source('src/platform/customer-password-sync.js');
 expect(passwordSync.includes("scope:'customer-request-password',max:10,windowSeconds:900"),'Overseerr password changes must be separately rate limited.');
 expect(passwordSync.includes("router.post('/account/requests/password',requireCustomer,requestPasswordLimit"),'The independent Overseerr password mutation must use its dedicated rate limiter.');
+expect(passwordSync.includes("router.get('/account/service-passwords/fragment'")&&passwordSync.includes('servicePasswordFragment(req'),'Service password controls must be generated from current entitlements for the Account page.');
+expect(passwordSync.includes("res.redirect(302,'/account/security#service-passwords')"),'Legacy service-password URLs must converge on the Account section.');
 expect(!passwordSync.includes('bcrypt.compare(')&&!passwordSync.includes('currentPortalPassword'),'Service password management must not read or verify the portal password.');
 expect(passwordSync.includes("'customer.request_password.change'"),'Successful Overseerr password changes must be audited without logging the password.');
 expect(passwordSync.includes('Portal and Overseerr passwords are separate.'),'The retired sync endpoint must explicitly keep portal and Overseerr credentials separate.');
 expect(!passwordSync.includes('metadata:{password'),'Service password audit must never include plaintext secrets.');
 
-console.log('Customer playback trust, webhook ingest and independent service password smoke: ok');
+const nowPlaying=source('src/platform/customer-now-playing.js');
+expect(nowPlaying.includes('WHERE aps.customer_id=$1'),'Now-playing reads must always be scoped to the signed-in customer.');
+expect(nowPlaying.includes("aps.last_seen_at>NOW()-INTERVAL '5 minutes'"),'Now-playing must reject stale playback snapshots.');
+expect(!nowPlaying.includes('remote_endpoint_encrypted')&&!nowPlaying.includes('jellyfin_session_id'),'Customer now-playing responses must not expose private endpoints or Jellyfin session IDs.');
+expect(passwordSync.includes('router.use(createCustomerNowPlayingRouter())'),'The mounted customer account router must own the now-playing JSON endpoint before the general platform router.');
+const nowPlayingClient=source('public/js/customer-now-playing.js');
+expect(nowPlayingClient.includes("fetch('/account/now-playing.json'")&&nowPlayingClient.includes('window.setInterval(refresh,15000)'),'The live-stream strip must refresh from the customer-scoped endpoint without polling Jellyfin directly from the browser.');
+
+console.log('Customer playback trust, webhook ingest, independent service password and now-playing smoke: ok');

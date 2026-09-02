@@ -1,40 +1,21 @@
-:root{--customer-nav-width:230px;--customer-nav-hover:rgba(76,201,240,.09);--customer-nav-active:rgba(76,201,240,.14)}
-.customerPortalNav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;padding:8px;border:1px solid #29323d;border-radius:11px;background:#10161d}
-.customerPortalNavLink{display:inline-flex;align-items:center;min-height:38px;padding:8px 11px;border:1px solid transparent;border-radius:8px;color:#aeb9c6;text-decoration:none;font-size:12px;font-weight:750;transition:background .15s ease,border-color .15s ease,color .15s ease,transform .15s ease}
-.customerPortalNavLink:hover{background:var(--customer-nav-hover);border-color:rgba(76,201,240,.18);color:#edf8fc;transform:translateX(2px)}
-.customerPortalNavLink.active{border-color:#337d95;background:var(--customer-nav-active);color:#9ae6fb;box-shadow:inset 3px 0 0 #4cc9f0}
-.customerSidebar .customerPortalNav{display:grid;margin:0;padding:0;border:0;background:transparent}
-.customerSidebar .customerPortalNavLink{width:100%}
-.customerLayout,.customerPortalPage,.securityMain{width:min(1220px,calc(100% - 36px));margin:0 auto;display:grid;grid-template-columns:var(--customer-nav-width) minmax(0,1fr);column-gap:24px;align-items:start}
-.customerLayout{gap:24px}
+:root{--customer-nav-hover:rgba(76,201,240,.09);--customer-nav-active:rgba(76,201,240,.14)}
+.customerPortalNav{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin:0 0 12px;padding:8px;border:1px solid #29323d;border-radius:11px;background:#10161d;scrollbar-width:thin}
+.customerPortalNavLink{display:inline-flex;align-items:center;min-height:38px;padding:8px 11px;border:1px solid transparent;border-radius:8px;color:#aeb9c6;text-decoration:none;font-size:12px;font-weight:750;white-space:nowrap;flex:0 0 auto;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.customerPortalNavLink:hover{background:var(--customer-nav-hover);border-color:rgba(76,201,240,.18);color:#edf8fc}
+.customerPortalNavLink.active{border-color:#3b99b5;background:var(--customer-nav-active);color:#9ae6fb;box-shadow:inset 0 0 0 1px rgba(76,201,240,.18)}
+.customerLayout,.customerPortalPage,.securityMain{width:min(1220px,calc(100% - 36px));margin:0 auto;display:block}
 .customerPortalPage,.securityMain{padding:24px 0 64px}
-.customerLayout .portalMain{width:100%;margin:0;padding:24px 0 64px}
-.customerSidebar{width:100%;position:sticky;top:88px;align-self:start}
+.customerLayout .portalMain{width:100%;margin:0;padding:8px 0 64px}
+.customerSidebar{display:contents}.customerNavTitle{display:none}
 .securityMain{max-width:1220px!important}
-.customerStandaloneHeader{grid-column:1/-1!important;grid-row:1;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px;margin:0 0 20px;padding:0 2px 14px;border-bottom:1px solid #222a34}
+.customerStandaloneHeader{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px;margin:0 0 20px;padding:0 2px 14px;border-bottom:1px solid #222a34}
 .customerStandaloneHeader .brandLockup{display:flex;align-items:center;gap:11px;text-decoration:none}.customerStandaloneHeader .brandLogo{width:36px;height:36px;border-radius:9px;object-fit:cover}.customerStandaloneHeader .brandName{font-size:17px;font-weight:850;letter-spacing:-.01em}.customerStandaloneHeader .brandMeta{margin-top:2px;color:#8d99aa;font-size:11px}
-.customerPortalPage>.customerPortalNav,.securityMain>.customerPortalNav{grid-column:1;grid-row:1 / span 200;display:grid;align-content:start;gap:5px;margin:0;position:sticky;top:88px;padding:12px;border-color:#2b3948;border-radius:13px;background:#101820;box-shadow:0 12px 34px rgba(0,0,0,.14)}
-.securityMain>.customerStandaloneHeader+.customerPortalNav{grid-row:2 / span 200}
-.customerPortalPage>.customerPortalNav::before,.securityMain>.customerPortalNav::before{content:"My account";display:block;padding:2px 8px 8px;color:#6f8192;font-size:10px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}
-.customerPortalPage>.customerPortalNav .customerPortalNavLink,.securityMain>.customerPortalNav .customerPortalNavLink{width:100%}
-.customerPortalPage>:not(.customerPortalNav),.securityMain>:not(.customerPortalNav):not(.customerStandaloneHeader){grid-column:2;min-width:0}
-.customerPortalPageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
-.customerPortalPageHeader h1{margin:0 0 5px}
-.customerPortalPageHeader p{margin:0;color:#8d99aa}
+.customerPortalPageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:18px 0}.customerPortalPageHeader h1{margin:0 0 5px}.customerPortalPageHeader p{margin:0;color:#8d99aa}
+.customerNowPlaying[hidden]{display:none!important}.customerNowPlaying{margin:0 0 18px;padding:12px 14px;border:1px solid #253244;border-radius:12px;background:#101827;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.customerNowPlayingHeader,.customerNowPlayingTop,.customerNowPlayingMeta,.customerNowPlayingHeading,.customerNowPlayingState{display:flex;align-items:center}.customerNowPlayingHeader,.customerNowPlayingTop,.customerNowPlayingMeta{justify-content:space-between;gap:12px}.customerNowPlayingHeading,.customerNowPlayingState,.customerNowPlayingTitleWrap{display:flex;align-items:center;gap:8px;min-width:0}.customerNowPlayingHeader{margin-bottom:8px}.customerNowPlayingHeading{font-size:13px}.customerNowPlayingPulse{width:7px;height:7px;border-radius:50%;background:#2dd4bf;box-shadow:0 0 0 3px rgba(45,212,191,.09)}.customerNowPlayingCount{padding:3px 8px;border-radius:999px;background:#0c1422;color:#b4c0cf;font:700 10px ui-monospace,monospace}.customerNowPlayingRows{display:grid;gap:10px}.customerNowPlayingRow+.customerNowPlayingRow{padding-top:9px;border-top:1px solid #202c3b}.customerNowPlayingType{padding:3px 7px;border-radius:999px;background:#5b5fe9;color:#eef0ff;font-size:9px;font-weight:850;letter-spacing:.04em}.customerNowPlayingTitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#dce5f0}.customerNowPlayingService{color:#8493a6;font-size:10px}.customerNowPlayingState .pill{font-size:9px;padding:2px 6px}.customerNowPlayingTrack{height:2px;margin:7px 0 6px;border-radius:999px;background:rgba(37,201,189,.18);overflow:hidden;position:relative}.customerNowPlayingTrack::after{content:"";position:absolute;inset:0;width:22%;background:linear-gradient(90deg,transparent,#25c9bd,transparent);animation:customerNowPlayingSweep 2.5s linear infinite}.customerNowPlayingMeta{color:#738195;font-size:9px}.customerNowPlayingMeta span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.customerNowPlayingMeta span:last-child{white-space:nowrap}
+.servicePasswordBlock{grid-column:1/-1;scroll-margin-top:18px;padding:4px 0}.servicePasswordHeading{margin:4px 0 12px}.servicePasswordHeading h2{margin:0 0 4px}.servicePasswordHeading p{margin:0;color:#8d99aa}.servicePasswordGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.servicePasswordGrid>.panel{scroll-margin-top:18px}
 .panel:has(form[action="/account/requests/password/sync"]){display:none!important}
-@media(max-width:900px){
- .customerLayout,.customerPortalPage,.securityMain{display:block;width:min(100% - 28px,1180px);padding-top:16px}
- .customerStandaloneHeader{min-height:60px;margin-bottom:14px;padding-bottom:12px}
- .customerPortalPage>.customerPortalNav,.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav{position:static;display:flex;overflow-x:auto;gap:4px;margin:0 0 18px;padding:8px;border:1px solid #29323d;border-radius:11px;background:#10161d;box-shadow:none}
- .customerLayout .portalMain{padding-top:8px}
- .customerPortalPage>.customerPortalNav::before,.securityMain>.customerPortalNav::before{display:none}
- .customerPortalPage>.customerPortalNav .customerPortalNavLink,.securityMain>.customerPortalNav .customerPortalNavLink,.customerSidebar .customerPortalNavLink{width:auto;white-space:nowrap;flex:0 0 auto}
- .customerPortalNavLink:hover{transform:none}
-}
-@media(max-width:700px){
- .customerLayout,.customerPortalPage,.securityMain{width:min(100% - 24px,1180px)}
- .customerPortalNav{overflow-x:auto;flex-wrap:nowrap}
- .customerPortalNavLink{white-space:nowrap;flex:0 0 auto}
- .customerPortalPageHeader{flex-direction:column}
- .customerStandaloneHeader .button{display:none}
-}
+@keyframes customerNowPlayingSweep{from{transform:translateX(-130%)}to{transform:translateX(650%)}}
+@media(prefers-reduced-motion:reduce){.customerNowPlayingTrack::after{animation:none}}
+@media(max-width:900px){.customerLayout,.customerPortalPage,.securityMain{width:min(100% - 28px,1180px)}.customerPortalPage,.securityMain{padding-top:16px}.customerStandaloneHeader{min-height:60px;margin-bottom:14px;padding-bottom:12px}.customerLayout .portalMain{padding-top:6px}.customerPortalNav{gap:4px}.customerNowPlaying{padding:11px 12px}}
+@media(max-width:700px){.customerLayout,.customerPortalPage,.securityMain{width:min(100% - 24px,1180px)}.customerPortalPageHeader{flex-direction:column}.customerStandaloneHeader .button{display:none}.customerNowPlayingTop,.customerNowPlayingMeta{align-items:flex-start}.customerNowPlayingState{flex:0 0 auto}.customerNowPlayingMeta{gap:8px}.servicePasswordGrid{grid-template-columns:1fr}}

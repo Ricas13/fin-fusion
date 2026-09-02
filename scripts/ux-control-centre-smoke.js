@@ -71,7 +71,7 @@ assert(/outcome\?\.active&&\(outcome\?\.account\?\.id\|\|outcome\?\.emby\?\.acco
 assert(/getCustomerState/.test(customerDashboard)&&/has not completed yet/.test(customerDashboard),'customer provisioning retry must preserve pending/blocked state instead of false success');
 assert(/ready to watch/.test(dashboard)&&/Manage my account/.test(dashboard),'simplified customer journey missing');
 assert(/controlCentreSummary/.test(css),'customer control centre styling missing');
-assert(/grid-template-columns:var\(--customer-nav-width\) minmax\(0,1fr\)/.test(customerNav),'signed-in customer subpages must use a left navigation shell on desktop');
-assert(/position:sticky/.test(customerNav)&&/My account/.test(customerNav),'customer navigation must remain obvious while moving through account pages');
-assert(/@media\(max-width:900px\)/.test(customerNav)&&/overflow-x:auto/.test(customerNav),'customer navigation must collapse safely on smaller screens');
+assert(/\.customerPortalNav\{display:flex/.test(customerNav)&&/flex-wrap:nowrap/.test(customerNav)&&/overflow-x:auto/.test(customerNav),'signed-in customer subpages must use one horizontal overflow-safe navigation shell');
+assert(/\.customerSidebar\{display:contents\}/.test(customerNav)&&!/--customer-nav-width:230px/.test(customerNav)&&!/grid-template-columns:var\(--customer-nav-width\)/.test(customerNav),'the old desktop left navigation reservation must remain retired');
+assert(/@media\(max-width:900px\)/.test(customerNav)&&/overflow-x:auto/.test(customerNav),'customer navigation must remain safe on smaller screens');
 console.log('ux control centre smoke: ok');

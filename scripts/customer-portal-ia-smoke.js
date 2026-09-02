@@ -40,6 +40,9 @@ const history=read('src/platform/customer-history.js');
 const activity=read('src/platform/customer-activity.js');
 const activityView=read('views/customer/activity.ejs');
 const customerPortalCss=read('public/css/customer-portal.css');
+const nowPlayingRoute=read('src/platform/customer-now-playing.js');
+const nowPlayingClient=read('public/js/customer-now-playing.js');
+const servicePasswordsClient=read('public/js/customer-account-service-passwords.js');
 
 for(const label of ['Home','Activity','Support','Help','Payments','Account','Notifications'])assert(nav.includes(label),`customer navigation missing ${label}`);
 assert(!nav.includes('>Setup</a>')&&!nav.includes('Plan &amp; billing'),'customer navigation must not restore the redundant Setup or Plan & billing destinations');
@@ -48,6 +51,8 @@ assert(nav.includes('/account/history')&&nav.includes("active==='history'"),'Pay
 assert(nav.includes('/account/communications')&&nav.includes("active==='notifications'"),'Notifications must be a first-class navigation destination with its own active state');
 assert(nav.includes('>Affiliate</a>')&&!nav.includes('>Benefits</a>'),'customer navigation must consistently call the referral programme Affiliate');
 assert(nav.includes('Request content ↗'),'configured content requests must be part of the canonical customer navigation');
+assert(!nav.includes('>Service passwords</a>')&&!nav.includes('href="/account/service-passwords"'),'service passwords must live inside Account rather than creating another customer navigation destination');
+assert(nav.includes('data-customer-now-playing')&&nav.includes('/js/customer-now-playing.js')&&nav.includes('/js/customer-account-service-passwords.js'),'the shared signed-in navigation must own the live-stream strip and Account service-password enhancement');
 assert(generatedNav.includes("views/customer/_nav.ejs")&&generatedNav.includes('ejs.compile'),'server-rendered account pages must render the same EJS navigation partial as template-rendered pages');
 assert(generatedNav.includes('optionsForCustomer')&&generatedNav.includes('optionsFromPortal'),'customer navigation conditionals must come from one shared options helper');
 assert(generatedNav.includes('standaloneHeader')&&generatedNav.includes("['account','security']"),'signed-in Account must recover the shared account header without affecting login/2FA frames');
@@ -57,12 +62,14 @@ assert(!dashboard.includes('customerNavLink\" href=\"<%= overseerrUrl %>\"'),'da
 assert(dashboard.includes('href="/account/security">Account</a>')&&!dashboard.includes('href="/account/security">Security</a>'),'Home account shortcuts must use the same Account name as the canonical navigation');
 assert(customerCore.includes('ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username'),'Jellyfin username rename eligibility must be limited to accounts created before today.');
 assert(customerPasswordSync.includes("'/account/jellyfin/:accountId/username'")&&customerPasswordSync.includes('renameJellyfinAccount(req.session.customerId'),'customer portal must expose a CSRF-protected Jellyfin username rename route.');
-assert(customerPasswordSync.includes("router.get('/account/service-passwords'")&&customerPasswordSync.includes("return redirectWith(res,'/account/service-passwords','error','Passwords do not match.')"),'service-password validation errors must stay inside the dedicated Service passwords account surface.');
+assert(customerPasswordSync.includes("router.get('/account/service-passwords/fragment'")&&customerPasswordSync.includes("res.redirect(302,'/account/security#service-passwords')"),'service-password UI must be embedded into Account while preserving old service-password URLs as compatibility redirects.');
+assert(customerPasswordSync.includes("return redirectWith(res,'/account/security','error','Passwords do not match.','service-passwords')"),'service-password validation errors must return to the Account service-password section.');
+assert(servicePasswordsClient.includes("form[action=\"/account/security/password\"]")&&servicePasswordsClient.includes("fetch('/account/service-passwords/fragment'")&&servicePasswordsClient.includes("portalPanel.after(content)"),'Account must insert entitlement-aware service passwords immediately after the portal-password card.');
 assert(provisioningEngine.includes('async function renameJellyfinAccount')&&provisioningEngine.includes('ja.created_at<CURRENT_DATE AS can_rename_jellyfin_username')&&provisioningEngine.includes('!account.can_rename_jellyfin_username')&&provisioningEngine.includes("method: 'POST'")&&provisioningEngine.includes('Name: username'),'Jellyfin username rename must enforce the legacy-account rule in SQL and update the existing remote user rather than recreating it.');
 assert(dashboard.includes('can_rename_jellyfin_username')&&dashboard.includes('Change username')&&dashboard.includes('/account/jellyfin/${esc(a.id)}/username'),'dashboard must render username rename only for eligible older Jellyfin accounts.');
 assert(!/redirect\(['"]\/account\/communications\?welcome=1/.test(customerCommunications),'customer Home must not be intercepted by notification-channel onboarding.');
-assert(application.indexOf('app.use(createCustomerPasswordSyncRouter())')>=0&&application.indexOf('app.use(createCustomerPasswordSyncRouter())')<application.indexOf('app.use(createRouter())'),'customer Jellyfin account mutation routes must mount before the general platform router.');
-assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.securityMain>.customerPortalNav'),'Account security must use the same left-side desktop navigation treatment as other customer pages');
+assert(application.indexOf('app.use(createCustomerPasswordSyncRouter())')>=0&&application.indexOf('app.use(createCustomerPasswordSyncRouter())')<application.indexOf('app.use(createRouter())'),'customer account mutation and live-session routes must mount before the general platform router.');
+assert(security.includes('class=\"securityMain\"')&&customerNavigationCss.includes('.customerLayout,.customerPortalPage,.securityMain')&&customerNavigationCss.includes('display:block'),'Account security must use the same horizontal account shell as other signed-in customer pages');
 assert(security.includes('customerNav.optionsFromPortal(portal)'),'Account security must compute the same canonical conditional navigation options as other customer pages');
 assert(security.includes("const navigation=active?customerNav.nav(active,navOptions):''"),'security frames must be able to suppress account navigation for pre-login and verification-only pages');
 assert(security.includes("'Two-factor authentication',`${error}")&&security.includes('`,null));});'),'pre-login 2FA must use the minimal auth shell rather than exposing signed-in navigation');
@@ -81,9 +88,12 @@ assert(supportThread.includes('class=\"portalTopbar\"')&&supportThread.includes(
 assert(supportRoute.includes("res.redirect('/account/support?error='+encodeURIComponent('This support ticket does not exist or is not linked to your account.'))"),'missing or foreign support tickets must return to Support rather than dropping into a nav-less generic page');
 assert(docsRoute.includes("customerNav.nav('docs'")&&docsRender.includes('accountNavHtml'),'customer Help must preserve the canonical account navigation while keeping guide navigation inside the docs experience');
 assert(docsRender.includes('customerTopbar(site)'),'customer Help must retain the account header above the documentation reading shell');
-assert(customerNavigationCss.includes('--customer-nav-width:230px')&&customerNavigationCss.includes('.customerLayout,.customerPortalPage,.securityMain')&&customerNavigationCss.includes('grid-template-columns:var(--customer-nav-width) minmax(0,1fr)'),'customer pages must reserve the same left navigation column across old and new account shells');
-assert(customerNavigationCss.includes('top:88px'),'desktop customer navigation must stick below the account topbar consistently');
-assert(customerNavigationCss.includes('@media(max-width:900px)')&&customerNavigationCss.includes('.securityMain>.customerPortalNav,.customerSidebar .customerPortalNav'),'customer left navigation must still collapse to the mobile horizontal navigation pattern');
+assert(customerNavigationCss.includes('.customerPortalNav{display:flex')&&customerNavigationCss.includes('flex-wrap:nowrap')&&customerNavigationCss.includes('overflow-x:auto'),'signed-in customer navigation must remain one horizontal, overflow-safe menu');
+assert(customerNavigationCss.includes('.customerSidebar{display:contents}')&&!customerNavigationCss.includes('--customer-nav-width:230px')&&!customerNavigationCss.includes('grid-template-columns:var(--customer-nav-width)'),'the old reserved left-sidebar layout must stay retired');
+assert(customerNavigationCss.includes('.customerNowPlaying')&&customerNavigationCss.includes('.servicePasswordBlock'),'the shared shell must style both the live-session strip and embedded service passwords');
+assert(nowPlayingRoute.includes("router.get('/account/now-playing.json'")&&nowPlayingRoute.includes('WHERE aps.customer_id=$1')&&nowPlayingRoute.includes("last_seen_at>NOW()-INTERVAL '5 minutes'"),'live-session data must be a fresh, signed-in, customer-scoped read');
+assert(!nowPlayingRoute.includes('remote_endpoint_encrypted')&&!nowPlayingRoute.includes('jellyfin_session_id'),'customer now-playing output must not select private endpoint or internal session identifiers');
+assert(nowPlayingClient.includes("fetch('/account/now-playing.json'")&&nowPlayingClient.includes('window.setInterval(refresh,15000)')&&nowPlayingClient.includes('if(!list.length){root.hidden=true'),'the live-session strip must refresh in place and disappear when the customer is not streaming');
 
 assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
 assert(onboarding.includes('<div class="brandMeta">My account</div>')&&onboarding.includes('href="/account/security">Account</a>')&&!onboarding.includes('>Account security</a>')&&!onboarding.includes('<div class="brandMeta">Getting started</div>'),'onboarding must use the same My account / Account terminology as the signed-in portal');
