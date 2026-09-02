@@ -2,6 +2,7 @@
 
 const { spawnSync } = require('child_process');
 const { Client } = require('pg');
+require('./cloudflare-network-identity-smoke');
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required for the integration suite');
