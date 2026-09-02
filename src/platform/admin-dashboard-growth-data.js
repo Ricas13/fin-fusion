@@ -183,7 +183,7 @@ async function playbackTrend(range) {
   const result=await query(`WITH buckets AS (
       SELECT gs AS bucket,GREATEST(gs,$1::timestamptz) bucket_start,LEAST(gs+INTERVAL '${step}',$2::timestamptz) bucket_end
       FROM generate_series(date_trunc('${grain}',$1::timestamptz),date_trunc('${grain}',($2::timestamptz-INTERVAL '1 microsecond')),INTERVAL '${step}') gs
-    ), overlaps AS (
+    ), playback_overlap AS (
       SELECT b.bucket,b.bucket_start,b.bucket_end,ph.id,LOWER(COALESCE(ph.playback_method,'unknown')) method,
         CASE WHEN ph.id IS NULL THEN 0 ELSE GREATEST(0,EXTRACT(EPOCH FROM (LEAST(COALESCE(ph.ended_at,ph.last_seen_at),b.bucket_end)-GREATEST(ph.started_at,b.bucket_start)))) END seconds,
         CASE WHEN ph.id IS NOT NULL AND ph.started_at>=b.bucket_start AND ph.started_at<b.bucket_end THEN 1 ELSE 0 END started
@@ -198,7 +198,7 @@ async function playbackTrend(range) {
       COALESCE(SUM(seconds) FILTER(WHERE method='directstream'),0)::bigint directstream_seconds,
       COALESCE(SUM(seconds) FILTER(WHERE method='transcode'),0)::bigint transcode_seconds,
       COALESCE(SUM(seconds) FILTER(WHERE method NOT IN('directplay','directstream','transcode')),0)::bigint unknown_seconds
-    FROM overlaps GROUP BY bucket ORDER BY bucket`,[range.start,range.end]);
+    FROM playback_overlap GROUP BY bucket ORDER BY bucket`,[range.start,range.end]);
   const rows=fillPlaybackSeries(range,grain,result.rows,['bucket_seconds','avg_concurrent','session_starts','directplay_seconds','directstream_seconds','transcode_seconds','unknown_seconds']).map(row=>{
     const total=row.directplay_seconds+row.directstream_seconds+row.transcode_seconds+row.unknown_seconds;
     return{...row,directplay_pct:total?row.directplay_seconds/total*100:0,directstream_pct:total?row.directstream_seconds/total*100:0,transcode_pct:total?row.transcode_seconds/total*100:0,unknown_pct:total?row.unknown_seconds/total*100:0};
