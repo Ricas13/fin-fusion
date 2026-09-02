@@ -4,35 +4,58 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Jellyfin · <%= siteName %></title>
+  <title>My Access · <%= siteName %></title>
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
   <link rel="stylesheet" href="/css/customer-jellyfin.css">
   <script src="/js/customer-jellyfin.js" defer></script>
 </head>
+<%
+  function validDate(value){if(!value)return null;const date=new Date(value);return Number.isNaN(date.getTime())?null:date;}
+  function formatDate(value){const date=validDate(value);return date?date.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'No expiry';}
+  function serviceType(subscription){const type=String(subscription?.service_type_snapshot||subscription?.service_type||'jellyfin').toLowerCase();return ['jellyfin','emby','stremio','bundle'].includes(type)?type:'jellyfin';}
+  function subscriptionName(subscription){return subscription?.plan_name||subscription?.contract_plan_name||subscription?.name||subscription?.plan_code||subscription?.code||'Streaming access';}
+  function subscriptionKind(subscription){if(subscription?.is_free_tier)return'Free Server';const type=serviceType(subscription);if(type==='emby')return'Emby Share';if(type==='stremio')return'Stremio';if(type==='bundle')return'Jellyfin + Stremio';return String(subscription?.billing_interval_snapshot||subscription?.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin';}
+  function subscriptionStatus(subscription){if(subscription?.status==='trialing')return'Trial active';if(subscription?.status==='past_due')return'Payment needs attention';if(subscription?.status==='paused')return'Paused';return'Active';}
+%>
 <body><div class="portalShell">
 <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
 <main class="customerPortalPage jellyfinHub">
-  <%- include('_nav',{active:'jellyfin'}) %>
+  <%- include('_nav',{active:'access'}) %>
   <% if(message){ %><div class="notice success"><%= message %></div><% } %>
   <% if(error){ %><div class="notice error"><%= error %></div><% } %>
 
   <section class="jellyfinHubHero">
-    <div><span class="eyebrow">Streaming access</span><h1>Jellyfin</h1><p>Your server, sign-in details and library visibility in one place.</p></div>
-    <div class="jellyfinHeroActions"><a class="button secondary" href="https://jellyfin.org/downloads/" target="_blank" rel="noopener noreferrer">Official apps ↗</a><a class="button secondary" href="/account/activity">Playback activity</a></div>
+    <div><span class="eyebrow">Streaming access</span><h1>My Access</h1><p>Your subscriptions, servers, sign-in details and personal library visibility in one place.</p></div>
+    <div class="jellyfinHeroActions"><a class="button secondary" href="/account/activity">Playback activity</a><a class="button secondary" href="/account#plans">View plans</a></div>
+  </section>
+
+  <section class="panel" aria-labelledby="active-subscriptions-heading">
+    <div class="jellyfinSubhead"><div><span class="eyebrow">Subscriptions</span><h2 id="active-subscriptions-heading">Your active access</h2><p>Each subscription stays separate, including Free Server and temporary trials.</p></div><span class="jellyfinLibraryCount"><%= subscriptions.length %> active</span></div>
+    <% if(!subscriptions.length){ %><div class="jellyfinEmptyLibraries">No active subscriptions.</div><% } else { %>
+      <div class="jellyfinCredentialGrid">
+      <% subscriptions.forEach(function(subscription){const type=serviceType(subscription); %>
+        <article class="jellyfinCredential">
+          <span><%= subscriptionKind(subscription) %> · <%= subscriptionStatus(subscription) %></span>
+          <strong><%= subscriptionName(subscription) %></strong>
+          <small><% if(subscription.is_free_tier){ %>Free access while your Free Server entitlement remains active<% } else if(subscription.current_period_end){ %><%= String(subscription.billing_interval_snapshot||subscription.billing_interval)==='trial'?'Trial ends':'Current period ends' %> <%= formatDate(subscription.current_period_end) %><% } else { %>Current access<% } %><% if(type==='jellyfin'||type==='emby'||type==='bundle'){ %> · <%= Math.max(1,Number(subscription.streams||1)) %> stream<%= Number(subscription.streams||1)===1?'':'s' %><% } %></small>
+        </article>
+      <% }) %>
+      </div>
+    <% } %>
   </section>
 
   <% if(!accounts.length){ %>
-  <section class="panel jellyfinPending"><div><h2>Jellyfin access is being prepared</h2><p>Your entitlement is active, but a server account is not ready yet.</p></div><form method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary" type="submit">Retry setup</button></form></section>
+  <section class="panel jellyfinPending"><div><h2>Server access is being prepared</h2><p>If one of your subscriptions includes Jellyfin or Emby, its server account will appear here when provisioning completes.</p></div><form method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary" type="submit">Retry setup</button></form></section>
   <% } %>
 
   <div class="jellyfinAccountList">
-  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]); %>
-    <section class="jellyfinAccountCard <%= account.disabled?'isUnavailable':'' %>">
+  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]);const player=account.serviceType==='emby'?'Emby':'Jellyfin'; %>
+    <section class="jellyfinAccountCard <%= account.disabled?'isUnavailable':'' %>" id="account-<%= account.id %>">
       <div class="jellyfinAccountHead">
-        <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLane==='free'?'Free Server':'Premium Jellyfin' %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
-        <% if(account.publicUrl&&!account.disabled&&!account.passwordSetupRequired){ %><a class="button primary" href="<%= account.publicUrl %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %>
+        <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLabel %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
+        <% if(account.publicUrl&&!account.disabled&&!account.passwordSetupRequired){ %><a class="button primary" href="<%= account.publicUrl %>" target="_blank" rel="noopener noreferrer">Open <%= player %></a><% } %>
       </div>
 
       <div class="jellyfinCredentialGrid">
@@ -42,33 +65,44 @@
       </div>
 
       <% if(account.passwordSetupRequired){ %>
-      <div class="jellyfinSetupNotice"><div><strong>One step left</strong><span>Choose the password you will use in Jellyfin.</span></div></div>
-      <form class="jellyfinPasswordForm" method="post" action="/account/jellyfin/<%= account.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin"><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button primary" type="submit">Save password</button></form>
+      <div class="jellyfinSetupNotice"><div><strong>One step left</strong><span>Choose the password you will use for this <%= player %> account.</span></div></div>
+      <form class="jellyfinPasswordForm" method="post" action="/account/access/media/<%= account.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button primary" type="submit">Save <%= player %> password</button></form>
       <% } %>
 
       <div class="jellyfinAccountBody">
+        <% if(account.librarySelectable){ %>
         <section class="jellyfinLibraries" aria-labelledby="libraries-<%= account.id %>">
-          <div class="jellyfinSubhead"><div><h2 id="libraries-<%= account.id %>">Libraries you see</h2><p>Uncheck anything you do not want shown in Jellyfin. You cannot add libraries outside your plan.</p></div><% if(account.availableLibraries.length){ %><span class="jellyfinLibraryCount"><%= account.selectedLibraries.length %> / <%= account.availableLibraries.length %> visible</span><% } %></div>
+          <div class="jellyfinSubhead"><div><h2 id="libraries-<%= account.id %>">Libraries on this server</h2><p>Choose what you want visible for this specific account. A Free Server and a 24-hour trial can therefore have different selections.</p></div><% if(account.availableLibraries.length){ %><span class="jellyfinLibraryCount"><%= account.selectedLibraries.length %> / <%= account.availableLibraries.length %> visible</span><% } %></div>
           <% if(account.libraryError){ %><div class="notice warn">Libraries could not be read from this server right now. Your existing selection has not been changed.</div>
           <% } else if(!account.availableLibraries.length){ %><div class="jellyfinEmptyLibraries">No selectable libraries are currently available for this server.</div>
           <% } else { %>
           <form method="post" action="/account/libraries/<%= account.id %>" data-library-form><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin">
             <div class="jellyfinLibraryTools"><button class="button ghost small" type="button" data-library-all>Show all</button><button class="button ghost small" type="button" data-library-none>Hide all</button></div>
-            <div class="jellyfinLibraryGrid"><% account.availableLibraries.forEach(function(name){ %><label class="jellyfinLibraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= selectedSet.has(name)?'checked':'' %>><span><strong><%= name %></strong><small>Visible in Jellyfin</small></span></label><% }) %></div>
-            <div class="jellyfinLibrarySave"><button class="button secondary" type="submit">Save library visibility</button><span><%= account.librarySelectionSaved?'Your personal library preference is active.':'All plan libraries are currently shown.' %></span></div>
+            <div class="jellyfinLibraryGrid"><% account.availableLibraries.forEach(function(name){ %><label class="jellyfinLibraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= selectedSet.has(name)?'checked':'' %>><span><strong><%= name %></strong><small>Visible on <%= account.serverName %></small></span></label><% }) %></div>
+            <div class="jellyfinLibrarySave"><button class="button secondary" type="submit">Save libraries for this server</button><span><%= account.librarySelectionSaved?'Your personal selection is active for this account.':'All libraries granted by this plan are currently shown.' %></span></div>
           </form>
           <% } %>
         </section>
+        <% } else { %>
+        <section class="jellyfinLibraries"><div class="jellyfinSubhead"><div><h2><%= player %> access</h2><p>This server uses the access policy assigned to your <%= account.planName %> subscription.</p></div></div><div class="jellyfinEmptyLibraries">There are no customer-selectable library controls for this <%= player %> account.</div></section>
+        <% } %>
 
         <aside class="jellyfinManage">
           <details <%= account.passwordSetupRequired?'':'open' %>><summary>Sign-in &amp; account settings</summary><div class="jellyfinManageBody">
-            <% if(!account.passwordSetupRequired){ %><form method="post" action="/account/jellyfin/<%= account.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin"><h3>Change password</h3><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit">Update password</button></form><% } %>
-            <% if(account.canRename){ %><form method="post" action="/account/jellyfin/<%= account.id %>/username"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin"><h3>Change username</h3><div class="field"><label>New Jellyfin username</label><input class="input" name="username" minlength="3" maxlength="80" pattern="[A-Za-z0-9._@+-]{3,80}" autocomplete="username" required value="<%= account.username %>"></div><button class="button secondary" type="submit">Update username</button></form><% } %>
+            <% if(!account.passwordSetupRequired){ %><form method="post" action="/account/access/media/<%= account.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h3>Change password</h3><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit">Update password</button></form><% } %>
+            <% if(account.canRename){ %><form method="post" action="/account/access/media/<%= account.id %>/username"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h3>Change username</h3><div class="field"><label>New <%= player %> username</label><input class="input" name="username" minlength="3" maxlength="80" pattern="[A-Za-z0-9._@+-]{3,80}" autocomplete="username" required value="<%= account.username %>"></div><button class="button secondary" type="submit">Update username</button></form><% } %>
           </div></details>
-          <details><summary>How to sign in</summary><ol class="jellyfinSteps"><li>Install an official Jellyfin app.</li><li>Enter the server URL shown above.</li><li>Sign in with the username shown above.</li><li>Use the Jellyfin password you set here.</li></ol></details>
+          <details><summary>How to sign in</summary><ol class="jellyfinSteps"><li>Install an official <%= player %> app.</li><li>Enter the server URL shown above.</li><li>Sign in with the username shown above.</li><li>Use the <%= player %> password you set here.</li></ol></details>
         </aside>
       </div>
     </section>
   <% }) %>
   </div>
+
+  <% if(requestState&&requestState.eligible){const requestReady=Boolean(requestState.access&&requestState.access.external_user_id&&!requestState.access.access_suspended); %>
+  <section class="jellyfinAccountCard" id="overseerr">
+    <div class="jellyfinAccountHead"><div><div class="jellyfinAccountTitle"><strong>Request content</strong><span class="pill accent">Overseerr</span><span class="pill <%= requestReady?'good':'warn' %>"><%= requestReady?'Ready':'Password needed' %></span></div><div class="jellyfinPlanLine">Included with your current streaming access</div></div><% if(requestReady&&requestState.configuration.baseUrl){ %><a class="button primary" href="<%= requestState.configuration.baseUrl %>" target="_blank" rel="noopener noreferrer">Open Overseerr</a><% } %></div>
+    <div class="jellyfinAccountBody"><section class="jellyfinLibraries"><div class="jellyfinSubhead"><div><h2>Overseerr password</h2><p>Set or reset your request-site password here. It remains separate from your CAPTAiNFiN portal and media-server passwords.</p></div></div></section><aside class="jellyfinManage"><form method="post" action="/account/access/requests/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="field"><label>New Overseerr password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit"><%= requestReady?'Reset Overseerr password':'Set Overseerr password' %></button></form></aside></div>
+  </section>
+  <% } %>
 </main></div></body></html>

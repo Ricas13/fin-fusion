@@ -88,16 +88,22 @@ expect(enforcement.includes('jellyfin_stop_did_not_end_session'),'A 204/no-op Je
 const dashboard=source('views/customer/dashboard.ejs');
 expect(dashboard.includes('/account/activity')&&dashboard.includes('View playback activity'),'Dashboard must provide a direct playback-activity shortcut.');
 const nav=source('views/customer/_nav.ejs');
-expect(!nav.includes('>Service passwords</a>')&&nav.includes('data-customer-now-playing'),'Service passwords must be embedded in Account while the shared navigation owns the live-session strip.');
+expect(!nav.includes('>Service passwords</a>')&&nav.includes('data-customer-now-playing')&&nav.includes('>My Access</a>'),'Service credentials must live in My Access while the shared navigation owns the live-session strip.');
 const passwordSync=source('src/platform/customer-password-sync.js');
 expect(passwordSync.includes("scope:'customer-request-password',max:10,windowSeconds:900"),'Overseerr password changes must be separately rate limited.');
 expect(passwordSync.includes("router.post('/account/requests/password',requireCustomer,requestPasswordLimit"),'The independent Overseerr password mutation must use its dedicated rate limiter.');
-expect(passwordSync.includes("router.get('/account/service-passwords/fragment'")&&passwordSync.includes('servicePasswordFragment(req'),'Service password controls must be generated from current entitlements for the Account page.');
-expect(passwordSync.includes("res.redirect(302,'/account/security#service-passwords')"),'Legacy service-password URLs must converge on the Account section.');
+expect(passwordSync.includes("router.get('/account/service-passwords/fragment'")&&passwordSync.includes('servicePasswordFragment(req'),'The old entitlement-aware service-password fragment must remain a compatibility response for legacy clients.');
+expect(passwordSync.includes("router.get('/account/service-passwords',requireCustomer,(_req,res)=>res.redirect(302,'/account/access'))")&&passwordSync.includes("router.get('/account/requests/password',requireCustomer,(_req,res)=>res.redirect(302,'/account/access#overseerr'))"),'Legacy service-password URLs must converge on My Access.');
+expect(passwordSync.includes("return res.redirect('/account/access')"),'Fresh Jellyfin or Emby password setup must converge on My Access.');
 expect(!passwordSync.includes('bcrypt.compare(')&&!passwordSync.includes('currentPortalPassword'),'Service password management must not read or verify the portal password.');
 expect(passwordSync.includes("'customer.request_password.change'"),'Successful Overseerr password changes must be audited without logging the password.');
 expect(passwordSync.includes('Portal and Overseerr passwords are separate.'),'The retired sync endpoint must explicitly keep portal and Overseerr credentials separate.');
 expect(!passwordSync.includes('metadata:{password'),'Service password audit must never include plaintext secrets.');
+
+const accessHub=source('src/platform/customer-jellyfin.js');
+expect(accessHub.includes("router.post('/account/access/media/:accountId/password'")&&accessHub.includes("router.post('/account/access/requests/password'"),'My Access must own the visible media-service and Overseerr password mutations.');
+const accessView=source('views/customer/jellyfin.ejs');
+expect(accessView.includes('/account/libraries/<%= account.id %>')&&accessView.includes('A Free Server and a 24-hour trial can therefore have different selections'),'My Access library selection must stay account/server scoped for concurrent Jellyfin lanes.');
 
 const nowPlaying=source('src/platform/customer-now-playing.js');
 expect(nowPlaying.includes('WHERE aps.customer_id=$1'),'Now-playing reads must always be scoped to the signed-in customer.');
