@@ -19,7 +19,11 @@ const automationJobs=read('src/automation/jobs.js');
 const composition=read('src/platform/admin-route-composition.js');
 const operator=read('public/js/operator-experience.js');
 const stableNavigation=read('public/js/customer-360-navigation.js');
+const customerClaimUi=read('public/js/admin-customer-claim.js');
+const customerClaims=read('src/customer-claims.js');
+const customer360Css=read('public/css/customer-360.css');
 const adminHtml=read('src/platform/admin-html.js');
+const adminHtmlCore=read('src/platform/admin-html-core.js');
 
 assert(migration.includes('CREATE TABLE public.stremio_install_credential_recovery'),'Stremio install recovery migration is missing');
 assert(migration.includes('credential_encrypted text NOT NULL'),'recoverable install credentials must be encrypted at rest');
@@ -87,6 +91,22 @@ assert(view360.includes("accessCards=require('./customer-360-access-cards')")&&v
 assert(accessCards.includes('Access overview')&&accessCards.includes('accessControlGrid')&&accessCards.includes('Save access changes'),'Customer 360 Access must expose compact operational cards and one technical-policy save action');
 assert(accessCards.includes("bulkPreviewForm(token,customerId,'migrate_server','Move server'")&&accessCards.includes('Reset access controls to plan'),'Customer 360 Access must keep customer-scoped server movement and reset-to-plan operations');
 assert(accessCards.includes('Provisioning history')&&accessCards.includes('accessActivity'),'large diagnostic tables must remain available as collapsed lower disclosures');
+assert(customer360Css.includes('.content .accessControlsSection .accessControlGrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px')&&customer360Css.includes('.content .accessControlsSection .accessControlCard{display:grid;gap:5px;padding:8px 9px'),'Customer Access policy controls must override the old oversized cards with compact three-column control rows');
+assert(customer360Css.includes('color-mix(in srgb,var(--h-customers) 18%,transparent)')&&customer360Css.includes('outline:2px solid var(--focus)'),'Customer Access selections must use the Customers section hue and shared focus token rather than a separate cyan theme');
+assert(customer360Css.includes('@media(max-width:1120px){.content .accessControlsSection .accessControlGrid{grid-template-columns:repeat(2,minmax(0,1fr))}')&&customer360Css.includes('.content .accessControlsSection .accessControlGrid{grid-template-columns:1fr}'),'compact access controls must retain a safe 3/2/1 responsive layout');
+
+// Imported Jellyfin customers use the dedicated claim flow, not ordinary portal
+// activation. The page enhancement is deliberately progressive; the server-side
+// createClaim guard remains the security boundary if a stale page submits after
+// another administrator has already claimed the customer.
+assert(adminHtmlCore.includes('/js/admin-customer-claim.js'),'canonical admin pages must load the contextual imported-customer claim controller');
+assert(customerClaimUi.includes("location.pathname.match(/^\\/admin\\/users\\/([0-9a-f-]{36})$/i)")&&customerClaimUi.includes("return !tab || tab === 'overview'"),'portal invite enhancement must be scoped to the individual customer Overview only');
+assert(customerClaimUi.includes("valueFor(card, 'Portal username') !== '—'")&&customerClaimUi.includes('Portal account not claimed'),'claimed customers must not receive the imported-customer invite control');
+assert(customerClaimUi.includes('/admin/customer-claims/${encodeURIComponent(id)}/create')&&customerClaimUi.includes('New customer claim link'),'the customer Overview must reuse the canonical claim-link endpoint and its one-time bearer response');
+assert(customerClaimUi.includes('their Jellyfin password is not changed')&&customerClaimUi.includes('Creating another link revokes the previous unused link'),'invite copy must preserve the imported-account safety semantics');
+assert(customerClaims.includes("if(customer.user_id)throw new Error('This customer already has a CAPTAiNFiN portal account.')"),'claim backend must reject a customer that has already acquired a portal identity');
+assert(customerClaims.includes('UPDATE customers SET user_id=$2')&&customerClaims.includes("jellyfinPasswordChanged:false"),'claim completion must create/link the portal identity without changing the existing Jellyfin password');
+
 assert(operator.includes("appendTopAction('Manage customer'"),'legacy operator enrichment must remain compatible until the customer-specific stabilizer runs');
 assert(operator.includes('if(context.hasJellyfinAccount)appendTopAction(\'Change Jellyfin password\''),'Jellyfin password support context must remain available to the legacy enrichment layer');
 assert(!operator.includes("link.textContent='Change Jellyfin password';link.setAttribute('data-customer-password-support'"),'the old unconditional Jellyfin password action must not return');
