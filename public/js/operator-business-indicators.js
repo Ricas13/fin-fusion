@@ -55,8 +55,8 @@
   }
   function setSignal(key,total,sourceCounts={}){
     const wrap=ensureSignalNodes(),node=wrap?.querySelector(`[data-operator-signal="${key}"]`);if(!node)return;
-    const count=Math.max(0,Number(total||0));node.hidden=count<=0;const badge=node.querySelector('[data-operator-signal-count]');if(badge){badge.textContent=count>99?'99+':String(count);if(key==='alerts')badge.setAttribute('aria-label',`${count} unresolved alert signals`);}
-    if(key==='alerts'){const summary=node.querySelector('.operatorSignalSummary');if(summary)summary.setAttribute('aria-label',`Alerts: ${count} unresolved operational signals. These clear when resolved, not when viewed.`);}
+    const count=Math.max(0,Number(total||0));node.hidden=count<=0;const badge=node.querySelector('[data-operator-signal-count]');if(badge){badge.textContent=key==='alerts'?'!':count>99?'99+':String(count);if(key==='alerts')badge.setAttribute('aria-label',`${count} unresolved alert signals`);}
+    if(key==='alerts'){const summary=node.querySelector('.operatorSignalSummary');if(summary)summary.setAttribute('aria-label',`Alerts: unresolved operational signals are present. These clear when resolved, not when viewed.`);}
     Object.entries(sourceCounts).forEach(([source,value])=>{const row=node.querySelector(`[data-signal-source="${source}"]`),rowCount=node.querySelector(`[data-signal-count="${source}"]`),n=Math.max(0,Number(value||0));if(row)row.hidden=n<=0;if(rowCount){rowCount.textContent=n>99?'99+':String(n);if(key==='alerts')rowCount.setAttribute('title',`${n} unresolved`);}});
   }
 
