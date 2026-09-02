@@ -19,10 +19,6 @@ function canonical(href){
     if(!u.pathname.startsWith('/admin'))return null;
     if(u.pathname.startsWith('/admin/api/'))return null;
     if(u.pathname.includes(':'))return null;
-    // The crawler inventories route surfaces, not every presentation-filter
-    // permutation. Range controls can expose many links to the same page and
-    // exhaust legitimate route/resource limits during one synthetic crawl.
-    // Explicitly-seeded query-dependent workflows remain covered separately.
     const searchKeys=[...u.searchParams.keys()];
     if(searchKeys.length&&searchKeys.every(key=>['range','from','to'].includes(key)))return u.pathname;
     return `${u.pathname}${u.search}`;
@@ -75,7 +71,7 @@ async function auditPage(page,url,{mobile=false}={}){
     await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
     const metrics=await page.evaluate(()=>({
       links:[...document.querySelectorAll('a[href]')].map(a=>({href:a.getAttribute('href'),text:a.textContent.trim(),download:a.hasAttribute('download')})),
-      forms:[...document.querySelectorAll('form')].map(f=>({method:(f.method||'get').toUpperCase(),action:new URL(f.action,location.href).pathname})),
+      forms:[...document.querySelectorAll('form')].map(f=>({method:(f.getAttribute('method')||'get').toUpperCase(),action:new URL(f.action,location.href).pathname})),
       buttons:[...document.querySelectorAll('button')].map(b=>b.textContent.trim()).filter(Boolean),
       emptyLinks:[...document.querySelectorAll('a[href]')].filter(a=>!a.textContent.trim()&&!a.getAttribute('aria-label')&&!a.querySelector('img[alt]')).length,
       duplicateIds:Object.entries([...document.querySelectorAll('[id]')].reduce((m,el)=>(m[el.id]=(m[el.id]||0)+1,m),{})).filter(([,n])=>n>1),
@@ -107,26 +103,19 @@ async function assertWorkflow(page,url,{owner=null,current=null,personal=false}=
   const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
   assert(response&&response.status()<400,`${url} workflow page returned ${response?.status()}`);
   await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
-
-  // The rail is the only persistent navigation hierarchy. Specialist screens
-  // keep their owner active, but never manufacture a third rail level.
   const visiblePageNavigation=await page.locator('.content nav.workflowCardGrid,.content nav.operatorTabs,.content nav.coherenceSectionTabs,.content nav.coherenceSubTabs,.content section.coherenceOwnedTools').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
   assert.equal(visiblePageNavigation,0,`${url} still renders ${visiblePageNavigation} page-body navigation surfaces`);
   assert.equal(await page.locator('.adminSubTab').count(),0,`${url} reintroduced a third rail level`);
-
   if(owner){
     const activeMain=(await page.locator('.adminTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
     assert.deepStrictEqual(activeMain,[owner],`${url} must keep ${owner} active in the left rail: ${JSON.stringify(activeMain)}`);
   }
-
   if(current){
     const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
     assert.equal(breadcrumb,current,`${url} breadcrumb does not identify its current page`);
   }
-
   const topBarAdminLinks=(await page.locator('.topBarActions > a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
   assert.deepStrictEqual(topBarAdminLinks,[],`${url} mixes page navigation/actions into the global top utility bar: ${JSON.stringify(topBarAdminLinks)}`);
-
   if(personal){
     const personalSubRows=await page.locator('.content nav.operatorTabs,.content nav.coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
     assert.equal(personalSubRows,0,`${url} must not reintroduce a personal-account subtab row`);
@@ -134,7 +123,7 @@ async function assertWorkflow(page,url,{owner=null,current=null,personal=false}=
 }
 
 async function safeMutationAudit(page){
-  const forms=await page.locator('form').evaluateAll(forms=>forms.map(form=>({method:(form.method||'get').toUpperCase(),action:new URL(form.action,location.href).pathname,hasCsrf:Boolean(form.querySelector('input[name="_csrf"]')),buttons:[...form.querySelectorAll('button')].map(b=>b.textContent.trim())})));
+  const forms=await page.locator('form').evaluateAll(forms=>forms.map(form=>({method:(form.getAttribute('method')||'get').toUpperCase(),action:new URL(form.action,location.href).pathname,hasCsrf:Boolean(form.querySelector('input[name="_csrf"]')),buttons:[...form.querySelectorAll('button')].map(b=>b.textContent.trim())})));
   for(const form of forms){if(form.method==='POST')assert(form.hasCsrf,`POST form ${form.action} is missing CSRF`);}
 }
 
@@ -146,10 +135,6 @@ async function main(){
     const context=await browser.newContext({viewport:{width:1440,height:1000}});
     const page=await context.newPage();
     await login(page);
-
-    // Seed representative records using the same encrypted credential contract
-    // as the live server registry so the browser harness cannot regress to the
-    // retired plaintext api_key schema.
     const encryptedApiKey=encryptWithEnv('browser-api-key-2026','JELLYFIN_ENCRYPTION_KEY','jf1');
     const server=await pool.query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,public_url,api_key_encrypted,enabled,priority,max_users,location,allow_new_users,trial_enabled,paid_enabled,health_status,last_health_check) VALUES('Browser Jellyfin','browser-jellyfin','premium','http://127.0.0.1:8096',NULL,$1,TRUE,50,100,NULL,TRUE,TRUE,TRUE,'offline',NOW()) ON CONFLICT DO NOTHING RETURNING id`,[encryptedApiKey]);
     const serverId=server.rows[0]?.id||(await pool.query(`SELECT id FROM jellyfin_servers WHERE name='Browser Jellyfin' LIMIT 1`)).rows[0]?.id;
@@ -175,7 +160,6 @@ async function main(){
     await assertWorkflow(page,'/admin/profile',{personal:true});
     await assertWorkflow(page,'/admin/profile/notifications',{personal:true});
     await assertWorkflow(page,'/admin/security',{personal:true});
-
     for(const [url,current] of [
       ['/admin/settings/integrations','Connections'],
       ['/admin/notifications/preferences','Notifications'],
@@ -183,7 +167,6 @@ async function main(){
       ['/admin/notifications','Email infrastructure'],
       ['/admin/request-users','Request service']
     ]) await assertWorkflow(page,url,{owner:'Connections',current});
-
     await assertWorkflow(page,'/admin/provisioning',{owner:'Provisioning',current:'Provisioning'});
     await assertWorkflow(page,'/admin/provisioning/drift',{owner:'Provisioning',current:'Access consistency'});
     await assertWorkflow(page,'/admin/provisioning/migrations',{owner:'Provisioning',current:'Customer moves'});
@@ -201,9 +184,6 @@ async function main(){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
-    // The compact shell is a real off-canvas drawer: it starts closed, exposes
-    // only the fixed two-level Servers destinations, locks page scrolling while
-    // open, and Escape closes it again.
     await page.goto(`${BASE}/admin/activity`,{waitUntil:'domcontentloaded'});
     const drawerToggle=page.locator('[data-admin-mobile-nav-toggle]');
     assert.equal(await drawerToggle.count(),1,'mobile admin shell must expose one drawer toggle');
@@ -222,8 +202,6 @@ async function main(){
     assert.equal(await drawerToggle.getAttribute('aria-expanded'),'false','Escape must close the mobile drawer');
     assert.equal(await page.locator('body.mobileNavLocked').count(),0,'closing the drawer must release page scrolling');
 
-    // Export endpoints are POST + CSRF downloads. Exercise all four against the
-    // real clean-install schema so SQL drift cannot hide behind static tests.
     await page.setViewportSize({width:1440,height:1000});
     await page.goto(`${BASE}/admin/payments/export`,{waitUntil:'domcontentloaded'});
     for(const [action,suffix] of [
