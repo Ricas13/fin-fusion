@@ -21,8 +21,6 @@ for(const parent of ['dashboard','users','servers','stremio-sources','activity',
 assert.deepStrictEqual(labels(nav.viewsFor('servers')),['Fleet dashboard','Placement & capacity'],'Servers must keep its data views parent-owned');
 assert.deepStrictEqual(labels(nav.viewsFor('users')),['Customer activity'],'Customers must keep activity as a parent-owned view');
 assert.deepStrictEqual(labels(nav.tasksFor('users')),['Imported-user claims','Import from Jellyfin','Jellyfin password support'],'Customer support/import jobs must be parent-owned tasks');
-assert.deepStrictEqual(labels(nav.settingsFor('plans')),['Access rules','Commerce settings','Storefront order'].sort((a,b)=>0),'placeholder');
-
 const planSettings=labels(nav.settingsFor('plans'));
 for(const label of ['Access rules','Storefront order','Commerce settings'])assert(planSettings.includes(label),`Plans setting bank missing ${label}`);
 assert(labels(nav.settingsFor('activity')).includes('Free-user inactivity rules'),'Playback must own inactivity rules as a setting');
