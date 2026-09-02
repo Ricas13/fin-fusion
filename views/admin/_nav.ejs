@@ -1,5 +1,5 @@
 <%
   // adminNavGroupFor is supplied through Express app.locals. Its renderHeader
   // bridge resolves the same canonical header() used by string-rendered pages,
-  // so legacy EJS screens cannot drift and do not need require() in templates.
+  // so legacy EJS screens cannot drift or import server modules themselves.
 %><%- adminNavGroupFor.renderHeader(activeNav, siteName) %>
