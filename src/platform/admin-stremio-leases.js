@@ -11,7 +11,7 @@ const LEASE_PAGE_SIZE=25;
 function pageNumber(value){const n=Number.parseInt(value,10);return Number.isInteger(n)&&n>0?n:1;}
 function date(value){if(!value)return'Never';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB');}
 function pill(label,kind=''){return `<span class="pill ${kind}">${esc(label)}</span>`;}
-function networkLabel(value){const raw=String(value||'').trim();if(raw.startsWith('ipv4:'))return raw.slice(5);if(raw.startsWith('ipv6:'))return raw.slice(5);return raw||'Unknown network';}
+function networkLabel(row={}){const family=String(row.network_family||'unknown').toLowerCase(),prefix=family==='ipv4'?'IPv4':family==='ipv6'?'IPv6 /64':'Network',fingerprint=String(row.network_hash||'').slice(0,10);return `${prefix}${fingerprint?` · ${fingerprint}…`:''}`;}
 function leaseState(row){const expiry=new Date(row.expires_at).getTime(),remaining=expiry-Date.now();if(!Number.isFinite(expiry)||remaining<=0)return{label:'Expired',kind:'warn'};if(remaining<=60*60*1000)return{label:'Expiring soon',kind:'warn'};return{label:'Active',kind:'good'};}
 function leaseKey(body={}){
   const subjectKey=String(body.subjectKey||'').trim(),networkHash=String(body.networkHash||'').trim().toLowerCase();
@@ -23,7 +23,7 @@ function leaseKey(body={}){
 async function list(page=1,pageSize=LEASE_PAGE_SIZE){
   const requested=pageNumber(page),size=Math.max(10,Math.min(100,Number(pageSize)||LEASE_PAGE_SIZE));
   const totalResult=await query(`SELECT COUNT(*)::int n FROM access_network_leases WHERE tenant_key='default' AND scope='stremio' AND expires_at>NOW()`),total=Number(totalResult.rows[0]?.n||0),pages=Math.max(1,Math.ceil(total/size)),current=Math.min(requested,pages),offset=(current-1)*size;
-  const result=await query(`SELECT l.subject_key,l.customer_id,l.network_hash,l.network_family,l.network_descriptor,l.first_seen_at,l.last_seen_at,l.expires_at,
+  const result=await query(`SELECT l.subject_key,l.customer_id,l.network_hash,l.network_family,l.first_seen_at,l.last_seen_at,l.expires_at,
       COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.email customer_email,
       s.id subscription_id,s.plan_id,p.name plan_name,p.code plan_code
     FROM access_network_leases l
@@ -43,12 +43,12 @@ function actionForm(req,row,action,label,buttonClass){
 
 function section(req,leases){
   const rows=leases.rows||[],previous=leases.page>1?leases.page-1:null,next=leases.page<leases.pages?leases.page+1:null;
-  const table=rows.length?`<div class="capabilityTableWrap"><table class="capabilityTable"><thead><tr><th>Customer</th><th>Plan</th><th>Household network</th><th>First seen</th><th>Last seen</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(row=>{const state=leaseState(row),actions=[actionForm(req,row,'renew','Renew','secondary'),actionForm(req,row,'release','Release','danger'),row.customer_id?`<a class="button secondary btn-sm" href="/admin/users/${esc(row.customer_id)}">Open customer</a>`:''].filter(Boolean).join('');return `<tr><td class="sourceIdentity"><strong>${esc(row.customer_name||'Customer')}</strong><small>${esc(row.customer_email||'')}</small></td><td><strong>${esc(row.plan_name||'Unmatched subscription')}</strong>${row.plan_code?`<div class="subText">${esc(row.plan_code)}</div>`:''}</td><td><strong>${esc(networkLabel(row.network_descriptor))}</strong><div class="subText">${esc(row.network_family||'network')}</div></td><td>${esc(date(row.first_seen_at))}</td><td>${esc(date(row.last_seen_at))}</td><td>${esc(date(row.expires_at))}</td><td>${pill(state.label,state.kind)}</td><td class="rowActions">${actions}</td></tr>`;}).join('')}</tbody></table></div>`:'<div class="capabilityEmpty">No active Stremio household IP leases.</div>';
-  return `<section class="capabilitySection" id="leases"><div class="capabilitySectionHead"><div class="capabilitySectionTitle"><h2>Household IP leases</h2><p>Active household connections currently consuming Stremio plan slots. Renew extends only this lease using the subscriber's effective plan timing; Release frees only this connection.</p></div><span class="pill">${leases.total.toLocaleString('en-GB')} active lease${leases.total===1?'':'s'}</span></div>${table}<div class="capabilityPagination"><span>Page ${leases.page} of ${leases.pages}</span><div class="capabilityPaginationActions">${previous?`<a class="button secondary btn-sm" href="/admin/servers/stremio?leasePage=${previous}#leases">Previous</a>`:''}${next?`<a class="button secondary btn-sm" href="/admin/servers/stremio?leasePage=${next}#leases">Next</a>`:''}</div></div></section>`;
+  const table=rows.length?`<div class="capabilityTableWrap"><table class="capabilityTable"><thead><tr><th>Customer</th><th>Plan</th><th>Household network</th><th>First seen</th><th>Last seen</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(row=>{const state=leaseState(row),actions=[actionForm(req,row,'renew','Renew','secondary'),actionForm(req,row,'release','Release','danger'),row.customer_id?`<a class="button secondary btn-sm" href="/admin/users/${esc(row.customer_id)}">Open customer</a>`:''].filter(Boolean).join('');return `<tr><td class="sourceIdentity"><strong>${esc(row.customer_name||'Customer')}</strong><small>${esc(row.customer_email||'')}</small></td><td><strong>${esc(row.plan_name||'Unmatched subscription')}</strong>${row.plan_code?`<div class="subText">${esc(row.plan_code)}</div>`:''}</td><td><strong>${esc(networkLabel(row))}</strong><div class="subText">Privacy-safe lease fingerprint</div></td><td>${esc(date(row.first_seen_at))}</td><td>${esc(date(row.last_seen_at))}</td><td>${esc(date(row.expires_at))}</td><td>${pill(state.label,state.kind)}</td><td class="rowActions">${actions}</td></tr>`;}).join('')}</tbody></table></div>`:'<div class="capabilityEmpty">No active Stremio household IP leases.</div>';
+  return `<section class="capabilitySection" id="leases"><div class="capabilitySectionHead"><div class="capabilitySectionTitle"><h2>Household IP leases</h2><p>Active household connections currently consuming Stremio plan slots. Renew extends only this lease using the subscriber's effective plan timing; Release frees only this connection. Raw IP addresses are intentionally not stored, so each connection is shown by IP family and a short lease fingerprint.</p></div><span class="pill">${leases.total.toLocaleString('en-GB')} active lease${leases.total===1?'':'s'}</span></div>${table}<div class="capabilityPagination"><span>Page ${leases.page} of ${leases.pages}</span><div class="capabilityPaginationActions">${previous?`<a class="button secondary btn-sm" href="/admin/servers/stremio?leasePage=${previous}#leases">Previous</a>`:''}${next?`<a class="button secondary btn-sm" href="/admin/servers/stremio?leasePage=${next}#leases">Next</a>`:''}</div></div></section>`;
 }
 
 async function lockTarget(client,subjectKey,networkHash){
-  const result=await client.query(`SELECT l.subject_key,l.customer_id,l.network_hash,l.network_family,l.network_descriptor,l.first_seen_at,l.last_seen_at,l.expires_at,
+  const result=await client.query(`SELECT l.subject_key,l.customer_id,l.network_hash,l.network_family,l.first_seen_at,l.last_seen_at,l.expires_at,
       s.id subscription_id,s.plan_id,COALESCE(l.customer_id,s.customer_id) effective_customer_id,
       p.stremio_household_lease_minutes,
       COALESCE(s.stremio_household_network_limit_snapshot,p.stremio_household_network_limit) stremio_household_network_limit,
@@ -67,7 +67,7 @@ async function writeAudit(client,req,action,row,metadata={}){
   const entityId=row.subscription_id||crypto.randomUUID();
   await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5::jsonb)`,[
     req.session?.authUserId||null,action,row.subscription_id?'subscription':'stremio_household_lease',entityId,
-    JSON.stringify({subjectKey:row.subject_key,customerId:row.effective_customer_id||row.customer_id||null,networkFamily:row.network_family||null,networkDescriptor:row.network_descriptor||null,...metadata})
+    JSON.stringify({subjectKey:row.subject_key,customerId:row.effective_customer_id||row.customer_id||null,networkFamily:row.network_family||null,networkFingerprint:String(row.network_hash||'').slice(0,10),...metadata})
   ]);
 }
 
