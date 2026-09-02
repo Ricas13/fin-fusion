@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../db');
 const requestSettings = require('./request-service-settings');
 const planPolicy = require('./request-plan-policy');
+const requestEntitlements = require('./request-entitlement');
 const outbound = require('../security/outbound-url-policy');
 
 const REQUEST_PERMISSION = planPolicy.DEFAULT_REQUEST_MASK;
@@ -208,8 +209,15 @@ async function suspendCustomer(candidate, external, { planId = null, desired = n
 function indexesFor(users) {
   return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user])) };
 }
-async function syncCustomer(candidate, indexes = {}) {
+async function resolveRequestCandidate(candidate) {
+  if (candidate?.entitlement_active && candidate.request_access_enabled !== false) return candidate;
+  const alternate = candidate?.customer_id ? await requestEntitlements.resolve(candidate.customer_id) : null;
+  return alternate?.entitlement_active ? { ...candidate, ...alternate } : candidate;
+}
+async function syncCustomer(candidate, indexes = {}, options = {}) {
+  candidate = await resolveRequestCandidate(candidate);
   const username = cleanUsername(candidate.username), email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
+  const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
   let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
   if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
   if (!candidate.entitlement_active) return suspendCustomer(candidate, external, { planId: null });
@@ -220,7 +228,7 @@ async function syncCustomer(candidate, indexes = {}) {
   try {
     let created = false;
     if (!external) {
-      const bootstrapPassword = crypto.randomBytes(30).toString('base64url');
+      const bootstrapPassword = suppliedPassword || crypto.randomBytes(30).toString('base64url');
       external = await apiRequest('/api/v1/user', { method: 'POST', body: { email, username, password: bootstrapPassword } });
       created = true;
       if (external?.id && indexes.byId) indexes.byId.set(String(external.id), external);
@@ -233,8 +241,8 @@ async function syncCustomer(candidate, indexes = {}) {
     if (permissionsChanged) await setPermissions(external.id, activePermissions);
     const main = await syncMainSettings(external.id, external.username || username, candidate, external.email || email);
     const settings = main.settings;
-    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired: created || Boolean(candidate.password_reset_required), activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
-    return { status: 'synced', customerId: candidate.customer_id, created, remoteChanged: created || permissionsChanged || main.changed };
+    await mark(candidate.customer_id, { status: 'synced', externalUserId: external.id, email: external.email || email, username: external.username || username, passwordResetRequired: Boolean(candidate.password_reset_required) || (created && !suppliedPassword), activePermissions, accessSuspended: false, planId: candidate.plan_id, movieQuotaLimit: settings.movieQuotaLimit, movieQuotaDays: settings.movieQuotaDays, tvQuotaLimit: settings.tvQuotaLimit, tvQuotaDays: settings.tvQuotaDays });
+    return { status: 'synced', customerId: candidate.customer_id, created, passwordApplied: Boolean(created && suppliedPassword), remoteChanged: created || permissionsChanged || main.changed };
   } catch (error) {
     await mark(candidate.customer_id, { status: 'failed', externalUserId: external?.id || candidate.external_user_id, email: external?.email || email, username: external?.username || username, passwordResetRequired: Boolean(candidate.password_reset_required), activePermissions: candidate.active_permissions, accessSuspended: Boolean(candidate.access_suspended), planId: candidate.applied_plan_id, movieQuotaLimit: candidate.applied_movie_quota_limit, movieQuotaDays: candidate.applied_movie_quota_days, tvQuotaLimit: candidate.applied_tv_quota_limit, tvQuotaDays: candidate.applied_tv_quota_days, error: error.message });
     return { status: 'failed', customerId: candidate.customer_id, error: error.message, remoteChanged: false };
@@ -313,26 +321,38 @@ async function syncSelected(customerIds) {
   await syncBatch(candidates, indexes, summary);
   return finalizeSummary(summary);
 }
-async function syncOneCustomer(customerId) {
+async function syncOneCustomer(customerId, options = {}) {
   const candidates = await syncCandidates(), candidate = candidates.find(row => String(row.customer_id) === String(customerId));
   if (!candidate) throw new Error('Customer not found.');
   const existing = await externalUsers();
-  return syncCustomer(candidate, indexesFor(existing));
+  return syncCustomer(candidate, indexesFor(existing), options);
 }
 async function requestAccessForCustomer(customerId) {
-  const result = await query(`SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,p.name AS applied_plan_name,p.code AS applied_plan_code FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN request_user_sync rus ON rus.customer_id=c.id LEFT JOIN plans p ON p.id=rus.applied_plan_id WHERE c.id=$1`, [customerId]);
-  return result.rows[0] || null;
+  const result = await query(`
+    SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,
+      p.name AS applied_plan_name,p.code AS applied_plan_code
+    FROM customers c
+    LEFT JOIN app_users u ON u.id=c.user_id
+    LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
+    LEFT JOIN plans p ON p.id=rus.applied_plan_id
+    WHERE c.id=$1
+  `,[customerId]);
+  const state = result.rows[0] || null;
+  if (!state) return null;
+  const entitlement = await requestEntitlements.resolve(customerId);
+  return { ...state, ...(entitlement || {}), entitlement_active: Boolean(entitlement?.entitlement_active), request_access_enabled: Boolean(entitlement?.request_access_enabled) };
 }
 async function setCustomerPassword(customerId, password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 200) throw new Error('Request-site password must be between 12 and 200 characters.');
   let access = await requestAccessForCustomer(customerId);
+  if (!access?.entitlement_active) throw new Error('Request access requires an active plan or trial with request access enabled.');
   if (!access?.external_user_id) {
-    const result = await syncOneCustomer(customerId);
+    const result = await syncOneCustomer(customerId, { password });
     if (result.status !== 'synced') throw new Error(result.error || 'Request-site user could not be synced.');
     access = await requestAccessForCustomer(customerId);
   }
   if (!access?.external_user_id) throw new Error('Request-site user is not synced yet.');
-  if (access.access_suspended) throw new Error('Request access is suspended until the subscription becomes active again.');
+  if (access.access_suspended) throw new Error('Request access is suspended until an active plan or trial with request access is available again.');
   await apiRequest(`/api/v1/user/${encodeURIComponent(access.external_user_id)}/settings/password`, { method: 'POST', body: { newPassword: password } });
   await query(`UPDATE request_user_sync SET password_reset_required=FALSE,last_error=NULL,updated_at=NOW() WHERE customer_id=$1`, [customerId]);
   return true;
@@ -345,4 +365,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate };
