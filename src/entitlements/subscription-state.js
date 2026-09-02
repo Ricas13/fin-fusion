@@ -22,7 +22,7 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
              THEN 'infinity'::timestamptz
              ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
         END AS access_expires_at,
-        EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.released_at IS NULL) AS blocked
+        public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
  FROM subscriptions s
  JOIN plans p ON p.id=s.plan_id
  LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
@@ -36,8 +36,9 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
       OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
       OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
    )
-   AND ($2::boolean OR NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.released_at IS NULL))
- ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC,
+   AND ($2::boolean OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
+ ORDER BY public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) ASC,
+          CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC,
           CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
                THEN 'infinity'::timestamptz
                ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
