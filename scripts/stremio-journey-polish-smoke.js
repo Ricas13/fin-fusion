@@ -36,9 +36,12 @@ assert(/homeRedirect\(provisioned\s*\?\s*'message'\s*:\s*'error'/.test(customer)
 assert(customer.includes('automatic access setup is still finishing'),'a failed managed-provisioning attempt must tell the customer setup is still in progress rather than silently claiming success');
 
 // Shared labels and blocked-playback guidance use the same plain-language model
-// while all persisted compatibility field names stay unchanged.
+// while all persisted compatibility field names stay unchanged. Normal household
+// exhaustion keeps the replacement guidance; an unresolved reverse-proxy client
+// identity is a separate fail-closed state and must explain why playback stopped.
 assert(components.includes('household connection${households === 1 ?')&&!components.includes('household IP${households === 1 ?'),'shared Stremio plan labels must use household connections');
-assert(household.includes("return 'Household IP limit reached';")&&household.includes('allowed household internet connections')&&household.includes('change your household connection'),'blocked playback must explain the household limit and replacement action plainly');
+assert(household.includes("'Household IP limit reached'")&&household.includes('allowed household internet connections')&&household.includes('change your household connection'),'blocked playback must explain the household limit and replacement action plainly');
+assert(household.includes("'Household IP could not be verified'")&&household.includes('Playback is blocked rather than sharing a proxy address between customers.'),'unresolved proxy identity must fail closed with plain-language guidance');
 assert(household.includes('stremio_ip_replacement_policy_snapshot')&&household.includes('stremio_ip_replacement_cooldown_minutes_snapshot'),'persisted Stremio replacement contracts must remain unchanged');
 assert(household.includes("'X-CAPTAiNFiN-429-Reason', 'household_network'"),'runtime household-network response contract must remain unchanged');
 
