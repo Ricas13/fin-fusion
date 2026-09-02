@@ -89,8 +89,8 @@ function createAdminLanePolicyRouter() {
             }
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.lane_policy_override','customer',$2,$3::jsonb)`, [req.session.authUserId,req.params.customerId,JSON.stringify({ accessLane, fields: changed })]);
             let note = '';
-            try { await provisioning.reconcileCustomer(req.params.customerId); } catch (_) { note = ' Jellyfin reconciliation is still catching up.'; }
-            return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&message=${encodeURIComponent(`${accessLane === 'free' ? 'Free' : 'Premium'} policy overrides saved.${note}`)}`);
+            try { await provisioning.reconcileCustomer(req.params.customerId); } catch (error) { note = ` Saved locally, but Jellyfin reconciliation failed: ${String(error?.message||error).slice(0,220)}`; }
+            return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&${note?'error':'message'}=${encodeURIComponent(`${accessLane === 'free' ? 'Free' : 'Premium'} policy overrides saved.${note}`)}`);
         } catch (error) {
             return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&error=${encodeURIComponent(error.message)}`);
         }
@@ -102,8 +102,12 @@ function createAdminLanePolicyRouter() {
         try {
             await overrides.resetAllPolicyOverrides(req.params.customerId,accessLane,req.session.authUserId);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.lane_policy_override_reset_all','customer',$2,$3::jsonb)`, [req.session.authUserId,req.params.customerId,JSON.stringify({ accessLane })]);
-            try { await provisioning.reconcileCustomer(req.params.customerId); } catch (_) {}
-            return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&message=${encodeURIComponent(`${accessLane === 'free' ? 'Free' : 'Premium'} policy reset to plan.`)}`);
+            try {
+                await provisioning.reconcileCustomer(req.params.customerId);
+                return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&message=${encodeURIComponent(`${accessLane === 'free' ? 'Free' : 'Premium'} policy reset to plan and reconciled.`)}`);
+            } catch (error) {
+                return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&error=${encodeURIComponent(`${accessLane === 'free' ? 'Free' : 'Premium'} policy reset locally, but Jellyfin reconciliation failed: ${String(error?.message||error).slice(0,220)}`)}`);
+            }
         } catch (error) {
             return res.redirect(`/admin/users/${encodeURIComponent(req.params.customerId)}?tab=access&error=${encodeURIComponent(error.message)}`);
         }
