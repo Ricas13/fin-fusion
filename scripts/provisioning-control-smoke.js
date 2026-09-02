@@ -14,6 +14,7 @@ const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const provisioningFacade=read('src/jellyfin/provisioning.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
+const subscriptionState=read('src/entitlements/subscription-state.js');
 
 const desired = {
     IsAdministrator: false,
@@ -67,9 +68,17 @@ assert(reconciliationLock.includes('pg_try_advisory_lock')&&reconciliationLock.i
 assert(reconciliationLock.includes('Do not coalesce concurrent calls.')&&reconciliationLock.includes('must run after the first reconcile completes')&&!reconciliationLock.includes('const inFlight = new Map()'),'queued reconciliation calls must run again after prior state-changing work instead of coalescing onto a stale result');
 assert(reconciliationLock.includes("CUSTOMER_RECONCILIATION_LOCK_TIMEOUT"),'reconciliation lock contention must fail with an explicit retryable error');
 assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
-assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(provisioningFacade),'legacy provisioning facade must serialize direct reconciliation callers too');
-assert(provisioningFacade.includes('reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);})'),'account-scoped reconciliation must share the same customer lock');
-assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy single-lane facade');
+assert(provisioningFacade.includes("function canonicalReconciler(){return require('./resilient-provisioning')}"),'legacy provisioning imports must resolve reconciliation through the resilient owner');
+assert(/async function reconcileCustomer\(customerId\)\{return canonicalReconciler\(\)\.reconcileCustomer\(customerId\)\}/.test(provisioningFacade),'legacy customer reconciliation must delegate instead of invoking the single-lane engine');
+assert(/async function reconcileAccount\(accountId\)\{return canonicalReconciler\(\)\.reconcileAccount\(accountId\)\}/.test(provisioningFacade),'legacy account reconciliation must delegate through the same multi-lane owner');
+assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId)')&&resilientProvisioning.includes('accessHolds.syncLegacySummary(customerId)'),'multi-lane reconciliation must canonicalize stale free-tier holds before resolving a newly paid entitlement');
+assert(resilientProvisioning.includes("RECONCILIATION_POSTCONDITION_FAILED")&&resilientProvisioning.includes("assertLanePostcondition('Primary',primaryEntitlement,primary)"),'reconciliation must not record a healthy result unless the entitled primary lane converged to an enabled account');
+assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy helper facade');
+
+const paidPriority=subscriptionState.indexOf("ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC");
+const expiryPriority=subscriptionState.indexOf("CASE WHEN o.permanent_access=TRUE",paidPriority);
+assert(paidPriority>=0&&expiryPriority>paidPriority,'effective Jellyfin entitlement selection must prefer paid/trial contracts before comparing expiry, so Free Server sentinel dates cannot outrank Premium');
+assert(subscriptionState.includes('free lane is resolved independently'),'entitlement precedence must document why retained Free Server access does not own the primary lane');
 
 assert(provisioningEngine.includes("const compensation = require('./provisioning-compensation')"),'provisioning engine must use the shared remote-user compensation helper');
 assert(provisioningEngine.includes("stage: 'policy_apply'")&&provisioningEngine.includes("stage: 'database_persist'"),'both remote policy failure and local persistence failure must invoke provisioning compensation');

@@ -6,12 +6,10 @@ const {query}=require('../db');
 const subscriptionState=require('../entitlements/subscription-state');
 const subscriptionExpiry=require('../entitlements/subscription-expiry');
 const accessHolds=require('../entitlements/access-holds');
-const inactivityHoldReconciliation=require('../entitlements/inactivity-hold-reconciliation');
 const planServers=require('./plan-servers');
 const placement=require('./placement');
 function safeLog(value,max=500){return String(value==null?'':value).replace(/[\r\n\t\u2028\u2029]+/g,' ').slice(0,max)}
 async function currentEntitlement(customerId){return subscriptionState.effectiveSubscription(customerId)}
-async function syncAccess(customerId){await accessHolds.syncLegacySummary(customerId)}
 async function markPasswordSetupRequired(accountId){if(!accountId)return;await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,password_reset_required=TRUE,updated_at=NOW() WHERE id=$1`,[accountId]);}
 async function selectServerForPlan(plan){
   const accessKind=String(plan?.billing_interval||plan?.contract_billing_interval||'')==='trial'?'trial':Number(plan?.price_minor??plan?.contract_price_minor??0)===0?'free':'paid';
@@ -58,31 +56,16 @@ async function notifyNewJellyfinAccess(customerId,account){
     await notifications.dispatch({eventType:'customer.service.provisioned',to:row.email||null,customerId,subject:`Your ${site} Jellyfin access is ready`,text:steps,adminSubject:`${site}: Jellyfin access provisioned`,adminText:`${row.customer_name} (${row.email||customerId}) was provisioned as ${account.jellyfin_username||username}${serverUrl?` on ${serverUrl}`:''}.`,whatsappTo:row.whatsapp_opt_in?row.phone_e164:null,dedupeKey:`jellyfin-provisioned:${account.id}`,forceEmail:true});
   }catch(error){console.warn('Jellyfin onboarding notification failed.',{customerId:safeLog(customerId,100),error:safeLog(error?.message||error)});}
 }
-async function reconcileCustomerUnlocked(customerId){
-  // A plan-specific inactivity hold belongs only to the free plan that created
-  // it. Release it before policy calculation if the customer has since moved
-  // to a different/free-disabled/paid entitlement. Manual and cleanup holds are
-  // deliberately untouched here.
-  await inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId);
-  await syncAccess(customerId);
-  // Detect only accounts created by this reconciliation. Existing/imported
-  // Jellyfin users keep their current credential state, while a newly-created
-  // account whose bootstrap password is random is immediately flagged for the
-  // customer to choose a real password in the portal or, for a personal admin
-  // media profile, from the administrator's own My Profile page.
-  const before=await query(`SELECT id FROM jellyfin_accounts WHERE customer_id=$1`,[customerId]);
-  const existing=new Set(before.rows.map(r=>String(r.id)));
-  const outcome=await core.reconcileCustomer(customerId);
-  if(outcome?.account?.id&&!existing.has(String(outcome.account.id))){
-    await markPasswordSetupRequired(outcome.account.id);
-    outcome.account.password_setup_required=true;
-    outcome.account.password_reset_required=true;
-    notifyNewJellyfinAccess(customerId,outcome.account).catch(()=>{});
-  }
-  return outcome;
-}
-async function reconcileCustomer(customerId){return reconciliationLock.withCustomerReconciliationLock(customerId,()=>reconcileCustomerUnlocked(customerId));}
-async function reconcileAccount(accountId){const account=await query('SELECT customer_id FROM jellyfin_accounts WHERE id=$1',[accountId]);if(!account.rowCount)return core.reconcileAccount(accountId);const customerId=account.rows[0].customer_id;return reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);});}
+
+// Compatibility facade: a large amount of older platform code imports
+// ./provisioning for helpers as well as reconciliation. Reconciliation itself
+// is now owned exclusively by resilient-provisioning because it understands
+// primary/free/Emby/Stremio lanes. Keep the helper API here, but lazily delegate
+// mutations so an old import can never invoke the retired single-lane engine.
+function canonicalReconciler(){return require('./resilient-provisioning')}
+async function reconcileCustomer(customerId){return canonicalReconciler().reconcileCustomer(customerId)}
+async function reconcileAccount(accountId){return canonicalReconciler().reconcileAccount(accountId)}
+
 async function createJellyfinAccount(customerId,server,effective,options={}){const account=await core.createJellyfinAccount(customerId,server,effective,options);if(options.passwordSetupRequired!==false){await markPasswordSetupRequired(account.id);account.password_setup_required=true;account.password_reset_required=true;}return account;}
 async function setJellyfinPassword(customerId,accountId,newPassword){const result=await core.setJellyfinPassword(customerId,accountId,newPassword);await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[accountId,customerId]);return result;}
 function adminHoldType(reason){if(reason==='disabled')return'admin_disabled';if(reason==='suspended')return'admin_suspended';return'admin_hold'}
