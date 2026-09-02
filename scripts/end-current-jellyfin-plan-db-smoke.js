@@ -12,12 +12,12 @@ const providerOps=require('../src/payments/provider-operations');
     const plan=(await query(`SELECT id FROM plans WHERE COALESCE(is_addon,FALSE)=FALSE AND service_type IN ('jellyfin','bundle') ORDER BY is_free_tier DESC,created_at,id LIMIT 1`)).rows[0];
     assert(plan,'clean install must contain at least one primary Jellyfin/bundle plan');
 
-    async function fixture(label,{source='free_claim',providerSubscriptionId=null,permanent=false}={}){
+    async function fixture(label,{source='free_claim',providerSubscriptionId=null,billingMode=null,permanent=false}={}){
         const user=await query(`INSERT INTO app_users(username,password_hash,role,active,email_verified_at) VALUES($1,'test-hash','customer',TRUE,NOW()) RETURNING id`,[`endplan_${label}_${suffix}`]);
         users.push(user.rows[0].id);
         const customer=await query(`INSERT INTO customers(user_id,display_name,automation_protected) VALUES($1,$2,$3) RETURNING id`,[user.rows[0].id,`End plan ${label} ${suffix}`,Boolean(permanent)]);
         customers.push(customer.rows[0].id);
-        const sub=await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,starts_at,current_period_end,service_extension_days,cancel_at_period_end) VALUES($1,$2,'active',$3,$4,NOW()-INTERVAL '1 day',NOW()+INTERVAL '30 days',5,FALSE) RETURNING id`,[customer.rows[0].id,plan.id,source,providerSubscriptionId]);
+        const sub=await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,provider_subscription_id,billing_mode,starts_at,current_period_end,service_extension_days,cancel_at_period_end) VALUES($1,$2,'active',$3,$4,COALESCE($5,CASE WHEN $3 IN ('stripe','paypal','plisio') THEN 'payment' ELSE 'manual' END),NOW()-INTERVAL '1 day',NOW()+INTERVAL '30 days',5,FALSE) RETURNING id`,[customer.rows[0].id,plan.id,source,providerSubscriptionId,billingMode]);
         subscriptions.push(sub.rows[0].id);
         if(permanent)await query(`INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason,previous_automation_protected) VALUES($1,$2,TRUE,'DB smoke permanent access',FALSE)`,[customer.rows[0].id,sub.rows[0].id]);
         return{customerId:customer.rows[0].id,subscriptionId:sub.rows[0].id};
@@ -44,7 +44,7 @@ const providerOps=require('../src/payments/provider-operations');
         assert.strictEqual(protectedState.automation_protected,false,'previous automation-protection state must be restored');
         assert.strictEqual(await termination.currentJellyfinSubscription(pinned.customerId),null,'revoked permanent pin must not keep the ended plan effective');
 
-        const recurring=await fixture('recurring',{source:'stripe',providerSubscriptionId:`sub_endplan_${suffix}`});
+        const recurring=await fixture('recurring',{source:'stripe',providerSubscriptionId:`sub_endplan_${suffix}`,billingMode:'subscription'});
         const recurringKey=`db-end-recurring-${suffix}`;operationKeys.push(recurringKey);
         let terminateCalls=0,seenKey=null;
         const fakeAdapter={terminate:async(_row,{idempotencyKey}={})=>{terminateCalls++;seenKey=idempotencyKey;return{status:'cancelled',remoteStatus:'canceled'};}};
@@ -56,7 +56,7 @@ const providerOps=require('../src/payments/provider-operations');
         assert.strictEqual(recurringOp.state,'reconciled','provider operation must reach reconciled after local convergence');
         assert.strictEqual((await query(`SELECT status FROM subscriptions WHERE id=$1`,[recurring.subscriptionId])).rows[0].status,'cancelled');
 
-        const recovery=await fixture('recovery',{source:'stripe',providerSubscriptionId:`sub_endplan_recovery_${suffix}`});
+        const recovery=await fixture('recovery',{source:'stripe',providerSubscriptionId:`sub_endplan_recovery_${suffix}`,billingMode:'subscription'});
         const recoveryKey=`db-end-recovery-${suffix}`;operationKeys.push(recoveryKey);
         const op=await providerOps.begin({provider:'stripe',scope:'customer',ownerId:recovery.customerId,operationType:termination.OPERATION_TYPE,localReference:recovery.subscriptionId,idempotencyKey:recoveryKey,request:{subscriptionId:recovery.subscriptionId,providerSubscriptionId:`sub_endplan_recovery_${suffix}`,reason:'DB smoke recover provider-applied termination'}});
         await providerOps.providerApplied(op.id,{providerReference:`sub_endplan_recovery_${suffix}`,result:{terminationStatus:'cancelled',remoteStatus:'canceled'}});
