@@ -49,9 +49,11 @@ async function addHold({ customerId, type, sourceKey = '', reason = '', actorUse
     return transaction(execute);
 }
 
-async function releaseHold({ customerId, type, sourceKey = null, actorUserId = null }, client = null) {
+async function releaseHold({ customerId, type, sourceKey = null, actorUserId = null, resolutionReason = '' }, client = null) {
     const execute = async db => {
-        const params = [customerId, clean(type, 80), actorUserId];
+        const holdType = clean(type, 80);
+        const releaseReason = clean(resolutionReason, 500);
+        const params = [customerId, holdType, actorUserId];
         let sql = `UPDATE customer_access_holds SET released_at=NOW(),released_by=$3
                    WHERE customer_id=$1 AND hold_type=$2 AND released_at IS NULL`;
         if (sourceKey !== null) { params.push(clean(sourceKey, 200)); sql += ' AND source_key=$4'; }
@@ -60,7 +62,7 @@ async function releaseHold({ customerId, type, sourceKey = null, actorUserId = n
         if (released.rowCount) {
             await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
                 VALUES($1,'customer.access_hold.release','customer',$2,$3::jsonb)`,
-            [actorUserId, customerId, JSON.stringify({ type: clean(type, 80), sourceKey, released: released.rowCount })]);
+            [actorUserId, customerId, JSON.stringify({ type: holdType, sourceKey, released: released.rowCount, resolutionReason: releaseReason || null })]);
         }
         return released.rowCount;
     };
