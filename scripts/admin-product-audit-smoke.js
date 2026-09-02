@@ -113,9 +113,10 @@ assert(householdMigration.includes('stremio_household_network_limit')&&household
 assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&householdMigration.includes('snapshot_subscription_stremio_household_policy'),'subscription policy snapshots must persist the effective household policy for current contracts');
 
 const mainWidgets=registry.listWidgets('main');
-assert.deepStrictEqual(mainWidgets.map(w=>w.key),['cashFlow','newVsCancelled','serviceMix'],'Main dashboard must deliberately stay focused on cash flow, growth and service mix');
-assert.deepStrictEqual(mainWidgets.map(w=>w.defaultSpan),[4,4,4],'Main dashboard widgets must preserve the compact equal-thirds visual hierarchy');
-assert(mainWidgets.every(w=>w.title&&w.render),'every focused Main dashboard widget must retain a named renderer rather than becoming a stub');
+const expectedMainWidgets=['activeSubscribers','newVsChurn','netGrowth','subscriptionsByPlan','churnRate','mrrTrend','activeStreamsTrend','playMethodBreakdown','mostUsedPlayers'];
+assert.deepStrictEqual(mainWidgets.map(w=>w.key),expectedMainWidgets,'Main dashboard must expose the nine agreed growth and server analytics cards');
+assert.deepStrictEqual(mainWidgets.map(w=>w.defaultSpan),Array(9).fill(4),'Main dashboard widgets must preserve the 3x3 equal-thirds visual hierarchy');
+assert(mainWidgets.every(w=>w.title&&w.render),'every Main dashboard analytics card must retain a named renderer rather than becoming a stub');
 assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Payments, and Operations'),'Existing Settings directory guidance must remain available until its copy is refreshed separately');
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
 for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
