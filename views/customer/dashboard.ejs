@@ -72,7 +72,7 @@
     <main class="portalMain customerSimpleHome">
       <% if(message){ %><div class="notice success"><%= message %></div><% } %>
       <% if(error){ %><div class="notice error"><%= error %></div><% } %>
-      <% if(provisioningState&&provisioningState.last_error){ %><div class="notice warn"><strong>Streaming setup needs attention.</strong> <%= provisioningState.last_error %><form class="plainForm" method="post" action="/account/provisioning/retry" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary" type="submit">Retry setup</button></form></div><% } %>
+      <% if(provisioningState&&provisioningState.last_error){ %><div class="notice warn"><strong>Streaming setup needs attention.</strong> <%= provisioningState.last_error %></div><% } %>
       <% if(openCheckout){ %><div class="notice"><strong>You have a checkout in progress.</strong> If you closed the payment page without finishing, you can cancel it here and start again.<form class="plainForm" method="post" action="/account/checkout/cancel-open" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary">Cancel in-progress checkout</button></form></div><% } %>
 
       <section class="accountHero simpleHero <%= anyReady?'ready':jellyfinNeedsPassword||embyNeedsPassword?'attention':jellyfinPending||embyPending?'pending':'' %>">
