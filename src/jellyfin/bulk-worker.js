@@ -18,7 +18,13 @@ const STALE_RUNNING_MINUTES = 10;
 const handlers = new Map();
 
 function registerHandler(jobType, fn) {
-    handlers.set(jobType, fn);
+    const key = String(jobType || '').trim();
+    if (!key) throw new Error('Bulk job handler type is required.');
+    if (typeof fn !== 'function') throw new Error(`Bulk job handler "${key}" must be a function.`);
+    if (handlers.has(key)) {
+        throw new Error(`Duplicate bulk job handler registration: "${key}"`);
+    }
+    handlers.set(key, fn);
 }
 
 async function claimBatch() {

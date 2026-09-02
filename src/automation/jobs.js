@@ -27,7 +27,6 @@ const stremioExternalTokens=require('../stremio/external-token-maintenance');
 const stremioManagedEntitlements=require('../stremio/managed-entitlements');
 const customerDeletion=require('../platform/customer-deletion');
 require('../platform/bulk-operations');
-require('../platform/bulk-server-migration');
 require('../platform/operator-bulk-operations');
 async function notificationLifecycleSafeRun(){const checkpoint=await notificationLifecycle.loadState(new Date());const result=await notificationLifecycle.run();if(Number(result?.failed||0)>0){await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[notificationLifecycle.STATE_KEY,JSON.stringify({cursor:checkpoint.cursor.toISOString(),servers:checkpoint.servers})]);return{...result,cursorRetained:true};}return result;}
 const jobs={
