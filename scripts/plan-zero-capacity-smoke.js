@@ -23,6 +23,7 @@ const notificationOutbox=read('src/integrations/notification-outbox.js');
 const adminNotifications=read('src/platform/admin-notification-preferences.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const dashboard=read('views/customer/dashboard.ejs');
+const access=read('views/customer/jellyfin.ejs');
 const provisioning=read('src/jellyfin/provisioning.js');
 const jobs=read('src/automation/jobs.js');
 const automationWorker=read('scripts/automation-worker.js');
@@ -62,10 +63,10 @@ assert(jobs.includes('free_places_digest')&&automationWorker.includes('free_plac
 assert(notificationSettings.includes('communityForLoad')&&notificationSettings.includes('extras=communityForLoad'),'persisted incomplete community settings must load without throwing and leave the status updater disabled');
 assert(!inactivity.includes('free-places-digest')&&!inactivity.includes('free_places_digest'),'inactivity handling must never post Discord Free Server availability directly');
 
-// /account reuses assigned credentials and private Stremio URLs; no reversible Jellyfin password is introduced.
+// /account reuses assigned credentials and private Stremio URLs; media credentials are managed in My Access.
 assert(customerDashboard.includes("notificationSettings.status().catch(()=>({}))")&&customerDashboard.includes("discordInviteUrl:deliverySettings.discordInviteUrl||''")&&customerDashboard.includes('stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl'),'both /account render paths must receive the shared Discord invite and the ready dashboard must receive the optional Stremio metadata addon');
 assert(onboarding.includes('isFree&&discordInviteUrl')&&onboarding.includes('Free Access is full.')&&onboarding.includes('>Subscribe</a>')&&onboarding.includes('Currently full'),'logged-in customers without active access must get the Discord Subscribe CTA only for a sold-out Free Server plan');
-assert(/href="https:\/\/jellyfin\.org\/downloads\/"/.test(dashboard)&&dashboard.includes('value="<%= a.public_url %>"')&&dashboard.includes('portal.customer.login_username||a.jellyfin_username')&&dashboard.includes('Use the password you set under Jellyfin access.'),'ready Jellyfin onboarding must use the official client, assigned server URL, portal username and the password chosen in Jellyfin access');
+assert(access.includes('How to sign in')&&access.includes('Install an official <%= player %> app.')&&access.includes('<span>Server URL</span>')&&access.includes('<span>Username</span>')&&access.includes('Use the <%= player %> password you set here.'),'My Access must own official-client, assigned-server, username and chosen-password sign-in guidance for ready Jellyfin and Emby accounts');
 assert(dashboard.includes('Access is being prepared.')&&/href="https:\/\/web\.stremio\.com"/.test(dashboard)&&dashboard.includes('Profile → Addons → Add addon')&&dashboard.includes('value="<%= stremioManifestUrl %>"')&&dashboard.includes('stremioMetadataAddonUrl'),'service onboarding must stay on /account, remain pending-aware and use the existing private Stremio manifest with an optional configured metadata addon');
 assert(dashboard.includes('Install in Stremio')&&dashboard.includes('Keep this link private.'),'Stremio onboarding must preserve the primary install action and private-link warning');
 assert(dashboard.includes('freeSoldOut')&&dashboard.includes('discordInviteUrl')&&dashboard.includes('>Subscribe</a>')&&dashboard.includes('Currently full'),'active-account Free Server card must use the Discord invite only when sold out and configured');
@@ -73,6 +74,7 @@ assert(!dashboard.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beam
 assert(/Download an official Jellyfin client: https:\/\/jellyfin\.org\/downloads\/\\n2\. Server URL:/.test(provisioning)&&provisioning.includes('Use the password you set under Jellyfin access')&&provisioning.includes('portal_username'),'the existing provisioned email must repeat the same official-client and chosen-password onboarding semantics');
 ejs.compile(onboarding,{filename:'views/customer/onboarding.ejs'});
 ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
+ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
 
 (async()=>{
   const fakeDb=async()=>({rowCount:1,rows:[{id:'zero-plan',capacity_limit:0,used:0}]});
