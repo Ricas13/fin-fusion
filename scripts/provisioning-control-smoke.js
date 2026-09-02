@@ -8,6 +8,7 @@ const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const adminProvisioning=read('src/platform/admin-provisioning.js');
 const automationJobs=read('src/automation/jobs.js');
+const jellyfinJobs=read('src/jellyfin/jobs.js');
 const stremioRequeue=read('db/migrations/031_requeue_legacy_stremio_provisioning.sql');
 const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
@@ -70,6 +71,12 @@ assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLoc
 assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(provisioningFacade),'legacy provisioning facade must serialize direct reconciliation callers too');
 assert(provisioningFacade.includes('reconciliationLock.withCustomerReconciliationLock(customerId,async()=>{await syncAccess(customerId);return core.reconcileAccount(accountId);})'),'account-scoped reconciliation must share the same customer lock');
 assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy single-lane facade');
+assert(!jellyfinJobs.includes('p.active=TRUE'),'background reconciliation must not stop repairing sold contracts when a plan is hidden, archived or deactivated in the catalogue');
+assert(jellyfinJobs.includes('o.permanent_access=TRUE')&&jellyfinJobs.includes('service_extension_days'),'background reconciliation must retain permanent and extended contract access');
+assert(jellyfinJobs.includes("s.status IN ('active','trialing','past_due','paused')"),'background reconciliation must use the same live status family as the runtime entitlement engine');
+assert(jellyfinJobs.includes("s.status IN ('active','trialing','past_due','paused','cancelled','expired')"),'background reconciliation must keep extended cancelled/expired contracts repairable while the extension is live');
+assert(jellyfinJobs.includes('s.superseded_by IS NULL')&&jellyfinJobs.includes('s.starts_at <= NOW()'),'background reconciliation must respect supersession and future starts');
+assert(jellyfinJobs.includes("cps.status IN ('pending','running','blocked','failed')"),'failed deprovision/reconciliation work must remain retryable after the contract itself stops being live');
 
 assert(provisioningEngine.includes("const compensation = require('./provisioning-compensation')"),'provisioning engine must use the shared remote-user compensation helper');
 assert(provisioningEngine.includes("stage: 'policy_apply'")&&provisioningEngine.includes("stage: 'database_persist'"),'both remote policy failure and local persistence failure must invoke provisioning compensation');
