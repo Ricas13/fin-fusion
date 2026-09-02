@@ -13,7 +13,7 @@ const planCreateV2=read('src/platform/admin-plan-create-v2.js');
 const adminActions=read('src/platform/admin-actions.js');
 const accountActivation=read('src/auth/account-activation.js');
 const navModel=require('../src/platform/admin-nav');
-const baseCss=read('public/css/admin-original-base.css');
+const tokens=read('public/css/admin-tokens.css');
 const componentCss=read('public/css/admin-original-components.css');
 const refinementCss=read('public/css/admin-visual-refinement.css');
 const capabilityCss=read('public/css/admin-capability.css');
@@ -37,6 +37,7 @@ assert(core.includes('topBreadcrumb'),'Admin shell must render a stable top brea
 assert(core.includes('<details class="navSection'),'Admin navigation groups must be collapsible');
 assert(core.includes("${activeGroup?'open':''}"),'The active navigation group must start expanded');
 assert(core.includes('/css/admin-visual-refinement.css'),'Admin shell must load the visual refinement layer');
+assert(core.includes('/css/admin-tokens.css'),'Admin shell must load the canonical token layer');
 assert(capabilityCss.includes("@import url('/css/admin-density.css')"),'Admin capability layer must load the final density overrides for both canonical and legacy shells');
 assert(densityCss.includes('.sectionGraphicStats{grid-template-columns:repeat(4,minmax(92px,1fr))'),'Section overview KPIs must use a compact four-column wide-screen row');
 assert(densityCss.includes('.sectionInsightCard{padding:10px 11px'),'Section insight cards must use compact summary padding');
@@ -44,16 +45,21 @@ assert(densityCss.includes('.operatorHero{padding:14px'),'Operator control-room 
 assert(densityCss.includes('.analyticsKpi{min-height:78px'),'Analytics KPI cards must not reserve oversized empty height');
 assert(densityCss.includes('.summaryCard{padding:8px 9px')&&densityCss.includes('.metric,.stat-card{padding:11px 12px'),'Shared profile and legacy metric cards must participate in the density pass');
 assert(!/\.button\s*\{/.test(densityCss),'Density layer must not shrink global action targets');
+
+assert.equal(navModel.groups.length,6,'Admin rail must expose exactly six sections');
+assert.equal(navModel.groups.reduce((sum,group)=>sum+group.pages.length,0),17,'Admin rail must expose exactly seventeen permanent destinations');
 const commerceGroup=navModel.groups.find(group=>group.key==='commerce');
-assert(commerceGroup&&!commerceGroup.pages.some(page=>page[0]==='billing'),'Billing must not become a primary Commerce destination');
-assert(navModel.childPages('payments').some(page=>page[0]==='billing'&&page[2]==='/admin/billing'),'Billing must be directly discoverable beneath Payments & Billing');
+assert(commerceGroup&&!commerceGroup.pages.some(page=>page[0]==='billing'),'Billing must not become a permanent Commerce rail destination');
+assert(navModel.relatedPages('payments').some(page=>page[0]==='billing'&&page[2]==='/admin/billing'),'Billing must remain discoverable from Payments without occupying the rail');
 const billingGroup=navModel.groupFor('billing');
 assert(billingGroup.key==='commerce'&&billingGroup.pages.some(page=>page[0]==='billing'),'Billing must remain a routable Commerce workflow page for breadcrumb context');
-const jellyfinGroup=navModel.groups.find(group=>group.key==='jellyfin');
-assert(jellyfinGroup&&!jellyfinGroup.pages.some(page=>page[0]==='libraries'),'Libraries must not become a primary Jellyfin destination');
-assert(!navModel.childPages('servers').some(page=>page[0]==='libraries'),'Scan-only Libraries utility must stay out of permanent Jellyfin → Servers navigation');
+const serversGroup=navModel.groups.find(group=>group.key==='servers');
+assert(serversGroup&&!serversGroup.pages.some(page=>page[0]==='libraries'),'Libraries must not become a permanent Servers destination');
+assert(navModel.childPages('servers').length===0,'Servers must not render a third navigation level');
+assert(navModel.relatedPages('servers').some(page=>page[0]==='libraries'&&page[2]==='/admin/libraries'),'Scan-only Libraries utility must remain discoverable from its owner without occupying the rail');
 assert(navModel.hiddenPages.libraries?.page?.[2]==='/admin/libraries'&&navModel.SIDEBAR_EXCLUDED_CHILDREN.has('libraries'),'Libraries direct utility route must remain available while excluded from sidebar discovery');
-assert(!navModel.aliases.libraries&&navModel.sidebarKey('libraries')==='servers','Libraries must retain its own nested active identity for direct compatibility access while keeping Servers highlighted as the parent');
+assert(!navModel.aliases.libraries&&navModel.sidebarKey('libraries')==='servers','Libraries must keep Servers highlighted as its owner');
+
 assert(planCreateV2.includes('name="streams"'),'New plan form must expose a Jellyfin concurrent-stream rule');
 assert(catalog.includes("int(body.streams,1,50,'Concurrent streams')"),'Legacy plan input compatibility must still validate concurrent streams from 1 to 50');
 assert(catalog.includes('sort_order,streams,allow_remuxing'),'Legacy plan input compatibility must still persist stream limits into plans.streams');
@@ -61,10 +67,14 @@ assert(catalog.includes('streams:plan.streams'),'Legacy plan creation audit meta
 assert(planCreateV2.includes("'concurrent_streams', 'household_network'")&&planCreateV2.includes("const streams = stremio ? 1 : int(body.streams ?? '1', 0, 50, 'Jellyfin concurrent streams')")&&planCreateV2.includes("jellyfinAccessModel === 'household_network' ? int(body.jellyfinHouseholdNetworkLimit")&&planCreateV2.includes('data-jellyfin-stream-fields')&&planCreateV2.includes('data-jellyfin-household-fields'),'Jellyfin plan creation must keep concurrent streams independently configurable alongside optional household enforcement');
 assert(planCreateV2.includes('name="stremioHouseholdNetworkLimit"')&&planCreateV2.includes("int(body.stremioHouseholdNetworkLimit ?? '1', 1, 10")&&planCreateV2.includes('Unlimited streams')&&planCreateV2.includes('Unlimited</strong>'),'Stremio plan creation must expose a configurable household-connection allowance while keeping simultaneous streams/devices unlimited');
 assert(catalog.includes('Prepare included services immediately')&&catalog.includes('Historical bundles and add-ons are not assignable here')&&catalog.includes("COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio','emby')")&&catalog.includes('serviceCatalog.planLabel(p)'),'Admin customer creation must label every standalone service through the canonical catalogue and avoid assigning historical bundles/add-ons');
-assert(baseCss.includes('--sidebar-w:248px'),'Desktop admin shell should use the wider visual-hierarchy sidebar');
+
+assert(tokens.includes('--rail-w:240px'),'Desktop admin rail width must come from the token contract');
+assert(tokens.includes('--bar-h:56px')&&tokens.includes('--pitch:40px'),'Desktop shell height and navigation rhythm must come from the token contract');
+assert(tokens.includes('@media (max-width:820px)')&&tokens.includes('--pitch:44px'),'Token contract must own the mobile breakpoint and touch pitch');
 assert(componentCss.includes('.fieldHelp'),'Admin controls must have a consistent helper-description style');
 assert(componentCss.includes('min-height:40px'),'Admin controls must use the larger readable control size');
-assert(refinementCss.includes('.navSection[open] .navSectionPages'),'Accordion CSS must expose only expanded navigation groups on desktop');
+assert(core.includes('.navSection[open] .navSectionPages{display:grid}'),'Canonical shell must expose only the expanded navigation section');
+assert(!core.includes('adminSubTab'),'Canonical shell must not render a third navigation level');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:repeat(3,minmax(0,1fr))'),'Settings must use three side-by-side responsibility cards on wide screens');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))'),'Settings responsibility cards must fall back to two columns on narrower desktops/tablets');
 assert(refinementCss.includes('.settings-grid{grid-template-columns:1fr}'),'Settings responsibility cards must become one column on mobile');

@@ -37,12 +37,12 @@ async function main(){
     await screenshot(page,'plans-list-stremio');
 
     // Specific-plan workflow pages must not create a second navigation row.
-    // Their owning Commerce → Plans & Storefront destination stays active in
-    // the canonical left sidebar while record-specific controls remain local.
+    // Their owning Commerce → Plans destination stays active in the canonical
+    // left sidebar while record-specific controls remain local.
     for(const suffix of ['edit','inventory','commerce']){
       await gotoAdmin(page,`/admin/plans/${id}/${suffix}`);
       assert.equal(await page.locator('.planWorkflowTabs').count(),0,`${suffix} still renders the retired plan workflow subtab row`);
-      assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Plans & Storefront'],`${suffix} must keep Plans & Storefront active in the sidebar`);
+      assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Plans'],`${suffix} must keep Plans active in the sidebar`);
       assert.equal(await page.locator('.coherenceSectionTabs,.coherenceSubTabs,.coherenceOwnedTools').count(),0,`${suffix} still renders duplicate page-body navigation outside the sidebar`);
       const allTabs=await labels(page.locator('.operatorTabs a'));
       assert(!allTabs.includes('All plans')&&!allTabs.includes('Bundles'),`${suffix} still mixes catalogue filters into a specific plan`);
@@ -51,7 +51,7 @@ async function main(){
     await gotoAdmin(page,`/admin/plans/${id}/delivery`);
     assert.equal(new URL(page.url()).pathname,`/admin/plans/${plan.id}/edit`,'Legacy Stremio Delivery URL must resolve to the canonical editor');
     assert.equal(await page.locator('.planWorkflowTabs').count(),0,'Legacy Stremio Delivery redirect must not recreate the retired plan workflow subtab row');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Plans & Storefront'],'Legacy Stremio Delivery redirect must remain owned by Plans & Storefront in the sidebar');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Plans'],'Legacy Stremio Delivery redirect must remain owned by Plans in the sidebar');
     assert.equal(await page.locator('.coherenceSectionTabs,.coherenceSubTabs,.coherenceOwnedTools').count(),0,'Legacy Stremio Delivery redirect must not recreate duplicate page-body navigation');
     assert.equal(await page.locator('.planDeliveryTools').count(),0,'Canonical Stremio editor exposed Jellyfin-only delivery tools');
     const canonicalEditorText=await page.locator('body').innerText();
@@ -61,7 +61,7 @@ async function main(){
 
     await gotoAdmin(page,'/admin/operations');
     assert.equal(new URL(page.url()).pathname,'/admin/servers','Legacy Operations page did not redirect to unified Servers');
-    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Servers'],'Unified server operations must keep Servers as the permanent Jellyfin sidebar destination');
+    assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Jellyfin'],'Unified server operations must keep Jellyfin as the permanent Jellyfin sidebar destination');
     const fleetText=await page.locator('body').innerText();
     assert(/Placement ready/.test(fleetText)&&/Sellable stream capacity/.test(fleetText)&&/Live streams/.test(fleetText),'Unified Servers is missing fleet placement readiness or sellable stream capacity');
     assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Unified Servers still contains unrelated platform/security settings');
@@ -82,7 +82,8 @@ async function main(){
     assert(/Public URL & regional format/.test(general)&&/Public base URL/.test(general)&&/Timezone/.test(general),'General does not own public URL/locale/timezone');
     assert(!/Default customer plan/.test(general)&&!/Default server priority/.test(general),'Dead workflow defaults returned to General');
     const settingsLinks=await labels(page.locator('[data-nav-section="settings"] .adminTab'));
-    assert(!settingsLinks.includes('Operations')&&!settingsLinks.includes('Stremio'),'Settings still exposes an Operations/Stremio implementation destination');
+    assert.deepStrictEqual(settingsLinks,['General','Security','Connections','System'],'Settings must expose exactly its four rail destinations');
+    assert.equal(await page.locator('.adminSubTab').count(),0,'The rail must stay two levels deep -- no sub-tabs');
     const generalForm=page.locator('form[action="/admin/settings/runtime-general"]');
     assert.equal(await generalForm.count(),1,'General runtime form is missing');
     await submit(generalForm,'Save URL & regional settings');

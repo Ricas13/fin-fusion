@@ -33,7 +33,7 @@ assert(admin.includes('email:current.ticket.customer_email'),'staff-reply notifi
 assert(!admin.includes('.login_email')&&!admin.includes('.login_username'),'admin support UI must not depend on retired/nonexistent customer login fields');
 assert(admin.includes("catch(error){console.warn('Support reply notification could not be queued:'"),'notification failure must not invalidate a committed staff reply');
 assert(nav.includes("['tickets','Support','/admin/tickets']"),'Support tickets must remain visible under the canonical Customers navigation');
-assert(nav.includes("['orders','Orders & Growth','/admin/commerce/orders']"),'Orders & Growth must remain visible at the canonical Commerce-owned route');
+assert(nav.includes("['orders','Orders','/admin/commerce/orders']"),'Orders must remain visible at the canonical Commerce-owned route');
 assert(composition.includes('createAdminSupportTicketsRouter')&&composition.includes('createAdminOrdersRouter'),'admin support/orders must use canonical route composition');
 assert(router.includes('createCustomerSupportRouter'),'customer support must be mounted in the customer runtime');
 for(const key of ['customers','orders','tickets'])assert(operator.includes(`${key}:`)||operator.includes(`const [customers,orders`),`operator state missing ${key}`);

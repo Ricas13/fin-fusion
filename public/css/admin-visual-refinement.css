@@ -1,18 +1,6 @@
 /* Visual refinement layer: keep the admin scannable before adding more features. */
 
-/* Sidebar accordion ------------------------------------------------------- */
-.adminTabs{gap:2px}
-.navSection{display:block}
-.navSection>summary{list-style:none}
-.navSection>summary::-webkit-details-marker{display:none}
-.navSectionLabel{min-height:34px;padding:5px 8px;border-radius:8px;cursor:pointer;user-select:none;transition:background .14s ease,color .14s ease}
-.navSectionLabel:hover{background:rgba(255,255,255,.035);color:#aeb9c6}
-.navSection.active .navSectionLabel{color:#9aa9ba}
-.navChevron{margin-left:auto;color:#526173;font-size:13px;line-height:1;transform:rotate(-90deg);transition:transform .14s ease,color .14s ease}
-.navSection[open] .navChevron{transform:rotate(0);color:#7d8d9f}
-.navSectionPages{display:none;gap:2px;padding:2px 0}
-.navSection[open] .navSectionPages{display:grid}
-.navSection:not([open]){border-bottom:1px solid rgba(255,255,255,.015)}
+/* Rail accordion styling now belongs to the canonical token-based shell. */
 
 /* Cross-cutting search belongs in the shell, not as a sidebar destination. */
 .adminQuickFind{flex:1 1 320px;max-width:430px;margin:0 18px}
@@ -76,19 +64,7 @@
 }
 
 @media(max-width:860px){
-  /* Mobile keeps the existing horizontal navigation instead of hiding closed groups. */
-  .adminTabs{gap:12px}
-  .navSection{display:flex;align-items:center;border:0}
-  .navSectionLabel{display:none!important}
-  .navSectionPages,.navSection[open] .navSectionPages{display:flex!important;gap:4px;padding:0}
   .planListToolbar{grid-template-columns:1fr 1fr}
-
-  /* The top bar must grow when a page has multiple real actions. Keeping the
-     desktop fixed height here caused Help/action buttons to overlap vertically. */
-  .topBar{height:auto;min-height:50px;padding-top:8px;padding-bottom:8px;flex-wrap:wrap;row-gap:8px}
-  .topBreadcrumb{flex:1 1 auto}
-  .adminQuickFind{order:3;flex:1 1 100%;max-width:none;margin:0}
-  .topBarActions{margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
 }
 
 @media(max-width:760px){

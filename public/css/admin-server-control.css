@@ -29,5 +29,34 @@
 .serverPreviewForm{grid-template-columns:max-content minmax(140px,1fr) max-content 90px auto}
 .serverPreviewResult{margin-top:10px}
 .serverPreviewResult .notice{margin-bottom:7px}
+
+/* Server editor --------------------------------------------------------- */
+.serverEditorGrid{display:grid;grid-template-columns:1fr;gap:10px;align-items:start;margin:0}
+.serverEditorGrid>.section{min-width:0;margin:0;height:auto;align-self:start}
+.serverEditorConfigCard .formPanel{padding:11px 12px}
+.serverEditorConfigCard .formGrid{gap:8px 10px}
+.serverEditorConfigCard .toggleGrid{gap:6px;margin:8px 0}
+.serverEditorConfigCard .toggleRow{padding:8px 9px}
+.serverEditorConnectivityCard .formPanel,.serverEditorGrid>.adminSettingsBasicServer .formPanel{padding:11px 12px}
+.serverEditorConnectivityCard .formPanel{display:grid;gap:9px}
+.serverEditorConnectivityCard .formPanel p{margin:0;font-size:10px;line-height:1.4}
+.serverEditorConnectivityCard .formPanel form{margin:0}
+.serverEditorGrid>.adminSettingsBasicServer{min-width:0;margin:0;height:auto;align-self:start}
+.serverEditorGrid>.adminSettingsBasicServer .sectionHead{margin-bottom:0}
+.serverEditorGrid>.adminSettingsBasicServer .formGrid{grid-template-columns:1fr!important;gap:7px}
+.serverEditorGrid>.adminSettingsBasicServer .formGroup{margin-bottom:7px}
+.serverEditorGrid>.adminSettingsBasicServer textarea.input{min-height:82px}
+.serverEditorSafetyNote{margin-top:10px}
+.serverEditorGrid--new>.serverEditorConfigCard{grid-column:1/-1}
+@media(min-width:820px){
+  .serverEditorGrid--existing{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .serverEditorGrid--existing>.serverEditorConfigCard{grid-column:1/-1}
+}
+@media(min-width:1180px){
+  .serverEditorGrid--existing{grid-template-columns:minmax(0,2fr) minmax(280px,1fr);grid-template-rows:auto auto}
+  .serverEditorGrid--existing>.serverEditorConfigCard{grid-column:1;grid-row:1 / span 2}
+  .serverEditorGrid--existing>.adminSettingsBasicServer{grid-column:2;grid-row:1}
+  .serverEditorGrid--existing>.serverEditorConnectivityCard{grid-column:2;grid-row:2}
+}
 @media(max-width:1100px){.serverControlOverview{grid-template-columns:repeat(2,minmax(0,1fr))}.serverAdvancedGrid{grid-template-columns:1fr}}
-@media(max-width:700px){.serverControlOverview{grid-template-columns:1fr 1fr}.serverAdvancedForm,.serverPreviewForm{grid-template-columns:1fr}.serverAdvancedForm small{grid-column:auto}.serverControlHint{line-height:1.4}}
+@media(max-width:700px){.serverControlOverview{grid-template-columns:1fr 1fr}.serverAdvancedForm,.serverPreviewForm{grid-template-columns:1fr}.serverAdvancedForm small{grid-column:auto}.serverControlHint{line-height:1.4}.serverEditorGrid{gap:12px}.serverEditorConfigCard .formPanel,.serverEditorConnectivityCard .formPanel,.serverEditorGrid>.adminSettingsBasicServer .formPanel{padding:12px 13px}}

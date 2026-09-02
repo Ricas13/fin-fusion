@@ -1,0 +1,83 @@
+/* Admin design tokens.
+   The single source of truth for colour, type, rhythm and radius in the admin
+   surface. The canonical and legacy shells both consume this contract so a
+   value is changed in one place rather than across dozens of stylesheets.
+
+   Two colour systems, deliberately separate:
+     PLACE  -- one hue per navigation section. Identity. Never means good/bad.
+     STATE  -- ok / warn / alert. Condition. Same everywhere, any section.
+   Keeping them apart is what makes colour carry information rather than
+   decoration. Do not use a --h-* value to signal status, or a state value as
+   section chrome.
+
+   Focus is a third, separate colour used nowhere else, so a keyboard ring can
+   never be misread as state. */
+
+:root{
+  /* ---- surfaces ---- */
+  --enclosure:#151A1E;   /* page background */
+  --rail:#101417;        /* sidebar and top bar */
+  --line:#262D34;        /* every border, one value */
+
+  /* ---- text ---- */
+  --text:#E4E9ED;
+  --dim:#8794A0;
+
+  /* ---- PLACE: one hue per section ----
+     Equal lightness and chroma, so no section shouts louder than another.
+     The active section publishes its hue as --hue; every hue-bearing element
+     inherits from that, so one page reads as one colour. */
+  --h-dashboard:#7FA8E8;
+  --h-customers:#5FC9A3;
+  --h-servers:#A98CF0;
+  --h-commerce:#E8A33D;
+  --h-operations:#5BC0D8;
+  --h-settings:#E88A9C;
+  --hue:var(--h-dashboard);
+
+  /* ---- STATE: condition, never identity ---- */
+  --ok:#4FB286;
+  --warn:#E8A33D;
+  --alert:#E0674F;
+
+  /* ---- focus: its own colour, used for nothing else ---- */
+  --focus:#7FB3D5;
+
+  /* ---- type: six steps, nothing between ---- */
+  --t-xs:11px;   /* counters, kbd hints */
+  --t-sm:12px;   /* row descriptions, meta */
+  --t-md:13px;   /* body, nav, row labels */
+  --t-lg:15px;   /* group headings */
+  --t-xl:20px;   /* page title, mobile */
+  --t-2xl:28px;  /* page title, desktop */
+
+  /* ---- rhythm: one pitch governs every interactive row ---- */
+  --pitch:40px;
+  --gut:16px;    /* single spacing unit, multiples only */
+  --r:8px;       /* one radius; pills use 999px; nothing else exists */
+
+  /* ---- shell ---- */
+  --rail-w:240px;
+  --bar-h:56px;
+}
+
+/* Two breakpoints exist. This is one of them. */
+@media (max-width:820px){
+  :root{
+    --pitch:44px;   /* touch target */
+    --bar-h:52px;
+    --rail-w:0px;   /* rail becomes an overlay drawer */
+  }
+}
+
+body[data-section=dashboard]{--hue:var(--h-dashboard)}
+body[data-section=customers]{--hue:var(--h-customers)}
+body[data-section=servers]{--hue:var(--h-servers)}
+body[data-section=commerce]{--hue:var(--h-commerce)}
+body[data-section=operations]{--hue:var(--h-operations)}
+body[data-section=settings]{--hue:var(--h-settings)}
+
+/* Legacy base CSS uppercased section labels. The fixed shell contract uses
+   ordinary sentence case; this late shared shell rule prevents that old
+   typographic decision leaking into either renderer. */
+.navSectionLabel{text-transform:none;letter-spacing:0}

@@ -28,8 +28,8 @@ lacks(adminPassword,'JSON.stringify({password','password must never be placed in
 const adminRouter=read('src/platform/router.js');
 has(adminRouter,'createAdminCustomerJellyfinPasswordRouter','admin password support router must be part of the live platform router');
 const adminNav=read('src/platform/admin-nav.js');
-has(adminNav,"'customer-jellyfin-password':Object.freeze({groupKey:'people',parentKey:'users'",'admin password support must remain discoverable from the customer workflow without becoming permanent People navigation');
-lacks(adminNav,"['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password']",'Jellyfin password support must not return as a permanent People sidebar item');
+has(adminNav,"'customer-jellyfin-password':Object.freeze({kind:'task',groupKey:'customers',parentKey:'users'",'admin password support must remain discoverable as an All customers-owned task without becoming a permanent rail destination');
+lacks(adminNav,"['customer-jellyfin-password','Jellyfin Passwords','/admin/customer-jellyfin-password']",'Jellyfin password support must not return as a permanent Customers rail item');
 
 const paymentReturn=read('src/platform/customer-payment-return.js');
 has(paymentReturn,"/account?welcome=1&message=",'successful payment returns must enter the access welcome flow');
