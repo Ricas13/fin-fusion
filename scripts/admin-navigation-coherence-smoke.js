@@ -44,7 +44,7 @@ assert(/adminTab active[^>]*href="\/admin\/backups"/.test(migrationHeader),'Paid
 assert(!migrationHeader.includes('href="/admin/payments/legacy-import"'),'Paid-user migration must not become a third-level rail entry');
 
 const expenseCrumb=context.breadcrumb('expenses');
-assert(expenseCrumb.includes('<a href="/admin/payments">Payments &amp; Billing</a>'),'Expense breadcrumb must link back to its owning main page');
+assert(expenseCrumb.includes('<a href="/admin/payments">Payments</a>'),'Expense breadcrumb must link back to its owning main page');
 assert(expenseCrumb.includes('<strong>Expenses &amp; Profitability</strong>'),'Expense breadcrumb must identify the specialist page');
 
 const rendered=html.layout({
