@@ -34,13 +34,15 @@ function summarizeFailureReasons(reasons, failed) {
 // than storefront catalogue state. Once sold, a contract must keep receiving
 // repair/verification even if its plan is later hidden/archived/inactive, and
 // permanent or service-extension access must not silently fall out of the job.
+// Do not gate on customers.access_paused_at: that column is only a legacy
+// customer-level summary and is populated even by subscription/lane-scoped
+// holds. The canonical reconciler decides which individual lanes are blocked.
 async function dueCustomers(limit = 250) {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 250));
     const result = await query(`
         WITH active AS (
             SELECT DISTINCT s.customer_id
             FROM subscriptions s
-            JOIN customers c ON c.id=s.customer_id
             LEFT JOIN customer_entitlement_overrides o
                    ON o.customer_id=s.customer_id AND o.subscription_id=s.id
             WHERE s.superseded_by IS NULL
@@ -54,7 +56,6 @@ async function dueCustomers(limit = 250) {
                       AND (s.current_period_end + ((s.service_extension_days || ' days')::interval)) > NOW()
                   )
               )
-              AND c.access_paused_at IS NULL
         ), candidates AS (
             SELECT a.customer_id,
                    cps.status AS provisioning_status,
