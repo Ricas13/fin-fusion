@@ -198,6 +198,21 @@ async function claimDirectStreamResult(entitlement, req) {
   return householdAccess.claim(entitlement, req, { kind: 'direct_stream_result' });
 }
 
+// A household/IP decision that fails to resolve (misconfigured plan, an
+// unrecognized address, a DB hiccup) must never be treated the same as "no
+// streams for this title" -- the customer needs to see why access was
+// blocked, not Stremio's generic empty-result screen. Any failure here is
+// therefore itself a denial, using the same informative stream entry as a
+// real over-limit decision.
+async function safeHouseholdDecision(run, label) {
+  try {
+    return await run();
+  } catch (error) {
+    console.error(`Stremio household ${label} check failed:`, safeLogText(error?.message || error, 300));
+    return { allowed: false, decision: 'check_failed', retryAfterSeconds: 60 };
+  }
+}
+
 async function sendHouseholdBlockedMedia(req, res) {
   if (!enabled()) return res.status(404).end();
   try {
@@ -258,13 +273,13 @@ function createStremioRuntimeRouter() {
       // to be resolved into a response. The actual claim happens immediately
       // before raw Jellyfin URLs are handed to Stremio because there is no
       // CAPTAiNFiN playback hop anymore.
-      const preview = await householdAccess.preview(entitlement, req, { kind: 'stream_results' });
+      const preview = await safeHouseholdDecision(() => householdAccess.preview(entitlement, req, { kind: 'stream_results' }), 'preview');
       if (preview && preview.allowed === false) return res.json(await deniedStreamResponse(entitlement, req, type, videoId, preview));
 
       const origin = await publicOrigin(req);
       const cached = cachedStreams(entitlement.id, type, videoId, origin);
       if (cached) {
-        const household = await claimDirectStreamResult(entitlement, req);
+        const household = await safeHouseholdDecision(() => claimDirectStreamResult(entitlement, req), 'claim');
         if (!household.allowed) return res.json(await deniedStreamResponse(entitlement, req, type, videoId, household));
         await entitlements.markUse(entitlement.id, 'stream').catch(error => console.warn('Unable to update Stremio usage timestamp:', safeLogText(error?.message || error, 300)));
         return res.json({ streams: cached });
@@ -279,7 +294,7 @@ function createStremioRuntimeRouter() {
       const streams = [...managed, ...external];
 
       if (streams.length) {
-        const household = await claimDirectStreamResult(entitlement, req);
+        const household = await safeHouseholdDecision(() => claimDirectStreamResult(entitlement, req), 'claim');
         if (!household.allowed) return res.json(await deniedStreamResponse(entitlement, req, type, videoId, household));
         rememberStreams(entitlement.id, type, videoId, origin, streams);
       }
