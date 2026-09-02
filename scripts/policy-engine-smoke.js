@@ -148,14 +148,14 @@ function main() {
         assert(!fourK.includes("COALESCE(js.media_server_type,'jellyfin')='jellyfin'"), '4K transcode enforcement must not silently exclude Emby servers');
         assert(fourK.includes('/Sessions/${encodeURIComponent(candidate.Id)}/Playing/Stop'), '4K enforcement must continue through the shared media-server registry path');
 
-        assert.strictEqual(subscriptionState.recurringProvider({ source: 'stripe', provider_subscription_id: 'sub_123' }), true, 'Stripe sub_* is recurring');
-        assert.strictEqual(subscriptionState.recurringProvider({ source: 'stripe', provider_subscription_id: 'pi_123' }), false, 'Stripe PaymentIntent is PAYG, not recurring');
-        assert.strictEqual(subscriptionState.recurringProvider({ source: 'paypal', provider_subscription_id: 'I-ABC123' }), true, 'PayPal I-* is recurring');
-        assert.strictEqual(subscriptionState.recurringProvider({ source: 'paypal', provider_subscription_id: 'PAY-123' }), false, 'PayPal one-time payment ID is PAYG');
-        assert.strictEqual(subscriptionState.recurringProvider({ source: 'plisio', provider_subscription_id: 'txn-123' }), false, 'Plisio transactions are PAYG');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_unusual_but_remote_metadata' }), true, 'Stripe billing_mode=subscription is recurring regardless of provider ID shape');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'stripe', billing_mode: 'payment', provider_subscription_id: 'sub_misleading_prefix' }), false, 'Stripe billing_mode=payment is PAYG even when the provider ID resembles a subscription');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'paypal', billing_mode: 'subscription', provider_subscription_id: 'PAY-UNUSUAL' }), true, 'PayPal billing_mode=subscription is recurring regardless of provider ID shape');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'paypal', billing_mode: 'payment', provider_subscription_id: 'I-MISLEADING' }), false, 'PayPal billing_mode=payment is PAYG even when the provider ID resembles a subscription');
+        assert.strictEqual(subscriptionState.recurringProvider({ source: 'plisio', billing_mode: 'subscription', provider_subscription_id: 'txn-123' }), false, 'Plisio is not a supported recurring provider');
         assert(payg.includes("s.source IN ('stripe','paypal','plisio')"), 'PAYG reminders must include Plisio one-time purchases');
-        assert(payg.includes("s.source='stripe' AND COALESCE(s.provider_subscription_id,'') ~* '^sub_'") && payg.includes("s.source='paypal' AND COALESCE(s.provider_subscription_id,'') ~* '^I-'"), 'PAYG reminders must exclude only canonical provider recurring identifiers');
-        assert(!payg.includes('s.provider_subscription_id IS NULL'), 'PAYG reminders must not mistake non-null one-time payment IDs for recurring subscriptions');
+        assert(payg.includes("s.billing_mode='payment'"), 'PAYG reminders must use persisted billing_mode as the canonical payment contract');
+        assert(!payg.includes("provider_subscription_id,'') ~* '^sub_'") && !payg.includes("provider_subscription_id,'') ~* '^I-'"), 'PAYG reminders must not infer billing mode from provider identifier prefixes');
 
         assert(household.includes('aps.device_name,ja.access_lane'), 'household sessions must carry the owning Jellyfin lane');
         assert(household.includes("(CASE WHEN p.is_free_tier THEN 'free' ELSE 'primary' END)=$2"), 'household entitlement lookup must be scoped to Free versus primary lane');
