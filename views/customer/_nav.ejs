@@ -15,5 +15,6 @@
   <a class="customerPortalNavLink <%= active==='notifications'?'active':'' %>" href="/account/communications">Notifications</a>
   <% if (navOverseerrUrl) { %>
     <a class="customerPortalNavLink" href="<%= navOverseerrUrl %>" target="_blank" rel="noreferrer">Request content ↗</a>
+    <a class="customerPortalNavLink <%= active==='requests'?'active':'' %>" href="/account/requests/password">Request password</a>
   <% } %>
 </nav>
