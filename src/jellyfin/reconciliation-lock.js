@@ -5,7 +5,7 @@ const { Client } = require('pg');
 const LOCK_NAMESPACE = 761932;
 const LOCK_TIMEOUT_MS = 30000;
 const LOCK_POLL_MS = 100;
-const DEFAULT_MAX_CONCURRENCY = 8;
+const DEFAULT_MAX_CONCURRENCY = 4;
 
 function boundedInteger(value, fallback, min, max) {
     const parsed = Number(value);
@@ -16,7 +16,7 @@ function boundedInteger(value, fallback, min, max) {
 const MAX_CONCURRENCY = boundedInteger(
     process.env.RECONCILIATION_MAX_CONCURRENCY,
     DEFAULT_MAX_CONCURRENCY,
-    2,
+    1,
     50
 );
 let activeSlots = 0;
