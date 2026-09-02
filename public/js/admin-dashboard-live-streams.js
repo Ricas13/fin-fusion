@@ -3,7 +3,7 @@
 (()=>{
   const root=document.querySelector('[data-admin-live-streams]');
   if(!root)return;
-  const grid=root.querySelector('[data-live-stream-grid]'),count=root.querySelector('[data-live-stream-count]'),meta=root.querySelector('[data-live-stream-meta]'),errorBox=root.querySelector('[data-live-stream-error]');
+  const list=root.querySelector('[data-live-stream-grid]'),count=root.querySelector('[data-live-stream-count]'),meta=root.querySelector('[data-live-stream-meta]'),errorBox=root.querySelector('[data-live-stream-error]');
   const csrf=root.dataset.csrfToken||'';
   let timer=null,busy=false,messageTarget=null;
 
@@ -43,42 +43,43 @@
     if(!response.ok)throw new Error(payload.error||`Stream ${kind} failed.`);return payload;
   }
   async function control(stream,action,buttonNode){
-    if(action==='stop'&&!window.confirm(`Stop ${stream.user}'s playback of ${stream.title}?`))return;
+    if(action==='stop'&&!window.confirm(`Stop ${stream.user}'s playback of ${stream.title}? If the client ignores Stop, CAPTAiNFiN may safely sign out that device when no other active stream shares it.`))return;
     buttonNode.disabled=true;showError('');try{await post(stream,'control',{action});showNotice(action==='stop'?'Stream stopped.':action==='pause'?'Pause command sent.':'Resume command sent.');window.setTimeout(refresh,500);}catch(error){showError(error.message);}finally{buttonNode.disabled=false;}
   }
 
-  function artwork(stream){
-    const wrap=el('div','adminLiveStreamArtwork');
-    if(stream.imageUrl){const img=el('img','');img.loading='lazy';img.alt='';img.src=stream.imageUrl;img.addEventListener('error',()=>{img.remove();wrap.classList.add('fallback');wrap.append(el('span','',typeLabel(stream).slice(0,1)));},{once:true});wrap.append(img);}else{wrap.classList.add('fallback');wrap.append(el('span','',typeLabel(stream).slice(0,1)));}
-    if(stream.paused)wrap.append(el('div','adminLiveStreamPauseOverlay','Ⅱ'));
-    return wrap;
-  }
+  function streamRow(stream){
+    const row=el('article','adminLiveStreamRow');
+    if(stream.paused)row.classList.add('paused');if(String(stream.method).toLowerCase().includes('transcode'))row.classList.add('transcoding');
 
-  function streamCard(stream){
-    const card=el('article','adminLiveStreamCard');
-    if(stream.paused)card.classList.add('paused');if(String(stream.method).toLowerCase().includes('transcode'))card.classList.add('transcoding');
-    const body=el('div','adminLiveStreamCardBody');body.append(artwork(stream));
-    const content=el('div','adminLiveStreamContent');
-    const userRow=el('div','adminLiveStreamUserRow');const user=el('a','adminLiveStreamUser',stream.user||'Customer');user.href=`/admin/users/${encodeURIComponent(stream.customerId)}`;user.title=stream.email||stream.user||'Customer';userRow.append(user);
+    const top=el('div','adminLiveStreamTop');
+    const headline=el('div','adminLiveStreamHeadline');headline.append(badge(typeLabel(stream),'type'));
+    const media=el('div','adminLiveStreamMedia');media.append(el('strong','adminLiveStreamTitle',stream.title||'Playing media'));if(stream.subtitle)media.append(el('span','adminLiveStreamSubtitle',stream.subtitle));headline.append(media);top.append(headline);
+
+    const right=el('div','adminLiveStreamTopRight');
+    const quick=el('div','adminLiveStreamQuick');quick.append(badge(stream.service||'Jellyfin','service'),badge(stream.paused?'Paused':'Playing',stream.paused?'paused':'playing'));if(stream.resolution)quick.append(badge(stream.resolution,'quality'));right.append(quick);
     const controls=el('div','adminLiveStreamActions');
     const pauseLabel=stream.paused?'▶':'Ⅱ',pauseTitle=stream.paused?'Resume stream':'Pause stream',pauseAction=stream.paused?'resume':'pause';const pauseButton=button(pauseLabel,pauseTitle,'pause',()=>control(stream,pauseAction,pauseButton));pauseButton.disabled=!stream.supportsControl;
-    controls.append(pauseButton,button('✉','Send custom message','message',()=>openMessage(stream)));const stopButton=button('×','Stop stream','stop',()=>control(stream,'stop',stopButton));controls.append(stopButton);userRow.append(controls);content.append(userRow);
-    const media=el('div','adminLiveStreamMedia');const title=el('strong','adminLiveStreamTitle',stream.title||'Playing media');media.append(title);if(stream.subtitle)media.append(el('span','adminLiveStreamSubtitle',stream.subtitle));content.append(media);
-    const chips=el('div','adminLiveStreamChips');chips.append(badge(typeLabel(stream),'type'),badge(stream.service||'Jellyfin','service'),badge(stream.paused?'Paused':'Playing',stream.paused?'paused':'playing'));if(stream.resolution)chips.append(badge(stream.resolution,'quality'));content.append(chips);
-    const progress=el('div','adminLiveStreamProgress');const fill=el('i','');const pct=Number(stream.progressPercent);fill.style.width=`${Number.isFinite(pct)?Math.max(0,Math.min(100,pct)):0}%`;progress.append(fill);content.append(progress);
-    const times=el('div','adminLiveStreamTimes');times.append(el('span','',duration(stream.positionSeconds)));const remain=remaining(stream);times.append(el('span','',remain|| (stream.durationSeconds!=null?duration(stream.durationSeconds):'Live')));content.append(times);
-    const tech=el('div','adminLiveStreamTech');[stream.method,stream.videoCodec,stream.audioCodec&&stream.audioChannels?`${stream.audioCodec} ${stream.audioChannels}ch`:stream.audioCodec,bitrate(stream.bitrate)].filter(Boolean).forEach(value=>tech.append(badge(value,'tech')));content.append(tech);
-    if(Array.isArray(stream.transcodeReasons)&&stream.transcodeReasons.length){const reason=el('div','adminLiveStreamReasons',`Transcode: ${stream.transcodeReasons.join(', ')}`);reason.title=reason.textContent;content.append(reason);}
-    body.append(content);card.append(body);
-    const footer=el('div','adminLiveStreamFooter');const left=el('span','');left.append(el('strong','',stream.serverName||'Server'));left.append(document.createTextNode(` · ${stream.device||stream.client||'Unknown device'}`));footer.append(left);const rightParts=[stream.remoteAddress,stream.isLocal?'local':'remote'].filter(Boolean);footer.append(el('span','',rightParts.join(' · ')));card.append(footer);
-    return card;
+    controls.append(pauseButton,button('✉','Send custom message','message',()=>openMessage(stream)));const stopButton=button('×','Stop stream','stop',()=>control(stream,'stop',stopButton));controls.append(stopButton);right.append(controls);top.append(right);row.append(top);
+
+    const progress=el('div','adminLiveStreamProgress');const fill=el('i','');const pct=Number(stream.progressPercent);fill.style.width=`${Number.isFinite(pct)?Math.max(0,Math.min(100,pct)):0}%`;progress.append(fill);row.append(progress);
+
+    const bottom=el('div','adminLiveStreamBottom');
+    const identity=el('div','adminLiveStreamIdentity');const user=el('a','adminLiveStreamUser',stream.user||'Customer');user.href=`/admin/users/${encodeURIComponent(stream.customerId)}`;user.title=stream.email||stream.user||'Customer';identity.append(user);
+    [stream.serverName,stream.device||stream.client,stream.remoteAddress,stream.isLocal?'local':'remote'].filter(Boolean).forEach(value=>{identity.append(el('span','adminLiveStreamDot','·'));identity.append(el('span','',value));});bottom.append(identity);
+
+    const detail=el('div','adminLiveStreamDetail');
+    [stream.method,bitrate(stream.bitrate),stream.videoCodec,stream.audioCodec&&stream.audioChannels?`${stream.audioCodec} ${stream.audioChannels}ch`:stream.audioCodec].filter(Boolean).forEach(value=>detail.append(el('span','',value)));
+    const timing=el('span','adminLiveStreamTiming',`${duration(stream.positionSeconds)} / ${stream.durationSeconds!=null?duration(stream.durationSeconds):'Live'}${remaining(stream)?` · ${remaining(stream)} left`:''}`);detail.append(timing);bottom.append(detail);row.append(bottom);
+
+    if(Array.isArray(stream.transcodeReasons)&&stream.transcodeReasons.length){const reasons=el('div','adminLiveStreamReasons',`Transcode: ${stream.transcodeReasons.join(', ')}`);reasons.title=reasons.textContent;row.append(reasons);}
+    return row;
   }
 
   function render(payload){
     const streams=Array.isArray(payload?.streams)?payload.streams:[],failures=Array.isArray(payload?.failures)?payload.failures:[];count.textContent=`${streams.length} stream${streams.length===1?'':'s'}`;
     meta.textContent=failures.length?`${failures.length} server${failures.length===1?'':'s'} unavailable · showing confirmed live sessions`:'Across enabled Jellyfin and Emby servers';
-    grid.replaceChildren();if(!streams.length){const empty=el('div','adminLiveStreamsEmpty');empty.append(el('strong','',failures.length?'No confirmed streams available':'Nobody is streaming right now'));empty.append(el('span','',failures.length?'One or more media servers could not be checked.':'This panel will populate automatically when playback starts.'));grid.append(empty);return;}
-    streams.forEach(stream=>grid.append(streamCard(stream)));
+    list.replaceChildren();if(!streams.length){const empty=el('div','adminLiveStreamsEmpty');empty.append(el('strong','',failures.length?'No confirmed streams available':'Nobody is streaming right now'));empty.append(el('span','',failures.length?'One or more media servers could not be checked.':'This panel will populate automatically when playback starts.'));list.append(empty);return;}
+    streams.forEach(stream=>list.append(streamRow(stream)));
   }
 
   async function refresh(){
