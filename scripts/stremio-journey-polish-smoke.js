@@ -46,16 +46,19 @@ assert(household.includes('stremio_ip_replacement_policy_snapshot')&&household.i
 assert(household.includes("'X-CAPTAiNFiN-429-Reason', 'household_network'"),'runtime household-network response contract must remain unchanged');
 
 // Admin UX remains a presentation layer over canonical source, plan and customer
-// routes. The old three-card setup journey is intentionally gone so operational
-// pages start with their actual controls instead of duplicate navigation.
+// routes. The retired setup journey and source explainer stay absent; operational
+// notices and the actual source controls remain owned by the server-rendered page.
 assert(!adminJourney.includes('stremioJourney')&&!adminJourney.includes('insertJourney('),'Stremio polish must not inject Sources / Plan delivery / Customer install journey cards');
 assert(!adminJourney.includes('Stremio setup journey')&&!adminJourney.includes('stremioJourneyStep'),'retired Stremio setup-card markup must stay removed');
+assert(!adminJourney.includes('Choose where Stremio can find your library.')&&!adminJourney.includes('How playback is delivered'),'retired Stremio source explainer must not be recreated by presentation JavaScript');
 assert(adminJourney.includes('Manage Stremio sources')&&adminJourney.includes('Save delivery sources'),'plan delivery must use operator-friendly source actions');
 assert(adminJourney.includes('Advanced order')&&adminJourney.includes('Advanced maintenance')&&adminJourney.includes('Technical diagnostics'),'technical source ordering, maintenance and diagnostics must use progressive disclosure');
 assert(adminJourney.includes('textContent')&&!adminJourney.includes('fetch('),'Stremio polish must change presentation only and must not own server state');
 
 assert(capabilityCss.includes("@import url('/css/admin-stremio-journey.css')"),'admin capability bundle must load Stremio polish styles');
 assert(adminShell.includes('/js/admin-stremio-journey.js'),'admin shell must load Stremio polish behavior');
-for(const contract of ['.stremioFlowOverview','.stremioAdvancedMaintenance','.stremioOrderDetails','@media(max-width:800px)'])assert(adminCss.includes(contract),`Stremio polish CSS missing ${contract}`);
+assert(adminCss.includes('.stremioJourney{display:none!important}'),'old cached journey markup must remain defensively hidden');
+for(const contract of ['.stremioAdvancedMaintenance','.stremioOrderDetails','@media(max-width:800px)'])assert(adminCss.includes(contract),`Stremio polish CSS missing ${contract}`);
+assert(!adminCss.includes('.stremioFlowOverview'),'retired source-explainer styling must stay removed');
 
 console.log('stremio journey polish smoke: ok');
