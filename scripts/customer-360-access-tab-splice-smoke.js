@@ -19,7 +19,8 @@ assert(!/indexOf\(marker\)|const marker=/.test(wrapperSource),'Customer 360 must
 assert(wrapperSource.includes('skipAccessSections:true'),'Access must render shared Customer 360 chrome without the legacy giant Access body');
 assert(v2Source.includes('options.skipAccessSections'),'v2 must keep the explicit Access skip contract');
 assert(wrapperSource.includes("accessCards=require('./customer-360-access-cards')"),'Customer 360 must have one dedicated card Access renderer');
-assert(wrapperSource.includes("accessStatus=require('./customer-360-access-status')")&&wrapperSource.includes('manage.portalSection'),'Access must expose hold diagnostics and the existing portal onboarding controls');
+assert(wrapperSource.includes("accessStatus=require('./customer-360-access-status')"),'Access must expose explicit hold diagnostics');
+assert(!wrapperSource.includes('manage.portalSection'),'Portal account/onboarding must remain owned by the canonical Overview/claim workflow rather than being duplicated on Access');
 assert(!adminSource.includes('Preview customer portal'),'The redundant Preview customer portal action must be removed');
 
 assert(cardsSource.includes('accessOverviewGrid'),'Access summary must use compact overview cards');
@@ -79,7 +80,7 @@ const plan={id:'free-plan',plan_name:'Free Server',name:'Free Server',is_free_ti
 const failedDetail=fixture({provisioningState:{status:'failed',last_error:'No eligible free server'},subscriptions:[{status:'active',current_period_end:new Date(Date.now()+86400000),plan_name:'Free Server',streams:1,is_free_tier:true,service_type:'jellyfin',server_class:'free'}]});
 const failedHtml=view.body(failedDetail,'access','token',{currentPlan:plan,effective:effectiveFixture(),assignment},{householdOverrides:{}});
 assert(failedHtml.includes('Access status')&&failedHtml.includes('No active access holds'),'Access must begin with explicit entitlement/hold diagnostics');
-assert(failedHtml.includes('Portal account & onboarding'),'Access must wire the existing portal onboarding backend into the UI');
+assert(!failedHtml.includes('Portal account & onboarding'),'Access must not duplicate the portal onboarding workflow owned by Overview');
 assert(failedHtml.includes('Access overview'),'Access must retain the compact operational overview');
 assert(failedHtml.includes('Provisioning failed / Needs attention.'),'failed provisioning must remain explicit');
 assert(failedHtml.includes('Free Server entitlement remains allocated'),'failed Free Server provisioning must explain that entitlement remains allocated during repair');
@@ -119,7 +120,7 @@ assert(manualHtml.includes('name="serverId"')&&manualHtml.includes('value="free-
 const stremioHtml=view.body(fixture({primaryEntitlement:{service_type:'stremio',name:'Stremio Plan',status:'active'}}),'access','token',null,{});
 assert(stremioHtml.includes('Stremio access'),'Stremio-only customer must retain Stremio access controls');
 assert(!stremioHtml.includes('accessControlGrid'),'Stremio-only customer must not see Jellyfin technical cards');
-assert(stremioHtml.includes('Portal account & onboarding'),'Stremio Access must expose portal onboarding too');
+assert(!stremioHtml.includes('Portal account & onboarding'),'Stremio Access must not duplicate portal onboarding either');
 assert(stremioHtml.includes('Test Customer'),'Stremio Access must retain shared Customer 360 chrome');
 
 console.log('customer 360 card access smoke: ok');
