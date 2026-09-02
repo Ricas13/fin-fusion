@@ -21,9 +21,11 @@ function liveRequestEntitlement(portal){
 }
 
 function optionsFromPortal(portal){
+  const hasServiceAccess=liveRequestEntitlement(portal);
   return{
     showBenefits:Boolean(portal&&portal.referralsEnabled&&portal.referralCode),
-    overseerrUrl:liveRequestEntitlement(portal)?String(runtimeSettings.overseerrUrl()||''):''
+    showServicePasswords:hasServiceAccess,
+    overseerrUrl:hasServiceAccess?String(runtimeSettings.overseerrUrl()||''):''
   };
 }
 
@@ -34,7 +36,7 @@ async function optionsForCustomer(customerId){
 }
 
 function nav(active='',options={}){
-  const signedInAccountSurface=['account','security'].includes(String(active||''))&&Object.prototype.hasOwnProperty.call(options||{},'showBenefits');
+  const signedInAccountSurface=['account','security','passwords'].includes(String(active||''))&&Object.prototype.hasOwnProperty.call(options||{},'showBenefits');
   return renderNav({active,...options,standaloneHeader:signedInAccountSurface,siteName:runtimeSettings.siteName()});
 }
 
