@@ -31,10 +31,14 @@ function liveJellyfinEntitlement(portal){
 
 function optionsFromPortal(portal){
   const hasServiceAccess=liveRequestEntitlement(portal);
+  const hasJellyfinAccess=liveJellyfinEntitlement(portal);
   return{
     showBenefits:Boolean(portal&&portal.referralsEnabled&&portal.referralCode),
     showServicePasswords:hasServiceAccess,
-    showJellyfin:liveJellyfinEntitlement(portal),
+    showAccess:hasServiceAccess,
+    // Compatibility for older partials/tests while My Access replaces the
+    // Jellyfin-only navigation destination.
+    showJellyfin:hasJellyfinAccess,
     overseerrUrl:hasServiceAccess?String(runtimeSettings.overseerrUrl()||''):''
   };
 }
