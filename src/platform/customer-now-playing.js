@@ -25,7 +25,7 @@ function methodLabel(value){
 
 async function nowPlayingForCustomer(customerId){
   const result=await query(`
-    SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,aps.application_version,
+    SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,
            aps.playback_method,aps.is_paused,aps.position_ticks,aps.first_seen_at,aps.last_seen_at,
            COALESCE(js.media_server_type,'jellyfin') AS media_server_type
     FROM active_playback_sessions aps
@@ -40,7 +40,6 @@ async function nowPlayingForCustomer(customerId){
     service:serviceLabel(row.media_server_type),
     client:row.client_name||null,
     device:row.device_name||null,
-    applicationVersion:row.application_version||null,
     method:methodLabel(row.playback_method),
     paused:Boolean(row.is_paused),
     positionSeconds:positionSeconds(row.position_ticks),
