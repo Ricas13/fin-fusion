@@ -1,6 +1,7 @@
 'use strict';
 
 const express=require('express');
+const {rateLimit}=require('express-rate-limit');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
@@ -8,6 +9,7 @@ const registry=require('../jellyfin/registry');
 const mediaProvider=require('../media-servers/provider');
 const outbound=require('../security/outbound-url-policy');
 
+const surfaceLimit=rateLimit({windowMs:60000,limit:300,standardHeaders:'draft-8',legacyHeaders:false,message:{error:'Too many live-stream requests. Try again shortly.'}});
 const readLimit=routeRateLimit.middleware({scope:'admin-dashboard-live-streams-read',max:120,windowSeconds:60,reason:'admin_dashboard_live_streams_read'});
 const writeLimit=routeRateLimit.middleware({scope:'admin-dashboard-live-streams-control',max:60,windowSeconds:60,reason:'admin_dashboard_live_streams_control'});
 const MAX_IMAGE_BYTES=5*1024*1024;
@@ -218,7 +220,7 @@ function renderLiveStreamsPanel(req){
 }
 
 function createAdminDashboardLiveStreamsRouter(){
-  const router=express.Router();router.use('/admin/live-streams',gate,noStore);
+  const router=express.Router();router.use('/admin/live-streams',surfaceLimit,gate,noStore);
   router.get('/admin/live-streams',readLimit,async(_req,res,next)=>{try{return res.json(await liveSessionsSnapshot());}catch(error){return next(error);}});
   router.get('/admin/live-streams/server/:serverId/item/:itemId/primary-image',readLimit,(req,res)=>primaryImage(req,res));
   router.post('/admin/live-streams/server/:serverId/session/:sessionId/control',writeLimit,(req,res)=>controlSession(req,res));
