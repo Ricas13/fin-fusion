@@ -52,7 +52,7 @@
           <% if(account.libraryError){ %><div class="notice warn">Libraries could not be read from this server right now. Your existing selection has not been changed.</div>
           <% } else if(!account.availableLibraries.length){ %><div class="jellyfinEmptyLibraries">No selectable libraries are currently available for this server.</div>
           <% } else { %>
-          <form method="post" action="/account/libraries/<%= account.id %>" data-library-form><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <form method="post" action="/account/libraries/<%= account.id %>" data-library-form><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin">
             <div class="jellyfinLibraryTools"><button class="button ghost small" type="button" data-library-all>Show all</button><button class="button ghost small" type="button" data-library-none>Hide all</button></div>
             <div class="jellyfinLibraryGrid"><% account.availableLibraries.forEach(function(name){ %><label class="jellyfinLibraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= selectedSet.has(name)?'checked':'' %>><span><strong><%= name %></strong><small>Visible in Jellyfin</small></span></label><% }) %></div>
             <div class="jellyfinLibrarySave"><button class="button secondary" type="submit">Save library visibility</button><span><%= account.librarySelectionSaved?'Your personal library preference is active.':'All plan libraries are currently shown.' %></span></div>
