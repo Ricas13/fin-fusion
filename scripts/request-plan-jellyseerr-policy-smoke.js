@@ -10,6 +10,7 @@ const policy = require('../src/integrations/request-plan-policy');
 const migration = read('db/migrations/030_request_plan_user_policy.sql');
 const planUi = read('src/platform/admin-request-plan-policy.js');
 const sync = read('src/integrations/request-user-sync.js');
+const requestEntitlement = read('src/integrations/request-entitlement.js');
 const requestUsers = read('src/platform/admin-request-users.js');
 const jellyfinEditor = read('src/platform/admin-jellyfin-plan-editor.js');
 const stremioEditor = read('src/platform/admin-stremio-plan-editor.js');
@@ -50,6 +51,12 @@ assert(sync.includes('email,') && sync.includes('discoverRegion') && sync.includ
 assert(!sync.includes('discordId:current?.discordId'), 'legacy partial main-settings payload must not return');
 assert(sync.includes('syncSelected(customerIds)'), 'request sync must support selected-customer reconciliation');
 assert(sync.includes('currentPermissions !== activePermissions'), 'managed plan permissions must be reconciled even for already-active users');
+assert(sync.includes("require('./request-entitlement')") && sync.includes('resolveRequestCandidate(candidate)'), 'request sync must resolve non-Jellyfin service entitlements before suspending a customer');
+for (const laneView of ['effective_customer_entitlements','effective_stremio_entitlements','effective_emby_entitlements']) {
+  assert(requestEntitlement.includes(laneView), `request entitlement resolution must include ${laneView}`);
+}
+assert(requestEntitlement.includes('COALESCE(p.request_access_enabled,TRUE)=TRUE'), 'cross-service request entitlement must still respect each plan request-access switch');
+assert(requestEntitlement.includes('ORDER BY e.blocked ASC,e.service_rank ASC'), 'cross-service request entitlement must prefer usable access while preserving the existing Jellyfin-first policy when multiple lanes qualify');
 
 assert(requestUsers.includes('data-request-user-select-all'), 'request user table must have Select All');
 assert(requestUsers.includes('/admin/request-users/sync-selected'), 'request user table must support Sync selected');
