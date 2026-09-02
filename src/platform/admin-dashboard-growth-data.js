@@ -136,7 +136,7 @@ async function planTrend(range) {
     )
     SELECT b.bucket,COALESCE(NULLIF(s.plan_name_snapshot,''),p.name) plan_name,COUNT(*)::int subscriptions
     FROM buckets b
-    JOIN subscriptions s ON s.starts_at<=b.sample_at AND ${ACCESS_END.replaceAll('s.','s.')}>b.sample_at
+    JOIN subscriptions s ON s.starts_at<=b.sample_at AND ${ACCESS_END}>b.sample_at
     JOIN plans p ON p.id=s.plan_id
     WHERE ${PRIMARY_PAID}
     GROUP BY b.bucket,COALESCE(NULLIF(s.plan_name_snapshot,''),p.name)
@@ -191,6 +191,7 @@ async function playbackTrend(range) {
         ON ph.started_at<b.bucket_end AND COALESCE(ph.ended_at,ph.last_seen_at)>b.bucket_start
     )
     SELECT bucket,
+      EXTRACT(EPOCH FROM(MAX(bucket_end)-MIN(bucket_start)))::numeric bucket_seconds,
       COALESCE(SUM(seconds)/NULLIF(EXTRACT(EPOCH FROM(MAX(bucket_end)-MIN(bucket_start))),0),0)::numeric avg_concurrent,
       SUM(started)::int session_starts,
       COALESCE(SUM(seconds) FILTER(WHERE method='directplay'),0)::bigint directplay_seconds,
@@ -198,7 +199,7 @@ async function playbackTrend(range) {
       COALESCE(SUM(seconds) FILTER(WHERE method='transcode'),0)::bigint transcode_seconds,
       COALESCE(SUM(seconds) FILTER(WHERE method NOT IN('directplay','directstream','transcode')),0)::bigint unknown_seconds
     FROM overlaps GROUP BY bucket ORDER BY bucket`,[range.start,range.end]);
-  const rows=fillPlaybackSeries(range,grain,result.rows,['avg_concurrent','session_starts','directplay_seconds','directstream_seconds','transcode_seconds','unknown_seconds']).map(row=>{
+  const rows=fillPlaybackSeries(range,grain,result.rows,['bucket_seconds','avg_concurrent','session_starts','directplay_seconds','directstream_seconds','transcode_seconds','unknown_seconds']).map(row=>{
     const total=row.directplay_seconds+row.directstream_seconds+row.transcode_seconds+row.unknown_seconds;
     return{...row,directplay_pct:total?row.directplay_seconds/total*100:0,directstream_pct:total?row.directstream_seconds/total*100:0,transcode_pct:total?row.transcode_seconds/total*100:0,unknown_pct:total?row.unknown_seconds/total*100:0};
   });
@@ -228,8 +229,8 @@ async function playerUsage(range) {
     GROUP BY client_name,device_name`,[range.start,range.end]);
   const grouped=new Map();
   for(const row of result.rows){const name=normalizePlayer(row.client_name,row.device_name),current=grouped.get(name)||{name,sessions:0,seconds:0};current.sessions+=Number(row.sessions||0);current.seconds+=Number(row.seconds||0);grouped.set(name,current);}
-  const rows=[...grouped.values()].sort((a,b)=>b.seconds-a.seconds||b.sessions-a.sessions).slice(0,9),total=rows.reduce((sum,row)=>sum+row.seconds,0);
-  return{rows:rows.map(row=>({...row,share:total?row.seconds/total*100:0}))};
+  const sorted=[...grouped.values()].sort((a,b)=>b.seconds-a.seconds||b.sessions-a.sessions),total=sorted.reduce((sum,row)=>sum+row.seconds,0),rows=sorted.slice(0,9);
+  return{rows:rows.map(row=>({...row,share:total?row.seconds/total*100:0})),totalSeconds:total};
 }
 
 async function growthServerAnalytics(range,reporting) {
