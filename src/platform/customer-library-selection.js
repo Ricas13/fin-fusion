@@ -56,7 +56,7 @@ async function saveLibraries(req,res,accountId){
         accountId:target,
         error:reconcileError.message
       });
-      return errorRedirect(req,res,'Library visibility was saved, but Jellyfin could not be updated right now. Try again in a moment.');
+      return errorRedirect(req,res,'Library selection was saved, but Jellyfin could not be updated right now. Use Retry setup or try again later.');
     }
     return successRedirect(req,res,`Library visibility updated (${chosen.length} selected).`);
   }catch(error){
