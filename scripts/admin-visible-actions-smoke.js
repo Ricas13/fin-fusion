@@ -57,20 +57,24 @@ assert(!/DELETE\s+FROM\s+(?:public\.)?audit_log/i.test(customerDeletion)&&!/DELE
 assert(customerDeletionFinalizer.includes("set_config('steamfusion.allow_audit_mutation','on',true)")&&customerDeletionFinalizer.includes("set_config('steamfusion.allow_audit_mutation','off',true)"),'Portal-user deletion finalizer must narrowly allow audit actor FK nulling without deleting audit events');
 assert(customerDeletionFinalizer.includes("'admin.customer.hard_delete'"),'Permanent customer deletion finalizer must append a deletion tombstone audit event');
 
-const settings=navModel.groups.find(group=>group.key==='settings'),automation=navModel.groups.find(group=>group.key==='automation'),dashboard=navModel.groups.find(group=>group.key==='dashboard');
-assert(settings&&automation&&dashboard,'Core navigation groups must exist');
-const settingsKeys=settings.pages.map(page=>page[0]),automationKeys=automation.pages.map(page=>page[0]),dashboardKeys=dashboard.pages.map(page=>page[0]);
+const settings=navModel.groups.find(group=>group.key==='settings'),operations=navModel.groups.find(group=>group.key==='operations'),dashboard=navModel.groups.find(group=>group.key==='dashboard'),customers=navModel.groups.find(group=>group.key==='customers'),servers=navModel.groups.find(group=>group.key==='servers'),commerce=navModel.groups.find(group=>group.key==='commerce');
+assert(settings&&operations&&dashboard&&customers&&servers&&commerce,'All six fixed navigation groups must exist');
+assert.deepStrictEqual(navModel.groups.map(group=>group.key),['dashboard','customers','servers','commerce','operations','settings'],'Permanent navigation group order must remain fixed');
+assert.equal(navModel.groups.reduce((sum,group)=>sum+group.pages.length,0),17,'Permanent rail must remain limited to seventeen destinations');
+const settingsKeys=settings.pages.map(page=>page[0]),operationsKeys=operations.pages.map(page=>page[0]),dashboardKeys=dashboard.pages.map(page=>page[0]);
 assert(!settingsKeys.includes('my-profile'),'Personal My Profile must not be duplicated in global Settings navigation');
 assert(settingsKeys.includes('settings-integrations'),'Connections must remain a visible Settings control room');
-assert(!settingsKeys.includes('notification-settings'),'Global Notifications must be contextual to Connections rather than a separate Settings sidebar item');
+assert(!settingsKeys.includes('notification-settings'),'Global Notifications must be contextual to Connections rather than a separate Settings rail item');
 assert(navModel.hiddenPages?.['notification-settings']?.parentKey==='settings-integrations','Global Notifications must remain addressable from the Connections control room');
-assert(!settingsKeys.includes('my-notifications'),'My Notifications must not be duplicated in the Settings sidebar');
-assert(settingsKeys.includes('settings-commerce'),'Commerce must remain a visible Settings configuration directory');
-assert(!automationKeys.includes('policy-drift'),'Access consistency is a Provisioning sub-workflow, not a first-class sidebar destination');
-assert(!automationKeys.includes('notification-gateway'),'Notification delivery health belongs to Connections, not Operations');
-assert(!automationKeys.includes('events'),'Cross-platform audit/event history must be contextual to Automation rather than consuming permanent sidebar space');
+assert(!settingsKeys.includes('my-notifications'),'My Notifications must not be duplicated in the Settings rail');
+assert(!settingsKeys.includes('settings-commerce'),'Commerce settings must be owned by Commerce → Plans rather than consuming a Settings rail item');
+assert(navModel.hiddenPages?.['settings-commerce']?.parentKey==='plans'&&navModel.hiddenPages?.['settings-commerce']?.kind==='setting','Commerce settings must remain addressable as a Plans-owned setting');
+assert(!operationsKeys.includes('policy-drift'),'Access consistency is a Provisioning-owned workflow, not a permanent rail destination');
+assert(!operationsKeys.includes('notification-gateway'),'Notification delivery health belongs to Connections, not Operations');
+assert(!operationsKeys.includes('events'),'Cross-platform audit/event history must be contextual to Automation rather than consuming permanent rail space');
 assert(navModel.hiddenPages?.events?.parentKey==='automation-jobs','Audit/event history must remain addressable from Automation');
-assert(!dashboardKeys.includes('events'),'Dashboard navigation should remain focused on current state and action');
+assert(dashboardKeys.includes('attention'),'Needs attention must be a permanent Dashboard destination');
+assert(!navModel.hiddenPages?.attention,'Needs attention must not also exist as a hidden child');
 assert(navModel.hiddenPages?.['my-profile'],'Personal profile must remain addressable from the My account area');
 assert(navModel.hiddenPages?.['my-notifications'],'Personal notifications must remain addressable as a hidden My Profile workflow page');
 assert.equal(navModel.hiddenPages?.['my-notifications']?.parentKey,'my-profile','Personal notifications must remain owned by My Profile');
@@ -79,6 +83,7 @@ assert(navModel.hiddenPages?.['policy-drift'],'Access consistency must remain ad
 assert(navModel.hiddenPages?.['notification-gateway'],'Notification delivery health must remain addressable from Connections');
 assert(navSource.includes("'my-notifications':Object.freeze"),'Hidden personal notification workflow metadata must remain explicit');
 assert.equal(navModel.hiddenPages?.['jellyfin-import']?.page?.[1],'Import from Jellyfin','Jellyfin import must use one canonical label in breadcrumbs and navigation');
+for(const group of navModel.groups)for(const page of group.pages)assert.deepStrictEqual(navModel.childPages(page[0]),[],`${page[1]} must not create a third rail level`);
 
 const connectionLabels=html=>[...String(html).matchAll(/<strong>([^<]+)<\/strong>/g)].map(match=>match[1]);
 const expectedConnections=['Connections','Notifications','Email infrastructure','Request service'];
