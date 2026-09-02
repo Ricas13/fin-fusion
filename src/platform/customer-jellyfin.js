@@ -76,7 +76,7 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
     publicUrl:account.public_url||'',
     username:account.jellyfin_username||'',
     accessLane:account.access_lane||'primary',
-    disabled:Boolean(account.disabled||!account.server_enabled||entitlement?.blocked),
+    disabled:Boolean(!entitlement||account.disabled||!account.server_enabled||entitlement?.blocked),
     passwordSetupRequired:Boolean(account.password_setup_required),
     canRename:Boolean(portalAccount?.can_rename_jellyfin_username),
     planName:entitlementName(entitlement),
@@ -85,7 +85,7 @@ function mergeAccount(account,portalAccount,profile,entitlement,error=null){
     availableLibraries:available,
     selectedLibraries:selected,
     librarySelectionSaved:Boolean(effective?.selection),
-    librarySelectable:type==='jellyfin',
+    librarySelectable:type==='jellyfin'&&Boolean(entitlement),
     libraryError:error?String(error.message||error):null
   };
 }
@@ -143,13 +143,13 @@ function createCustomerJellyfinRouter(){
       const customerId=req.session.customerId;
       const portal=await customers.getCustomerPortal(customerId);
       const subscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
-        .filter(customerNav.liveSubscription)
+        .filter(customerNav.liveServiceSubscription)
         .sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
       const [accounts,requestState]=await Promise.all([
         accessAccountsForCustomer(customerId,portal),
         requestStateForCustomer(customerId)
       ]);
-      if(!subscriptions.length&&!accounts.length&&!requestState.eligible){
+      if(!subscriptions.length&&!requestState.eligible){
         return res.redirect('/account?error='+encodeURIComponent('You do not currently have active streaming access.'));
       }
       res.setHeader('Cache-Control','no-store, private, max-age=0');
