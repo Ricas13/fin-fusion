@@ -76,7 +76,9 @@ assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes(
 assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source clean rebuild');
 
 assert(sources.includes("const leaseAdmin=require('./admin-stremio-leases')")&&sources.includes('leaseAdmin.list(leasePage)')&&sources.includes('leaseAdmin.mount(r,mutationLimit)'),'Stremio control centre must load, render and mount household lease operations');
-assert(leases.includes("scope='stremio'")&&leases.includes("expires_at>NOW()")&&leases.includes('network_descriptor'),'household lease table must read active Stremio network leases and display the stored network descriptor');
+assert(leases.includes("scope='stremio'")&&leases.includes("expires_at>NOW()")&&leases.includes('network_hash')&&leases.includes('network_family'),'household lease table must use the existing privacy-safe hash/family lease schema');
+assert(!leases.includes('network_descriptor'),'lease admin must not assume or add raw/canonical IP storage that the privacy-preserving lease schema intentionally omits');
+assert(leases.includes('Privacy-safe lease fingerprint')&&leases.includes('Raw IP addresses are intentionally not stored'),'operator view must explain why a raw household address is not displayed');
 assert(leases.includes('<h2>Household IP leases</h2>')&&leases.includes("'/admin/servers/stremio/leases/renew'")&&leases.includes("'/admin/servers/stremio/leases/release'"),'household lease table must expose renew and exact-release actions');
 assert(leases.includes('planComponents.stremioHouseholdConfig(row)')&&leases.includes("COALESCE(s.stremio_ip_replacement_policy_snapshot,p.stremio_ip_replacement_policy)"),'renewal must use the same effective lease timing as runtime, including subscription replacement snapshots');
 assert(leases.includes("SET expires_at=NOW()+($3::int*INTERVAL '1 minute')")&&!leases.includes('SET last_seen_at'),'admin renewal must extend expiry without pretending that customer playback occurred');
