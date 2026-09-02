@@ -46,28 +46,45 @@
         return submitter.getAttribute(name) || '';
     }
 
+    // Never read form.action/form.method/form.target/form.enctype directly here.
+    // HTML forms expose named controls as properties, so fields such as
+    // <input name="action" value="revoke"> can shadow those DOM properties and
+    // turn a valid admin mutation into a request to the wrong URL. Attribute
+    // reads are deterministic regardless of control names.
+    function formAttribute(form, name, fallback = '') {
+        if (!form?.getAttribute) return fallback;
+        const value = form.getAttribute(name);
+        return value == null || value === '' ? fallback : value;
+    }
+
     function actionUrl(form, submitter = null) {
         const override = explicitSubmitterAttribute(submitter, 'formaction');
-        return override ? new URL(override, window.location.href).href : (form.action || window.location.href);
+        const raw = override || formAttribute(form, 'action', window.location.href);
+        return new URL(raw, window.location.href).href;
     }
 
     function actionMethod(form, submitter = null) {
         const override = explicitSubmitterAttribute(submitter, 'formmethod');
-        return String(override || form.method || 'POST').toUpperCase();
+        return String(override || formAttribute(form, 'method', 'POST')).toUpperCase();
     }
 
     function actionPath(form) {
-        try { return new URL(form.action || window.location.href, window.location.href).pathname; }
+        try { return new URL(formAttribute(form, 'action', window.location.href), window.location.href).pathname; }
         catch (_) { return ''; }
     }
 
     function shouldEnhance(form) {
-        if (String(form.method || 'get').toLowerCase() !== 'post') return false;
+        if (String(formAttribute(form, 'method', 'get')).toLowerCase() !== 'post') return false;
         if (form.dataset.nativeSubmit === 'true') return false;
-        if (form.target && form.target !== '_self') return false;
-        if (String(form.enctype || '').toLowerCase() === 'multipart/form-data') return false;
+        const target = formAttribute(form, 'target', '');
+        if (target && target !== '_self') return false;
+        if (String(formAttribute(form, 'enctype', '')).toLowerCase() === 'multipart/form-data') return false;
         if (form.querySelector('input[type="file"]')) return false;
         const path = actionPath(form);
+        // Customer 360 mutations follow normal server-side POST/redirect/GET
+        // semantics. Keep them native so a generic AJAX enhancement can never
+        // swallow redirects, one-time results, or mutation feedback.
+        if (/^\/admin\/users\/[0-9a-f-]{36}(?:\/|$)/i.test(path)) return false;
         // Credential forms intentionally use native submission so browser
         // formaction and CSRF behavior stay fully conventional.
         if (path === '/admin/notifications/preferences/delivery') return false;
@@ -75,11 +92,11 @@
         // response. Fetching it in the background and reloading the GET form would
         // discard the only operator-visible copy of that result.
         if (path === '/admin/users/new') return false;
-        return sameOrigin(form.action || window.location.href);
+        return sameOrigin(actionUrl(form));
     }
 
     function appendBulkSelections(form, data) {
-        if (form.id !== 'bulkForm') return;
+        if (formAttribute(form, 'id', '') !== 'bulkForm') return;
         const table = document.getElementById('customersTable');
         if (!table) return;
         table.querySelectorAll('.rowCheck:checked').forEach(control => data.append('customerId', control.value));

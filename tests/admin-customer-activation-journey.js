@@ -69,6 +69,25 @@ async function main(){
     assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
     await shot(admin,'customer-360');
 
+    // HTMLFormElement exposes named controls as form properties. The permanent
+    // access form deliberately contains input[name="action"], which previously
+    // shadowed form.action in the generic AJAX enhancer and posted to the global
+    // 404 fallback. Exercise the rendered form in Chromium so route existence
+    // alone can never be mistaken for a working button again.
+    const permanentForm=admin.locator(`form[action="/admin/users/${dbCustomer.id}/permanent-access"]`);
+    assert.equal(await permanentForm.count(),1,'Customer 360 permanent-access form is missing');
+    assert.equal(await permanentForm.locator('input[name="action"]').inputValue(),'enable','new customer should render the permanent-access enable action');
+    await Promise.all([
+      admin.waitForNavigation({waitUntil:'domcontentloaded',timeout:15000}),
+      permanentForm.getByRole('button',{name:'Make permanent'}).click()
+    ]);
+    await settle(admin);
+    assert.equal(new URL(admin.url()).pathname,`/admin/users/${dbCustomer.id}`,'Permanent-access button did not return through the mounted Customer 360 owner');
+    const permanentResultText=await admin.locator('body').innerText();
+    assert(/Give the customer an active plan before making access permanent/i.test(permanentResultText),'Mounted permanent-access handler did not return its expected no-plan validation');
+    assert(!/Not found|Request failed/i.test(permanentResultText),'Permanent-access form fell through to the global Not found/request failure path');
+    await shot(admin,'permanent-access-mounted');
+
     // Duplicate creation must explain the problem rather than create a second identity.
     await gotoPage(admin,`${BASE}/admin/users/new`);
     const duplicate=admin.locator('form[action="/admin/users/new"]');

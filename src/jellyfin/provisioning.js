@@ -62,6 +62,9 @@ async function notifyNewJellyfinAccess(customerId,account){
 // is now owned exclusively by resilient-provisioning because it understands
 // primary/free/Emby/Stremio lanes. Keep the helper API here, but lazily delegate
 // mutations so an old import can never invoke the retired single-lane engine.
+// The delegated resilient owner performs
+// inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId)
+// before entitlement selection on every customer reconciliation.
 function canonicalReconciler(){return require('./resilient-provisioning')}
 async function reconcileCustomer(customerId){return canonicalReconciler().reconcileCustomer(customerId)}
 async function reconcileAccount(accountId){return canonicalReconciler().reconcileAccount(accountId)}
