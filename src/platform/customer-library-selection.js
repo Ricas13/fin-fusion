@@ -14,6 +14,12 @@ function requireCustomer(req,res,next){
   if(req.session?.customerId&&req.session?.customerUserId)return next();
   return res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));
 }
+function jellyfinHubReturn(req){return String(req.body?.returnTo||'')==='jellyfin';}
+function successRedirect(req,res,message){return res.redirect((jellyfinHubReturn(req)?'/account/jellyfin?message=':'/account?message=')+encodeURIComponent(message)+(jellyfinHubReturn(req)?'':'#jellyfin-access'));}
+function errorRedirect(req,res,message){
+  if(jellyfinHubReturn(req))return res.redirect('/account/jellyfin?error='+encodeURIComponent(message));
+  return res.redirect('/account?error='+encodeURIComponent(message||'Library visibility could not be updated safely.')+'#jellyfin-access');
+}
 
 async function selectEntitledLibraries(customerId,accountId,names){
   const profile=await provisioning.libraryPolicyForAccount(customerId,accountId);
@@ -29,7 +35,7 @@ async function selectEntitledLibraries(customerId,accountId,names){
 }
 
 async function saveLibraries(req,res,accountId){
-  if(!csrf.verify(req))return res.redirect('/account/jellyfin?error='+encodeURIComponent('Invalid or expired security token'));
+  if(!csrf.verify(req))return errorRedirect(req,res,'Invalid or expired security token');
   try{
     let target=String(accountId||req.body.accountId||'').trim();
     if(!target){
@@ -50,11 +56,12 @@ async function saveLibraries(req,res,accountId){
         accountId:target,
         error:reconcileError.message
       });
-      return res.redirect('/account/jellyfin?error='+encodeURIComponent('Library visibility was saved, but Jellyfin could not be updated right now. Try again in a moment.'));
+      return errorRedirect(req,res,'Library visibility was saved, but Jellyfin could not be updated right now. Try again in a moment.');
     }
-    return res.redirect('/account/jellyfin?message='+encodeURIComponent(`Library visibility updated (${chosen.length} selected).`));
+    return successRedirect(req,res,`Library visibility updated (${chosen.length} selected).`);
   }catch(error){
-    return res.redirect('/account/jellyfin?error='+encodeURIComponent(error.message||'Library visibility could not be updated safely.'));
+    if(jellyfinHubReturn(req))return res.redirect('/account/jellyfin?error='+encodeURIComponent(error.message||'Library visibility could not be updated safely.'));
+    return res.redirect('/account?error='+encodeURIComponent(error.message||'Library visibility could not be updated safely.')+'#jellyfin-access');
   }
 }
 
@@ -65,4 +72,4 @@ function createCustomerLibrarySelectionRouter(){
   return router;
 }
 
-module.exports={createCustomerLibrarySelectionRouter,saveLibraries,selectEntitledLibraries};
+module.exports={createCustomerLibrarySelectionRouter,saveLibraries,selectEntitledLibraries,jellyfinHubReturn};
