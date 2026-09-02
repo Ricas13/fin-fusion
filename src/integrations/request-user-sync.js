@@ -90,6 +90,7 @@ async function syncCandidates() {
       e.plan_id,e.name AS plan_name,e.code AS plan_code,e.access_expires_at AS current_period_end,
       e.request_movie_quota_limit,e.request_movie_quota_days,
       e.request_tv_quota_limit,e.request_tv_quota_days,
+      COALESCE(p.request_access_enabled,TRUE) AS request_access_enabled,
       p.request_permissions,p.request_watchlist_sync_movies,p.request_watchlist_sync_tv,
       p.request_locale,p.request_discover_region,p.request_streaming_region,p.request_original_language,
       (e.subscription_id IS NOT NULL AND e.blocked=FALSE) AS entitlement_active,
@@ -147,6 +148,8 @@ function desiredMainSettings(current, externalUsername, plan, externalEmail = nu
     locale: requestLocale(plan?.request_locale, current?.locale),
     discoverRegion,
     streamingRegion,
+    // Kept for compatibility with older Overseerr/Jellyseerr releases that
+    // represented both region settings as one field. Modern Seerr ignores it.
     region: discoverRegion,
     originalLanguage: planValue(plan?.request_original_language, current?.originalLanguage, null),
     watchlistSyncMovies: planValue(plan?.request_watchlist_sync_movies, current?.watchlistSyncMovies, false),
@@ -183,8 +186,7 @@ async function mark(customerId, fields = {}) {
 function desiredPermissions(candidate, currentPermissions) {
   const remembered = Number(candidate.active_permissions);
   const fallback = Number.isInteger(remembered) && remembered > 0 ? remembered : currentPermissions > 0 ? currentPermissions : REQUEST_PERMISSION;
-  const configured = planPolicy.planPermissionMask(candidate, fallback) ?? REQUEST_PERMISSION;
-  return planPolicy.sanitizePermissionMask(configured | REQUEST_PERMISSION) ?? REQUEST_PERMISSION;
+  return planPolicy.planPermissionMask(candidate, fallback) ?? REQUEST_PERMISSION;
 }
 async function suspendCustomer(candidate, external, { planId = null, desired = null } = {}) {
   if (!external?.id) {
@@ -208,10 +210,14 @@ function indexesFor(users) {
 }
 async function syncCustomer(candidate, indexes = {}, options = {}) {
   const username = cleanUsername(candidate.username), email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
-  const suppliedPassword = typeof options.password === 'string' && options.password.length >= 8 && options.password.length <= 200 ? options.password : null;
+  const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
   let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
   if (!external) external = indexes.byEmail?.get(String(email).toLowerCase()) || null;
   if (!candidate.entitlement_active) return suspendCustomer(candidate, external, { planId: null });
+  if (candidate.request_access_enabled === false) {
+    const managedDesired = candidate.request_permissions == null ? null : planPolicy.sanitizePermissionMask(candidate.request_permissions);
+    return suspendCustomer(candidate, external, { planId: candidate.plan_id, desired: managedDesired });
+  }
   try {
     let created = false;
     if (!external) {
@@ -315,20 +321,33 @@ async function syncOneCustomer(customerId, options = {}) {
   return syncCustomer(candidate, indexesFor(existing), options);
 }
 async function requestAccessForCustomer(customerId) {
-  const result = await query(`SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,p.name AS applied_plan_name,p.code AS applied_plan_code,COALESCE((e.subscription_id IS NOT NULL AND e.blocked=FALSE),FALSE) AS entitlement_active FROM customers c LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN request_user_sync rus ON rus.customer_id=c.id LEFT JOIN plans p ON p.id=rus.applied_plan_id LEFT JOIN effective_customer_entitlements e ON e.customer_id=c.id WHERE c.id=$1`, [customerId]);
+  const result = await query(`
+    SELECT rus.*,
+      COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,
+      p.name AS applied_plan_name,p.code AS applied_plan_code,
+      COALESCE(ep.request_access_enabled,TRUE) AS request_access_enabled,
+      COALESCE((e.subscription_id IS NOT NULL AND e.blocked=FALSE AND COALESCE(ep.request_access_enabled,TRUE)=TRUE),FALSE) AS entitlement_active
+    FROM customers c
+    LEFT JOIN app_users u ON u.id=c.user_id
+    LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
+    LEFT JOIN plans p ON p.id=rus.applied_plan_id
+    LEFT JOIN effective_customer_entitlements e ON e.customer_id=c.id
+    LEFT JOIN plans ep ON ep.id=e.plan_id
+    WHERE c.id=$1
+  `, [customerId]);
   return result.rows[0] || null;
 }
 async function setCustomerPassword(customerId, password) {
-  if (typeof password !== 'string' || password.length < 8 || password.length > 200) throw new Error('Request-site password must be between 8 and 200 characters.');
+  if (typeof password !== 'string' || password.length < 12 || password.length > 200) throw new Error('Request-site password must be between 12 and 200 characters.');
   let access = await requestAccessForCustomer(customerId);
-  if (!access?.entitlement_active) throw new Error('Request access requires an active plan or trial.');
+  if (!access?.entitlement_active) throw new Error('Request access requires an active plan or trial with request access enabled.');
   if (!access?.external_user_id) {
     const result = await syncOneCustomer(customerId, { password });
     if (result.status !== 'synced') throw new Error(result.error || 'Request-site user could not be synced.');
     access = await requestAccessForCustomer(customerId);
   }
   if (!access?.external_user_id) throw new Error('Request-site user is not synced yet.');
-  if (access.access_suspended) throw new Error('Request access is suspended until an active plan or trial is available again.');
+  if (access.access_suspended) throw new Error('Request access is suspended until an active plan or trial with request access is available again.');
   await apiRequest(`/api/v1/user/${encodeURIComponent(access.external_user_id)}/settings/password`, { method: 'POST', body: { newPassword: password } });
   await query(`UPDATE request_user_sync SET password_reset_required=FALSE,last_error=NULL,updated_at=NOW() WHERE customer_id=$1`, [customerId]);
   return true;
