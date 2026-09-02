@@ -7,6 +7,7 @@ const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const requestUsers=require('../integrations/request-user-sync');
 const routeRateLimit=require('../security/route-rate-limit');
+const {createCustomerNowPlayingRouter}=require('./customer-now-playing');
 
 const mediaPasswordLimit=routeRateLimit.middleware({scope:'customer-media-password',max:10,windowSeconds:900});
 const requestPasswordLimit=routeRateLimit.middleware({scope:'customer-request-password',max:10,windowSeconds:900});
@@ -99,6 +100,7 @@ function redirectWith(res,path,key,value,hash=''){return res.redirect(`${path}?$
 
 function createCustomerPasswordSyncRouter(){
     const router=express.Router();
+    router.use(createCustomerNowPlayingRouter());
 
     // Freshly provisioned MediaBrowser identities use random bootstrap secrets.
     // Keep the setup guard, but send customers to the matching Account section.
