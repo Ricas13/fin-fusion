@@ -15,15 +15,14 @@ const managedMediaIndex=require('../stremio/media-index');
 const managedLibraries=require('../stremio/managed-library-selection');
 const indexMaintenance=require('../stremio/index-maintenance');
 const sourceAdminConfig=require('../stremio/source-admin-config');
+const leaseAdmin=require('./admin-stremio-leases');
 const {esc,layout}=require('./admin-html');
 
 const mutationLimit=routeRateLimit.middleware({scope:'admin-stremio-sources',max:30,windowSeconds:300});
-const ACTIVITY_PAGE_SIZE=25;
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function token(req){return `<input type="hidden" name="_csrf" value="${esc(csrf.token(req))}">`;}
 function compact(v,max=1200){return String(v||'').replace(/[\r\n\t]+/g,' ').replace(/\s{2,}/g,' ').trim().slice(0,max);}
-function date(v){if(!v)return'Never';const d=new Date(v);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB');}
 function pill(label,kind=''){return `<span class="pill ${kind}">${esc(label)}</span>`;}
 function authPill(state){return state==='connected'?pill('Connected','good'):state==='reconnect_required'?pill('Reconnect','bad'):pill('Attention','warn');}
 function indexPill(state){return state==='ready'?pill('Ready','good'):state==='running'?pill('Indexing','accent'):state==='queued'?pill('Queued','accent'):state==='failed'?pill('Failed','bad'):pill('Not indexed','warn');}
@@ -36,33 +35,17 @@ function diagnosticNotice(message,hint='',detail='',attempt=''){
 }
 function notice(req){return `${req.query.message?`<div class="notice success">${esc(req.query.message)}</div>`:''}${req.query.error?diagnosticNotice(req.query.error,req.query.errorHint,req.query.errorDetail,req.query.errorAttempt):''}`;}
 async function runtimeData(){await stremioRuntime.ensureLoaded();const checks=await stremioRuntime.prerequisites();return{...stremioRuntime.snapshot(),...checks};}
-function pageNumber(value){const n=Number.parseInt(value,10);return Number.isInteger(n)&&n>0?n:1;}
-async function managedActivity(page=1,pageSize=ACTIVITY_PAGE_SIZE){
-  const requested=pageNumber(page),size=Math.max(10,Math.min(100,Number(pageSize)||ACTIVITY_PAGE_SIZE));
-  const totalResult=await query(`SELECT COUNT(*)::int n FROM stremio_managed_accounts`),total=Number(totalResult.rows[0]?.n||0),pages=Math.max(1,Math.ceil(total/size)),current=Math.min(requested,pages),offset=(current-1)*size;
-  const result=await query(`SELECT sma.id,sma.customer_id,sma.status,sma.last_playback_info_at,sma.last_error,sma.updated_at,sma.created_at,
-      COALESCE(c.display_name,u.username,c.email,'Customer') customer_name,c.email customer_email,
-      js.id server_id,js.name server_name,ja.jellyfin_username hidden_username
-    FROM stremio_managed_accounts sma
-    JOIN customers c ON c.id=sma.customer_id
-    LEFT JOIN app_users u ON u.id=c.user_id
-    JOIN jellyfin_servers js ON js.id=sma.server_id
-    JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id
-    ORDER BY COALESCE(sma.last_playback_info_at,sma.updated_at,sma.created_at) DESC,sma.created_at DESC
-    LIMIT $1 OFFSET $2`,[size,offset]);
-  return{rows:result.rows,total,pages,page:current,pageSize:size};
-}
-async function pageData(activityPage=1){
-  const [runtime,sources,managed,managedIndexes,externalLibraryRows,activity]=await Promise.all([
+async function pageData(leasePage=1){
+  const [runtime,sources,managed,managedIndexes,externalLibraryRows,leases]=await Promise.all([
     runtimeData(),sourcePool.list(),managedSources.list(),managedMediaIndex.states(),
     query(`SELECT source_id,library_id,name,collection_type,selected,available FROM stremio_source_libraries ORDER BY source_id,available DESC,name`).catch(()=>({rows:[]})),
-    managedActivity(activityPage)
+    leaseAdmin.list(leasePage)
   ]);
   const indexByServer=new Map(managedIndexes.map(row=>[String(row.id),row])),librariesBySource=new Map();
   for(const row of externalLibraryRows.rows||[]){const key=String(row.source_id);if(!librariesBySource.has(key))librariesBySource.set(key,[]);librariesBySource.get(key).push(row);}
   const managedLibraryResults=await Promise.all(managed.map(server=>managedLibraries.forPage(server.id)));
   return{
-    runtime,activity,
+    runtime,leases,
     managed:managed.map((server,index)=>({...server,managed_index:indexByServer.get(String(server.id))||null,libraries:managedLibraryResults[index]?.libraries||[],library_error:managedLibraryResults[index]?.error||null})),
     sources:sources.map(source=>({...source,libraries:librariesBySource.get(String(source.id))||[]}))
   };
@@ -120,13 +103,8 @@ function externalRow(req,source){
 function addExternalForm(req){
   return `<details class="capabilityAddDisclosure"><summary>Add external Jellyfin source</summary><form class="capabilityAddForm" method="post" action="/admin/servers/stremio">${token(req)}<div class="capabilityAddGrid"><label><span>Name</span><input class="input" name="name" required placeholder="External server"></label><label><span>Jellyfin URL</span><input class="input" type="url" name="baseUrl" required placeholder="https://jellyfin.example.com"></label><label><span>Username</span><input class="input" name="username" autocomplete="username" required></label><label><span>Password</span><input class="input" type="password" name="password" autocomplete="current-password" required></label><label><span>Priority</span><input class="input" type="number" name="priority" min="1" max="10000" value="100"></label><label><span>Rotate token every (hours)</span><input class="input" type="number" name="tokenRotationHours" min="1" max="168" value="4"></label></div><div class="capabilityAddToggles"><label class="inlineToggle"><input type="checkbox" name="tokenRotationEnabled" checked><span>Automatic 4-hour token rotation</span></label><label class="inlineToggle"><input type="checkbox" name="authorizationConfirmed" required><span>I am authorized to use this Jellyfin account.</span></label></div><div class="capabilityControlActions"><button class="button">Connect source</button><span class="subText">The password is stored encrypted only when automatic token rotation is enabled.</span></div></form></details>`;
 }
-function activitySection(activity){
-  const rows=activity.rows||[],previous=activity.page>1?activity.page-1:null,next=activity.page<activity.pages?activity.page+1:null;
-  const table=rows.length?`<div class="capabilityTableWrap"><table class="capabilityTable"><thead><tr><th>Portal customer</th><th>Hidden Jellyfin user</th><th>Managed server</th><th>State</th><th>Last activity</th><th></th></tr></thead><tbody>${rows.map(row=>`<tr><td class="sourceIdentity"><strong>${esc(row.customer_name)}</strong><small>${esc(row.customer_email||'')}</small></td><td><strong>${esc(row.hidden_username||'—')}</strong><div class="subText">Internal Stremio account</div></td><td>${esc(row.server_name)}</td><td>${pill(row.status,row.status==='active'?'good':row.status==='error'?'bad':'warn')}${row.last_error?`<div class="subText">${esc(row.last_error)}</div>`:''}</td><td>${esc(date(row.last_playback_info_at||row.updated_at||row.created_at))}</td><td class="rowActions"><a class="button secondary btn-sm" href="/admin/users/${esc(row.customer_id)}">Open customer</a></td></tr>`).join('')}</tbody></table></div>`:'<div class="capabilityEmpty">No managed Stremio accounts have been created yet.</div>';
-  return `<section class="capabilitySection" id="activity"><div class="capabilitySectionHead"><div class="capabilitySectionTitle"><h2>Managed Stremio activity</h2><p>Hidden Jellyfin accounts are always tied back to their CAPTAiNFiN customer so you can act on the real account immediately.</p></div><span class="pill">${activity.total.toLocaleString('en-GB')} account${activity.total===1?'':'s'}</span></div>${table}<div class="capabilityPagination"><span>Page ${activity.page} of ${activity.pages}</span><div class="capabilityPaginationActions">${previous?`<a class="button secondary btn-sm" href="/admin/servers/stremio?activityPage=${previous}#activity">Previous</a>`:''}${next?`<a class="button secondary btn-sm" href="/admin/servers/stremio?activityPage=${next}#activity">Next</a>`:''}</div></div></section>`;
-}
 async function page(req){
-  await runtimeSettings.ensureLoaded();const d=await pageData(req.query.activityPage);
+  await runtimeSettings.ensureLoaded();const d=await pageData(req.query.leasePage);
   const managedEnabled=d.managed.filter(s=>s.stremio_enabled).length,externalEnabled=d.sources.filter(s=>s.enabled).length,managedReady=d.managed.filter(s=>s.stremio_enabled&&s.managed_index?.index_status==='ready'&&Number(s.managed_index?.item_count||0)>0).length,externalReady=d.sources.filter(s=>s.enabled&&s.auth_state==='connected'&&s.index_status==='ready'&&Number(s.item_count||0)>0).length,indexedTitles=d.managed.reduce((n,s)=>n+Number(s.managed_index?.item_count||0),0)+d.sources.reduce((n,s)=>n+Number(s.item_count||0),0),selectedLibraries=d.managed.reduce((n,s)=>n+(s.libraries||[]).filter(l=>l.available&&l.selected).length,0)+d.sources.reduce((n,s)=>n+(s.libraries||[]).filter(l=>l.available&&l.selected).length,0),runtimeLabel=d.runtime.enabled?(d.runtime.ready?'Ready':'Blocked'):'Disabled';
   const body=`<div class="capabilityPage">${notice(req)}<div class="statusBanner ${d.runtime.ready?'good':d.runtime.enabled?'warn':'info'}"><strong>Stremio is a control plane, not a video proxy.</strong> Managed playback uses household access and Jellyfin-side policy/lifecycle controls; external servers are direct fallback results. CAPTAiNFiN does not enforce a Stremio concurrent-stream quota, and media bytes never pass through the portal.</div>
   <div class="capabilitySummary"><div class="capabilitySummaryStats"><div class="capabilityStat"><div class="capabilityStatLabel">Runtime</div><div class="capabilityStatValue">${esc(runtimeLabel)}</div><div class="capabilityStatMeta">${managedReady+externalReady} ready source${managedReady+externalReady===1?'':'s'}</div></div><div class="capabilityStat"><div class="capabilityStatLabel">Managed sources</div><div class="capabilityStatValue">${managedEnabled}/${d.managed.length}</div><div class="capabilityStatMeta">${managedReady} indexed & ready</div></div><div class="capabilityStat"><div class="capabilityStatLabel">External sources</div><div class="capabilityStatValue">${externalEnabled}/${d.sources.length}</div><div class="capabilityStatMeta">${externalReady} indexed & ready</div></div><div class="capabilityStat"><div class="capabilityStatLabel">Libraries selected</div><div class="capabilityStatValue">${selectedLibraries}</div><div class="capabilityStatMeta">Across both source types</div></div><div class="capabilityStat"><div class="capabilityStatLabel">Indexed items</div><div class="capabilityStatValue">${indexedTitles.toLocaleString('en-GB')}</div><div class="capabilityStatMeta">Local lookup index only</div></div></div><div class="capabilitySummaryActions">${runtimeControl(req,d)}<form method="post" action="/admin/servers/stremio/reindex-all">${token(req)}<button class="button danger btn-sm">Clear all indexes & rebuild</button></form></div></div>
@@ -135,8 +113,8 @@ async function page(req){
 
   <section class="capabilitySection"><div class="capabilitySectionHead"><div class="capabilitySectionTitle"><h2>External Jellyfin sources</h2><p>Unmanaged backup sources use dedicated Jellyfin accounts and always appear after managed results.</p></div><div class="capabilitySectionActions">${pill(`${externalEnabled}/${d.sources.length} enabled`,externalEnabled?'good':'')}</div></div>${externalForms(req,d.sources)}${d.sources.length?`<div class="capabilityTableWrap"><table class="capabilityTable"><thead><tr><th>Source</th><th>Connection</th><th>Libraries</th><th>Index</th><th>Stremio / priority</th><th></th></tr></thead>${d.sources.map(source=>externalRow(req,source)).join('')}</table></div>`:'<div class="capabilityEmpty">No external Jellyfin sources have been added.</div>'}${addExternalForm(req)}</section>
 
-  ${activitySection(d.activity)}</div>`;
-  return layout({siteName:runtimeSettings.siteName(),active:'stremio-sources',title:'Manage Stremio',subtitle:'Sources, libraries, indexing and account activity in one compact control centre',body});
+  ${leaseAdmin.section(req,d.leases)}</div>`;
+  return layout({siteName:runtimeSettings.siteName(),active:'stremio-sources',title:'Manage Stremio',subtitle:'Sources, libraries, indexing and household IP leases in one compact control centre',body});
 }
 async function sourcePage(req){return page(req);}
 function queueAutomation(){return query(`INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested) VALUES('stremio_media_index',TRUE,10800,NOW(),TRUE) ON CONFLICT(job_key) DO UPDATE SET enabled=TRUE,interval_seconds=10800,next_run_at=NOW(),force_run_requested=TRUE,updated_at=NOW()`);}
@@ -151,6 +129,7 @@ function createAdminStremioSourcesRouter(){
   r.get('/admin/servers/stremio',async(req,res,next)=>{try{return res.send(await page(req));}catch(error){next(error);}});
   r.post('/admin/servers/stremio/runtime',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled)==='1';await stremioRuntime.setEnabled(enabled,req.session.authUserId);return res.redirect('/admin/servers/stremio?message='+encodeURIComponent(enabled?'Stremio runtime enabled.':'Stremio runtime disabled.'));}catch(error){return redirectError(res,'/admin/servers/stremio',error);}});
   r.post('/admin/servers/stremio/reindex-all',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const result=await indexMaintenance.clearAllAndQueue(req.session.authUserId);return res.redirect('/admin/servers/stremio?message='+encodeURIComponent(`Cleared ${Number(result.totalDeleted||0).toLocaleString('en-GB')} indexed items. A clean full rebuild has been queued.`));}catch(error){return redirectError(res,'/admin/servers/stremio',error);}});
+  leaseAdmin.mount(r,mutationLimit);
   r.post('/admin/servers/stremio/managed/:id',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{const enabled=String(req.body.enabled)==='1';await managedSources.configure({serverId:req.params.id,enabled,sourcePriority:req.body.priority,actorUserId:req.session.authUserId});if(enabled)await managedLibraries.refresh(req.params.id,req.session.authUserId).catch(()=>{});await queueAutomation();return res.redirect(`/admin/servers/stremio?message=${encodeURIComponent('Managed Stremio source updated.')}#managed-${encodeURIComponent(req.params.id)}`);}catch(error){return redirectError(res,'/admin/servers/stremio',error);}});
   r.post('/admin/servers/stremio/managed/:id/libraries',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await managedMediaIndex.saveLibrariesAndReset(req.params.id,req.body.libraryId,req.session.authUserId);await queueAutomation();return res.redirect(`/admin/servers/stremio?message=${encodeURIComponent('Managed libraries saved. A clean index rebuild has been queued.')}#managed-${encodeURIComponent(req.params.id)}`);}catch(error){return redirectError(res,'/admin/servers/stremio',error);}});
   r.post('/admin/servers/stremio/managed/:id/refresh-libraries',mutationLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid security token');try{await managedLibraries.refresh(req.params.id,req.session.authUserId);return res.redirect(`/admin/servers/stremio?message=${encodeURIComponent('Managed library list refreshed.')}#managed-${encodeURIComponent(req.params.id)}`);}catch(error){return redirectError(res,'/admin/servers/stremio',error);}});
@@ -168,4 +147,4 @@ function createAdminStremioSourcesRouter(){
   return r;
 }
 
-module.exports={ACTIVITY_PAGE_SIZE,createAdminStremioSourcesRouter,page,sourcePage,runtimeData,managedActivity,pageData,libraryToggles};
+module.exports={createAdminStremioSourcesRouter,page,sourcePage,runtimeData,pageData,libraryToggles};
