@@ -13,6 +13,7 @@ const entitlements=read('src/stremio/entitlements.js');
 const customerStremio=read('src/platform/customer-stremio.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const management=read('src/platform/admin-customer-management.js');
+const accessHoldsAdmin=read('src/platform/admin-customer-access-holds.js');
 const deletion=read('src/platform/customer-deletion.js');
 const externalDeletion=read('src/platform/customer-external-deletion.js');
 const automationJobs=read('src/automation/jobs.js');
@@ -43,20 +44,21 @@ for(const route of [
   '/admin/users/:customerId/manage/email/unverify',
   '/admin/users/:customerId/manage/activation/rotate',
   '/admin/users/:customerId/manage/portal/status',
-  '/admin/users/:customerId/manage/reconcile',
   '/admin/users/:customerId/manage/stremio/install',
   '/admin/users/:customerId/manage/stremio/revoke'
 ])assert(management.includes(route),`customer management route missing: ${route}`);
+assert(accessHoldsAdmin.includes("router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute)")&&accessHoldsAdmin.includes("router.post('/admin/users/:customerId/reconcile',reconcileRoute)"),'canonical Customer 360 reconciliation routes must share one blocker-aware owner');
+assert(!management.includes("r.post('/admin/users/:customerId/manage/reconcile'"),'legacy customer-management router must not re-own reconciliation');
 
 assert(management.includes("session_version=session_version+1"),'disabling/enabling portal access must invalidate existing sessions');
 assert(management.includes('UPDATE account_activation_tokens SET revoked_at=NOW()'),'disabling portal access must revoke unused onboarding links so they cannot reactivate the account');
 assert(management.includes("password_changed_at")&&management.includes('Use the onboarding link'),'portal accounts must not be enabled before onboarding has established a customer password');
-assert(management.includes("'admin.customer.portal.enrol'")&&management.includes("'admin.customer.account.update'")&&management.includes("'admin.customer.service.reconcile'"),'high-impact Customer 360 management changes must be audited');
+assert(management.includes("'admin.customer.portal.enrol'")&&management.includes("'admin.customer.account.update'")&&accessHoldsAdmin.includes("'admin.customer.service.reconcile'"),'high-impact Customer 360 management changes must be audited by their canonical owners');
 assert(management.includes('activation.activeForUser')&&management.includes('/activate/${encodeURIComponent(row.raw)}'),'active onboarding links must be recoverable from Customer management');
 assert(management.includes('activation.create({userId')&&management.includes('A fresh onboarding link was generated'),'admins must be able to regenerate missed onboarding links');
 assert(management.includes('Generate / rotate installation URL')&&management.includes('Manifest / installation URL'),'Stremio install details must be visible and recoverable from Customer management');
 assert(management.includes('activeSubscriptions(detail)')&&management.includes("if(primary==='jellyfin'&&hasStremio)return'bundle'"),'Customer management must treat an active Stremio add-on alongside Jellyfin as combined service access');
-assert(management.includes('stremio.entitledSubscription(req.params.customerId)')&&management.includes('stremio.reconcileForCustomer(req.params.customerId,stremioEntitlement)'),'service reconciliation must preserve and reconcile active Stremio add-ons');
+assert(accessHoldsAdmin.includes('provisioning.reconcileCustomer(customerId)')&&!accessHoldsAdmin.includes('stremio.reconcileForCustomer'),'single-customer reconciliation must delegate once to the canonical service-aware reconciler rather than running Stremio twice');
 assert(management.includes("serviceType:type")&&management.includes('hasJellyfinAccount'),'Customer 360 must expose service-aware action context');
 assert(management.includes('data-native-submit="true"'),'single-customer plan/expiry actions must bypass inline AJAX form handling');
 
