@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Jellyfin · <%= siteName %></title>
+  <link rel="icon" href="/branding/favicon">
+  <link rel="stylesheet" href="/css/customer-portal.css">
+  <link rel="stylesheet" href="/css/customer-navigation.css">
+  <link rel="stylesheet" href="/css/customer-jellyfin.css">
+  <script src="/js/customer-jellyfin.js" defer></script>
+</head>
+<body><div class="portalShell">
+<header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
+<main class="customerPortalPage jellyfinHub">
+  <%- include('_nav',{active:'jellyfin'}) %>
+  <% if(message){ %><div class="notice success"><%= message %></div><% } %>
+  <% if(error){ %><div class="notice error"><%= error %></div><% } %>
+
+  <section class="jellyfinHubHero">
+    <div><span class="eyebrow">Streaming access</span><h1>Jellyfin</h1><p>Your server, sign-in details and library visibility in one place.</p></div>
+    <div class="jellyfinHeroActions"><a class="button secondary" href="https://jellyfin.org/downloads/" target="_blank" rel="noopener noreferrer">Official apps ↗</a><a class="button secondary" href="/account/activity">Playback activity</a></div>
+  </section>
+
+  <% if(!accounts.length){ %>
+  <section class="panel jellyfinPending"><div><h2>Jellyfin access is being prepared</h2><p>Your entitlement is active, but a server account is not ready yet.</p></div><form method="post" action="/account/provisioning/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary" type="submit">Retry setup</button></form></section>
+  <% } %>
+
+  <div class="jellyfinAccountList">
+  <% accounts.forEach(function(account){const selectedSet=new Set(account.selectedLibraries||[]); %>
+    <section class="jellyfinAccountCard <%= account.disabled?'isUnavailable':'' %>">
+      <div class="jellyfinAccountHead">
+        <div><div class="jellyfinAccountTitle"><strong><%= account.serverName %></strong><span class="pill <%= account.accessLane==='free'?'good':'accent' %>"><%= account.accessLane==='free'?'Free Server':'Premium Jellyfin' %></span><span class="pill <%= account.disabled?'bad':account.passwordSetupRequired?'warn':'good' %>"><%= account.disabled?'Unavailable':account.passwordSetupRequired?'Password needed':'Ready' %></span></div><div class="jellyfinPlanLine"><%= account.planName %><% if(account.streams){ %> · <%= account.streams %> stream<%= account.streams===1?'':'s' %><% } %></div></div>
+        <% if(account.publicUrl&&!account.disabled&&!account.passwordSetupRequired){ %><a class="button primary" href="<%= account.publicUrl %>" target="_blank" rel="noopener noreferrer">Open Jellyfin</a><% } %>
+      </div>
+
+      <div class="jellyfinCredentialGrid">
+        <div class="jellyfinCredential"><span>Server URL</span><strong><%= account.publicUrl||'Being prepared' %></strong></div>
+        <div class="jellyfinCredential"><span>Username</span><strong><%= account.username||'Being prepared' %></strong></div>
+        <div class="jellyfinCredential"><span>Password</span><strong><%= account.passwordSetupRequired?'Choose a password':'Set by you' %></strong></div>
+      </div>
+
+      <% if(account.passwordSetupRequired){ %>
+      <div class="jellyfinSetupNotice"><div><strong>One step left</strong><span>Choose the password you will use in Jellyfin.</span></div></div>
+      <form class="jellyfinPasswordForm" method="post" action="/account/jellyfin/<%= account.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin"><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button primary" type="submit">Save password</button></form>
+      <% } %>
+
+      <div class="jellyfinAccountBody">
+        <section class="jellyfinLibraries" aria-labelledby="libraries-<%= account.id %>">
+          <div class="jellyfinSubhead"><div><h2 id="libraries-<%= account.id %>">Libraries you see</h2><p>Uncheck anything you do not want shown in Jellyfin. You cannot add libraries outside your plan.</p></div><% if(account.availableLibraries.length){ %><span class="jellyfinLibraryCount"><%= account.selectedLibraries.length %> / <%= account.availableLibraries.length %> visible</span><% } %></div>
+          <% if(account.libraryError){ %><div class="notice warn">Libraries could not be read from this server right now. Your existing selection has not been changed.</div>
+          <% } else if(!account.availableLibraries.length){ %><div class="jellyfinEmptyLibraries">No selectable libraries are currently available for this server.</div>
+          <% } else { %>
+          <form method="post" action="/account/libraries/<%= account.id %>" data-library-form><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin">
+            <div class="jellyfinLibraryTools"><button class="button ghost small" type="button" data-library-all>Show all</button><button class="button ghost small" type="button" data-library-none>Hide all</button></div>
+            <div class="jellyfinLibraryGrid"><% account.availableLibraries.forEach(function(name){ %><label class="jellyfinLibraryChoice"><input type="checkbox" name="library" value="<%= name %>" <%= selectedSet.has(name)?'checked':'' %>><span><strong><%= name %></strong><small>Visible in Jellyfin</small></span></label><% }) %></div>
+            <div class="jellyfinLibrarySave"><button class="button secondary" type="submit">Save library visibility</button><span><%= account.librarySelectionSaved?'Your personal library preference is active.':'All plan libraries are currently shown.' %></span></div>
+          </form>
+          <% } %>
+        </section>
+
+        <aside class="jellyfinManage">
+          <details <%= account.passwordSetupRequired?'':'open' %>><summary>Sign-in &amp; account settings</summary><div class="jellyfinManageBody">
+            <% if(!account.passwordSetupRequired){ %><form method="post" action="/account/jellyfin/<%= account.id %>/password"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin"><h3>Change password</h3><div class="field"><label>New password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button secondary" type="submit">Update password</button></form><% } %>
+            <% if(account.canRename){ %><form method="post" action="/account/jellyfin/<%= account.id %>/username"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="jellyfin"><h3>Change username</h3><div class="field"><label>New Jellyfin username</label><input class="input" name="username" minlength="3" maxlength="80" pattern="[A-Za-z0-9._@+-]{3,80}" autocomplete="username" required value="<%= account.username %>"></div><button class="button secondary" type="submit">Update username</button></form><% } %>
+          </div></details>
+          <details><summary>How to sign in</summary><ol class="jellyfinSteps"><li>Install an official Jellyfin app.</li><li>Enter the server URL shown above.</li><li>Sign in with the username shown above.</li><li>Use the Jellyfin password you set here.</li></ol></details>
+        </aside>
+      </div>
+    </section>
+  <% }) %>
+  </div>
+</main></div></body></html>

@@ -1,9 +1,10 @@
-<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); const navStandalone=typeof standaloneHeader!=='undefined'&&Boolean(standaloneHeader); const navSiteName=typeof siteName!=='undefined'?String(siteName||''):''; %>
+<% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navJellyfin=typeof showJellyfin!=='undefined'?Boolean(showJellyfin):Boolean(configuredNav.showJellyfin); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); const navStandalone=typeof standaloneHeader!=='undefined'&&Boolean(standaloneHeader); const navSiteName=typeof siteName!=='undefined'?String(siteName||''):''; %>
 <% if(navStandalone){ %>
 <header class="customerStandaloneHeader"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= navSiteName %></div><div class="brandMeta">My account</div></div></a><a class="button ghost small" href="/account">Home</a></header>
 <% } %>
 <nav class="customerPortalNav" aria-label="Customer navigation">
   <a class="customerPortalNavLink <%= active==='overview'?'active':'' %>" href="/account">Home</a>
+  <% if (navJellyfin) { %><a class="customerPortalNavLink <%= active==='jellyfin'?'active':'' %>" href="/account/jellyfin">Jellyfin</a><% } %>
   <a class="customerPortalNavLink <%= active==='activity'?'active':'' %>" href="/account/activity">Activity</a>
   <a class="customerPortalNavLink <%= active==='history'?'active':'' %>" href="/account/history">Payments</a>
   <% if (navBenefits) { %>

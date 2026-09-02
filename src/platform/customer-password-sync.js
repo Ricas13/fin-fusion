@@ -19,6 +19,7 @@ function requireCustomer(req,res,next){
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function mediaType(account){return String(account?.media_server_type||'jellyfin').toLowerCase()==='emby'?'emby':'jellyfin';}
 function mediaLabel(account){return mediaType(account)==='emby'?'Emby':'Jellyfin';}
+function jellyfinHubReturn(req){return String(req.body?.returnTo||'')==='jellyfin';}
 
 async function mediaRows(customerId){
     const result=await query(`
@@ -108,10 +109,18 @@ function createCustomerPasswordSyncRouter(){
     router.use(createCustomerNowPlayingRouter());
 
     // Freshly provisioned MediaBrowser identities use random bootstrap secrets.
-    // Keep the setup guard, but send customers to the matching Account section.
+    // Jellyfin setup belongs in the dedicated Jellyfin hub; other services
+    // continue to use Account -> Service passwords.
     router.use('/account',(req,res,next)=>{
         if(req.method!=='GET'||req.path!=='/')return next();
-        return requireCustomer(req,res,async()=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return next();return res.redirect('/account/security#service-passwords');}catch(error){return next(error)}});
+        return requireCustomer(req,res,async()=>{
+            try{
+                const accounts=await pending(req.session.customerId);
+                if(!accounts.length)return next();
+                if(accounts.some(account=>mediaType(account)==='jellyfin'))return res.redirect('/account/jellyfin');
+                return res.redirect('/account/security#service-passwords');
+            }catch(error){return next(error);}
+        });
     });
 
     router.get('/account/service-passwords/fragment',requireCustomer,async(req,res,next)=>{
@@ -123,21 +132,29 @@ function createCustomerPasswordSyncRouter(){
         }catch(error){return next(error);}
     });
     router.get('/account/service-passwords',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#service-passwords'));
-    router.get('/account/jellyfin/setup',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#service-passwords'));
+    router.get('/account/jellyfin/setup',requireCustomer,(_req,res)=>res.redirect(302,'/account/jellyfin'));
     router.get('/account/requests/password',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#overseerr'));
 
     router.post('/account/jellyfin/:accountId/password',requireCustomer,mediaPasswordLimit,async(req,res)=>{
-        if(!csrf.verify(req))return redirectWith(res,'/account/security','error','Invalid or expired security token','service-passwords');
+        const hub=jellyfinHubReturn(req);
+        if(!csrf.verify(req))return hub?redirectWith(res,'/account/jellyfin','error','Invalid or expired security token'):redirectWith(res,'/account/security','error','Invalid or expired security token','service-passwords');
         const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-        if(password.length<12||password.length>200)return redirectWith(res,'/account/security','error','Streaming-service passwords must be between 12 and 200 characters.','service-passwords');
-        if(password!==confirm)return redirectWith(res,'/account/security','error','Passwords do not match.','service-passwords');
+        if(password.length<12||password.length>200)return hub?redirectWith(res,'/account/jellyfin','error','Streaming-service passwords must be between 12 and 200 characters.'):redirectWith(res,'/account/security','error','Streaming-service passwords must be between 12 and 200 characters.','service-passwords');
+        if(password!==confirm){
+            if(hub)return redirectWith(res,'/account/jellyfin','error','Passwords do not match.');
+            return redirectWith(res,'/account/security','error','Passwords do not match.','service-passwords');
+        }
         try{
             const access=await assertMediaPasswordAccess(req.session.customerId,req.params.accountId);
             await provisioning.setJellyfinPassword(req.session.customerId,req.params.accountId,password);
             await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.session.customerId]);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.media_password.change','customer',$2,$3::jsonb)`,[req.session.customerUserId,req.session.customerId,JSON.stringify({accountId:req.params.accountId,serviceType:access.serviceType,secretStored:false})]).catch(()=>{});
+            if(hub&&access.serviceType==='jellyfin')return redirectWith(res,'/account/jellyfin','message',`${access.label} password updated.`);
             return redirectWith(res,'/account/security','message',`${access.label} password updated.`,'service-passwords');
-        }catch(error){return redirectWith(res,'/account/security','error',error.message||'Streaming-service password could not be updated.','service-passwords');}
+        }catch(error){
+            if(hub)return redirectWith(res,'/account/jellyfin','error',error.message||'Streaming-service password could not be updated.');
+            return redirectWith(res,'/account/security','error',error.message||'Streaming-service password could not be updated.','service-passwords');
+        }
     });
 
     router.post('/account/jellyfin/:accountId/username',requireCustomer,mediaPasswordLimit,async(req,res)=>{
@@ -145,8 +162,12 @@ function createCustomerPasswordSyncRouter(){
         try{
             const access=await assertMediaPasswordAccess(req.session.customerId,req.params.accountId);
             await provisioning.renameJellyfinAccount(req.session.customerId,req.params.accountId,req.body.username,{actorUserId:req.session.customerUserId});
+            if(jellyfinHubReturn(req)&&access.serviceType==='jellyfin')return res.redirect('/account/jellyfin?message='+encodeURIComponent(`${access.label} username updated. Your watched history and profile stay with the same account.`));
             return res.redirect('/account?message='+encodeURIComponent(`${access.label} username updated. Your watched history and profile stay with the same account.`));
-        }catch(error){return res.redirect('/account?error='+encodeURIComponent(error.message||'Streaming username could not be updated.'));}
+        }catch(error){
+            if(jellyfinHubReturn(req))return res.redirect('/account/jellyfin?error='+encodeURIComponent(error.message||'Streaming username could not be updated.'));
+            return res.redirect('/account?error='+encodeURIComponent(error.message||'Streaming username could not be updated.'));
+        }
     });
 
     router.post('/account/requests/password',requireCustomer,requestPasswordLimit,async(req,res)=>{
@@ -172,4 +193,4 @@ function createCustomerPasswordSyncRouter(){
     return router;
 }
 
-module.exports={createCustomerPasswordSyncRouter,pending,mediaRows,entitlementSnapshot,entitlementForMediaAccount,activeMediaAccounts,assertMediaPasswordAccess,servicePasswordState,servicePasswordFragment};
+module.exports={createCustomerPasswordSyncRouter,pending,mediaRows,entitlementSnapshot,entitlementForMediaAccount,activeMediaAccounts,assertMediaPasswordAccess,servicePasswordState,servicePasswordFragment,jellyfinHubReturn};
