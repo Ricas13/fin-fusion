@@ -37,3 +37,12 @@ ON CONFLICT(customer_id) DO UPDATE SET
     last_error=NULL,
     next_attempt_at=NOW(),
     updated_at=NOW();
+
+-- Request the normal entitlement worker immediately as well as marking each
+-- customer due. On installations where the worker has not created its row yet,
+-- seed the ordinary five-minute default used by automation-worker.js.
+INSERT INTO automation_job_state(job_key,enabled,interval_seconds,next_run_at,force_run_requested)
+VALUES('entitlements',TRUE,300,NOW(),TRUE)
+ON CONFLICT(job_key) DO UPDATE SET
+    next_run_at=NOW(),
+    force_run_requested=TRUE;
