@@ -7,8 +7,6 @@ const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const requestUsers=require('../integrations/request-user-sync');
 const routeRateLimit=require('../security/route-rate-limit');
-const runtimeSettings=require('./runtime-settings');
-const customerNav=require('./customer-nav-html');
 
 const mediaPasswordLimit=routeRateLimit.middleware({scope:'customer-media-password',max:10,windowSeconds:900});
 const requestPasswordLimit=routeRateLimit.middleware({scope:'customer-request-password',max:10,windowSeconds:900});
@@ -86,52 +84,53 @@ function passwordForm(req,{action,label,button}){
     return `<form method="post" action="${esc(action)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="field"><label>New ${esc(label)} password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button primary" type="submit">${esc(button)}</button></form>`;
 }
 
-async function servicePasswordPage(req,state,{error=null,message=null}={}){
-    await runtimeSettings.ensureLoaded();
-    const site=runtimeSettings.siteName();
-    const navOptions=await customerNav.optionsForCustomer(req.session.customerId);
+function servicePasswordFragment(req,state){
     const mediaCards=state.mediaAccounts.map((account,index)=>{
         const label=mediaLabel(account),anchor=index===0||!state.mediaAccounts.slice(0,index).some(a=>mediaType(a)===mediaType(account))?` id="${mediaType(account)}"`:'';
         const setup=Boolean(account.password_setup_required);
         return `<section class="panel"${anchor}><div class="eyebrow">${esc(label)} password</div><h2>${esc(account.jellyfin_username||label)}</h2><p class="accessMeta">${esc(account.server_name||`${label} server`)}</p><p>${setup?`Choose the password for this ${label} account before you sign in.`:`Reset this ${label} password whenever you need to.`} This password is separate from your CAPTAiNFiN portal password.</p>${account.public_url?`<p><a class="button secondary small" href="${esc(account.public_url)}" target="_blank" rel="noreferrer">Open ${esc(label)} ↗</a></p>`:''}${passwordForm(req,{action:`/account/jellyfin/${encodeURIComponent(account.id)}/password`,label,button:setup?`Set ${label} password`:`Reset ${label} password`})}</section>`;
     }).join('');
     const requestCard=state.requestEligible?`<section class="panel" id="overseerr"><div class="eyebrow">Overseerr password</div><h2>Request content</h2><p>${state.requestAccess?.external_user_id?'Reset your Overseerr password whenever you need to.':'Your plan includes request access. Choose an Overseerr password to create your request account.'} This password is separate from your CAPTAiNFiN portal password.</p>${state.requestConfig?.baseUrl&&state.requestAccess?.external_user_id&&!state.requestAccess?.access_suspended?`<p><a class="button secondary small" href="${esc(state.requestConfig.baseUrl)}" target="_blank" rel="noreferrer">Open Overseerr ↗</a></p>`:''}${passwordForm(req,{action:'/account/requests/password',label:'Overseerr',button:state.requestAccess?.external_user_id?'Reset Overseerr password':'Create Overseerr account'})}</section>`:'';
-    const empty=!mediaCards&&!requestCard?'<section class="panel"><h2>No service passwords available</h2><p>Password controls appear here only while you have the matching active plan or trial.</p></section>':'';
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Service passwords · ${esc(site)}</title><link rel="icon" href="/branding/favicon"><link rel="stylesheet" href="/css/customer-portal.css"><link rel="stylesheet" href="/css/customer-navigation.css"><style>.passwordMain{max-width:1050px;margin:auto;padding:24px}.passwordGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}.panel{padding:20px}.field{margin:12px 0}</style></head><body><main class="passwordMain">${customerNav.nav('passwords',navOptions)}<div class="customerPortalPageHeader"><div><div class="eyebrow">Credentials</div><h1>Service passwords</h1><p>Jellyfin, Emby and Overseerr passwords are managed independently from your portal login and from each other.</p></div></div>${message?`<div class="notice success">${esc(message)}</div>`:''}${error?`<div class="notice error">${esc(error)}</div>`:''}<div class="passwordGrid">${mediaCards}${requestCard}${empty}</div></main></body></html>`;
+    if(!mediaCards&&!requestCard)return'';
+    return `<section class="servicePasswordBlock" id="service-passwords"><div class="servicePasswordHeading"><div class="eyebrow">Credentials</div><h2>Service passwords</h2><p>Jellyfin, Emby and Overseerr passwords are independent from your portal password and from each other.</p></div><div class="servicePasswordGrid">${mediaCards}${requestCard}</div></section>`;
 }
 
-function redirectWith(res,path,key,value){return res.redirect(`${path}?${key}=${encodeURIComponent(value)}`);}
+function redirectWith(res,path,key,value,hash=''){return res.redirect(`${path}?${key}=${encodeURIComponent(value)}${hash?`#${encodeURIComponent(hash)}`:''}`);}
 
 function createCustomerPasswordSyncRouter(){
     const router=express.Router();
 
     // Freshly provisioned MediaBrowser identities use random bootstrap secrets.
-    // Keep the existing setup guard, but send customers to one service-aware
-    // password page instead of assuming every account is Jellyfin.
+    // Keep the setup guard, but send customers to the matching Account section.
     router.use('/account',(req,res,next)=>{
         if(req.method!=='GET'||req.path!=='/')return next();
-        return requireCustomer(req,res,async()=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return next();return res.redirect('/account/service-passwords');}catch(error){return next(error)}});
+        return requireCustomer(req,res,async()=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return next();return res.redirect('/account/security#service-passwords');}catch(error){return next(error)}});
     });
 
-    router.get('/account/service-passwords',requireCustomer,async(req,res,next)=>{
-        try{return res.send(await servicePasswordPage(req,await servicePasswordState(req.session.customerId),{error:req.query.error||null,message:req.query.message||null}));}
-        catch(error){return next(error);}
+    router.get('/account/service-passwords/fragment',requireCustomer,async(req,res,next)=>{
+        try{
+            res.setHeader('Cache-Control','no-store, private, max-age=0');
+            const html=servicePasswordFragment(req,await servicePasswordState(req.session.customerId));
+            if(!html)return res.status(204).end();
+            return res.type('html').send(html);
+        }catch(error){return next(error);}
     });
-    router.get('/account/jellyfin/setup',requireCustomer,(_req,res)=>res.redirect('/account/service-passwords'));
-    router.get('/account/requests/password',requireCustomer,(_req,res)=>res.redirect('/account/service-passwords#overseerr'));
+    router.get('/account/service-passwords',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#service-passwords'));
+    router.get('/account/jellyfin/setup',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#service-passwords'));
+    router.get('/account/requests/password',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#overseerr'));
 
     router.post('/account/jellyfin/:accountId/password',requireCustomer,mediaPasswordLimit,async(req,res)=>{
-        if(!csrf.verify(req))return redirectWith(res,'/account/service-passwords','error','Invalid or expired security token');
+        if(!csrf.verify(req))return redirectWith(res,'/account/security','error','Invalid or expired security token','service-passwords');
         const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-        if(password.length<12||password.length>200)return redirectWith(res,'/account/service-passwords','error','Streaming-service passwords must be between 12 and 200 characters.');
-        if(password!==confirm)return redirectWith(res,'/account/service-passwords','error','Passwords do not match.');
+        if(password.length<12||password.length>200)return redirectWith(res,'/account/security','error','Streaming-service passwords must be between 12 and 200 characters.','service-passwords');
+        if(password!==confirm)return redirectWith(res,'/account/security','error','Passwords do not match.','service-passwords');
         try{
             const access=await assertMediaPasswordAccess(req.session.customerId,req.params.accountId);
             await provisioning.setJellyfinPassword(req.session.customerId,req.params.accountId,password);
             await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,password_reset_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.session.customerId]);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.media_password.change','customer',$2,$3::jsonb)`,[req.session.customerUserId,req.session.customerId,JSON.stringify({accountId:req.params.accountId,serviceType:access.serviceType,secretStored:false})]).catch(()=>{});
-            return redirectWith(res,'/account/service-passwords','message',`${access.label} password updated.`);
-        }catch(error){return redirectWith(res,'/account/service-passwords','error',error.message||'Streaming-service password could not be updated.');}
+            return redirectWith(res,'/account/security','message',`${access.label} password updated.`,'service-passwords');
+        }catch(error){return redirectWith(res,'/account/security','error',error.message||'Streaming-service password could not be updated.','service-passwords');}
     });
 
     router.post('/account/jellyfin/:accountId/username',requireCustomer,mediaPasswordLimit,async(req,res)=>{
@@ -144,26 +143,26 @@ function createCustomerPasswordSyncRouter(){
     });
 
     router.post('/account/requests/password',requireCustomer,requestPasswordLimit,async(req,res)=>{
-        if(!csrf.verify(req))return redirectWith(res,'/account/service-passwords','error','Invalid or expired security token');
+        if(!csrf.verify(req))return redirectWith(res,'/account/security','error','Invalid or expired security token','overseerr');
         const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-        if(password.length<12||password.length>200)return redirectWith(res,'/account/service-passwords','error','Overseerr password must be between 12 and 200 characters.');
-        if(password!==confirm)return redirectWith(res,'/account/service-passwords','error','Overseerr passwords do not match.');
+        if(password.length<12||password.length>200)return redirectWith(res,'/account/security','error','Overseerr password must be between 12 and 200 characters.','overseerr');
+        if(password!==confirm)return redirectWith(res,'/account/security','error','Overseerr passwords do not match.','overseerr');
         try{
             const access=await requestUsers.requestAccessForCustomer(req.session.customerId);
             if(!access?.entitlement_active)throw new Error('Overseerr password management requires an active plan or trial.');
             await requestUsers.setCustomerPassword(req.session.customerId,password);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.request_password.change','customer',$2,'{"secretStored":false}'::jsonb)`,[req.session.customerUserId,req.session.customerId]).catch(()=>{});
-            return redirectWith(res,'/account/service-passwords','message','Overseerr password updated.');
-        }catch(error){return redirectWith(res,'/account/service-passwords','error',error.message||'Overseerr password could not be updated.');}
+            return redirectWith(res,'/account/security','message','Overseerr password updated.','overseerr');
+        }catch(error){return redirectWith(res,'/account/security','error',error.message||'Overseerr password could not be updated.','overseerr');}
     });
 
     // Old portal-password-sync forms/bookmarks must never re-couple credentials.
     router.post('/account/requests/password/sync',requireCustomer,requestPasswordLimit,async(req,res)=>{
-        if(!csrf.verify(req))return redirectWith(res,'/account/service-passwords','error','Invalid or expired security token');
-        return redirectWith(res,'/account/service-passwords','message','Portal and Overseerr passwords are separate. Choose the Overseerr password you want here.');
+        if(!csrf.verify(req))return redirectWith(res,'/account/security','error','Invalid or expired security token','overseerr');
+        return redirectWith(res,'/account/security','message','Portal and Overseerr passwords are separate. Choose the Overseerr password you want here.','overseerr');
     });
 
     return router;
 }
 
-module.exports={createCustomerPasswordSyncRouter,pending,mediaRows,entitlementSnapshot,entitlementForMediaAccount,activeMediaAccounts,assertMediaPasswordAccess,servicePasswordState,servicePasswordPage};
+module.exports={createCustomerPasswordSyncRouter,pending,mediaRows,entitlementSnapshot,entitlementForMediaAccount,activeMediaAccounts,assertMediaPasswordAccess,servicePasswordState,servicePasswordFragment};
