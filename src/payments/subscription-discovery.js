@@ -4,6 +4,7 @@ const Stripe = require('stripe');
 const { query } = require('../db');
 const providerSettings = require('./provider-settings');
 const lifecycle = require('./lifecycle');
+const billingMode = require('./subscription-billing-mode');
 
 const MAX_REMOTE_SUBSCRIPTIONS = 5000;
 const MAX_PROVIDER_PAGES = 2000;
@@ -16,10 +17,13 @@ const PAYPAL_CURRENT = new Set(['ACTIVE', 'SUSPENDED']);
 function clean(value, max = 500) { return String(value == null ? '' : value).trim().slice(0, max); }
 function emailKey(value) { return clean(value, 320).toLowerCase(); }
 function objectId(value) { return typeof value === 'string' ? clean(value, 255) : clean(value?.id, 255); }
+// Remote discovery still validates the provider's documented remote object
+// families. Local recurring truth never depends on these prefixes.
 function recurringId(provider, id) {
     const value = clean(id, 255);
     return (provider === 'stripe' && /^sub_/i.test(value)) || (provider === 'paypal' && /^I-/i.test(value));
 }
+function localRecurring(row) { return billingMode.isRecurring(row); }
 function currentRemote(remote) {
     if (remote?.provider === 'stripe') return STRIPE_CURRENT.has(String(remote.status || '').toLowerCase());
     if (remote?.provider === 'paypal') return PAYPAL_CURRENT.has(String(remote.status || '').toUpperCase());
@@ -62,12 +66,14 @@ async function premiumEntitlements() {
     const result = await query(`
         SELECT e.customer_id,e.subscription_id,e.plan_id,e.status,e.source,e.current_period_end,e.cancel_at_period_end,
                e.provider_customer_id,e.provider_subscription_id,e.provider_price_id_snapshot,e.server_class,
+               s.billing_mode,
                COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type) AS service_type,
                COALESCE(e.price_minor_snapshot,e.price_minor,0) AS price_minor,
                COALESCE(NULLIF(e.plan_name_snapshot,''),e.name) AS plan_name,
                COALESCE(NULLIF(e.plan_code_snapshot,''),e.code) AS plan_code,
                c.email,c.display_name,u.username AS portal_username
           FROM effective_customer_entitlements e
+          JOIN subscriptions s ON s.id=e.subscription_id
           JOIN customers c ON c.id=e.customer_id
           LEFT JOIN app_users u ON u.id=c.user_id
          WHERE e.server_class='premium'
@@ -84,7 +90,7 @@ async function identityContext(premiumRows) {
         query(`SELECT customer_id,provider,provider_customer_id FROM payment_customers WHERE provider IN ('stripe','paypal')`),
         query(`SELECT customer_id,source AS provider,provider_customer_id FROM subscriptions WHERE source IN ('stripe','paypal') AND provider_customer_id IS NOT NULL`),
         query(`SELECT provider,external_id,plan_id,active FROM plan_provider_prices WHERE provider IN ('stripe','paypal') AND checkout_mode='subscription' AND external_id IS NOT NULL`),
-        query(`SELECT id,customer_id,source,provider_subscription_id FROM subscriptions WHERE source IN ('stripe','paypal') AND provider_subscription_id IS NOT NULL`)
+        query(`SELECT id,customer_id,source,provider_subscription_id,billing_mode FROM subscriptions WHERE source IN ('stripe','paypal') AND provider_subscription_id IS NOT NULL`)
     ]);
     const providerIdentityToCustomers = new Map();
     const addIdentity = row => {
@@ -112,7 +118,7 @@ async function identityContext(premiumRows) {
     }
     const providerSubscriptionOwners = new Map();
     for (const row of existing.rows) {
-        if (!recurringId(row.source, row.provider_subscription_id)) continue;
+        if (!localRecurring(row)) continue;
         providerSubscriptionOwners.set(`${row.source}:${row.provider_subscription_id}`, { subscriptionId: String(row.id), customerId: String(row.customer_id) });
     }
     return { providerIdentityToCustomers, emailToCustomers, externalToPlans, providerSubscriptionOwners };
@@ -150,7 +156,7 @@ function matchPremiumRows(premiumRows, remotes, context) {
     const current = remotes.filter(currentRemote);
     const rows = [];
     for (const local of premiumRows) {
-        if (recurringId(local.source, local.provider_subscription_id)) {
+        if (localRecurring(local)) {
             rows.push({ local, state: 'linked', candidates: [], match: null, reason: 'Already linked to a recurring provider subscription.' });
             continue;
         }
@@ -331,7 +337,7 @@ async function preview() {
 }
 async function coverageStats() {
     const premium = await premiumEntitlements();
-    const linked = premium.filter(row => recurringId(row.source, row.provider_subscription_id)).length;
+    const linked = premium.filter(localRecurring).length;
     return { premium: premium.length, linked, missing: premium.length - linked };
 }
 
@@ -367,6 +373,7 @@ module.exports = {
     PAYPAL_DISCOVERY_DAYS,
     PAYPAL_TRANSACTION_TYPES,
     recurringId,
+    localRecurring,
     currentRemote,
     normalizeStripeSubscription,
     normalizePayPalSubscription,
