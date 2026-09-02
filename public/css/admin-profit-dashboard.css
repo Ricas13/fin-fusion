@@ -2,7 +2,8 @@
 .adminDashboardCompactBody>.notice{margin:0}
 .adminDashboardCompactBody .dashboardRangeBar{padding:10px 12px;border-radius:9px}
 .adminDashboardCompactBody .dashboardCustomizeBar{min-height:28px;margin:0 0 2px;padding:0}
-.adminDashboardCompactBody .analyticsGrid{gap:10px}
+.adminDashboardCompactBody .analyticsGrid{gap:10px;align-items:start}
+.adminDashboardCompactBody .analyticsCard.widgetCard{height:auto;min-height:0;align-self:start}
 .adminDashboardCompactBody .analyticsCardHeader{padding:11px 12px}
 .adminDashboardCompactBody .analyticsCardBody{padding:11px 12px}
 .adminDashboardCompactBody .analyticsCardHeader h2{font-size:12px}
