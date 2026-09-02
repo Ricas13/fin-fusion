@@ -1,0 +1,43 @@
+/* Stremio uses the same compact card rhythm as the Jellyfin plan editor.
+ * Scope is deliberately limited to the unified Stremio plan surface. */
+.planControlRoom.stremioPlanReference .planControlGrid{
+  grid-auto-flow:row!important;
+  align-items:stretch!important;
+}
+.planControlRoom.stremioPlanReference .planControlGrid>.planConfigCard,
+.planControlRoom.stremioPlanReference .planControlGrid>.requestPlanCard{
+  min-width:0;
+  align-self:stretch!important;
+  height:100%!important;
+}
+.planControlRoom.stremioPlanReference #product{order:0}
+.planControlRoom.stremioPlanReference #availability{order:1}
+.planControlRoom.stremioPlanReference #access{order:2}
+.planControlRoom.stremioPlanReference #sources{order:3}
+.planControlRoom.stremioPlanReference #requests{order:4}
+
+@media(min-width:820px){
+  .planControlRoom.stremioPlanReference #product{
+    grid-column:1/-1!important;
+  }
+}
+
+@media(min-width:1280px){
+  .planControlRoom.stremioPlanReference .planControlGrid{
+    grid-template-columns:repeat(3,minmax(0,1fr))!important;
+    gap:13px!important;
+  }
+  .planControlRoom.stremioPlanReference #product{
+    grid-column:span 2!important;
+  }
+  .planControlRoom.stremioPlanReference #product:has(details.planCardDetails[open]){
+    grid-column:1/-1!important;
+  }
+}
+
+@media(max-width:819px){
+  .planControlRoom.stremioPlanReference .planControlGrid>.planConfigCard,
+  .planControlRoom.stremioPlanReference .planControlGrid>.requestPlanCard{
+    height:auto!important;
+  }
+}
