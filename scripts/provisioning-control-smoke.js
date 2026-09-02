@@ -9,12 +9,15 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const adminProvisioning=read('src/platform/admin-provisioning.js');
 const automationJobs=read('src/automation/jobs.js');
 const stremioRequeue=read('db/migrations/031_requeue_legacy_stremio_provisioning.sql');
+const paidRequeue=read('db/migrations/20260902211500_requeue_live_paid_jellyfin.sql');
 const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const provisioningFacade=read('src/jellyfin/provisioning.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
 const subscriptionState=read('src/entitlements/subscription-state.js');
+const permanentAccess=read('src/entitlements/permanent-access.js');
+const entitlementJobs=read('src/jellyfin/jobs.js');
 
 const desired = {
     IsAdministrator: false,
@@ -79,6 +82,17 @@ const paidPriority=subscriptionState.indexOf("ORDER BY CASE WHEN COALESCE(p.is_f
 const expiryPriority=subscriptionState.indexOf("CASE WHEN o.permanent_access=TRUE",paidPriority);
 assert(paidPriority>=0&&expiryPriority>paidPriority,'effective Jellyfin entitlement selection must prefer paid/trial contracts before comparing expiry, so Free Server sentinel dates cannot outrank Premium');
 assert(subscriptionState.includes('free lane is resolved independently'),'entitlement precedence must document why retained Free Server access does not own the primary lane');
+
+assert(permanentAccess.includes("const subscriptionState=require('./subscription-state')"),'permanent access must use the canonical subscription selector');
+assert(permanentAccess.includes('subscriptionState.effectiveSubscription(customerId,{client,includeBlocked:true})'),'making access permanent must pin the same primary contract that reconciliation uses');
+assert(!permanentAccess.includes('SELECT * FROM effective_customer_entitlements WHERE customer_id=$1 LIMIT 1'),'permanent access must not pin an arbitrary entitlement row in a multi-lane customer');
+
+assert(!entitlementJobs.includes('AND p.active=TRUE'),'existing subscription contracts must continue reconciliation after their catalogue plan is retired or hidden');
+assert(entitlementJobs.includes("o.permanent_access=TRUE AND o.revoked_at IS NULL"),'permanent contracts must remain in the periodic reconciliation population after their original period ends');
+assert(entitlementJobs.includes("s.status IN ('active','trialing','past_due','paused','cancelled','expired')"),'service extensions must remain in the periodic reconciliation population');
+assert(paidRequeue.includes('COALESCE(p.is_free_tier,FALSE)=FALSE')&&paidRequeue.includes("IN ('jellyfin','bundle')"),'deployment repair must target every currently-live paid Jellyfin/bundle contract');
+assert(paidRequeue.includes("status='pending'")&&paidRequeue.includes('next_attempt_at=NOW()'),'deployment repair must immediately queue existing paid customers for canonical reconciliation');
+assert(!paidRequeue.includes('p.active=TRUE'),'paid-user repair must not skip contracts just because their catalogue plan is no longer for sale');
 
 assert(provisioningEngine.includes("const compensation = require('./provisioning-compensation')"),'provisioning engine must use the shared remote-user compensation helper');
 assert(provisioningEngine.includes("stage: 'policy_apply'")&&provisioningEngine.includes("stage: 'database_persist'"),'both remote policy failure and local persistence failure must invoke provisioning compensation');
