@@ -377,7 +377,7 @@ async function analyticsData(range) {
             LEFT JOIN app_users u ON u.id=c.user_id
             WHERE s.status IN ('active','trialing') AND s.cancel_at_period_end=FALSE
               AND s.current_period_end > NOW() AND s.current_period_end <= $1
-              AND ((s.source='stripe' AND s.provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\') OR (s.source='paypal' AND s.provider_subscription_id LIKE 'I-%'))
+              AND s.billing_mode='subscription' AND s.source IN ('stripe','paypal')
             ORDER BY s.current_period_end LIMIT 1000
         `, [forecastEnd]),
         query(`
