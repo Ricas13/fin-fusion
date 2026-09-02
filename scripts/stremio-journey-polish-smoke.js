@@ -46,7 +46,7 @@ assert(household.includes("'X-CAPTAiNFiN-429-Reason', 'household_network'"),'run
 // routes. The old three-card setup journey is intentionally gone so operational
 // pages start with their actual controls instead of duplicate navigation.
 assert(!adminJourney.includes('stremioJourney')&&!adminJourney.includes('insertJourney('),'Stremio polish must not inject Sources / Plan delivery / Customer install journey cards');
-for(const retiredStep of ["'Sources'","'Plan delivery'","'Customer install'"])assert(!adminJourney.includes(retiredStep),`retired Stremio journey step returned: ${retiredStep}`);
+assert(!adminJourney.includes('Stremio setup journey')&&!adminJourney.includes('stremioJourneyStep'),'retired Stremio setup-card markup must stay removed');
 assert(adminJourney.includes('Manage Stremio sources')&&adminJourney.includes('Save delivery sources'),'plan delivery must use operator-friendly source actions');
 assert(adminJourney.includes('Advanced order')&&adminJourney.includes('Advanced maintenance')&&adminJourney.includes('Technical diagnostics'),'technical source ordering, maintenance and diagnostics must use progressive disclosure');
 assert(adminJourney.includes('textContent')&&!adminJourney.includes('fetch('),'Stremio polish must change presentation only and must not own server state');
