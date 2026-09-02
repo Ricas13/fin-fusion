@@ -17,6 +17,7 @@ const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
 const subscriptionState=read('src/entitlements/subscription-state.js');
 const permanentAccess=read('src/entitlements/permanent-access.js');
+const accessHolds=read('src/entitlements/access-holds.js');
 const entitlementJobs=read('src/jellyfin/jobs.js');
 
 const desired = {
@@ -77,6 +78,9 @@ assert(/async function reconcileAccount\(accountId\)\{return canonicalReconciler
 assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId)')&&resilientProvisioning.includes('accessHolds.syncLegacySummary(customerId)'),'multi-lane reconciliation must canonicalize stale free-tier holds before resolving a newly paid entitlement');
 assert(resilientProvisioning.includes("RECONCILIATION_POSTCONDITION_FAILED")&&resilientProvisioning.includes("assertLanePostcondition('Primary',primaryEntitlement,primary)"),'reconciliation must not record a healthy result unless the entitled primary lane converged to an enabled account');
 assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy helper facade');
+
+assert(accessHolds.includes("hold_type IN ('admin_disabled','admin_suspended','admin_hold','legacy')"),'bulk admin release must clear every hold type that holdAccess can create, including generic admin_hold');
+assert(accessHolds.includes("'customer.access_hold.release_admin'"),'bulk admin hold release must remain auditable');
 
 const paidPriority=subscriptionState.indexOf("ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC");
 const expiryPriority=subscriptionState.indexOf("CASE WHEN o.permanent_access=TRUE",paidPriority);
