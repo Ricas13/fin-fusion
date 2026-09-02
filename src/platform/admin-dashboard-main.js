@@ -7,8 +7,9 @@ const reportingCurrency = require('./reporting-currency');
 const subscriptionAnalytics = require('./subscription-analytics');
 const profitability = require('./business-profitability');
 const fleetDashboard = require('./admin-server-fleet-dashboard');
+const growthData = require('./admin-dashboard-growth-data');
+const growthView = require('./admin-dashboard-growth-view');
 const registry = require('./admin-dashboard-registry');
-const widgets = require('./admin-dashboard-widgets');
 const { renderWidgetGrid } = require('./admin-dashboard-page');
 const { esc } = require('./admin-html');
 const { number, money } = require('./admin-dashboard-format');
@@ -65,8 +66,10 @@ function fleetCapacity(rows){const enabled=(rows||[]).filter(row=>row.enabled!==
 
 async function buildContext(req){
     const range=dashboardRange(req.query||{}),reporting=await reportingCurrency.getForUser(req.session.authUserId);
-    const [data,profit,newVsCancelled,mix,fleet]=await Promise.all([dashboardData(range,reporting),profitability.dashboardProfitability(reporting),newVsCancelledSeries(range),serviceMix(),fleetDashboard.dashboardRows()]);
-    return{range,reporting,data:{...data,profitability:profit,newVsCancelled,serviceMix:mix,streamGauge:fleetCapacity(fleet)}};
+    const [data,profit,analytics,fleet,mix]=await Promise.all([
+        dashboardData(range,reporting),profitability.dashboardProfitability(reporting),growthData.growthServerAnalytics(range,reporting),fleetDashboard.dashboardRows(),serviceMix()
+    ]);
+    return{range,reporting,data:{...data,profitability:profit,growthAnalytics:analytics,serviceMix:mix,streamGauge:fleetCapacity(fleet)}};
 }
 registry.registerContextBuilder('main',buildContext);
 
@@ -76,10 +79,20 @@ function pairedBars(rows,currency){
 }
 function serviceBlocks(mix){return `<div class="serviceMixBlocks" aria-label="Current service access mix"><div class="serviceMixBlock serviceMixBlock--jellyfin"><span>Jellyfin</span><strong>${esc(number(mix.jellyfin))}</strong><small>paid customers · bundles included</small></div><div class="serviceMixBlock serviceMixBlock--stremio"><span>Stremio</span><strong>${esc(number(mix.stremio))}</strong><small>paid customers · bundles included</small></div><div class="serviceMixBlock serviceMixBlock--free"><span>Free</span><strong>${esc(number(mix.free))}</strong><small>current free-tier customers</small></div></div>`;}
 
-registry.register('main','cashFlow',{title:'Weekly receipts vs expenses',subtitle:'Net Stripe + PayPal receipts against booked operating expenses in the reporting currency.',defaultOrder:1,defaultSpan:4,render:async ctx=>pairedBars(ctx.data.profitability.weekly,ctx.data.profitability.currency)});
-registry.register('main','newVsCancelled',{title:'New vs cancelled',subtitle:'Subscription starts versus cancellations over the selected range.',defaultOrder:2,defaultSpan:4,render:async ctx=>widgets.stackedAreaChart(ctx.data.newVsCancelled,['new','cancelled'])});
-registry.register('main','serviceMix',{title:'Service mix',subtitle:'Current customer access by Jellyfin, Stremio and free tier.',defaultOrder:3,defaultSpan:4,render:async ctx=>serviceBlocks(ctx.data.serviceMix)});
+registry.register('main','activeSubscribers',{title:'Active subscribers',subtitle:'Paid customer access over time; exact plan switches do not create false churn.',defaultOrder:1,defaultSpan:4,render:async ctx=>growthView.activeSubscribers(ctx.data.growthAnalytics)});
+registry.register('main','newVsChurn',{title:'New signups vs churned',subtitle:'First activations, returning customers and paid-access churn in the same period.',defaultOrder:2,defaultSpan:4,render:async ctx=>growthView.newVsChurn(ctx.data.growthAnalytics)});
+registry.register('main','netGrowth',{title:'Net growth',subtitle:'Activations plus reactivations minus customers whose paid access ended.',defaultOrder:3,defaultSpan:4,render:async ctx=>growthView.netGrowth(ctx.data.growthAnalytics)});
+registry.register('main','subscriptionsByPlan',{title:'Subscriptions by plan',subtitle:'Historical active paid subscriptions by plan tier.',defaultOrder:4,defaultSpan:4,render:async ctx=>growthView.subscriptionsByPlan(ctx.data.growthAnalytics)});
+registry.register('main','churnRate',{title:'Churn rate',subtitle:'Customers lost divided by the active customer base at the start of each bucket.',defaultOrder:5,defaultSpan:4,render:async ctx=>growthView.churnRate(ctx.data.growthAnalytics)});
+registry.register('main','mrrTrend',{title:'MRR',subtitle:'Verified recurring Stripe and PayPal contracts, normalized to monthly value.',defaultOrder:6,defaultSpan:4,render:async ctx=>growthView.mrr(ctx.data.growthAnalytics)});
+registry.register('main','activeStreamsTrend',{title:'Active streams over time',subtitle:'Average concurrent managed playback calculated from session overlap time.',defaultOrder:7,defaultSpan:4,render:async ctx=>growthView.activeStreams(ctx.data.growthAnalytics)});
+registry.register('main','playMethodBreakdown',{title:'Play method breakdown',subtitle:'Share of actual watch time delivered by Direct Play, Direct Stream and Transcode.',defaultOrder:8,defaultSpan:4,render:async ctx=>growthView.playMethods(ctx.data.growthAnalytics)});
+registry.register('main','mostUsedPlayers',{title:'Most used players',subtitle:'Normalized client/player families ranked by managed watch time.',defaultOrder:9,defaultSpan:4,render:async ctx=>growthView.players(ctx.data.growthAnalytics)});
 
-async function renderMain(req){const ctx=await buildContext(req),html=await renderWidgetGrid('main',req,ctx);return{ctx,html:`<link rel="stylesheet" href="/css/admin-profit-dashboard.css">${html}`};}
+async function renderMain(req){
+    const ctx=await buildContext(req),grid=await renderWidgetGrid('main',req,ctx);
+    const header=`<div class="growthAnalyticsHeader"><div><h2>Growth & server analytics</h2><p>Business health, plan mix and managed playback use the same selected reporting period.</p></div><span>Playback uses ${esc(ctx.data.growthAnalytics.playback.grain)} buckets · growth uses ${esc(ctx.data.growthAnalytics.growth.grain)} buckets</span></div>`;
+    return{ctx,html:`<link rel="stylesheet" href="/css/admin-profit-dashboard.css">${header}${grid}<link rel="stylesheet" href="/css/admin-dashboard-growth.css">`};
+}
 
 module.exports={renderMain,buildContext,mrrByCurrency,primaryMrr,churnRate,newVsCancelledSeries,revenueMixByService,revenueByPlan,revenueByBillingInterval,aggregateConverted,serviceMix,fleetCapacity,pairedBars,serviceBlocks};
