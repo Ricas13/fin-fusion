@@ -33,6 +33,7 @@ jobs:
           node scripts/stremio-admin-smoke.js
           node scripts/stremio-playback-compatibility-smoke.js
           node scripts/stremio-household-access-smoke.js
+          node scripts/cloudflare-network-identity-smoke.js
           node scripts/stremio-access-error-smoke.js
           node scripts/stremio-rate-limit-smoke.js
           node scripts/stremio-edge-auth-smoke.js
