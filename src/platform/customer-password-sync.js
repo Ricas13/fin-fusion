@@ -134,7 +134,7 @@ function createCustomerPasswordSyncRouter(){
         }catch(error){return redirectWith(res,'/account/service-passwords','error',error.message||'Streaming-service password could not be updated.');}
     });
 
-    router.post('/account/jellyfin/:accountId/username',requireCustomer,async(req,res)=>{
+    router.post('/account/jellyfin/:accountId/username',requireCustomer,mediaPasswordLimit,async(req,res)=>{
         if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
         try{
             const access=await assertMediaPasswordAccess(req.session.customerId,req.params.accountId);
