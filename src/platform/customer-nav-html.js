@@ -36,7 +36,8 @@ async function optionsForCustomer(customerId){
 }
 
 function nav(active='',options={}){
-  const signedInAccountSurface=['account','security','passwords'].includes(String(active||''))&&Object.prototype.hasOwnProperty.call(options||{},'showBenefits');
+  const surface=String(active||'');
+  const signedInAccountSurface=(['account','security'].includes(surface)||surface==='passwords')&&Object.prototype.hasOwnProperty.call(options||{},'showBenefits');
   return renderNav({active,...options,standaloneHeader:signedInAccountSurface,siteName:runtimeSettings.siteName()});
 }
 
