@@ -1,6 +1,7 @@
 'use strict';
 
 const express=require('express');
+const {rateLimit}=require('express-rate-limit');
 const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
@@ -11,6 +12,7 @@ const routeRateLimit=require('../security/route-rate-limit');
 const csrf=require('../auth/csrf');
 const {query}=require('../db');
 
+const accessSurfaceLimit=rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false,message:'Too many access requests. Try again shortly.'});
 const mediaMutationLimit=routeRateLimit.middleware({scope:'customer-access-media-credentials',max:10,windowSeconds:900});
 const requestPasswordLimit=routeRateLimit.middleware({scope:'customer-access-request-password',max:10,windowSeconds:900});
 
@@ -132,6 +134,7 @@ async function assertMediaAccess(customerId,accountId){
 
 function createCustomerJellyfinRouter(){
   const router=express.Router();
+  router.use('/account/access',accessSurfaceLimit);
 
   router.get('/account/jellyfin',requireCustomer,legacyAccessRedirect);
   router.get('/account/access',requireCustomer,async(req,res,next)=>{
