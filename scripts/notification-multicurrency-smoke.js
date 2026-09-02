@@ -68,7 +68,7 @@ assert(!settingsKeys.includes('my-profile'),'Personal administrator profile must
 assert(!settingsKeys.includes('my-notifications'),'Per-admin notifications must not be duplicated in the global Settings sidebar');
 assert(navModel.hiddenPages?.['my-profile']&&navModel.hiddenPages?.['my-notifications']&&navModel.hiddenPages?.['my-security'],'Personal admin pages must keep explicit My account workflow metadata');
 assert(adminHtmlCore.includes('<div class="headerActionLabel">My account</div>')&&adminHtmlCore.includes('href="/admin/profile">My profile')&&adminHtmlCore.includes('href="/admin/profile/notifications">My notifications')&&adminHtmlCore.includes('href="/admin/security">My security'),'Administrators need discoverable My profile, My notifications and My security links under My account');
-assert(settingsKeys.includes('settings-commerce')&&settingsGroup.pages.find(page=>page[0]==='settings-commerce')?.[2]==='/admin/settings/commerce','Settings Commerce must remain a visible Settings-owned configuration directory');
+assert(!settingsKeys.includes('settings-commerce')&&navModel.hiddenPages?.['settings-commerce']?.groupKey==='commerce'&&navModel.hiddenPages?.['settings-commerce']?.parentKey==='plans'&&navModel.hiddenPages?.['settings-commerce']?.kind==='setting'&&navModel.settingsFor('plans').some(page=>page[0]==='settings-commerce'&&page[2]==='/admin/settings/commerce'),'Commerce settings must remain a Plans-owned setting without consuming a Settings rail destination');
 assert(nav.includes("'my-notifications':Object.freeze"),'Hidden My Notifications workflow metadata must remain explicit');
 
 // Global notification pages must reuse the single stable Connections workflow.
