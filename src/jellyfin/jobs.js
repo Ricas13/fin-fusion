@@ -23,23 +23,37 @@ function summarizeFailureReasons(reasons, failed) {
 }
 
 // A customer is due when either:
-//  1. they currently have an active entitlement and have never been reconciled
+//  1. they currently have a live contract and have never been reconciled
 //     (or their next scheduled verification/retry time has arrived), OR
 //  2. a previous provisioning/deprovisioning attempt is pending/blocked/failed
 //     and is due. The second branch is important for expired/cancelled users:
 //     if Jellyfin was offline when access was meant to be disabled, they still
 //     need to be retried even though they no longer have an active subscription.
+//
+// The live-contract predicate intentionally mirrors subscription-state rather
+// than storefront catalogue state. Once sold, a contract must keep receiving
+// repair/verification even if its plan is later hidden/archived/inactive, and
+// permanent or service-extension access must not silently fall out of the job.
 async function dueCustomers(limit = 250) {
     const bounded = Math.max(1, Math.min(1000, Number(limit) || 250));
     const result = await query(`
         WITH active AS (
             SELECT DISTINCT s.customer_id
             FROM subscriptions s
-            JOIN plans p ON p.id=s.plan_id
             JOIN customers c ON c.id=s.customer_id
-            WHERE s.status IN ('active','trialing','past_due')
-              AND s.current_period_end > NOW()
-              AND p.active=TRUE
+            LEFT JOIN customer_entitlement_overrides o
+                   ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+            WHERE s.superseded_by IS NULL
+              AND s.starts_at <= NOW()
+              AND (
+                  (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                  OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end > NOW())
+                  OR (
+                      COALESCE(s.service_extension_days,0)>0
+                      AND s.status IN ('active','trialing','past_due','paused','cancelled','expired')
+                      AND (s.current_period_end + ((s.service_extension_days || ' days')::interval)) > NOW()
+                  )
+              )
               AND c.access_paused_at IS NULL
         ), candidates AS (
             SELECT a.customer_id,
