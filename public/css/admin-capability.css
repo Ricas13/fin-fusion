@@ -4,7 +4,7 @@
 @import url('/css/admin-ui-primitives.css');
 @import url('/css/admin-accessibility-mobile.css');
 @import url('/css/admin-command-palette.css');
-@import url('/css/admin-stremio-journey.css');
+@import url('/css/admin-stremio-journey.css?v=20260902-header-cleanup');
 @import url('/css/admin-release-status.css');
 @import url('/css/admin-backup-recovery.css');
 @import url('/css/admin-adaptive-plans.css');
