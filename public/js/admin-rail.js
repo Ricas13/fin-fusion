@@ -29,6 +29,14 @@
   const sections=[...nav.querySelectorAll('details.navSection[data-nav-section]')];
   const activeSection=sections.find(section=>section.classList.contains('active'))||sections.find(section=>section.open)||sections[0]||null;
 
+  // A permanent destination has an exact aria-current marker. When a legacy
+  // classification also points at the same section, prefer that exact row over
+  // a parent-active fallback so two rail rows can never appear selected.
+  const exactTab=nav.querySelector('.adminTab[aria-current="page"]');
+  if(exactTab){
+    for(const tab of nav.querySelectorAll('.adminTab.active'))tab.classList.toggle('active',tab===exactTab);
+  }
+
   // Legacy EJS screens cannot publish data-section on <body> without touching
   // their page bodies. Derive it from the same canonical rail registry instead.
   if(!document.body.dataset.section&&activeSection?.dataset.navSection){
