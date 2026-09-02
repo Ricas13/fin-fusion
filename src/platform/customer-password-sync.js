@@ -16,7 +16,7 @@ function requireCustomer(req,res,next){
     if(req.session?.customerId&&req.session?.customerUserId)return next();
     return res.redirect('/account/login?next='+encodeURIComponent(req.originalUrl||'/account'));
 }
-function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));}
+function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function mediaType(account){return String(account?.media_server_type||'jellyfin').toLowerCase()==='emby'?'emby':'jellyfin';}
 function mediaLabel(account){return mediaType(account)==='emby'?'Emby':'Jellyfin';}
 function jellyfinHubReturn(req){return String(req.body?.returnTo||'')==='jellyfin';}
@@ -109,10 +109,18 @@ function createCustomerPasswordSyncRouter(){
     router.use(createCustomerNowPlayingRouter());
 
     // Freshly provisioned MediaBrowser identities use random bootstrap secrets.
-    // Keep the setup guard, but send customers to the matching Account section.
+    // Jellyfin setup belongs in the dedicated Jellyfin hub; other services
+    // continue to use Account -> Service passwords.
     router.use('/account',(req,res,next)=>{
         if(req.method!=='GET'||req.path!=='/')return next();
-        return requireCustomer(req,res,async()=>{try{const accounts=await pending(req.session.customerId);if(!accounts.length)return next();return res.redirect('/account/security#service-passwords');}catch(error){return next(error)}});
+        return requireCustomer(req,res,async()=>{
+            try{
+                const accounts=await pending(req.session.customerId);
+                if(!accounts.length)return next();
+                if(accounts.some(account=>mediaType(account)==='jellyfin'))return res.redirect('/account/jellyfin');
+                return res.redirect('/account/security#service-passwords');
+            }catch(error){return next(error);}
+        });
     });
 
     router.get('/account/service-passwords/fragment',requireCustomer,async(req,res,next)=>{
@@ -124,7 +132,7 @@ function createCustomerPasswordSyncRouter(){
         }catch(error){return next(error);}
     });
     router.get('/account/service-passwords',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#service-passwords'));
-    router.get('/account/jellyfin/setup',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#service-passwords'));
+    router.get('/account/jellyfin/setup',requireCustomer,(_req,res)=>res.redirect(302,'/account/jellyfin'));
     router.get('/account/requests/password',requireCustomer,(_req,res)=>res.redirect(302,'/account/security#overseerr'));
 
     router.post('/account/jellyfin/:accountId/password',requireCustomer,mediaPasswordLimit,async(req,res)=>{
