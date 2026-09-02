@@ -9,6 +9,7 @@ const publicError=require('./public-error');
 const twoFactor=require('../security/customer-two-factor');
 const customerRateLimit=require('../security/customer-rate-limit');
 const routeRateLimit=require('../security/route-rate-limit');
+const requestUsers=require('../integrations/request-user-sync');
 const csrf=require('../auth/csrf');
 const save=customerSession.save;
 const regenerate=customerSession.regenerate;
@@ -26,6 +27,20 @@ function normalizeLoginIdentity(value){return String(value||'').trim().toLowerCa
 async function recordCompletedLogin(account,twoFactorUsed=false){
  try{await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.login.success','customer',$2,$3::jsonb)`,[account.userId,account.customerId,JSON.stringify({username:String(account.username||'').slice(0,80),twoFactorUsed:Boolean(twoFactorUsed)})]);}
  catch(error){console.warn('Customer login activity audit failed:',error.message)}
+}
+async function syncRequestPasswordAfterLogin(customerId,password){
+ try{
+  const config=await requestUsers.configuration();
+  if(!config.configured)return false;
+  const access=await requestUsers.requestAccessForCustomer(customerId);
+  if(!access?.entitlement_active)return false;
+  await requestUsers.setCustomerPassword(customerId,String(password||''));
+  return true;
+ }catch(error){
+  await requestUsers.markPasswordSyncFailure(customerId,error).catch(()=>{});
+  console.warn(`Seerr password sync after portal login failed for ${customerId}:`,error.message);
+  return false;
+ }
 }
 async function identityLoginRateLimit(req,res,next){
  if(req.method!=='POST')return next();
@@ -64,8 +79,8 @@ async function twoFactorLoginRateLimit(req,res,next){
 }
 function createCustomerLoginRouter(){const r=express.Router();
  r.get('/account/login',async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const message=req.query.locked?'Too many incorrect two-factor codes. This account is temporarily locked; try again later.':req.query.session==='expired'?'Your session expired. Sign in again.':null;return res.render('customer/login',{error:null,message,next:safeNext(req.query.next),csrfToken:csrf.token(req),siteName:runtimeSettings.siteName()})}catch(e){next(e)}});
- r.post('/account/login',passwordRouteLimit,identityLoginRateLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');try{const account=await customers.authenticateCustomer(req.body.identity,req.body.password);if(!account)throw new Error('Invalid email/username or password');const lock=await twoFactor.locked(account.userId);if(lock.locked)throw new Error('This account is temporarily locked after repeated security-code failures. Try again later.');const state=await twoFactor.state(account.userId);if(state?.totp_enabled){await regenerate(req);req.session.pendingCustomerAuth={account,startedAt:Date.now(),next:safeNext(req.body.next)};req.session.csrfToken=crypto.randomBytes(32).toString('base64url');req.session.cookie.maxAge=10*60*1000;await save(req);return res.redirect('/account/2fa');}await establish(req,account);await recordCompletedLogin(account,false);return res.redirect(safeNext(req.body.next));}catch(error){await runtimeSettings.ensureLoaded();const failure=publicError.present(error,{context:'Customer login failed',fallback:'Authentication temporarily unavailable. Please try again later.',status:401});return res.status(failure.status).render('customer/login',{error:failure.message,message:null,next:safeNext(req.body.next),csrfToken:csrf.token(req),siteName:runtimeSettings.siteName()});}});
+ r.post('/account/login',passwordRouteLimit,identityLoginRateLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');try{const account=await customers.authenticateCustomer(req.body.identity,req.body.password);if(!account)throw new Error('Invalid email/username or password');const lock=await twoFactor.locked(account.userId);if(lock.locked)throw new Error('This account is temporarily locked after repeated security-code failures. Try again later.');const state=await twoFactor.state(account.userId);if(state?.totp_enabled){await regenerate(req);req.session.pendingCustomerAuth={account,startedAt:Date.now(),next:safeNext(req.body.next)};req.session.csrfToken=crypto.randomBytes(32).toString('base64url');req.session.cookie.maxAge=10*60*1000;await save(req);return res.redirect('/account/2fa');}await establish(req,account);await recordCompletedLogin(account,false);await syncRequestPasswordAfterLogin(account.customerId,req.body.password);return res.redirect(safeNext(req.body.next));}catch(error){await runtimeSettings.ensureLoaded();const failure=publicError.present(error,{context:'Customer login failed',fallback:'Authentication temporarily unavailable. Please try again later.',status:401});return res.status(failure.status).render('customer/login',{error:failure.message,message:null,next:safeNext(req.body.next),csrfToken:csrf.token(req),siteName:runtimeSettings.siteName()});}});
  r.post('/account/2fa',twoFactorRouteLimit,twoFactorLoginRateLimit,async(req,res)=>{if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');const pending=req.session?.pendingCustomerAuth;if(!pending||Date.now()-Number(pending.startedAt||0)>10*60*1000){await destroy(req);return res.redirect('/account/login?session=expired');}const result=await twoFactor.verify(pending.account.userId,req.body.code);if(!result.ok){if(result.locked){await destroy(req);return res.redirect('/account/login?locked=1');}await save(req);return res.redirect('/account/2fa?error=1');}const destination=safeNext(pending.next),account=pending.account;await establish(req,account);await recordCompletedLogin(account,true);return res.redirect(destination);});
  r.post('/account/password',requireCustomer,(req,res)=>res.redirect('/account/security?error='+encodeURIComponent('Use Account Security to change your portal password; your current password is required.')));
  return r}
-module.exports={createCustomerLoginRouter,safeNext,establish,normalizeLoginIdentity,identityLoginRateLimit,twoFactorLoginRateLimit,recordCompletedLogin};
+module.exports={createCustomerLoginRouter,safeNext,establish,normalizeLoginIdentity,identityLoginRateLimit,twoFactorLoginRateLimit,recordCompletedLogin,syncRequestPasswordAfterLogin};
