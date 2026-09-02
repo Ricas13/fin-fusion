@@ -38,14 +38,16 @@ assert(danger.includes('uiDangerZone')&&danger.includes('btn-danger'),'danger zo
 const capability=read('public/css/admin-capability.css');
 const css=read('public/css/admin-ui-primitives.css');
 const visual=read('public/css/admin-visual-refinement.css');
+const tokens=read('public/css/admin-tokens.css');
 const legacyHead=read('views/admin/_head.ejs');
 assert(capability.includes("@import url('/css/admin-ui-primitives.css')"),'shared UI styles must load globally through the admin capability layer');
 for(const token of ['.uiSectionHeader','.uiEmptyState','.uiConfirmPanel','.uiDangerZone','@media(max-width:700px)'])assert(css.includes(token),`shared UI CSS missing ${token}`);
 assert(visual.includes('.workflowCardGrid{position:relative;top:auto;z-index:auto')&&visual.includes('display:flex!important')&&visual.includes('margin:0 0 18px'),'workflow navigation must remain compact and reserve normal-flow space below the admin header');
 assert(visual.includes('.workflowCard>span:not(.workflowCardEyebrow),.workflowCard>small{display:none}'),'compact workflow navigation must not expand into descriptive content cards');
 assert(visual.includes('.pageHeader + .operatorTabs{position:relative;top:auto;z-index:auto')&&visual.includes('margin:0 0 16px'),'top-level page tabs must stay in normal flow so they cannot overlap page content');
-assert(legacyHead.includes('--sidebar-w:248px'),'legacy EJS pages must use the same desktop sidebar width as the canonical admin shell');
-assert(legacyHead.includes('/css/admin-visual-refinement.css')&&legacyHead.includes('/css/admin-capability.css'),'legacy EJS pages must load shared refinement and operator-hero capability styles');
+assert(tokens.includes('--rail-w:240px')&&tokens.includes('--bar-h:56px'),'canonical admin tokens must own desktop shell geometry');
+assert(legacyHead.includes('--sidebar-w:var(--rail-w)')&&legacyHead.includes('--bar-h'),'legacy EJS pages must consume the same tokenized shell geometry');
+assert(legacyHead.includes('/css/admin-visual-refinement.css')&&legacyHead.includes('/css/admin-capability.css')&&legacyHead.includes('/css/admin-tokens.css'),'legacy EJS pages must load shared refinement, capability and token styles');
 assert(legacyHead.includes('.mainPane,.adminMain')&&legacyHead.includes('.content,.pageContent'),'legacy and canonical shell containers must share the same geometry rules');
 
 const integration=read('src/platform/admin-integration-card.js');
