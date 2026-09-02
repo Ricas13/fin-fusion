@@ -35,6 +35,7 @@ function cleanItemId(value){
   return id;
 }
 function ticksToSeconds(value){const n=Number(value);return Number.isFinite(n)&&n>=0?Math.floor(n/10000000):null;}
+function delay(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
 function playbackMethod(session){
   const value=String(session?.PlayState?.PlayMethod||'').toLowerCase();
   if(value==='directplay')return'Direct Play';
@@ -67,8 +68,10 @@ function primaryImageItem(item){
 function remoteAddress(value){
   const raw=String(value||'').trim();
   if(!raw)return null;
+  const mapped=raw.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?$/i);if(mapped)return mapped[1];
   if(raw.startsWith('[')){const end=raw.indexOf(']');return end>0?raw.slice(1,end):raw.slice(0,160);}
-  const ipv4WithPort=raw.match(/^(.+):(\d+)$/);return (ipv4WithPort&&ipv4WithPort[1].includes('.'))?ipv4WithPort[1]:raw.slice(0,160);
+  const ipv4WithPort=raw.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);if(ipv4WithPort)return ipv4WithPort[1];
+  return raw.slice(0,160);
 }
 
 async function managedAccounts(){
@@ -145,17 +148,40 @@ async function auditControl(req,action,target,detail={}){
   ]);
 }
 
+async function serverSessions(serverId){
+  const sessions=await registry.request(serverId,'/Sessions?activeWithinSeconds=180',{timeoutMs:5000});
+  if(!Array.isArray(sessions))throw new Error('Active sessions could not be revalidated.');
+  return sessions.filter(session=>session?.Id&&session?.NowPlayingItem);
+}
+async function stopManagedSession(target){
+  let directError=null;
+  try{await registry.request(target.server.id,`/Sessions/${encodeURIComponent(target.session.Id)}/Playing/Stop`,{method:'POST',timeoutMs:5000});}catch(error){directError=error;}
+  await delay(750);
+  let fresh=await serverSessions(target.server.id),still=fresh.find(row=>String(row.Id)===String(target.session.Id));
+  if(!still)return{method:'playback_stop',directError:directError?.message||null};
+  const deviceId=still.DeviceId||target.session.DeviceId||null;
+  if(!deviceId)throw new Error(directError?.message||'The client ignored the stop command and did not expose a safe device fallback.');
+  const sameDevice=fresh.filter(row=>String(row.Id)!==String(target.session.Id)&&String(row.DeviceId||'')===String(deviceId));
+  if(sameDevice.length)throw new Error('The client ignored Stop. CAPTAiNFiN did not sign the device out because another active stream is using the same device.');
+  await registry.request(target.server.id,`/Devices?id=${encodeURIComponent(deviceId)}`,{method:'DELETE',timeoutMs:5000});
+  await delay(750);fresh=await serverSessions(target.server.id);still=fresh.find(row=>String(row.Id)===String(target.session.Id));
+  if(still)throw new Error('The media server accepted Stop and device sign-out, but the stream is still active.');
+  return{method:'device_logout_fallback',directError:directError?.message||null};
+}
+
 async function controlSession(req,res){
   if(!csrf.verify(req))return res.status(403).json({error:'Invalid or expired security token.'});
   try{
     const target=await managedLiveSession(req.params.serverId,req.params.sessionId),action=String(req.body?.action||'').toLowerCase();
     const paused=Boolean(target.session?.PlayState?.IsPaused);
+    if(action==='stop'){
+      const stopped=await stopManagedSession(target);await auditControl(req,'admin.live_stream.stop',target,{previousPaused:paused,stopMethod:stopped.method,directStopError:stopped.directError});return res.json({ok:true,action,method:stopped.method});
+    }
     let endpoint,auditAction;
-    if(action==='stop'){endpoint=`/Sessions/${encodeURIComponent(target.session.Id)}/Playing/Stop`;auditAction='admin.live_stream.stop';}
-    else if(action==='pause'){if(paused)return res.json({ok:true,state:'paused'});endpoint=`/Sessions/${encodeURIComponent(target.session.Id)}/Playing/Pause`;auditAction='admin.live_stream.pause';}
+    if(action==='pause'){if(paused)return res.json({ok:true,state:'paused'});endpoint=`/Sessions/${encodeURIComponent(target.session.Id)}/Playing/Pause`;auditAction='admin.live_stream.pause';}
     else if(action==='resume'){if(!paused)return res.json({ok:true,state:'playing'});endpoint=`/Sessions/${encodeURIComponent(target.session.Id)}/Playing/Unpause`;auditAction='admin.live_stream.resume';}
     else return res.status(400).json({error:'Choose pause, resume or stop.'});
-    if(action!=='stop'&&target.session.SupportsMediaControl!==true)return res.status(409).json({error:'This client does not advertise pause/resume control.'});
+    if(target.session.SupportsMediaControl!==true)return res.status(409).json({error:'This client does not advertise pause/resume control.'});
     await registry.request(target.server.id,endpoint,{method:'POST',timeoutMs:5000});
     await auditControl(req,auditAction,target,{previousPaused:paused});
     return res.json({ok:true,action});
@@ -194,11 +220,11 @@ function renderLiveStreamsPanel(req){
 function createAdminDashboardLiveStreamsRouter(){
   const router=express.Router();router.use('/admin/live-streams',gate,noStore);
   router.get('/admin/live-streams',readLimit,async(_req,res,next)=>{try{return res.json(await liveSessionsSnapshot());}catch(error){return next(error);}});
-  router.get('/admin/live-streams/server/:serverId/item/:itemId/primary-image',readLimit,primaryImage);
-  router.post('/admin/live-streams/server/:serverId/session/:sessionId/control',writeLimit,controlSession);
-  router.post('/admin/live-streams/server/:serverId/session/:sessionId/message',writeLimit,messageSession);
+  router.get('/admin/live-streams/server/:serverId/item/:itemId/primary-image',readLimit,(req,res)=>primaryImage(req,res));
+  router.post('/admin/live-streams/server/:serverId/session/:sessionId/control',writeLimit,(req,res)=>controlSession(req,res));
+  router.post('/admin/live-streams/server/:serverId/session/:sessionId/message',writeLimit,(req,res)=>messageSession(req,res));
   router.use('/admin/live-streams',(_error,_req,res,_next)=>{if(res.headersSent)return;return res.status(500).json({error:'Live stream controls are temporarily unavailable.'});});
   return router;
 }
 
-module.exports={createAdminDashboardLiveStreamsRouter,renderLiveStreamsPanel,liveSessionsSnapshot,normalizeLiveSession,managedLiveSession,controlSession,messageSession,resolutionLabel,ticksToSeconds,cleanSessionId,cleanText};
+module.exports={createAdminDashboardLiveStreamsRouter,renderLiveStreamsPanel,liveSessionsSnapshot,normalizeLiveSession,managedLiveSession,controlSession,messageSession,stopManagedSession,resolutionLabel,ticksToSeconds,cleanSessionId,cleanText,remoteAddress};
