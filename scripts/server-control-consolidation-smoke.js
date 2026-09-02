@@ -28,9 +28,11 @@ assert(libraries.includes('/admin/servers?message=') && libraries.includes('#ser
 
 assert(!serverTabs.includes("['libraries','Libraries'"), 'per-server tabs must not expose a separate Libraries workflow');
 assert(navModel.hiddenPages['fleet-operations']?.parentKey==='servers' && navModel.hiddenPages.libraries?.parentKey==='servers', 'Placement and Libraries compatibility routes must remain owned by the consolidated Servers control surface');
-assert.deepStrictEqual(navModel.childPages('servers').map(page=>page[1]), ['Fleet dashboard','Placement & capacity'], 'durable Servers tools must be discoverable as nested sidebar destinations without the scan-only Libraries utility');
+assert.deepStrictEqual(navModel.childPages('servers'), [], 'Servers rail must stay two levels deep');
+assert.deepStrictEqual(navModel.viewsFor('servers').map(page=>page[1]), ['Fleet dashboard','Placement & capacity'], 'durable Servers views must stay discoverable from their parent without becoming rail children');
+assert(navModel.relatedPages('servers').some(page=>page[0]==='libraries'), 'Libraries must remain discoverable as a parent-owned related page');
 assert(navModel.SIDEBAR_EXCLUDED_CHILDREN.has('libraries'), 'Libraries must remain a direct compatibility utility without occupying permanent sidebar navigation');
-assert(navModel.aliases.operations==='servers' && !navModel.aliases['fleet-operations'] && !navModel.aliases.libraries, 'legacy Operations may resolve to Servers while nested Placement/Libraries retain exact active identity');
+assert(navModel.aliases.operations==='servers' && !navModel.aliases['fleet-operations'] && !navModel.aliases.libraries, 'legacy Operations may resolve to Servers while Placement/Libraries retain exact contextual identity');
 
 assert(capability.includes("@import url('/css/admin-server-control.css')"), 'shared admin shell must load server control styling');
 assert(css.includes('.serverControlTable') && css.includes('.serverControlOverview') && css.includes('.serverAdvancedGrid'), 'consolidated Servers needs dedicated compact layout contracts');
