@@ -96,7 +96,12 @@ function servicePasswordFragment(req,state){
     return `<section class="servicePasswordBlock" id="service-passwords"><div class="servicePasswordHeading"><div class="eyebrow">Credentials</div><h2>Service passwords</h2><p>Jellyfin, Emby and Overseerr passwords are independent from your portal password and from each other.</p></div><div class="servicePasswordGrid">${mediaCards}${requestCard}</div></section>`;
 }
 
-function redirectWith(res,path,key,value,hash=''){return res.redirect(`${path}?${key}=${encodeURIComponent(value)}${hash?`#${encodeURIComponent(hash)}`:''}`);}
+function redirectWith(res,path,key,message,hash=''){
+    const params=new URLSearchParams();
+    params.set(key,String(message));
+    const anchor=hash?'#'+encodeURIComponent(hash):'';
+    return res.redirect(path+'?'+params.toString()+anchor);
+}
 
 function createCustomerPasswordSyncRouter(){
     const router=express.Router();
