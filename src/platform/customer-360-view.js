@@ -43,11 +43,12 @@ function body(detail,tab,token,accessDetail,options={}){
   // Render only Customer 360's shared hero/summary/tab chrome. The old Access
   // implementation is deliberately skipped so the card workspace below is the
   // single owner of Jellyfin policy, libraries, history and activity on this tab.
+  // Portal onboarding remains owned by Overview/claim workflows; duplicating it
+  // here creates competing account-management surfaces.
   const chrome=v2.body(safe,'access',token,accessDetail,{...options,skipAccessSections:true});
   const status=accessStatus.render(safe,token);
-  const portal=manage.portalSection(safe,token,options.activationInfo);
-  if(type==='stremio')return chrome+status+portal+stremioAccessPanel(safe)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+stremioInstallSection(safe,token,options);
-  const jellyfin=chrome+status+portal+stripLegacyReconcileForms(accessCards.render(safe,token,accessDetail,options),safe.customer.id);
+  if(type==='stremio')return chrome+status+stremioAccessPanel(safe)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+stremioInstallSection(safe,token,options);
+  const jellyfin=chrome+status+stripLegacyReconcileForms(accessCards.render(safe,token,accessDetail,options),safe.customer.id);
   return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
