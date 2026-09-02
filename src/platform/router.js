@@ -43,6 +43,7 @@ const { createCustomerSecurityRouter } = require('./customer-security');
 const { createCustomerStremioRouter } = require('./customer-stremio');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerLibrarySelectionRouter } = require('./customer-library-selection');
+const { createCustomerJellyfinRouter } = require('./customer-jellyfin');
 const { createCustomerDashboardRouter } = require('./customer-dashboard');
 const { createCustomerSupportRouter } = require('./customer-support');
 const { createCustomerDocsRouter } = require('./customer-docs');
@@ -81,6 +82,7 @@ function createRouter() {
     router.use(createCustomerStremioRouter());
     router.use(createCustomerAffiliateRouter());
     router.use(createCustomerLibrarySelectionRouter());
+    router.use(createCustomerJellyfinRouter());
     router.use(createCustomerDashboardRouter());
     router.use(createCustomerSupportRouter());
     router.use(createCustomerDocsRouter());
