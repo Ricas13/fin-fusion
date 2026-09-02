@@ -28,8 +28,11 @@ assert(progressiveShell.includes('/js/admin-rail.js'),'admin shell must load the
 assert(!progressiveShell.includes('/js/admin-sidebar-nav.js'),'retired sidebar controller must not be loaded alongside the unified rail');
 
 const legacyNav=read('views/admin/_nav.ejs');
+const navSource=read('src/platform/admin-nav.js');
 const navRegistry=require('../src/platform/admin-nav');
-assert(legacyNav.includes("require(process.cwd() + '/src/platform/admin-html-core-base')")&&legacyNav.includes('adminCore.header(activeNav, siteName)'),'legacy EJS screens must render the exact canonical rail markup');
+assert(legacyNav.includes('adminNavGroupFor.renderHeader(activeNav, siteName)'),'legacy EJS screens must render through the canonical server-provided header');
+assert(navSource.includes("Object.defineProperty(groupFor,'renderHeader'")&&navSource.includes("require('./admin-html-core-base').header(active,site)"),'legacy EJS compatibility bridge must resolve the canonical header lazily');
+assert(!legacyNav.includes('require('),'legacy EJS partial must not import CommonJS modules at render time');
 assert(!legacyNav.includes('iconPaths')&&!legacyNav.includes('adminSubTab'),'legacy EJS rail must not duplicate icons or third-level navigation');
 assert.deepStrictEqual(navRegistry.childPages('activity'),[],'Playback must not render third-level rail children');
 assert(navRegistry.settingsFor('activity').some(page=>page[0]==='inactivity-policy'),'Playback inactivity rules must remain discoverable as a parent-owned setting');
