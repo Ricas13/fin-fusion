@@ -29,12 +29,6 @@
     const title=document.querySelector('.pageHeader h1');if(title)title.textContent='Stremio sources';
     const subtitle=document.querySelector('.pageHeader .pageSubtitle');if(subtitle)subtitle.textContent='Choose the Jellyfin libraries Stremio can use, then connect them to plans.';
 
-    const banner=document.querySelector('.capabilityPage > .statusBanner');
-    if(banner){
-      banner.className='stremioFlowOverview';
-      banner.innerHTML='<div><strong>Choose where Stremio can find your library.</strong><span>CAPTAiNFiN Jellyfin servers can be included directly. External Jellyfin servers are optional fallbacks when you need them.</span></div><details><summary>How playback is delivered</summary><p>CAPTAiNFiN finds matching titles and returns the appropriate Jellyfin result to Stremio. Playback goes directly between Stremio and Jellyfin; video is not proxied through the CAPTAiNFiN portal. Stremio access remains unlimited by device and simultaneous stream, subject to each plan\'s household-connection allowance.</p></details>';
-    }
-
     const statLabels={
       'Runtime':'Stremio service',
       'Managed sources':'CAPTAiNFiN servers',

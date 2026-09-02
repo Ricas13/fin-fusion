@@ -120,7 +120,7 @@ async function main(){
     let stremioText=await page.locator('body').innerText();
     assert(/CAPTAiNFiN Jellyfin servers/.test(stremioText)&&/External Jellyfin fallbacks/.test(stremioText),'Stremio Sources must expose managed servers and external fallbacks');
     assert(/Add external Jellyfin source/.test(stremioText),'Stremio Sources is missing the independent external-source workflow');
-    assert(/Choose where Stremio can find your library/.test(stremioText),'Stremio Sources must explain its normal operator task in plain language');
+    assert(!/Choose where Stremio can find your library/.test(stremioText)&&!/How playback is delivered/.test(stremioText),'Stremio Sources must not restore the retired explainer banner');
     assert(/Household IP leases/.test(stremioText),'Stremio Sources must expose household lease operations');
     assert.equal(await page.locator('.stremioJourneyStep').count(),0,'Stremio Sources must not render the retired setup journey cards');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio'],'The single permanent Stremio sidebar destination must remain active on source management');
