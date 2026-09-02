@@ -4,7 +4,7 @@
 @import url('/css/admin-ui-primitives.css');
 @import url('/css/admin-accessibility-mobile.css');
 @import url('/css/admin-command-palette.css');
-@import url('/css/admin-stremio-journey.css?v=20260902-header-cleanup');
+@import url('/css/admin-stremio-journey.css');
 @import url('/css/admin-release-status.css');
 @import url('/css/admin-backup-recovery.css');
 @import url('/css/admin-adaptive-plans.css');
@@ -27,3 +27,20 @@
    grid-template-columns:repeat(5,minmax(0,1fr)) and then collapse responsively. */
 /* Keep real KPI content above any legacy/dashboard decorative layer. */
 .analyticsKpi>*{position:relative;z-index:2}
+
+/* Retired Stremio source header chrome must stay out of the visible layout.
+   Success/error notices are separate .notice elements and remain visible. */
+.stremioJourney,
+.stremioFlowOverview,
+.capabilityPage:has(form[action="/admin/servers/stremio/runtime"])>.statusBanner{
+  position:absolute!important;
+  inline-size:1px!important;
+  block-size:1px!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  overflow:hidden!important;
+  clip-path:inset(50%)!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
