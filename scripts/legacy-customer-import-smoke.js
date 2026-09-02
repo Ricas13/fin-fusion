@@ -61,7 +61,7 @@ const overlapCandidate = { start: new Date('2026-07-22T00:00:00Z'), end: new Dat
 const localPartial = { id: 'local-year', plan_id: 'year', source: 'migration', status: 'active', provider_subscription_id: null, effective_price_minor: 6000, starts_at: new Date('2026-07-22T00:00:00Z'), current_period_end: new Date('2027-01-22T00:00:00Z') };
 assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'year', [localPartial]).kind, 'extend', 'same-plan local paid access may be safely extended to the trusted legacy expiry');
 assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'six', [localPartial]).kind, 'review', 'a different-plan overlap must remain manual review');
-const liveRecurring = { ...localPartial, id: 'stripe-live', source: 'stripe', provider_subscription_id: 'sub_live_123', status: 'active' };
+const liveRecurring = { ...localPartial, id: 'stripe-live', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_live_123', status: 'active' };
 assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'year', [liveRecurring]).kind, 'covered_recurring', 'verified recurring provider access must never be overwritten by CSV migration');
 const duplicateLocal = { ...localPartial, id: 'local-year-2' };
 assert.strictEqual(legacy.existingPaidDecision(overlapCandidate, 'year', [localPartial, duplicateLocal]).kind, 'review', 'multiple local paid overlaps must never be guessed');
