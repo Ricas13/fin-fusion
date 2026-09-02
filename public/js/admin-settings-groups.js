@@ -141,6 +141,17 @@
     return advanced;
   }
 
+  function ensureFormAdvanced(card, form, id, summaryText) {
+    if (!card || !form) return null;
+    const existing = [...form.children].find(child => child.matches?.('details.adminSettingsCardAdvanced'));
+    if (existing) return existing;
+    const advanced = disclosure(id, 'Advanced Settings', summaryText, 'Expand');
+    advanced.classList.add('adminSettingsCardAdvanced');
+    const anchor = form.querySelector(':scope > .buttonRow, :scope > button.button');
+    if (anchor) form.insertBefore(advanced, anchor); else form.append(advanced);
+    return advanced;
+  }
+
   function queryNoticeForServerPage() {
     if (!/^\/admin\/servers\/[0-9a-f-]{36}\/edit$/i.test(location.pathname)) return;
     const params = new URLSearchParams(location.search);
@@ -276,10 +287,53 @@
     if (!grid || grid.dataset.settingsGrouped === '1') return;
     grid.dataset.settingsGrouped = '1';
 
-    for (const card of grid.querySelectorAll(':scope > .planConfigCard')) {
-      markBasic(card, 'Normal plan controls stay visible.');
+    const cards = [...grid.querySelectorAll(':scope > .planConfigCard, :scope > .requestPlanCard')];
+    for (const card of cards) markBasic(card, 'Normal plan controls stay visible.');
+
+    const productCard = document.getElementById('product') || (() => {
+      const commerce = document.getElementById('commerce');
+      return commerce?.querySelector('form input[name="name"]') ? commerce : null;
+    })();
+    const productForm = productCard?.querySelector(':scope > form');
+    if (productForm) {
+      const productAdvanced = ensureFormAdvanced(productCard, productForm, `${productCard.id}-advanced-settings`, 'Storefront copy, catalogue details and Discord role mapping.');
+      const productAdvancedBody = bodyOf(productAdvanced);
+      for (const selector of ['textarea[name="description"]', 'input[name="feature1"]', '[name="discordRoleId"]']) moveField(productForm, productAdvancedBody, selector);
+      moveBlock(productForm, productAdvancedBody, ':scope > .toggleGrid');
+    }
+
+    const lifecycleCard = document.getElementById('lifecycle');
+    const lifecycleForm = lifecycleCard?.querySelector(':scope > form');
+    if (lifecycleForm?.querySelector('input[name="noPlaybackDays"], input[name="enabled"]')) {
+      const lifecycleAdvanced = ensureFormAdvanced(lifecycleCard, lifecycleForm, 'lifecycle-advanced-settings', 'Free-user inactivity triggers and observation thresholds.');
+      const lifecycleAdvancedBody = bodyOf(lifecycleAdvanced);
+      moveBlock(lifecycleForm, lifecycleAdvancedBody, ':scope > .operatorCallout:not(.statusInfo)');
+      moveBlock(lifecycleForm, lifecycleAdvancedBody, ':scope > .planPermissionGrid');
+      moveBlock(lifecycleForm, lifecycleAdvancedBody, ':scope > .formGrid');
+    }
+
+    const sourcesCard = document.getElementById('sources');
+    const sourcesForm = sourcesCard?.querySelector(':scope > form');
+    if (sourcesForm?.querySelector(':scope > .planServerChoices')) {
+      const sourcesAdvanced = ensureFormAdvanced(sourcesCard, sourcesForm, 'sources-advanced-settings', 'Additional source selection and source priority.');
+      const sourcesAdvancedBody = bodyOf(sourcesAdvanced);
+      moveBlock(sourcesForm, sourcesAdvancedBody, ':scope > .planServerChoices');
+      moveBlock(sourcesForm, sourcesAdvancedBody, ':scope > .buttonRow');
+    }
+
+    for (const card of cards) {
+      if (card.querySelector('.adminSettingsCardAdvanced')) continue;
       const existing = card.querySelector('details.planCardDetails');
       if (existing) promoteExistingAdvanced(card, `${card.id || 'card'}-advanced-settings`, 'Specialist controls for this card');
+    }
+
+    const requestCard = document.getElementById('requests');
+    const requestAdvanced = requestCard?.querySelector('details.adminSettingsCardAdvanced');
+    const requestAdvancedBody = bodyOf(requestAdvanced);
+    if (requestAdvancedBody) {
+      for (const details of requestCard.querySelectorAll('details.planCardDetails')) {
+        if (details !== requestAdvanced && !requestAdvanced.contains(details)) requestAdvancedBody.append(details);
+      }
     }
 
     const accessCard = document.getElementById('access');
@@ -298,6 +352,11 @@
     const element = form.querySelector(selector);
     const group = element?.closest('.formGroup, .toggleRow, .securityNote');
     if (group && !advancedBody.contains(group)) advancedBody.append(group);
+  }
+
+  function moveBlock(form, advancedBody, selector) {
+    const element = form?.querySelector(selector);
+    if (element && advancedBody && !advancedBody.contains(element)) advancedBody.append(element);
   }
 
   async function serverMessagePanel(serverId, beforeNode) {
@@ -335,7 +394,7 @@
       const timeoutGroup = formGroup('Display time', timeout);
       timeoutGroup.append(node('div', 'inlineHelp', `Seconds before ${providerLabel} dismisses the pop-up.`));
       const fields = node('div', 'formGrid'); fields.append(audience, titleGroup, textGroup, timeoutGroup); form.append(fields);
-      const row = node('div', 'buttonRow'); const submit = node('button', 'button', 'Send message'); submit.type = 'submit'; row.append(submit); form.append(row); formPanel.append(form);
+      const row = node('div', 'buttonRow'); const submit = node('button', 'button secondary', 'Send message'); submit.type = 'submit'; row.append(submit); form.append(row); formPanel.append(form);
     } catch (error) {
       formPanel.append(node('div', 'notice error', error.message || 'Active media-server sessions could not be loaded.'));
     }
