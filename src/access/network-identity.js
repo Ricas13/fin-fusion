@@ -3,6 +3,42 @@
 const crypto = require('crypto');
 const net = require('net');
 
+// Cloudflare's published origin-facing proxy ranges. Keep this list in sync with
+// https://www.cloudflare.com/ips/. These are used only to decide whether a
+// Cloudflare visitor-IP header is trustworthy; arbitrary clients cannot opt in
+// by sending CF-Connecting-IP themselves.
+const CLOUDFLARE_CIDRS = Object.freeze([
+  '103.21.244.0/22',
+  '103.22.200.0/22',
+  '103.31.4.0/22',
+  '104.16.0.0/13',
+  '104.24.0.0/14',
+  '108.162.192.0/18',
+  '131.0.72.0/22',
+  '141.101.64.0/18',
+  '162.158.0.0/15',
+  '172.64.0.0/13',
+  '173.245.48.0/20',
+  '188.114.96.0/20',
+  '190.93.240.0/20',
+  '197.234.240.0/22',
+  '198.41.128.0/17',
+  '2400:cb00::/32',
+  '2606:4700::/32',
+  '2803:f800::/32',
+  '2405:b500::/32',
+  '2405:8100::/32',
+  '2a06:98c0::/29',
+  '2c0f:f248::/32'
+]);
+
+const cloudflareProxies = new net.BlockList();
+for (const cidr of CLOUDFLARE_CIDRS) {
+  const [address, prefixRaw] = cidr.split('/');
+  const family = net.isIP(address);
+  cloudflareProxies.addSubnet(address, Number(prefixRaw), family === 4 ? 'ipv4' : 'ipv6');
+}
+
 function stripPort(value) {
   let raw = String(value || '').trim();
   if (!raw) return '';
@@ -79,8 +115,46 @@ function hashNetwork(value, options = {}) {
   return crypto.createHmac('sha256', secret).update(descriptor.canonical).digest('hex');
 }
 
-function requestAddress(req) {
-  return stripPort(req?.ip || req?.socket?.remoteAddress || '');
+function isCloudflareAddress(value) {
+  const address = stripPort(value);
+  const family = net.isIP(address);
+  if (!family) return false;
+  return cloudflareProxies.check(address, family === 4 ? 'ipv4' : 'ipv6');
 }
 
-module.exports = { stripPort, expandIpv6, canonicalNetwork, networkDescriptor, hashSecret, hashNetwork, requestAddress };
+function requestHeader(req, name) {
+  const direct = req?.headers?.[name];
+  if (Array.isArray(direct)) return direct.length === 1 ? String(direct[0] || '') : '';
+  return String(direct || '');
+}
+
+function requestAddress(req) {
+  // req.ip is intentionally the trust boundary here. With CAPTAiNFiN's default
+  // local/Docker trust-proxy setting, a Cloudflare-proxied request resolves to
+  // the Cloudflare edge address. Only in that case may Cloudflare's visitor-IP
+  // headers replace it. A direct request carrying a forged CF-Connecting-IP is
+  // ignored because its req.ip is not in a Cloudflare origin-facing range.
+  const effectiveAddress = stripPort(req?.ip || req?.socket?.remoteAddress || '');
+  if (!isCloudflareAddress(effectiveAddress)) return effectiveAddress;
+
+  // If Pseudo IPv4 is configured to overwrite headers, Cloudflare preserves the
+  // real IPv6 visitor in CF-Connecting-IPv6. Prefer it so the existing /64
+  // household normalization continues to represent the real IPv6 network.
+  const connectingIpv6 = stripPort(requestHeader(req, 'cf-connecting-ipv6'));
+  if (net.isIP(connectingIpv6) === 6) return connectingIpv6;
+
+  const connectingIp = stripPort(requestHeader(req, 'cf-connecting-ip'));
+  return net.isIP(connectingIp) ? connectingIp : effectiveAddress;
+}
+
+module.exports = {
+  CLOUDFLARE_CIDRS,
+  stripPort,
+  expandIpv6,
+  canonicalNetwork,
+  networkDescriptor,
+  hashSecret,
+  hashNetwork,
+  isCloudflareAddress,
+  requestAddress
+};
