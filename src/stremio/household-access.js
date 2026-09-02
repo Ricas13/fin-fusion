@@ -51,24 +51,34 @@ function leaseOptions(entitlement, component, address, options = {}) {
   };
 }
 
+function networkUnavailableDecision() {
+  return { allowed: false, decision: 'network_unavailable', retryAfterSeconds: 60 };
+}
+
 async function claim(entitlement, req, options = {}) {
-  const { component } = await configForEntitlement(entitlement);
   const address = networkIdentity.requestAddress(req);
+  if (!networkIdentity.isPublicAddress(address)) return networkUnavailableDecision();
+  const { component } = await configForEntitlement(entitlement);
   return leases.claim(leaseOptions(entitlement, component, address, options));
 }
 
 async function preview(entitlement, req, options = {}) {
   const address = networkIdentity.requestAddress(req);
-  if (!networkIdentity.networkDescriptor(address)) return { allowed: true, decision: 'unknown_network' };
+  if (!networkIdentity.isPublicAddress(address)) return networkUnavailableDecision();
   const { component } = await configForEntitlement(entitlement);
   return leases.preview(leaseOptions(entitlement, component, address, options));
 }
 
-function deniedTitle() {
-  return 'Household IP limit reached';
+function deniedTitle(decision) {
+  return decision?.decision === 'network_unavailable'
+    ? 'Household IP could not be verified'
+    : 'Household IP limit reached';
 }
 
-function deniedMessage(_decision) {
+function deniedMessage(decision) {
+  if (decision?.decision === 'network_unavailable') {
+    return 'CAPTAiNFiN could not verify this connection\'s public household IP. Playback is blocked rather than sharing a proxy address between customers. Try again shortly or contact support if this continues.';
+  }
   return 'This Stremio plan has already reached its allowed household internet connections. Connect from a registered household connection, wait until a connection can be replaced automatically, or change your household connection from your account when eligible.';
 }
 
@@ -84,7 +94,7 @@ function blockedMediaIsWebReady(value) {
 }
 
 function deniedStream(decision, options = {}) {
-  const title = deniedTitle();
+  const title = deniedTitle(decision);
   const description = deniedMessage(decision);
   const url = options.url ? String(options.url) : '';
   const stream = {
@@ -111,7 +121,7 @@ function applyDeniedResponse(res, decision) {
   const retry = Math.max(1, Number(decision?.retryAfterSeconds || 60));
   res.setHeader('Retry-After', String(retry));
   res.setHeader('X-CAPTAiNFiN-429-Reason', 'household_network');
-  return res.status(429).json({ error: deniedTitle(), message: deniedMessage(decision) });
+  return res.status(429).json({ error: deniedTitle(decision), message: deniedMessage(decision) });
 }
 
 async function replacementStateWithComponent(entitlement, component, { client = null } = {}) {
@@ -161,4 +171,4 @@ async function release(entitlement, { actorUserId = null, reason = 'manual_reset
   });
 }
 
-module.exports = { planForEntitlement, subjectKey, configForEntitlement, claim, preview, deniedTitle, deniedMessage, blockedMediaIsWebReady, deniedStream, applyDeniedResponse, replacementState, replacementStateWithComponent, cooldownMessage, release };
+module.exports = { planForEntitlement, subjectKey, configForEntitlement, leaseOptions, networkUnavailableDecision, claim, preview, deniedTitle, deniedMessage, blockedMediaIsWebReady, deniedStream, applyDeniedResponse, replacementState, replacementStateWithComponent, cooldownMessage, release };
