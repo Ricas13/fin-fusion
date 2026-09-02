@@ -32,6 +32,8 @@ assert(freeIndex>=0&&jellyfinIndex>freeIndex&&embyIndex>jellyfinIndex&&stremioIn
 assert(!plansList.includes('Historical subscribers'),'Plans table must not restore the historical-subscriber column');
 assert(plansList.includes('Customer availability')&&plansList.includes('customers} ${plural(customers,\'customer\')} on this plan'),'Plans capacity must be presented in customer terms');
 assert(plansList.includes('planActionsCell')&&plansList.includes('planActionsRow'),'Plans table must reserve the reclaimed column width for one-line actions');
+assert(plansList.includes("readiness.catalogueState(plan).key === 'hidden'")&&plansList.includes('planHiddenDisclosureRow')&&plansList.includes('planHiddenPlanRow'),'Hidden catalogue plans must remain in their service-family table behind a collapsed disclosure row');
+assert(plansList.includes('Show hidden plans')&&plansList.includes('Hide hidden plans')&&plansList.includes('planHiddenToggle:checked'),'Hidden-plan disclosure must clearly expose expand and collapse states without removing the underlying rows');
 assert(plansList.includes('Historical Bundles / Add-ons'), 'historical bundle/add-on rows must be isolated from current plan families');
 assert(!operatorExperience.includes("['Bundles','/admin/plans?type=bundle']"), 'client-side bundle plan tabs must not be reintroduced');
 assert(createPlan.includes("const SERVICE_TYPES = ['jellyfin', 'stremio']"), 'shared new-plan creation must remain limited to Jellyfin and Stremio while Emby uses its dedicated editor');
