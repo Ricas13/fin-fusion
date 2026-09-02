@@ -14,7 +14,6 @@ const groups=Object.freeze([
 
 const hiddenPages=Object.freeze({
   search:Object.freeze({kind:'page',groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['search','Search','/admin/search'])}),
-  attention:Object.freeze({kind:'page',groupKey:'dashboard',parentKey:'dashboard',page:Object.freeze(['attention','Needs Attention','/admin/attention'])}),
 
   'servers-dashboard':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['servers-dashboard','Fleet dashboard','/admin/servers/dashboard'])}),
   'fleet-operations':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['fleet-operations','Placement & capacity','/admin/servers/operations'])}),
