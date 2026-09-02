@@ -7,12 +7,10 @@ const csrf=require('../auth/csrf');
 const routeRateLimit=require('../security/route-rate-limit');
 const registry=require('../jellyfin/registry');
 const mediaProvider=require('../media-servers/provider');
-const outbound=require('../security/outbound-url-policy');
 
 const surfaceLimit=rateLimit({windowMs:60000,limit:300,standardHeaders:'draft-8',legacyHeaders:false,message:{error:'Too many live-stream requests. Try again shortly.'}});
 const readLimit=routeRateLimit.middleware({scope:'admin-dashboard-live-streams-read',max:120,windowSeconds:60,reason:'admin_dashboard_live_streams_read'});
 const writeLimit=routeRateLimit.middleware({scope:'admin-dashboard-live-streams-control',max:60,windowSeconds:60,reason:'admin_dashboard_live_streams_control'});
-const MAX_IMAGE_BYTES=5*1024*1024;
 
 function gate(req,res,next){
   if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();
@@ -29,11 +27,6 @@ function cleanText(value,max,label){
 function cleanSessionId(value){
   const id=String(value||'').trim();
   if(!id||id.length>256||/[\u0000-\u001f\u007f/\\]/.test(id))throw new Error('Invalid media session.');
-  return id;
-}
-function cleanItemId(value){
-  const id=String(value||'').trim();
-  if(!id||id.length>160||!/^[-A-Za-z0-9_:.]+$/.test(id))throw new Error('Invalid media item.');
   return id;
 }
 function ticksToSeconds(value){const n=Number(value);return Number.isFinite(n)&&n>=0?Math.floor(n/10000000):null;}
@@ -61,12 +54,6 @@ function episodeCode(item){
   return `${Number.isFinite(season)?`S${String(season).padStart(2,'0')}`:''}${Number.isFinite(episode)?` E${String(episode).padStart(2,'0')}`:''}`.trim();
 }
 function mediaStreams(item){return Array.isArray(item?.MediaStreams)?item.MediaStreams:[];}
-function primaryImageItem(item){
-  if(item?.SeriesId&&item?.SeriesPrimaryImageTag)return String(item.SeriesId);
-  if(item?.ParentId&&item?.ParentPrimaryImageTag)return String(item.ParentId);
-  if(item?.Id&&(item?.ImageTags?.Primary||item?.PrimaryImageTag))return String(item.Id);
-  return null;
-}
 function remoteAddress(value){
   const raw=String(value||'').trim();
   if(!raw)return null;
@@ -102,7 +89,6 @@ function normalizeLiveSession(server,account,session){
   const title=item.SeriesName||item.Name||'Playing media',ep=episodeCode(item),subtitle=String(item.Type||'').toLowerCase()==='episode'
     ? [ep,item.Name].filter(Boolean).join(' · ')
     : [item.ProductionYear].filter(Boolean).join('');
-  const imageItemId=primaryImageItem(item);
   const transcodeReasons=Array.isArray(trans.TranscodeReasons)?trans.TranscodeReasons.map(String):[];
   return{
     serverId:String(server.id),serverName:String(server.name||'Media server'),service:mediaProvider.label(server.media_server_type||'jellyfin'),
@@ -112,8 +98,7 @@ function normalizeLiveSession(server,account,session){
     remoteAddress:remoteAddress(session.RemoteEndPoint),isLocal:Boolean(session.IsLocal),paused:Boolean(session?.PlayState?.IsPaused),supportsControl:session.SupportsMediaControl===true,
     method:playbackMethod(session),positionSeconds:position,durationSeconds:duration,progressPercent:duration&&position!=null?Math.max(0,Math.min(100,position/duration*100)):null,
     bitrate:Number(trans.Bitrate||item.Bitrate||0)||null,width,height,resolution:resolutionLabel(width,height),videoCodec:video.Codec?String(video.Codec).toUpperCase():null,audioCodec:audio.Codec?String(audio.Codec).toUpperCase():null,audioChannels:Number(audio.Channels||0)||null,
-    transcodeReasons,lastActivityAt:session.LastActivityDate||null,
-    imageUrl:imageItemId?`/admin/live-streams/server/${encodeURIComponent(server.id)}/item/${encodeURIComponent(imageItemId)}/primary-image`:null
+    transcodeReasons,lastActivityAt:session.LastActivityDate||null
   };
 }
 
@@ -200,21 +185,6 @@ async function messageSession(req,res){
   }catch(error){return res.status(409).json({error:error.message||'Message could not be sent.'});}
 }
 
-async function primaryImage(req,res){
-  try{
-    const itemId=cleanItemId(req.params.itemId),server=await registry.getServerSecret(req.params.serverId);
-    if(!server||!server.enabled)return res.status(404).end();
-    const endpoint=`/Items/${encodeURIComponent(itemId)}/Images/Primary?maxWidth=240&quality=85`,url=mediaProvider.apiUrl(server.base_url,server.media_server_type,endpoint);
-    const response=await outbound.safeFetch(url,{purpose:`${mediaProvider.label(server.media_server_type)} artwork for admin live streams`,method:'GET',timeoutMs:5000,headers:{...registry.authHeaders(server.apiKey,{mediaServerType:server.media_server_type}),Accept:'image/*'}});
-    if(!response.ok)return res.status(response.status===404?404:502).end();
-    const contentType=String(response.headers.get('content-type')||'');
-    if(!contentType.toLowerCase().startsWith('image/'))return res.status(502).end();
-    const declared=Number(response.headers.get('content-length')||0);if(declared>MAX_IMAGE_BYTES)return res.status(413).end();
-    const bytes=Buffer.from(await response.arrayBuffer());if(bytes.length>MAX_IMAGE_BYTES)return res.status(413).end();
-    res.setHeader('Content-Type',contentType);res.setHeader('Cache-Control','private, max-age=60');return res.send(bytes);
-  }catch(_){return res.status(404).end();}
-}
-
 function renderLiveStreamsPanel(req){
   return `<link rel="stylesheet" href="/css/admin-dashboard-live-streams.css"><section class="adminLiveStreams" data-admin-live-streams data-csrf-token="${csrf.token(req)}" aria-live="polite"><div class="adminLiveStreamsHeader"><div><span class="adminLiveStreamsEyebrow">Live playback</span><div class="adminLiveStreamsHeading"><span class="adminLiveStreamsPulse" aria-hidden="true"></span><h2>Now Playing</h2><span class="adminLiveStreamsCount" data-live-stream-count>Loading…</span></div></div><div class="adminLiveStreamsHeaderMeta" data-live-stream-meta>Across enabled Jellyfin and Emby servers</div></div><div class="notice error adminLiveStreamsError" data-live-stream-error hidden></div><div class="adminLiveStreamsGrid" data-live-stream-grid><div class="adminLiveStreamsLoading">Loading active streams…</div></div></section><script src="/js/admin-dashboard-live-streams.js" defer></script>`;
 }
@@ -222,7 +192,6 @@ function renderLiveStreamsPanel(req){
 function createAdminDashboardLiveStreamsRouter(){
   const router=express.Router();router.use('/admin/live-streams',surfaceLimit,gate,noStore);
   router.get('/admin/live-streams',readLimit,async(_req,res,next)=>{try{return res.json(await liveSessionsSnapshot());}catch(error){return next(error);}});
-  router.get('/admin/live-streams/server/:serverId/item/:itemId/primary-image',readLimit,(req,res)=>primaryImage(req,res));
   router.post('/admin/live-streams/server/:serverId/session/:sessionId/control',writeLimit,(req,res)=>controlSession(req,res));
   router.post('/admin/live-streams/server/:serverId/session/:sessionId/message',writeLimit,(req,res)=>messageSession(req,res));
   router.use('/admin/live-streams',(_error,_req,res,_next)=>{if(res.headersSent)return;return res.status(500).json({error:'Live stream controls are temporarily unavailable.'});});
