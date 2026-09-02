@@ -9,14 +9,23 @@ const runtimeSettings=require('./runtime-settings');
 const templatePath=path.join(__dirname,'../../views/customer/_nav.ejs');
 const renderNav=ejs.compile(fs.readFileSync(templatePath,'utf8'),{filename:templatePath});
 
+function liveSubscription(subscription){
+  if(subscription?.is_addon||subscription?.superseded_by)return false;
+  if(!['active','trialing','past_due','paused'].includes(String(subscription?.status||'')))return false;
+  if(!subscription.current_period_end)return true;
+  const end=new Date(subscription.current_period_end);
+  return !Number.isNaN(end.getTime())&&end.getTime()>Date.now();
+}
 function liveRequestEntitlement(portal){
   const subscriptions=Array.isArray(portal?.subscriptions)?portal.subscriptions:[];
+  return subscriptions.some(liveSubscription);
+}
+function liveJellyfinEntitlement(portal){
+  const subscriptions=Array.isArray(portal?.subscriptions)?portal.subscriptions:[];
   return subscriptions.some(subscription=>{
-    if(subscription?.is_addon||subscription?.superseded_by)return false;
-    if(!['active','trialing','past_due','paused'].includes(String(subscription?.status||'')))return false;
-    if(!subscription.current_period_end)return true;
-    const end=new Date(subscription.current_period_end);
-    return !Number.isNaN(end.getTime())&&end.getTime()>Date.now();
+    if(!liveSubscription(subscription))return false;
+    const service=String(subscription.service_type_snapshot||subscription.service_type||'jellyfin').toLowerCase();
+    return service==='jellyfin'||service==='bundle';
   });
 }
 
@@ -25,6 +34,7 @@ function optionsFromPortal(portal){
   return{
     showBenefits:Boolean(portal&&portal.referralsEnabled&&portal.referralCode),
     showServicePasswords:hasServiceAccess,
+    showJellyfin:liveJellyfinEntitlement(portal),
     overseerrUrl:hasServiceAccess?String(runtimeSettings.overseerrUrl()||''):''
   };
 }
@@ -41,4 +51,4 @@ function nav(active='',options={}){
   return renderNav({active,...options,standaloneHeader:signedInAccountSurface,siteName:runtimeSettings.siteName()});
 }
 
-module.exports={nav,optionsFromPortal,optionsForCustomer,liveRequestEntitlement};
+module.exports={nav,optionsFromPortal,optionsForCustomer,liveRequestEntitlement,liveJellyfinEntitlement,liveSubscription};
