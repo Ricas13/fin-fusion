@@ -34,19 +34,22 @@ assert(adminSecurity.includes("require('./admin-security-routes')"),'canonical a
 assert(adminSecurity.includes('createAdminStepUpRouter')&&adminSecurity.includes('sensitiveMutationGuard'),'canonical admin security facade must retain step-up and sensitive mutation guards');
 assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/platform/admin-security.js'],'only the canonical admin security facade may import internal security routes');
 
-// Jellyfin provisioning: all public calls pass through the entitlement/lifecycle facade.
-// The historical provisioning-core alias is intentionally gone; no runtime caller
-// should be able to bypass the canonical facade through an old import path.
+// Jellyfin provisioning: provisioning.js remains the helper compatibility
+// surface, but every reconcile mutation must lazy-delegate to the multi-lane
+// resilient owner. This prevents older admin modules from accidentally invoking
+// the retired single-lane provisioning engine.
 assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning compatibility facade must stay removed');
 const provisioning=read('src/jellyfin/provisioning.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
-assert(provisioning.includes("require('./provisioning-engine')"),'canonical provisioning facade must use the internal engine');
-assert(!provisioning.includes("require('./provisioning-core')"),'canonical provisioning facade must not depend on its historical alias');
-assert(provisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical provisioning must retain inactivity-hold reconciliation');
-assert(provisioning.includes('markPasswordSetupRequired'),'canonical provisioning must retain password-setup state');
-assert(provisioning.includes('maybeAutoDowngrade'),'canonical provisioning must retain automatic free-tier downgrade behavior');
-assert.deepStrictEqual(importers("require('./provisioning-engine')"),['src/jellyfin/provisioning.js'],'only the canonical provisioning facade may import provisioning-engine');
+assert(provisioning.includes("require('./provisioning-engine')"),'provisioning helper facade must use the internal engine for low-level helpers');
+assert(!provisioning.includes("require('./provisioning-core')"),'provisioning helper facade must not depend on its historical alias');
+assert(provisioning.includes("function canonicalReconciler(){return require('./resilient-provisioning')}"),'legacy provisioning imports must route reconciliation through the resilient multi-lane owner');
+assert(provisioning.includes('canonicalReconciler().reconcileCustomer(customerId)')&&provisioning.includes('canonicalReconciler().reconcileAccount(accountId)'),'customer and account reconciliation must both delegate to resilient provisioning');
+assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer'),'canonical resilient provisioning must retain inactivity-hold reconciliation');
+assert(provisioning.includes('markPasswordSetupRequired'),'provisioning helper facade must retain password-setup state for created Jellyfin identities');
+assert(provisioning.includes('maybeAutoDowngrade'),'provisioning helper facade must retain automatic free-tier downgrade behavior');
+assert.deepStrictEqual(importers("require('./provisioning-engine')"),['src/jellyfin/provisioning.js'],'only the provisioning helper facade may import provisioning-engine');
 assert(provisioning.includes("require('../entitlements/subscription-expiry')")&&resilientProvisioning.includes("require('../entitlements/subscription-expiry')"),'both provisioning facades must delegate expiry selection to the canonical entitlement helper');
 assert(provisioning.includes('subscriptionExpiry.expireAndReconcile')&&resilientProvisioning.includes('subscriptionExpiry.expireAndReconcile'),'provisioning facades must retain their own reconcile callbacks while sharing expiry ownership');
 assert(!provisioning.includes('WITH expired AS')&&!resilientProvisioning.includes('WITH expired AS'),'subscription expiry SQL must not be duplicated across provisioning layers');
