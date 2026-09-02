@@ -34,7 +34,7 @@ const managedLibraryMigration=read('db/migrations/021_stremio_managed_library_se
 assert(router.includes('createAdminStremioSourcesRouter')&&router.includes('router.use(createAdminStremioSourcesRouter())'),'Stremio source router must be mounted');
 assert(adminServers.includes('SERVER_ID_PARAM')&&adminServers.includes('/admin/servers/${SERVER_ID_PARAM}/edit'),'generic Jellyfin server routes must be UUID-constrained so /admin/servers/stremio is not parsed as a server ID');
 assert(nav.includes("['stremio-sources','Stremio','/admin/servers/stremio']"),'Stremio workspace must expose one canonical Stremio control room');
-assert(nav.includes("'stremio-playback':Object.freeze({groupKey:'stremio',parentKey:'stremio-sources'")&&nav.includes("['stremio-playback','IP access','/admin/stremio/playback']"),'Stremio IP access must remain routable as a contextual workflow under the Stremio control room');
+assert(nav.includes("'stremio-playback':Object.freeze({kind:'setting',groupKey:'servers',parentKey:'stremio-sources'")&&nav.includes("['stremio-playback','IP access','/admin/stremio/playback']"),'Stremio IP access must remain routable as a parent-owned setting under the Stremio control room');
 assert(nav.includes("'stremio-settings':'stremio-sources'")&&nav.includes("'stremio-source-pool':'stremio-sources'")&&nav.includes("'stremio-managed-sources':'stremio-sources'"),'legacy Stremio navigation aliases must resolve to the Stremio control room');
 assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integrations must not duplicate the Stremio workflow');
 assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'legacy Stremio settings URLs must land on the single Stremio control centre');
