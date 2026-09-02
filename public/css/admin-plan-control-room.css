@@ -65,11 +65,13 @@
 .planConfigBody .formGroup{margin-bottom:10px}
 .planConfigBody .formGrid{gap:8px 10px}
 .planConfigBody .toggleGrid{gap:6px;margin:8px 0}
+.planControlGrid #availability .toggleGrid{grid-template-columns:1fr!important}
 .planConfigBody .toggleRow{padding:8px 9px}
 .planConfigBody .toggleRow>span{min-width:0}
 .planConfigBody .toggleRow strong,.planPermissionGrid .toggleRow strong{overflow-wrap:normal;word-break:normal;hyphens:none}
 .planConfigBody .buttonRow{margin-top:9px}
 .planConfigFacts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:9px}
+.planConfigFacts:has(>:nth-child(2):last-child){grid-template-columns:repeat(2,minmax(0,1fr))}
 .planConfigFact{padding:7px 8px;border:1px solid var(--border-soft);border-radius:8px;background:var(--panel2)}
 .planConfigFact span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.04em;font-weight:750}
 .planConfigFact strong{display:block;margin-top:2px;color:var(--text-strong);font-size:15px;line-height:1.2}
@@ -114,9 +116,14 @@
 .requestPlanCard details.planCardDetails>summary:after{content:'Expand';float:right;color:var(--muted);font-size:9px;text-transform:uppercase}
 .requestPlanCard details.planCardDetails[open]>summary:after{content:'Collapse'}
 .requestPlanCard details.planCardDetails .planDetailsBody{padding:0 11px 10px}
-.requestPlanCard.stremioCard>.sectionHead{margin-bottom:0}
+.requestPlanCard.stremioCard>.sectionHead{margin-bottom:0;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+.requestPlanCard.stremioCard>.sectionHead>div:first-child{flex:1 0 100%;min-width:0}
+.requestPlanCard.stremioCard>.sectionHead .adminSettingsCardGrade{margin-left:0}
 .requestPlanCard.stremioCard .requestPlanBody{padding:11px}
 
+@media(min-width:1280px){
+  .requestPermissionMode{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 @media(max-width:1250px){
   .attentionBulkBar{grid-template-columns:auto repeat(2,minmax(140px,1fr));minmax(180px,1.3fr) auto}
 }
