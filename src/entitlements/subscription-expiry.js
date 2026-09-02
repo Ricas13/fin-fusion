@@ -3,6 +3,7 @@
 const { query, transaction } = require('../db');
 const notificationDispatch = require('../integrations/notification-dispatch');
 const expiryPolicy = require('../integrations/notification-expiry-policy');
+const billingMode = require('../payments/subscription-billing-mode');
 
 const DEFAULT_WARNING_DAYS = Math.max(...expiryPolicy.DEFAULT_POLICY.milestones);
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -10,10 +11,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 function recurringAutoRenewal(row) {
     const status = String(row?.status || '').toLowerCase();
     if (!['active', 'trialing'].includes(status) || row?.cancel_at_period_end === true) return false;
-    const source = String(row?.source || '').toLowerCase();
-    const providerId = String(row?.provider_subscription_id || '');
-    return (source === 'stripe' && providerId.startsWith('sub_')) ||
-        (source === 'paypal' && providerId.startsWith('I-'));
+    return billingMode.isRecurring(row);
 }
 
 function expiryDate(value) {
@@ -55,12 +53,11 @@ function providerExpiryProtected(row, syncResult) {
 
 async function dueRecurringSubscriptions() {
     const result = await query(`
-        SELECT id,source,provider_subscription_id,status,cancel_at_period_end,current_period_end,service_extension_days
+        SELECT id,source,billing_mode,provider_subscription_id,status,cancel_at_period_end,current_period_end,service_extension_days
         FROM subscriptions
         WHERE superseded_by IS NULL
           AND source IN ('stripe','paypal')
-          AND ((source='stripe' AND COALESCE(provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\')
-            OR (source='paypal' AND COALESCE(provider_subscription_id,'') LIKE 'I-%'))
+          AND billing_mode='subscription'
           AND status IN('active','trialing','past_due','paused')
           AND current_period_end+(COALESCE(service_extension_days,0)||' days')::interval<=NOW()
         ORDER BY current_period_end,id
@@ -71,7 +68,7 @@ async function dueRecurringSubscriptions() {
 async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
     const warningDays = Math.max(0, Math.min(30, Number(days) || 0));
     const result = await query(`
-        SELECT s.id,s.customer_id,s.status,s.source,s.provider_subscription_id,s.cancel_at_period_end,
+        SELECT s.id,s.customer_id,s.status,s.source,s.billing_mode,s.provider_subscription_id,s.cancel_at_period_end,
                COALESCE(s.plan_name_snapshot,p.name,'Your subscription') AS plan_name,
                s.current_period_end+(COALESCE(s.service_extension_days,0)||' days')::interval AS access_expires_at,
                COALESCE(c.display_name,au.username,c.email,'Customer') AS customer_name
