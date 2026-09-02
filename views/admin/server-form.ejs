@@ -27,46 +27,48 @@
       </div>
       <% } %>
 
-      <section class="section">
-        <div class="sectionHead"><h2>Server configuration</h2><span class="muted"><%= server ? provider+' · '+server.health_status : 'new server' %></span></div>
-        <form method="post" action="<%= server ? '/admin/servers/'+server.id : '/admin/servers' %>" class="formPanel">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <div class="formGrid">
-            <div class="formGroup"><label for="name">Name</label><input class="input" id="name" name="name" maxlength="100" required value="<%= server ? server.name : '' %>"></div>
-            <div class="formGroup"><label for="slug">Slug</label><input class="input" id="slug" name="slug" maxlength="60" required pattern="[a-z0-9][a-z0-9-]{1,58}[a-z0-9]" value="<%= server ? server.slug : '' %>"></div>
-            <div class="formGroup"><label for="mediaServerType">Media server</label><select class="input" id="mediaServerType" name="mediaServerType"><option value="jellyfin" <%= !server || server.media_server_type!=='emby' ? 'selected' : '' %>>Jellyfin</option><option value="emby" <%= server && server.media_server_type==='emby' ? 'selected' : '' %>>Emby</option></select><div class="subText">Controls API authentication, endpoint paths and provider-specific user policy compatibility. Changing this on a server with assigned users requires impact confirmation.</div></div>
-            <div class="formGroup"><label for="serverClass">Server class</label><select class="input" id="serverClass" name="serverClass"><% ['premium','free','custom'].forEach(function(v){ %><option value="<%= v %>" <%= server && server.server_class===v ? 'selected' : '' %>><%= v %></option><% }) %></select><div class="subText"><strong>Premium</strong> receives Premium-plan users, <strong>Free</strong> receives Free-plan users, and <strong>Custom</strong> is for plans with explicit placement rules. This is a placement category, not a media quality setting.</div></div>
-            <div class="formGroup"><label for="location">Location</label><input class="input" id="location" name="location" maxlength="100" placeholder="e.g. London" value="<%= server && server.location ? server.location : '' %>"></div>
-            <div class="formGroup"><label for="baseUrl">Internal/base URL</label><input class="input" id="baseUrl" name="baseUrl" type="url" required placeholder="https://media.internal.example" value="<%= server ? server.base_url : '' %>"><div class="subText">The address CAPTAiNFiN itself uses to reach this server. For Docker/LAN/private hostnames or IPs, trust the destination first in Settings → Security.</div></div>
-            <div class="formGroup"><label for="publicUrl">Customer/public URL</label><input class="input" id="publicUrl" name="publicUrl" type="url" placeholder="https://premium.example.com" value="<%= server && server.public_url ? server.public_url : '' %>"><div class="subText">The HTTPS address customers open in their browser or app.</div></div>
-            <div class="formGroup"><label for="priority">Placement priority</label><input class="input" id="priority" name="priority" type="number" min="0" max="10000" required value="<%= server ? server.priority : 100 %>"><div class="subText">Lower numbers are preferred after health/capacity checks.</div></div>
-            <div class="formGroup"><label for="maxUsers">Sellable stream capacity</label><input class="input" id="maxUsers" name="maxUsers" type="number" min="1" max="100000" placeholder="Not configured" value="<%= server && server.max_users ? server.max_users : '' %>"><div class="subText">How many concurrent-stream entitlements this server contributes to storefront availability. A 3-stream plan consumes 3 units; a 6-stream entitlement consumes 6. Premium servers share one Premium pool and Free servers share one Free pool.</div></div>
-          </div>
+      <div class="serverEditorGrid <%= server ? 'serverEditorGrid--existing' : 'serverEditorGrid--new' %>">
+        <section class="section serverEditorConfigCard">
+          <div class="sectionHead"><h2>Server configuration</h2><span class="muted"><%= server ? provider+' · '+server.health_status : 'new server' %></span></div>
+          <form method="post" action="<%= server ? '/admin/servers/'+server.id : '/admin/servers' %>" class="formPanel">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="formGrid">
+              <div class="formGroup"><label for="name">Name</label><input class="input" id="name" name="name" maxlength="100" required value="<%= server ? server.name : '' %>"></div>
+              <div class="formGroup"><label for="slug">Slug</label><input class="input" id="slug" name="slug" maxlength="60" required pattern="[a-z0-9][a-z0-9-]{1,58}[a-z0-9]" value="<%= server ? server.slug : '' %>"></div>
+              <div class="formGroup"><label for="mediaServerType">Media server</label><select class="input" id="mediaServerType" name="mediaServerType"><option value="jellyfin" <%= !server || server.media_server_type!=='emby' ? 'selected' : '' %>>Jellyfin</option><option value="emby" <%= server && server.media_server_type==='emby' ? 'selected' : '' %>>Emby</option></select><div class="subText">Controls API authentication, endpoint paths and provider-specific user policy compatibility. Changing this on a server with assigned users requires impact confirmation.</div></div>
+              <div class="formGroup"><label for="serverClass">Server class</label><select class="input" id="serverClass" name="serverClass"><% ['premium','free','custom'].forEach(function(v){ %><option value="<%= v %>" <%= server && server.server_class===v ? 'selected' : '' %>><%= v %></option><% }) %></select><div class="subText"><strong>Premium</strong> receives Premium-plan users, <strong>Free</strong> receives Free-plan users, and <strong>Custom</strong> is for plans with explicit placement rules. This is a placement category, not a media quality setting.</div></div>
+              <div class="formGroup"><label for="location">Location</label><input class="input" id="location" name="location" maxlength="100" placeholder="e.g. London" value="<%= server && server.location ? server.location : '' %>"></div>
+              <div class="formGroup"><label for="baseUrl">Internal/base URL</label><input class="input" id="baseUrl" name="baseUrl" type="url" required placeholder="https://media.internal.example" value="<%= server ? server.base_url : '' %>"><div class="subText">The address CAPTAiNFiN itself uses to reach this server. For Docker/LAN/private hostnames or IPs, trust the destination first in Settings → Security.</div></div>
+              <div class="formGroup"><label for="publicUrl">Customer/public URL</label><input class="input" id="publicUrl" name="publicUrl" type="url" placeholder="https://premium.example.com" value="<%= server && server.public_url ? server.public_url : '' %>"><div class="subText">The HTTPS address customers open in their browser or app.</div></div>
+              <div class="formGroup"><label for="priority">Placement priority</label><input class="input" id="priority" name="priority" type="number" min="0" max="10000" required value="<%= server ? server.priority : 100 %>"><div class="subText">Lower numbers are preferred after health/capacity checks.</div></div>
+              <div class="formGroup"><label for="maxUsers">Sellable stream capacity</label><input class="input" id="maxUsers" name="maxUsers" type="number" min="1" max="100000" placeholder="Not configured" value="<%= server && server.max_users ? server.max_users : '' %>"><div class="subText">How many concurrent-stream entitlements this server contributes to storefront availability. A 3-stream plan consumes 3 units; a 6-stream entitlement consumes 6. Premium servers share one Premium pool and Free servers share one Free pool.</div></div>
+            </div>
 
-          <div class="toggleGrid">
-            <label class="toggleRow"><input type="checkbox" name="allowNewUsers" <%= !server || server.allow_new_users ? 'checked' : '' %>><span><strong>Eligible for new-user placement</strong><span class="subText">Base eligibility only. Use Servers → Fleet operations for temporary Active, Drain or Maintenance states.</span></span></label>
-            <label class="toggleRow"><input type="checkbox" name="trialEnabled" <%= !server || server.trial_enabled ? 'checked' : '' %>><span><strong>Allow trials</strong><span class="subText">Trial plans may be placed here.</span></span></label>
-            <label class="toggleRow"><input type="checkbox" name="paidEnabled" <%= !server || server.paid_enabled ? 'checked' : '' %>><span><strong>Allow paid subscriptions</strong><span class="subText">Paid plans may be placed here.</span></span></label>
-          </div>
+            <div class="toggleGrid">
+              <label class="toggleRow"><input type="checkbox" name="allowNewUsers" <%= !server || server.allow_new_users ? 'checked' : '' %>><span><strong>Eligible for new-user placement</strong><span class="subText">Base eligibility only. Use Servers → Fleet operations for temporary Active, Drain or Maintenance states.</span></span></label>
+              <label class="toggleRow"><input type="checkbox" name="trialEnabled" <%= !server || server.trial_enabled ? 'checked' : '' %>><span><strong>Allow trials</strong><span class="subText">Trial plans may be placed here.</span></span></label>
+              <label class="toggleRow"><input type="checkbox" name="paidEnabled" <%= !server || server.paid_enabled ? 'checked' : '' %>><span><strong>Allow paid subscriptions</strong><span class="subText">Paid plans may be placed here.</span></span></label>
+            </div>
 
-          <div class="formGrid">
-            <div class="formGroup"><label for="apiKey"><%= server ? provider : 'Media-server' %> API key <%= server ? '(leave blank to keep current key)' : '' %></label><input class="input" id="apiKey" name="apiKey" type="password" autocomplete="new-password" <%= server ? '' : 'required' %>><div class="subText">Create a dedicated server API key for CAPTAiNFiN. Jellyfin uses Dashboard → Advanced → API Keys; Emby uses its server API-key management. The key is tested with the selected provider before saving and is never displayed again.</div></div>
-            <% if (server) { %><div class="formGroup"><label for="confirmation">Impact confirmation</label><input class="input" id="confirmation" name="confirmation" autocomplete="off" placeholder="Type CHANGE only for a risky edit"><div class="subText">Required when changing provider, server class/base URL, or removing paid/trial placement while this server has assigned accounts or explicit plan rules.</div></div><% } %>
-          </div>
+            <div class="formGrid">
+              <div class="formGroup"><label for="apiKey"><%= server ? provider : 'Media-server' %> API key <%= server ? '(leave blank to keep current key)' : '' %></label><input class="input" id="apiKey" name="apiKey" type="password" autocomplete="new-password" <%= server ? '' : 'required' %>><div class="subText">Create a dedicated server API key for CAPTAiNFiN. Jellyfin uses Dashboard → Advanced → API Keys; Emby uses its server API-key management. The key is tested with the selected provider before saving and is never displayed again.</div></div>
+              <% if (server) { %><div class="formGroup"><label for="confirmation">Impact confirmation</label><input class="input" id="confirmation" name="confirmation" autocomplete="off" placeholder="Type CHANGE only for a risky edit"><div class="subText">Required when changing provider, server class/base URL, or removing paid/trial placement while this server has assigned accounts or explicit plan rules.</div></div><% } %>
+            </div>
 
-          <div class="securityNote standalone"><strong>High-impact confirmation:</strong> when administrator 2FA is enrolled, server mutations use the global step-up guard. The confirmation remains fresh for the configured step-up window rather than prompting on every field edit.</div>
-          <div class="buttonRow"><button class="button" type="submit"><%= server ? 'Save server' : 'Add server' %></button><a class="button secondary" href="/admin/servers">Cancel</a></div>
-        </form>
-      </section>
+            <div class="securityNote standalone"><strong>High-impact confirmation:</strong> when administrator 2FA is enrolled, server mutations use the global step-up guard. The confirmation remains fresh for the configured step-up window rather than prompting on every field edit.</div>
+            <div class="buttonRow"><button class="button" type="submit"><%= server ? 'Save server' : 'Add server' %></button><a class="button secondary" href="/admin/servers">Cancel</a></div>
+          </form>
+        </section>
 
-      <% if (server) { %>
-      <section class="section">
-        <div class="sectionHead"><h2>Connectivity</h2><span class="pill <%= server.health_status==='healthy'?'good':(server.health_status==='offline'?'bad':'warn') %>"><%= server.health_status %></span></div>
-        <div class="formPanel"><p class="muted">Run a health check using the stored <%= provider %> credential. This does not modify the server.</p><form method="post" action="/admin/servers/<%= server.id %>/health"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary" type="submit">Run health check</button></form><div class="subText">Last check: <%= server.last_health_check ? new Date(server.last_health_check).toLocaleString() : 'never' %></div></div>
-      </section>
-      <% } %>
+        <% if (server) { %>
+        <section class="section serverEditorConnectivityCard">
+          <div class="sectionHead"><h2>Connectivity</h2><span class="pill <%= server.health_status==='healthy'?'good':(server.health_status==='offline'?'bad':'warn') %>"><%= server.health_status %></span></div>
+          <div class="formPanel"><p class="muted">Run a health check using the stored <%= provider %> credential. This does not modify the server.</p><form method="post" action="/admin/servers/<%= server.id %>/health"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button secondary" type="submit">Run health check</button></form><div class="subText">Last check: <%= server.last_health_check ? new Date(server.last_health_check).toLocaleString() : 'never' %></div></div>
+        </section>
+        <% } %>
+      </div>
 
-      <div class="securityNote standalone">Server deletion and hard-disable controls are intentionally absent. Use Fleet operations to drain placement first and the reviewed server-migration workflow before destructive infrastructure changes.</div>
+      <div class="securityNote standalone serverEditorSafetyNote">Server deletion and hard-disable controls are intentionally absent. Use Fleet operations to drain placement first and the reviewed server-migration workflow before destructive infrastructure changes.</div>
     </div>
   </main>
 </div>
