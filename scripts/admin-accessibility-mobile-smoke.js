@@ -14,50 +14,56 @@ assert(shell.includes('aria-current="page"'),'active admin navigation must expos
 assert(shell.includes('aria-live="polite"'),'operator status updates must be announced politely');
 assert(shell.includes('for="adminQuickFindInput"'),'quick find must have a real label association');
 assert(shell.includes('Help & docs'),'help action should use a plain-language label');
+assert(shell.includes('data-section="${esc(current.group.key)}"'),'canonical pages must publish their section hue on body');
+assert(shell.includes('@media(max-width:820px)'),'canonical shell must use the token-system mobile breakpoint');
+for(const contract of ['.adminMobileNavToggle','transform:translateX(-100%)','.adminHeader.mobileNavOpen','width:min(86vw,320px)','body.mobileNavLocked']){
+  assert(shell.includes(contract),`canonical mobile drawer CSS missing ${contract}`);
+}
+assert(!shell.includes('adminSubTab'),'canonical shell must not render or style a third navigation level');
+assert(!shell.includes('--header-actions-h'),'canonical shell must not reserve measured account-menu height');
+
 const progressiveShell=read('src/platform/admin-html-core.js');
 assert(progressiveShell.includes('/js/admin-safety-confirmations.js'),'admin shell must load shared safety confirmations');
-assert(progressiveShell.includes('/js/admin-sidebar-nav.js'),'admin shell must load shared sidebar navigation behavior');
+assert(progressiveShell.includes('/js/admin-rail.js'),'admin shell must load the unified rail/drawer controller');
+assert(!progressiveShell.includes('/js/admin-sidebar-nav.js'),'retired sidebar controller must not be loaded alongside the unified rail');
 
 const legacyNav=read('views/admin/_nav.ejs');
 const navRegistry=require('../src/platform/admin-nav');
-assert(legacyNav.includes('Array.isArray(child.children)')&&legacyNav.includes('class="adminSubTab'),'legacy EJS sidebar must render canonical nested destinations');
-assert(navRegistry.childPages('activity').some(page=>page[0]==='inactivity-policy'),'Playback must retain its Free-user inactivity rules child destination');
-assert(!navRegistry.childPages('servers').some(page=>page[0]==='libraries'),'Libraries scan utility must not appear as permanent sidebar navigation');
-assert(navRegistry.groups.find(group=>group.key==='jellyfin').pages.find(page=>page[0]==='activity').children.some(page=>page[0]==='inactivity-policy'),'legacy nav group data must carry Playback nested destinations');
-const sidebar=read('public/js/admin-sidebar-nav.js');
-assert(sidebar.includes('closeOthers(section)')&&sidebar.includes('other.open=false'),'opening one admin navigation group must collapse the other groups');
-assert(sidebar.includes("section.querySelector('.navSectionPages .adminTab[href]')"),'parent navigation must resolve the first submenu destination');
-assert(sidebar.includes('event.preventDefault()')&&sidebar.includes('window.location.assign(first.href)'),'desktop parent clicks must expand the group and open its first submenu page');
-assert(sidebar.includes("window.matchMedia('(max-width:860px)').matches"),'sidebar accordion behavior must preserve the compact mobile navigation');
+assert(legacyNav.includes("require(process.cwd() + '/src/platform/admin-html-core-base')")&&legacyNav.includes('adminCore.header(activeNav, siteName)'),'legacy EJS screens must render the exact canonical rail markup');
+assert(!legacyNav.includes('iconPaths')&&!legacyNav.includes('adminSubTab'),'legacy EJS rail must not duplicate icons or third-level navigation');
+assert.deepStrictEqual(navRegistry.childPages('activity'),[],'Playback must not render third-level rail children');
+assert(navRegistry.settingsFor('activity').some(page=>page[0]==='inactivity-policy'),'Playback inactivity rules must remain discoverable as a parent-owned setting');
+assert(navRegistry.relatedPages('servers').some(page=>page[0]==='libraries'),'Libraries must remain reachable from its parent without occupying the rail');
+
+const rail=read('public/js/admin-rail.js');
+for(const contract of [
+  'closeOthers(section)',
+  'other.open=false',
+  "adminRailOpenSection",
+  "window.matchMedia(MOBILE_QUERY)",
+  "data-admin-mobile-nav-toggle",
+  'adminMobileNavBackdrop',
+  'mobileNavOpen',
+  'aria-expanded',
+  "event.key==='Escape'",
+  "event.key!=='Tab'",
+  'getClientRects().length>0',
+  "event.target.closest('a[href]')"
+]) assert(rail.includes(contract),`unified rail behavior missing ${contract}`);
+assert(rail.includes("const MOBILE_QUERY='(max-width:820px)'"),'rail behavior must share the 820px mobile breakpoint');
 
 const navCoherence=read('public/js/admin-navigation-coherence.js');
-for(const contract of [
-    'installMobileAdminDrawer()',
-    "window.matchMedia('(max-width:860px)')",
-    "data-admin-mobile-nav-toggle",
-    "adminMobileNavBackdrop",
-    "mobileNavOpen",
-    "aria-expanded",
-    "event.key==='Escape'",
-    "event.target.closest('a[href]')"
-]) assert(navCoherence.includes(contract),`mobile drawer behavior missing ${contract}`);
+assert(!navCoherence.includes('installMobileAdminDrawer'),'navigation coherence enhancer must not own a second mobile drawer');
+assert(!fs.existsSync(path.join(root,'public/css/admin-mobile-drawer-fix.css')),'obsolete mobile drawer correction stylesheet must be deleted');
 
 const capability=read('public/css/admin-capability.css');
 assert(capability.includes("@import url('/css/admin-accessibility-mobile.css')"),'admin shell must load accessibility/mobile layer');
 assert(capability.includes("@import url('/css/admin-responsive-tables.css')"),'admin shell must load shared responsive-table layer');
+assert(!capability.includes('admin-mobile-drawer-fix.css'),'capability layer must not import the retired drawer correction file');
 const css=read('public/css/admin-accessibility-mobile.css');
-for(const contract of ['.srOnly',':focus-visible','min-height:44px','prefers-reduced-motion','td[data-label=""]'])assert(css.includes(contract),`accessibility/mobile CSS missing ${contract}`);
+for(const contract of ['.srOnly',':focus-visible','min-height:var(--pitch)','prefers-reduced-motion','td[data-label=""]'])assert(css.includes(contract),`accessibility/mobile CSS missing ${contract}`);
 assert(css.includes('.profileMeta,.summaryLabel,.summarySub'),'legacy customer metadata must use the readable shared override');
-for(const contract of [
-    '.adminMobileNavToggle',
-    '.adminHeader.mobileNavOpen .adminTabsWrap',
-    'transform:translateX(-105%)',
-    'width:min(86vw,320px)',
-    '.navSectionLabel{display:flex!important',
-    '.navSection[open] .navSectionPages{display:grid!important',
-    'body.mobileNavLocked',
-    '.topBar{top:58px!important}'
-]) assert(css.includes(contract),`mobile drawer CSS missing ${contract}`);
+assert(!css.includes('.adminHeader.mobileNavOpen'),'accessibility layer must not reimplement canonical drawer geometry');
 
 const responsiveCss=read('public/css/admin-responsive-tables.css');
 for(const contract of ['@media(max-width:1100px)','.responsiveTable thead','.responsiveTable tbody','.responsiveTable td::before','content:attr(data-label)','word-break:normal','grid-template-columns:minmax(100px,30%) minmax(0,1fr)','.attentionBulkBar{grid-template-columns:1fr!important}'])assert(responsiveCss.includes(contract),`responsive table CSS missing ${contract}`);
