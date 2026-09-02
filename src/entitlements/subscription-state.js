@@ -22,10 +22,29 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
              THEN 'infinity'::timestamptz
              ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
         END AS access_expires_at,
-        public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+        b.blocked
  FROM subscriptions s
  JOIN plans p ON p.id=s.plan_id
  LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+ CROSS JOIN LATERAL (
+   SELECT (
+     public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
+     OR (
+       COALESCE(p.is_free_tier,FALSE)
+       AND EXISTS(
+         SELECT 1 FROM customer_access_holds h
+         WHERE h.customer_id=s.customer_id AND h.released_at IS NULL AND (
+           (h.hold_type='inactivity_policy' AND h.source_key=('plan:'||p.id::text))
+           OR (h.hold_type='jellyfin_cleanup' AND EXISTS(
+             SELECT 1 FROM jellyfin_accounts ja
+             WHERE ja.customer_id=s.customer_id AND ja.account_purpose='jellyfin' AND ja.access_lane='free'
+               AND h.source_key=('server:'||ja.server_id::text)
+           ))
+         )
+       )
+     )
+   ) AS blocked
+ ) b
  WHERE s.customer_id=$1
    AND COALESCE(p.is_addon,FALSE)=FALSE
    AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
@@ -36,8 +55,8 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
       OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
       OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
    )
-   AND ($2::boolean OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
- ORDER BY public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) ASC,
+   AND ($2::boolean OR b.blocked=FALSE)
+ ORDER BY b.blocked ASC,
           CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC,
           CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
                THEN 'infinity'::timestamptz
