@@ -42,6 +42,7 @@ const { createAdminExpensesRouter } = require('./admin-expenses');
 const { createAdminCustomerCreateRouter } = require('./admin-customer-create');
 const { createAdminActionsRouter } = require('./admin-actions');
 const { createAdminMediaControlsRouter } = require('./admin-media-controls');
+const { createAdminDashboardLiveStreamsRouter } = require('./admin-dashboard-live-streams');
 const { createAdminStremioPlanDispatchRouter } = require('./admin-stremio-plan-dispatch');
 const { createAdminEmbyPlanEditorRouter } = require('./admin-emby-plan-editor');
 const { createAdminJellyfinPlanEditorRouter } = require('./admin-jellyfin-plan-editor');
@@ -141,6 +142,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminCustomerCreateRouter());
   app.use(createAdminActionsRouter());
   app.use(createAdminMediaControlsRouter());
+  app.use(createAdminDashboardLiveStreamsRouter());
   app.use(createAdminStremioPlanDispatchRouter());
   app.use(createAdminEmbyPlanEditorRouter());
   app.use(createAdminJellyfinPlanEditorRouter());
