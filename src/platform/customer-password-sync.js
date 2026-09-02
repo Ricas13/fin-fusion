@@ -23,6 +23,17 @@ async function verifyPortalPassword(userId,password){
     const row=await query(`SELECT password_hash FROM app_users WHERE id=$1 AND role='customer' AND active=TRUE LIMIT 1`,[userId]);
     return Boolean(row.rowCount&&row.rows[0]?.password_hash&&await bcrypt.compare(password,row.rows[0].password_hash));
 }
+async function requestPasswordPage(req,access,{error=null,message=null}={}){
+    await runtimeSettings.ensureLoaded();
+    const config=await requestUsers.configuration();
+    const site=esc(runtimeSettings.siteName());
+    const requestUrl=config?.baseUrl?esc(config.baseUrl):'';
+    const accountReady=Boolean(access?.external_user_id&&!access?.access_suspended);
+    const accountCopy=accountReady
+        ? 'Your Seerr account is active. Use the control below whenever you need to reset it back to the same password as your portal account.'
+        : 'Your Seerr account is not ready yet. Enter your current portal password below and CAPTAiNFiN will create or reactivate it using the same portal credentials.';
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Request access · ${site}</title><link rel="icon" href="/branding/favicon"><link rel="stylesheet" href="/css/customer-portal.css"><link rel="stylesheet" href="/css/customer-navigation.css"><style>main{max-width:760px;margin:32px auto;padding:22px}.panel{padding:22px;margin:14px 0}.field{margin:14px 0}.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}</style></head><body><main><a class="button ghost small" href="/account">← My account</a><section class="panel"><div class="eyebrow">Request content</div><h1>Seerr access</h1><p>${esc(accountCopy)}</p>${message?`<div class="notice success">${esc(message)}</div>`:''}${error?`<div class="notice error">${esc(error)}</div>`:''}<form method="post" action="/account/requests/password/sync"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="field"><label for="request-current-portal-password">Current portal password</label><input class="input" id="request-current-portal-password" name="currentPortalPassword" type="password" minlength="8" maxlength="200" autocomplete="current-password" required><div class="hint">CAPTAiNFiN verifies this against your portal login and sends it directly to Seerr. It is never stored in plaintext.</div></div><div class="actions"><button class="button primary" type="submit">${accountReady?'Reset Seerr to portal password':'Create / sync Seerr account'}</button>${requestUrl&&accountReady?`<a class="button secondary" href="${requestUrl}" target="_blank" rel="noreferrer">Open Seerr ↗</a>`:''}</div></form></section></main></body></html>`;
+}
 
 function createCustomerPasswordSyncRouter() {
     const router = express.Router();
@@ -45,24 +56,9 @@ function createCustomerPasswordSyncRouter() {
         try {
             await provisioning.setJellyfinPassword(req.session.customerId, req.params.accountId, password);
             await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,updated_at=NOW() WHERE id=$1 AND customer_id=$2`,[req.params.accountId,req.session.customerId]);
+            return res.redirect('/account?message=' + encodeURIComponent('Jellyfin password updated. Your Seerr password continues to follow your portal password.'));
         } catch (error) {
             return res.redirect(target+'?error=' + encodeURIComponent(error.message || 'Jellyfin password could not be updated.'));
-        }
-
-        try {
-            const config = await requestUsers.configuration();
-            if (!config.configured) {
-                return res.redirect('/account?message=' + encodeURIComponent('Jellyfin password updated.'));
-            }
-            const access = await requestUsers.requestAccessForCustomer(req.session.customerId);
-            if (access?.access_suspended) {
-                return res.redirect('/account?message=' + encodeURIComponent('Jellyfin password updated. Request access is currently suspended.'));
-            }
-            await requestUsers.setCustomerPassword(req.session.customerId, password);
-            return res.redirect('/account?message=' + encodeURIComponent('Jellyfin and request-site passwords updated.'));
-        } catch (error) {
-            await requestUsers.markPasswordSyncFailure(req.session.customerId, error).catch(() => {});
-            return res.redirect('/account?error=' + encodeURIComponent('Jellyfin password was updated, but the request-site password could not be synchronized. Use the request password control to retry.'));
         }
     });
 
@@ -76,31 +72,38 @@ function createCustomerPasswordSyncRouter() {
         }
     });
 
-    router.post('/account/requests/password',requireCustomer,async(req,res)=>{
-        if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));
+    router.get('/account/requests/password',requireCustomer,async(req,res,next)=>{
         try{
-            if(req.body.password!==req.body.confirmPassword)throw new Error('Request-site passwords do not match.');
-            await requestUsers.setCustomerPassword(req.session.customerId,req.body.password);
-            return res.redirect('/account?message='+encodeURIComponent('Request-site password updated.'));
-        }catch(error){
-            return res.redirect('/account?error='+encodeURIComponent(error.message||'Request-site password could not be updated.'));
-        }
+            const config=await requestUsers.configuration();
+            if(!config.configured)return res.redirect('/account?error='+encodeURIComponent('Request access is not configured right now.'));
+            const access=await requestUsers.requestAccessForCustomer(req.session.customerId);
+            if(!access?.entitlement_active)return res.redirect('/account?error='+encodeURIComponent('Request access requires an active plan or trial.'));
+            return res.send(await requestPasswordPage(req,access,{error:req.query.error||null,message:req.query.message||null}));
+        }catch(error){return next(error);}
+    });
+
+    // Request-site passwords are deliberately portal-owned. Keep this legacy
+    // endpoint non-destructive so older forms/bookmarks cannot create a second,
+    // divergent password.
+    router.post('/account/requests/password',requireCustomer,async(req,res)=>{
+        if(!csrf.verify(req))return res.redirect('/account/requests/password?error='+encodeURIComponent('Invalid or expired security token'));
+        return res.redirect('/account/requests/password?error='+encodeURIComponent('Seerr uses your portal password. Use the sync control below to reset it.'));
     });
 
     router.post('/account/requests/password/sync',requireCustomer,requestPasswordSyncLimit,async(req,res)=>{
-        if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));
+        if(!csrf.verify(req))return res.redirect('/account/requests/password?error='+encodeURIComponent('Invalid or expired security token'));
         try{
             const portalPassword=String(req.body.currentPortalPassword||'');
             if(!(await verifyPortalPassword(req.session.customerUserId,portalPassword)))throw new Error('Current portal password was not accepted.');
             await requestUsers.setCustomerPassword(req.session.customerId,portalPassword);
             await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.request_password.sync_from_portal','customer',$2,'{"secretStored":false}'::jsonb)`,[req.session.customerUserId,req.session.customerId]).catch(()=>{});
-            return res.redirect('/account?message='+encodeURIComponent('Your portal password is now synced to Seerr.'));
+            return res.redirect('/account/requests/password?message='+encodeURIComponent('Your portal password is now synced to Seerr.'));
         }catch(error){
-            return res.redirect('/account?error='+encodeURIComponent(error.message||'Seerr password could not be synced.'));
+            return res.redirect('/account/requests/password?error='+encodeURIComponent(error.message||'Seerr password could not be synced.'));
         }
     });
 
     return router;
 }
 
-module.exports = { createCustomerPasswordSyncRouter,pending,setupPage,verifyPortalPassword };
+module.exports = { createCustomerPasswordSyncRouter,pending,setupPage,requestPasswordPage,verifyPortalPassword };
