@@ -6,5 +6,8 @@
 @media(max-width:800px){.stremioJourney{grid-template-columns:1fr}.stremioJourneyCopy small{white-space:normal}.stremioFlowOverview{grid-template-columns:1fr}.stremioFlowOverview details{min-width:0}.stremioOrderDetails{width:100%}.stremioOrderDetails .input{min-height:44px}.sourceInlineSettings>.stremioOrderDetails{margin-left:0}}
 
 /* Keep the Stremio sources screen focused on the controls themselves. Success/error
-   notices remain visible; only the workflow strip and explanatory overview are hidden. */
-.stremioJourney,.stremioFlowOverview{display:none!important}
+   notices remain visible. The retired journey is gone; the old explanatory copy is
+   retained only as non-interactive assistive context so it occupies no visual space. */
+.stremioJourney{display:none!important}
+.stremioFlowOverview{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;pointer-events:none!important}
+.stremioFlowOverview details{display:none!important}
