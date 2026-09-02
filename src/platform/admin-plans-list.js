@@ -62,6 +62,31 @@ function familyMatches(plan, type) {
 function plural(value, singular, pluralValue=`${singular}s`) {
   return Number(value) === 1 ? singular : pluralValue;
 }
+function hiddenPlan(plan) {
+  return readiness.catalogueState(plan).key === 'hidden';
+}
+function hiddenPlanDisclosureStyles() {
+  return `<style>
+.planHiddenDisclosureRow>td{padding:0!important;border-top:1px solid #2a3540!important;background:#0f161e!important}
+.planHiddenDisclosure{position:relative;display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;padding:11px 14px;box-sizing:border-box;cursor:pointer;color:#9dacba;background:linear-gradient(90deg,rgba(247,185,85,.055),rgba(255,255,255,.012));transition:background .16s ease,color .16s ease}
+.planHiddenDisclosure:hover{background:linear-gradient(90deg,rgba(247,185,85,.09),rgba(255,255,255,.02));color:#d8e0e7}
+.planHiddenToggle{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+.planHiddenDisclosure:has(.planHiddenToggle:focus-visible){outline:2px solid #4cc9f0;outline-offset:-2px}
+.planHiddenDisclosureTitle{display:flex;align-items:center;gap:8px;font-weight:800;color:#d5dde5}
+.planHiddenDisclosureDot{width:7px;height:7px;border-radius:50%;background:#f7b955;box-shadow:0 0 0 4px rgba(247,185,85,.09)}
+.planHiddenDisclosureCount{display:inline-grid;place-items:center;min-width:23px;height:19px;padding:0 6px;border:1px solid rgba(247,185,85,.22);border-radius:999px;background:rgba(247,185,85,.08);color:#f3c978;font-size:10px;font-weight:850}
+.planHiddenDisclosureHint{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.045em;color:#8393a3}
+.planHiddenDisclosureChevron{width:14px;height:14px;transition:transform .18s ease}
+.planHiddenWhenOpen{display:none}
+.planHiddenPlanRow{display:none}
+tbody:has(.planHiddenToggle:checked) .planHiddenPlanRow{display:table-row}
+tbody:has(.planHiddenToggle:checked) .planHiddenWhenClosed{display:none}
+tbody:has(.planHiddenToggle:checked) .planHiddenWhenOpen{display:inline}
+tbody:has(.planHiddenToggle:checked) .planHiddenDisclosureChevron{transform:rotate(180deg)}
+tbody:has(.planHiddenToggle:checked) .planHiddenDisclosure{background:linear-gradient(90deg,rgba(247,185,85,.075),rgba(255,255,255,.018));border-bottom:1px solid rgba(247,185,85,.12)}
+@media(max-width:760px){.planHiddenDisclosure{padding:10px 11px}.planHiddenDisclosureHint{font-size:9px}.planHiddenDisclosureTitle{font-size:12px}}
+</style>`;
+}
 /*
  * The capacity owner still distinguishes `${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer`
  * and the underlying drill-down remains equivalent to `View shared ${esc(state.pool)} capacity`.
@@ -79,7 +104,7 @@ function capacityCell(plan) {
   const remaining=Math.max(0,Number(state.remaining||0)),pct=Math.min(100,Math.round((used/limit)*100)),near=pct>=85?' nearFull':'';
   return `<div class="capacityMeter"><strong class="${remaining===0?'statusBad':remaining<=Math.max(2,Math.ceil(limit*.1))?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${customers} ${plural(customers,'customer')} on this plan · ${remaining} new ${plural(remaining,'place')} available</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">Manage customer availability →</a></div>`;
 }
-function planRow(plan, ctx) {
+function planRow(plan, ctx, extraClass = '') {
   const href = `/admin/plans/${encodeURIComponent(plan.id)}/edit`;
   const accessHref = `/admin/plans/${encodeURIComponent(plan.id)}/access`;
   const lifecycleHref = `/admin/plans/${encodeURIComponent(plan.id)}/lifecycle`;
@@ -90,7 +115,8 @@ function planRow(plan, ctx) {
   const delivery = readiness.deliveryLabel(plan);
   const type = readiness.serviceType(plan);
   const family = planFamily(plan);
-  return `<tr class="planListRow" tabindex="0" data-href="${esc(href)}"><td><strong>${esc(plan.name)}</strong> <span class="planTypeTag ${esc(type)}">${esc(serviceLabel(plan))}</span>${plan.is_free_tier ? ' <span class="planTypeTag">Free server plan</span>' : ''}${family === 'legacy' ? ' <span class="planTypeTag legacy">Historical</span>' : ''}<div class="subText">${esc(plan.code)} · v${esc(plan.version_number || 1)} · ${esc(plan.audience)}${type !== 'stremio' ? ` · ${esc(plan.server_class || 'custom')}` : ''}</div></td><td><strong>${esc(delivery)}</strong><div class="subText">${esc(accessModel(plan))}</div></td><td><span class="pill ${s.kind}">${esc(s.label)}</span><div class="subText">${s.sellable ? 'Available for acquisition' : 'New acquisition blocked'}</div></td><td><strong>${esc(priceLabel(plan))}</strong><div class="subText">${free && type === 'jellyfin' && plan.billing_interval !== 'trial' ? 'Usage rules, no billing period' : esc(billingLabel(plan.billing_interval))}</div></td><td>${capacityCell(plan)}</td><td class="right planActionsCell"><div class="buttonRow planActionsRow"><a class="button secondary btn-sm" href="${esc(href)}">Manage</a><a class="button secondary btn-sm" href="${esc(accessHref)}">Access</a>${free && type === 'jellyfin' && family === 'free' && plan.billing_interval !== 'trial' ? `<a class="button secondary btn-sm" href="${esc(lifecycleHref)}">Usage rules</a>` : ''}<a class="button secondary btn-sm" href="/admin/catalog/plan/${esc(plan.id)}/clone">Clone/version</a></div></td></tr>`;
+  const rowClass = `planListRow${extraClass ? ` ${extraClass}` : ''}`;
+  return `<tr class="${esc(rowClass)}" tabindex="0" data-href="${esc(href)}"><td><strong>${esc(plan.name)}</strong> <span class="planTypeTag ${esc(type)}">${esc(serviceLabel(plan))}</span>${plan.is_free_tier ? ' <span class="planTypeTag">Free server plan</span>' : ''}${family === 'legacy' ? ' <span class="planTypeTag legacy">Historical</span>' : ''}<div class="subText">${esc(plan.code)} · v${esc(plan.version_number || 1)} · ${esc(plan.audience)}${type !== 'stremio' ? ` · ${esc(plan.server_class || 'custom')}` : ''}</div></td><td><strong>${esc(delivery)}</strong><div class="subText">${esc(accessModel(plan))}</div></td><td><span class="pill ${s.kind}">${esc(s.label)}</span><div class="subText">${s.sellable ? 'Available for acquisition' : 'New acquisition blocked'}</div></td><td><strong>${esc(priceLabel(plan))}</strong><div class="subText">${free && type === 'jellyfin' && plan.billing_interval !== 'trial' ? 'Usage rules, no billing period' : esc(billingLabel(plan.billing_interval))}</div></td><td>${capacityCell(plan)}</td><td class="right planActionsCell"><div class="buttonRow planActionsRow"><a class="button secondary btn-sm" href="${esc(href)}">Manage</a><a class="button secondary btn-sm" href="${esc(accessHref)}">Access</a>${free && type === 'jellyfin' && family === 'free' && plan.billing_interval !== 'trial' ? `<a class="button secondary btn-sm" href="${esc(lifecycleHref)}">Usage rules</a>` : ''}<a class="button secondary btn-sm" href="/admin/catalog/plan/${esc(plan.id)}/clone">Clone/version</a></div></td></tr>`;
 }
 async function withCapacity(rows) {
   if (!rows.length) return rows;
@@ -101,8 +127,13 @@ async function withCapacity(rows) {
 }
 function sectionTable(key, title, description, rows, ctx, { keepEmpty = false, emptyHtml = '' } = {}) {
   if (!rows.length && !keepEmpty) return '';
+  const visibleRows = rows.filter(row => !hiddenPlan(row));
+  const hiddenRows = rows.filter(hiddenPlan);
+  const hiddenDisclosure = hiddenRows.length
+    ? `<tr class="planHiddenDisclosureRow"><td colspan="6"><label class="planHiddenDisclosure"><input class="planHiddenToggle" type="checkbox"><span class="planHiddenDisclosureTitle"><span class="planHiddenDisclosureDot" aria-hidden="true"></span>Hidden plans <span class="planHiddenDisclosureCount">${hiddenRows.length}</span></span><span class="planHiddenDisclosureHint"><span class="planHiddenWhenClosed">Show hidden plans</span><span class="planHiddenWhenOpen">Hide hidden plans</span><svg class="planHiddenDisclosureChevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></span></label></td></tr>${hiddenRows.map(row => planRow(row, ctx, 'planHiddenPlanRow')).join('')}`
+    : '';
   const content = rows.length
-    ? `<div class="tableWrap" data-plan-table-wrap><table class="dataTable responsiveTable" data-plan-table><thead><tr><th>Plan</th><th>Delivery</th><th>Sale readiness</th><th>Price</th><th>Customer availability</th><th class="right planActionsCell">Actions</th></tr></thead><tbody>${rows.map(row => planRow(row, ctx)).join('')}</tbody></table></div>`
+    ? `<div class="tableWrap" data-plan-table-wrap><table class="dataTable responsiveTable" data-plan-table><thead><tr><th>Plan</th><th>Delivery</th><th>Sale readiness</th><th>Price</th><th>Customer availability</th><th class="right planActionsCell">Actions</th></tr></thead><tbody>${visibleRows.map(row => planRow(row, ctx)).join('')}${hiddenDisclosure}</tbody></table></div>`
     : emptyHtml;
   return `<section class="section planFamilySection" data-plan-table-section="${esc(key)}"><div class="sectionHead"><div><h2>${esc(title)}</h2><div class="muted">${esc(description)}</div></div><span class="muted">${rows.length} plan${rows.length === 1 ? '' : 's'}</span></div>${content}</section>`;
 }
@@ -147,7 +178,7 @@ async function plansPage(req) {
     sectionTable('legacy', 'Historical Bundles / Add-ons', 'Historical rows kept for existing customer contracts; new bundle/add-on creation is retired.', groups.legacy, ctx)
   ].join('');
   const empty = `<div class="emptyAction"><div><strong>${showArchived ? 'No archived plans.' : 'No plans in this category yet.'}</strong><div>${showArchived ? 'Retired plans will appear here without affecting existing customer contract history.' : 'Create one from the Plans action button when needed.'}</div></div></div>`;
-  const body = `${notice(req)}${productTabs()}${sections || empty}`;
+  const body = `${hiddenPlanDisclosureStyles()}${notice(req)}${productTabs()}${sections || empty}`;
   const active = type === 'jellyfin' ? 'jellyfin-plans' : type === 'stremio' ? 'stremio-plans' : 'plans';
   return layout({
     siteName: runtimeSettings.siteName(),
