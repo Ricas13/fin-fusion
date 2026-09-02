@@ -32,12 +32,45 @@ const CLOUDFLARE_CIDRS = Object.freeze([
   '2c0f:f248::/32'
 ]);
 
-const cloudflareProxies = new net.BlockList();
-for (const cidr of CLOUDFLARE_CIDRS) {
-  const [address, prefixRaw] = cidr.split('/');
-  const family = net.isIP(address);
-  cloudflareProxies.addSubnet(address, Number(prefixRaw), family === 4 ? 'ipv4' : 'ipv6');
+// Household identity must represent an internet-facing client network, never a
+// loopback/private reverse proxy, documentation address, or other non-routable
+// hop. Treating a shared proxy address as the household identity collapses every
+// customer request onto the same lease and silently defeats the household limit.
+const NON_PUBLIC_CIDRS = Object.freeze([
+  '0.0.0.0/8',
+  '10.0.0.0/8',
+  '100.64.0.0/10',
+  '127.0.0.0/8',
+  '169.254.0.0/16',
+  '172.16.0.0/12',
+  '192.0.0.0/24',
+  '192.0.2.0/24',
+  '192.168.0.0/16',
+  '198.18.0.0/15',
+  '198.51.100.0/24',
+  '203.0.113.0/24',
+  '224.0.0.0/4',
+  '240.0.0.0/4',
+  '::/128',
+  '::1/128',
+  'fc00::/7',
+  'fe80::/10',
+  'ff00::/8',
+  '2001:db8::/32'
+]);
+
+function blockList(cidrs) {
+  const list = new net.BlockList();
+  for (const cidr of cidrs) {
+    const [address, prefixRaw] = cidr.split('/');
+    const family = net.isIP(address);
+    list.addSubnet(address, Number(prefixRaw), family === 4 ? 'ipv4' : 'ipv6');
+  }
+  return list;
 }
+
+const cloudflareProxies = blockList(CLOUDFLARE_CIDRS);
+const nonPublicAddresses = blockList(NON_PUBLIC_CIDRS);
 
 function stripPort(value) {
   let raw = String(value || '').trim();
@@ -122,33 +155,84 @@ function isCloudflareAddress(value) {
   return cloudflareProxies.check(address, family === 4 ? 'ipv4' : 'ipv6');
 }
 
+function isPublicAddress(value) {
+  const address = stripPort(value);
+  const family = net.isIP(address);
+  if (!family) return false;
+  return !nonPublicAddresses.check(address, family === 4 ? 'ipv4' : 'ipv6');
+}
+
 function requestHeader(req, name) {
   const direct = req?.headers?.[name];
   if (Array.isArray(direct)) return direct.length === 1 ? String(direct[0] || '') : '';
   return String(direct || '');
 }
 
-function requestAddress(req) {
-  // req.ip is intentionally the trust boundary here. With CAPTAiNFiN's default
-  // local/Docker trust-proxy setting, a Cloudflare-proxied request resolves to
-  // the Cloudflare edge address. Only in that case may Cloudflare's visitor-IP
-  // headers replace it. A direct request carrying a forged CF-Connecting-IP is
-  // ignored because its req.ip is not in a Cloudflare origin-facing range.
-  const effectiveAddress = stripPort(req?.ip || req?.socket?.remoteAddress || '');
-  if (!isCloudflareAddress(effectiveAddress)) return effectiveAddress;
+function forwardedAddresses(req) {
+  const raw = requestHeader(req, 'x-forwarded-for');
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map(value => stripPort(value))
+    .filter(value => net.isIP(value));
+}
 
+function cloudflareVisitorHeader(req) {
   // If Pseudo IPv4 is configured to overwrite headers, Cloudflare preserves the
   // real IPv6 visitor in CF-Connecting-IPv6. Prefer it so the existing /64
   // household normalization continues to represent the real IPv6 network.
   const connectingIpv6 = stripPort(requestHeader(req, 'cf-connecting-ipv6'));
-  if (net.isIP(connectingIpv6) === 6) return connectingIpv6;
+  if (net.isIP(connectingIpv6) === 6 && isPublicAddress(connectingIpv6) && !isCloudflareAddress(connectingIpv6)) return connectingIpv6;
 
   const connectingIp = stripPort(requestHeader(req, 'cf-connecting-ip'));
-  return net.isIP(connectingIp) ? connectingIp : effectiveAddress;
+  if (net.isIP(connectingIp) && isPublicAddress(connectingIp) && !isCloudflareAddress(connectingIp)) return connectingIp;
+  return '';
+}
+
+function forwardedVisitorAddress(addresses) {
+  // Walk from the origin-facing side of X-Forwarded-For toward the visitor.
+  // This selects the nearest public non-Cloudflare hop and avoids trusting an
+  // arbitrary left-most value that a client may have supplied before Cloudflare.
+  for (let index = addresses.length - 1; index >= 0; index -= 1) {
+    const address = addresses[index];
+    if (!isPublicAddress(address) || isCloudflareAddress(address)) continue;
+    return address;
+  }
+  return '';
+}
+
+function requestAddress(req) {
+  // req.ip is the primary Express trust boundary. When the configured reverse
+  // proxy chain has already resolved a public visitor address, use it directly.
+  const effectiveAddress = stripPort(req?.ip || req?.socket?.remoteAddress || '');
+  if (isPublicAddress(effectiveAddress) && !isCloudflareAddress(effectiveAddress)) return effectiveAddress;
+
+  const forwarded = forwardedAddresses(req);
+  const cloudflareSeen = isCloudflareAddress(effectiveAddress) || forwarded.some(isCloudflareAddress);
+  if (!cloudflareSeen) {
+    // Never turn a local/Docker proxy address into a household lease. If proxy
+    // forwarding is broken, returning no identity causes household access to
+    // fail closed instead of making every viewer look like the same household.
+    return '';
+  }
+
+  const headerVisitor = cloudflareVisitorHeader(req);
+  if (headerVisitor) return headerVisitor;
+
+  // CF-Connecting-IP should normally be present, but X-Forwarded-For gives us a
+  // safe fallback when an intermediate proxy drops that header while preserving
+  // the Cloudflare hop and visitor chain.
+  const forwardedVisitor = forwardedVisitorAddress(forwarded);
+  if (forwardedVisitor) return forwardedVisitor;
+
+  // A Cloudflare edge address is not a customer household. Failing closed here
+  // is preferable to refreshing one shared lease for every visitor.
+  return '';
 }
 
 module.exports = {
   CLOUDFLARE_CIDRS,
+  NON_PUBLIC_CIDRS,
   stripPort,
   expandIpv6,
   canonicalNetwork,
@@ -156,5 +240,8 @@ module.exports = {
   hashSecret,
   hashNetwork,
   isCloudflareAddress,
+  isPublicAddress,
+  forwardedAddresses,
+  forwardedVisitorAddress,
   requestAddress
 };

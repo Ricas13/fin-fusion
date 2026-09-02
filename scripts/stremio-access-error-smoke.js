@@ -18,8 +18,11 @@ assert(runtime.includes("'/stremio/:token/subscription-ended/:type/:videoId.mp4'
 assert(runtime.includes('const state = await installTokenState(req.params.token);') && runtime.includes('await entitlements.markUse(state.entitlement.id, \'manifest\')'), 'recognized ended install tokens must keep serving the addon manifest so Stremio can surface the error result');
 
 assert(household.includes('function deniedStream('), 'household-limit failure must keep returning a fake Stremio stream result');
-assert(household.includes("return 'Household IP limit reached';"), 'household-limit fake result must name the actual access error');
+assert(household.includes("'Household IP limit reached'"), 'household-limit fake result must name the actual access error');
+assert(household.includes("'Household IP could not be verified'"), 'unresolved proxy identity must produce a visible fail-closed household error');
+assert(household.includes("decision: 'network_unavailable'"), 'unresolved public visitor identity must fail closed before a shared proxy lease can be used');
 assert(household.includes('CAPTAiNFiN • ${title}'), 'household-limit fake result must remain visibly branded');
 assert(household.includes('already reached its allowed household internet connections'), 'household-limit result must explain that the plan allowance is exhausted');
+assert(household.includes('Playback is blocked rather than sharing a proxy address between customers.'), 'proxy identity failures must explain the fail-closed behavior');
 
 console.log('stremio access error smoke: ok');
