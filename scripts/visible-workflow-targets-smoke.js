@@ -69,19 +69,19 @@ async function main(){
     let match;
     const formRe=/<form\b[^>]*>/gi;
     while((match=formRe.exec(source))){
-      const tag=match[0],action=staticLocalTarget(attr(tag,'action'));
+      const tag=match[0],action=dynamicLocalTarget(attr(tag,'action'));
       if(!action)continue;
       const method=(attr(tag,'method')||'GET').toUpperCase();
       checks.push({method,path:action,rel,kind:'form'});
     }
     const submitterRe=/<(?:button|input)\b[^>]*formaction\s*=\s*["']([^"']+)["'][^>]*>/gi;
     while((match=submitterRe.exec(source))){
-      const action=staticLocalTarget(match[1]);
+      const action=dynamicLocalTarget(match[1]);
       if(action)checks.push({method:'POST',path:action,rel,kind:'formaction'});
     }
     const hrefRe=/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>/gi;
     while((match=hrefRe.exec(source))){
-      const href=staticLocalTarget(match[1]);
+      const href=dynamicLocalTarget(match[1]);
       if(href)checks.push({method:'GET',path:href,rel,kind:'href'});
     }
     const redirectRe=/res\.redirect\(\s*(?:\d{3}\s*,\s*)?(['"`])([\s\S]*?)\1/g;
@@ -92,11 +92,11 @@ async function main(){
   }
   const missing=checks.filter(check=>!routes.some(route=>(route.method===check.method||route.method==='ALL')&&sameShape(check.path,route.path)));
   if(missing.length){
-    console.error('Visible static workflow targets without a mounted route:');
+    console.error('Visible same-origin workflow targets without a mounted route:');
     for(const item of missing)console.error(` - ${item.method} ${item.path} (${item.kind} in ${item.rel})`);
   }
-  assert.equal(missing.length,0,'Every visible static same-origin workflow target must have a mounted route');
-  console.log(`visible workflow targets smoke: ok (${checks.length} static targets checked)`);
+  assert.equal(missing.length,0,'Every visible same-origin workflow target, including dynamic customer actions, must have a mounted route');
+  console.log(`visible workflow targets smoke: ok (${checks.length} static/dynamic targets checked)`);
 }
 
 main()
