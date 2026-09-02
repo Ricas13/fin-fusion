@@ -7,6 +7,7 @@ const classifier=require('../src/payments/provider-transaction-classifier');
 const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
 
 const source=read('public/js/operator-business-indicators.js');
+const indicatorStyles=read('public/css/operator-business-indicators.css');
 const state=read('src/platform/admin-operator-state.js');
 const profit=read('src/platform/business-profitability.js');
 const expensePage=read('src/platform/admin-expenses.js');
@@ -18,6 +19,11 @@ assert(source.includes('data-operator-signal="new"')&&source.includes("signalMen
 assert(source.includes("primaryHref:'/admin/attention'")&&source.includes("href:'/admin/payments'")&&source.includes("href:'/admin/commerce/orders'")&&source.includes("href:'/admin/tickets'"),'alert and inbox menus must lead to their canonical operator queues');
 assert(source.includes("tone:'alert'")&&source.includes("tone:'inbox'")&&source.includes('operatorSignal--new'),'header signals must retain distinct semantic tones');
 assert(!source.includes("count.textContent=total>0?(total>99?'99+':String(total)):'Clear'"),'split header signals must not render Clear into every zero state');
+assert(source.includes("headLabel:'Unresolved alerts'")&&source.includes('Persistent until resolved'),'Alerts must describe unresolved operational state rather than unread state');
+assert(source.includes("meta:'Unacknowledged items — acknowledge after review'")&&source.includes("meta:'Unresolved health state — clears when recovered'")&&source.includes("meta:'Unresolved processing state — clears when processed'"),'each Alerts source must explain its own clearing semantics');
+assert(source.includes("badge.textContent=key==='alerts'?'!'"),'Alerts summary must be a state indicator rather than a misleading sum of overlapping signal counts');
+assert(source.includes('These clear when resolved, not when viewed.'),'Alerts accessibility copy must make persistent semantics explicit');
+assert(!indicatorStyles.includes('operatorAlertPulse')&&indicatorStyles.includes('.operatorSignal--alert .operatorSignalSummary::before'),'persistent Alerts must use a static state treatment rather than a perpetual unread-style pulse');
 assert(source.includes('<span>Profit</span>')&&source.includes('data-operator-profit'),'admin header must show profit instead of gross revenue');
 assert(source.includes('href="/admin/expenses"'),'profit header metric must link to Expenses & Profitability');
 assert(source.includes('monthlyProfit')&&source.includes('yearlyProfit'),'profit chip must render both month and calendar-year/YTD profit');
