@@ -26,6 +26,7 @@ function staticContracts(){
   assert(inactivity.includes("ja.access_lane='free'")&&inactivity.includes('ph.server_id=ja.server_id'),'Free inactivity must use only Free-lane server playback');
   assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity candidates must not depend on how Free access was acquired');
   assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("ja.access_lane='free'"),'Free entitlement blocking must recognize source-agnostic Free-lane inactivity and cleanup holds');
+  assert(subscriptionState.includes('ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC'),'runtime Jellyfin entitlement selection must prefer a live paid/trial lane over permanent Free access');
   assert(inactivity.includes("reason:'premium_jellyfin_active'"),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
   assert(provisioning.includes("'reconcile','started'")&&!provisioning.includes("'reconcile_multi_access','started'"),'multi-access provisioning runs must use a schema-valid action');
   assert(migration.includes("CHECK (access_lane IN ('primary','free'))")&&migration.includes("p_source='free_claim'"),'applied migration must remain unchanged while runtime supplements legacy-source Free blocking');
@@ -47,6 +48,8 @@ function staticContracts(){
 
     let jellyfin=(await client.query(`SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1`,[customer.id])).rows[0],stremio=(await client.query(`SELECT subscription_id FROM effective_stremio_entitlements WHERE customer_id=$1`,[customer.id])).rows[0];
     assert.strictEqual(String(jellyfin.subscription_id),String(premiumTrial.id),'Premium Jellyfin trial must overlay permanent Free Server');
+    let runtimeJellyfin=await state.effectiveSubscription(customer.id,{client});
+    assert.strictEqual(String(runtimeJellyfin.subscription_id),String(premiumTrial.id),'runtime Jellyfin selector must agree that Premium trial overlays permanent Free Server');
     assert.strictEqual(String(stremio.subscription_id),String(stremioTrial.id),'Stremio trial must coexist with the Jellyfin entitlement');
     let freeLane=await state.liveFreeJellyfinSubscription(customer.id,{client});
     assert.strictEqual(String(freeLane.subscription_id),String(free.id),'Free Server must remain independently discoverable while Premium trial is active');
@@ -54,8 +57,12 @@ function staticContracts(){
     await client.query(`UPDATE subscriptions SET status='expired',current_period_end=NOW()-INTERVAL '1 second' WHERE id=$1`,[premiumTrial.id]);
     jellyfin=(await client.query(`SELECT subscription_id FROM effective_customer_entitlements WHERE customer_id=$1`,[customer.id])).rows[0];
     assert.strictEqual(String(jellyfin.subscription_id),String(free.id),'Free Server must become effective again after Premium trial expiry');
+    runtimeJellyfin=await state.effectiveSubscription(customer.id,{client});
+    assert.strictEqual(String(runtimeJellyfin.subscription_id),String(free.id),'runtime Jellyfin selector must fall back to Free Server after Premium trial expiry');
 
     const premiumPaid=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days','sub_multi_jellyfin') RETURNING id`,[customer.id,plans.premiumPaid.id])).rows[0];
+    runtimeJellyfin=await state.effectiveSubscription(customer.id,{client});
+    assert.strictEqual(String(runtimeJellyfin.subscription_id),String(premiumPaid.id),'runtime Jellyfin selector must prefer paid Premium over permanent Free Server even though Free expires later');
     freeLane=await state.liveFreeJellyfinSubscription(customer.id,{client});
     assert.strictEqual(String(freeLane.subscription_id),String(free.id),'Free Server must remain live beside paid Premium Jellyfin');
     await state.assertNoOtherLiveRecurring(client,customer.id,premiumPaid.id,plans.stremioPaid.id);
