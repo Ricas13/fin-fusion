@@ -103,44 +103,31 @@ async function auditPage(page,url,{mobile=false}={}){
   }
 }
 
-async function assertWorkflow(page,url,expected,activeExpected=null){
+async function assertWorkflow(page,url,{owner=null,current=null,personal=false}={}){
   const response=await page.goto(`${BASE}${url}`,{waitUntil:'domcontentloaded',timeout:20000});
   assert(response&&response.status()<400,`${url} workflow page returned ${response?.status()}`);
   await page.waitForLoadState('load',{timeout:10000}).catch(()=>{});
 
-  // The sidebar is the only navigation hierarchy. No legacy workflow cards,
-  // horizontal tabs, secondary rows, or bottom-of-page tool directories may
-  // remain visible in page content.
+  // The rail is the only persistent navigation hierarchy. Specialist screens
+  // keep their owner active, but never manufacture a third rail level.
   const visiblePageNavigation=await page.locator('.content nav.workflowCardGrid,.content nav.operatorTabs,.content nav.coherenceSectionTabs,.content nav.coherenceSubTabs,.content section.coherenceOwnedTools').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
   assert.equal(visiblePageNavigation,0,`${url} still renders ${visiblePageNavigation} page-body navigation surfaces`);
+  assert.equal(await page.locator('.adminSubTab').count(),0,`${url} reintroduced a third rail level`);
 
-  const ownerByPath=url.startsWith('/admin/notifications')||url==='/admin/request-users'||url==='/admin/settings/integrations'?'Connections'
-    :url.startsWith('/admin/provisioning')?'Provisioning'
-      :url==='/admin/backups'||url==='/admin/configuration'?'Backups & Recovery'
-        :null;
-  if(ownerByPath){
+  if(owner){
     const activeMain=(await page.locator('.adminTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
-    assert.deepStrictEqual(activeMain,[ownerByPath],`${url} must keep ${ownerByPath} active in the left sidebar: ${JSON.stringify(activeMain)}`);
-
-    if(Array.isArray(expected)&&expected[0]===ownerByPath){
-      const children=(await page.locator('.adminTab.active').locator('xpath=..').locator('.adminSubTab').allTextContents()).map(x=>x.trim()).filter(Boolean);
-      assert.deepStrictEqual(children,expected.slice(1),`${url} nested sidebar tools changed: ${JSON.stringify(children)}`);
-    }
+    assert.deepStrictEqual(activeMain,[owner],`${url} must keep ${owner} active in the left rail: ${JSON.stringify(activeMain)}`);
   }
 
-  if(activeExpected){
+  if(current){
     const breadcrumb=String(await page.locator('.topBreadcrumb strong').textContent()).trim();
-    assert.equal(breadcrumb,activeExpected,`${url} breadcrumb does not identify its current page`);
-    if(ownerByPath&&activeExpected!==ownerByPath){
-      const activeChild=(await page.locator('.adminSubTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean);
-      assert.deepStrictEqual(activeChild,[activeExpected],`${url} must highlight ${activeExpected} as the current nested sidebar destination: ${JSON.stringify(activeChild)}`);
-    }
+    assert.equal(breadcrumb,current,`${url} breadcrumb does not identify its current page`);
   }
 
   const topBarAdminLinks=(await page.locator('.topBarActions > a[href^="/admin"]').allTextContents()).map(x=>x.trim()).filter(Boolean);
   assert.deepStrictEqual(topBarAdminLinks,[],`${url} mixes page navigation/actions into the global top utility bar: ${JSON.stringify(topBarAdminLinks)}`);
 
-  if(expected.join('|')==='Profile|Notifications|Security'){
+  if(personal){
     const personalSubRows=await page.locator('.content nav.operatorTabs,.content nav.coherenceSubTabs').evaluateAll(nodes=>nodes.filter(el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}).length);
     assert.equal(personalSubRows,0,`${url} must not reintroduce a personal-account subtab row`);
   }
@@ -185,46 +172,55 @@ async function main(){
       }
     }
 
-    const profileTabs=['Profile','Notifications','Security'];
-    await assertWorkflow(page,'/admin/profile',profileTabs);
-    await assertWorkflow(page,'/admin/profile/notifications',profileTabs);
-    await assertWorkflow(page,'/admin/security',profileTabs);
+    await assertWorkflow(page,'/admin/profile',{personal:true});
+    await assertWorkflow(page,'/admin/profile/notifications',{personal:true});
+    await assertWorkflow(page,'/admin/security',{personal:true});
 
-    const connectionTabs=['Connections','Notifications','Email infrastructure','Request service'];
-    for(const [url,active] of [
+    for(const [url,current] of [
       ['/admin/settings/integrations','Connections'],
       ['/admin/notifications/preferences','Notifications'],
       ['/admin/notifications/email','Email infrastructure'],
       ['/admin/notifications','Email infrastructure'],
       ['/admin/request-users','Request service']
-    ]) await assertWorkflow(page,url,connectionTabs,active);
+    ]) await assertWorkflow(page,url,{owner:'Connections',current});
 
-    const provisioningTabs=['Provisioning','Access consistency'];
-    await assertWorkflow(page,'/admin/provisioning',provisioningTabs,'Provisioning');
-    await assertWorkflow(page,'/admin/provisioning/drift',provisioningTabs,'Access consistency');
-    await assertWorkflow(page,'/admin/provisioning/migrations',provisioningTabs);
-    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Customer moves','Customer moves must remain reachable from Customer 360 without reappearing in the Provisioning sidebar');
+    await assertWorkflow(page,'/admin/provisioning',{owner:'Provisioning',current:'Provisioning'});
+    await assertWorkflow(page,'/admin/provisioning/drift',{owner:'Provisioning',current:'Access consistency'});
+    await assertWorkflow(page,'/admin/provisioning/migrations',{owner:'Provisioning',current:'Customer moves'});
     const legacyRequestResponse=await page.goto(`${BASE}/admin/request-plan-policy`,{waitUntil:'domcontentloaded',timeout:20000});
     assert(legacyRequestResponse&&legacyRequestResponse.status()<400,'legacy Request limits URL must remain a safe compatibility redirect');
     assert.equal(new URL(page.url()).pathname,'/admin/plans','legacy Request limits URL must redirect to canonical Plans');
-    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Plans & Storefront','legacy Request limits must land in Plans & Storefront');
+    assert.equal(String(await page.locator('.topBreadcrumb strong').textContent()).trim(),'Plans','legacy Request limits must land in Plans');
+    assert.deepStrictEqual((await page.locator('.adminTab.active').allTextContents()).map(x=>x.trim()).filter(Boolean),['Plans'],'legacy Request limits must keep Plans active in the rail');
     assert(!(await page.locator('.operatorTabs').allTextContents()).join(' ').includes('Request limits'),'Request limits must not remain as a duplicate Plans workflow card');
-    const backupTabs=['Backups & Recovery','Configuration Transfer','Migrate paid users'];
-    await assertWorkflow(page,'/admin/backups',backupTabs,'Backups & Recovery');
-    await assertWorkflow(page,'/admin/configuration',backupTabs,'Configuration Transfer');
+    await assertWorkflow(page,'/admin/backups',{owner:'Backups',current:'Backups'});
+    await assertWorkflow(page,'/admin/configuration',{owner:'Backups',current:'Configuration Transfer'});
 
     await page.setViewportSize({width:390,height:844});
     for(const url of ['/admin','/admin/users','/admin/plans','/admin/plans/new?type=stremio','/admin/provisioning','/admin/request-users','/admin/notifications/preferences','/admin/profile','/admin/profile/notifications','/admin/security','/admin/servers/operations','/admin/backups','/admin/billing','/admin/payments/transactions','/admin/payments/export','/admin/activity']){
       inventory.mobile.push(await auditPage(page,url,{mobile:true}));
     }
 
+    // The compact shell is a real off-canvas drawer: it starts closed, exposes
+    // only the fixed two-level Servers destinations, locks page scrolling while
+    // open, and Escape closes it again.
     await page.goto(`${BASE}/admin/activity`,{waitUntil:'domcontentloaded'});
-    await page.locator('[data-admin-mobile-nav-toggle]').click();
-    const jellyfinSection=page.locator('details.navSection[data-nav-section="jellyfin"]');
-    if(!(await jellyfinSection.getAttribute('open')))await jellyfinSection.locator(':scope > summary').click();
-    const jellyfinNested=(await jellyfinSection.locator('.adminSubTab').allTextContents()).map(value=>value.trim()).filter(Boolean);
-    assert(jellyfinNested.includes('Free-user inactivity rules'),`Playback mobile drawer lost its nested tools: ${JSON.stringify(jellyfinNested)}`);
-    assert(!jellyfinNested.includes('Libraries'),'Libraries utility must not reappear in the mobile drawer');
+    const drawerToggle=page.locator('[data-admin-mobile-nav-toggle]');
+    assert.equal(await drawerToggle.count(),1,'mobile admin shell must expose one drawer toggle');
+    assert.equal(await drawerToggle.getAttribute('aria-expanded'),'false','mobile drawer must start closed');
+    await drawerToggle.click();
+    assert.equal(await drawerToggle.getAttribute('aria-expanded'),'true','drawer toggle must expose its open state');
+    assert(await page.locator('body.mobileNavLocked').count(),'opening the drawer must lock page scrolling');
+    const serversSection=page.locator('details.navSection[data-nav-section="servers"]');
+    assert.equal(await serversSection.count(),1,'mobile drawer must expose the canonical Servers section');
+    if(!(await serversSection.getAttribute('open')))await serversSection.locator(':scope > summary').click();
+    const serverDestinations=(await serversSection.locator('.adminTab').allTextContents()).map(value=>value.trim()).filter(Boolean);
+    assert.deepStrictEqual(serverDestinations,['Jellyfin','Stremio','Playback'],'mobile Servers drawer destinations changed');
+    assert.deepStrictEqual((await serversSection.locator('.adminTab.active').allTextContents()).map(value=>value.trim()).filter(Boolean),['Playback'],'Playback must remain the single active rail destination');
+    assert.equal(await page.locator('.adminSubTab').count(),0,'mobile drawer must never render third-level destinations');
+    await page.keyboard.press('Escape');
+    assert.equal(await drawerToggle.getAttribute('aria-expanded'),'false','Escape must close the mobile drawer');
+    assert.equal(await page.locator('body.mobileNavLocked').count(),0,'closing the drawer must release page scrolling');
 
     // Export endpoints are POST + CSRF downloads. Exercise all four against the
     // real clean-install schema so SQL drift cannot hide behind static tests.
