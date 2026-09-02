@@ -212,11 +212,11 @@ async function expiryReconciliationFailureReporting(suffix) {
 // Item 8: auto-renewing recurring subscriptions should not receive misleading
 // manual-renewal expiry warnings, except when cancel_at_period_end is true.
 function renewalWarningEligibility() {
-  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'active', source: 'stripe', provider_subscription_id: 'sub_123' }), true, 'an active recurring Stripe subscription must be treated as auto-renewing');
-  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'trialing', source: 'stripe', provider_subscription_id: 'sub_123' }), true, 'a trialing recurring Stripe subscription must be treated as auto-renewing');
-  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'active', source: 'stripe', provider_subscription_id: 'sub_123', cancel_at_period_end: true }), false, 'a recurring subscription scheduled to cancel at period end must be eligible for the manual-renewal warning');
-  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'trialing', source: 'stripe', provider_subscription_id: 'sub_123', cancel_at_period_end: true }), false, 'a trialing subscription scheduled to cancel at period end must also be eligible for the warning');
-  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'active', source: 'admin_grant' }), false, 'a manual/non-recurring subscription must never be treated as auto-renewing');
+  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'active', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), true, 'an active recurring Stripe subscription must be treated as auto-renewing');
+  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'trialing', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), true, 'a trialing recurring Stripe subscription must be treated as auto-renewing');
+  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'active', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123', cancel_at_period_end: true }), false, 'a recurring subscription scheduled to cancel at period end must be eligible for the manual-renewal warning');
+  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'trialing', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123', cancel_at_period_end: true }), false, 'a trialing subscription scheduled to cancel at period end must also be eligible for the warning');
+  assert.equal(subscriptionExpiry.recurringAutoRenewal({ status: 'active', source: 'admin_grant', billing_mode: 'manual' }), false, 'a manual/non-recurring subscription must never be treated as auto-renewing');
 }
 
 // Item 9: releasing a household network lease (with a cooldown-eligibility
