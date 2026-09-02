@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../db');
 const requestSettings = require('./request-service-settings');
 const planPolicy = require('./request-plan-policy');
+const requestEntitlements = require('./request-entitlement');
 const outbound = require('../security/outbound-url-policy');
 
 const REQUEST_PERMISSION = planPolicy.DEFAULT_REQUEST_MASK;
@@ -208,7 +209,13 @@ async function suspendCustomer(candidate, external, { planId = null, desired = n
 function indexesFor(users) {
   return { byId: new Map(users.filter(user => user?.id != null).map(user => [String(user.id), user])), byEmail: new Map(users.filter(user => user?.email).map(user => [String(user.email).toLowerCase(), user])) };
 }
+async function resolveRequestCandidate(candidate) {
+  if (candidate?.entitlement_active && candidate.request_access_enabled !== false) return candidate;
+  const alternate = candidate?.customer_id ? await requestEntitlements.resolve(candidate.customer_id) : null;
+  return alternate?.entitlement_active ? { ...candidate, ...alternate } : candidate;
+}
 async function syncCustomer(candidate, indexes = {}, options = {}) {
+  candidate = await resolveRequestCandidate(candidate);
   const username = cleanUsername(candidate.username), email = validEmail(candidate.email) || candidate.external_email || fallbackEmail(candidate.customer_id);
   const suppliedPassword = typeof options.password === 'string' && options.password.length >= 12 && options.password.length <= 200 ? options.password : null;
   let external = candidate.external_user_id ? indexes.byId?.get(String(candidate.external_user_id)) : null;
@@ -322,20 +329,18 @@ async function syncOneCustomer(customerId, options = {}) {
 }
 async function requestAccessForCustomer(customerId) {
   const result = await query(`
-    SELECT rus.*,
-      COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,
-      p.name AS applied_plan_name,p.code AS applied_plan_code,
-      COALESCE(ep.request_access_enabled,TRUE) AS request_access_enabled,
-      COALESCE((e.subscription_id IS NOT NULL AND e.blocked=FALSE AND COALESCE(ep.request_access_enabled,TRUE)=TRUE),FALSE) AS entitlement_active
+    SELECT rus.*,COALESCE(NULLIF(u.email,''),NULLIF(c.email,'')) AS customer_email,
+      p.name AS applied_plan_name,p.code AS applied_plan_code
     FROM customers c
     LEFT JOIN app_users u ON u.id=c.user_id
     LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
     LEFT JOIN plans p ON p.id=rus.applied_plan_id
-    LEFT JOIN effective_customer_entitlements e ON e.customer_id=c.id
-    LEFT JOIN plans ep ON ep.id=e.plan_id
     WHERE c.id=$1
-  `, [customerId]);
-  return result.rows[0] || null;
+  `,[customerId]);
+  const state = result.rows[0] || null;
+  if (!state) return null;
+  const entitlement = await requestEntitlements.resolve(customerId);
+  return { ...state, ...(entitlement || {}), entitlement_active: Boolean(entitlement?.entitlement_active), request_access_enabled: Boolean(entitlement?.request_access_enabled) };
 }
 async function setCustomerPassword(customerId, password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 200) throw new Error('Request-site password must be between 12 and 200 characters.');
@@ -360,4 +365,4 @@ async function statusSummary() {
   return { ...config, counts: Object.fromEntries(counts.rows.map(row => [row.status, row.count])), suspended: Number(suspended.rows[0]?.count || 0) };
 }
 
-module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary };
+module.exports = { REQUEST_PERMISSION, DEFAULT_SYNC_CONCURRENCY, cleanBaseUrl, configuration, apiRequest, validEmail, cleanUsername, fallbackEmail, quotaLimit, quotaDays, syncConcurrency, mapBounded, syncCandidates, externalUsers, permissionState, setPermissions, desiredMainSettings, mainSettingsChanged, syncMainSettings, setQuotas, cleanFailureMessage, emptySummary, countResult, finalizeSummary, syncAll, syncSelected, syncOneCustomer, requestAccessForCustomer, setCustomerPassword, markPasswordSyncFailure, statusSummary, resolveRequestCandidate };
