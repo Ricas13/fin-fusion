@@ -93,11 +93,12 @@ assert(attentionSource.includes('jobHealth.list()'), 'Needs Attention must deriv
 assert(operatorState.includes('attention.openSummary()'), 'header Alerts count must use the same Needs Attention snapshot as the Alerts page');
 
 assert(capability.includes("@import url('/css/admin-plan-control-room.css')"), 'shared admin shell must load the plan/attention layout corrections');
-assert(css.includes('.planControlGrid{display:grid;grid-template-columns:1fr!important'), 'plan editor must default to one configuration job per row');
-assert(css.includes('@media(min-width:1100px)') && css.includes('.planControlGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use at most two columns on wide screens');
-assert(css.includes('.planControlGrid>#access,.planControlGrid>#availability{grid-column:auto!important}'), 'Access and Availability must be the deliberate two-card pair');
-assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:1/-1!important}'), 'legacy span classes must resolve to full-width cards rather than mosaics');
-assert(css.includes('.planControlGrid>.requestPlanCard{grid-column:1/-1!important'), 'request/Jellyseerr policy must remain a full-width monster card');
+assert(css.includes('.planControlGrid{display:grid;grid-template-columns:1fr!important'), 'plan editor must keep a safe one-column base before responsive enhancements');
+assert(css.includes('@media(min-width:820px)') && css.includes('.planControlGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important'), 'plan editor must use two compact columns at normal admin widths');
+assert(css.includes('@media(min-width:1280px)') && css.includes('.planControlGrid{grid-template-columns:repeat(3,minmax(0,1fr))!important'), 'plan editor must use the requested three-column desktop body rhythm');
+assert(css.includes('.planConfigCard.span2,.planConfigCard.span3{grid-column:auto!important}'), 'legacy span classes must no longer force full-width rows in the compact editor');
+assert(css.includes('.planControlGrid>.requestPlanCard{grid-column:auto!important'), 'request/Jellyseerr policy must participate in the compact grid instead of remaining a full-width monster card');
+assert(css.includes('.requestQuotaGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}'), 'request quotas must stay readable inside a compact card instead of squeezing four fields into one row');
 assert(css.includes('overflow-wrap:normal;word-break:normal;hyphens:none'), 'toggle titles must not wrap in the middle of words');
 assert(!densityCss.includes('.planControlGrid{') && !densityCss.includes('.planControlGrid>'), 'card-density CSS must not override planControlGrid geometry or spans');
 assert(css.includes('.planControlHeader{display:none!important}'), 'duplicate plan status strip must stay out of the editor');
