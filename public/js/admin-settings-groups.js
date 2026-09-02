@@ -312,15 +312,6 @@
       moveBlock(lifecycleForm, lifecycleAdvancedBody, ':scope > .formGrid');
     }
 
-    const sourcesCard = document.getElementById('sources');
-    const sourcesForm = sourcesCard?.querySelector(':scope > form');
-    if (sourcesForm?.querySelector(':scope > .planServerChoices')) {
-      const sourcesAdvanced = ensureFormAdvanced(sourcesCard, sourcesForm, 'sources-advanced-settings', 'Additional source selection and source priority.');
-      const sourcesAdvancedBody = bodyOf(sourcesAdvanced);
-      moveBlock(sourcesForm, sourcesAdvancedBody, ':scope > .planServerChoices');
-      moveBlock(sourcesForm, sourcesAdvancedBody, ':scope > .buttonRow');
-    }
-
     for (const card of cards) {
       if (card.querySelector('.adminSettingsCardAdvanced')) continue;
       const existing = card.querySelector('details.planCardDetails');
@@ -394,7 +385,7 @@
       const timeoutGroup = formGroup('Display time', timeout);
       timeoutGroup.append(node('div', 'inlineHelp', `Seconds before ${providerLabel} dismisses the pop-up.`));
       const fields = node('div', 'formGrid'); fields.append(audience, titleGroup, textGroup, timeoutGroup); form.append(fields);
-      const row = node('div', 'buttonRow'); const submit = node('button', 'button secondary', 'Send message'); submit.type = 'submit'; row.append(submit); form.append(row); formPanel.append(form);
+      const row = node('div', 'buttonRow'); const submit = node('button', 'button', 'Send message'); submit.type = 'submit'; row.append(submit); form.append(row); formPanel.append(form);
     } catch (error) {
       formPanel.append(node('div', 'notice error', error.message || 'Active media-server sessions could not be loaded.'));
     }
