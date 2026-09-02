@@ -92,7 +92,14 @@ async function notifyNewJellyfinAccess(customerId, account) {
   try {
     const notifications = require('../integrations/notification-dispatch');
     const runtimeSettings = require('../platform/runtime-settings');
-    await runtimeSettings.ensureLoaded().catch(() => {});
+    try {
+      await runtimeSettings.ensureLoaded();
+    } catch (settingsError) {
+      console.warn('Runtime settings refresh failed before Jellyfin onboarding notification.', {
+        customerId: safeLog(customerId, 100),
+        error: safeLog(settingsError?.message || settingsError)
+      });
+    }
     const found = await query(`
       SELECT COALESCE(c.email,u.email) email,
              COALESCE(c.display_name,u.username,'Customer') customer_name,
