@@ -23,11 +23,11 @@ const secondaryOutbox = read('src/integrations/notification-outbox.js');
 // Active provider subscriptions renew automatically and must not receive a
 // misleading monthly "expires soon" warning. Non-recurring, trial/past-due and
 // cancelled access remains eligible for an access-expiry warning.
-assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'stripe', provider_subscription_id: 'sub_123' }), true);
-assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'paypal', provider_subscription_id: 'I-ABC123' }), true);
-assert.strictEqual(expiry.recurringAutoRenewal({ status: 'cancelled', source: 'stripe', provider_subscription_id: 'sub_123' }), false);
-assert.strictEqual(expiry.recurringAutoRenewal({ status: 'past_due', source: 'paypal', provider_subscription_id: 'I-ABC123' }), false);
-assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'service_credit', provider_subscription_id: null }), false);
+assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), true);
+assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'paypal', billing_mode: 'subscription', provider_subscription_id: 'I-ABC123' }), true);
+assert.strictEqual(expiry.recurringAutoRenewal({ status: 'cancelled', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), false);
+assert.strictEqual(expiry.recurringAutoRenewal({ status: 'past_due', source: 'paypal', billing_mode: 'subscription', provider_subscription_id: 'I-ABC123' }), false);
+assert.strictEqual(expiry.recurringAutoRenewal({ status: 'active', source: 'service_credit', billing_mode: 'payment', provider_subscription_id: null }), false);
 assert(expiry.DEFAULT_WARNING_DAYS >= 1 && expiry.DEFAULT_WARNING_DAYS <= 30, 'expiry warning window must stay bounded');
 assert.deepStrictEqual(expiryPolicy.DEFAULT_POLICY.milestones, [7, 3, 1, 0], 'default expiry cadence must cover 7/3/1/0');
 assert.deepStrictEqual(expiryPolicy.normalizeMilestones([1, '7', 3, 7, 0, 31, -1]), [7, 3, 1, 0], 'expiry milestones must be unique, bounded, ordered and allow day zero');

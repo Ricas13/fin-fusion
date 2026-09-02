@@ -16,7 +16,7 @@ const customerManagementSource=fs.readFileSync(path.join(root,'src/platform/admi
 
 function subscription(cancelAtPeriodEnd=false){
   return{
-    id:'sub-current',subscription_id:'sub-current',plan_id:'plan-current',status:'active',source:'paypal',
+    id:'sub-current',subscription_id:'sub-current',plan_id:'plan-current',status:'active',source:'paypal',billing_mode:'subscription',
     provider_subscription_id:'I-SMOKE-PAYPAL',cancel_at_period_end:cancelAtPeriodEnd,
     current_period_end:'2099-09-30T12:00:00.000Z',service_type:'jellyfin',service_type_snapshot:'jellyfin',
     plan_name:'Current PayPal',plan_code:'current-paypal',billing_interval:'month',billing_interval_snapshot:'month',
@@ -81,7 +81,7 @@ assert(bulkOperationsSource.includes('billingContractPreserved:true'),'the recur
 assert(customerManagementSource.includes('function accessPath(')&&customerManagementSource.includes('return res.redirect(accessPath(id,key,message,anchor))'),'folded /manage POST actions must return success/error feedback directly to the Access tab');
 assert(customerManagementSource.includes("r.get('/admin/users/:customerId/manage'")&&customerManagementSource.includes('return res.redirect(accessPath(req.params.customerId,key,message))'),'GET /manage must redirect into Access and preserve an existing message/error');
 
-const localAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[{...subscription(false),source:'manual',provider_subscription_id:null}],accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Server A',recon_status:'successful'}]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
+const localAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[{...subscription(false),source:'manual',billing_mode:'payment',provider_subscription_id:null}],accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Server A',recon_status:'successful'}]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
 for(const label of ['Change entitlement','Move server','Use plan placement','Change expiry','Reset expiry to plan term','Reconcile'])assert(localAccessHtml.includes(label),`Access overview must expose ${label} without leaving the customer workspace`);
 assert(accessCardsSource.includes('Reset access controls to plan'),'the compact Access workspace must retain an explicit reset-to-plan policy action');
 assert(localAccessHtml.includes('/server-placement/reset')&&localAccessHtml.includes('name="confirmation"')&&localAccessHtml.includes('placeholder="PLACE"'),'automatic plan placement reset must be an explicit typed-confirmation customer action');

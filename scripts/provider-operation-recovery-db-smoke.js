@@ -61,7 +61,7 @@ async function customer(tag) {
     return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`, [`Provider Recovery ${tag}`, `provider-recovery-${tag}@example.invalid`])).rows[0];
 }
 async function subscription(customerId, planId, providerSubscriptionId) {
-    return (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING *`, [customerId, planId, providerSubscriptionId])).rows[0];
+    return (await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin') RETURNING *`, [customerId, planId, providerSubscriptionId])).rows[0];
 }
 function remote(id, priceId) {
     remoteSubscriptions.set(id, { id, status: 'active', cancel_at_period_end: false, metadata: {}, items: { data: [{ id: `si_${id}`, price: { id: priceId }, current_period_start: Math.floor(Date.now()/1000)-100, current_period_end: Math.floor(Date.now()/1000)+2592000 }] } });
@@ -78,8 +78,8 @@ async function testAConcurrentRecurringSerialization() {
     try {
         await one.query('BEGIN');
         await two.query('BEGIN');
-        await one.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [c.id, p.id, `sub_serial_a_${tag}`]);
-        const second = two.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [c.id, p.id, `I-SERIAL-B-${tag}`]).catch(error => { secondError = error; return null; });
+        await one.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [c.id, p.id, `sub_serial_a_${tag}`]);
+        const second = two.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id,service_type_snapshot) VALUES($1,$2,'active','paypal','subscription',NOW(),NOW()+INTERVAL '30 days',$3,'jellyfin')`, [c.id, p.id, `I-SERIAL-B-${tag}`]).catch(error => { secondError = error; return null; });
         await new Promise(resolve => setTimeout(resolve, 80));
         await one.query('COMMIT');
         await second;
@@ -90,7 +90,7 @@ async function testAConcurrentRecurringSerialization() {
         one.release(); two.release();
     }
     assert(secondError, 'A: the second concurrent recurring activation must be rejected after serialization');
-    const live = await query(`SELECT COUNT(*)::int n FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.source IN('stripe','paypal') AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW() AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(s.service_type_snapshot,p.service_type,'jellyfin')='jellyfin'`, [c.id]);
+    const live = await query(`SELECT COUNT(*)::int n FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND s.superseded_by IS NULL AND s.source IN('stripe','paypal') AND s.billing_mode='subscription' AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW() AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(s.service_type_snapshot,p.service_type,'jellyfin')='jellyfin'`, [c.id]);
     assert.strictEqual(live.rows[0].n, 1, 'A: exactly one valid recurring subscription must emerge');
 }
 

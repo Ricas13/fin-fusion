@@ -37,8 +37,8 @@ async function main(){
   assert(detached.server_id===null&&detached.jellyfin_account_id===null&&detached.jellyfin_access_token_encrypted===null,'source-based Stremio entitlement must remain detached from the retired Jellyfin delivery identity');
   await client.query(`UPDATE subscriptions SET status='expired' WHERE id=$1`,[stremioSub.id]);
 
-  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`sub_${suffix}_one`]);
-  await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`I-${suffix}-two`],'overlapping recurring customer subscription');
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`sub_${suffix}_one`]);
+  await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_subscription_id) VALUES($1,$2,'active','paypal','subscription',NOW(),NOW()+INTERVAL '30 days',$3)`,[customer.id,plan.id,`I-${suffix}-two`],'overlapping recurring customer subscription');
 
   // Provider-customer identity semantics: PayPal payer IDs are funding-account
   // identities and may legitimately fan in to multiple CAPTAiNFiN customers.
@@ -46,16 +46,16 @@ async function main(){
   const payerA=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`PayPal A ${suffix}`,`paypal-a-${suffix}@example.invalid`])).rows[0];
   const payerB=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`PayPal B ${suffix}`,`paypal-b-${suffix}@example.invalid`])).rows[0];
   const sharedPayer=`PAYER-${suffix}`;
-  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[payerA.id,plan.id,sharedPayer,`I-${suffix}-A`]);
-  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','paypal',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[payerB.id,plan.id,sharedPayer,`I-${suffix}-B`]);
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','paypal','subscription',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[payerA.id,plan.id,sharedPayer,`I-${suffix}-A`]);
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','paypal','subscription',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[payerB.id,plan.id,sharedPayer,`I-${suffix}-B`]);
   const sharedPayPalRows=await client.query(`SELECT customer_id FROM payment_customers WHERE provider='paypal' AND provider_customer_id=$1 ORDER BY customer_id`,[sharedPayer]);
   assert(sharedPayPalRows.rowCount===2,'one PayPal payer must be allowed to fund two distinct CAPTAiNFiN customers');
 
   const stripeA=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Stripe A ${suffix}`,`stripe-a-${suffix}@example.invalid`])).rows[0];
   const stripeB=(await client.query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Stripe B ${suffix}`,`stripe-b-${suffix}@example.invalid`])).rows[0];
   const sharedStripe=`cus_${suffix}`;
-  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[stripeA.id,plan.id,sharedStripe,`sub_${suffix}_A`]);
-  await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','stripe',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[stripeB.id,plan.id,sharedStripe,`sub_${suffix}_B`],'shared Stripe customer identity');
+  await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[stripeA.id,plan.id,sharedStripe,`sub_${suffix}_A`]);
+  await expectConstraint(client,`INSERT INTO subscriptions(customer_id,plan_id,status,source,billing_mode,starts_at,current_period_end,provider_customer_id,provider_subscription_id) VALUES($1,$2,'active','stripe','subscription',NOW(),NOW()+INTERVAL '30 days',$3,$4)`,[stripeB.id,plan.id,sharedStripe,`sub_${suffix}_B`],'shared Stripe customer identity');
   const rolledBackStripe=await client.query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND source='stripe' AND provider_subscription_id=$2`,[stripeB.id,`sub_${suffix}_B`]);
   assert(rolledBackStripe.rowCount===0,'Stripe identity collision must roll back the subscription instead of leaving a half-linked purchase');
   const stripeMappings=await client.query(`SELECT customer_id FROM payment_customers WHERE provider='stripe' AND provider_customer_id=$1`,[sharedStripe]);

@@ -7,6 +7,7 @@ const capacity = require('../entitlements/plan-capacity');
 const discounts = require('./discounts');
 const referrals = require('../referrals');
 const billingPeriods = require('./billing-periods');
+const billingMode = require('./subscription-billing-mode');
 
 const PAYMENT_EVENT_LEASE_MINUTES = 30;
 const PAYMENT_EVENT_RETRY_MINUTES = 5;
@@ -40,15 +41,16 @@ function mapProviderStatus(provider, status) {
     return null;
 }
 
-function paymentDelinquencySourceKey(provider, providerSubscriptionId) {
+function paymentDelinquencySourceKey(provider, providerSubscriptionId, subscriptionBillingMode) {
     const id = String(providerSubscriptionId || '').trim();
-    if (provider === 'stripe' && /^sub_/i.test(id)) return `stripe:${id}`;
-    if (provider === 'paypal' && /^I-/i.test(id)) return `paypal:${id}`;
-    return null;
+    const source = String(provider || '').trim().toLowerCase();
+    if (!id || billingMode.normalize(subscriptionBillingMode) !== billingMode.BILLING_MODES.SUBSCRIPTION) return null;
+    if (!billingMode.PROVIDER_RECURRING_SOURCES.has(source)) return null;
+    return `${source}:${id}`;
 }
 
-async function syncProviderAccessState({ customerId, provider, providerSubscriptionId, status }, client = null) {
-    const sourceKey = paymentDelinquencySourceKey(provider, providerSubscriptionId);
+async function syncProviderAccessState({ customerId, provider, providerSubscriptionId, status, billingMode: subscriptionBillingMode }, client = null) {
+    const sourceKey = paymentDelinquencySourceKey(provider, providerSubscriptionId, subscriptionBillingMode);
     if (!customerId || !sourceKey || !status) return null;
 
     if (['past_due', 'paused'].includes(status)) {
@@ -57,7 +59,7 @@ async function syncProviderAccessState({ customerId, provider, providerSubscript
             type: PAYMENT_DELINQUENCY_HOLD_TYPE,
             sourceKey,
             reason: `${provider} recurring payment is delinquent`,
-            metadata: { provider, providerSubscriptionId, status, automatic: true }
+            metadata: { provider, providerSubscriptionId, billingMode: subscriptionBillingMode, status, automatic: true }
         }, client);
     }
 
@@ -227,6 +229,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             const currencySnapshot = String(contract?.currency || plan.currency || '').toUpperCase();
             const billingIntervalSnapshot = contract?.billingInterval || plan.billing_interval;
             const durationDaysSnapshot = contract?.durationDays ?? plan.duration_days;
+            const checkoutBillingMode = billingMode.normalize(contract?.checkoutMode) || null;
             let row;
             if (existing.rowCount) {
                 const existingSubscription = existing.rows[0];
@@ -238,15 +241,15 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
                 if (historicalCheckoutReplay) {
                     row = existingSubscription;
                 } else {
-                    const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,updated_at=NOW() WHERE id=$15 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, existingSubscription.id]);
+                    const updated = await client.query(`UPDATE subscriptions SET plan_id=$1,status=$2,starts_at=$3,current_period_end=$4,cancel_at_period_end=$5,provider_customer_id=COALESCE($6,provider_customer_id),provider_price_id_snapshot=COALESCE($7,provider_price_id_snapshot),plan_name_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_name_snapshot ELSE $9 END,plan_code_snapshot=CASE WHEN $8::jsonb IS NULL THEN plan_code_snapshot ELSE $10 END,price_minor_snapshot=CASE WHEN $8::jsonb IS NULL THEN price_minor_snapshot ELSE $11 END,currency_snapshot=CASE WHEN $8::jsonb IS NULL THEN currency_snapshot ELSE $12 END,billing_interval_snapshot=CASE WHEN $8::jsonb IS NULL THEN billing_interval_snapshot ELSE $13 END,duration_days_snapshot=CASE WHEN $8::jsonb IS NULL THEN duration_days_snapshot ELSE $14 END,commercial_snapshot=CASE WHEN $8::jsonb IS NULL THEN commercial_snapshot ELSE $8::jsonb END,billing_mode=COALESCE($15,billing_mode),updated_at=NOW() WHERE id=$16 RETURNING *`, [planId, status, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerPriceId, snapshotJson, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, checkoutBillingMode, existingSubscription.id]);
                     row = updated.rows[0];
                 }
             } else {
-                const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb)) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson]);
+                const inserted = await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,cancel_at_period_end,provider_customer_id,provider_subscription_id,provider_price_id_snapshot,plan_name_snapshot,plan_code_snapshot,price_minor_snapshot,currency_snapshot,billing_interval_snapshot,duration_days_snapshot,commercial_snapshot,billing_mode) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb),COALESCE($18,'payment')) RETURNING *`, [customerId, planId, status, provider, startsAt, endsAt, cancelAtPeriodEnd, providerCustomerId, providerSubscriptionId, providerPriceId, planNameSnapshot, planCodeSnapshot, priceMinorSnapshot, currencySnapshot, billingIntervalSnapshot, durationDaysSnapshot, snapshotJson, checkoutBillingMode]);
                 row = inserted.rows[0];
             }
             const effectiveStatus = historicalCheckoutReplay ? row.status : status;
-            await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus }, client);
+            await syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status: effectiveStatus, billingMode: row.billing_mode }, client);
             const effectiveDiscountCodeId = discountCodeId || contract?.discountCodeId || null;
             const appliedMinor = contract ? Math.max(0, Number(contract.priceMinor || 0) - Number(contract.discountedMinor ?? contract.priceMinor ?? 0)) : discountAmountAppliedMinor;
             if (effectiveDiscountCodeId && !historicalCheckoutReplay) {
@@ -255,7 +258,7 @@ async function activatePurchase({ customerId, planId, provider, providerCustomer
             if (settlementCheckoutIntentId && !historicalCheckoutReplay) {
                 await resolveCapacitySettlementIncident({ provider, checkoutIntentId: settlementCheckoutIntentId }, client);
             }
-            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay })]);
+            await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('payment.subscription.activate','subscription',$1,$2::jsonb)`, [row.id, JSON.stringify({ provider, customerId, planId, effectivePlanId: row.plan_id, providerSubscriptionId, providerPriceId, billingMode: row.billing_mode, status: effectiveStatus, checkoutContract: Boolean(contract), checkoutIntentId: settlementCheckoutIntentId, historicalCheckoutReplay })]);
             return row;
         });
     } catch (error) {
@@ -284,7 +287,7 @@ async function updateProviderSubscription({ provider, providerSubscriptionId, pr
     const row = await transaction(async client => {
         const result = await client.query(`UPDATE subscriptions SET status=COALESCE($1,status),current_period_end=COALESCE($2,current_period_end),cancel_at_period_end=COALESCE($3,cancel_at_period_end),updated_at=NOW() WHERE source=$4 AND provider_subscription_id=$5 RETURNING *`, [status, periodEnd ? new Date(periodEnd) : null, cancelAtPeriodEnd, provider, providerSubscriptionId]);
         if (!result.rowCount) return null;
-        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status }, client);
+        if (status) await syncProviderAccessState({ customerId: result.rows[0].customer_id, provider, providerSubscriptionId, status, billingMode: result.rows[0].billing_mode }, client);
         return result.rows[0];
     });
     if (row) await reconcileCommittedCustomer(row.customer_id, 'Provider subscription');

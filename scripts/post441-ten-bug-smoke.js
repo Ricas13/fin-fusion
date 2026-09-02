@@ -124,9 +124,9 @@ async function main() {
     effectiveAddons:entitlement.effectiveAddons
   };
   try {
-    entitlement.effectiveSubscription = async () => ({ subscription_id:'j-sub',id:'j-sub',source:'stripe',provider_subscription_id:'sub_jellyfin',is_addon:false,is_free_tier:false,service_type:'jellyfin' });
-    entitlement.effectiveStremioSubscription = async () => ({ subscription_id:'s-sub',id:'s-sub',source:'paypal',provider_subscription_id:'I-STREMIO',is_addon:false,is_free_tier:false,service_type:'stremio' });
-    entitlement.effectiveEmbySubscription = async () => ({ subscription_id:'e-sub',id:'e-sub',source:'stripe',provider_subscription_id:'sub_emby',is_addon:false,is_free_tier:false,service_type:'emby' });
+    entitlement.effectiveSubscription = async () => ({ subscription_id:'j-sub',id:'j-sub',source:'stripe',billing_mode:'subscription',provider_subscription_id:'sub_jellyfin',is_addon:false,is_free_tier:false,service_type:'jellyfin' });
+    entitlement.effectiveStremioSubscription = async () => ({ subscription_id:'s-sub',id:'s-sub',source:'paypal',billing_mode:'subscription',provider_subscription_id:'I-STREMIO',is_addon:false,is_free_tier:false,service_type:'stremio' });
+    entitlement.effectiveEmbySubscription = async () => ({ subscription_id:'e-sub',id:'e-sub',source:'stripe',billing_mode:'subscription',provider_subscription_id:'sub_emby',is_addon:false,is_free_tier:false,service_type:'emby' });
     entitlement.effectiveAddons = async () => [];
     const stremioCurrent = await planChange.currentRecurring('customer-a',{id:'stremio-target',is_addon:false,service_type:'stremio'});
     assert.equal(stremioCurrent.subscription_id,'s-sub','a Stremio plan change must not mutate an unrelated Jellyfin or Emby billing agreement');

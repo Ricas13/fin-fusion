@@ -3,6 +3,7 @@
 const { query } = require('../db');
 const buildInfo = require('../build-info');
 const lifecycle = require('./lifecycle');
+const billingMode = require('./subscription-billing-mode');
 const providerSettings = require('./provider-settings');
 const providerOps = require('./provider-operations');
 const providerHttp = require('./provider-http');
@@ -18,10 +19,7 @@ let paypalTokenUntil = 0;
 let paypalCredentialKey = null;
 
 function isRecurring(row) {
-    const id = String(row?.provider_subscription_id || '');
-    if (row?.source === 'stripe') return /^sub_/i.test(id);
-    if (row?.source === 'paypal') return /^I-/i.test(id);
-    return false;
+    return billingMode.isRecurring(row);
 }
 
 function providerMissing(error) {
@@ -231,7 +229,7 @@ async function syncSubscription(subscriptionId, { adapter = null, expectedCancel
     }
 }
 async function dueSubscriptions({ all = false, limit = 100 } = {}) {
-    const result = await query(`SELECT s.id,s.source,s.provider_subscription_id,s.status,s.cancel_at_period_end,s.current_period_end FROM subscriptions s LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') AND ((s.source='stripe' AND s.provider_subscription_id LIKE 'sub\\_%' ESCAPE '\\') OR (s.source='paypal' AND s.provider_subscription_id LIKE 'I-%')) AND s.status IN ('active','trialing','past_due','paused') AND ($1::boolean OR ps.next_attempt_at IS NULL OR ps.next_attempt_at <= NOW()) ORDER BY COALESCE(ps.next_attempt_at,'1970-01-01'::timestamptz),s.updated_at LIMIT $2`, [Boolean(all),Math.max(1,Math.min(500,Number(limit) || 100))]);
+    const result = await query(`SELECT s.id,s.source,s.billing_mode,s.provider_subscription_id,s.status,s.cancel_at_period_end,s.current_period_end FROM subscriptions s LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') AND s.billing_mode='subscription' AND s.status IN ('active','trialing','past_due','paused') AND ($1::boolean OR ps.next_attempt_at IS NULL OR ps.next_attempt_at <= NOW()) ORDER BY COALESCE(ps.next_attempt_at,'1970-01-01'::timestamptz),s.updated_at LIMIT $2`, [Boolean(all),Math.max(1,Math.min(500,Number(limit) || 100))]);
     return result.rows;
 }
 async function syncDue({ all = false, limit = 100, adapters = {} } = {}) {
@@ -266,6 +264,7 @@ async function recoverProviderOperation(op) {
     if (newer) throw recoverySuperseded(`Superseded by newer ${newer.operation_type} operation ${newer.id}.`);
     const request = op.request_snapshot || {}, subscriptionId = request.subscriptionId || op.local_reference, row = await subscriptionById(subscriptionId);
     if (!row || String(row.customer_id) !== String(op.owner_id)) throw recoveryManual('Renewal subscription no longer exists for this customer.');
+    if (!isRecurring(row)) throw recoveryManual('Renewal operation no longer points to a recurring provider subscription.');
     const desired = Boolean(request.desiredCancelAtPeriodEnd), remoteAdapter = await defaultAdapter(row.source);
     let remote = await remoteAdapter.fetchRemote(row);
     if (!remote || !remote.status || typeof remote.cancelAtPeriodEnd !== 'boolean') throw new Error('Provider returned an ambiguous renewal state.');
@@ -285,7 +284,7 @@ async function recoverProviderOperation(op) {
 }
 async function dashboardData() {
     const [subscriptions, events] = await Promise.all([
-        query(`SELECT s.id,s.customer_id,s.plan_id,s.status,s.source,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.currency,c.display_name,c.email,u.username AS portal_username,ps.remote_status,ps.remote_period_end,ps.remote_cancel_at_period_end,ps.last_attempt_at,ps.last_success_at,ps.last_error,ps.consecutive_failures,ps.next_attempt_at FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') ORDER BY s.updated_at DESC LIMIT 500`),
+        query(`SELECT s.id,s.customer_id,s.plan_id,s.status,s.source,s.billing_mode,s.starts_at,s.current_period_end,s.cancel_at_period_end,s.provider_customer_id,s.provider_subscription_id,s.created_at,s.updated_at,p.name AS plan_name,p.code AS plan_code,p.price_minor,p.currency,c.display_name,c.email,u.username AS portal_username,ps.remote_status,ps.remote_period_end,ps.remote_cancel_at_period_end,ps.last_attempt_at,ps.last_success_at,ps.last_error,ps.consecutive_failures,ps.next_attempt_at FROM subscriptions s JOIN plans p ON p.id=s.plan_id JOIN customers c ON c.id=s.customer_id LEFT JOIN app_users u ON u.id=c.user_id LEFT JOIN subscription_provider_sync ps ON ps.subscription_id=s.id WHERE s.source IN ('stripe','paypal') ORDER BY s.updated_at DESC LIMIT 500`),
         query(`SELECT provider,provider_event_id,event_type,processed_at,processing_error,created_at FROM payment_events WHERE provider IN ('stripe','paypal') ORDER BY created_at DESC LIMIT 50`)
     ]);
     const rows = subscriptions.rows.map(row => ({ ...row, recurring:isRecurring(row) }));

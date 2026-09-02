@@ -1,6 +1,7 @@
 'use strict';
 
 const primitives = require('./lifecycle-primitives');
+const billingMode = require('./subscription-billing-mode');
 const { query, transaction } = require('../db');
 const state = require('../entitlements/subscription-state');
 const serviceScope = require('../entitlements/service-scope');
@@ -15,6 +16,15 @@ function addPlanDuration(plan, from = new Date()) {
 }
 function permanentEnd() { return planExpiry.freeTierEnd(); }
 function availableWindowSql(alias='p'){return `${alias}.active=TRUE AND ${alias}.visible=TRUE AND ${alias}.archived_at IS NULL AND (${alias}.effective_from IS NULL OR ${alias}.effective_from<=NOW()) AND (${alias}.effective_until IS NULL OR ${alias}.effective_until>NOW())`;}
+function checkoutBillingMode(input){return billingMode.normalize(input?.commercialSnapshot?.checkoutMode);}
+function validRemoteRecurringId(provider,value){
+    const source=String(provider||'').trim().toLowerCase(),id=String(value||'').trim();
+    // This validates the remote API object family only. Persisted local
+    // recurring truth is billing_mode and must never be inferred from this ID.
+    if(source==='stripe')return /^sub_/i.test(id);
+    if(source==='paypal')return /^I-/i.test(id);
+    return false;
+}
 
 async function getProviderOptions(planCode, provider) {
     const result = await query(`
@@ -231,7 +241,8 @@ async function activatePurchase(input) {
     const plan=state.assertAudience(planResult.rows[0], 'customer');
     const same = input.providerSubscriptionId ? await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 LIMIT 1`, [input.provider,input.providerSubscriptionId]) : {rowCount:0};
     if(!same.rowCount)stremio.assertAcquirable(plan,{context:'paid subscription activation'});
-    if (state.recurringProvider({ source: input.provider, provider_subscription_id: input.providerSubscriptionId })) {
+    const mode=checkoutBillingMode(input);
+    if (billingMode.isRecurring({ source: input.provider, billing_mode: mode })) {
         if (!same.rowCount) await state.assertNoOtherLiveRecurring({ query }, input.customerId, null, plan.id);
     }
     const activated=await primitives.activatePurchase(input);
@@ -254,8 +265,7 @@ async function attachDiscoveredProviderSubscription({
 }) {
     provider = String(provider || '').toLowerCase();
     providerSubscriptionId = String(providerSubscriptionId || '').trim();
-    const remoteIdentity = { source: provider, provider_subscription_id: providerSubscriptionId };
-    if (!['stripe','paypal'].includes(provider) || !state.recurringProvider(remoteIdentity)) throw new Error('A valid Stripe or PayPal recurring subscription is required.');
+    if (!validRemoteRecurringId(provider,providerSubscriptionId)) throw new Error('A valid Stripe or PayPal recurring subscription is required.');
     const remotePlanIds = Array.from(new Set((externalPlanIds || []).map(value => String(value || '').trim()).filter(Boolean)));
     if (!remotePlanIds.length) throw new Error('Provider subscription has no plan/price identity to verify.');
 
@@ -299,7 +309,7 @@ async function attachDiscoveredProviderSubscription({
 
         const updated = await client.query(`
             UPDATE subscriptions
-               SET source=$2,
+               SET source=$2,billing_mode='subscription',
                    provider_customer_id=COALESCE($3,provider_customer_id),
                    provider_subscription_id=$4,
                    provider_price_id_snapshot=COALESCE($5,provider_price_id_snapshot),
@@ -312,7 +322,7 @@ async function attachDiscoveredProviderSubscription({
              RETURNING *
         `, [local.id, provider, providerCustomerId || null, providerSubscriptionId, providerMap.external_id || null, providerMap.plan_price_id || null, providerMap.id || null, status, periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd)]);
         const row = updated.rows[0];
-        await primitives.syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status }, client);
+        await primitives.syncProviderAccessState({ customerId: row.customer_id, provider, providerSubscriptionId, status, billingMode: row.billing_mode }, client);
 
         const now = new Date(), next = new Date(now.getTime() + 6 * 60 * 60 * 1000);
         await client.query(`
@@ -324,7 +334,7 @@ async function attachDiscoveredProviderSubscription({
                 last_attempt_at=EXCLUDED.last_attempt_at,last_success_at=EXCLUDED.last_success_at,
                 last_error=NULL,consecutive_failures=0,next_attempt_at=EXCLUDED.next_attempt_at,updated_at=NOW()
         `, [row.id, provider, String(providerStatus || ''), periodEnd ? new Date(periodEnd) : null, Boolean(cancelAtPeriodEnd), now, next]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.billing.subscription_discovery.link','subscription',$2,$3::jsonb)`, [actorUserId, row.id, JSON.stringify({ customerId: row.customer_id, provider, providerCustomerId, providerSubscriptionId, providerPlanIds: remotePlanIds, providerMappingId: providerMap.id, providerMappingExternalId: providerMap.external_id, remoteStatus: providerStatus, matchReason })]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.billing.subscription_discovery.link','subscription',$2,$3::jsonb)`, [actorUserId, row.id, JSON.stringify({ customerId: row.customer_id, provider, providerCustomerId, providerSubscriptionId, billingMode: row.billing_mode, providerPlanIds: remotePlanIds, providerMappingId: providerMap.id, providerMappingExternalId: providerMap.external_id, remoteStatus: providerStatus, matchReason })]);
         return { row, already: false };
     });
 

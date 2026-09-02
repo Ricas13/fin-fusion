@@ -11,7 +11,7 @@ const moneyFormat=require('./money-format');
 const planPricing=require('../payments/plan-pricing');
 const accessVariants=require('../payments/stream-variants');
 const variantCapacity=require('../payments/access-variant-capacity');
-const serviceScope=require('../entitlements/service-scope');
+const billingMode=require('../payments/subscription-billing-mode');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
 const stremioEntitlements=require('../stremio/entitlements');
@@ -33,9 +33,27 @@ async function hideInternalAccounts(_customerId,portal){if(!portal||!Array.isArr
 async function tagMediaServerAccounts(customerId,portal){if(!portal||!Array.isArray(portal.accounts)||!portal.accounts.length)return portal;const result=await query(`SELECT ja.id,COALESCE(js.media_server_type,'jellyfin') AS media_server_type FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1`,[customerId]);const map=new Map(result.rows.map(row=>[String(row.id),String(row.media_server_type||'jellyfin')]));portal.accounts=portal.accounts.map(account=>({...account,media_server_type:map.get(String(account.id))||'jellyfin'}));return portal;}
 function deliveryType(entitlement){return productReadiness.serviceType({service_type:entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin'});}
 function liveSubscription(row){if(!row||row.superseded_by||!['active','trialing','past_due','paused'].includes(String(row.status||'')))return false;if(!row.current_period_end)return true;const end=new Date(row.current_period_end);return !Number.isNaN(end.getTime())&&end.getTime()>Date.now();}
-function recurringProvider(row){if(row?.source==='stripe'&&/^sub_/i.test(String(row.provider_subscription_id||'')))return'stripe';if(row?.source==='paypal'&&/^I-/i.test(String(row.provider_subscription_id||'')))return'paypal';return null;}
-function livePlanIds(portal){return new Set((portal?.subscriptions||[]).filter(liveSubscription).map(row=>String(row.plan_id)).filter(Boolean));}
-function currentRecurringForPlan(plan,portal){const rows=(portal?.subscriptions||[]).filter(row=>liveSubscription(row)&&recurringProvider(row));const matches=rows.filter(row=>Boolean(row.is_addon)===Boolean(plan.is_addon)&&serviceScope.overlaps(row,plan));return matches.find(row=>String(row.plan_id)===String(plan.id))||matches[0]||null;}
+function recurringProvider(row){return billingMode.recurringProvider(row);}
+function subscriptionId(row){return row&&(row.subscription_id||row.id)?String(row.subscription_id||row.id):null;}
+function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=null,embyPlan=null}={}){
+  const byId=new Map((Array.isArray(portal?.subscriptions)?portal.subscriptions:[]).map(row=>[subscriptionId(row),row]).filter(([id])=>id));
+  const seen=new Set(),rows=[];
+  for(const entitlement of [freePlan,currentPlan,stremioPlan,embyPlan]){
+    const id=subscriptionId(entitlement);if(!id||seen.has(id))continue;seen.add(id);
+    const portalRow=byId.get(id)||{};
+    rows.push({...portalRow,...entitlement,id,subscription_id:id});
+  }
+  return rows;
+}
+function canonicalizePortalSubscriptions(portal,accessRows){
+  if(!portal)return portal;
+  const canonical=Array.isArray(accessRows)?accessRows:[],ids=new Set(canonical.map(subscriptionId).filter(Boolean));
+  const preserved=(Array.isArray(portal.subscriptions)?portal.subscriptions:[]).filter(row=>row.is_addon||!liveSubscription(row)||ids.has(subscriptionId(row)));
+  const preservedById=new Set(preserved.map(subscriptionId).filter(Boolean));
+  portal.subscriptions=[...canonical.filter(row=>!preservedById.has(subscriptionId(row))),...preserved];
+  return portal;
+}
+function livePlanIds(rows){return new Set((Array.isArray(rows)?rows:[]).map(row=>String(row.plan_id||'')).filter(Boolean));}
 function variantPaymentOptions(variant,enabled){return(Array.isArray(variant?.payment_options)?variant.payment_options:[]).filter(option=>enabled[option.provider]).map(option=>({provider:option.provider,checkoutMode:option.checkoutMode||option.checkout_mode||'payment'}));}
 function priceLabel(minor,currency){return moneyFormat.formatMinor(minor,currency||'GBP');}
 
@@ -51,13 +69,13 @@ async function libraryProfilesForPortal(customerId,portal){const profiles=[];for
 async function discountPreview(customerId,rawCode){const code=discounts.normalizeCode(rawCode);if(!code)return{code:'',valid:false,plans:{},message:null};const plans=await sellablePlans(),out={},errors=[];for(const plan of plans.filter(plan=>Number(plan.price_minor||0)>0)){try{const discount=await discounts.validateForCheckout({code,planId:plan.id,planCode:plan.code,customerId,currency:plan.currency}),baseMinor=Number(plan.price_minor||0),finalMinor=discounts.computeDiscountedMinor(baseMinor,discount);out[plan.code]={valid:true,baseMinor,finalMinor,currency:plan.currency||'USD',discountType:discount?.discount_type||null,percentOff:Number(discount?.percent_off||0),fixedOffMinor:Number(discount?.fixed_off_minor||0)};}catch(error){out[plan.code]={valid:false};errors.push(error.message);}}const valid=Object.values(out).some(row=>row.valid);return{code,valid,plans:out,message:valid?'Promo applied to eligible plan prices below. Stripe subscription promos reduce the first payment; PayPal recurring plans cannot be dynamically repriced, so a promo uses PayPal one-time checkout.':errors[0]||'That promo code is not valid for the available plans.'};}
 
 async function customerVariantState(customerId){
-  const [plans,portal]=await Promise.all([catalogPlans(),customers.getCustomerPortal(customerId)]),enabled={stripe:stripe.enabled(),paypal:paypal.enabled(),plisio:plisio.enabled()};
-  return plans.filter(plan=>Array.isArray(plan.access_variants)&&plan.access_variants.length>1).map(plan=>{
-    const current=currentRecurringForPlan(plan,portal),samePlan=Boolean(current&&String(current.plan_id)===String(plan.id)),kind=plan.access_variant_kind||accessVariants.variantKind(plan),currentQuantity=samePlan?planChange.subscriptionAccessQuantity(current,kind):null,currentProvider=recurringProvider(current),preferred=plan.preferred_access_variant||plan.access_variants.find(v=>!v.capacity?.soldOut)||plan.access_variants[0];
+  const plans=await catalogPlans(),enabled={stripe:stripe.enabled(),paypal:paypal.enabled(),plisio:plisio.enabled()};
+  return Promise.all(plans.filter(plan=>Array.isArray(plan.access_variants)&&plan.access_variants.length>1).map(async plan=>{
+    const current=await planChange.currentRecurring(customerId,plan).catch(()=>null),samePlan=Boolean(current&&String(current.plan_id)===String(plan.id)),kind=plan.access_variant_kind||accessVariants.variantKind(plan),currentQuantity=samePlan?planChange.subscriptionAccessQuantity(current,kind):null,currentProvider=recurringProvider(current),preferred=plan.preferred_access_variant||plan.access_variants.find(v=>!v.capacity?.soldOut)||plan.access_variants[0];
     const variants=plan.access_variants.map(variant=>{const quantity=variantCapacity.variantQuantity(plan,variant),replacementFits=Boolean(samePlan&&currentQuantity&&quantity<=currentQuantity),soldOut=Boolean(variant.capacity?.soldOut&&!replacementFits);return{quantity,kind:variant.variant_kind||kind,priceMinor:Number(variant.price_minor||0),currency:variant.currency||plan.currency,priceLabel:priceLabel(variant.price_minor,variant.currency||plan.currency),soldOut,scarcity:soldOut?(variant.capacity?.label||'Currently full'):(replacementFits&&variant.capacity?.soldOut?'Available as a reduction':variant.capacity?.label||'Available'),paymentOptions:variantPaymentOptions(variant,enabled)};});
     const preferredQuantity=samePlan&&variants.some(v=>v.quantity===currentQuantity)?currentQuantity:variantCapacity.variantQuantity(plan,preferred);
     return{planId:plan.id,code:plan.code,name:plan.name,kind,preferredQuantity,currentPlan:samePlan,currentQuantity,currentProvider,currentCancelAtPeriodEnd:Boolean(current?.cancel_at_period_end),currentPriceMinor:current?Number(current.price_minor_snapshot??current.price_minor??0):null,variants};
-  });
+  }));
 }
 
 function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -74,10 +92,11 @@ function createCustomerDashboardRouter(){
       const returnStatus=await cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,error:error.message}));
       if(returnStatus.eligible&&req.query.skipRestore!=='1'){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');return res.send(returningAccessPage(req,returnStatus));}
       const portalRaw=await customers.getCustomerPortal(customerId),currency=await planPricing.platformDefaultCurrency();
-      const [plans,currentPlan,freePlan,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
-        sellablePlans(Array.from(livePlanIds(portalRaw))),provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
+      const [currentPlan,freePlan,stremioPlan,embyPlan,requestAccess,requestConfig,rawProvisioningState,renewalSubscription,openPlanChange,deliverySettings]=await Promise.all([
+        provisioning.currentEntitlement(customerId),subscriptionState.liveFreeJellyfinSubscription(customerId,{includeBlocked:true}),stremioEntitlements.entitledSubscription(customerId),subscriptionState.effectiveEmbySubscription(customerId,{includeBlocked:true}),requestUserSync.requestAccessForCustomer(customerId),requestUserSync.configuration(),provisioning.control.getCustomerState(customerId).catch(()=>null),planChange.currentRecurring(customerId).catch(()=>null),planChange.pendingForCustomer(customerId).catch(()=>null),notificationSettings.status().catch(()=>({}))
       ]);
-      const portal=await tagMediaServerAccounts(customerId,await hideInternalAccounts(customerId,portalRaw)),navOptions=customerNav.optionsFromPortal(portal),paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
+      const accessRows=canonicalAccessRows(portalRaw,{currentPlan,freePlan,stremioPlan,embyPlan}),plans=await sellablePlans(Array.from(livePlanIds(accessRows)));
+      const portal=canonicalizePortalSubscriptions(await tagMediaServerAccounts(customerId,await hideInternalAccounts(customerId,portalRaw)),accessRows),navOptions=customerNav.optionsFromPortal(portal),paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
       if(!currentPlan&&!freePlan&&!stremioPlan&&!embyPlan&&!openPlanChange)return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
       return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
@@ -86,4 +105,4 @@ function createCustomerDashboardRouter(){
   r.post('/account/provisioning/retry',requireCustomer,async(req,res)=>{if(!csrf.verify(req))return res.redirect('/account?error='+encodeURIComponent('Invalid or expired security token'));try{const customerId=req.session.customerId,restored=await cleanupReturn.restoreReturningCustomer(customerId,{reconcile:provisioning.reconcileCustomer});if(restored.restored)return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your Jellyfin access has been restored.'));const outcome=await provisioning.reconcileCustomer(customerId);if(outcome?.active&&(outcome?.account?.id||outcome?.emby?.account?.id||outcome?.stremio?.status==='active'))return res.redirect('/account?welcome=1&message='+encodeURIComponent('Your streaming access has been refreshed.'));const state=await provisioning.control.getCustomerState(customerId).catch(()=>null),safe=customerProvisioningMessage(state)||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}catch(error){const safe=customerProvisioningMessage({status:'failed',last_error:error?.message||error})||'Your streaming access has not completed yet. We will keep retrying automatically.';return res.redirect('/account?welcome=1&error='+encodeURIComponent(safe));}});
   return r;
 }
-module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,customerVariantState,liveSubscription,recurringProvider,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,returningAccessPage};
+module.exports={createCustomerDashboardRouter,hideInternalAccounts,tagMediaServerAccounts,deliveryType,catalogPlans,sellablePlans,customerVariantState,liveSubscription,recurringProvider,canonicalAccessRows,canonicalizePortalSubscriptions,onboardingMessage,customerProvisioningMessage,stremioDeepLink,stremioLinks,stremioHouseholdForCustomer,libraryProfilesForPortal,discountPreview,returningAccessPage};

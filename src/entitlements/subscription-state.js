@@ -2,9 +2,10 @@
 
 const {query}=require('../db');
 const serviceScope=require('./service-scope');
+const billingMode=require('../payments/subscription-billing-mode');
 const LIVE_STATUSES=Object.freeze(['active','trialing','past_due','paused']);
 const DIRECT_AUDIENCES=new Set(['direct']);
-function recurringProvider(row){const source=String(row?.source||''),id=String(row?.provider_subscription_id||'');return(source==='stripe'&&/^sub_/i.test(id))||(source==='paypal'&&/^I-/i.test(id))}
+function recurringProvider(row){return billingMode.isRecurring(row)}
 function audienceAllows(plan,channel){const audience=String(plan?.audience||'direct');if(channel==='customer')return DIRECT_AUDIENCES.has(audience);return false}
 function assertAudience(plan,channel){if(!audienceAllows(plan,channel))throw new Error('This plan is not available for direct customers.');return plan}
 
@@ -135,7 +136,7 @@ async function effectiveAddons(customerId,{client=null,includeBlocked=false}={})
  ORDER BY a.access_expires_at DESC,s.created_at DESC
  `,[customerId,Boolean(includeBlocked)]);return result.rows}
 async function assertNoOtherLiveRecurring(client,customerId,excludeId=null,targetPlanId=null){
- const base=`s.customer_id=$1 AND s.superseded_by IS NULL AND s.id<>COALESCE($2::uuid,'00000000-0000-0000-0000-000000000000'::uuid) AND s.source IN('stripe','paypal') AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW() AND ((s.source='stripe' AND COALESCE(s.provider_subscription_id,'') LIKE 'sub\\_%' ESCAPE '\\') OR (s.source='paypal' AND COALESCE(s.provider_subscription_id,'') LIKE 'I-%'))`;
+ const base=`s.customer_id=$1 AND s.superseded_by IS NULL AND s.id<>COALESCE($2::uuid,'00000000-0000-0000-0000-000000000000'::uuid) AND s.source IN('stripe','paypal') AND s.billing_mode='subscription' AND s.status IN('active','trialing','past_due','paused') AND s.current_period_end>NOW()`;
  if(!targetPlanId){const result=await client.query(`SELECT s.id FROM subscriptions s WHERE ${base} LIMIT 1 FOR UPDATE`,[customerId,excludeId]);if(result.rowCount)throw new Error('A recurring subscription is already active for this customer. Change or cancel it instead of creating another one.');return;}
  const target=await client.query('SELECT id,is_addon,service_type FROM plans WHERE id=$1',[targetPlanId]);if(!target.rowCount)throw new Error('Plan not found.');
  if(target.rows[0].is_addon){const result=await client.query(`SELECT s.id FROM subscriptions s WHERE ${base} AND s.plan_id=$3 LIMIT 1 FOR UPDATE`,[customerId,excludeId,targetPlanId]);if(result.rowCount)throw new Error('This customer already has an active recurring subscription for this add-on.');return;}

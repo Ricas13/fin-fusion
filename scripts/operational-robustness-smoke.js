@@ -104,7 +104,7 @@ async function testProviderDeadlines() {
 }
 
 async function testDeletionBillingControl() {
-  const row = { id: 'sub-local', source: 'stripe', provider_subscription_id: 'sub_remote', customer_id: 'customer-1' };
+  const row = { id: 'sub-local', source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_remote', customer_id: 'customer-1' };
   let seen = null;
   const result = await billingControl.terminateRecurringForDeletion(row, {
     idempotencyKey: 'delete-target-1',
@@ -132,8 +132,8 @@ async function testDeletionBillingControl() {
 }
 
 function testProviderOwnedExpirySafety() {
-  const stripeRow = { source: 'stripe', provider_subscription_id: 'sub_expiry' };
-  const paypalRow = { source: 'paypal', provider_subscription_id: 'I-EXPIRY' };
+  const stripeRow = { source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_expiry' };
+  const paypalRow = { source: 'paypal', billing_mode: 'subscription', provider_subscription_id: 'I-EXPIRY' };
   assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: false }), true, 'failed provider verification must preserve local access');
   assert.strictEqual(subscriptionExpiry.providerExpiryProtected(stripeRow, { ok: true, remote: { status: 'active', cancelAtPeriodEnd: false } }), true, 'healthy auto-renewing Stripe access must not be locally expired');
   assert.strictEqual(subscriptionExpiry.providerExpiryProtected(paypalRow, { ok: true, remote: { status: 'ACTIVE', cancelAtPeriodEnd: false } }), true, 'healthy auto-renewing PayPal access must not be locally expired');
