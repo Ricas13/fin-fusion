@@ -63,15 +63,16 @@
       if(summary)summary.setAttribute('aria-expanded',section.open?'true':'false');
       section.addEventListener('toggle',()=>{
         if(syncing)return;
-        if(section.open)closeOthers(section);
-        const ownSummary=section.querySelector(':scope > summary.navSectionLabel');
-        if(ownSummary)ownSummary.setAttribute('aria-expanded',section.open?'true':'false');
+        if(section.open){
+          closeOthers(section);
+          persistSection(section);
+        }else if(!sections.some(other=>other.open)){
+          persistSection(null);
+        }
         for(const other of sections){
-          if(other===section)continue;
           const otherSummary=other.querySelector(':scope > summary.navSectionLabel');
           if(otherSummary)otherSummary.setAttribute('aria-expanded',other.open?'true':'false');
         }
-        persistSection(section.open?section:null);
       });
     }
   }
@@ -104,7 +105,7 @@
 
   function focusableInDrawer(){
     return [...header.querySelectorAll('a[href],button:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')]
-      .filter(element=>!element.hasAttribute('hidden')&&element.getAttribute('aria-hidden')!=='true');
+      .filter(element=>!element.hasAttribute('hidden')&&element.getAttribute('aria-hidden')!=='true'&&element.getClientRects().length>0);
   }
 
   function drawerIsOpen(){return mobile.matches&&header.classList.contains('mobileNavOpen');}
@@ -129,7 +130,10 @@
     }
   }
 
-  toggle?.addEventListener('click',()=>setDrawerOpen(!drawerIsOpen(),{restoreFocus:drawerIsOpen()}));
+  toggle?.addEventListener('click',()=>{
+    const wasOpen=drawerIsOpen();
+    setDrawerOpen(!wasOpen,{restoreFocus:wasOpen});
+  });
   backdrop.addEventListener('click',()=>setDrawerOpen(false,{restoreFocus:true}));
   header.addEventListener('click',event=>{
     if(drawerIsOpen()&&event.target.closest('a[href]'))setDrawerOpen(false);
