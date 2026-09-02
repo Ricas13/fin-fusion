@@ -26,7 +26,8 @@ function staticContracts(){
   assert(inactivity.includes("ja.access_lane='free'")&&inactivity.includes('ph.server_id=ja.server_id'),'Free inactivity must use only Free-lane server playback');
   assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity candidates must not depend on how Free access was acquired');
   assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("ja.access_lane='free'"),'Free entitlement blocking must recognize source-agnostic Free-lane inactivity and cleanup holds');
-  assert(subscriptionState.includes('ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC'),'runtime Jellyfin entitlement selection must prefer a live paid/trial lane over permanent Free access');
+  assert(subscriptionState.includes('ORDER BY b.blocked ASC')&&subscriptionState.includes('CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC'),'runtime Jellyfin entitlement selection must prefer an unblocked paid/trial lane over blocked or permanent Free access');
+  assert(subscriptionState.includes('public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)')&&subscriptionState.includes('CROSS JOIN LATERAL'),'runtime Jellyfin selection must use subscription-scoped holds rather than treating every hold as customer-wide');
   assert(inactivity.includes("reason:'premium_jellyfin_active'"),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
   assert(provisioning.includes("'reconcile','started'")&&!provisioning.includes("'reconcile_multi_access','started'"),'multi-access provisioning runs must use a schema-valid action');
   assert(migration.includes("CHECK (access_lane IN ('primary','free'))")&&migration.includes("p_source='free_claim'"),'applied migration must remain unchanged while runtime supplements legacy-source Free blocking');
@@ -72,6 +73,8 @@ function staticContracts(){
     await client.query(`INSERT INTO customer_access_holds(customer_id,hold_type,source_key,reason,metadata) VALUES($1,'payment_delinquency','stripe:sub_multi_jellyfin','test delinquency','{}'::jsonb)`,[customer.id]);
     jellyfin=(await client.query(`SELECT subscription_id,blocked FROM effective_customer_entitlements WHERE customer_id=$1`,[customer.id])).rows[0];stremio=(await client.query(`SELECT subscription_id,blocked FROM effective_stremio_entitlements WHERE customer_id=$1`,[customer.id])).rows[0];
     assert.strictEqual(String(jellyfin.subscription_id),String(free.id),'Jellyfin delinquency must fall back to healthy Free Server access');assert.strictEqual(jellyfin.blocked,false);assert.strictEqual(String(stremio.subscription_id),String(stremioPaid.id),'Jellyfin delinquency must not block independent Stremio access');assert.strictEqual(stremio.blocked,false);
+    runtimeJellyfin=await state.effectiveSubscription(customer.id,{client});
+    assert.strictEqual(String(runtimeJellyfin.subscription_id),String(free.id),'runtime Jellyfin selection must fall back to Free only when the Premium provider subscription itself is delinquent');
 
     const migratedCustomer=(await client.query(`INSERT INTO customers(display_name,email) VALUES('Migrated Free Test','migrated-free@example.invalid') RETURNING id`)).rows[0];
     const migratedFree=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','migration',NOW()-INTERVAL '30 days','9999-12-31') RETURNING id`,[migratedCustomer.id,plans.free.id])).rows[0];
@@ -81,9 +84,12 @@ function staticContracts(){
     migratedLane=await state.liveFreeJellyfinSubscription(migratedCustomer.id,{client,includeBlocked:true});
     assert.strictEqual(String(migratedLane.subscription_id),String(migratedFree.id));assert.strictEqual(migratedLane.blocked,true,'Migrated Free access must honor a plan-scoped inactivity hold');
     assert.strictEqual(await state.liveFreeJellyfinSubscription(migratedCustomer.id,{client}),null,'Blocked migrated Free access must disappear from normal Free entitlement lookup');
+    assert.strictEqual(await state.effectiveSubscription(migratedCustomer.id,{client}),null,'primary runtime lookup must also respect a source-agnostic Free inactivity hold');
     const migratedPremium=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','manual',NOW(),NOW()+INTERVAL '30 days') RETURNING id`,[migratedCustomer.id,plans.premiumPaid.id])).rows[0];
     jellyfin=(await client.query(`SELECT subscription_id,blocked FROM effective_customer_entitlements WHERE customer_id=$1`,[migratedCustomer.id])).rows[0];
     assert.strictEqual(String(jellyfin.subscription_id),String(migratedPremium.id),'A Free inactivity hold must not block simultaneous Premium Jellyfin');assert.strictEqual(jellyfin.blocked,false);
+    runtimeJellyfin=await state.effectiveSubscription(migratedCustomer.id,{client});
+    assert.strictEqual(String(runtimeJellyfin.subscription_id),String(migratedPremium.id),'runtime selection must keep Premium active while only the legacy/migrated Free lane is held');
 
     const upgradeCustomer=(await client.query(`INSERT INTO customers(display_name,email) VALUES('Trial Upgrade Test','trial-upgrade@example.invalid') RETURNING id`)).rows[0];
     const livePremiumTrial=(await client.query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'trialing','manual',NOW(),NOW()+INTERVAL '7 days') RETURNING id`,[upgradeCustomer.id,plans.premiumTrial.id])).rows[0];
