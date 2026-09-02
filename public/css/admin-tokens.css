@@ -1,8 +1,7 @@
 /* Admin design tokens.
    The single source of truth for colour, type, rhythm and radius in the admin
-   surface. Nothing in here is consumed yet -- this file is introduced first so
-   later work has somewhere to point, and so a value is changed in one place
-   rather than across 38 stylesheets.
+   surface. The canonical and legacy shells both consume this contract so a
+   value is changed in one place rather than across dozens of stylesheets.
 
    Two colour systems, deliberately separate:
      PLACE  -- one hue per navigation section. Identity. Never means good/bad.
@@ -77,3 +76,8 @@ body[data-section=servers]{--hue:var(--h-servers)}
 body[data-section=commerce]{--hue:var(--h-commerce)}
 body[data-section=operations]{--hue:var(--h-operations)}
 body[data-section=settings]{--hue:var(--h-settings)}
+
+/* Legacy base CSS uppercased section labels. The fixed shell contract uses
+   ordinary sentence case; this late shared shell rule prevents that old
+   typographic decision leaking into either renderer. */
+.navSectionLabel{text-transform:none;letter-spacing:0}
