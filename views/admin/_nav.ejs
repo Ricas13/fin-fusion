@@ -1,6 +1,5 @@
 <%
-  // Legacy EJS screens render the exact same rail markup as the string-based
-  // admin shell. Keeping one renderer also means both paths consume the shared
-  // admin-icons module instead of carrying a second iconPaths object here.
-  const adminCore = require(process.cwd() + '/src/platform/admin-html-core-base');
-%><%- adminCore.header(activeNav, siteName) %>
+  // adminNavGroupFor is supplied through Express app.locals. Its renderHeader
+  // bridge resolves the same canonical header() used by string-rendered pages,
+  // so legacy EJS screens cannot drift and do not need require() in templates.
+%><%- adminNavGroupFor.renderHeader(activeNav, siteName) %>
