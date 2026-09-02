@@ -32,9 +32,6 @@ async function identityLoginRateLimit(req,res,next){
  const identity=normalizeLoginIdentity(req.body?.identity);
  if(!identity)return next();
  try{
-  // A coarse route/IP/session limiter is attached before this middleware. This
-  // second bucket protects each submitted identity across distributed sources.
-  // Persisted bucket keys are HMACed; raw email/usernames never enter the DB.
   const result=await customerRateLimit.consume(`customer-login-identity:${identity}`,{limit:30,windowMs:15*60*1000});
   if(!result.allowed){
    res.setHeader('Retry-After',String(Math.max(1,Math.ceil((result.resetAt.getTime()-Date.now())/1000))));

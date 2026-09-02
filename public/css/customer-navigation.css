@@ -21,6 +21,7 @@
 .customerPortalPageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
 .customerPortalPageHeader h1{margin:0 0 5px}
 .customerPortalPageHeader p{margin:0;color:#8d99aa}
+.panel:has(form[action="/account/requests/password/sync"]){display:none!important}
 @media(max-width:900px){
  .customerLayout,.customerPortalPage,.securityMain{display:block;width:min(100% - 28px,1180px);padding-top:16px}
  .customerStandaloneHeader{min-height:60px;margin-bottom:14px;padding-bottom:12px}

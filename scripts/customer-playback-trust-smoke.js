@@ -87,13 +87,14 @@ expect(enforcement.includes('jellyfin_stop_did_not_end_session'),'A 204/no-op Je
 
 const dashboard=source('views/customer/dashboard.ejs');
 expect(dashboard.includes('/account/activity')&&dashboard.includes('View playback activity'),'Dashboard must provide a direct playback-activity shortcut.');
-expect(dashboard.includes('/account/requests/password/sync')&&dashboard.includes('currentPortalPassword'),'Dashboard must expose explicit portal-password sync to Seerr.');
-expect(dashboard.includes('plaintext password is not stored'),'Password-sync copy must explain the secret boundary.');
+const nav=source('views/customer/_nav.ejs');
+expect(nav.includes('/account/service-passwords')&&nav.includes('Service passwords'),'Signed-in customers with service access must have a dedicated service-password surface.');
 const passwordSync=source('src/platform/customer-password-sync.js');
-expect(passwordSync.includes("scope:'customer-request-password-sync',max:5,windowSeconds:900"),'Seerr password sync must be separately rate limited.');
-expect(passwordSync.includes('bcrypt.compare(password,row.rows[0].password_hash)'),'Seerr sync must verify the current portal password before sending it to Seerr.');
-expect(passwordSync.indexOf('verifyPortalPassword(req.session.customerUserId,portalPassword)')<passwordSync.indexOf('requestUsers.setCustomerPassword(req.session.customerId,portalPassword)'),'Portal password verification must happen before Seerr mutation.');
-expect(passwordSync.includes("'customer.request_password.sync_from_portal'"),'Successful password sync must be audited without logging the password.');
-expect(!passwordSync.includes('metadata:{password'),'Password sync audit must never include plaintext secrets.');
+expect(passwordSync.includes("scope:'customer-request-password',max:10,windowSeconds:900"),'Overseerr password changes must be separately rate limited.');
+expect(passwordSync.includes("router.post('/account/requests/password',requireCustomer,requestPasswordLimit"),'The independent Overseerr password mutation must use its dedicated rate limiter.');
+expect(!passwordSync.includes('bcrypt.compare(')&&!passwordSync.includes('currentPortalPassword'),'Service password management must not read or verify the portal password.');
+expect(passwordSync.includes("'customer.request_password.change'"),'Successful Overseerr password changes must be audited without logging the password.');
+expect(passwordSync.includes('Portal and Overseerr passwords are separate.'),'The retired sync endpoint must explicitly keep portal and Overseerr credentials separate.');
+expect(!passwordSync.includes('metadata:{password'),'Service password audit must never include plaintext secrets.');
 
-console.log('Customer playback trust, webhook ingest and Seerr password sync smoke: ok');
+console.log('Customer playback trust, webhook ingest and independent service password smoke: ok');
