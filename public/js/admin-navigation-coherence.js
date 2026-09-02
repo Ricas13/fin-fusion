@@ -78,96 +78,6 @@
     pageAction('Export data','/admin/payments/export','data-backup-export-action');
   }
 
-  function installMobileAdminDrawer(){
-    const header=document.querySelector('.adminHeader');
-    const headerMain=header?.querySelector('.headerMain');
-    const tabsWrap=header?.querySelector('.adminTabsWrap');
-    const nav=tabsWrap?.querySelector('.adminTabs');
-    const account=header?.querySelector('[data-header-actions]');
-    if(!header||!headerMain||!tabsWrap||!nav)return;
-
-    const mobile=window.matchMedia('(max-width:860px)');
-    if(!tabsWrap.id)tabsWrap.id='adminMobileNavigation';
-
-    const accountHome=account?.parentNode||null;
-    const accountNext=account?.nextSibling||null;
-    function placeAccountMenu(){
-      if(!account||!accountHome)return;
-      if(mobile.matches){
-        if(account.parentNode!==tabsWrap)tabsWrap.appendChild(account);
-      }else if(account.parentNode!==accountHome){
-        if(accountNext&&accountNext.parentNode===accountHome)accountHome.insertBefore(account,accountNext);
-        else accountHome.appendChild(account);
-      }
-    }
-
-    let toggle=headerMain.querySelector('[data-admin-mobile-nav-toggle]');
-    if(!toggle){
-      toggle=document.createElement('button');
-      toggle.type='button';
-      toggle.className='adminMobileNavToggle';
-      toggle.setAttribute('data-admin-mobile-nav-toggle','');
-      toggle.setAttribute('aria-controls',tabsWrap.id);
-      toggle.setAttribute('aria-expanded','false');
-      toggle.setAttribute('aria-label','Open administration menu');
-      toggle.innerHTML='<span class="adminMobileNavGlyph" aria-hidden="true">☰</span><span>Menu</span>';
-      headerMain.appendChild(toggle);
-    }
-
-    let backdrop=document.querySelector('[data-admin-mobile-nav-backdrop]');
-    if(!backdrop){
-      backdrop=document.createElement('div');
-      backdrop.className='adminMobileNavBackdrop';
-      backdrop.setAttribute('data-admin-mobile-nav-backdrop','');
-      backdrop.hidden=true;
-      document.body.appendChild(backdrop);
-    }
-
-    const sections=[...nav.querySelectorAll('details.navSection')];
-    function closeOtherSections(opened){
-      for(const section of sections){
-        if(section!==opened&&section.open)section.open=false;
-      }
-    }
-    for(const section of sections){
-      section.addEventListener('toggle',()=>{
-        if(section.open)closeOtherSections(section);
-      });
-    }
-
-    function setOpen(open,{restoreFocus=false}={}){
-      placeAccountMenu();
-      const next=Boolean(open&&mobile.matches);
-      header.classList.toggle('mobileNavOpen',next);
-      document.body.classList.toggle('mobileNavLocked',next);
-      toggle.setAttribute('aria-expanded',next?'true':'false');
-      toggle.setAttribute('aria-label',next?'Close administration menu':'Open administration menu');
-      backdrop.hidden=!next;
-      if(next){
-        // Keep the active destination visible, but do not prevent the drawer
-        // itself from scrolling when a large section such as Commerce expands.
-        const active=nav.querySelector('.adminSubTab.active,.adminTab.active,.navSectionLabel');
-        if(active&&typeof active.focus==='function')active.focus({preventScroll:true});
-      }else if(restoreFocus&&typeof toggle.focus==='function')toggle.focus({preventScroll:true});
-    }
-
-    toggle.addEventListener('click',()=>setOpen(!header.classList.contains('mobileNavOpen')));
-    backdrop.addEventListener('click',()=>setOpen(false,{restoreFocus:true}));
-    tabsWrap.addEventListener('click',event=>{
-      if(event.target.closest('a[href]'))setOpen(false);
-    });
-    document.addEventListener('keydown',event=>{
-      if(event.key==='Escape'&&header.classList.contains('mobileNavOpen'))setOpen(false,{restoreFocus:true});
-    });
-    const onViewportChange=()=>{
-      placeAccountMenu();
-      if(!mobile.matches)setOpen(false);
-    };
-    placeAccountMenu();
-    if(typeof mobile.addEventListener==='function')mobile.addEventListener('change',onViewportChange);
-    else if(typeof mobile.addListener==='function')mobile.addListener('change',onViewportChange);
-  }
-
   function loadScript(src,marker){
     if(document.querySelector(`script[${marker}]`))return;
     const script=document.createElement('script');
@@ -196,7 +106,6 @@
   watchLatePageActions();
   installCustomerBillingActions();
   installBackupExportAction();
-  installMobileAdminDrawer();
   loadSettingsGroups();
   loadPlanAccessEnhancer();
 
