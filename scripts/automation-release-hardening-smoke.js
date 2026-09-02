@@ -7,6 +7,7 @@ const jobHealth = require('../src/automation/job-health');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const compact = value => String(value || '').replace(/\s+/g, '');
 
 assert.strictEqual(jobHealth.failedCountFromResult({ failed: 4 }), 4, 'failed result count should be detected');
 assert.strictEqual(jobHealth.failedCountFromResult({ errors: 2 }), 2, 'errors result count should be detected');
@@ -96,21 +97,23 @@ const policyGuardScope = resilientProvisioning.slice(
     resilientProvisioning.indexOf('async function applyPolicyIfChanged'),
     resilientProvisioning.indexOf('async function disableAccounts')
 );
-assert(policyGuardScope.includes("method:'GET',timeoutMs:5000"),
+const compactPolicyGuardScope = compact(policyGuardScope);
+assert(compactPolicyGuardScope.includes("method:'GET',timeoutMs:5000"),
     'entitlement reconciliation must probe the current remote policy before issuing a write');
-assert(policyGuardScope.includes('control.policyMatches(remote,desired)'),
+assert(compactPolicyGuardScope.includes('control.policyMatches(remote,desired)'),
     'entitlement reconciliation must recognize an unchanged remote policy');
-assert(policyGuardScope.includes('return{missing:[],unchanged:true}'),
+assert(compactPolicyGuardScope.includes('return{missing:[],unchanged:true}'),
     'unchanged entitlement policy must complete without a remote policy POST');
-assert(policyGuardScope.indexOf('control.policyMatches(remote,desired)') < policyGuardScope.indexOf('return base.applyPolicy(account,effective,disabled)'),
+assert(compactPolicyGuardScope.indexOf('control.policyMatches(remote,desired)') < compactPolicyGuardScope.indexOf('returnbase.applyPolicy(account,effective,disabled)'),
     'policy comparison must happen before the fallback policy mutation');
 const laneScope = resilientProvisioning.slice(
     resilientProvisioning.indexOf('async function reconcileLane'),
     resilientProvisioning.indexOf('async function recordRun')
 );
-assert(laneScope.includes('await applyPolicyIfChanged(account,effective,false)'),
+const compactLaneScope = compact(laneScope);
+assert(compactLaneScope.includes('awaitapplyPolicyIfChanged(account,effective,false)'),
     'active entitlement lanes must use the read-before-write policy guard');
-assert(!laneScope.includes('await base.applyPolicy(account,effective,false)'),
+assert(!compactLaneScope.includes('awaitbase.applyPolicy(account,effective,false)'),
     'active entitlement lanes must not unconditionally POST policy on every verification run');
 
 const admin = read('src/platform/admin-automation.js');
