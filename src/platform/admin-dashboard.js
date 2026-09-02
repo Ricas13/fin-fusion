@@ -8,6 +8,7 @@ const { dashboardRange } = require('./admin-dashboard-analytics');
 const reportingCurrency = require('./reporting-currency');
 const runtimeSettings = require('./runtime-settings');
 const { money, number } = require('./admin-dashboard-format');
+const { renderLiveStreamsPanel } = require('./admin-dashboard-live-streams');
 
 function isNativeAdmin(req){return Boolean(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId);}
 function primaryAction(stats){if(!stats.setup?.counts?.plans)return'<a class="button" href="/admin/plans">+ Create plan</a>';if(!stats.setup?.counts?.servers)return'<a class="button" href="/admin/servers/new">+ Add server</a>';return'<a class="button" href="/admin/users/new">+ Add customer</a>';}
@@ -29,7 +30,7 @@ async function dashboardPage(req,res){
   try{
     await Promise.all([runtimeSettings.ensureLoaded(),reportingCurrency.refreshRates().catch(()=>null)]);
     const{ctx,html}=await renderMain(req),stats=ctx.data;
-    const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${dashboardHero(ctx)}${rangeControls(ctx.range)}${html}</div>`;
+    const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${rangeControls(ctx.range)}${html}</div>`;
     return res.send(layout({siteName:runtimeSettings.siteName(),active:'dashboard',title:'Admin Dashboard',subtitle:`Profit, growth and live capacity · ${ctx.range.label} · ${ctx.reporting.currency}`,body,action:primaryAction(stats)}));
   }catch(error){
     console.error('Admin dashboard failed:',error.message);
