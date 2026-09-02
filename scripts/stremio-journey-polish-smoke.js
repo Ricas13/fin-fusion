@@ -42,16 +42,17 @@ assert(household.includes("return 'Household IP limit reached';")&&household.inc
 assert(household.includes('stremio_ip_replacement_policy_snapshot')&&household.includes('stremio_ip_replacement_cooldown_minutes_snapshot'),'persisted Stremio replacement contracts must remain unchanged');
 assert(household.includes("'X-CAPTAiNFiN-429-Reason', 'household_network'"),'runtime household-network response contract must remain unchanged');
 
-// Admin UX is a presentation layer over the existing canonical source, plan and
-// customer routes; it must not introduce a second Stremio state or API surface.
-for(const route of ['/admin/servers/stremio','/admin/plans?type=stremio','/admin/users?service=stremio'])assert(adminJourney.includes(route),`Stremio journey missing canonical route ${route}`);
-for(const step of ['Sources','Plan delivery','Customer install'])assert(adminJourney.includes(`'${step}'`),`Stremio journey missing step ${step}`);
+// Admin UX remains a presentation layer over canonical source, plan and customer
+// routes. The old three-card setup journey is intentionally gone so operational
+// pages start with their actual controls instead of duplicate navigation.
+assert(!adminJourney.includes('stremioJourney')&&!adminJourney.includes('insertJourney('),'Stremio polish must not inject Sources / Plan delivery / Customer install journey cards');
+for(const retiredStep of ["'Sources'","'Plan delivery'","'Customer install'"])assert(!adminJourney.includes(retiredStep),`retired Stremio journey step returned: ${retiredStep}`);
 assert(adminJourney.includes('Manage Stremio sources')&&adminJourney.includes('Save delivery sources'),'plan delivery must use operator-friendly source actions');
 assert(adminJourney.includes('Advanced order')&&adminJourney.includes('Advanced maintenance')&&adminJourney.includes('Technical diagnostics'),'technical source ordering, maintenance and diagnostics must use progressive disclosure');
-assert(adminJourney.includes('textContent')&&!adminJourney.includes('fetch('),'journey polish must change presentation only and must not own server state');
+assert(adminJourney.includes('textContent')&&!adminJourney.includes('fetch('),'Stremio polish must change presentation only and must not own server state');
 
-assert(capabilityCss.includes("@import url('/css/admin-stremio-journey.css')"),'admin capability bundle must load Stremio journey styles');
-assert(adminShell.includes('/js/admin-stremio-journey.js'),'admin shell must load Stremio journey behavior');
-for(const contract of ['.stremioJourney','.stremioFlowOverview','.stremioAdvancedMaintenance','.stremioOrderDetails','@media(max-width:800px)'])assert(adminCss.includes(contract),`Stremio journey CSS missing ${contract}`);
+assert(capabilityCss.includes("@import url('/css/admin-stremio-journey.css')"),'admin capability bundle must load Stremio polish styles');
+assert(adminShell.includes('/js/admin-stremio-journey.js'),'admin shell must load Stremio polish behavior');
+for(const contract of ['.stremioFlowOverview','.stremioAdvancedMaintenance','.stremioOrderDetails','@media(max-width:800px)'])assert(adminCss.includes(contract),`Stremio polish CSS missing ${contract}`);
 
 console.log('stremio journey polish smoke: ok');
