@@ -137,7 +137,7 @@ assert.ok(adminSource.includes('/admin/billing/discover/preview'), 'Billing must
 assert.ok(adminSource.includes('/admin/billing/discover/apply'), 'Billing must expose an explicit safe-link action');
 assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'provider linking must require explicit confirmation');
 assert.ok(adminSource.includes('Missing provider links'), 'Billing must permanently name the missing-provider operator queue');
-assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.recurringId(row.source,row.provider_subscription_id))"), 'Billing must list unlinked premium customers instead of hiding them from the recurring table');
+assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.localRecurring(row))"), 'Billing must list unlinked premium customers using canonical local recurring truth instead of provider-ID shape inference');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-preview'), 'each missing link must support read-only provider verification');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-link'), 'each missing link must support explicit verified attachment');
 assert.ok(adminSource.includes('Verify provider subscription'), 'manual resolution must show provider truth before attachment');
