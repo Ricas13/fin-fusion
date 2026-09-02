@@ -114,7 +114,7 @@ assert(householdMigration.includes('stremio_household_network_limit_snapshot')&&
 
 const mainWidgets=registry.listWidgets('main');
 assert.deepStrictEqual(mainWidgets.map(w=>w.key),['cashFlow','newVsCancelled','serviceMix'],'Main dashboard must deliberately stay focused on cash flow, growth and service mix');
-assert.deepStrictEqual(mainWidgets.map(w=>w.defaultSpan),[12,8,4],'Main dashboard widget spans must preserve the intended one-full-width plus two-column visual hierarchy');
+assert.deepStrictEqual(mainWidgets.map(w=>w.defaultSpan),[4,4,4],'Main dashboard widgets must preserve the compact equal-thirds visual hierarchy');
 assert(mainWidgets.every(w=>w.title&&w.render),'every focused Main dashboard widget must retain a named renderer rather than becoming a stub');
 assert(settings.includes('Daily work belongs in Customers, Delivery, Plans & Payments, and Operations'),'Existing Settings directory guidance must remain available until its copy is refreshed separately');
 assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers')&&commerce.includes('Upcoming expiries'),'Commerce must show new subscribers and upcoming customer expiries');
