@@ -10,6 +10,7 @@ const nav=read('src/platform/admin-nav.js');
 const settings=read('src/platform/admin-original-settings.js');
 const legacy=read('src/platform/admin-stremio.js');
 const sources=read('src/platform/admin-stremio-sources.js');
+const leases=read('src/platform/admin-stremio-leases.js');
 const managedAdmin=read('src/platform/admin-stremio-managed-sources.js');
 const externalConfig=read('src/stremio/source-admin-config.js');
 const adminServers=read('src/platform/admin-servers.js');
@@ -40,12 +41,12 @@ assert(!settings.includes('href="/admin/settings/stremio"'),'Settings → Integr
 assert(legacy.includes("res.redirect(302,'/admin/servers/stremio')"),'legacy Stremio settings URLs must land on the single Stremio control centre');
 assert(managedAdmin.includes("res.redirect(302,'/admin/servers/stremio')"),'old managed Stremio URL must redirect to the single control centre');
 
-for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Libraries included in Stremio','Clear all indexes & rebuild','Managed Stremio activity','Hidden Jellyfin user','Add external Jellyfin source'])assert(sources.includes(phrase),`Stremio control centre missing: ${phrase}`);
+for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Libraries included in Stremio','Clear all indexes & rebuild','Add external Jellyfin source'])assert(sources.includes(phrase),`Stremio control centre missing: ${phrase}`);
 assert(sources.includes('capabilitySummary')&&sources.includes('capabilityTable')&&sources.includes('capabilitySourceDisclosure'),'Stremio must use the shared compact capability-page pattern');
 assert(htmlCore.includes('/css/admin-capability.css'),'shared capability-page stylesheet must be loaded globally');
 assert(capabilityCss.includes('grid-template-columns:repeat(5,minmax(0,1fr))'),'library choices must use the dense wide-screen grid');
 const renderedBody=sources.slice(sources.indexOf('const body=`<div class="capabilityPage">'));
-assert(renderedBody.indexOf('<h2>Managed Jellyfin sources</h2>')<renderedBody.indexOf('<h2>External Jellyfin sources</h2>')&&renderedBody.indexOf('<h2>External Jellyfin sources</h2>')<renderedBody.indexOf('${activitySection(d.activity)}'),'page hierarchy must be summary → managed → external → activity');
+assert(renderedBody.indexOf('<h2>Managed Jellyfin sources</h2>')<renderedBody.indexOf('<h2>External Jellyfin sources</h2>')&&renderedBody.indexOf('<h2>External Jellyfin sources</h2>')<renderedBody.indexOf('${leaseAdmin.section(req,d.leases)}'),'page hierarchy must be summary → managed → external → household leases');
 assert(!sources.includes('Recent connection attempts')&&!sources.includes('sourceInlineManage'),'Stremio must not retain the old multi-panel/connection-attempt page shape');
 assert(sources.includes("r.get('/admin/servers/stremio/:id',(_req,res)=>res.redirect(302,'/admin/servers/stremio'))"),'external source detail URLs must collapse back into the single control centre');
 assert(sources.includes('Stremio is a control plane, not a video proxy.')&&sources.toLowerCase().includes('media bytes never pass through the portal'),'operator UI must preserve the no-byte-proxy boundary');
@@ -74,9 +75,16 @@ assert(indexMaintenance.includes('DELETE FROM stremio_media_index')&&indexMainte
 assert(indexMaintenance.includes("status='running'")&&indexMaintenance.includes('Wait for active indexing'),'global destructive index cleanup must refuse to run while indexing is active');
 assert(sources.includes("r.post('/admin/servers/stremio/reindex-all'")&&sources.includes('indexMaintenance.clearAllAndQueue'),'admin must expose one-click all-source clean rebuild');
 
-assert(sources.includes('JOIN customers c ON c.id=sma.customer_id')&&sources.includes('JOIN jellyfin_accounts ja ON ja.id=sma.jellyfin_account_id'),'activity must correlate hidden Jellyfin accounts to real portal customers');
-assert(sources.includes('ja.jellyfin_username hidden_username')&&sources.includes('/admin/users/${esc(row.customer_id)}'),'activity rows must display the hidden Jellyfin username and link straight to customer management');
-assert(sources.includes('LIMIT $1 OFFSET $2')&&sources.includes('activityPage'),'managed Stremio activity must be paginated');
+assert(sources.includes("const leaseAdmin=require('./admin-stremio-leases')")&&sources.includes('leaseAdmin.list(leasePage)')&&sources.includes('leaseAdmin.mount(r,mutationLimit)'),'Stremio control centre must load, render and mount household lease operations');
+assert(leases.includes("scope='stremio'")&&leases.includes("expires_at>NOW()")&&leases.includes('network_hash')&&leases.includes('network_family'),'household lease table must use the existing privacy-safe hash/family lease schema');
+assert(!leases.includes('network_descriptor'),'lease admin must not assume or add raw/canonical IP storage that the privacy-preserving lease schema intentionally omits');
+assert(leases.includes('Privacy-safe lease fingerprint')&&leases.includes('Raw IP addresses are intentionally not stored'),'operator view must explain why a raw household address is not displayed');
+assert(leases.includes('<h2>Household IP leases</h2>')&&leases.includes("'/admin/servers/stremio/leases/renew'")&&leases.includes("'/admin/servers/stremio/leases/release'"),'household lease table must expose renew and exact-release actions');
+assert(leases.includes('planComponents.stremioHouseholdConfig(row)')&&leases.includes("COALESCE(s.stremio_ip_replacement_policy_snapshot,p.stremio_ip_replacement_policy)"),'renewal must use the same effective lease timing as runtime, including subscription replacement snapshots');
+assert(leases.includes("SET expires_at=NOW()+($3::int*INTERVAL '1 minute')")&&!leases.includes('SET last_seen_at'),'admin renewal must extend expiry without pretending that customer playback occurred');
+assert(leases.includes("subject_key=$1 AND network_hash=$2")&&leases.includes('admin.stremio.lease.renew')&&leases.includes('admin.stremio.lease.release'),'lease actions must target one exact network row and write distinct audit events');
+assert(leases.includes('csrf.verify(req)')&&leases.includes('mutationLimit'),'lease mutations must retain CSRF and persistent admin mutation throttling');
+assert(!sources.includes('Managed Stremio activity')&&!sources.includes('activitySection('),'customer activity table must be replaced by lease operations rather than merely duplicated');
 
 assert(sourceClient.includes('/Users/AuthenticateByName')&&sourceClient.includes('/Views?IncludeExternalContent=false'),'Source client must use normal Jellyfin user authentication and discover visible libraries');
 assert(sourceClient.includes("TOKEN_ENV='JELLYFIN_ENCRYPTION_KEY'")&&sourceClient.includes("LEGACY_TOKEN_ENV='STREMIO_JELLYFIN_TOKEN_KEY'"),'External tokens must use the normal Jellyfin encryption key while retaining legacy decrypt compatibility');

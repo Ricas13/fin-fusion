@@ -121,7 +121,8 @@ async function main(){
     assert(/CAPTAiNFiN Jellyfin servers/.test(stremioText)&&/External Jellyfin fallbacks/.test(stremioText),'Stremio Sources must expose managed servers and external fallbacks');
     assert(/Add external Jellyfin source/.test(stremioText),'Stremio Sources is missing the independent external-source workflow');
     assert(/Choose where Stremio can find your library/.test(stremioText),'Stremio Sources must explain its normal operator task in plain language');
-    assert.deepStrictEqual(await labels(page.locator('.stremioJourneyStep.active strong')),['Sources'],'Stremio Sources must show the Sources journey step');
+    assert(/Household IP leases/.test(stremioText),'Stremio Sources must expose household lease operations');
+    assert.equal(await page.locator('.stremioJourneyStep').count(),0,'Stremio Sources must not render the retired setup journey cards');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Stremio'],'The single permanent Stremio sidebar destination must remain active on source management');
     const addSource=page.locator('form[action="/admin/servers/stremio"]');
     assert.equal(await addSource.count(),1,'External Jellyfin source form is missing');

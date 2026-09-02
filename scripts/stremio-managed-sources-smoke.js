@@ -88,9 +88,10 @@ assert(admin.includes('mediaServerType:type'),'managed API-key rotation audit mu
 assert(!admin.includes('decryptWithEnv')&&!admin.includes('decryptJellyfinKey'),'managed source handling must never decrypt an API key for display');
 assert(admin.includes("res.redirect('/admin/servers/stremio?message='"),'managed source saves must return to the single Stremio page');
 
-for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Managed Stremio activity','Libraries included in Stremio'])assert(sources.includes(phrase),`single-page Stremio control centre missing: ${phrase}`);
+for(const phrase of ['Manage Stremio','Managed Jellyfin sources','External Jellyfin sources','Libraries included in Stremio'])assert(sources.includes(phrase),`single-page Stremio control centre missing: ${phrase}`);
+assert(sources.includes("leaseAdmin=require('./admin-stremio-leases')")&&sources.includes('${leaseAdmin.section(req,d.leases)}'),'single-page Stremio control centre must replace managed activity with household lease operations');
 assert(sources.indexOf('Managed Jellyfin sources')<sources.indexOf('External Jellyfin sources'),'managed server table must render before external sources');
-assert(sources.indexOf('External Jellyfin sources')<sources.indexOf('${activitySection(d.activity)}'),'managed activity must follow both source groups');
+assert(sources.indexOf('External Jellyfin sources')<sources.indexOf('${leaseAdmin.section(req,d.leases)}'),'household lease operations must follow both source groups');
 assert(sources.includes("managedSources=require('../stremio/managed-sources')")&&sources.includes("managedMediaIndex=require('../stremio/media-index')"),'single page must load managed fleet and managed index state');
 assert(sources.includes('capabilitySourceDisclosure')&&sources.includes('sourceInlineSettings'),'source maintenance must stay inline in the compact control centre');
 assert(sources.includes('action="/admin/servers/stremio/managed/${esc(server.id)}"'),'managed rows must save through the canonical managed mutation route');
