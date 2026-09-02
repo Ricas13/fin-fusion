@@ -110,3 +110,29 @@
   .page-automation .automationJobCard .toggleRow{align-self:stretch}
   .operatorPager{align-items:stretch}.operatorPagerButtons{width:100%}.operatorPageButton{flex:1}
 }
+
+/* Plan editor card grid: match row height across cards and anchor each card's
+   save action to a shared bottom edge, so a row of differently-sized cards
+   still reads as one aligned unit instead of a jagged grid. A card whose
+   Advanced disclosure is open already grows to span the full row width
+   elsewhere; stretching same-row siblings here does not fight that, since a
+   full-width card is always alone in its own row.
+   Selectors are qualified with .content.planReferencePage to match (and win
+   the cascade over) the existing per-card layout rules at equal specificity
+   plus later source order. */
+.content.planReferencePage .planControlGrid{align-items:stretch!important}
+.content.planReferencePage .planControlGrid>.planConfigCard{display:flex!important;flex-direction:column!important;align-self:stretch!important}
+.content.planReferencePage .planConfigCard>form.planConfigBody{flex:1 1 auto!important;display:flex!important;flex-direction:column!important}
+.content.planReferencePage .planConfigBody>.buttonRow,
+.content.planReferencePage .planConfigBody>button.button{margin-top:auto!important}
+
+/* Group cards of similar height into the same row instead of source order,
+   so a very short card (Availability, Library access) doesn't sit beside a
+   much taller one (Access specification, Requests/Jellyseerr). */
+.content.planReferencePage .planControlGrid>#commerce{order:1!important}
+.content.planReferencePage .planControlGrid>#access{order:2!important}
+.content.planReferencePage .planControlGrid>#lifecycle{order:3!important}
+.content.planReferencePage .planControlGrid>#requests{order:4!important}
+.content.planReferencePage .planControlGrid>#delivery{order:5!important}
+.content.planReferencePage .planControlGrid>#availability{order:6!important}
+.content.planReferencePage .planControlGrid>#libraries{order:7!important}
