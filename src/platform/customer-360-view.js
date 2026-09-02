@@ -3,6 +3,7 @@
 const v2=require('./customer-360-view-v2');
 const manage=require('./admin-customer-management');
 const accessCards=require('./customer-360-access-cards');
+const accessStatus=require('./customer-360-access-status');
 
 function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
@@ -29,6 +30,11 @@ function stremioInstallSection(detail,token,options={}){return options.stremioIn
 function accessWorkspaceSection(detail,token,accessDetail){return accessCards.accessOverview(detail,token,accessDetail);}
 function manualServerAssignmentForm(token,customerId,assignment){return accessCards.manualAssignmentForm(token,customerId,assignment);}
 function assignmentCapacityLabel(server){return accessCards.assignmentCapacityLabel(server);}
+function stripLegacyReconcileForms(html,customerId){
+  const action=`/admin/users/${encodeURIComponent(customerId)}/manage/reconcile`;
+  const escaped=action.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return String(html||'').replace(new RegExp(`<form class="plainForm" method="post" action="${escaped}"[^>]*>[\\s\\S]*?<\\/form>`,'g'),'');
+}
 
 function body(detail,tab,token,accessDetail,options={}){
   const safe=customerFacingDetail(detail),type=serviceType(detail).toLowerCase();
@@ -38,9 +44,11 @@ function body(detail,tab,token,accessDetail,options={}){
   // implementation is deliberately skipped so the card workspace below is the
   // single owner of Jellyfin policy, libraries, history and activity on this tab.
   const chrome=v2.body(safe,'access',token,accessDetail,{...options,skipAccessSections:true});
-  if(type==='stremio')return chrome+stremioAccessPanel(safe)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+stremioInstallSection(safe,token,options);
-  const jellyfin=chrome+accessCards.render(safe,token,accessDetail,options);
+  const status=accessStatus.render(safe,token);
+  const portal=manage.portalSection(safe,token,options.activationInfo);
+  if(type==='stremio')return chrome+status+portal+stremioAccessPanel(safe)+stremioHouseholdSection(safe,token,accessDetail?.currentPlan,options)+stremioInstallSection(safe,token,options);
+  const jellyfin=chrome+status+portal+stripLegacyReconcileForms(accessCards.render(safe,token,accessDetail,options),safe.customer.id);
   return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm};
+module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};
