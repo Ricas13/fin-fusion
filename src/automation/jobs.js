@@ -1,7 +1,6 @@
 'use strict';
 const{query}=require('../db');
-const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioning');
-const{notifyExpiringSubscriptions}=require('../entitlements/subscription-expiry');
+const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning');
 const{reconcileActiveEntitlements,healthcheckAllServers}=require('../jellyfin/jobs');
 const automaticFreeDowngradeRetry=require('../entitlements/automatic-free-downgrade-retry');
 const drift=require('../jellyfin/drift-control');
