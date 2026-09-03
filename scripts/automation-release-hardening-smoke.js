@@ -49,6 +49,10 @@ for (const field of ['last_completed_at', 'last_outcome', 'last_failed_count', '
 const worker = read('scripts/automation-worker.js');
 assert(worker.includes('DB_CONTROL_HEADROOM'), 'Automation worker must reserve database control headroom');
 assert(worker.includes('Math.min(REQUESTED_CONCURRENCY, DB_POOL_SIZE - DB_CONTROL_HEADROOM)'), 'Worker concurrency must be bounded by its DB pool');
+assert(worker.includes('dbConnectionBudget') && worker.includes('CONNECTION_BUDGET.totalReserved'),
+    'Automation heartbeat metadata must expose the complete database connection budget');
+assert(worker.includes('Automation request-service settings refresh failed during startup'),
+    'Best-effort automation settings refresh failures must remain visible to operators');
 
 const compose = read('docker-compose.yml');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
@@ -63,7 +67,7 @@ assert.strictEqual(connectionBudget.AUTOMATION_ROLE_CONNECTION_LIMIT, automation
 
 const defaultAutomationBudget = connectionBudget.automationConnectionBudget({
     DB_POOL_SIZE: String(automationPoolDefault),
-    RECONCILIATION_MAX_CONCURRENCY: String(connectionBudget.AUTOMATION_DEFAULT_RECONCILIATION_MAX)
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: String(connectionBudget.AUTOMATION_DEFAULT_RECONCILIATION_MAX)
 });
 assert.strictEqual(defaultAutomationBudget.primaryPoolMax, 6, 'automation primary pool default should remain six');
 assert.strictEqual(defaultAutomationBudget.maintenanceLockPoolMax, 4, 'automation maintenance-lock default should remain four');
@@ -72,15 +76,20 @@ assert.strictEqual(defaultAutomationBudget.healthcheckReserve, 1, 'automation he
 assert(defaultAutomationBudget.totalReserved <= automationRoleLimit,
     'Default automation primary + maintenance + reconciliation + healthcheck budget must fit inside the role limit');
 assert.strictEqual(defaultAutomationBudget.spare, 0, 'the default automation budget should account for every role connection explicitly');
-assert.throws(() => connectionBudget.automationConnectionBudget({
+assert.strictEqual(connectionBudget.automationConnectionBudget({
     DB_POOL_SIZE: '6',
     RECONCILIATION_MAX_CONCURRENCY: '4'
-}), /Unsafe automation database pool budget/,
-'unsafe reconciliation concurrency must fail fast instead of oversubscribing the automation role');
+}).reconciliationMax, 1,
+'web reconciliation configuration must not leak into the automation role budget');
 assert.throws(() => connectionBudget.automationConnectionBudget({
     DB_POOL_SIZE: '6',
-    RECONCILIATION_MAX_CONCURRENCY: '1',
-    MAINTENANCE_LOCK_POOL_MAX: '5'
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: '4'
+}), /Unsafe automation database pool budget/,
+'unsafe automation reconciliation concurrency must fail fast instead of oversubscribing the automation role');
+assert.throws(() => connectionBudget.automationConnectionBudget({
+    DB_POOL_SIZE: '6',
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: '1',
+    AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: '5'
 }), /Unsafe automation maintenance-lock pool/,
 'unsafe explicit maintenance-lock concurrency must fail fast instead of oversubscribing the automation role');
 assert(maintenanceLock.includes('automationConnectionBudget().maintenanceLockPoolMax'),
