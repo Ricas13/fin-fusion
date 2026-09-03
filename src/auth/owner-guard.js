@@ -2,6 +2,10 @@
 
 const { query } = require('../db');
 
+function isAdminSession(req) {
+    return Boolean(req.session?.authUserId && req.session?.authRole === 'admin');
+}
+
 async function ownerStatus(userId) {
     const result = await query(`
         SELECT role,active,COALESCE(is_owner,FALSE) AS is_owner
@@ -14,7 +18,7 @@ async function ownerStatus(userId) {
 }
 
 async function requireOwner(req,res,next) {
-    if (!(req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId)) {
+    if (!isAdminSession(req)) {
         return res.redirect('/login?session=expired');
     }
     try {
@@ -52,4 +56,4 @@ async function ownerBoundary(req,res,next) {
     return requireOwner(req,res,next);
 }
 
-module.exports = { ownerStatus, requireOwner, ownerBoundary, isOwnerOnlyPath, OWNER_ONLY_PATHS };
+module.exports = { isAdminSession, ownerStatus, requireOwner, ownerBoundary, isOwnerOnlyPath, OWNER_ONLY_PATHS };
