@@ -10,6 +10,7 @@ const baseline=read('db/migrations/000_database_baseline.sql');
 const cursors=read('src/platform/operator-read-cursors.js');
 const operator=read('src/platform/admin-operator-state.js');
 const tickets=read('src/support/tickets.js');
+const adminOrders=read('src/platform/admin-orders.js');
 const client=read('public/js/operator-business-indicators.js');
 const experience=read('public/js/operator-experience.js');
 
@@ -26,6 +27,9 @@ assert(operator.includes('csrf.verify(req)'),'read acknowledgement must require 
 assert(operator.includes('csrfToken:csrf.token(req)'),'authenticated unread response must provide same-origin CSRF token');
 assert(operator.includes('seen.customers')&&operator.includes('seen.orders')&&operator.includes('seen.tickets'),'business counts must use stored cursors');
 assert(tickets.includes('staffQueueSummary(since=null)'),'ticket unread summary must accept a cursor');
+assert(adminOrders.includes("const readCursors=require('./operator-read-cursors');"),'Orders must own a server-side read-cursor fallback');
+assert(adminOrders.includes("readCursors.markSeen(req.session.authUserId,'orders')"),'opening Orders must persist the order read cursor server-side');
+assert(adminOrders.includes('const html=await page();await markOrdersSeen(req);return res.send(html)'),'Orders must acknowledge only after the page has rendered successfully');
 assert(client.includes("'X-CSRF-Token':data.csrfToken"),'browser read acknowledgement must send CSRF token');
 assert(client.includes('_csrf:data.csrfToken'),'browser read acknowledgement must also include the CSRF token in its form body');
 assert(client.includes('businessAreaForPath(normalizedPath)'),'browser must resolve the active business workspace before acknowledging unread state');
