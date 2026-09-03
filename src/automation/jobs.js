@@ -2,6 +2,7 @@
 const{query}=require('../db');
 const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/resilient-provisioning');
 const{reconcileActiveEntitlements,healthcheckAllServers}=require('../jellyfin/jobs');
+const automaticFreeDowngradeRetry=require('../entitlements/automatic-free-downgrade-retry');
 const drift=require('../jellyfin/drift-control');
 const bulkWorker=require('../jellyfin/bulk-worker');
 const requestUserSync=require('../integrations/request-user-sync');
@@ -31,7 +32,7 @@ require('../platform/operator-bulk-operations');
 async function notificationLifecycleSafeRun(){const checkpoint=await notificationLifecycle.loadState(new Date());const result=await notificationLifecycle.run();if(Number(result?.failed||0)>0){await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[notificationLifecycle.STATE_KEY,JSON.stringify({cursor:checkpoint.cursor.toISOString(),servers:checkpoint.servers})]);return{...result,cursorRetained:true};}return result;}
 const jobs={
  async health(){const results=await healthcheckAllServers();return{total:results.length,failed:results.filter(item=>!item.ok).length}},
- async entitlements(){const warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0);return{...active,expired:expiredCount,expiryFailed,warnings,processed:expiredCount+Number(active.total||0),failed:Number(active.failed||0)+Number(active.blocked||0)+Number(warnings.failed||0)+expiryFailed}},
+ async entitlements(){const downgradeRetries=await automaticFreeDowngradeRetry.processDue({limit:25}),warnings=await notifyExpiringSubscriptions(),expiry=await expireSubscriptionsAndReconcile(),active=await reconcileActiveEntitlements(),expiredCount=Number(expiry?.expired??expiry??0),expiryFailed=Number(expiry?.failed||0),downgradeRetryFailed=Number(downgradeRetries.failed||0);return{...active,expired:expiredCount,expiryFailed,downgradeRetries,warnings,processed:Number(downgradeRetries.total||0)+expiredCount+Number(active.total||0),failed:Number(active.failed||0)+Number(active.blocked||0)+Number(warnings.failed||0)+expiryFailed+downgradeRetryFailed}},
  async policy_drift(){const result=await drift.auditDue({all:false});return{...result,processed:Number(result.total||0),failed:Number(result.unreachable||0)}},
  async customer_inactivity(){return customerInactivity.run()},
  async customer_deletions(){return customerDeletion.processDue({limit:10})},
