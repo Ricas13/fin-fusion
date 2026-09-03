@@ -10,6 +10,7 @@ const db = require('../src/db');
 const build = require('../src/build-info');
 const refundPolicy = require('../src/payments/prorata-refunds');
 const routeManifest = require('../src/platform/admin-route-manifest');
+const desiredAccessState = require('../src/entitlements/customer-access-desired-state');
 
 assert.strictEqual(build.version, '2.0.0', 'v2 must have one canonical 2.0.0 package/build identity');
 assert.deepStrictEqual(build.providerAppInfo(), { name:'CAPTAiNFiN', version:'2.0.0' });
@@ -42,6 +43,35 @@ assert.strictEqual(future.mode, 'future_full');
 assert.strictEqual(future.refundMinor, 4000, 'a fully unused future period may refund all provider-paid cash');
 assert.throws(() => refundPolicy.refundableQuoteFromRow({ ...baseRow, provider_subscription_id:'sub_recurring' }, { now:halfway }), /Recurring provider subscriptions/);
 
+const paid={plan_id:'paid-plan',subscription_id:'paid-sub',is_free_tier:false,blocked:false};
+const free={plan_id:'free-plan',subscription_id:'free-sub',is_free_tier:true,blocked:false};
+const stremio={plan_id:'stremio-plan',subscription_id:'stremio-sub',blocked:false};
+const emby={plan_id:'emby-plan',subscription_id:'emby-sub',blocked:false};
+let desired=desiredAccessState.deriveCustomerAccessDesiredState();
+assert.strictEqual(desired.desiredAnyAccess,false,'no entitlements must desire no external access');
+assert.deepStrictEqual(desired.activePlanIds,[],'no entitlements must produce no Discord plan roles');
+desired=desiredAccessState.deriveCustomerAccessDesiredState({effectiveJellyfin:paid});
+assert.strictEqual(desired.primaryEntitlement,paid,'paid Jellyfin must own the primary lane');
+assert.deepStrictEqual(desired.desired,{primaryJellyfin:true,freeJellyfin:false,stremio:false,emby:false});
+assert.deepStrictEqual(desired.activePlanIds,['paid-plan']);
+desired=desiredAccessState.deriveCustomerAccessDesiredState({effectiveJellyfin:free,freeEntitlement:free});
+assert.strictEqual(desired.primaryEntitlement,null,'Free Server must never masquerade as the paid/primary lane');
+assert.strictEqual(desired.desired.freeJellyfin,true,'Free Server must remain an independent desired lane');
+desired=desiredAccessState.deriveCustomerAccessDesiredState({effectiveJellyfin:paid,freeEntitlement:free,stremioEntitlement:stremio,embyEntitlement:emby});
+assert.deepStrictEqual(desired.activePlanIds,['paid-plan','free-plan','stremio-plan','emby-plan'],'all usable service lanes must contribute managed Discord roles once');
+assert.strictEqual(desired.controlEntitlement,paid,'primary paid Jellyfin should remain the reconciliation control entitlement when present');
+const blockedPaid={...paid,blocked:true};
+desired=desiredAccessState.deriveCustomerAccessDesiredState({effectiveJellyfin:blockedPaid,freeEntitlement:free});
+assert.strictEqual(desired.desired.primaryJellyfin,false,'blocked paid entitlement must not request enabled Jellyfin access');
+assert.strictEqual(desired.desired.freeJellyfin,true,'a blocked paid lane must not erase an independently usable Free Server lane');
+assert.deepStrictEqual(desired.activePlanIds,['free-plan'],'blocked lanes must not contribute Discord roles');
+desired=desiredAccessState.deriveCustomerAccessDesiredState({stremioEntitlement:{...stremio,blocked:true},embyEntitlement:emby});
+assert.strictEqual(desired.desired.stremio,false,'blocked Stremio entitlement must not be considered desired access');
+assert.strictEqual(desired.desired.emby,true,'unblocked Emby access must remain independent');
+desired=desiredAccessState.deriveCustomerAccessDesiredState({effectiveJellyfin:paid,holds:[{id:'h1',hold_type:'admin_hold',source_key:'admin',reason:'manual'},{id:'h2',type:'inactivity_policy',sourceKey:'plan:free'}]});
+assert.deepStrictEqual(desired.blockers.map(row=>row.type),['admin_hold','inactivity_policy'],'typed hold identity must survive desired-state normalization');
+assert.strictEqual(desired.blockers[0].sourceKey,'admin');
+
 const referrals = read('src/referrals.js');
 assert(referrals.includes("rr.status='pending'"), 'only pending referral redemptions may qualify');
 assert(referrals.includes('ORDER BY s.starts_at,s.created_at LIMIT 1'), 'affiliate reward must bind to the first qualifying paid subscription');
@@ -64,11 +94,13 @@ assert(composition.includes('createAdminProrataRefundsRouter'), 'the staff pro-r
 assert(composition.includes('assertAdminRouteOrder(criticalOrder)'), 'production startup must enforce critical route precedence');
 
 const customer360View = read('src/platform/customer-360-view.js');
+assert(customer360View.includes("require('../entitlements/customer-access-desired-state')"),'Customer 360 must consume the shared pure desired-access calculator instead of re-deriving blocker semantics');
 assert(customer360View.includes('function accessTruthPanel(detail)'), 'Customer 360 overview must keep a dedicated access-truth explanation surface');
 assert(customer360View.includes('Commercial state') && customer360View.includes('Active blockers') && customer360View.includes('Observed state') && customer360View.includes('Reconciliation'),
   'Customer 360 access truth must separate entitlement, blockers, observed state and reconciliation');
 assert(customer360View.includes("tab==='overview'?rendered.replace('</nav>',`</nav>${accessTruthPanel(safe)}`):rendered"),
   'Customer 360 access truth must stay on Overview without duplicating the dedicated Access workspace');
+assert(customer360View.includes('Entitlement currently blocked'),'Customer 360 must distinguish a blocked canonical entitlement even when no display hold row is available');
 
 const nav = read('src/platform/admin-nav.js');
 const retiredProduct = ['re','seller'].join('');
