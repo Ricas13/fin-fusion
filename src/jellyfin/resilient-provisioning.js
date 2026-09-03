@@ -9,6 +9,7 @@ const accessHolds = require('../entitlements/access-holds');
 const inactivityHoldReconciliation = require('../entitlements/inactivity-hold-reconciliation');
 const subscriptionState = require('../entitlements/subscription-state');
 const subscriptionExpiry = require('../entitlements/subscription-expiry');
+const desiredAccessState = require('../entitlements/customer-access-desired-state');
 const libraryPolicy = require('./account-library-policy');
 const jellyfinPolicy = require('./policy');
 const discordRoles = require('../integrations/discord-roles');
@@ -90,16 +91,6 @@ function assertLanePostcondition(name, entitlement, result) {
     error.code = 'RECONCILIATION_POSTCONDITION_FAILED';
     error.lane = name.toLowerCase();
     throw error;
-}
-
-function blockerState(holds) {
-    return (holds || []).map(hold => ({
-        id: hold.id,
-        type: hold.hold_type,
-        sourceKey: hold.source_key || null,
-        reason: hold.reason || null,
-        createdAt: hold.created_at || null
-    }));
 }
 
 async function currentEntitlementTruth(customerId) {
@@ -330,13 +321,12 @@ async function activeDiscordPlanIds(customerId) {
         require('../stremio/entitlements').entitledSubscription(customerId),
         subscriptionState.effectiveEmbySubscription(customerId, { includeBlocked: true })
     ]);
-    const primaryEntitlement = effectiveJellyfin && !effectiveJellyfin.is_free_tier ? effectiveJellyfin : null;
-    return [
-        primaryEntitlement && !primaryEntitlement.blocked ? primaryEntitlement.plan_id : null,
-        freeEntitlement && !freeEntitlement.blocked ? freeEntitlement.plan_id : null,
-        stremioEntitlement?.plan_id || null,
-        embyEntitlement && !embyEntitlement.blocked ? embyEntitlement.plan_id : null
-    ].filter(Boolean);
+    return desiredAccessState.deriveCustomerAccessDesiredState({
+        effectiveJellyfin,
+        freeEntitlement,
+        stremioEntitlement,
+        embyEntitlement
+    }).activePlanIds;
 }
 
 async function reconcileDiscordRoles(customerId, { discordExtraManagedRoleIds = [] } = {}) {
@@ -362,15 +352,20 @@ async function reconcileCustomerUnlocked(customerId) {
         subscriptionState.effectiveEmbySubscription(customerId, { includeBlocked: true }),
         accessHolds.activeHolds(customerId)
     ]);
-    const primaryEntitlement = effectiveJellyfin && !effectiveJellyfin.is_free_tier ? effectiveJellyfin : null;
-    const controlEntitlement = primaryEntitlement || freeEntitlement || stremioEntitlement || embyEntitlement || null;
-    const activePlanIds = [
-        primaryEntitlement && !primaryEntitlement.blocked ? primaryEntitlement.plan_id : null,
-        freeEntitlement && !freeEntitlement.blocked ? freeEntitlement.plan_id : null,
-        stremioEntitlement?.plan_id || null,
-        embyEntitlement && !embyEntitlement.blocked ? embyEntitlement.plan_id : null
-    ].filter(Boolean);
-    const blockers = blockerState(holds);
+    const desiredState = desiredAccessState.deriveCustomerAccessDesiredState({
+        effectiveJellyfin,
+        freeEntitlement,
+        stremioEntitlement,
+        embyEntitlement,
+        holds
+    });
+    const {
+        primaryEntitlement,
+        controlEntitlement,
+        activePlanIds,
+        blockers,
+        desired
+    } = desiredState;
 
     await control.markCustomerRunning(customerId, controlEntitlement);
     try {
@@ -381,7 +376,7 @@ async function reconcileCustomerUnlocked(customerId) {
                 makePrimary: Boolean(primaryEntitlement)
             });
             const free = await reconcileLane(customerId, freeEntitlement, 'free', accounts, {
-                makePrimary: !primaryEntitlement && Boolean(freeEntitlement && !freeEntitlement.blocked)
+                makePrimary: !primaryEntitlement && desired.freeJellyfin
             });
             if (!primaryEntitlement && !free.active) await disableAccounts(accounts);
 
