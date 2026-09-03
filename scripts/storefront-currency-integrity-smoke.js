@@ -10,6 +10,7 @@ const discounts=read('src/payments/discounts.js');
 const reporting=read('src/platform/reporting-currency.js');
 const storefront=read('src/platform/storefront.js');
 const storefrontRefinement=read('public/css/storefront-refinement.css');
+const storefrontPlanDriven=read('public/css/storefront-plan-driven.css');
 const publicPages=read('src/platform/public-pages.js');
 const publicShellSource=read('src/platform/public-shell.js');
 const checkout=read('src/platform/flexible-checkout.js');
@@ -69,8 +70,14 @@ assert(storefront.includes('class="paymentMethodsCard"')&&storefront.includes('c
 assert(storefrontRefinement.includes('.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr)'),'Desktop storefront must use the intended two-card split layout');
 assert(storefrontRefinement.includes('.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Payment method mini-cards must remain a three-column row inside the payment card');
 assert(storefrontRefinement.includes('.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr)'),'Affiliate promotion must reserve a compact dedicated visual column for its artwork');
-assert(storefrontRefinement.includes('.paymentMethodsCard,.affiliatePromoCard{position:relative;overflow:hidden;min-height:240px'),'Payment and affiliate feature cards must stay compact at Free Server banner scale');
-assert(storefrontRefinement.includes('background:linear-gradient(115deg,rgba(19,52,66,.72),rgba(15,23,32,.96) 58%,rgba(11,17,24,.98))'),'Payment showcase must use the same restrained teal/dark palette family as the Free Server banner');
+assert(storefrontPlanDriven.includes('.paymentMethodsCard,.affiliatePromoCard,.freeTierPanel{box-sizing:border-box;height:270px;min-height:270px}'),'Payment, affiliate and Free Server cards must have exactly the same 270px desktop height');
+const visibleFreeBorder='border:1px solid rgba(76,201,240,.22)!important';
+const visibleFreeBackground='background:linear-gradient(115deg,rgba(20,40,50,.7),rgba(15,21,28,.98) 58%,rgba(11,16,22,.98))!important';
+const visibleFreeShadow='box-shadow:0 24px 80px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.035)!important';
+assert(storefrontPlanDriven.includes('.freeTierPanel.soldOut{border-color:rgba(76,201,240,.22);background:linear-gradient(115deg,rgba(20,40,50,.7),rgba(15,21,28,.98) 58%,rgba(11,16,22,.98))}'),'Free Server sold-out reference colours must remain stable');
+assert(storefrontPlanDriven.includes(visibleFreeBorder)&&storefrontPlanDriven.includes(visibleFreeBackground)&&storefrontPlanDriven.includes(visibleFreeShadow),'Payment and affiliate cards must copy the visible Free Server card border, background and shadow exactly');
+assert(storefrontPlanDriven.includes('.paymentMethodsShowcase{gap:14px!important;padding:0!important;border:0!important;border-radius:0!important;background:none!important;box-shadow:none!important;backdrop-filter:none!important}'),'Payment showcase wrapper must not add a second coloured frame or extra height around the two cards');
+assert(storefrontPlanDriven.includes('.paymentMethodsCard:before,.affiliatePromoCard:before{content:"";position:absolute;inset:auto;width:320px;height:320px;border-radius:50%;left:-120px;top:-180px;background:radial-gradient(circle,rgba(76,201,240,.18),transparent 68%);pointer-events:none}'),'Top cards must copy the Free Server teal glow treatment exactly');
 assert(!storefrontRefinement.includes('rgba(95,87,255,.58)'),'Affiliate card must not regress to the purple treatment that clashes with the Free Server banner');
 assert(storefrontRefinement.includes('@media(max-width:1050px)')&&storefrontRefinement.includes('.paymentMethodsShowcase{grid-template-columns:1fr}'),'The two-card showcase must stack cleanly on narrower displays');
 
@@ -106,4 +113,4 @@ assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence 
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 
-console.log('storefront currency integrity smoke: master-currency architecture, compact two-card affiliate showcase, shared public shell and UI surfaces ok');
+console.log('storefront currency integrity smoke: exact Free Server banner parity, affiliate showcase, shared public shell and UI surfaces ok');
