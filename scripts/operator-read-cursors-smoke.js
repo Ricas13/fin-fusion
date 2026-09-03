@@ -44,7 +44,7 @@ assert(client.includes("path==='/admin/commerce/orders'||path==='/admin/orders'"
 assert(client.includes("path==='/admin/payments')return'payments'"),'opening Payments must acknowledge provider callback notifications');
 assert(client.includes("meta:'New provider callback issues — clears after review'")&&client.includes("href:'/admin/payments',business:true"),'Payments alert must explain and persist click-time review acknowledgement');
 assert(client.includes("areaForCurrentPage==='payments'?0:Number(data.counts.payments||0)"),'Payments must not show its own stale callback alert while it is being reviewed');
-assert(client.includes('provider callback notifications clear after review'),'Alerts copy must distinguish reviewable provider callbacks from persistent health incidents');
+assert(client.includes('provider callback notifications clear after you review Payments.'),'Alerts copy must distinguish reviewable provider callbacks from persistent health incidents');
 assert(client.includes('if(!response.ok)throw new Error(`Read acknowledgement failed (${response.status})`)'),'browser must not pretend a failed acknowledgement persisted server-side');
 assert(client.includes('markAreaReadWithRetry'),'browser must retry transient read acknowledgement failures instead of leaving a sticky badge');
 assert(client.includes('const delays=[0,200,500,1000,2000,4000]'),'read acknowledgement must retry across a meaningful transient-failure window');
