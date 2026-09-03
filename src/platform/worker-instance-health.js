@@ -35,11 +35,34 @@ function clean(value, max = 200) {
   return text ? text.slice(0, max) : null;
 }
 
+function reconciliationMetrics(metadata = {}) {
+  const raw = metadata?.reconciliation;
+  if (!raw || typeof raw !== 'object') return null;
+  const concurrency = raw.concurrency && typeof raw.concurrency === 'object' ? raw.concurrency : {};
+  return {
+    started: number(raw.started),
+    succeeded: number(raw.succeeded),
+    failed: number(raw.failed),
+    lockTimeouts: number(raw.lockTimeouts),
+    cleanupFailures: number(raw.cleanupFailures),
+    averageDurationMs: number(raw.averageDurationMs),
+    averageProcessSlotWaitMs: number(raw.averageProcessSlotWaitMs),
+    averageDatabaseLockWaitMs: number(raw.averageDatabaseLockWaitMs),
+    maxDurationMs: number(raw.maxDurationMs),
+    maxProcessSlotWaitMs: number(raw.maxProcessSlotWaitMs),
+    maxDatabaseLockWaitMs: number(raw.maxDatabaseLockWaitMs),
+    active: number(concurrency.active),
+    queued: number(concurrency.queued),
+    limit: number(concurrency.limit)
+  };
+}
+
 function instanceView(row) {
   const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   const instanceId = clean(row?.instance_id, 200) || 'unknown';
+  const key = clean(row?.worker_key, 80) || 'unknown';
   return {
-    key: clean(row?.worker_key, 80) || 'unknown',
+    key,
     instanceId,
     version: clean(row?.version, 80),
     commitSha: clean(row?.commit_sha, 80),
@@ -53,7 +76,8 @@ function instanceView(row) {
     containerId: clean(metadata.containerId, 200),
     containerName: clean(metadata.containerName, 200),
     lastCycleOutcome: clean(metadata.lastCycleOutcome, 24),
-    serverFailures: number(metadata.serverFailures)
+    serverFailures: number(metadata.serverFailures),
+    reconciliation: key === 'automation' ? reconciliationMetrics(metadata) : null
   };
 }
 
@@ -91,7 +115,8 @@ function summarize(rows = []) {
       lastCycleOutcome: representative?.lastCycleOutcome || null,
       serverFailures: representative?.serverFailures || 0,
       instanceCount: roleInstances.length,
-      liveInstances: active.length
+      liveInstances: active.length,
+      reconciliation: representative?.reconciliation || null
     });
   }
 
@@ -102,4 +127,4 @@ function summarize(rows = []) {
   return { workers, instances, warnings };
 }
 
-module.exports = { freshnessSeconds, instanceState, instanceView, summarize };
+module.exports = { freshnessSeconds, instanceState, reconciliationMetrics, instanceView, summarize };
