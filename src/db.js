@@ -1,7 +1,46 @@
+const path = require('path');
 const { Pool } = require('pg');
 const { RESTORE_MAINTENANCE_LOCK } = require('./db-locks');
 
+const DEFAULT_WEB_DATABASE_ROLE = 'steamfusion_app';
 let pool;
+
+function databaseUsername(databaseUrl) {
+    const raw = String(databaseUrl || '').trim();
+    if (!raw) return '';
+    let url;
+    try { url = new URL(raw); }
+    catch (_) { throw new Error('DATABASE_URL must be a valid PostgreSQL URL'); }
+    if (!['postgres:', 'postgresql:'].includes(url.protocol)) throw new Error('DATABASE_URL must use postgres:// or postgresql://');
+    return decodeURIComponent(url.username || '');
+}
+
+function assertWebDatabaseRole({
+    nodeEnv = process.env.NODE_ENV,
+    databaseUrl = process.env.DATABASE_URL,
+    expectedRole = process.env.WEB_DATABASE_ROLE || DEFAULT_WEB_DATABASE_ROLE
+} = {}) {
+    if (String(nodeEnv || '').toLowerCase() !== 'production') return null;
+    const expected = String(expectedRole || '').trim();
+    if (!expected) throw new Error('WEB_DATABASE_ROLE must name the restricted PostgreSQL role used by the web runtime');
+    const actual = databaseUsername(databaseUrl);
+    if (!actual) throw new Error('DATABASE_URL is required for the production web runtime');
+    if (actual !== expected) {
+        throw new Error(`Production web DATABASE_URL must authenticate as the restricted ${expected} role (received ${actual}). Run migrations/recovery with the owner URL, but never node src/application.js.`);
+    }
+    return actual;
+}
+
+function directWebRuntime(argv = process.argv) {
+    const entry = String(argv?.[1] || '').trim();
+    if (!entry) return false;
+    return path.resolve(entry) === path.resolve(__dirname, 'application.js');
+}
+
+// This runs before Express/session-store startup for the supported direct web
+// entrypoint. It prevents a manual production launch from accidentally using
+// the owner/deploy DATABASE_URL instead of the least-privilege app role.
+if (directWebRuntime()) assertWebDatabaseRole();
 
 function getPool() {
     if (pool) return pool;
@@ -87,4 +126,17 @@ async function closePool() {
     await current.end();
 }
 
-module.exports = { getPool, query, readQuery, mutationQuery, transaction, healthcheck, closePool, isMutationSql };
+module.exports = {
+    getPool,
+    query,
+    readQuery,
+    mutationQuery,
+    transaction,
+    healthcheck,
+    closePool,
+    isMutationSql,
+    databaseUsername,
+    assertWebDatabaseRole,
+    directWebRuntime,
+    DEFAULT_WEB_DATABASE_ROLE
+};
