@@ -56,19 +56,25 @@ assert(!customerDashboard.includes('enabledCurrencies()'),'Customer account must
 assert(!onboarding.includes('name="currency"'),'Customer checkout forms must not post a customer-selected currency');
 assert(onboarding.includes('All paid prices use <strong><%='),'Customer onboarding must present the single portal currency explicitly');
 
-assert(storefront.includes("const affiliateCredits=require('../affiliate-credits');"),'Storefront affiliate strip must use the canonical affiliate-credit service');
+assert(storefront.includes("const affiliateCredits=require('../affiliate-credits');"),'Storefront affiliate showcase must use the canonical affiliate-credit service');
 assert(storefront.includes('async function storefrontAffiliate(customerId,currency)')&&storefront.includes('affiliateCredits.loadSettings()')&&storefront.includes('affiliateCredits.balances(customerId)'),'Storefront must derive affiliate enablement and signed-in balances from the canonical ledger');
 assert(storefront.includes("if(!affiliate?.enabled)return'';"),'Disabled affiliate programs must render no storefront affiliate promotion');
 assert(storefront.includes("balances.find(row=>String(row.currency||'').toUpperCase()===String(currency||'GBP').toUpperCase())"),'Storefront affiliate balance must follow the master storefront currency');
-assert(storefront.includes('paymentMethodsStrip(paymentMethods,affiliate,currency,logged)'),'Affiliate promotion must live inside the existing payment-method panel');
+assert(storefront.includes('paymentMethodsStrip(paymentMethods,affiliate,currency,logged)'),'Affiliate promotion must share the payment-method showcase region');
 assert(storefront.includes("logged?'/account/affiliate':'/account/login?next=%2Faccount%2Faffiliate'"),'Affiliate CTA must send signed-in customers to Affiliate and anonymous visitors through sign-in');
-assert(storefront.includes("title=`${money(available,currency)} available`")&&storefront.includes("title=`${money(pending,currency)} pending`"),'Signed-in storefront must surface real available and pending affiliate credit');
-assert(storefrontRefinement.includes('.affiliatePromo{')&&storefrontRefinement.includes('flex:1 0 100%'),'Affiliate promotion must remain a subordinate full-width strip rather than a fourth payment method');
+assert(storefront.includes('`${money(available,currency)} available credit`')&&storefront.includes('`${money(pending,currency)} pending credit`'),'Signed-in storefront must surface real available and pending affiliate credit');
+assert(storefront.includes('function referralArtwork()')&&storefront.includes('class="affiliateArtwork"')&&storefront.includes('<svg viewBox="0 0 260 220"'),'Affiliate feature card must include its own embedded referral artwork without an external image dependency');
+assert(storefront.includes('class="paymentMethodsShowcase ${affiliateCard?\'hasAffiliate\':\'paymentsOnly\'}"'),'Payment and affiliate promotion must render as two peer feature cards when Affiliate is enabled');
+assert(storefront.includes('class="paymentMethodsCard"')&&storefront.includes('class="affiliatePromoCard"'),'Storefront must keep payment methods and Affiliate in separate large cards');
+assert(storefrontRefinement.includes('.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr)'),'Desktop storefront must use the intended two-card split layout');
+assert(storefrontRefinement.includes('.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Payment method mini-cards must remain a three-column row inside the payment card');
+assert(storefrontRefinement.includes('.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(175px,.72fr)'),'Affiliate promotion must reserve a dedicated visual column for its artwork');
+assert(storefrontRefinement.includes('@media(max-width:1050px)')&&storefrontRefinement.includes('.paymentMethodsShowcase{grid-template-columns:1fr}'),'The two-card showcase must stack cleanly on narrower displays');
 
 assert(storefront.includes('publicShell.publicHeader({site,nav,logged,registrationOpen})'),'Storefront must render the shared public header');
 assert(storefront.includes('publicShell.publicFooter({site,support:shellSupport,registrationOpen})'),'Storefront must render the shared public footer');
 assert(publicPages.includes('publicShell.publicHeader({site,nav,active,logged,registrationOpen})'),'Information pages must render the same shared public header');
-assert(publicPages.includes('publicShell.publicFooter({site,support,registrationOpen})'),'Information pages must render the shared public footer');
+assert(publicPages.includes('publicShell.publicFooter({site,support,registrationOpen})'),'Information pages must render the same shared public footer');
 assert(!publicPages.includes('<header class="storeHeader">'),'Information pages must not maintain a separate public header implementation');
 assert(!publicPages.includes('<footer class="storeFooter">'),'Information pages must not maintain a separate public footer implementation');
 assert(publicShellSource.includes("['trust','Trust','/trust']"),'Trust must be part of the permanent public navigation');
@@ -94,4 +100,4 @@ assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence 
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 
-console.log('storefront currency integrity smoke: master-currency architecture, affiliate strip, shared public shell and UI surfaces ok');
+console.log('storefront currency integrity smoke: master-currency architecture, two-card affiliate showcase, shared public shell and UI surfaces ok');
