@@ -7,6 +7,10 @@ function text(value, fallback = '—') {
 function serviceType(row) {
   return String(row?.service_type_snapshot || row?.service_type || '').trim().toLowerCase();
 }
+function supports(row, service) {
+  const type = serviceType(row);
+  return type === service || type === 'bundle';
+}
 function currentSubscriptions(detail) {
   const now = Date.now();
   return (detail?.subscriptions || []).filter(row => {
@@ -44,10 +48,20 @@ function resultRows(detail) {
   const state = detail?.provisioningState || {};
   const result = snapshot(detail);
   const live = currentSubscriptions(detail);
-  const primaryEntitlement = detail?.primaryEntitlement || live.find(row => ['jellyfin','bundle'].includes(serviceType(row)) && !row.is_free_tier) || null;
-  const freeEntitlement = detail?.freeEntitlement || live.find(row => ['jellyfin','bundle'].includes(serviceType(row)) && row.is_free_tier) || null;
-  const embyEntitlement = live.find(row => ['emby','bundle'].includes(serviceType(row))) || null;
-  const stremioEntitlement = live.find(row => ['stremio','bundle'].includes(serviceType(row))) || null;
+  const loadedPrimary = detail?.primaryEntitlement || null;
+  const loadedFree = detail?.freeEntitlement || null;
+  const primaryEntitlement = loadedPrimary && supports(loadedPrimary, 'jellyfin') && !loadedPrimary.is_free_tier
+    ? loadedPrimary
+    : live.find(row => supports(row, 'jellyfin') && !row.is_free_tier) || null;
+  const freeEntitlement = loadedFree && supports(loadedFree, 'jellyfin') && loadedFree.is_free_tier
+    ? loadedFree
+    : live.find(row => supports(row, 'jellyfin') && row.is_free_tier) || null;
+  const embyEntitlement = loadedPrimary && supports(loadedPrimary, 'emby')
+    ? loadedPrimary
+    : live.find(row => supports(row, 'emby')) || null;
+  const stremioEntitlement = loadedPrimary && supports(loadedPrimary, 'stremio')
+    ? loadedPrimary
+    : live.find(row => supports(row, 'stremio')) || null;
   const accounts = (detail?.accounts || []).filter(row => String(row?.account_purpose || 'jellyfin') !== 'stremio_internal');
   const primaryAccount = accounts.find(row => String(row?.access_lane || 'primary') === 'primary') || null;
   const freeAccount = accounts.find(row => String(row?.access_lane || '') === 'free') || null;
@@ -57,7 +71,7 @@ function resultRows(detail) {
   const blockerText = blockers.length ? blockers.map(row => typeof row === 'string' ? row : row.type || row.hold_type || 'hold').join(', ') : null;
   const reconciledAt = result.reconciledAt || state.last_success_at || state.last_attempt_at || null;
 
-  const rows = [
+  return [
     {
       key: 'jellyfin-primary', service: 'Jellyfin primary', desired: laneDesired(result.primary, Boolean(primaryEntitlement)),
       actual: laneActual(result.primary, primaryAccount), plan: lanePlan(result.primary, primaryEntitlement),
@@ -82,12 +96,11 @@ function resultRows(detail) {
       target: result.serverId ? String(result.serverId) : 'Managed Stremio delivery', issue: null, reconciledAt
     },
     {
-      key: 'discord', service: 'Discord roles', desired: live.length ? 'Synced to active plans' : 'No active plan roles',
+      key: 'discord', service: 'Discord roles', desired: live.length || loadedPrimary ? 'Synced to active plans' : 'No active plan roles',
       actual: result.discordStatus ? text(result.discordStatus) : 'No reconciliation snapshot', plan: 'Active plan roles',
       target: 'Discord integration', issue: null, reconciledAt
     }
   ];
-  return rows;
 }
 
-module.exports = { resultRows, snapshot, currentSubscriptions, laneActual, laneDesired, serviceType };
+module.exports = { resultRows, snapshot, currentSubscriptions, laneActual, laneDesired, serviceType, supports };
