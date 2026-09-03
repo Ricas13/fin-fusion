@@ -19,7 +19,7 @@ const serviceCatalog=require('../catalog/service-catalog');
 const productReadiness=require('./product-readiness');
 const{esc}=require('./admin-html');
 
-const STOREFRONT_ASSET_REV='20260903-1547';
+const STOREFRONT_ASSET_REV='20260903-1734';
 
 function money(minor,currency='GBP'){return moneyFormat.formatMinor(minor,currency,{trimZeroDecimals:true});}
 function interval(plan){const labels={trial:'trial',month:'month','6_months':'6 months',year:'year',custom:`${Number(plan.duration_days||30)} days`};return labels[plan.billing_interval]||String(plan.billing_interval||'access');}
