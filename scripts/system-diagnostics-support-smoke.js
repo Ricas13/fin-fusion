@@ -8,6 +8,7 @@ const {
   supportReportFromDiagnostics,
   assertSanitizedReport
 } = require('../src/platform/system-diagnostics');
+const operationalMetrics = require('../src/platform/operational-metrics');
 const { supportFilename } = require('../src/platform/admin-system');
 
 const root = path.join(__dirname, '..');
@@ -80,6 +81,24 @@ assert.throws(() => assertSanitizedReport({ database: 'postgresql://u:p@db/x' },
 assert.throws(() => assertSanitizedReport({ harmless: 'known-secret-value' }, { SESSION_SECRET: 'known-secret-value' }), /configured secret/i);
 assert.match(supportFilename(new Date('2026-08-22T06:07:08.000Z')), /^captainfin-support-20260822-060708\.json$/);
 
+const operational = operationalMetrics.supportSnapshot({
+  databasePool: { total: 7, idle: 3, waiting: 2, max: 10 },
+  reconciliation: {
+    active: 2, queued: 4, limit: 4, total: 100, succeeded: 91, failed: 7, lockTimeouts: 2, canceled: 0,
+    averageDurationMs: 140, averageSlotWaitMs: 20, averageDbLockWaitMs: 8, maxDurationMs: 900, maxSlotWaitMs: 120, maxDbLockWaitMs: 80
+  },
+  backlog: {
+    paymentEventRetries: 3, providerRecovery: 2, providerManualReview: 1, freeDowngradeRetries: 4,
+    freeDowngradeDue: 2, provisioningProblems: 5, provisioningRunning: 1, available: true
+  }
+});
+assert.deepStrictEqual(operational.databasePool, { total: 7, idle: 3, waiting: 2, max: 10, unavailable: false });
+assert.strictEqual(operational.reconciliation.queued, 4);
+assert.strictEqual(operational.reconciliation.averageDbLockWaitMs, 8);
+assert.strictEqual(operational.backlog.freeDowngradeDue, 2);
+assert.strictEqual(operational.backlog.providerManualReview, 1);
+assertSanitizedReport({ operational }, {});
+
 const adminSource = fs.readFileSync(path.join(root, 'src/platform/admin-system.js'), 'utf8');
 assert(adminSource.includes('System health'));
 assert(adminSource.includes('Support report'));
@@ -88,9 +107,23 @@ assert(adminSource.includes('Content-Disposition'));
 assert(adminSource.includes("X-Content-Type-Options"));
 assert(adminSource.includes('Review before sharing'));
 assert(adminSource.includes('Running release'), 'existing version/update section must remain');
+assert(adminSource.includes('Operational pressure'), 'System page must surface runtime reconciliation/queue pressure');
+assert(adminSource.includes('systemWithOperationalMetrics()'), 'System page and support report must consume the same operational metric snapshot');
+assert(adminSource.includes('operationalMetrics.supportSnapshot(system.operational)'), 'support report must include only the sanitized operational counter projection');
 assert(!adminSource.includes("require('child_process')"), 'System page must not gain shell execution');
 assert(!adminSource.includes('docker.sock'), 'System page must not gain Docker socket access');
 assert(!adminSource.includes("readFileSync('.env')"), 'System page must not read .env');
+
+const metricsSource = fs.readFileSync(path.join(root, 'src/platform/operational-metrics.js'), 'utf8');
+assert(metricsSource.includes("reconciliationLock.concurrencySnapshot()"), 'reconciliation pressure must come from the canonical lock/gate owner');
+assert(metricsSource.includes('pool.totalCount') && metricsSource.includes('pool.waitingCount') && metricsSource.includes('pool.options?.max'), 'DB pool pressure must come from the live pg pool');
+assert(metricsSource.includes('processed_at IS NULL AND processing_error IS NOT NULL'), 'payment retry backlog must use durable payment event retry truth');
+assert(metricsSource.includes("manual_review_required=TRUE"), 'provider manual-review backlog must be explicit');
+assert(metricsSource.includes('automatic_free_downgrade_retries'), 'automatic Free downgrade retries must be surfaced');
+assert(metricsSource.includes("status IN ('blocked','failed')"), 'provisioning problem backlog must use canonical customer provisioning state');
+assert(metricsSource.includes("console.warn('Operational backlog diagnostics unavailable.'"), 'best-effort backlog failures must be visible rather than silently swallowed');
+assert(metricsSource.includes("warning: 'Operational backlog metrics are temporarily unavailable.'"), 'operators must see degraded metric collection in the System page');
+assert(!metricsSource.includes('customer_id AS') && !metricsSource.includes('SELECT customer_id,'), 'operational counters must not expose customer identities');
 
 const diagnosticsSource = fs.readFileSync(path.join(root, 'src/platform/system-diagnostics.js'), 'utf8');
 assert(diagnosticsSource.includes('supportReportFromDiagnostics'));
