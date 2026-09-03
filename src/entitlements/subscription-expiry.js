@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const notificationDispatch = require('../integrations/notification-dispatch');
 const expiryPolicy = require('../integrations/notification-expiry-policy');
 const billingMode = require('../payments/subscription-billing-mode');
+const automaticFreeDowngradeRetry = require('./automatic-free-downgrade-retry');
 
 const DEFAULT_WARNING_DAYS = Math.max(...expiryPolicy.DEFAULT_POLICY.milestones);
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -203,9 +204,14 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onA
             try {
                 downgraded = await autoDowngrade(customerId, row);
             } catch (error) {
+                // The commercial expiry is already committed at this point. A
+                // failed configured Free fallback must therefore become a
+                // durable lifecycle retry before normal reconciliation closes
+                // the expired paid access. If this write fails, fail the job
+                // rather than pretending a future retry is guaranteed.
+                await automaticFreeDowngradeRetry.enqueue(customerId, error);
                 failed += 1;
                 if (typeof onAutoDowngradeError === 'function') onAutoDowngradeError(customerId, error);
-                else throw error;
             }
         }
         if (downgraded) continue;
