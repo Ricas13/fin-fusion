@@ -174,4 +174,4 @@ async function scenarioL(){
   assert.strictEqual(externalDeletion.retryMinutes(1),1);
   assert.strictEqual(externalDeletion.retryMinutes(99),360,'retry backoff must be bounded');
   console.log('customer deletion durable target runtime smoke passed (A-L)');
-})().catch(error=>{console.error(error);process.exit(1);});
+})().catch(()=>{console.error('customer deletion durable target runtime smoke failed');process.exit(1);});
