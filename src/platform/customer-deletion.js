@@ -115,6 +115,28 @@ async function markDeletionFailed(job,error,jellyfinResults=null){
   `,[job.id,message(error),jellyfinResults?JSON.stringify(jellyfinResults):null,minutes]);
 }
 
+async function markDeletionFailedBestEffort(job,error,jellyfinResults=null){
+  try{
+    await markDeletionFailed(job,error,jellyfinResults);
+    return true;
+  }catch(writeError){
+    console.error('Unable to persist customer deletion failure state.',{jobId:job?.id||null,error:message(writeError)});
+    return false;
+  }
+}
+
+async function currentJellyfinDeletionResults(jobId){
+  try{
+    const current=await externalDeletion.listTargets(jobId);
+    return externalDeletion.jellyfinResultsFromTargets(current);
+  }catch(error){
+    // A diagnostic read failure must not be converted into an empty result set:
+    // doing so would overwrite previously durable deletion proof with [].
+    console.warn('Unable to reload customer deletion targets after a failed cleanup attempt.',{jobId,error:message(error)});
+    return null;
+  }
+}
+
 async function ensureDeletionHold(job){
   if(job.access_held_at)return job;
   await provisioning.holdAccess(job.customer_id,'jellyfin_deleted',job.actor_user_id||null);
@@ -147,9 +169,8 @@ async function processDeletionJob(jobId){
       // attempts/error/result. Discord removal is awaited and verified here.
       targets=await externalDeletion.reconcileJobTargets(job);
     }catch(error){
-      const current=await externalDeletion.listTargets(job.id).catch(()=>[]);
-      const jellyfinResults=externalDeletion.jellyfinResultsFromTargets(current);
-      await markDeletionFailed(job,error,jellyfinResults);
+      const jellyfinResults=await currentJellyfinDeletionResults(job.id);
+      await markDeletionFailedBestEffort(job,error,jellyfinResults);
       throw pendingError(job,error);
     }
 
@@ -160,12 +181,12 @@ async function processDeletionJob(jobId){
 
     try{return await finalizePortalDeletion(job,{results:jellyfinResults});}
     catch(error){
-      await markDeletionFailed(job,error,jellyfinResults);
+      await markDeletionFailedBestEffort(job,error,jellyfinResults);
       throw pendingError(job,error);
     }
   }catch(error){
     if(error?.code==='CUSTOMER_DELETION_PENDING')throw error;
-    await markDeletionFailed(job,error).catch(()=>{});
+    await markDeletionFailedBestEffort(job,error);
     throw pendingError(job,error);
   }
 }
@@ -210,6 +231,8 @@ module.exports={
   deleteJellyfinAccounts,
   enqueueHardDelete,
   claimDeletionJob,
+  markDeletionFailedBestEffort,
+  currentJellyfinDeletionResults,
   processDeletionJob,
   processDue,
   hardDeletePortalCustomer,
