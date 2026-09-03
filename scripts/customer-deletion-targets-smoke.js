@@ -144,9 +144,34 @@ async function scenarioK(){
   assert.doesNotMatch(source,/if\(current\.targets_persisted_at\)/,'K: old deletion snapshots must be refreshed so newly-recognized billing resources cannot be skipped');
 }
 
+async function scenarioL(){
+  const externalPath=require.resolve('../src/platform/customer-external-deletion'),deletionPath=require.resolve('../src/platform/customer-deletion');
+  const saved=new Map([externalPath,deletionPath].map(key=>[key,require.cache[key]]));
+  try{
+    require.cache[externalPath]={id:externalPath,filename:externalPath,loaded:true,exports:{
+      listTargets:async()=>{throw new Error('diagnostic target reload failed');},
+      jellyfinResultsFromTargets:rows=>rows
+    }};
+    delete require.cache[deletionPath];
+    const fresh=require('../src/platform/customer-deletion');
+    const originalWarn=console.warn;
+    console.warn=()=>{};
+    try{
+      const recovered=await fresh.currentJellyfinDeletionResults('job-1');
+      assert.strictEqual(recovered,null,'L: failed target-state reload must return null so durable Jellyfin proof is preserved instead of overwritten with []');
+    }finally{console.warn=originalWarn;}
+  }finally{
+    for(const [key,value] of saved){if(value)require.cache[key]=value;else delete require.cache[key];}
+  }
+  const deletionSource=fs.readFileSync(path.join(__dirname,'../src/platform/customer-deletion.js'),'utf8');
+  assert(!deletionSource.includes('listTargets(job.id).catch(()=>[])'),'L: target reload failures must not silently become an empty durable result set');
+  assert(!deletionSource.includes('markDeletionFailed(job,error).catch(()=>{})'),'L: failure-state persistence errors must be observable instead of silently extending a running lease');
+  assert(deletionSource.includes('Unable to persist customer deletion failure state.'),'L: best-effort failure-state persistence must log its own failure without masking the provider error');
+}
+
 (async()=>{
-  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();
+  await scenarioA();await scenarioB();await scenarioC();await scenarioD();await scenarioE();await scenarioF();await scenarioG();await scenarioH();await scenarioI();await scenarioJ();await scenarioK();await scenarioL();
   assert.strictEqual(externalDeletion.retryMinutes(1),1);
   assert.strictEqual(externalDeletion.retryMinutes(99),360,'retry backoff must be bounded');
-  console.log('customer deletion durable target runtime smoke passed (A-K)');
+  console.log('customer deletion durable target runtime smoke passed (A-L)');
 })().catch(error=>{console.error(error);process.exit(1);});
