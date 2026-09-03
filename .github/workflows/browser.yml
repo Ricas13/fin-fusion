@@ -179,11 +179,21 @@ jobs:
           CLEAN_INSTALL_EXPECTED: 'false'
         run: node scripts/clean-install-smoke.js
 
+      - name: Configure restricted web role for production browser setup
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
+          APP_DATABASE_URL: postgres://steamfusion_app:clean-app-runtime-password-2026@127.0.0.1:5432/clean
+          AUTOMATION_DATABASE_URL: postgres://steamfusion_automation:clean-automation-runtime-password-2026@127.0.0.1:5432/clean
+          ACTIVITY_DATABASE_URL: postgres://steamfusion_activity:clean-activity-runtime-password-2026@127.0.0.1:5432/clean
+          BACKUP_DATABASE_URL: postgres://steamfusion_backup:clean-backup-runtime-password-2026@127.0.0.1:5432/clean
+          BACKUP_VERIFY_DATABASE_URL: postgres://steamfusion_backup_verify:clean-backup-verify-password-2026@127.0.0.1:5432/clean
+        run: npm run db:runtime-roles
+
       - name: Browser first-run creates first admin and locks installer
         env:
           NODE_ENV: production
           PORT: '3031'
-          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/clean
+          DATABASE_URL: postgres://steamfusion_app:clean-app-runtime-password-2026@127.0.0.1:5432/clean
           SESSION_SECRET: '1111111111111111111111111111111111111111111111111111111111111111'
           DATA_ENCRYPTION_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
           JELLYFIN_ENCRYPTION_KEY: '3333333333333333333333333333333333333333333333333333333333333333'
