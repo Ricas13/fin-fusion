@@ -59,8 +59,8 @@ assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(clie
 assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(experience),'legacy operator experience must not maintain a second local unread cursor');
 assert(!experience.includes("fetch('/admin/api/operator-state/unread'"),'legacy operator experience must not independently fetch unread counts');
 assert(experience.includes('operator-business-indicators.js'),'legacy helper must document the canonical unread owner to prevent drift');
-assert(automationJobs.includes("const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioning');"),'Entitlements must import reconciliation from resilient provisioning');
-assert(automationJobs.includes("const{notifyExpiringSubscriptions}=require('../entitlements/subscription-expiry');"),'Entitlements must import expiry warnings from their canonical subscription-expiry owner');
-assert(!automationJobs.includes('expireSubscriptionsAndReconcile,notifyExpiringSubscriptions'),'Entitlements must not rely on the removed resilient-provisioning warning re-export');
+assert(automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning');"),'Entitlements must obtain expiry reconciliation and warning notifications through the canonical provisioning facade');
+assert(!automationJobs.includes("require('../entitlements/subscription-expiry')"),'Automation jobs must not bypass provisioning ownership to call subscription-expiry directly');
+assert(!automationJobs.includes("require('../jellyfin/resilient-provisioning')"),'Automation jobs must not depend on non-contract resilient-provisioning exports');
 
 console.log('operator read cursors smoke: ok');
