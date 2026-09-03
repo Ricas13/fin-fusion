@@ -67,12 +67,13 @@ assert(storefront.includes('`${money(available,currency)} available credit`')&&s
 assert(storefront.includes('function referralArtwork()')&&storefront.includes('class="affiliateArtwork"')&&storefront.includes('<svg viewBox="0 0 260 220"'),'Affiliate feature card must include its own embedded referral artwork without an external image dependency');
 assert(storefront.includes('class="paymentMethodsShowcase ${affiliateCard?\'hasAffiliate\':\'paymentsOnly\'}"'),'Payment and affiliate promotion must render as two peer feature cards when Affiliate is enabled');
 assert(storefront.includes('class="paymentMethodsCard"')&&storefront.includes('class="affiliatePromoCard"'),'Storefront must keep payment methods and Affiliate in separate large cards');
-assert(storefront.includes("const STOREFRONT_ASSET_REV='20260903-1547';"),'Storefront must carry an explicit asset revision when visual CSS changes ship');
+assert(storefront.includes("const STOREFRONT_ASSET_REV='20260903-1734';"),'Storefront must bump the asset revision when compact banner CSS ships');
 assert(storefront.includes('/css/storefront.css?v=${STOREFRONT_ASSET_REV}')&&storefront.includes('/css/storefront-refinement.css?v=${STOREFRONT_ASSET_REV}')&&storefront.includes('/css/storefront-plan-driven.css?v=${STOREFRONT_ASSET_REV}'),'Storefront CSS links must be cache-busted so browsers cannot keep stale banner styling');
 assert(storefrontRefinement.includes('.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr)'),'Desktop storefront must use the intended two-card split layout');
 assert(storefrontRefinement.includes('.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Payment method mini-cards must remain a three-column row inside the payment card');
 assert(storefrontRefinement.includes('.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr)'),'Affiliate promotion must reserve a compact dedicated visual column for its artwork');
-assert(storefrontPlanDriven.includes('.paymentMethodsCard,.affiliatePromoCard,.freeTierPanel{box-sizing:border-box;height:270px;min-height:270px}'),'Payment, affiliate and Free Server cards must have exactly the same 270px desktop height');
+assert(storefrontPlanDriven.includes('.paymentMethodsCard,.affiliatePromoCard{height:140px!important;min-height:140px!important;padding:14px 16px!important}'),'Payment and affiliate feature cards must stay at the requested roughly half-height 140px desktop layout');
+assert(storefrontPlanDriven.includes('.paymentMethodsCard{display:grid!important;grid-template-columns:minmax(190px,.9fr) minmax(0,1.55fr)!important;align-items:center!important;gap:14px!important}'),'Payment card content must reorganize horizontally so the 140px layout does not clip');
 const visibleFreeBorder='border:1px solid rgba(76,201,240,.22)!important';
 const visibleFreeBackground='background:linear-gradient(115deg,rgba(20,40,50,.7),rgba(15,21,28,.98) 58%,rgba(11,16,22,.98))!important';
 const visibleFreeShadow='box-shadow:0 24px 80px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.035)!important';
@@ -116,4 +117,4 @@ assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence 
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 
-console.log('storefront currency integrity smoke: exact Free Server banner parity, cache-busted assets, compact hero, shared public shell and UI surfaces ok');
+console.log('storefront currency integrity smoke: half-height payment and affiliate banners, exact Free Server colours, cache-busted assets, compact hero and shared public shell ok');
