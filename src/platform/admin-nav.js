@@ -7,7 +7,7 @@ const groups=Object.freeze([
   {key:'dashboard',label:'Dashboard',pages:[['dashboard','Overview','/admin'],['attention','Needs attention','/admin/attention']]},
   {key:'customers',label:'Customers',pages:[['users','All customers','/admin/users'],['tickets','Support','/admin/tickets']]},
   {key:'servers',label:'Servers',pages:[['servers','Jellyfin','/admin/servers'],['stremio-sources','Stremio','/admin/servers/stremio'],['activity','Playback','/admin/activity']]},
-  {key:'commerce',label:'Commerce',pages:[['plans','Plans','/admin/plans'],['orders','Orders','/admin/commerce/orders'],['payments','Payments','/admin/payments']]},
+  {key:'commerce',label:'Commerce',pages:[['plans','Plans','/admin/plans'],['orders','Orders','/admin/commerce/orders'],['discounts','Discounts','/admin/discounts'],['referrals','Affiliates','/admin/referrals'],['payments','Payments','/admin/payments']]},
   {key:'operations',label:'Operations',pages:[['provisioning','Provisioning','/admin/provisioning'],['automation-jobs','Automation','/admin/automation'],['backups','Backups','/admin/backups']]},
   {key:'settings',label:'Settings',pages:[['settings-general','General','/admin/settings?section=general'],['settings-security','Security','/admin/settings?section=security'],['settings-integrations','Connections','/admin/settings/integrations'],['system','System','/admin/system']]}
 ]);
@@ -28,8 +28,6 @@ const hiddenPages=Object.freeze({
   'customer-jellyfin-password':Object.freeze({kind:'task',groupKey:'customers',parentKey:'users',page:Object.freeze(['customer-jellyfin-password','Jellyfin password support','/admin/customer-jellyfin-password'])}),
 
   'commerce-overview':Object.freeze({kind:'view',groupKey:'commerce',parentKey:'orders',page:Object.freeze(['commerce-overview','Analytics','/admin/commerce'])}),
-  discounts:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'orders',page:Object.freeze(['discounts','Discounts','/admin/discounts'])}),
-  referrals:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'orders',page:Object.freeze(['referrals','Affiliates','/admin/referrals'])}),
   marketing:Object.freeze({kind:'page',groupKey:'commerce',parentKey:'orders',page:Object.freeze(['marketing','Marketing','/admin/marketing'])}),
   'storefront-order':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['storefront-order','Storefront order','/admin/plans/order'])}),
   'plan-access-rules':Object.freeze({kind:'setting',groupKey:'commerce',parentKey:'plans',page:Object.freeze(['plan-access-rules','Access rules','/admin/plans/access-rules'])}),
@@ -79,9 +77,9 @@ const aliases=Object.freeze({
   people:'users','jellyfin-import-users':'jellyfin-import','automation':'automation-jobs'
 });
 
-// The rail is flat: six sections, seventeen destinations, two levels. Nothing
-// is ever added back to it. Every other page is surfaced by its parent page
-// according to its kind, or found with the command palette:
+// The rail is flat: six sections, nineteen destinations, two levels. Every
+// other page is surfaced by its parent page according to its kind, or found
+// with the command palette:
 //
 //   view     a pivot of data the parent already shows -> a tab on the parent
 //   task     a job you run occasionally               -> a row that opens a panel
