@@ -67,6 +67,8 @@ assert(storefront.includes('`${money(available,currency)} available credit`')&&s
 assert(storefront.includes('function referralArtwork()')&&storefront.includes('class="affiliateArtwork"')&&storefront.includes('<svg viewBox="0 0 260 220"'),'Affiliate feature card must include its own embedded referral artwork without an external image dependency');
 assert(storefront.includes('class="paymentMethodsShowcase ${affiliateCard?\'hasAffiliate\':\'paymentsOnly\'}"'),'Payment and affiliate promotion must render as two peer feature cards when Affiliate is enabled');
 assert(storefront.includes('class="paymentMethodsCard"')&&storefront.includes('class="affiliatePromoCard"'),'Storefront must keep payment methods and Affiliate in separate large cards');
+assert(storefront.includes("const STOREFRONT_ASSET_REV='20260903-1547';"),'Storefront must carry an explicit asset revision when visual CSS changes ship');
+assert(storefront.includes('/css/storefront.css?v=${STOREFRONT_ASSET_REV}')&&storefront.includes('/css/storefront-refinement.css?v=${STOREFRONT_ASSET_REV}')&&storefront.includes('/css/storefront-plan-driven.css?v=${STOREFRONT_ASSET_REV}'),'Storefront CSS links must be cache-busted so browsers cannot keep stale banner styling');
 assert(storefrontRefinement.includes('.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr)'),'Desktop storefront must use the intended two-card split layout');
 assert(storefrontRefinement.includes('.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Payment method mini-cards must remain a three-column row inside the payment card');
 assert(storefrontRefinement.includes('.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr)'),'Affiliate promotion must reserve a compact dedicated visual column for its artwork');
@@ -78,6 +80,7 @@ assert(storefrontPlanDriven.includes('.freeTierPanel.soldOut{border-color:rgba(7
 assert(storefrontPlanDriven.includes(visibleFreeBorder)&&storefrontPlanDriven.includes(visibleFreeBackground)&&storefrontPlanDriven.includes(visibleFreeShadow),'Payment and affiliate cards must copy the visible Free Server card border, background and shadow exactly');
 assert(storefrontPlanDriven.includes('.paymentMethodsShowcase{gap:14px!important;padding:0!important;border:0!important;border-radius:0!important;background:none!important;box-shadow:none!important;backdrop-filter:none!important}'),'Payment showcase wrapper must not add a second coloured frame or extra height around the two cards');
 assert(storefrontPlanDriven.includes('.paymentMethodsCard:before,.affiliatePromoCard:before{content:"";position:absolute;inset:auto;width:320px;height:320px;border-radius:50%;left:-120px;top:-180px;background:radial-gradient(circle,rgba(76,201,240,.18),transparent 68%);pointer-events:none}'),'Top cards must copy the Free Server teal glow treatment exactly');
+assert(storefrontPlanDriven.includes('.heroSection{padding:42px 0 18px!important}')&&storefrontPlanDriven.includes('.heroGrid{min-height:440px!important}')&&storefrontPlanDriven.includes('.heroVisual{height:420px!important}'),'Storefront hero must not restore the oversized gap between the top navigation and first heading');
 assert(!storefrontRefinement.includes('rgba(95,87,255,.58)'),'Affiliate card must not regress to the purple treatment that clashes with the Free Server banner');
 assert(storefrontRefinement.includes('@media(max-width:1050px)')&&storefrontRefinement.includes('.paymentMethodsShowcase{grid-template-columns:1fr}'),'The two-card showcase must stack cleanly on narrower displays');
 
@@ -113,4 +116,4 @@ assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence 
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 
-console.log('storefront currency integrity smoke: exact Free Server banner parity, affiliate showcase, shared public shell and UI surfaces ok');
+console.log('storefront currency integrity smoke: exact Free Server banner parity, cache-busted assets, compact hero, shared public shell and UI surfaces ok');
