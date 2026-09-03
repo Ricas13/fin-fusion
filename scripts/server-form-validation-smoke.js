@@ -3,7 +3,11 @@
 process.env.NODE_ENV = 'production';
 delete process.env.JELLYFIN_ALLOWED_HOSTS;
 
+const fs = require('fs');
+const path = require('path');
 const { parseServerForm, safeAdminErrorInfo } = require('../src/platform/admin-servers');
+const webhookAuth = require('../src/jellyfin/playback-webhook-auth');
+const webhookToken = require('./jellyfin-webhook-token');
 
 const valid = {
     name: 'Primary',
@@ -61,4 +65,22 @@ if (arbitraryHost.baseUrl !== 'https://new-jellyfin.example') {
     throw new Error('Authenticated admin-added media-server host should be accepted without an env allowlist');
 }
 
-console.log('Jellyfin/Emby server form validation smoke: ok');
+const masterSecret = '0123456789abcdef0123456789abcdef';
+const serverA = '00000000-0000-0000-0000-000000000001';
+const serverB = '00000000-0000-0000-0000-000000000002';
+const tokenA = webhookAuth.deriveServerSecret(masterSecret, serverA);
+const tokenB = webhookAuth.deriveServerSecret(masterSecret, serverB);
+if (tokenA === tokenB || tokenA.length !== 64 || tokenB.length !== 64) throw new Error('Jellyfin webhook tokens must be deterministic 256-bit server-scoped values');
+if (webhookToken.tokenFor(masterSecret, serverA) !== tokenA) throw new Error('The operator token helper must use the same canonical server-scoped derivation as webhook verification');
+if (!webhookAuth.verifyServerSecret(tokenA, masterSecret, serverA).authenticated) throw new Error('A server-scoped webhook token must authenticate its own server');
+if (webhookAuth.verifyServerSecret(tokenA, masterSecret, serverB).authenticated) throw new Error('A Jellyfin webhook token from server A must not authenticate server B');
+if (webhookAuth.verifyServerSecret(masterSecret, masterSecret, serverA).authenticated) throw new Error('The shared master webhook secret must fail closed by default');
+const legacy = webhookAuth.verifyServerSecret(masterSecret, masterSecret, serverA, { allowLegacy: true });
+if (!legacy.authenticated || legacy.mode !== 'legacy') throw new Error('Explicit legacy webhook compatibility must remain available for controlled migration');
+
+const webhookRoute = fs.readFileSync(path.join(__dirname, '..', 'src/platform/webhooks.js'), 'utf8');
+if (!webhookRoute.includes('verifyServerSecret') || !webhookRoute.includes('JELLYFIN_WEBHOOK_ALLOW_LEGACY_SECRET')) throw new Error('Jellyfin webhook route must verify a server-scoped token and gate legacy compatibility explicitly');
+if (webhookRoute.includes("sameSecret(req.get('x-fin-fusion-webhook-secret'),secret)")) throw new Error('Jellyfin webhook route must not authenticate every server with the raw shared secret');
+if (!webhookRoute.includes("require('express-rate-limit')") || !webhookRoute.includes('jellyfinWebhookRateLimit,requestMaintenanceGuard')) throw new Error('Authenticated Jellyfin playback webhooks must be rate-limited before the handler runs');
+
+console.log('Jellyfin/Emby server form validation and playback webhook isolation smoke: ok');
