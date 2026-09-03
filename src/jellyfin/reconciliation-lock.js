@@ -30,6 +30,24 @@ function reconciliationConcurrencyLimit() {
 const MAX_CONCURRENCY = reconciliationConcurrencyLimit();
 let activeSlots = 0;
 const slotWaiters = [];
+const metrics = {
+    started: 0,
+    succeeded: 0,
+    failed: 0,
+    lockTimeouts: 0,
+    cleanupFailures: 0,
+    totalDurationMs: 0,
+    totalProcessSlotWaitMs: 0,
+    totalDatabaseLockWaitMs: 0,
+    maxDurationMs: 0,
+    maxProcessSlotWaitMs: 0,
+    maxDatabaseLockWaitMs: 0,
+    lastDurationMs: null,
+    lastProcessSlotWaitMs: null,
+    lastDatabaseLockWaitMs: null,
+    lastFinishedAt: null,
+    lastErrorCode: null
+};
 
 function cleanCustomerId(value) {
     const id = String(value || '').trim();
@@ -77,6 +95,37 @@ function concurrencySnapshot() {
     };
 }
 
+function metricsSnapshot() {
+    const finished = metrics.succeeded + metrics.failed;
+    return {
+        ...metrics,
+        averageDurationMs: finished ? Math.round(metrics.totalDurationMs / finished) : 0,
+        averageProcessSlotWaitMs: finished ? Math.round(metrics.totalProcessSlotWaitMs / finished) : 0,
+        averageDatabaseLockWaitMs: finished ? Math.round(metrics.totalDatabaseLockWaitMs / finished) : 0,
+        concurrency: concurrencySnapshot()
+    };
+}
+
+function recordFinished({ durationMs, processSlotWaitMs, databaseLockWaitMs, error }) {
+    metrics.totalDurationMs += durationMs;
+    metrics.totalProcessSlotWaitMs += processSlotWaitMs;
+    metrics.totalDatabaseLockWaitMs += databaseLockWaitMs;
+    metrics.maxDurationMs = Math.max(metrics.maxDurationMs, durationMs);
+    metrics.maxProcessSlotWaitMs = Math.max(metrics.maxProcessSlotWaitMs, processSlotWaitMs);
+    metrics.maxDatabaseLockWaitMs = Math.max(metrics.maxDatabaseLockWaitMs, databaseLockWaitMs);
+    metrics.lastDurationMs = durationMs;
+    metrics.lastProcessSlotWaitMs = processSlotWaitMs;
+    metrics.lastDatabaseLockWaitMs = databaseLockWaitMs;
+    metrics.lastFinishedAt = new Date().toISOString();
+    metrics.lastErrorCode = error?.code || null;
+    if (error) {
+        metrics.failed += 1;
+        if (error.code === 'CUSTOMER_RECONCILIATION_LOCK_TIMEOUT') metrics.lockTimeouts += 1;
+    } else {
+        metrics.succeeded += 1;
+    }
+}
+
 async function acquire(client, customerId, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     do {
@@ -95,17 +144,26 @@ async function withDatabaseLock(customerId, fn, { timeoutMs = LOCK_TIMEOUT_MS } 
     const id = cleanCustomerId(customerId);
     if (typeof fn !== 'function') throw new Error('Reconciliation lock requires a callback.');
     const boundedTimeout = Math.max(1000, Math.min(120000, Number(timeoutMs) || LOCK_TIMEOUT_MS));
+    const operationStarted = Date.now();
+    const processSlotStarted = Date.now();
+    let processSlotWaitMs = 0;
+    let databaseLockWaitMs = 0;
     let client = null;
     let locked = false;
+    let failure = null;
+    metrics.started += 1;
 
     // The PostgreSQL advisory lock remains the correctness lock across app and
     // worker processes. This process-local permit only bounds how many dedicated
     // lock connections can be held while reconciliations call external services.
     await acquireProcessSlot();
+    processSlotWaitMs = Date.now() - processSlotStarted;
     try {
         client = new Client(clientConfig());
         await client.connect();
+        const databaseLockStarted = Date.now();
         locked = await acquire(client, id, boundedTimeout);
+        databaseLockWaitMs = Date.now() - databaseLockStarted;
         if (!locked) {
             const error = new Error('Another reconciliation for this customer is still running. Try again shortly.');
             error.code = 'CUSTOMER_RECONCILIATION_LOCK_TIMEOUT';
@@ -116,13 +174,33 @@ async function withDatabaseLock(customerId, fn, { timeoutMs = LOCK_TIMEOUT_MS } 
         // mutations (new holds, plan changes, payment events) that happened while
         // the first reconcile was already in progress.
         return await fn();
+    } catch (error) {
+        failure = error;
+        throw error;
     } finally {
         if (client && locked) {
-            try { await client.query('SELECT pg_advisory_unlock($1::int,hashtext($2::text))', [LOCK_NAMESPACE, id]); }
-            catch (error) { console.error('Customer reconciliation advisory unlock failed:', { customerId: id, error: error.message }); }
+            try {
+                await client.query('SELECT pg_advisory_unlock($1::int,hashtext($2::text))', [LOCK_NAMESPACE, id]);
+            } catch (error) {
+                metrics.cleanupFailures += 1;
+                console.error('Customer reconciliation advisory unlock failed:', { customerId: id, error: error.message });
+            }
         }
-        if (client) await client.end().catch(() => {});
+        if (client) {
+            try {
+                await client.end();
+            } catch (error) {
+                metrics.cleanupFailures += 1;
+                console.warn('Customer reconciliation database connection cleanup failed.', { customerId: id, error: error.message });
+            }
+        }
         releaseProcessSlot();
+        recordFinished({
+            durationMs: Date.now() - operationStarted,
+            processSlotWaitMs,
+            databaseLockWaitMs,
+            error: failure
+        });
     }
 }
 
@@ -143,6 +221,7 @@ module.exports = {
     acquireProcessSlot,
     releaseProcessSlot,
     concurrencySnapshot,
+    metricsSnapshot,
     acquire,
     withDatabaseLock,
     withCustomerReconciliationLock
