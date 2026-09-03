@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 require('./free-access-inactivity-consistency-smoke');
 
-const provision = fs.readFileSync('src/jellyfin/provisioning-engine.js', 'utf8');
+const provision = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
 const dash = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
 const view = fs.readFileSync('views/customer/dashboard.ejs', 'utf8');
 const nav = fs.readFileSync('views/customer/_nav.ejs', 'utf8');
@@ -16,8 +16,8 @@ const freePlaces = fs.readFileSync('src/automation/free-places-digest.js', 'utf8
 const serverMigration = fs.readFileSync('src/jellyfin/server-migration.js', 'utf8');
 const adminServerMigration = fs.readFileSync('src/platform/admin-server-migrations.js', 'utf8');
 
-assert(/accessKind\s*=\s*isTrial\s*\?\s*['"]trial['"]/.test(provision), 'placement must classify trial/free/paid');
-assert(/\$2::text='free'\s+THEN TRUE/.test(provision), 'free access must not require paid_enabled');
+assert(/const accessKind = String\(plan\?\.billing_interval \|\| plan\?\.contract_billing_interval \|\| ''\) === 'trial'[\s\S]*\? 'free'[\s\S]*: 'paid'/.test(provision), 'placement must classify trial/free/paid');
+assert(/accessKind === 'paid'[\s\S]*Boolean\(server\.paid_enabled\)[\s\S]*: true/.test(provision), 'free access must not require paid_enabled');
 assert(/getCustomerState\(customerId\)/.test(dash), 'customer dashboard must expose provisioning state through the canonical customerId');
 assert(/\/account\/provisioning\/retry/.test(dash), 'customer must have provisioning retry route');
 assert(/include\('_nav'/.test(view), 'customer dashboard must use the shared left navigation');
