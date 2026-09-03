@@ -33,6 +33,14 @@ async function resetDatabase() {
 
 const suites = [
   {
+    name: 'Schema migration drift contract',
+    commands: [['node', ['scripts/schema-drift-db-smoke.js']]],
+  },
+  {
+    name: 'Semantic commerce abuse boundaries',
+    commands: [['node', ['scripts/semantic-commerce-boundaries-db-smoke.js']]],
+  },
+  {
     name: 'Admin analytics dashboard',
     commands: [['node', ['scripts/admin-analytics-dashboard-smoke.js']]],
   },
