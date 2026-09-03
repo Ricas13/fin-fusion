@@ -73,15 +73,19 @@ function reconciliationSnapshot() {
       ...snapshot,
       active: number(snapshot.concurrency?.active),
       queued: number(snapshot.concurrency?.queued),
-      limit: number(snapshot.concurrency?.limit)
+      limit: number(snapshot.concurrency?.limit),
+      averageSlotWaitMs: number(snapshot.averageProcessSlotWaitMs),
+      averageDbLockWaitMs: number(snapshot.averageDatabaseLockWaitMs),
+      maxSlotWaitMs: number(snapshot.maxProcessSlotWaitMs),
+      maxDbLockWaitMs: number(snapshot.maxDatabaseLockWaitMs)
     };
   } catch (error) {
     console.warn('Reconciliation diagnostics unavailable.', { error: String(error?.message || error).slice(0, 300) });
     return {
       active: 0, queued: 0, limit: 0, started: 0, succeeded: 0, failed: 0, lockTimeouts: 0,
-      cleanupFailures: 0, averageDurationMs: 0, averageProcessSlotWaitMs: 0,
-      averageDatabaseLockWaitMs: 0, maxDurationMs: 0, maxProcessSlotWaitMs: 0,
-      maxDatabaseLockWaitMs: 0, unavailable: true
+      cleanupFailures: 0, averageDurationMs: 0, averageProcessSlotWaitMs: 0, averageDatabaseLockWaitMs: 0,
+      averageSlotWaitMs: 0, averageDbLockWaitMs: 0, maxDurationMs: 0, maxProcessSlotWaitMs: 0,
+      maxDatabaseLockWaitMs: 0, maxSlotWaitMs: 0, maxDbLockWaitMs: 0, unavailable: true
     };
   }
 }
@@ -108,9 +112,12 @@ function supportSnapshot(metrics = {}) {
       active: number(reconciliation.active), queued: number(reconciliation.queued), limit: number(reconciliation.limit),
       started: number(reconciliation.started), succeeded: number(reconciliation.succeeded), failed: number(reconciliation.failed),
       lockTimeouts: number(reconciliation.lockTimeouts), cleanupFailures: number(reconciliation.cleanupFailures),
-      averageDurationMs: number(reconciliation.averageDurationMs), averageProcessSlotWaitMs: number(reconciliation.averageProcessSlotWaitMs),
-      averageDatabaseLockWaitMs: number(reconciliation.averageDatabaseLockWaitMs), maxDurationMs: number(reconciliation.maxDurationMs),
-      maxProcessSlotWaitMs: number(reconciliation.maxProcessSlotWaitMs), maxDatabaseLockWaitMs: number(reconciliation.maxDatabaseLockWaitMs),
+      averageDurationMs: number(reconciliation.averageDurationMs),
+      averageProcessSlotWaitMs: number(reconciliation.averageProcessSlotWaitMs ?? reconciliation.averageSlotWaitMs),
+      averageDatabaseLockWaitMs: number(reconciliation.averageDatabaseLockWaitMs ?? reconciliation.averageDbLockWaitMs),
+      maxDurationMs: number(reconciliation.maxDurationMs),
+      maxProcessSlotWaitMs: number(reconciliation.maxProcessSlotWaitMs ?? reconciliation.maxSlotWaitMs),
+      maxDatabaseLockWaitMs: number(reconciliation.maxDatabaseLockWaitMs ?? reconciliation.maxDbLockWaitMs),
       unavailable: reconciliation.unavailable === true
     },
     backlog: {
