@@ -126,8 +126,11 @@ function main() {
     const reconcile = section(provisioningSource, 'async function reconcileCustomerUnlocked', 'async function reconcileCustomer');
     assert(reconcile.includes('assertDiscordSyncResult(await discordRoles.syncRoleForCustomer'), 'Discord role sync is not awaited by the canonical reconciliation owner.');
     assert(!/syncRoleForCustomer\([^\n]+\)\.catch\(/.test(reconcile), 'Discord role failure is still fire-and-forget.');
-    assert(/primaryEntitlement\s*&&\s*!primaryEntitlement\.blocked/.test(reconcile), 'Blocked primary entitlement can still request a managed Discord role.');
-    assert(/freeEntitlement\s*&&\s*!freeEntitlement\.blocked/.test(reconcile), 'Blocked Free entitlement can still request a managed Discord role.');
+    assert(reconcile.includes('desiredAccessState.deriveCustomerAccessDesiredState({'), 'Canonical reconciliation must derive Discord role eligibility from shared desired access state.');
+    const desiredStateSource = source('src/entitlements/customer-access-desired-state.js');
+    assert(desiredStateSource.includes('return Boolean(entitlement && !entitlement.blocked);'), 'Shared desired access state must exclude blocked entitlements from usable access.');
+    assert(desiredStateSource.includes('desired.primaryJellyfin ? entitlementPlanId(primaryEntitlement) : null'), 'Blocked primary entitlement can still request a managed Discord role.');
+    assert(desiredStateSource.includes('desired.freeJellyfin ? entitlementPlanId(freeEntitlement) : null'), 'Blocked Free entitlement can still request a managed Discord role.');
 
     console.log('Residual temporal invariant fast smoke passed.');
 }
