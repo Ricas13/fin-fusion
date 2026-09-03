@@ -84,8 +84,9 @@ assert.match(supportFilename(new Date('2026-08-22T06:07:08.000Z')), /^captainfin
 const operational = operationalMetrics.supportSnapshot({
   databasePool: { total: 7, idle: 3, waiting: 2, max: 10 },
   reconciliation: {
-    active: 2, queued: 4, limit: 4, total: 100, succeeded: 91, failed: 7, lockTimeouts: 2, canceled: 0,
-    averageDurationMs: 140, averageSlotWaitMs: 20, averageDbLockWaitMs: 8, maxDurationMs: 900, maxSlotWaitMs: 120, maxDbLockWaitMs: 80
+    active: 2, queued: 4, limit: 4, started: 100, succeeded: 91, failed: 7, lockTimeouts: 2, cleanupFailures: 0,
+    averageDurationMs: 140, averageProcessSlotWaitMs: 20, averageDatabaseLockWaitMs: 8,
+    maxDurationMs: 900, maxProcessSlotWaitMs: 120, maxDatabaseLockWaitMs: 80
   },
   backlog: {
     paymentEventRetries: 3, providerRecovery: 2, providerManualReview: 1, freeDowngradeRetries: 4,
@@ -94,7 +95,7 @@ const operational = operationalMetrics.supportSnapshot({
 });
 assert.deepStrictEqual(operational.databasePool, { total: 7, idle: 3, waiting: 2, max: 10, unavailable: false });
 assert.strictEqual(operational.reconciliation.queued, 4);
-assert.strictEqual(operational.reconciliation.averageDbLockWaitMs, 8);
+assert.strictEqual(operational.reconciliation.averageDatabaseLockWaitMs, 8);
 assert.strictEqual(operational.backlog.freeDowngradeDue, 2);
 assert.strictEqual(operational.backlog.providerManualReview, 1);
 assertSanitizedReport({ operational }, {});
@@ -115,7 +116,8 @@ assert(!adminSource.includes('docker.sock'), 'System page must not gain Docker s
 assert(!adminSource.includes("readFileSync('.env')"), 'System page must not read .env');
 
 const metricsSource = fs.readFileSync(path.join(root, 'src/platform/operational-metrics.js'), 'utf8');
-assert(metricsSource.includes("reconciliationLock.concurrencySnapshot()"), 'reconciliation pressure must come from the canonical lock/gate owner');
+assert(metricsSource.includes("reconciliationLock.metricsSnapshot()"), 'reconciliation pressure/timing must come from the canonical lock/gate metrics owner');
+assert(metricsSource.includes('snapshot.concurrency?.active') && metricsSource.includes('snapshot.concurrency?.queued'), 'process-local active/queued values must be projected from the canonical metrics snapshot');
 assert(metricsSource.includes('pool.totalCount') && metricsSource.includes('pool.waitingCount') && metricsSource.includes('pool.options?.max'), 'DB pool pressure must come from the live pg pool');
 assert(metricsSource.includes('processed_at IS NULL AND processing_error IS NOT NULL'), 'payment retry backlog must use durable payment event retry truth');
 assert(metricsSource.includes("manual_review_required=TRUE"), 'provider manual-review backlog must be explicit');
