@@ -21,7 +21,7 @@ const planPolicy=read('src/entitlements/plan-lifecycle-policy.js');
 const inactivity=read('src/automation/customer-inactivity.js');
 const subscriptionState=read('src/entitlements/subscription-state.js');
 const cleanupReturn=read('src/entitlements/jellyfin-cleanup-return.js');
-const provisioning=read('src/jellyfin/provisioning.js');
+const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const lifecycle=read('src/payments/lifecycle.js');
 const storefront=read('src/platform/storefront.js');
 const serverUsers=read('src/platform/admin-server-users.js');
@@ -111,7 +111,7 @@ assert(!/DELETE\s+FROM\s+customers/i.test(inactivity),'Inactivity automation mus
 assert(!/UPDATE\s+app_users\s+SET\s+active\s*=\s*FALSE/i.test(inactivity),'Inactivity automation must never deactivate portal logins');
 assert(cleanupReturn.includes('includeBlocked:true'),'Portal return must be able to see through the cleanup hold');
 assert(cleanupReturn.includes('hold_type=$2')&&cleanupReturn.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Portal return must release only cleanup holds');
-assert(provisioning.includes('releaseObsoleteForCustomer(customerId)'),'Every Jellyfin reconcile must discard obsolete free-plan inactivity holds');
+assert(resilientProvisioning.includes('releaseObsoleteForCustomer(customerId)'),'Every canonical Jellyfin reconcile must discard obsolete free-plan inactivity holds');
 assert(lifecycle.includes('await inactivityHolds.releaseObsoleteForCustomer(input.customerId)'),'Paid activation must release an obsolete free-plan hold immediately after commit');
 
 // Server-scoped user import owns execution even though Customers exposes the entry point.
