@@ -25,7 +25,7 @@ const adminHtmlCore=read('src/platform/admin-html-core-base.js');
 const notificationTabs=read('src/platform/notification-workflow-tabs.js');
 const connectionsTabs=read('src/platform/integration-workflow-tabs.js');
 const adminProfile=read('src/platform/admin-profile-account.js');
-const provisioning=read('src/jellyfin/provisioning.js');
+const provisioning=read('src/jellyfin/provisioning-helpers.js');
 const platformRouter=read('src/platform/router.js');
 const globalNotifications=read('src/platform/admin-notification-preferences.js');
 const personalNotifications=read('src/platform/admin-personal-notification-preferences-v2.js');
@@ -94,7 +94,7 @@ assert(adminProfile.includes("r.post('/admin/profile/media/jellyfin/:accountId/p
 assert(adminProfile.includes('WHERE c.user_id=$1 AND ja.id=$2'),'Personal Jellyfin password updates must be ownership-scoped to the signed-in administrator');
 assert(adminProfile.includes('provisioning.setJellyfinPassword(row.customer_id,req.params.accountId,password)'),'Personal Jellyfin password updates must use the normal password service');
 assert(adminProfile.includes('autocomplete="new-password"')&&adminProfile.includes('confirmPassword'),'My Profile must provide password and confirmation fields without exposing a stored password');
-assert(provisioning.includes("row.user_role==='admin'&&row.registration_source==='admin_personal'"),'Provisioning must recognize role-preserving personal administrator media profiles');
+assert(/row\.user_role\s*===\s*'admin'\s*&&\s*row\.registration_source\s*===\s*'admin_personal'/.test(provisioning),'Provisioning must recognize role-preserving personal administrator media profiles');
 assert(provisioning.includes('Settings > My Profile'),'Personal administrator onboarding must direct password setup to My Profile instead of the customer portal');
 
 // Route ownership: the global notification module must not carry a second,

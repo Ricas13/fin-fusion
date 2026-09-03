@@ -198,7 +198,16 @@ async function publicMutationRateLimit(req, res, next) {
 async function loginSetupGate(req, res, next) {
   try {
     if (await firstRun.isSetupRequired()) return res.redirect('/setup');
-    await runtimeSettings.ensureLoaded().catch(() => {});
+    try {
+      await runtimeSettings.ensureLoaded();
+    } catch (settingsError) {
+      // Login can still use runtime-setting fallbacks, but an unavailable settings
+      // store must never disappear silently: it is an operator-visible degraded state.
+      console.warn('Runtime settings refresh failed before staff login.', {
+        requestId: req.requestId || null,
+        error: settingsError.message
+      });
+    }
     return next();
   } catch (error) {
     return next(error);
@@ -408,7 +417,7 @@ function start({ installSignalHandlers = require.main === module } = {}) {
   const server = app.listen(PORT, () => {
     console.log('CAPTAiNFiN running');
     console.log(`CAPTAiNFiN web application listening on http://127.0.0.1:${PORT}`);
-    startupSummary().catch(() => {});
+    startupSummary().catch(error => console.warn('Jellyfin startup summary task failed:', error.message));
   });
   const prune = setInterval(
     () => Promise.all([pruneLoginRateLimits(), customerRateLimit.cleanup()])

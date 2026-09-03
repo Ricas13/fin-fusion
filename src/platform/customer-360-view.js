@@ -36,9 +36,30 @@ function stripLegacyReconcileForms(html,customerId){
   return String(html||'').replace(new RegExp(`<form class="plainForm" method="post" action="${escaped}"[^>]*>[\\s\\S]*?<\\/form>`,'g'),'');
 }
 
+function accessTruthPanel(detail){
+  const entitlement=detail.primaryEntitlement||activeSubscription(detail)||null;
+  const holds=Array.isArray(detail.activeHolds)?detail.activeHolds:[];
+  const ordinaryAccounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
+  const enabledAccounts=ordinaryAccounts.filter(account=>!account.disabled);
+  const state=detail.provisioningState||null;
+  const planName=entitlement?.contract_plan_name||entitlement?.plan_name||entitlement?.name||entitlement?.plan_name_snapshot||entitlement?.contract_plan_code||entitlement?.plan_code||'No current entitlement';
+  const commercialStatus=entitlement?String(entitlement.status||entitlement.subscription_status||'effective'):'none';
+  const desired=entitlement?(holds.length?`Blocked by ${holds.length} active hold${holds.length===1?'':'s'}`:'Entitled / no active holds'):'No current entitlement';
+  const holdDetail=holds.length?holds.map(hold=>hold.hold_type||hold.type||'hold').join(', '):'None';
+  const serverDetail=enabledAccounts.length?enabledAccounts.map(account=>account.server_name||account.jellyfin_username||'Jellyfin').join(', '):ordinaryAccounts.length?'All ordinary Jellyfin accounts disabled':'No ordinary Jellyfin account';
+  const reconcileStatus=state?.status||'No reconciliation state';
+  const reconcileDetail=state?.last_error?state.last_error:(state?.last_success_at?`Last success ${new Date(state.last_success_at).toLocaleString('en-GB')}`:(state?.last_attempt_at?`Last attempt ${new Date(state.last_attempt_at).toLocaleString('en-GB')}`:'No completed reconciliation recorded'));
+  const statusTone=holds.length?'warn':entitlement?'good':'';
+  const reconTone=['failed','blocked'].includes(String(state?.status||''))?'bad':String(state?.status||'')==='healthy'?'good':'';
+  return `<section class="section customerAccessTruth"><div class="sectionHead"><div><h2>Access truth</h2><div class="muted">Commercial entitlement, blockers, actual Jellyfin state and the last reconciliation result are shown separately so support can see why access is in its current state.</div></div><a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(detail.customer.id)}?tab=access">Open Access</a></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Commercial state</h2><span class="pill ${entitlement?'good':''}">${escapeHtml(commercialStatus)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Entitlement</div><div class="kvValue">${escapeHtml(planName)}</div></div><div class="kvRow"><div class="kvLabel">Effective access</div><div class="kvValue"><span class="pill ${statusTone}">${escapeHtml(desired)}</span></div></div><div class="kvRow"><div class="kvLabel">Active blockers</div><div class="kvValue">${escapeHtml(holdDetail)}</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Observed state</h2><span class="pill ${enabledAccounts.length?'good':ordinaryAccounts.length?'warn':''}">${escapeHtml(`${enabledAccounts.length}/${ordinaryAccounts.length} enabled`)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Jellyfin</div><div class="kvValue">${escapeHtml(serverDetail)}</div></div><div class="kvRow"><div class="kvLabel">Reconciliation</div><div class="kvValue"><span class="pill ${reconTone}">${escapeHtml(reconcileStatus)}</span></div></div><div class="kvRow"><div class="kvLabel">Last result</div><div class="kvValue">${escapeHtml(reconcileDetail)}</div></div></div></div></section></div></section>`;
+}
+
 function body(detail,tab,token,accessDetail,options={}){
   const safe=customerFacingDetail(detail),type=serviceType(detail).toLowerCase();
-  if(tab!=='access')return v2.body(safe,tab,token,accessDetail,options);
+  if(tab!=='access'){
+    const rendered=v2.body(safe,tab,token,accessDetail,options);
+    return tab==='overview'?rendered.replace('</nav>',`</nav>${accessTruthPanel(safe)}`):rendered;
+  }
 
   // Render only Customer 360's shared hero/summary/tab chrome. The old Access
   // implementation is deliberately skipped so the card workspace below is the
@@ -52,4 +73,4 @@ function body(detail,tab,token,accessDetail,options={}){
   return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};
+module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,accessTruthPanel,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};

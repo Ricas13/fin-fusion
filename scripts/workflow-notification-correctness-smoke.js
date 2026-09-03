@@ -59,8 +59,8 @@ assert(!expirySource.includes('SUBSCRIPTION_EXPIRY_WARNING_DAYS'), 'expiry caden
 assert(!/async function expiringSubscriptions[\s\S]*?LIMIT\s+\$\d/i.test(expirySource), 'expiry warning discovery must not use a fixed SQL LIMIT');
 assert(expirySource.includes("COALESCE(p.is_free_tier,FALSE)=FALSE"), 'non-expiring Free Access must not receive expiry warnings');
 assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.includes('o.permanent_access=TRUE AND o.revoked_at IS NULL'), 'active Permanent Access must suppress expiry warnings for its pinned subscription');
-assert(provisioning.includes('async function notifyExpiringSubscriptions(){return subscriptionExpiry.notifyExpiringSubscriptions()}'), 'subscription-expiry notification behavior must remain behind the provisioning facade');
-assert(resilientProvisioning.includes('async function expireSubscriptionsAndReconcile(){return subscriptionExpiry.expireAndReconcile({reconcileCustomer'), 'resilient provisioning must own lane-aware expiry reconciliation');
+assert(/async function notifyExpiringSubscriptions\(\)\s*\{\s*return subscriptionExpiry\.notifyExpiringSubscriptions\(\);\s*\}/.test(provisioning), 'subscription-expiry notification behavior must remain behind the provisioning facade');
+assert(/async function expireSubscriptionsAndReconcile\(\)\s*\{\s*return subscriptionExpiry\.expireAndReconcile\(\{\s*reconcileCustomer\b/.test(resilientProvisioning), 'resilient provisioning must own lane-aware expiry reconciliation');
 assert(jobs.includes('const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require(\'../jellyfin/resilient-provisioning\')'), 'automation must consume expiry behavior through the canonical multi-lane provisioning owner');
 assert(jobs.includes('const warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
 assert(jobs.indexOf('notifyExpiringSubscriptions()') < jobs.indexOf('expireSubscriptionsAndReconcile()'), 'warnings must be checked before due subscriptions are expired');

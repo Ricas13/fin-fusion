@@ -4,10 +4,12 @@ const crypto = require('crypto');
 const { query, transaction } = require('../db');
 const registry = require('./registry');
 const policy = require('./policy');
-const placement = require('./placement');
 const planServers = require('./plan-servers');
 const compensation = require('./provisioning-compensation');
-const subscriptionState = require('../entitlements/subscription-state');
+
+// Low-level Jellyfin primitives only. Customer reconciliation, entitlement
+// selection, access holds and subscription expiry are intentionally owned by
+// the canonical multi-service layers and must not be reintroduced here.
 
 function randomPassword() {
     return crypto.randomBytes(24).toString('base64url');
@@ -230,59 +232,6 @@ async function resolveLibraryAccessForServer(serverId, unrestricted, visibleName
     return { enableAllFolders: false, enabledFolders, missing };
 }
 
-async function selectServerForPlan(plan) {
-    const isTrial = plan.billing_interval === 'trial';
-    const accessKind = isTrial ? 'trial' : (Number(plan.price_minor || 0) === 0 ? 'free' : 'paid');
-    const planId = planServers.planId(plan);
-    if (!planId) throw new Error('Plan id is required for server placement');
-    const healthMode = await planServers.placementHealthMode();
-
-    const result = await query(`
-        WITH restriction AS (
-            SELECT EXISTS(
-                SELECT 1
-                FROM plan_server_eligibility pse
-                JOIN jellyfin_servers restricted_server ON restricted_server.id=pse.server_id
-                WHERE pse.plan_id=$3 AND restricted_server.server_class=$1
-            ) AS restricted
-        )
-        SELECT js.*,
-               COUNT(DISTINCT ja.id)::int AS assigned_users,
-               COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams,
-               COALESCE(pse.weight,100)::int AS placement_weight
-        FROM jellyfin_servers js
-        CROSS JOIN restriction r
-        LEFT JOIN plan_server_eligibility pse
-               ON pse.plan_id=$3 AND pse.server_id=js.id
-        LEFT JOIN jellyfin_accounts ja
-               ON ja.server_id=js.id AND ja.disabled=FALSE
-        LEFT JOIN active_playback_sessions aps
-               ON aps.server_id=js.id
-        WHERE js.enabled=TRUE
-          AND js.allow_new_users=TRUE
-          AND COALESCE(js.placement_mode,'active')='active'
-          AND js.server_class=$1
-          AND (
-              ($4='healthy_only' AND js.health_status='healthy') OR
-              ($4='healthy_or_degraded' AND js.health_status IN ('healthy','degraded')) OR
-              ($4='fail_open' AND js.health_status<>'offline')
-          )
-          AND CASE WHEN $2::text='trial' THEN js.trial_enabled WHEN $2::text='free' THEN TRUE ELSE js.paid_enabled END
-          AND (NOT r.restricted OR pse.server_id IS NOT NULL)
-        GROUP BY js.id,pse.weight,r.restricted
-        HAVING js.max_users IS NULL OR js.max_users=0 OR COUNT(DISTINCT ja.id) < js.max_users
-    `, [plan.server_class, accessKind, planId, healthMode]);
-
-    return placement.selectServer(result.rows, plan.placement_strategy);
-}
-
-async function currentEntitlement(customerId) {
-    // One source of truth for starts_at, paid-through, supersession and typed
-    // access holds. Catalogue active/visible flags are deliberately irrelevant
-    // after a subscription contract has been created.
-    return subscriptionState.effectiveSubscription(customerId);
-}
-
 async function preferredUsername(customerId) {
     const result = await query(`
         SELECT COALESCE(NULLIF(c.display_name,''),u.username,'user') AS username
@@ -298,7 +247,14 @@ async function usernameAvailable(serverId, preferred) {
     const names = new Set((Array.isArray(users) ? users : []).map(u => String(u.Name || '').toLowerCase()));
     return !names.has(String(preferred || '').toLowerCase());
 }
-function cleanJellyfinUsername(value){const username=String(value||'').trim();if(!/^[A-Za-z0-9._@+-]{3,80}$/.test(username))throw new Error('Jellyfin username must be 3-80 characters using letters, numbers, dot, underscore, dash, plus or @.');return username;}
+
+function cleanJellyfinUsername(value) {
+    const username = String(value || '').trim();
+    if (!/^[A-Za-z0-9._@+-]{3,80}$/.test(username)) {
+        throw new Error('Jellyfin username must be 3-80 characters using letters, numbers, dot, underscore, dash, plus or @.');
+    }
+    return username;
+}
 
 async function uniqueUsername(serverId, preferred) {
     const users = await registry.request(serverId, '/Users');
@@ -442,85 +398,9 @@ async function recordRun(customerId, subscriptionId, action, fn) {
             UPDATE provisioning_runs
             SET status='failed',detail=$2::jsonb,completed_at=NOW()
             WHERE id=$1
-        `, [id, JSON.stringify({ error: error.message })]);
+        `, [id, JSON.stringify({ error: error.message, errorCode: error.code || null })]);
         throw error;
     }
-}
-
-async function reconcileCustomer(customerId) {
-    const entitlement = await currentEntitlement(customerId);
-    return recordRun(customerId, entitlement?.subscription_id || null, entitlement ? 'reconcile' : 'disable', async () => {
-        const accountsResult = await query(`
-            SELECT ja.*,js.enabled AS server_enabled,js.server_class
-            FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id
-            WHERE ja.customer_id=$1
-            ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.created_at ASC
-        `, [customerId]);
-        const accounts = accountsResult.rows;
-
-        if (!entitlement) {
-            for (const account of accounts) {
-                if (!account.disabled && account.server_enabled) {
-                    await applyPolicy(account, DISABLED_EFFECTIVE, true);
-                }
-            }
-            return { active: false, disabled: accounts.length };
-        }
-
-        const effective = await effectivePolicyForCustomer(customerId, entitlement);
-
-        // Existing access is deliberately sticky. Drain/maintenance affects new
-        // placement only; it does not silently evict a healthy existing account.
-        let account = accounts.find(a => a.is_primary && a.server_class === entitlement.server_class && a.server_enabled);
-        if (!account) account = accounts.find(a => !a.disabled && a.server_class === entitlement.server_class && a.server_enabled);
-        if (!account) account = accounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
-        if (!account) {
-            const server = await selectServerForPlan(entitlement);
-            if (!server) throw new Error(`No eligible Jellyfin server is currently available for plan ${entitlement.contract_plan_code || entitlement.code}`);
-            account = await createJellyfinAccount(customerId, server, effective);
-        } else {
-            await applyPolicy(account, effective, false);
-            if (!account.is_primary) {
-                await markPrimaryAccount(customerId, account.id);
-                account.is_primary = true;
-            }
-        }
-        for (const old of accounts) {
-            if (old.id !== account.id && !old.disabled && old.server_enabled) {
-                await applyPolicy(old, DISABLED_EFFECTIVE, true);
-            }
-        }
-
-        await query(`
-            INSERT INTO audit_log(action,entity_type,entity_id,metadata)
-            VALUES('entitlement.reconcile','customer',$1,$2::jsonb)
-        `, [customerId, JSON.stringify({
-            subscriptionId: entitlement.subscription_id,
-            planCode: entitlement.contract_plan_code || entitlement.code,
-            serverId: account.server_id,
-            jellyfinAccountId: account.id,
-            effectiveStreams: effective.technical.streams,
-            libraryVisibleCount: effective.visibleNames.length,
-            placementStrategy: placement.normalizeStrategy(entitlement.placement_strategy)
-        })]);
-
-        return { active: true, entitlement, account, effective };
-    });
-}
-
-async function reconcileAccount(accountId) {
-    const result = await query(`
-        SELECT ja.*,js.enabled AS server_enabled FROM jellyfin_accounts ja
-        JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.id=$1
-    `, [accountId]);
-    if (!result.rowCount) throw new Error('Jellyfin account not found');
-    const account = result.rows[0];
-    const entitlement = await currentEntitlement(account.customer_id);
-    if (!entitlement || !account.server_enabled) {
-        return applyPolicy(account, DISABLED_EFFECTIVE, true);
-    }
-    const effective = await effectivePolicyForCustomer(account.customer_id, entitlement);
-    return applyPolicy(account, effective, false);
 }
 
 async function setJellyfinPassword(customerId, accountId, newPassword) {
@@ -563,39 +443,6 @@ async function renameJellyfinAccount(customerId, accountId, newUsername, { actor
     });
 }
 
-// Compatibility exports only. The public provisioning facade owns typed
-// access holds and subscription expiry semantics.
-async function holdAccess(customerId, reason) {
-    await query(`UPDATE customers SET access_paused_at=NOW(),access_hold_reason=$2 WHERE id=$1`, [customerId, reason]);
-    return reconcileCustomer(customerId);
-}
-
-async function releaseAccess(customerId) {
-    await query(`UPDATE customers SET access_paused_at=NULL,access_hold_reason=NULL WHERE id=$1`, [customerId]);
-    return reconcileCustomer(customerId);
-}
-
-async function expireSubscriptionsAndReconcile() {
-    const expired = await transaction(async client => {
-        const rows = await client.query(`
-            WITH expired AS (
-                UPDATE subscriptions
-                SET status='expired',updated_at=NOW()
-                WHERE status IN ('active','trialing','past_due') AND current_period_end <= NOW()
-                RETURNING customer_id
-            )
-            SELECT DISTINCT customer_id FROM expired
-        `);
-        return rows.rows.map(r => r.customer_id);
-    });
-    for (const customerId of expired) {
-        try { await reconcileCustomer(customerId); } catch (error) {
-            console.error(`Entitlement reconcile failed for ${customerId}:`, error.message);
-        }
-    }
-    return expired.length;
-}
-
 module.exports = {
     discoverServerLibraries,
     libraryCatalogForServerClass,
@@ -614,18 +461,11 @@ module.exports = {
     effectivePolicyForCustomer,
     policyBody,
     resolveLibraryAccessForServer,
-    selectServerForPlan,
-    currentEntitlement,
     usernameAvailable,
     createJellyfinAccount,
     applyPolicy,
     disableJellyfinAccount,
     markPrimaryAccount,
-    reconcileCustomer,
-    reconcileAccount,
-    holdAccess,
-    releaseAccess,
     setJellyfinPassword,
-    renameJellyfinAccount,
-    expireSubscriptionsAndReconcile
+    renameJellyfinAccount
 };

@@ -1,10 +1,35 @@
 'use strict';
 
 const { Client } = require('pg');
+const {
+    AUTOMATION_ROLE,
+    AUTOMATION_DEFAULT_RECONCILIATION_MAX,
+    boundedInteger,
+    databaseRole,
+    automationConnectionBudget
+} = require('../security/database-connection-budget');
 
 const LOCK_NAMESPACE = 761932;
 const LOCK_TIMEOUT_MS = 30000;
 const LOCK_POLL_MS = 100;
+const DEFAULT_MAX_CONCURRENCY = 4;
+
+function reconciliationConcurrencyLimit() {
+    const role = databaseRole(process.env.DATABASE_URL);
+    if (role === AUTOMATION_ROLE) {
+        return automationConnectionBudget().reconciliationMax;
+    }
+    return boundedInteger(
+        process.env.RECONCILIATION_MAX_CONCURRENCY,
+        DEFAULT_MAX_CONCURRENCY,
+        1,
+        50
+    );
+}
+
+const MAX_CONCURRENCY = reconciliationConcurrencyLimit();
+let activeSlots = 0;
+const slotWaiters = [];
 
 function cleanCustomerId(value) {
     const id = String(value || '').trim();
@@ -26,6 +51,32 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function acquireProcessSlot() {
+    if (activeSlots < MAX_CONCURRENCY) {
+        activeSlots += 1;
+        return;
+    }
+    await new Promise(resolve => slotWaiters.push(resolve));
+}
+
+function releaseProcessSlot() {
+    const next = slotWaiters.shift();
+    if (next) {
+        // Transfer the existing active permit directly to the queued caller.
+        next();
+        return;
+    }
+    activeSlots = Math.max(0, activeSlots - 1);
+}
+
+function concurrencySnapshot() {
+    return {
+        active: activeSlots,
+        queued: slotWaiters.length,
+        limit: MAX_CONCURRENCY
+    };
+}
+
 async function acquire(client, customerId, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     do {
@@ -43,11 +94,17 @@ async function acquire(client, customerId, timeoutMs) {
 async function withDatabaseLock(customerId, fn, { timeoutMs = LOCK_TIMEOUT_MS } = {}) {
     const id = cleanCustomerId(customerId);
     if (typeof fn !== 'function') throw new Error('Reconciliation lock requires a callback.');
-    const client = new Client(clientConfig());
     const boundedTimeout = Math.max(1000, Math.min(120000, Number(timeoutMs) || LOCK_TIMEOUT_MS));
+    let client = null;
     let locked = false;
-    await client.connect();
+
+    // The PostgreSQL advisory lock remains the correctness lock across app and
+    // worker processes. This process-local permit only bounds how many dedicated
+    // lock connections can be held while reconciliations call external services.
+    await acquireProcessSlot();
     try {
+        client = new Client(clientConfig());
+        await client.connect();
         locked = await acquire(client, id, boundedTimeout);
         if (!locked) {
             const error = new Error('Another reconciliation for this customer is still running. Try again shortly.');
@@ -60,11 +117,12 @@ async function withDatabaseLock(customerId, fn, { timeoutMs = LOCK_TIMEOUT_MS } 
         // the first reconcile was already in progress.
         return await fn();
     } finally {
-        if (locked) {
+        if (client && locked) {
             try { await client.query('SELECT pg_advisory_unlock($1::int,hashtext($2::text))', [LOCK_NAMESPACE, id]); }
             catch (error) { console.error('Customer reconciliation advisory unlock failed:', { customerId: id, error: error.message }); }
         }
-        await client.end().catch(() => {});
+        if (client) await client.end().catch(() => {});
+        releaseProcessSlot();
     }
 }
 
@@ -76,8 +134,15 @@ module.exports = {
     LOCK_NAMESPACE,
     LOCK_TIMEOUT_MS,
     LOCK_POLL_MS,
+    DEFAULT_MAX_CONCURRENCY,
+    AUTOMATION_DEFAULT_RECONCILIATION_MAX,
+    MAX_CONCURRENCY,
     cleanCustomerId,
     clientConfig,
+    reconciliationConcurrencyLimit,
+    acquireProcessSlot,
+    releaseProcessSlot,
+    concurrencySnapshot,
     acquire,
     withDatabaseLock,
     withCustomerReconciliationLock

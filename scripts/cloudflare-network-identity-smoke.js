@@ -28,7 +28,7 @@ assert.strictEqual(
     socket: { remoteAddress: '172.18.0.2' }
   }),
   '81.2.69.142',
-  'X-Forwarded-For must recover the visitor when an intermediate proxy drops CF-Connecting-IP'
+  'X-Forwarded-For may recover the visitor after the effective client hop is independently proven to be Cloudflare'
 );
 
 assert.strictEqual(
@@ -40,8 +40,8 @@ assert.strictEqual(
     },
     socket: { remoteAddress: '172.18.0.2' }
   }),
-  '81.2.69.142',
-  'a local reverse proxy may recover the visitor only when the forwarded chain proves a Cloudflare hop'
+  '',
+  'a local reverse proxy must fail closed when Express did not independently resolve the effective hop to Cloudflare'
 );
 
 assert.strictEqual(

@@ -10,8 +10,19 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const transfer = require('../src/platform/configuration-transfer');
 const activity = require('../src/jellyfin/activity');
 const outbound = require('../src/security/outbound-url-policy');
+const networkIdentity = require('../src/access/network-identity');
 const adminStepUp = require('../src/auth/admin-step-up');
 const ownerGuard = require('../src/auth/owner-guard');
+
+function request(ip, headers = {}) {
+    const normalized = Object.fromEntries(Object.entries(headers).map(([key, value]) => [String(key).toLowerCase(), value]));
+    return {
+        ip,
+        headers: normalized,
+        socket: { remoteAddress: ip },
+        get(name) { return normalized[String(name).toLowerCase()] || ''; }
+    };
+}
 
 async function main() {
     const legacy = transfer.normalizeV2Plan({ code: 'legacy', streams: 1 }, { streams: null });
@@ -36,6 +47,57 @@ async function main() {
         activity.effectiveStreamLimit({ jellyfin_access_model: 'concurrent_streams', streams: 4 }),
         4,
         'valid concurrent-stream limits must be preserved'
+    );
+
+    // Household IP identity is an authorization boundary. CF-Connecting-IP can
+    // be trusted only when Express has independently resolved the effective
+    // client hop to a published Cloudflare edge. A forged Cloudflare-looking
+    // value inside X-Forwarded-For must never opt a local/direct caller into
+    // trusting arbitrary visitor-IP headers.
+    assert.strictEqual(
+        networkIdentity.requestAddress(request('8.8.8.8', {
+            'cf-connecting-ip': '1.1.1.1',
+            'x-forwarded-for': '1.1.1.1, 173.245.48.10'
+        })),
+        '8.8.8.8',
+        'a direct public client must remain authoritative even when it forges Cloudflare headers'
+    );
+    assert.strictEqual(
+        networkIdentity.requestAddress(request('172.18.0.5', {
+            'cf-connecting-ip': '8.8.8.8',
+            'x-forwarded-for': '8.8.8.8, 173.245.48.10'
+        })),
+        '',
+        'a private proxy hop must fail closed instead of trusting a Cloudflare address supplied only in X-Forwarded-For'
+    );
+    assert.strictEqual(
+        networkIdentity.requestAddress(request('173.245.48.10', {
+            'cf-connecting-ip': '8.8.8.8',
+            'x-forwarded-for': '8.8.8.8, 173.245.48.10'
+        })),
+        '8.8.8.8',
+        'a proven Cloudflare edge may supply the original public visitor address'
+    );
+    assert.strictEqual(
+        networkIdentity.requestAddress(request('173.245.48.10', {
+            'cf-connecting-ip': '192.168.1.20'
+        })),
+        '',
+        'Cloudflare visitor headers containing non-public addresses must fail closed'
+    );
+    assert.strictEqual(
+        networkIdentity.requestAddress(request('2606:4700::1234', {
+            'cf-connecting-ip': '2001:4860:4860::8888'
+        })),
+        '2001:4860:4860::8888',
+        'published Cloudflare IPv6 edges must preserve public IPv6 visitor identity'
+    );
+    assert.strictEqual(
+        networkIdentity.requestAddress(request('173.245.48.10', {
+            'x-forwarded-for': '8.8.4.4, 173.245.48.10'
+        })),
+        '8.8.4.4',
+        'X-Forwarded-For fallback is allowed only after the effective hop is independently proven to be Cloudflare'
     );
 
     const customers = read('src/customers.js');
@@ -117,6 +179,17 @@ async function main() {
         application.includes("res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet, noimageindex');"),
         'every CAPTAiNFiN response must carry the global no-index header'
     );
+    assert(
+        application.includes("app.set('trust proxy', trustProxySetting());"),
+        'Express client identity must remain behind the explicit trust-proxy policy'
+    );
+    assert(
+        application.includes("fail('TRUST_PROXY must list trusted proxy addresses/ranges") && !application.includes("return true; // trust every proxy"),
+        'trust-proxy configuration must reject blanket/hop-count trust'
+    );
+    const compose = read('docker-compose.yml');
+    assert(compose.includes('TRUST_PROXY: ${TRUST_PROXY:-loopback, linklocal, uniquelocal}'), 'Compose must trust only local/private reverse-proxy hops by default');
+    assert(compose.includes('"127.0.0.1:3030:3030"'), 'the web runtime must remain loopback-bound so public clients cannot bypass the reverse proxy');
 
     // GET /logout is retained only as a compatibility/confirmation URL. It must
     // never revoke or destroy a session; the actual mutation is POST + CSRF.

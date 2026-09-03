@@ -4,7 +4,7 @@ const path=require('path');
 const assert=require('assert');
 const root=path.resolve(__dirname,'..'),read=p=>fs.readFileSync(path.join(root,p),'utf8');
 for(const file of ['db/migrations/000_database_baseline.sql'])assert(fs.existsSync(path.join(root,file)),`${file} must exist`);
-const customer=read('src/payments/customer-plan-change.js'),provisioning=read('src/jellyfin/provisioning.js'),entitlement=read('src/entitlements/subscription-state.js'),canonical=read('db/migrations/000_database_baseline.sql'),app=read('src/application.js'),health=read('src/platform/health.js'),compose=read('docker-compose.yml');
+const customer=read('src/payments/customer-plan-change.js'),provisioning=read('src/jellyfin/provisioning.js'),provisioningHelpers=read('src/jellyfin/provisioning-helpers.js'),entitlement=read('src/entitlements/subscription-state.js'),canonical=read('db/migrations/000_database_baseline.sql'),app=read('src/application.js'),health=read('src/platform/health.js'),compose=read('docker-compose.yml');
 assert(/operationType:'plan_change_schedule'/.test(customer)&&/providerOps\.begin/.test(customer),'customer Stripe period-end change must be represented by an idempotent provider operation');
 assert(/subscriptionSchedules\.create/.test(customer)&&/from_subscription:current\.provider_subscription_id/.test(customer),'customer Stripe period-end change must create a provider subscription schedule from the current subscription');
 assert(/subscriptionSchedules\.update/.test(customer)&&/phases:\[/.test(customer),'customer Stripe schedule must define provider phases before renewal');
@@ -49,7 +49,8 @@ const legacyProviderState=subscriptions.match(/async function applyProviderState
 assert(legacyProviderState&&!/beginPaymentEvent/.test(legacyProviderState),'legacy applyProviderState must not open a second payment_events lease');
 assert(/updateProviderSubscription/.test(legacyProviderState),'legacy applyProviderState must delegate provider state to the canonical lifecycle');
 
-assert(/return subscriptionState\.effectiveSubscription\(customerId\)/.test(provisioning),'provisioning must use canonical entitlement resolution');
+assert(/return subscriptionState\.effectiveSubscription\(customerId\)/.test(provisioningHelpers),'provisioning helpers must use canonical entitlement resolution');
+assert(/require\('\.\/provisioning-helpers'\)/.test(provisioning)&&/\.\.\.helpers/.test(provisioning),'legacy provisioning facade must delegate entitlement helpers instead of reimplementing them');
 const effectiveSubscriptionSource=entitlement.match(/async function effectiveSubscription[\s\S]*?\n\}/)?.[0]||'';
 assert(/IN \('jellyfin','bundle'\)/.test(effectiveSubscriptionSource),'application Jellyfin entitlement resolution must be explicitly service-scoped');
 assert(!/FROM effective_customer_entitlements\b/.test(effectiveSubscriptionSource),'Jellyfin entitlement resolution must not consume the cross-service one-row view');

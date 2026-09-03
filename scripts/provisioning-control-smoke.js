@@ -13,10 +13,12 @@ const paidRequeue=read('db/migrations/20260902211500_requeue_live_paid_jellyfin.
 const reconciliationLock=read('src/jellyfin/reconciliation-lock.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const provisioningFacade=read('src/jellyfin/provisioning.js');
+const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
 const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const provisioningCompensation=read('src/jellyfin/provisioning-compensation.js');
 const subscriptionState=read('src/entitlements/subscription-state.js');
 const permanentAccess=read('src/entitlements/permanent-access.js');
+const accessHolds=read('src/entitlements/access-holds.js');
 const entitlementJobs=read('src/jellyfin/jobs.js');
 
 const desired = {
@@ -70,13 +72,24 @@ assert.strictEqual(control.verificationFresh(new Date(now - control.VERIFY_INTER
 assert(reconciliationLock.includes('pg_try_advisory_lock')&&reconciliationLock.includes('pg_advisory_unlock'),'customer reconciliation must use a PostgreSQL advisory lock that works across app and automation processes');
 assert(reconciliationLock.includes('Do not coalesce concurrent calls.')&&reconciliationLock.includes('must run after the first reconcile completes')&&!reconciliationLock.includes('const inFlight = new Map()'),'queued reconciliation calls must run again after prior state-changing work instead of coalescing onto a stale result');
 assert(reconciliationLock.includes("CUSTOMER_RECONCILIATION_LOCK_TIMEOUT"),'reconciliation lock contention must fail with an explicit retryable error');
-assert(/async function reconcileCustomer\(customerId\)\{return reconciliationLock\.withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
-assert(provisioningFacade.includes("function canonicalReconciler(){return require('./resilient-provisioning')}"),'legacy provisioning imports must resolve reconciliation through the resilient owner');
-assert(/async function reconcileCustomer\(customerId\)\{return canonicalReconciler\(\)\.reconcileCustomer\(customerId\)\}/.test(provisioningFacade),'legacy customer reconciliation must delegate instead of invoking the single-lane engine');
-assert(/async function reconcileAccount\(accountId\)\{return canonicalReconciler\(\)\.reconcileAccount\(accountId\)\}/.test(provisioningFacade),'legacy account reconciliation must delegate through the same multi-lane owner');
+assert(reconciliationLock.includes('RECONCILIATION_MAX_CONCURRENCY')&&reconciliationLock.includes('acquireProcessSlot')&&reconciliationLock.includes('releaseProcessSlot'),'reconciliation must bound dedicated PostgreSQL lock connections per process');
+assert(reconciliationLock.includes('concurrencySnapshot'),'reconciliation connection pressure must be observable');
+assert(/async function reconcileCustomer\(customerId\)\s*\{[\s\S]{0,160}withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
+assert(provisioningFacade.includes("require('./provisioning-helpers')"),'legacy provisioning imports must use the dependency-safe helper surface');
+assert(provisioningHelpers.includes("require('./provisioning-engine')"),'helper surface must be the only low-level provisioning engine owner');
+assert(resilientProvisioning.includes("require('./provisioning-helpers')")&&!resilientProvisioning.includes("require('./provisioning')"),'canonical reconciler must depend directly on helpers without a compatibility-facade cycle');
+assert(provisioningFacade.includes("return require('./resilient-provisioning')"),'legacy provisioning imports must resolve mutations through the resilient owner');
+assert(provisioningFacade.includes('canonicalReconciler().reconcileCustomer(customerId)'),'legacy customer reconciliation must delegate instead of invoking the single-lane engine');
+assert(provisioningFacade.includes('canonicalReconciler().reconcileAccount(accountId)'),'legacy account reconciliation must delegate through the same multi-lane owner');
+assert(provisioningFacade.includes('canonicalReconciler().holdAccess(customerId, reason, actorUserId)')&&provisioningFacade.includes('canonicalReconciler().releaseAccess(customerId, actorUserId)'),'legacy hold mutations must delegate to the canonical owner');
+assert(provisioningFacade.includes('canonicalReconciler().expireSubscriptionsAndReconcile()'),'legacy expiry composition must delegate to the canonical owner');
 assert(resilientProvisioning.includes('inactivityHoldReconciliation.releaseObsoleteForCustomer(customerId)')&&resilientProvisioning.includes('accessHolds.syncLegacySummary(customerId)'),'multi-lane reconciliation must canonicalize stale free-tier holds before resolving a newly paid entitlement');
-assert(resilientProvisioning.includes("RECONCILIATION_POSTCONDITION_FAILED")&&resilientProvisioning.includes("assertLanePostcondition('Primary',primaryEntitlement,primary)"),'reconciliation must not record a healthy result unless the entitled primary lane converged to an enabled account');
+assert(resilientProvisioning.includes("RECONCILIATION_POSTCONDITION_FAILED")&&/assertLanePostcondition\('Primary',\s*primaryEntitlement,\s*primary\)/.test(resilientProvisioning),'reconciliation must not record a healthy result unless the entitled primary lane converged to an enabled account');
+assert(resilientProvisioning.includes('errorCode: error.code || null'),'failed provisioning runs must preserve stable machine-readable error codes for support diagnostics');
 assert(automationJobs.includes("require('../jellyfin/resilient-provisioning')")&&!automationJobs.includes("const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require('../jellyfin/provisioning')"),'subscription-expiry automation must use the canonical multi-lane reconciler rather than the legacy helper facade');
+
+assert(accessHolds.includes("hold_type IN ('admin_disabled','admin_suspended','admin_hold','legacy')"),'bulk admin release must clear every hold type that holdAccess can create, including generic admin_hold');
+assert(accessHolds.includes("'customer.access_hold.release_admin'"),'bulk admin hold release must remain auditable');
 
 const paidPriority=subscriptionState.indexOf("ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC");
 const expiryPriority=subscriptionState.indexOf("CASE WHEN o.permanent_access=TRUE",paidPriority);

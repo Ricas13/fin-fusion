@@ -1,6 +1,6 @@
 # Operational robustness controls
 
-This document covers three operational controls that intentionally do not change CAPTAiNFiN product behavior: request-service synchronization efficiency, worker-instance diagnostics, and payment-provider HTTP deadlines.
+This document covers operational controls that intentionally do not change CAPTAiNFiN product behavior: request-service synchronization efficiency, reconciliation connection pressure, worker-instance diagnostics, and payment-provider HTTP deadlines.
 
 ## Request-service / Seerr synchronization
 
@@ -9,6 +9,28 @@ This document covers three operational controls that intentionally do not change
 Bulk synchronization uses a bounded worker pool. The default concurrency is **3** and `REQUEST_USER_SYNC_CONCURRENCY` may tune it, capped at **8**. Do not raise the cap to increase throughput without considering request-service rate limits and database connection pressure.
 
 `syncAll()` and `syncSelected()` return the existing result counters plus `metrics` containing `usersInspected`, `unchanged`, `updated`, `failed`, `concurrency`, and `elapsedMs`. A failed user is recorded as failed and the remaining users continue through the bounded pool.
+
+## Customer reconciliation connection pressure
+
+Customer reconciliation uses a PostgreSQL advisory lock keyed by customer ID. That database lock is the **correctness lock**: it serializes state-changing reconciliation for the same customer across the web application and automation worker, even when they run in separate processes or containers.
+
+A reconciliation can remain active while CAPTAiNFiN waits on Jellyfin, Emby, Stremio or Discord. The advisory lock therefore owns a dedicated PostgreSQL connection for the duration of that operation. `src/jellyfin/reconciliation-lock.js` adds a separate process-local concurrency permit solely to prevent unrelated customer reconciliations from consuming an unbounded number of those dedicated lock connections.
+
+The ordinary web process defaults to **4** concurrent customer reconciliations and may use `RECONCILIATION_MAX_CONCURRENCY`. The automation role is deliberately separate because PostgreSQL limits `steamfusion_automation` to **12** total connections. Its budget is centralized in `src/security/database-connection-budget.js` and, by default, is accounted as:
+
+- primary automation pool: **6**
+- maintenance-lock pool: **4**
+- customer reconciliation advisory-lock connection: **1**
+- Docker healthcheck reserve: **1**
+- total: **12 / 12**
+
+For that reason the automation role defaults to **1** customer reconciliation at a time and does **not** inherit the web application's `RECONCILIATION_MAX_CONCURRENCY`, including when a developer runs the worker directly with the same `.env` file. Runtime automation overrides, when explicitly supplied to the worker process, use `AUTOMATION_RECONCILIATION_MAX_CONCURRENCY` and `AUTOMATION_MAINTENANCE_LOCK_POOL_MAX`. Those values are validated together with `DB_POOL_SIZE`; unsafe combinations fail fast during process startup instead of allowing the worker to exhaust its PostgreSQL role under load. When the maintenance-lock size is not explicitly configured, it may shrink within its safe range to honor the shared role budget.
+
+The automation heartbeat publishes the calculated budget in `operational_worker_state.metadata.dbConnectionBudget`, including the role limit, primary pool, maintenance pool, reconciliation allowance, healthcheck reserve, total reserved connections and any spare capacity. This makes configuration drift visible to diagnostics without waiting for connection exhaustion.
+
+Do not treat this permit as a replacement for the PostgreSQL advisory lock. It is capacity/backpressure only. Queued calls for the same customer still run after the prior reconciliation completes rather than receiving the prior result, because a payment event, hold or administrator action may have changed desired state while the first operation was already running.
+
+Choose production limits with the runtime database-role limit, primary pool, maintenance locks, health checks, and external-service latency in mind. `reconciliation-lock.concurrencySnapshot()` exposes the current process-local `active`, `queued` and `limit` values for diagnostics/instrumentation.
 
 ## Worker instance health
 
@@ -32,6 +54,6 @@ Trusted Stripe and PayPal provider URLs remain owned by their provider adapters.
 
 ## Verification
 
-`npm run check:fast` includes `scripts/operational-robustness-smoke.js`, covering bounded request concurrency, diff guards, duplicate/version-skew/stale worker diagnostics, provider deadline termination, retry classification, request-ID capture, and successful provider response handling.
+`npm run check:fast` includes `scripts/operational-robustness-smoke.js`, covering bounded request concurrency, diff guards, duplicate/version-skew/stale worker diagnostics, provider deadline termination, retry classification, request-ID capture, and successful provider response handling. `scripts/automation-release-hardening-smoke.js` additionally verifies the shared automation connection-budget equation, web/automation configuration separation, worker budget diagnostics, and rejection of unsafe reconciliation/maintenance-lock overrides. Provisioning-control smoke coverage separately freezes the reconciliation advisory-lock and process-concurrency contracts.
 
 `npm run check:db` includes `scripts/request-user-sync-smoke.js`, which exercises the real request-sync state machine against a local HTTP request-service fixture. It verifies that a second unchanged sync emits zero permission/main-settings mutations and that a forced failure for one remote user does not prevent other users from converging.

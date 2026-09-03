@@ -134,6 +134,44 @@ const grace = require('../src/entitlements/jellyfin-inactivity-grace');
         assert(!blockedResult.remainingHolds.some(row => row.type === 'inactivity_policy'), 'only the matching inactivity hold should be released');
         assert.strictEqual((await query(`SELECT disabled FROM jellyfin_accounts WHERE id=$1`, [blocked.accountId])).rows[0].disabled, true, 'blocked customer must not be falsely reported as enabled');
 
+        // Bulk administrator release is deliberately narrower than a global
+        // unblock: it must clear every administrator-owned hold type that the
+        // admin API can create while leaving unrelated subsystem holds intact.
+        const adminBulk = await fixture('admin-bulk');
+        for (const [type, sourceKey] of [
+            ['admin_disabled', 'db-smoke-disabled'],
+            ['admin_suspended', 'db-smoke-suspended'],
+            ['admin_hold', 'db-smoke-generic'],
+            ['legacy', 'db-smoke-legacy']
+        ]) {
+            await accessHolds.addHold({
+                customerId: adminBulk.customerId,
+                type,
+                sourceKey,
+                reason: `DB smoke ${type}`
+            });
+        }
+        const releasedAdminCount = await accessHolds.releaseAllAdminHolds(adminBulk.customerId);
+        assert.strictEqual(releasedAdminCount, 4, 'bulk admin release must clear every administrator-owned hold, including generic admin_hold');
+        const remainingAfterAdminRelease = await accessHolds.activeHolds(adminBulk.customerId);
+        assert.deepStrictEqual(
+            remainingAfterAdminRelease.map(row => row.hold_type),
+            ['inactivity_policy'],
+            'bulk admin release must preserve unrelated subsystem holds'
+        );
+        const adminReleaseAudit = await query(`
+            SELECT metadata
+            FROM audit_log
+            WHERE action='customer.access_hold.release_admin'
+              AND entity_type='customer'
+              AND entity_id=$1
+            ORDER BY created_at DESC,id DESC
+            LIMIT 1
+        `, [adminBulk.customerId]);
+        assert.strictEqual(adminReleaseAudit.rowCount, 1, 'bulk admin release must create an audit event');
+        assert.strictEqual(Number(adminReleaseAudit.rows[0].metadata.released), 4, 'bulk admin release audit must record the released count');
+        assert(adminReleaseAudit.rows[0].metadata.holds.some(row => row.type === 'admin_hold'), 'bulk admin release audit must include the generic admin hold');
+
         console.log('admin jellyfin re-enable db smoke: ok');
     } finally {
         for (const customerId of created.customers.reverse()) await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});

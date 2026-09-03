@@ -207,22 +207,22 @@ function requestAddress(req) {
   const effectiveAddress = stripPort(req?.ip || req?.socket?.remoteAddress || '');
   if (isPublicAddress(effectiveAddress) && !isCloudflareAddress(effectiveAddress)) return effectiveAddress;
 
-  const forwarded = forwardedAddresses(req);
-  const cloudflareSeen = isCloudflareAddress(effectiveAddress) || forwarded.some(isCloudflareAddress);
-  if (!cloudflareSeen) {
-    // Never turn a local/Docker proxy address into a household lease. If proxy
-    // forwarding is broken, returning no identity causes household access to
-    // fail closed instead of making every viewer look like the same household.
-    return '';
-  }
+  // Cloudflare's visitor-IP headers are authoritative only when Express itself
+  // resolved the effective client hop to a published Cloudflare edge. Merely
+  // finding a Cloudflare-looking value somewhere in X-Forwarded-For is not a
+  // sufficient trust signal: an untrusted client or internal caller can supply
+  // that header. If the reverse-proxy trust chain is misconfigured, fail closed
+  // instead of letting a header opt itself into Cloudflare trust.
+  if (!isCloudflareAddress(effectiveAddress)) return '';
 
   const headerVisitor = cloudflareVisitorHeader(req);
   if (headerVisitor) return headerVisitor;
 
   // CF-Connecting-IP should normally be present, but X-Forwarded-For gives us a
-  // safe fallback when an intermediate proxy drops that header while preserving
-  // the Cloudflare hop and visitor chain.
-  const forwardedVisitor = forwardedVisitorAddress(forwarded);
+  // fallback when an intermediate trusted proxy drops that header. This fallback
+  // is reached only after the effective client hop has independently been proven
+  // to be Cloudflare.
+  const forwardedVisitor = forwardedVisitorAddress(forwardedAddresses(req));
   if (forwardedVisitor) return forwardedVisitor;
 
   // A Cloudflare edge address is not a customer household. Failing closed here

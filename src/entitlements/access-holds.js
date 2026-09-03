@@ -75,10 +75,18 @@ async function releaseAllAdminHolds(customerId, actorUserId = null) {
         const result = await client.query(`
             UPDATE customer_access_holds SET released_at=NOW(),released_by=$2
             WHERE customer_id=$1 AND released_at IS NULL
-              AND hold_type IN ('admin_disabled','admin_suspended','legacy')
-            RETURNING id
+              AND hold_type IN ('admin_disabled','admin_suspended','admin_hold','legacy')
+            RETURNING id,hold_type,source_key
         `, [customerId, actorUserId]);
         await syncLegacySummary(customerId, client);
+        if (result.rowCount) {
+            await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                VALUES($1,'customer.access_hold.release_admin','customer',$2,$3::jsonb)`,
+            [actorUserId, customerId, JSON.stringify({
+                released: result.rowCount,
+                holds: result.rows.map(row => ({ id: row.id, type: row.hold_type, sourceKey: row.source_key || null }))
+            })]);
+        }
         return result.rowCount;
     });
 }

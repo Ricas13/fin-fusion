@@ -4,9 +4,11 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const jobHealth = require('../src/automation/job-health');
+const connectionBudget = require('../src/security/database-connection-budget');
 
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const compact = value => String(value || '').replace(/\s+/g, '');
 
 assert.strictEqual(jobHealth.failedCountFromResult({ failed: 4 }), 4, 'failed result count should be detected');
 assert.strictEqual(jobHealth.failedCountFromResult({ errors: 2 }), 2, 'errors result count should be detected');
@@ -47,28 +49,67 @@ for (const field of ['last_completed_at', 'last_outcome', 'last_failed_count', '
 const worker = read('scripts/automation-worker.js');
 assert(worker.includes('DB_CONTROL_HEADROOM'), 'Automation worker must reserve database control headroom');
 assert(worker.includes('Math.min(REQUESTED_CONCURRENCY, DB_POOL_SIZE - DB_CONTROL_HEADROOM)'), 'Worker concurrency must be bounded by its DB pool');
+assert(worker.includes('dbConnectionBudget') && worker.includes('CONNECTION_BUDGET.totalReserved'),
+    'Automation heartbeat metadata must expose the complete database connection budget');
+assert(worker.includes('Automation request-service settings refresh failed during startup'),
+    'Best-effort automation settings refresh failures must remain visible to operators');
 
 const compose = read('docker-compose.yml');
+const envExample = read('.env.example');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
 const maintenanceLock = read('src/security/maintenance-lock.js');
+const reconciliationLock = read('src/jellyfin/reconciliation-lock.js');
+assert(compose.includes('RECONCILIATION_MAX_CONCURRENCY: ${RECONCILIATION_MAX_CONCURRENCY:-4}'),
+    'Compose must pass the documented web reconciliation limit into the web runtime');
+assert(compose.includes('AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: ${AUTOMATION_RECONCILIATION_MAX_CONCURRENCY:-1}'),
+    'Compose must pass the automation-specific reconciliation budget into the worker');
+assert(compose.includes('AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: ${AUTOMATION_MAINTENANCE_LOCK_POOL_MAX:-4}'),
+    'Compose must pass the automation-specific maintenance-lock budget into the worker');
+for (const setting of [
+    'RECONCILIATION_MAX_CONCURRENCY=4',
+    'AUTOMATION_RECONCILIATION_MAX_CONCURRENCY=1',
+    'AUTOMATION_MAINTENANCE_LOCK_POOL_MAX=4'
+]) {
+    assert(envExample.includes(setting), `.env.example must document effective runtime setting ${setting}`);
+}
 const automationRoleLimit = Number(/automation:\s*\{[^}]*connectionLimit:\s*(\d+)/s.exec(roleScript)?.[1]);
 const automationPoolDefault = Number(/AUTOMATION_DB_POOL_SIZE:-([0-9]+)/.exec(compose)?.[1]);
-const automationLockDefault = Number(/AUTOMATION_DEFAULT_LOCK_POOL_MAX\s*=\s*(\d+)/.exec(maintenanceLock)?.[1]);
-const automationNonPoolReserve = Number(/AUTOMATION_NON_POOL_RESERVE\s*=\s*(\d+)/.exec(maintenanceLock)?.[1]);
 assert(Number.isFinite(automationRoleLimit), 'Automation database role must have an explicit connection limit');
 assert(Number.isFinite(automationPoolDefault), 'Compose must expose the automation primary pool default');
-assert(Number.isFinite(automationLockDefault), 'Maintenance lock owner must expose the automation lock-pool default');
-assert(Number.isFinite(automationNonPoolReserve), 'Maintenance lock owner must reserve direct/control automation connections');
-assert.strictEqual(Number(/AUTOMATION_ROLE_CONNECTION_LIMIT\s*=\s*(\d+)/.exec(maintenanceLock)?.[1]), automationRoleLimit,
-    'Maintenance-lock safety budget must track the PostgreSQL automation role connection limit');
-assert(automationPoolDefault + automationLockDefault + automationNonPoolReserve <= automationRoleLimit,
-    'Default automation primary + maintenance-lock + direct connection budget must fit inside the role limit');
-assert(maintenanceLock.includes("role === AUTOMATION_ROLE ? AUTOMATION_DEFAULT_LOCK_POOL_MAX : 12"),
-    'Automation worker must use its smaller maintenance-lock pool default without reducing the web mutation guard pool');
-assert(maintenanceLock.includes('availableForLocks = AUTOMATION_ROLE_CONNECTION_LIMIT - primaryPoolMax - AUTOMATION_NON_POOL_RESERVE'),
-    'Automation maintenance-lock capacity must be derived from remaining role headroom');
-assert(maintenanceLock.includes('Unsafe automation database pool budget') && maintenanceLock.includes('Unsafe automation maintenance-lock pool'),
-    'Unsafe custom automation pool sizes must fail fast instead of exhausting the role during jobs');
+assert.strictEqual(connectionBudget.AUTOMATION_ROLE_CONNECTION_LIMIT, automationRoleLimit,
+    'Shared connection budget must track the PostgreSQL automation role connection limit');
+
+const defaultAutomationBudget = connectionBudget.automationConnectionBudget({
+    DB_POOL_SIZE: String(automationPoolDefault),
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: String(connectionBudget.AUTOMATION_DEFAULT_RECONCILIATION_MAX)
+});
+assert.strictEqual(defaultAutomationBudget.primaryPoolMax, 6, 'automation primary pool default should remain six');
+assert.strictEqual(defaultAutomationBudget.maintenanceLockPoolMax, 4, 'automation maintenance-lock default should remain four');
+assert.strictEqual(defaultAutomationBudget.reconciliationMax, 1, 'automation reconciliation must reserve only one dedicated lock connection by default');
+assert.strictEqual(defaultAutomationBudget.healthcheckReserve, 1, 'automation healthcheck must retain a dedicated connection reserve');
+assert(defaultAutomationBudget.totalReserved <= automationRoleLimit,
+    'Default automation primary + maintenance + reconciliation + healthcheck budget must fit inside the role limit');
+assert.strictEqual(defaultAutomationBudget.spare, 0, 'the default automation budget should account for every role connection explicitly');
+assert.strictEqual(connectionBudget.automationConnectionBudget({
+    DB_POOL_SIZE: '6',
+    RECONCILIATION_MAX_CONCURRENCY: '4'
+}).reconciliationMax, 1,
+'web reconciliation configuration must not leak into the automation role budget');
+assert.throws(() => connectionBudget.automationConnectionBudget({
+    DB_POOL_SIZE: '6',
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: '4'
+}), /Unsafe automation database pool budget/,
+'unsafe automation reconciliation concurrency must fail fast instead of oversubscribing the automation role');
+assert.throws(() => connectionBudget.automationConnectionBudget({
+    DB_POOL_SIZE: '6',
+    AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: '1',
+    AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: '5'
+}), /Unsafe automation maintenance-lock pool/,
+'unsafe explicit maintenance-lock concurrency must fail fast instead of oversubscribing the automation role');
+assert(maintenanceLock.includes('automationConnectionBudget().maintenanceLockPoolMax'),
+    'Maintenance locks must consume the shared automation connection budget');
+assert(reconciliationLock.includes('automationConnectionBudget().reconciliationMax'),
+    'Customer reconciliation must consume the shared automation connection budget');
 
 const managedStremio = read('src/stremio/managed-entitlements.js');
 const managedSyncScope = managedStremio.slice(managedStremio.indexOf('async function syncActive'), managedStremio.indexOf('module.exports'));
@@ -96,21 +137,23 @@ const policyGuardScope = resilientProvisioning.slice(
     resilientProvisioning.indexOf('async function applyPolicyIfChanged'),
     resilientProvisioning.indexOf('async function disableAccounts')
 );
-assert(policyGuardScope.includes("method:'GET',timeoutMs:5000"),
+const compactPolicyGuardScope = compact(policyGuardScope);
+assert(compactPolicyGuardScope.includes("method:'GET',timeoutMs:5000"),
     'entitlement reconciliation must probe the current remote policy before issuing a write');
-assert(policyGuardScope.includes('control.policyMatches(remote,desired)'),
+assert(compactPolicyGuardScope.includes('control.policyMatches(remote,desired)'),
     'entitlement reconciliation must recognize an unchanged remote policy');
-assert(policyGuardScope.includes('return{missing:[],unchanged:true}'),
+assert(compactPolicyGuardScope.includes('return{missing:[],unchanged:true}'),
     'unchanged entitlement policy must complete without a remote policy POST');
-assert(policyGuardScope.indexOf('control.policyMatches(remote,desired)') < policyGuardScope.indexOf('return base.applyPolicy(account,effective,disabled)'),
+assert(compactPolicyGuardScope.indexOf('control.policyMatches(remote,desired)') < compactPolicyGuardScope.indexOf('returnbase.applyPolicy(account,effective,disabled)'),
     'policy comparison must happen before the fallback policy mutation');
 const laneScope = resilientProvisioning.slice(
     resilientProvisioning.indexOf('async function reconcileLane'),
     resilientProvisioning.indexOf('async function recordRun')
 );
-assert(laneScope.includes('await applyPolicyIfChanged(account,effective,false)'),
+const compactLaneScope = compact(laneScope);
+assert(compactLaneScope.includes('awaitapplyPolicyIfChanged(account,effective,false)'),
     'active entitlement lanes must use the read-before-write policy guard');
-assert(!laneScope.includes('await base.applyPolicy(account,effective,false)'),
+assert(!compactLaneScope.includes('awaitbase.applyPolicy(account,effective,false)'),
     'active entitlement lanes must not unconditionally POST policy on every verification run');
 
 const admin = read('src/platform/admin-automation.js');
