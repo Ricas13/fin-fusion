@@ -24,7 +24,7 @@ const adminNotifications=read('src/platform/admin-notification-preferences.js');
 const customerDashboard=read('src/platform/customer-dashboard.js');
 const dashboard=read('views/customer/dashboard.ejs');
 const access=read('views/customer/jellyfin.ejs');
-const provisioning=read('src/jellyfin/provisioning.js');
+const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
 const jobs=read('src/automation/jobs.js');
 const automationWorker=read('scripts/automation-worker.js');
 const inactivity=read('src/automation/customer-inactivity.js')+read('src/automation/customer-inactivity-scoped.js');
@@ -71,7 +71,7 @@ assert(dashboard.includes('Access is being prepared.')&&/href="https:\/\/web\.st
 assert(dashboard.includes('Install in Stremio')&&dashboard.includes('Keep this link private.'),'Stremio onboarding must preserve the primary install action and private-link warning');
 assert(dashboard.includes('freeSoldOut')&&dashboard.includes('discordInviteUrl')&&dashboard.includes('>Subscribe</a>')&&dashboard.includes('Currently full'),'active-account Free Server card must use the Discord invite only when sold out and configured');
 assert(!dashboard.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club')&&!onboarding.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club')&&!customerDashboard.includes('7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club'),'Stremio metadata onboarding must never hardcode the retired addon URL');
-assert(/Download an official Jellyfin client: https:\/\/jellyfin\.org\/downloads\/\\n2\. Server URL:/.test(provisioning)&&provisioning.includes('Use the password you set under Jellyfin access')&&provisioning.includes('portal_username'),'the existing provisioned email must repeat the same official-client and chosen-password onboarding semantics');
+assert(/Download an official Jellyfin client: https:\/\/jellyfin\.org\/downloads\/\\n2\. Server URL:/.test(provisioningHelpers)&&provisioningHelpers.includes('Use the password you set under Jellyfin access')&&provisioningHelpers.includes('portal_username'),'the existing provisioned email must repeat the same official-client and chosen-password onboarding semantics');
 ejs.compile(onboarding,{filename:'views/customer/onboarding.ejs'});
 ejs.compile(dashboard,{filename:'views/customer/dashboard.ejs'});
 ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
