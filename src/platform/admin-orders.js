@@ -3,6 +3,7 @@
 const express=require('express');
 const {query}=require('../db');
 const runtimeSettings=require('./runtime-settings');
+const readCursors=require('./operator-read-cursors');
 const {esc,layout}=require('./admin-html');
 const ui=require('./admin-ui');
 
@@ -35,12 +36,16 @@ function ordersHero(orders){
  return ui.operatorHero({tone,eyebrow:'Transaction desk',title,body:'Orders is the purchase trail for Stripe and PayPal. It links transactions to the customer billing journey instead of exposing internal subscription records as the primary experience.',statusLabel:attention.length?'Review needed':'Transactions clear',next,facts:[{label:'Last 30 days',value:String(recent.length),detail:'provider purchases'},{label:'Stripe',value:String(stripe),detail:'last 30 days'},{label:'PayPal',value:String(paypal),detail:'last 30 days'},{label:'Past due',value:String(attention.length),detail:'within loaded purchase history'}],actionsHtml:first?`<a class="button" href="/admin/users/${encodeURIComponent(first.customer_id)}?tab=billing">Review first past-due customer</a><a class="button secondary" href="/admin/billing">Billing operations</a>`:'<a class="button secondary" href="/admin/billing">Billing operations</a><a class="button secondary" href="/admin/payments">Payment providers</a>'});
 }
 async function page(){await runtimeSettings.ensureLoaded();const orders=await rows(),recent=orders.slice(0,25),body=`${ordersHero(orders)}<section class="section">${ui.sectionHeader({title:'Recent purchases',description:'Newest Stripe and PayPal purchases. Select a customer to continue in their Billing journey.'})}${orderTable(recent)}${orders.length>recent.length?ui.detailDisclosure({title:`Full purchase history (${orders.length})`,summary:'Older provider purchases · open only when tracing a historical transaction',bodyHtml:orderTable(orders)}):''}</section>`;return layout({siteName:runtimeSettings.siteName(),active:'orders',title:'Orders',subtitle:'Trace purchases to customers; handle recurring billing problems in Billing',body});}
+async function markOrdersSeen(req){
+ try{return await readCursors.markSeen(req.session.authUserId,'orders');}
+ catch(error){console.warn('Order read cursor update failed:',error.message);return null;}
+}
 function createAdminOrdersRouter(){
  const router=express.Router();
  router.use('/admin/commerce/orders',gate,noStore);
  router.use('/admin/orders',gate,noStore);
- router.get('/admin/commerce/orders',async(_req,res,next)=>{try{return res.send(await page())}catch(error){next(error)}});
+ router.get('/admin/commerce/orders',async(req,res,next)=>{try{const html=await page();await markOrdersSeen(req);return res.send(html)}catch(error){next(error)}});
  router.get('/admin/orders',(_req,res)=>res.redirect(308,ORDERS_PATH));
  return router;
 }
-module.exports={createAdminOrdersRouter,page,rows,orderTable,ordersHero,ORDERS_PATH,LEGACY_ORDERS_PATH};
+module.exports={createAdminOrdersRouter,page,rows,orderTable,ordersHero,markOrdersSeen,ORDERS_PATH,LEGACY_ORDERS_PATH};
