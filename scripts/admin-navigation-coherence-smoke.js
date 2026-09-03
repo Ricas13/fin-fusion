@@ -13,8 +13,8 @@ const base=require('../src/platform/admin-html-core-base');
 const labels=rows=>rows.map(row=>row[1]);
 
 assert.equal(nav.groups.length,6,'rail must expose exactly six sections');
-assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),17,'rail must expose exactly seventeen permanent destinations');
-for(const parent of ['dashboard','users','servers','stremio-sources','activity','plans','orders','payments','provisioning','automation-jobs','backups','settings-general','settings-security','settings-integrations']){
+assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),19,'rail must expose exactly nineteen permanent destinations');
+for(const parent of ['dashboard','users','servers','stremio-sources','activity','plans','orders','discounts','referrals','payments','provisioning','automation-jobs','backups','settings-general','settings-security','settings-integrations']){
   assert.deepStrictEqual(nav.childPages(parent),[],`${parent} must not render third-level rail children`);
 }
 
@@ -25,13 +25,17 @@ const planSettings=labels(nav.settingsFor('plans'));
 for(const label of ['Access rules','Storefront order','Commerce settings'])assert(planSettings.includes(label),`Plans setting bank missing ${label}`);
 assert(labels(nav.settingsFor('activity')).includes('Free-user inactivity rules'),'Playback must own inactivity rules as a setting');
 assert(labels(nav.settingsFor('stremio-sources')).includes('IP access'),'Stremio must own IP access as a setting');
-assert(labels(nav.relatedPages('orders')).includes('Discounts')&&labels(nav.relatedPages('orders')).includes('Affiliates'),'Orders must keep commercial long-tail pages related but out of the rail');
+const commercePages=nav.groups.find(group=>group.key==='commerce').pages;
+assert.deepStrictEqual(labels(commercePages),['Plans','Orders','Discounts','Affiliates','Payments'],'Commerce must expose the canonical five permanent destinations');
+assert(!labels(nav.relatedPages('orders')).includes('Discounts')&&!labels(nav.relatedPages('orders')).includes('Affiliates'),'Discounts and Affiliates must not remain hidden Orders-related pages');
 assert(labels(nav.relatedPages('payments')).includes('Billing')&&labels(nav.relatedPages('payments')).includes('Expenses & Profitability'),'Payments must keep billing/profitability pages related but out of the rail');
 assert(labels(nav.tasksFor('backups')).includes('Export data')&&labels(nav.tasksFor('backups')).includes('Configuration Transfer'),'Backups must own portability tasks');
 
-for(const [key,parent] of [['expenses','payments'],['transactions','payments'],['refunds','payments'],['data-export','backups'],['legacy-paid-import','backups'],['discounts','orders'],['libraries','servers']]){
+for(const [key,parent] of [['expenses','payments'],['transactions','payments'],['refunds','payments'],['data-export','backups'],['legacy-paid-import','backups'],['libraries','servers']]){
   assert.strictEqual(nav.sidebarKey(key),parent,`${key} must keep ${parent} highlighted as its owning rail destination`);
 }
+assert.strictEqual(nav.sidebarKey('discounts'),'discounts','Discounts must highlight its own permanent Commerce destination');
+assert.strictEqual(nav.sidebarKey('referrals'),'referrals','Affiliates must highlight its own permanent Commerce destination');
 
 const expenseHeader=base.header('expenses','CAPTAiNFiN');
 assert(/adminTab active[^>]*href="\/admin\/payments"/.test(expenseHeader),'Expenses must keep Payments highlighted as its parent');
