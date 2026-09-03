@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const notificationDispatch = require('../integrations/notification-dispatch');
 const expiryPolicy = require('../integrations/notification-expiry-policy');
 const billingMode = require('../payments/subscription-billing-mode');
+const automaticFreeDowngradeRetry = require('./automatic-free-downgrade-retry');
 
 const DEFAULT_WARNING_DAYS = Math.max(...expiryPolicy.DEFAULT_POLICY.milestones);
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -189,7 +190,7 @@ async function expireDueSubscriptions({ syncRecurring = null } = {}) {
     });
 }
 
-async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null, syncRecurring = null, detail = false } = {}) {
+async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onAutoDowngradeError = null, onReconcileError = null, syncRecurring = null, detail = false } = {}) {
     if (typeof reconcileCustomer !== 'function') throw new Error('A subscription-expiry reconcile callback is required.');
     const verifyRecurring = typeof syncRecurring === 'function'
         ? syncRecurring
@@ -199,7 +200,20 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onR
     for (const row of expired) {
         const customerId = row.customer_id;
         let downgraded = null;
-        if (row.had_paid_expiry && typeof autoDowngrade === 'function') downgraded = await autoDowngrade(customerId);
+        if (row.had_paid_expiry && typeof autoDowngrade === 'function') {
+            try {
+                downgraded = await autoDowngrade(customerId, row);
+            } catch (error) {
+                // The commercial expiry is already committed at this point. A
+                // failed configured Free fallback must therefore become a
+                // durable lifecycle retry before normal reconciliation closes
+                // the expired paid access. If this write fails, fail the job
+                // rather than pretending a future retry is guaranteed.
+                await automaticFreeDowngradeRetry.enqueue(customerId, error);
+                failed += 1;
+                if (typeof onAutoDowngradeError === 'function') onAutoDowngradeError(customerId, error);
+            }
+        }
         if (downgraded) continue;
         try { await reconcileCustomer(customerId); }
         catch (error) {

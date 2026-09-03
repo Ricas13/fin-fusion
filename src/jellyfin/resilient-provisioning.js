@@ -478,7 +478,7 @@ async function maybeAutoDowngrade(customerId) {
             customerId,
             error: error.message
         });
-        return null;
+        throw error;
     }
 }
 
