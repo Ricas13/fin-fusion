@@ -39,7 +39,17 @@ async function current(customerId){
   const row=r.rows[0];
   if(row.status!=='active'||Number(row.current_token_version)!==Number(row.token_version))return null;
   if(String(row.current_token_hint||'')!==String(row.token_hint||''))return null;
-  try{return{...row,credential:decryptWithEnv(row.credential_encrypted,KEY_ENV,PREFIX)}}catch{return null;}
+  try{
+    return{...row,credential:decryptWithEnv(row.credential_encrypted,KEY_ENV,PREFIX)};
+  }catch(error){
+    // An unreadable recovery copy is safe to replace with a freshly-issued
+    // install token, but the key/data mismatch must remain visible to operators.
+    console.warn('Stremio install credential recovery decrypt failed.',{
+      customerId,
+      error:String(error?.message||error).replace(/[\r\n\t]+/g,' ').slice(0,300)
+    });
+    return null;
+  }
 }
 
 async function clear(customerId){
