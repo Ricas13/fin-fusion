@@ -4,6 +4,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const pkg = require('../package.json');
 const { query, getPool } = require('../src/db');
+const { automationConnectionBudget } = require('../src/security/database-connection-budget');
 const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
@@ -16,6 +17,7 @@ const DB_POOL_SIZE = Math.max(1, Math.min(50, Number(process.env.DB_POOL_SIZE ||
 const REQUESTED_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.AUTOMATION_WORKER_CONCURRENCY || 3)));
 const DB_CONTROL_HEADROOM = DB_POOL_SIZE >= 3 ? 2 : 0;
 const MAX_CONCURRENCY = Math.max(1, Math.min(REQUESTED_CONCURRENCY, DB_POOL_SIZE - DB_CONTROL_HEADROOM));
+const CONNECTION_BUDGET = automationConnectionBudget();
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.AUTOMATION_WORKER_HEARTBEAT_MS || 15000)));
 const INSTANCE_ID = String(process.env.HOSTNAME || `automation-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = String(process.env.COMMIT_SHA || process.env.GITHUB_SHA || '').slice(0, 80) || null;
@@ -47,6 +49,15 @@ async function heartbeat({ draining = false } = {}) {
         requestedConcurrency: REQUESTED_CONCURRENCY,
         dbPoolSize: DB_POOL_SIZE,
         dbControlHeadroom: DB_CONTROL_HEADROOM,
+        dbConnectionBudget: {
+            roleLimit: CONNECTION_BUDGET.roleLimit,
+            primaryPoolMax: CONNECTION_BUDGET.primaryPoolMax,
+            maintenanceLockPoolMax: CONNECTION_BUDGET.maintenanceLockPoolMax,
+            reconciliationMax: CONNECTION_BUDGET.reconciliationMax,
+            healthcheckReserve: CONNECTION_BUDGET.healthcheckReserve,
+            totalReserved: CONNECTION_BUDGET.totalReserved,
+            spare: CONNECTION_BUDGET.spare
+        },
         hostname: process.env.HOSTNAME || null,
         containerId: process.env.CONTAINER_ID || null,
         containerName: process.env.CONTAINER_NAME || null
@@ -101,14 +112,21 @@ async function runBatch(rows) {
 async function loop() {
     await Promise.all([
         providerSettings.ensureLoaded(),
-        requestSettings.ensureLoaded().catch(() => {}),
+        requestSettings.ensureLoaded().catch(error => {
+            console.warn('Automation request-service settings refresh failed during startup:', error.message);
+        }),
         emailSettings.ensureLoaded?.() || Promise.resolve()
     ]);
     await ensureRows();
     await heartbeat();
     heartbeatTimer = setInterval(() => heartbeat({ draining: stopping }).catch(error => console.error('Automation heartbeat failed:', error.message)), HEARTBEAT_MS);
     heartbeatTimer.unref?.();
-    console.log(`CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms concurrency=${MAX_CONCURRENCY}/${REQUESTED_CONCURRENCY} dbPool=${DB_POOL_SIZE}`);
+    console.log(
+        `CAPTAiNFiN automation worker ready; poll=${POLL_MS}ms `
+        + `concurrency=${MAX_CONCURRENCY}/${REQUESTED_CONCURRENCY} dbPool=${DB_POOL_SIZE} `
+        + `dbBudget=${CONNECTION_BUDGET.totalReserved}/${CONNECTION_BUDGET.roleLimit} `
+        + `(maintenance=${CONNECTION_BUDGET.maintenanceLockPoolMax}, reconcile=${CONNECTION_BUDGET.reconciliationMax})`
+    );
     while (!stopping) {
         try {
             await heartbeat();
@@ -126,10 +144,16 @@ async function shutdown(signal) {
     stopping = true;
     console.log(`Automation worker draining (${signal}); active=${running.size}`);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
-    await heartbeat({ draining: true }).catch(() => {});
+    await heartbeat({ draining: true }).catch(error => {
+        console.warn('Unable to publish final automation draining heartbeat:', error.message);
+    });
     if (running.size) await Promise.allSettled([...running]);
-    await query(`UPDATE operational_worker_state SET last_heartbeat_at=NOW(),draining_at=COALESCE(draining_at,NOW()),updated_at=NOW() WHERE worker_key='automation' AND instance_id=$1`, [INSTANCE_ID]).catch(() => {});
-    try { await getPool().end(); } catch (_) {}
+    await query(`UPDATE operational_worker_state SET last_heartbeat_at=NOW(),draining_at=COALESCE(draining_at,NOW()),updated_at=NOW() WHERE worker_key='automation' AND instance_id=$1`, [INSTANCE_ID]).catch(error => {
+        console.warn('Unable to persist final automation draining state:', error.message);
+    });
+    try { await getPool().end(); } catch (error) {
+        console.warn('Automation database pool close failed:', error.message);
+    }
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
