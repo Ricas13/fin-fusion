@@ -18,6 +18,7 @@ assert(viewSource.includes("serviceTruth=require('./customer-360-service-truth')
 assert(viewSource.includes('Service reconciliation truth'), 'Overview must expose per-service desired/observed reconciliation state');
 assert(viewSource.includes('No reconciliation snapshot'), 'missing observed state must be shown as unknown rather than silently healthy');
 assert(truthSource.includes('state.last_result || state.detail?.result || {}'), 'service truth must consume the canonical persisted reconciliation result');
+assert(truthSource.includes("type === service || type === 'bundle'"), 'per-service truth must explicitly scope direct and bundle entitlements');
 assert(!truthSource.includes("require('../db')") && !truthSource.includes('SELECT '), 'service truth must not create a second business-logic query path');
 
 const reconciledAt = '2026-09-03T09:30:00.000Z';
@@ -64,5 +65,16 @@ const blockedRows = serviceTruth.resultRows({
 assert.strictEqual(blockedRows[0].desired, 'Blocked by access hold');
 assert.strictEqual(blockedRows[0].actual, 'Blocked');
 assert.match(blockedRows[0].issue, /admin_suspended/);
+
+const stremioOnlyRows = serviceTruth.resultRows({
+  subscriptions: [{ status: 'active', current_period_end: '2026-10-03T00:00:00.000Z', service_type: 'stremio', plan_code: 'stremio-only' }],
+  primaryEntitlement: { status: 'active', service_type: 'stremio', contract_plan_code: 'stremio-only' },
+  accounts: [],
+  provisioningState: { status: 'healthy', last_result: { stremioStatus: 'active', discordStatus: 'synced', reconciledAt } }
+});
+assert.strictEqual(stremioOnlyRows[0].desired, 'Not required', 'Stremio primary entitlement must never be projected into the Jellyfin primary lane');
+assert.strictEqual(stremioOnlyRows[0].plan, '—');
+assert.strictEqual(stremioOnlyRows[3].desired, 'Enabled');
+assert.strictEqual(stremioOnlyRows[3].plan, 'stremio-only');
 
 console.log('customer 360 UUID audit + per-service truth smoke: ok');
