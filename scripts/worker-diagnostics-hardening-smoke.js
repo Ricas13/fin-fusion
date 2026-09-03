@@ -12,7 +12,25 @@ const automation = {
   worker_key: 'automation',
   heartbeat_age_seconds: 50,
   draining_at: null,
-  metadata: { pollMs: 15000, heartbeatMs: 15000 }
+  metadata: {
+    pollMs: 15000,
+    heartbeatMs: 15000,
+    reconciliation: {
+      started: 12,
+      succeeded: 10,
+      failed: 2,
+      lockTimeouts: 1,
+      cleanupFailures: 0,
+      averageDurationMs: 420,
+      averageProcessSlotWaitMs: 18,
+      averageDatabaseLockWaitMs: 7,
+      maxDurationMs: 2100,
+      maxProcessSlotWaitMs: 90,
+      maxDatabaseLockWaitMs: 42,
+      lastErrorCode: 'SHOULD_NOT_LEAK',
+      concurrency: { active: 1, queued: 2, limit: 4 }
+    }
+  }
 };
 const activity = {
   worker_key: 'activity',
@@ -28,6 +46,24 @@ assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, heartbeat_a
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, metadata: { ...activity.metadata, lastCycleOutcome: 'degraded' } }), 'degraded');
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, metadata: { ...activity.metadata, lastCycleOutcome: 'failed' } }), 'failed');
 assert.strictEqual(diagnostics.operationalWorkerState({ ...activity, draining_at: new Date(now).toISOString() }), 'draining');
+const automationView = workerInstanceHealth.instanceView(automation);
+assert.deepStrictEqual(automationView.reconciliation, {
+  started: 12,
+  succeeded: 10,
+  failed: 2,
+  lockTimeouts: 1,
+  cleanupFailures: 0,
+  averageDurationMs: 420,
+  averageProcessSlotWaitMs: 18,
+  averageDatabaseLockWaitMs: 7,
+  maxDurationMs: 2100,
+  maxProcessSlotWaitMs: 90,
+  maxDatabaseLockWaitMs: 42,
+  active: 1,
+  queued: 2,
+  limit: 4
+}, 'worker diagnostics must expose only aggregate reconciliation counts/timings and concurrency pressure');
+assert.strictEqual(Object.prototype.hasOwnProperty.call(automationView.reconciliation, 'lastErrorCode'), false, 'worker diagnostics must not forward arbitrary reconciliation error strings from heartbeat metadata');
 
 const rolloutSummary = workerInstanceHealth.summarize([
   { worker_key: 'activity', instance_id: 'replacement', heartbeat_age_seconds: 12, draining_at: null, metadata: { heartbeatMs: 15000, lastCycleOutcome: 'healthy' } },
@@ -37,6 +73,8 @@ const rolloutActivity = rolloutSummary.workers.find(worker => worker.key === 'ac
 assert.strictEqual(rolloutActivity.state, 'healthy', 'a fresher draining instance must not override a healthy active replacement');
 assert.strictEqual(rolloutActivity.heartbeatAgeSeconds, 12, 'role summary must report the representative active instance, not the draining row');
 assert.strictEqual(rolloutActivity.liveInstances, 1, 'draining workers must not count as active instances');
+const automationSummary = workerInstanceHealth.summarize([automation]);
+assert.strictEqual(automationSummary.workers[0].reconciliation.queued, 2, 'role summary must preserve representative automation reconciliation pressure for System diagnostics/support reports');
 
 const requestSummary = requestSync.emptySummary(5);
 requestSync.countResult(requestSummary, { status: 'failed', error: ' Seerr returned HTTP 500\nwhile saving settings ' });
@@ -86,6 +124,7 @@ assert(worker.includes('heartbeatTimer = setInterval'), 'Activity worker must he
 assert(worker.includes("if (result?.recorded || result?.reason === 'database_maintenance') heartbeat();"), 'Local activity health must advance only when the database heartbeat path is proven reachable');
 assert(worker.includes('withMaintenanceSharedLock'), 'Activity heartbeat/cycles must remain maintenance-aware');
 assert(automationWorker.includes('heartbeatMs: HEARTBEAT_MS'), 'Automation heartbeat metadata must publish its liveness cadence');
+assert(automationWorker.includes("require('../src/jellyfin/reconciliation-lock')")&&automationWorker.includes('reconciliation: reconciliationLock.metricsSnapshot()'), 'Automation heartbeat must publish process-local reconciliation pressure for cross-process diagnostics');
 assert(activityTrust.includes("WHERE worker_key='activity'"), 'Activity trust must read only activity worker instances');
 assert(activityTrust.includes('draining_at IS NULL'), 'Activity trust must ignore workers that have begun draining');
 assert(activityTrust.includes('ORDER BY last_heartbeat_at DESC'), 'Activity trust must select the freshest live worker instance after multi-instance health migration');
