@@ -41,6 +41,7 @@ assert.deepStrictEqual(importers("require('./admin-security-routes')"),['src/pla
 assert(!fs.existsSync(path.join(root,'src/jellyfin/provisioning-core.js')),'retired provisioning compatibility facade must stay removed');
 const provisioning=read('src/jellyfin/provisioning.js');
 const provisioningHelpers=read('src/jellyfin/provisioning-helpers.js');
+const provisioningEngine=read('src/jellyfin/provisioning-engine.js');
 const resilientProvisioning=read('src/jellyfin/resilient-provisioning.js');
 const subscriptionExpiry=read('src/entitlements/subscription-expiry.js');
 assert(provisioningHelpers.includes("require('./provisioning-engine')"),'dependency-safe helper surface must own the internal engine import');
@@ -52,7 +53,14 @@ assert.deepStrictEqual(importers("require('./provisioning-engine')"),['src/jelly
 assert(provisioningHelpers.includes('markPasswordSetupRequired'),'helper surface must retain password-setup state for created Jellyfin identities');
 for(const retired of ['reconcileCustomer','reconcileAccount','holdAccess','releaseAccess','expireSubscriptionsAndReconcile']){
   assert(!new RegExp(`\\b${retired}\\b`).test(provisioningHelpers.split('module.exports =')[1]||''),`helper surface must never export retired mutation ${retired}`);
+  assert(!new RegExp(`async function\\s+${retired}\\b`).test(provisioningEngine),`low-level provisioning engine must not retain retired mutation implementation ${retired}`);
+  assert(!new RegExp(`\\b${retired}\\b`).test(provisioningEngine.split('module.exports =')[1]||''),`low-level provisioning engine must never export retired mutation ${retired}`);
 }
+for(const retired of ['selectServerForPlan','currentEntitlement']){
+  assert(!new RegExp(`async function\\s+${retired}\\b`).test(provisioningEngine),`low-level provisioning engine must not retain canonical ownership helper ${retired}`);
+  assert(!new RegExp(`\\b${retired}\\b`).test(provisioningEngine.split('module.exports =')[1]||''),`low-level provisioning engine must not export canonical ownership helper ${retired}`);
+}
+assert(!provisioningEngine.includes("require('./placement')")&&!provisioningEngine.includes("require('../entitlements/subscription-state')"),'primitive provisioning engine must not regain placement or entitlement dependencies');
 assert(provisioning.includes("function canonicalReconciler() { return require('./resilient-provisioning'); }"),'legacy provisioning imports must route mutations through the resilient multi-lane owner');
 assert(provisioning.includes('canonicalReconciler().reconcileCustomer(customerId)')&&provisioning.includes('canonicalReconciler().reconcileAccount(accountId)'),'customer and account reconciliation must delegate to resilient provisioning');
 assert(provisioning.includes('canonicalReconciler().holdAccess(customerId, reason, actorUserId)')&&provisioning.includes('canonicalReconciler().releaseAccess(customerId, actorUserId)'),'access-hold mutations must delegate to the same canonical owner');
