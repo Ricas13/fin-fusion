@@ -7,6 +7,7 @@ const ui = require('./admin-ui');
 const runtimeSettings = require('./runtime-settings');
 const releaseStatus = require('./release-status');
 const diagnostics = require('./system-diagnostics');
+const operationalMetrics = require('./operational-metrics');
 
 function gate(req, res, next) {
   if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -46,6 +47,31 @@ function systemHealthNotice(system) {
 function healthCard(group) {
   return `<a class="card systemHealthCard systemHealth-${esc(group.kind)}" href="${esc(group.href)}"><div class="systemHealthCardHead"><strong>${esc(group.label)}</strong>${ui.statusBadge(group.kind === 'good' ? 'Healthy' : group.kind === 'bad' ? 'Attention' : 'Review', group.kind)}</div><p>${esc(group.detail)}</p><span class="systemHealthOpen">Review →</span></a>`;
 }
+function metricCard(label, value, detail, kind = '') {
+  return `<div class="card systemReleaseMetric"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(detail)}</small>${kind ? `<span class="pill ${esc(kind)}">${esc(kind === 'good' ? 'Healthy' : kind === 'bad' ? 'Attention' : 'Review')}</span>` : ''}</div>`;
+}
+function operationalSection(system) {
+  const operational = system.operational || {};
+  const pool = operational.databasePool || {};
+  const reconcile = operational.reconciliation || {};
+  const backlog = operational.backlog || {};
+  const poolKind = pool.unavailable ? 'warn' : Number(pool.waiting || 0) > 0 ? 'warn' : 'good';
+  const reconcileKind = reconcile.unavailable ? 'warn' : Number(reconcile.failed || 0) || Number(reconcile.lockTimeouts || 0) ? 'warn' : 'good';
+  const backlogTotal = Number(backlog.paymentEventRetries || 0) + Number(backlog.providerRecovery || 0) + Number(backlog.providerManualReview || 0) + Number(backlog.freeDowngradeRetries || 0) + Number(backlog.provisioningProblems || 0);
+  const backlogKind = backlog.available === false ? 'warn' : backlogTotal > 0 ? 'warn' : 'good';
+  const backlogWarning = backlog.warning ? `<div class="systemSafetyNote"><strong>Metric collection degraded</strong><p>${esc(backlog.warning)}</p></div>` : '';
+  return `<section class="card systemReleaseActions systemOperationalMetrics">
+    ${ui.sectionHeader({ title: 'Operational pressure', description: 'Live process-local reconciliation pressure and durable recovery backlogs. These are canonical counters and queue rows, not sampled logs.' })}
+    <section class="systemReleaseGrid" aria-label="Operational pressure metrics">
+      ${metricCard('Database pool', `${Number(pool.total || 0)}/${Number(pool.max || 0) || '—'}`, `${Number(pool.idle || 0)} idle · ${Number(pool.waiting || 0)} waiting`, poolKind)}
+      ${metricCard('Reconciliation', `${Number(reconcile.active || 0)} active · ${Number(reconcile.queued || 0)} queued`, `limit ${Number(reconcile.limit || 0)} · ${Number(reconcile.failed || 0)} failed · ${Number(reconcile.lockTimeouts || 0)} lock timeout(s)`, reconcileKind)}
+      ${metricCard('Reconcile timing', `${Number(reconcile.averageDurationMs || 0)} ms avg`, `slot ${Number(reconcile.averageSlotWaitMs || 0)} ms · DB lock ${Number(reconcile.averageDbLockWaitMs || 0)} ms avg`, reconcileKind)}
+      ${metricCard('Recovery backlog', `${backlogTotal} item(s)`, `${Number(backlog.paymentEventRetries || 0)} payment · ${Number(backlog.providerRecovery || 0)} provider · ${Number(backlog.freeDowngradeRetries || 0)} Free downgrade`, backlogKind)}
+    </section>
+    <dl class="systemBuildDetails"><div><dt>Provider manual review</dt><dd>${Number(backlog.providerManualReview || 0)}</dd></div><div><dt>Free downgrade due now</dt><dd>${Number(backlog.freeDowngradeDue || 0)}</dd></div><div><dt>Provisioning blocked/failed</dt><dd>${Number(backlog.provisioningProblems || 0)}</dd></div><div><dt>Provisioning running</dt><dd>${Number(backlog.provisioningRunning || 0)}</dd></div></dl>
+    ${backlogWarning}
+  </section>`;
+}
 
 function page(req, system) {
   const status = system.release;
@@ -61,10 +87,11 @@ function page(req, system) {
     <section class="systemHealthGrid" aria-label="System health checks">
       ${system.groups.map(healthCard).join('')}
     </section>
+    ${operationalSection(system)}
     <section class="card systemReleaseActions systemSupportReport">
       ${ui.sectionHeader({ title: 'Support report', description: 'Download an allowlisted diagnostic snapshot for troubleshooting. It contains health states, versions and counts—not environment dumps, credentials, customer data, server URLs or raw operational errors.', actionsHtml: '<a class="button secondary" href="/admin/system/support-report.json" download>Download support report</a>' })}
       <div class="systemSafetyNote"><strong>Review before sharing</strong><p>The report is generated through a deny-on-leak sanitizer and is designed to be shareable with support. Still review any diagnostic file before sending it outside your organisation.</p></div>
-      <dl class="systemSupportContents"><div><dt>Included</dt><dd>Build/version, runtime platform, readiness states, worker heartbeat ages, backup readiness, fleet counts and notification counts.</dd></div><div><dt>Excluded</dt><dd>Secrets, tokens, database URLs, email/IP addresses, customer records, plan/server names, provider identifiers and raw logs.</dd></div></dl>
+      <dl class="systemSupportContents"><div><dt>Included</dt><dd>Build/version, runtime platform, readiness states, worker heartbeat ages, backup readiness, fleet counts, notification counts and sanitized operational pressure counters.</dd></div><div><dt>Excluded</dt><dd>Secrets, tokens, database URLs, email/IP addresses, customer records, plan/server names, provider identifiers and raw logs.</dd></div></dl>
     </section>
     <section class="systemReleaseHero card">
       <div class="systemReleaseLead"><div><span class="uiEyebrow">Running release</span><h2>${esc(version)}</h2><p class="muted">Exact build and upstream status for this CAPTAiNFiN instance.</p></div>${ui.statusBadge(status.label, kindFor(status.state))}</div>
@@ -92,14 +119,21 @@ function supportFilename(now = new Date()) {
   return `captainfin-support-${now.toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-')}.json`;
 }
 
+async function systemWithOperationalMetrics() {
+  const [system, operational] = await Promise.all([
+    diagnostics.collectSystemDiagnostics(),
+    operationalMetrics.collect()
+  ]);
+  return { ...system, operational };
+}
+
 function createAdminSystemRouter() {
   const router = express.Router();
   router.use('/admin/system', gate, noStore);
   router.get('/admin/system', async (req, res, next) => {
     try {
       await runtimeSettings.ensureLoaded();
-      const system = await diagnostics.collectSystemDiagnostics();
-      return res.send(page(req, system));
+      return res.send(page(req, await systemWithOperationalMetrics()));
     } catch (error) { return next(error); }
   });
   router.get('/admin/system/status.json', async (_req, res, next) => {
@@ -110,8 +144,12 @@ function createAdminSystemRouter() {
   });
   router.get('/admin/system/support-report.json', async (_req, res, next) => {
     try {
-      const system = await diagnostics.collectSystemDiagnostics();
-      const report = diagnostics.supportReportFromDiagnostics(system);
+      const system = await systemWithOperationalMetrics();
+      const report = {
+        ...diagnostics.supportReportFromDiagnostics(system),
+        operational: operationalMetrics.supportSnapshot(system.operational)
+      };
+      diagnostics.assertSanitizedReport(report);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${supportFilename()}"`);
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -131,4 +169,4 @@ function createAdminSystemRouter() {
   return router;
 }
 
-module.exports = { createAdminSystemRouter, page, kindFor, supportFilename };
+module.exports = { createAdminSystemRouter, page, kindFor, supportFilename, operationalSection, systemWithOperationalMetrics };
