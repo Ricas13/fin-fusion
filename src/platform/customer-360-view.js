@@ -4,6 +4,7 @@ const v2=require('./customer-360-view-v2');
 const manage=require('./admin-customer-management');
 const accessCards=require('./customer-360-access-cards');
 const accessStatus=require('./customer-360-access-status');
+const serviceTruth=require('./customer-360-service-truth');
 const desiredState=require('../entitlements/customer-access-desired-state');
 
 function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
@@ -47,6 +48,18 @@ function desiredAccessForDetail(detail,entitlement){
   return desiredState.deriveCustomerAccessDesiredState(input);
 }
 
+function serviceTruthPanel(detail){
+  const rows=serviceTruth.resultRows(detail);
+  const rowHtml=rows.map(row=>{
+    const desiredTone=/blocked/i.test(row.desired)?'warn':/enabled|synced/i.test(row.desired)?'good':'';
+    const actualTone=/active|enabled|synced|healthy/i.test(row.actual)?'good':/blocked|failed|disabled|inactive|error/i.test(row.actual)?'bad':'';
+    const when=row.reconciledAt?new Date(row.reconciledAt):null;
+    const whenText=when&&!Number.isNaN(when.getTime())?when.toLocaleString('en-GB'):'No completed reconciliation';
+    return `<tr><td><strong>${escapeHtml(row.service)}</strong><div class="muted">${escapeHtml(row.plan)}</div></td><td><span class="pill ${desiredTone}">${escapeHtml(row.desired)}</span></td><td><span class="pill ${actualTone}">${escapeHtml(row.actual)}</span></td><td>${escapeHtml(row.target)}</td><td>${row.issue?`<span class="pill warn">${escapeHtml(row.issue)}</span>`:'—'}</td><td>${escapeHtml(whenText)}</td></tr>`;
+  }).join('');
+  return `<section class="section customerServiceTruth"><div class="sectionHead"><div><h2>Service reconciliation truth</h2><div class="muted">Desired and observed state by service, derived from the canonical reconciliation snapshot. “No reconciliation snapshot” means the service has not yet produced an observed result—not that access is healthy.</div></div></div><div class="tableWrap"><table class="table"><thead><tr><th>Service / plan</th><th>Desired</th><th>Observed</th><th>Account / server</th><th>Blocker / error</th><th>Last reconciled</th></tr></thead><tbody>${rowHtml}</tbody></table></div></section>`;
+}
+
 function accessTruthPanel(detail){
   const entitlement=detail.primaryEntitlement||activeSubscription(detail)||null;
   const accessIntent=desiredAccessForDetail(detail,entitlement);
@@ -63,7 +76,7 @@ function accessTruthPanel(detail){
   const reconcileDetail=state?.last_error?state.last_error:(state?.last_success_at?`Last success ${new Date(state.last_success_at).toLocaleString('en-GB')}`:(state?.last_attempt_at?`Last attempt ${new Date(state.last_attempt_at).toLocaleString('en-GB')}`:'No completed reconciliation recorded'));
   const statusTone=holds.length||entitlement&&!accessIntent.desiredAnyAccess?'warn':entitlement?'good':'';
   const reconTone=['failed','blocked'].includes(String(state?.status||''))?'bad':String(state?.status||'')==='healthy'?'good':'';
-  return `<section class="section customerAccessTruth"><div class="sectionHead"><div><h2>Access truth</h2><div class="muted">Commercial entitlement, blockers, actual Jellyfin state and the last reconciliation result are shown separately so support can see why access is in its current state.</div></div><a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(detail.customer.id)}?tab=access">Open Access</a></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Commercial state</h2><span class="pill ${entitlement?'good':''}">${escapeHtml(commercialStatus)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Entitlement</div><div class="kvValue">${escapeHtml(planName)}</div></div><div class="kvRow"><div class="kvLabel">Effective access</div><div class="kvValue"><span class="pill ${statusTone}">${escapeHtml(desired)}</span></div></div><div class="kvRow"><div class="kvLabel">Active blockers</div><div class="kvValue">${escapeHtml(holdDetail)}</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Observed state</h2><span class="pill ${enabledAccounts.length?'good':ordinaryAccounts.length?'warn':''}">${escapeHtml(`${enabledAccounts.length}/${ordinaryAccounts.length} enabled`)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Jellyfin</div><div class="kvValue">${escapeHtml(serverDetail)}</div></div><div class="kvRow"><div class="kvLabel">Reconciliation</div><div class="kvValue"><span class="pill ${reconTone}">${escapeHtml(reconcileStatus)}</span></div></div><div class="kvRow"><div class="kvLabel">Last result</div><div class="kvValue">${escapeHtml(reconcileDetail)}</div></div></div></div></section></div></section>`;
+  return `<section class="section customerAccessTruth"><div class="sectionHead"><div><h2>Access truth</h2><div class="muted">Commercial entitlement, blockers, actual Jellyfin state and the last reconciliation result are shown separately so support can see why access is in its current state.</div></div><a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(detail.customer.id)}?tab=access">Open Access</a></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Commercial state</h2><span class="pill ${entitlement?'good':''}">${escapeHtml(commercialStatus)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Entitlement</div><div class="kvValue">${escapeHtml(planName)}</div></div><div class="kvRow"><div class="kvLabel">Effective access</div><div class="kvValue"><span class="pill ${statusTone}">${escapeHtml(desired)}</span></div></div><div class="kvRow"><div class="kvLabel">Active blockers</div><div class="kvValue">${escapeHtml(holdDetail)}</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Observed state</h2><span class="pill ${enabledAccounts.length?'good':ordinaryAccounts.length?'warn':''}">${escapeHtml(`${enabledAccounts.length}/${ordinaryAccounts.length} enabled`)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Jellyfin</div><div class="kvValue">${escapeHtml(serverDetail)}</div></div><div class="kvRow"><div class="kvLabel">Reconciliation</div><div class="kvValue"><span class="pill ${reconTone}">${escapeHtml(reconcileStatus)}</span></div></div><div class="kvRow"><div class="kvLabel">Last result</div><div class="kvValue">${escapeHtml(reconcileDetail)}</div></div></div></div></section></div></section>${serviceTruthPanel(detail)}`;
 }
 
 function body(detail,tab,token,accessDetail,options={}){
@@ -85,4 +98,4 @@ function body(detail,tab,token,accessDetail,options={}){
   return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,desiredAccessForDetail,accessTruthPanel,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};
+module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};
