@@ -56,9 +56,10 @@ function validateMigrationIds(files) {
     return { legacy: legacy.length, timestamped: seen.size };
 }
 
+const frozenCollisionFiles = Object.values(GRANDFATHERED_LEGACY_PREFIX_COLLISIONS).flat();
 const frozenLegacyFixture = [
-    ...Array.from({ length: LEGACY_MIGRATION_COUNT - 3 }, (_, index) => `${String(index + 100).padStart(3, '0')}_legacy_${index}.sql`),
-    ...Object.values(GRANDFATHERED_LEGACY_PREFIX_COLLISIONS).flat()
+    ...Array.from({ length: LEGACY_MIGRATION_COUNT - frozenCollisionFiles.length }, (_, index) => `${String(index + 100).padStart(3, '0')}_legacy_${index}.sql`),
+    ...frozenCollisionFiles
 ];
 
 // Prove the guard rejects both future timestamp collisions and attempts to add
@@ -71,11 +72,10 @@ assert.throws(
     ]),
     /duplicate migration timestamp/
 );
+const alteredLegacyFixture = frozenLegacyFixture.filter(file => file !== '100_legacy_0.sql');
+alteredLegacyFixture.push('012_third_collision.sql');
 assert.throws(
-    () => validateMigrationIds([
-        ...frozenLegacyFixture.slice(0, LEGACY_MIGRATION_COUNT - 1),
-        '012_third_collision.sql'
-    ]),
+    () => validateMigrationIds(alteredLegacyFixture),
     /historical legacy migration prefix collisions changed/
 );
 
