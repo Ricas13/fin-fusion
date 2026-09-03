@@ -21,6 +21,7 @@ function randomPassword(){return crypto.randomBytes(32).toString('base64url');}
 function jellyfinAuthHeader(token){if(/[\r\n]/.test(String(token||'')))throw new Error('Invalid Jellyfin user token');return `MediaBrowser Token="${token}"`;}
 function clientAuthorization(type='jellyfin',userId=''){return registry.mediaProvider.clientAuthorization(type,{userId});}
 function restrictedTokenHeaders(type,token,{jsonBody=false}={}){return registry.mediaProvider.userTokenHeaders(type,token,{jsonBody});}
+function compactError(error){return String(error?.message||error||'Unknown error').replace(/[\r\n\t\u2028\u2029]+/g,' ').slice(0,500);}
 
 async function entitledSubscription(customerId){const addons=await subscriptionState.effectiveAddons(customerId),addon=addons.find(row=>['stremio','bundle'].includes(serviceType(row)));if(addon)return addon;return subscriptionState.effectiveStremioSubscription(customerId);}
 async function explicitSourceCount(subscriptionId,{readyOnly=false}={}){const conditions=readyOnly?`AND src.enabled=TRUE AND src.auth_state='connected' AND idx.status='ready' AND idx.item_count>0`:'',joins=readyOnly?`JOIN stremio_sources src ON src.id=ps.source_id JOIN stremio_source_index_state idx ON idx.source_id=src.id`:'';const r=await query(`SELECT COUNT(*)::int n FROM subscriptions s JOIN plan_stremio_sources ps ON ps.plan_id=s.plan_id AND ps.enabled=TRUE ${joins} WHERE s.id=$1 ${conditions}`,[subscriptionId]);return Number(r.rows[0]?.n||0);}
@@ -35,7 +36,16 @@ async function authenticateRestrictedUser(serverId,username,password){
   if(!response.ok||!body.AccessToken||!body.User?.Id)throw new Error(`Restricted ${providerLabel} authentication failed (${response.status}).`);
   return{accessToken:String(body.AccessToken),userId:String(body.User.Id),mediaServerType:type};
 }
-async function logoutRestrictedToken(server,encryptedToken){if(!encryptedToken)return false;try{const type=registry.mediaProvider.normalizeType(server?.media_server_type),token=decryptWithEnv(encryptedToken,TOKEN_ENV,TOKEN_PREFIX),url=registry.mediaProvider.apiUrl(server.base_url,type,'/Sessions/Logout'),response=await outbound.safeFetch(url,{purpose:`Stremio restricted logout on ${server.name}`,method:'POST',timeoutMs:8000,headers:restrictedTokenHeaders(type,token)});return response.ok||response.status===401||response.status===403;}catch(_error){console.warn('Stremio restricted media-server logout failed.');return false;}}
+async function logoutRestrictedToken(server,encryptedToken){
+  if(!encryptedToken)return false;
+  try{
+    const type=registry.mediaProvider.normalizeType(server?.media_server_type),token=decryptWithEnv(encryptedToken,TOKEN_ENV,TOKEN_PREFIX),url=registry.mediaProvider.apiUrl(server.base_url,type,'/Sessions/Logout'),response=await outbound.safeFetch(url,{purpose:`Stremio restricted logout on ${server.name}`,method:'POST',timeoutMs:8000,headers:restrictedTokenHeaders(type,token)});
+    return response.ok||response.status===401||response.status===403;
+  }catch(error){
+    console.warn('Stremio restricted media-server logout failed.',{serverId:server?.id||null,error:compactError(error)});
+    return false;
+  }
+}
 async function refreshRestrictedAccess(account,server,priorEncryptedToken=null){if(priorEncryptedToken){const loggedOut=await logoutRestrictedToken(server,priorEncryptedToken);if(!loggedOut)throw new Error('Could not verify revocation of the previous restricted Stremio token.');}const password=randomPassword();await registry.request(server.id,`/Users/${account.jellyfin_user_id}/Password`,{method:'POST',body:{Id:account.jellyfin_user_id,NewPw:password}});const auth=await authenticateRestrictedUser(server.id,account.jellyfin_username,password);if(auth.userId!==String(account.jellyfin_user_id))throw new Error('Restricted media-server authentication returned the wrong user identity.');await query(`UPDATE jellyfin_accounts SET password_setup_required=FALSE,updated_at=NOW() WHERE id=$1`,[account.id]);return{encryptedToken:encryptWithEnv(auth.accessToken,TOKEN_ENV,TOKEN_PREFIX),issuedAt:new Date(),mediaServerType:auth.mediaServerType};}
 
 async function managedAccountOwned(accountId){if(!accountId)return false;const r=await query(`SELECT EXISTS(SELECT 1 FROM stremio_managed_accounts WHERE jellyfin_account_id=$1 AND status='active') yes`,[accountId]);return r.rows[0]?.yes===true;}
@@ -51,7 +61,7 @@ async function reconcileSharedForCustomer(customerId,sub){const mapped=await exp
 async function reconcileForCustomer(customerId,entitlement=null,_options={}){const sub=entitlement||await entitledSubscription(customerId);if(!sub||!['stremio','bundle'].includes(serviceType(sub)))return suspend(customerId,'Stremio service is not currently entitled.');const shared=await reconcileSharedForCustomer(customerId,sub);if(shared)return shared;return persistEntitlementRecord(customerId,sub,{sharedSources:false});}
 async function current(customerId){const r=await query(`SELECT e.*,s.plan_id,s.status subscription_status,s.current_period_end,s.service_type_snapshot,p.service_type,p.streams,p.name plan_name,p.code plan_code,p.is_addon FROM stremio_entitlements e JOIN subscriptions s ON s.id=e.subscription_id JOIN plans p ON p.id=s.plan_id WHERE e.customer_id=$1 ORDER BY e.created_at DESC LIMIT 1`,[customerId]);return r.rows[0]||null;}
 async function suspend(customerId,reason='No active Stremio entitlement'){const rows=await query(`SELECT e.id,e.jellyfin_account_id,e.jellyfin_access_token_encrypted,js.id server_id,js.name server_name,js.base_url,js.media_server_type FROM stremio_entitlements e LEFT JOIN jellyfin_servers js ON js.id=e.server_id WHERE e.customer_id=$1`,[customerId]);for(const row of rows.rows){if(row.jellyfin_access_token_encrypted){const retired=await detachLegacyToken(row);if(!retired)throw new Error('Could not verify revocation of legacy Stremio access; suspension will retry.');}await disableLegacyAccountIfUnowned(row.jellyfin_account_id);}await query(`UPDATE stremio_entitlements SET status=CASE WHEN status='revoked' THEN status ELSE 'suspended' END,server_id=NULL,jellyfin_account_id=NULL,jellyfin_access_token_encrypted=NULL,jellyfin_token_issued_at=NULL,last_error=$2,updated_at=NOW() WHERE customer_id=$1`,[customerId,String(reason).slice(0,1000)]);return{active:false,status:'suspended'};}
-async function issueInstallation(customerId,{actorUserId=null}={}){return operationLock.withLock(`install-credential:${customerId}`,async()=>{const recent=await installRecovery.current(customerId).catch(()=>null),recentAt=recent?.updated_at?new Date(recent.updated_at).getTime():0;if(recent?.credential&&Number.isFinite(recentAt)&&Date.now()-recentAt<=INSTALL_CONCURRENCY_WINDOW_MS)return{credential:recent.credential,entitlement:{id:recent.entitlement_id,token_version:recent.token_version,token_hint:recent.token_hint},reused:true};foundation.assertAcquirable({service_type:'stremio'});const sub=await entitledSubscription(customerId);if(!sub)throw new Error('Your current plan or add-on does not include Stremio.');await reconcileForCustomer(customerId,sub);const issued=foundation.issueInstallCredential();const entitlement=await transaction(async client=>{const r=await client.query(`UPDATE stremio_entitlements SET token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW() WHERE subscription_id=$1 RETURNING *`,[sub.subscription_id,issued.hash,issued.hint]);if(!r.rowCount)throw new Error('Stremio entitlement could not be activated.');await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client});return r.rows[0];});return{credential:issued.token,entitlement,reused:false};});}
+async function issueInstallation(customerId,{actorUserId=null}={}){return operationLock.withLock(`install-credential:${customerId}`,async()=>{const recent=await installRecovery.current(customerId),recentAt=recent?.updated_at?new Date(recent.updated_at).getTime():0;if(recent?.credential&&Number.isFinite(recentAt)&&Date.now()-recentAt<=INSTALL_CONCURRENCY_WINDOW_MS)return{credential:recent.credential,entitlement:{id:recent.entitlement_id,token_version:recent.token_version,token_hint:recent.token_hint},reused:true};foundation.assertAcquirable({service_type:'stremio'});const sub=await entitledSubscription(customerId);if(!sub)throw new Error('Your current plan or add-on does not include Stremio.');await reconcileForCustomer(customerId,sub);const issued=foundation.issueInstallCredential();const entitlement=await transaction(async client=>{const r=await client.query(`UPDATE stremio_entitlements SET token_hash=$2,token_hint=$3,token_version=token_version+1,status='active',install_issued_at=NOW(),revoked_at=NULL,last_error=NULL,updated_at=NOW() WHERE subscription_id=$1 RETURNING *`,[sub.subscription_id,issued.hash,issued.hint]);if(!r.rowCount)throw new Error('Stremio entitlement could not be activated.');await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client});return r.rows[0];});return{credential:issued.token,entitlement,reused:false};});}
 async function revoke(customerId){return operationLock.withLock(`install-credential:${customerId}`,async()=>{
   const rows=await transaction(async client=>{
     const selected=await client.query(`SELECT e.id,e.jellyfin_account_id,e.jellyfin_access_token_encrypted,js.id server_id,js.name server_name,js.base_url,js.media_server_type FROM stremio_entitlements e LEFT JOIN jellyfin_servers js ON js.id=e.server_id WHERE e.customer_id=$1 AND e.status<>'revoked' FOR UPDATE OF e`,[customerId]);
@@ -62,10 +72,23 @@ async function revoke(customerId){return operationLock.withLock(`install-credent
     try{
       if(row.jellyfin_access_token_encrypted){const retired=await detachLegacyToken(row);if(!retired)throw new Error('Could not verify revocation of legacy Stremio access; revoke will retry without discarding cleanup identity.');}
       await disableLegacyAccountIfUnowned(row.jellyfin_account_id);
-    }catch(error){await query(`UPDATE stremio_entitlements SET last_error=$2,updated_at=NOW() WHERE id=$1`,[row.id,String(error?.message||error).slice(0,1000)]).catch(()=>{});throw error;}
+    }catch(error){
+      try{
+        await query(`UPDATE stremio_entitlements SET last_error=$2,updated_at=NOW() WHERE id=$1`,[row.id,compactError(error)]);
+      }catch(writeError){
+        console.warn('Unable to persist Stremio revocation failure detail.',{customerId,entitlementId:row.id,error:compactError(writeError)});
+      }
+      throw error;
+    }
   }
   if(rows.length)await transaction(async client=>{await client.query(`UPDATE stremio_entitlements SET status='revoked',server_id=NULL,jellyfin_account_id=NULL,jellyfin_access_token_encrypted=NULL,jellyfin_token_issued_at=NULL,revoked_at=NOW(),last_error=NULL,updated_at=NOW() WHERE customer_id=$1 AND status<>'revoked'`,[customerId]);});
-  await installRecovery.clear(customerId).catch(()=>{});
+  try{
+    await installRecovery.clear(customerId);
+  }catch(error){
+    // The install token itself is already revoked above. A stale encrypted
+    // recovery copy is unusable, but failure to remove it should be visible.
+    console.warn('Unable to clear revoked Stremio install credential recovery state.',{customerId,error:compactError(error)});
+  }
   return rows.length;
 });}
 async function findByInstallToken(raw){const token=String(raw||'');if(token.length<32)return null;const hash=foundation.hashInstallCredential(token),r=await query(`WITH effective AS (

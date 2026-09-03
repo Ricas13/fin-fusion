@@ -80,4 +80,12 @@ assert.strictEqual(minimal.metadata.audio,null,'Unknown audio must not be invent
 const unknown=foundation.streamDisplayFromFilename('Some.Movie.2025.strm');
 assert.strictEqual(unknown.name,'[CF ⚡] Stream');
 
+const entitlementSource=fs.readFileSync(path.resolve(__dirname,'../src/stremio/entitlements.js'),'utf8');
+const recoverySource=fs.readFileSync(path.resolve(__dirname,'../src/stremio/install-credential-recovery.js'),'utf8');
+assert(!entitlementSource.includes('installRecovery.current(customerId).catch(()=>null)'),'install issuance must fail when recovery state cannot be read instead of silently rotating credentials against unknown state');
+assert(!entitlementSource.includes('installRecovery.clear(customerId).catch(()=>{})'),'revocation recovery cleanup failures must be observable');
+assert(entitlementSource.includes('Unable to persist Stremio revocation failure detail.')&&entitlementSource.includes('Unable to clear revoked Stremio install credential recovery state.'),'Stremio revocation best-effort writes must log their failures without masking the primary cleanup result');
+assert(entitlementSource.includes('Stremio restricted media-server logout failed.')&&entitlementSource.includes('serverId:server?.id||null'),'restricted token logout failures must carry bounded operational context without logging the token');
+assert(recoverySource.includes('Stremio install credential recovery decrypt failed.'),'unreadable encrypted recovery state must be observable before a replacement credential is issued');
+
 console.log('stremio foundation smoke: ok');

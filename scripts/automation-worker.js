@@ -6,6 +6,7 @@ const pkg = require('../package.json');
 const { query, getPool } = require('../src/db');
 const { automationConnectionBudget } = require('../src/security/database-connection-budget');
 const { withMaintenanceSharedLock } = require('../src/security/maintenance-lock');
+const reconciliationLock = require('../src/jellyfin/reconciliation-lock');
 const jobHealth = require('../src/automation/job-health');
 const jobRegistry = require('../src/automation/jobs');
 const providerSettings = require('../src/payments/provider-settings');
@@ -58,6 +59,7 @@ async function heartbeat({ draining = false } = {}) {
             totalReserved: CONNECTION_BUDGET.totalReserved,
             spare: CONNECTION_BUDGET.spare
         },
+        reconciliation: reconciliationLock.metricsSnapshot(),
         hostname: process.env.HOSTNAME || null,
         containerId: process.env.CONTAINER_ID || null,
         containerName: process.env.CONTAINER_NAME || null
