@@ -62,7 +62,7 @@ assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.inc
 assert(/async function notifyExpiringSubscriptions\(\)\s*\{\s*return subscriptionExpiry\.notifyExpiringSubscriptions\(\);\s*\}/.test(provisioning), 'subscription-expiry notification behavior must remain behind the provisioning facade');
 assert(/async function expireSubscriptionsAndReconcile\(\)\s*\{\s*return subscriptionExpiry\.expireAndReconcile\(\{\s*reconcileCustomer\b/.test(resilientProvisioning), 'resilient provisioning must own lane-aware expiry reconciliation');
 assert(jobs.includes('const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require(\'../jellyfin/resilient-provisioning\')'), 'automation must consume expiry behavior through the canonical multi-lane provisioning owner');
-assert(jobs.includes('const warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
+assert(jobs.includes('warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
 assert(jobs.indexOf('notifyExpiringSubscriptions()') < jobs.indexOf('expireSubscriptionsAndReconcile()'), 'warnings must be checked before due subscriptions are expired');
 
 // Transactional rendering stays code-owned. The catalogue must preserve richer
