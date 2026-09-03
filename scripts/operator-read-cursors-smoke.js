@@ -13,6 +13,7 @@ const tickets=read('src/support/tickets.js');
 const adminOrders=read('src/platform/admin-orders.js');
 const client=read('public/js/operator-business-indicators.js');
 const experience=read('public/js/operator-experience.js');
+const automationJobs=read('src/automation/jobs.js');
 
 assert(baseline.includes('CREATE TABLE public.admin_nav_read_state'),'canonical admin nav read-state table missing from baseline');
 assert(baseline.includes('last_seen_at timestamp with time zone'),'canonical admin nav read-state timestamp missing');
@@ -58,5 +59,8 @@ assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(clie
 assert(!/\blocalStorage\s*\.(?:getItem|setItem|removeItem|clear)\s*\(/.test(experience),'legacy operator experience must not maintain a second local unread cursor');
 assert(!experience.includes("fetch('/admin/api/operator-state/unread'"),'legacy operator experience must not independently fetch unread counts');
 assert(experience.includes('operator-business-indicators.js'),'legacy helper must document the canonical unread owner to prevent drift');
+assert(automationJobs.includes("const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioning');"),'Entitlements must import reconciliation from resilient provisioning');
+assert(automationJobs.includes("const{notifyExpiringSubscriptions}=require('../entitlements/subscription-expiry');"),'Entitlements must import expiry warnings from their canonical subscription-expiry owner');
+assert(!automationJobs.includes('expireSubscriptionsAndReconcile,notifyExpiringSubscriptions'),'Entitlements must not rely on the removed resilient-provisioning warning re-export');
 
 console.log('operator read cursors smoke: ok');
