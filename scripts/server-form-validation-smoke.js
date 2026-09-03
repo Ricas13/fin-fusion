@@ -81,5 +81,6 @@ if (!legacy.authenticated || legacy.mode !== 'legacy') throw new Error('Explicit
 const webhookRoute = fs.readFileSync(path.join(__dirname, '..', 'src/platform/webhooks.js'), 'utf8');
 if (!webhookRoute.includes('verifyServerSecret') || !webhookRoute.includes('JELLYFIN_WEBHOOK_ALLOW_LEGACY_SECRET')) throw new Error('Jellyfin webhook route must verify a server-scoped token and gate legacy compatibility explicitly');
 if (webhookRoute.includes("sameSecret(req.get('x-fin-fusion-webhook-secret'),secret)")) throw new Error('Jellyfin webhook route must not authenticate every server with the raw shared secret');
+if (!webhookRoute.includes("require('express-rate-limit')") || !webhookRoute.includes('jellyfinWebhookRateLimit,requestMaintenanceGuard')) throw new Error('Authenticated Jellyfin playback webhooks must be rate-limited before the handler runs');
 
 console.log('Jellyfin/Emby server form validation and playback webhook isolation smoke: ok');
