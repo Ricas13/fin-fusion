@@ -21,61 +21,61 @@
 .planAvailability{animation:storePillIn .34s cubic-bezier(.2,.8,.2,1) both}
 .liveDot{animation:storePulse 1.6s cubic-bezier(.2,.8,.2,1) infinite}
 
-.paymentMethodsSection{padding:0 0 32px}
-.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr);gap:18px;padding:18px;border:1px solid rgba(130,168,216,.19);border-radius:24px;background:linear-gradient(145deg,rgba(5,12,22,.92),rgba(7,12,22,.78));box-shadow:0 22px 60px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.018);backdrop-filter:blur(16px)}
+.paymentMethodsSection{padding:0 0 26px}
+.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr);gap:14px;padding:12px;border:1px solid rgba(76,201,240,.28);border-radius:20px;background:linear-gradient(115deg,rgba(19,52,66,.72),rgba(15,23,32,.96) 58%,rgba(11,17,24,.98));box-shadow:0 24px 80px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.035);backdrop-filter:blur(14px)}
 .paymentMethodsShowcase.paymentsOnly{grid-template-columns:1fr}
-.paymentMethodsCard,.affiliatePromoCard{position:relative;overflow:hidden;min-height:330px;border-radius:21px}
-.paymentMethodsCard{display:flex;flex-direction:column;justify-content:space-between;gap:28px;padding:34px 32px 30px;border:1px solid rgba(38,146,255,.52);background:radial-gradient(circle at 5% 5%,rgba(26,129,213,.14),transparent 32%),linear-gradient(135deg,rgba(4,18,35,.97),rgba(5,15,29,.92));box-shadow:inset 0 0 48px rgba(16,114,200,.055)}
-.paymentMethodsCard:after{content:"";position:absolute;width:310px;height:310px;right:-98px;top:-36px;border:1px solid rgba(45,125,225,.09);border-radius:50%;box-shadow:0 0 0 24px rgba(45,125,225,.025),0 0 0 50px rgba(45,125,225,.02),0 0 0 76px rgba(45,125,225,.015);pointer-events:none}
-.paymentMethodsHeading{display:flex;align-items:flex-start;gap:26px;position:relative;z-index:1}
-.paymentSecurityMark{display:grid;place-items:center;flex:0 0 86px;width:86px;height:86px;border-radius:50%;color:#5cdbff;background:radial-gradient(circle,rgba(42,170,255,.17),rgba(5,15,30,.55) 67%);border:1px solid rgba(52,164,255,.28);box-shadow:0 0 35px rgba(30,142,255,.14)}
-.paymentSecurityMark svg{width:49px;height:49px;filter:drop-shadow(0 0 9px rgba(65,207,255,.42))}
-.paymentMethodsEyebrow,.affiliatePromoEyebrow{display:flex;align-items:center;gap:8px;font-size:.72rem;line-height:1;letter-spacing:.17em;text-transform:uppercase;color:#63d8ff}
-.paymentMethodsHeading h2{margin:16px 0 0;font-size:clamp(1.8rem,3vw,2.75rem);line-height:1.06;letter-spacing:-.045em;color:#f4f8ff}
-.paymentMethodsHeading h2 em{font-style:normal;color:#3ac8f3;text-shadow:0 0 24px rgba(58,200,243,.18)}
-.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.paymentMethod{display:flex;align-items:center;gap:13px;min-width:0;padding:16px 15px;border:1px solid rgba(119,161,209,.18);border-radius:15px;background:linear-gradient(145deg,rgba(11,24,41,.82),rgba(7,16,29,.72));box-shadow:inset 0 1px rgba(255,255,255,.018)}
-.paymentMethodGlyph{display:grid;place-items:center;flex:0 0 52px;width:52px;height:52px;border-radius:13px;font-weight:900}
-.cardGlyph{position:relative;border:1px solid rgba(21,211,240,.48);background:rgba(8,134,163,.12)}
-.cardGlyph:before{content:"";width:27px;height:18px;border:2px solid #24d6ef;border-radius:3px;box-shadow:0 0 12px rgba(36,214,239,.2)}
-.cardGlyph:after{content:"";position:absolute;width:17px;height:2px;left:17px;top:27px;background:#24d6ef;box-shadow:0 0 7px rgba(36,214,239,.45)}
+.paymentMethodsCard,.affiliatePromoCard{position:relative;overflow:hidden;min-height:240px;border-radius:16px}
+.paymentMethodsCard{display:flex;flex-direction:column;justify-content:space-between;gap:16px;padding:22px;border:1px solid rgba(76,201,240,.28);background:radial-gradient(circle at 4% 5%,rgba(76,201,240,.12),transparent 31%),linear-gradient(115deg,rgba(18,45,57,.68),rgba(15,23,32,.92) 58%,rgba(11,17,24,.95));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.paymentMethodsCard:after{content:"";position:absolute;width:235px;height:235px;right:-88px;top:-65px;border:1px solid rgba(76,201,240,.07);border-radius:50%;box-shadow:0 0 0 22px rgba(76,201,240,.018),0 0 0 44px rgba(76,201,240,.014),0 0 0 66px rgba(76,201,240,.01);pointer-events:none}
+.paymentMethodsHeading{display:flex;align-items:flex-start;gap:16px;position:relative;z-index:1}
+.paymentSecurityMark{display:grid;place-items:center;flex:0 0 62px;width:62px;height:62px;border-radius:50%;color:#78dcf8;background:radial-gradient(circle,rgba(76,201,240,.13),rgba(11,17,24,.55) 69%);border:1px solid rgba(76,201,240,.24);box-shadow:0 0 28px rgba(76,201,240,.1)}
+.paymentSecurityMark svg{width:36px;height:36px;filter:drop-shadow(0 0 8px rgba(76,201,240,.34))}
+.paymentMethodsEyebrow,.affiliatePromoEyebrow{display:flex;align-items:center;gap:8px;font-size:.68rem;line-height:1;letter-spacing:.15em;text-transform:uppercase;color:#78dcf8}
+.paymentMethodsHeading h2{margin:10px 0 0;font-size:clamp(1.6rem,2.5vw,2.15rem);line-height:1.04;letter-spacing:-.04em;color:#f4f8ff}
+.paymentMethodsHeading h2 em{font-style:normal;color:#40cbef;text-shadow:0 0 20px rgba(64,203,239,.14)}
+.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.paymentMethod{display:flex;align-items:center;gap:10px;min-width:0;padding:11px 10px;border:1px solid rgba(119,161,209,.16);border-radius:12px;background:linear-gradient(145deg,rgba(11,24,41,.65),rgba(7,16,29,.58));box-shadow:inset 0 1px rgba(255,255,255,.015)}
+.paymentMethodGlyph{display:grid;place-items:center;flex:0 0 42px;width:42px;height:42px;border-radius:10px;font-weight:900}
+.cardGlyph{position:relative;border:1px solid rgba(21,211,240,.42);background:rgba(8,134,163,.1)}
+.cardGlyph:before{content:"";width:23px;height:15px;border:2px solid #24d6ef;border-radius:3px;box-shadow:0 0 10px rgba(36,214,239,.18)}
+.cardGlyph:after{content:"";position:absolute;width:14px;height:2px;left:14px;top:23px;background:#24d6ef;box-shadow:0 0 6px rgba(36,214,239,.4)}
 .cardGlyph i{display:none}
-.paypalGlyph{color:#77a9ff;font-size:1.7rem;border:1px solid rgba(52,104,255,.45);background:linear-gradient(145deg,rgba(20,61,135,.22),rgba(8,25,62,.36));text-shadow:0 0 13px rgba(65,111,255,.45)}
-.cryptoGlyph{color:#ffcb63;font-size:2rem;border:1px solid rgba(224,157,31,.45);background:rgba(131,78,8,.18);text-shadow:0 0 13px rgba(255,187,57,.34)}
-.paymentMethodCopy{display:flex;min-width:0;flex-direction:column;gap:5px}.paymentMethod strong{font-size:.88rem;color:#f3f7ff}.paymentMethod small{font-size:.72rem;line-height:1.35;color:#9dafc5}
+.paypalGlyph{color:#77a9ff;font-size:1.45rem;border:1px solid rgba(52,104,255,.38);background:linear-gradient(145deg,rgba(20,61,135,.18),rgba(8,25,62,.28));text-shadow:0 0 11px rgba(65,111,255,.35)}
+.cryptoGlyph{color:#ffcb63;font-size:1.65rem;border:1px solid rgba(224,157,31,.4);background:rgba(131,78,8,.15);text-shadow:0 0 11px rgba(255,187,57,.28)}
+.paymentMethodCopy{display:flex;min-width:0;flex-direction:column;gap:3px}.paymentMethod strong{font-size:.8rem;color:#f3f7ff}.paymentMethod small{font-size:.66rem;line-height:1.28;color:#9dafc5}
 
-.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(175px,.72fr);align-items:center;gap:8px;padding:34px 28px 30px 34px;border:1px solid rgba(95,87,255,.58);background:radial-gradient(circle at 91% 20%,rgba(53,65,255,.18),transparent 34%),linear-gradient(135deg,rgba(8,14,37,.98),rgba(8,12,33,.94));box-shadow:inset 0 0 60px rgba(65,71,255,.065)}
-.affiliatePromoCard:before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 50%,rgba(46,87,255,.035));pointer-events:none}
+.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr);align-items:center;gap:8px;padding:22px;border:1px solid rgba(76,201,240,.28);background:radial-gradient(circle at 90% 18%,rgba(76,201,240,.12),transparent 33%),linear-gradient(115deg,rgba(18,45,57,.66),rgba(15,23,32,.92) 58%,rgba(11,17,24,.95));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.affiliatePromoCard:before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 54%,rgba(76,201,240,.024));pointer-events:none}
 .affiliatePromoContent{position:relative;z-index:2;display:flex;align-items:flex-start;flex-direction:column;min-width:0}
-.affiliatePromoStar{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;border:1px solid rgba(68,126,255,.3);color:#60cfff;font-size:1rem;background:rgba(15,49,111,.18);letter-spacing:0}
-.affiliatePromoCard h3{margin:30px 0 14px;font-size:clamp(1.85rem,2.9vw,2.65rem);line-height:1.03;letter-spacing:-.045em;color:#f4f8ff}
+.affiliatePromoStar{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;border:1px solid rgba(76,201,240,.25);color:#78dcf8;font-size:.9rem;background:rgba(18,62,79,.18);letter-spacing:0}
+.affiliatePromoCard h3{margin:16px 0 9px;font-size:clamp(1.55rem,2.4vw,2.05rem);line-height:1.02;letter-spacing:-.04em;color:#f4f8ff}
 .affiliatePromoCard h3::first-line{color:#f4f8ff}
-.affiliatePromoCard p{max-width:430px;margin:0;font-size:.9rem;line-height:1.6;color:#a9bad0}
-.affiliatePromoAction{display:inline-flex;align-items:center;justify-content:center;gap:12px;margin-top:28px;padding:13px 20px;min-width:172px;border-radius:11px;border:1px solid rgba(94,217,255,.55);background:linear-gradient(135deg,#2359e7,#24bce9);box-shadow:0 8px 25px rgba(29,119,242,.24),inset 0 1px rgba(255,255,255,.18);color:#fff;text-decoration:none;font-size:.86rem;font-weight:850;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}
-.affiliatePromoAction:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 11px 30px rgba(29,119,242,.3),inset 0 1px rgba(255,255,255,.2)}
+.affiliatePromoCard p{max-width:390px;margin:0;font-size:.8rem;line-height:1.48;color:#aeb9c5}
+.affiliatePromoAction{display:inline-flex;align-items:center;justify-content:center;gap:10px;margin-top:16px;padding:10px 16px;min-width:148px;border-radius:10px;border:1px solid rgba(76,201,240,.44);background:linear-gradient(135deg,rgba(31,113,154,.92),rgba(39,186,223,.92));box-shadow:0 7px 20px rgba(19,107,145,.18),inset 0 1px rgba(255,255,255,.14);color:#fff;text-decoration:none;font-size:.78rem;font-weight:850;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}
+.affiliatePromoAction:hover{transform:translateY(-1px);filter:brightness(1.07);box-shadow:0 9px 24px rgba(19,107,145,.24),inset 0 1px rgba(255,255,255,.16)}
 .affiliateArtwork{position:relative;z-index:1;display:grid;place-items:center;min-width:0;align-self:stretch}
-.affiliateArtwork:before{content:"";position:absolute;width:190px;height:190px;border-radius:50%;background:radial-gradient(circle,rgba(42,108,255,.18),transparent 69%);filter:blur(2px)}
-.affiliateArtwork svg{position:relative;width:min(100%,250px);height:auto;overflow:visible;filter:drop-shadow(0 20px 38px rgba(18,90,255,.16))}
+.affiliateArtwork:before{content:"";position:absolute;width:145px;height:145px;border-radius:50%;background:radial-gradient(circle,rgba(76,201,240,.14),transparent 69%);filter:blur(2px)}
+.affiliateArtwork svg{position:relative;width:min(100%,165px);height:auto;overflow:visible;filter:drop-shadow(0 16px 28px rgba(30,132,175,.13))}
 
 @media(max-width:1050px){
   .paymentMethodsShowcase{grid-template-columns:1fr}
   .paymentMethodsCard,.affiliatePromoCard{min-height:auto}
-  .affiliatePromoCard{grid-template-columns:minmax(0,1fr) 210px}
+  .affiliatePromoCard{grid-template-columns:minmax(0,1fr) 165px}
 }
 @media(max-width:720px){
-  .paymentMethodsShowcase{padding:11px;border-radius:18px;gap:11px}
-  .paymentMethodsCard,.affiliatePromoCard{border-radius:16px;padding:24px 20px}
-  .paymentMethodsHeading{gap:16px}
-  .paymentSecurityMark{flex-basis:58px;width:58px;height:58px}.paymentSecurityMark svg{width:34px;height:34px}
-  .paymentMethodsHeading h2{margin-top:12px;font-size:1.85rem}
+  .paymentMethodsShowcase{padding:9px;border-radius:16px;gap:9px}
+  .paymentMethodsCard,.affiliatePromoCard{border-radius:14px;padding:19px 17px}
+  .paymentMethodsHeading{gap:13px}
+  .paymentSecurityMark{flex-basis:52px;width:52px;height:52px}.paymentSecurityMark svg{width:30px;height:30px}
+  .paymentMethodsHeading h2{margin-top:9px;font-size:1.65rem}
   .paymentMethodsList{grid-template-columns:1fr}
-  .paymentMethod{padding:13px}
+  .paymentMethod{padding:11px}
   .affiliatePromoCard{grid-template-columns:1fr}
-  .affiliateArtwork{position:absolute;right:-24px;bottom:-26px;width:190px;opacity:.35;pointer-events:none}
-  .affiliatePromoContent{max-width:78%}
-  .affiliatePromoCard h3{margin-top:20px;font-size:1.85rem}.affiliatePromoCard p{font-size:.82rem}.affiliatePromoAction{margin-top:22px}
+  .affiliateArtwork{position:absolute;right:-20px;bottom:-24px;width:150px;opacity:.3;pointer-events:none}
+  .affiliatePromoContent{max-width:80%}
+  .affiliatePromoCard h3{margin-top:14px;font-size:1.65rem}.affiliatePromoCard p{font-size:.76rem}.affiliatePromoAction{margin-top:15px}
 }
-@media(max-width:470px){.affiliatePromoContent{max-width:100%}.affiliateArtwork{display:none}.paymentMethodsHeading{align-items:center}.paymentMethodsHeading h2{font-size:1.65rem}}
+@media(max-width:470px){.affiliatePromoContent{max-width:100%}.affiliateArtwork{display:none}.paymentMethodsHeading{align-items:center}.paymentMethodsHeading h2{font-size:1.5rem}}
 
 @keyframes storeRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes storePillIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
