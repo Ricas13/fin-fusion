@@ -54,6 +54,9 @@ jobs:
       - name: Production web database role guard
         run: node scripts/web-database-role-smoke.js
 
+      - name: Authenticated mutation CSRF boundary
+        run: node scripts/authenticated-csrf-boundary-smoke.js
+
       - name: Generate release evidence
         run: |
           mkdir -p test-results/release-evidence
