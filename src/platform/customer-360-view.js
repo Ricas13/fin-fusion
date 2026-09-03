@@ -4,6 +4,7 @@ const v2=require('./customer-360-view-v2');
 const manage=require('./admin-customer-management');
 const accessCards=require('./customer-360-access-cards');
 const accessStatus=require('./customer-360-access-status');
+const desiredState=require('../entitlements/customer-access-desired-state');
 
 function serviceType(detail){return String(detail?.primaryEntitlement?.service_type_snapshot||detail?.primaryEntitlement?.service_type||detail?.subscriptions?.[0]?.service_type||'jellyfin');}
 function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal')};}
@@ -36,20 +37,31 @@ function stripLegacyReconcileForms(html,customerId){
   return String(html||'').replace(new RegExp(`<form class="plainForm" method="post" action="${escaped}"[^>]*>[\\s\\S]*?<\\/form>`,'g'),'');
 }
 
+function desiredAccessForDetail(detail,entitlement){
+  const type=String(entitlement?.service_type_snapshot||entitlement?.service_type||serviceType(detail)||'jellyfin').toLowerCase();
+  const input={holds:Array.isArray(detail.activeHolds)?detail.activeHolds:[]};
+  if(type==='stremio')input.stremioEntitlement=entitlement;
+  else if(type==='emby')input.embyEntitlement=entitlement;
+  else if(entitlement?.is_free_tier)input.freeEntitlement=entitlement;
+  else input.effectiveJellyfin=entitlement;
+  return desiredState.deriveCustomerAccessDesiredState(input);
+}
+
 function accessTruthPanel(detail){
   const entitlement=detail.primaryEntitlement||activeSubscription(detail)||null;
-  const holds=Array.isArray(detail.activeHolds)?detail.activeHolds:[];
+  const accessIntent=desiredAccessForDetail(detail,entitlement);
+  const holds=accessIntent.blockers;
   const ordinaryAccounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
   const enabledAccounts=ordinaryAccounts.filter(account=>!account.disabled);
   const state=detail.provisioningState||null;
   const planName=entitlement?.contract_plan_name||entitlement?.plan_name||entitlement?.name||entitlement?.plan_name_snapshot||entitlement?.contract_plan_code||entitlement?.plan_code||'No current entitlement';
   const commercialStatus=entitlement?String(entitlement.status||entitlement.subscription_status||'effective'):'none';
-  const desired=entitlement?(holds.length?`Blocked by ${holds.length} active hold${holds.length===1?'':'s'}`:'Entitled / no active holds'):'No current entitlement';
-  const holdDetail=holds.length?holds.map(hold=>hold.hold_type||hold.type||'hold').join(', '):'None';
+  const desired=!entitlement?'No current entitlement':holds.length?`Blocked by ${holds.length} active hold${holds.length===1?'':'s'}`:accessIntent.desiredAnyAccess?'Entitled / no active holds':'Entitlement currently blocked';
+  const holdDetail=holds.length?holds.map(hold=>hold.type||'hold').join(', '):'None';
   const serverDetail=enabledAccounts.length?enabledAccounts.map(account=>account.server_name||account.jellyfin_username||'Jellyfin').join(', '):ordinaryAccounts.length?'All ordinary Jellyfin accounts disabled':'No ordinary Jellyfin account';
   const reconcileStatus=state?.status||'No reconciliation state';
   const reconcileDetail=state?.last_error?state.last_error:(state?.last_success_at?`Last success ${new Date(state.last_success_at).toLocaleString('en-GB')}`:(state?.last_attempt_at?`Last attempt ${new Date(state.last_attempt_at).toLocaleString('en-GB')}`:'No completed reconciliation recorded'));
-  const statusTone=holds.length?'warn':entitlement?'good':'';
+  const statusTone=holds.length||entitlement&&!accessIntent.desiredAnyAccess?'warn':entitlement?'good':'';
   const reconTone=['failed','blocked'].includes(String(state?.status||''))?'bad':String(state?.status||'')==='healthy'?'good':'';
   return `<section class="section customerAccessTruth"><div class="sectionHead"><div><h2>Access truth</h2><div class="muted">Commercial entitlement, blockers, actual Jellyfin state and the last reconciliation result are shown separately so support can see why access is in its current state.</div></div><a class="button secondary btn-sm" href="/admin/users/${encodeURIComponent(detail.customer.id)}?tab=access">Open Access</a></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Commercial state</h2><span class="pill ${entitlement?'good':''}">${escapeHtml(commercialStatus)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Entitlement</div><div class="kvValue">${escapeHtml(planName)}</div></div><div class="kvRow"><div class="kvLabel">Effective access</div><div class="kvValue"><span class="pill ${statusTone}">${escapeHtml(desired)}</span></div></div><div class="kvRow"><div class="kvLabel">Active blockers</div><div class="kvValue">${escapeHtml(holdDetail)}</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Observed state</h2><span class="pill ${enabledAccounts.length?'good':ordinaryAccounts.length?'warn':''}">${escapeHtml(`${enabledAccounts.length}/${ordinaryAccounts.length} enabled`)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Jellyfin</div><div class="kvValue">${escapeHtml(serverDetail)}</div></div><div class="kvRow"><div class="kvLabel">Reconciliation</div><div class="kvValue"><span class="pill ${reconTone}">${escapeHtml(reconcileStatus)}</span></div></div><div class="kvRow"><div class="kvLabel">Last result</div><div class="kvValue">${escapeHtml(reconcileDetail)}</div></div></div></div></section></div></section>`;
 }
@@ -73,4 +85,4 @@ function body(detail,tab,token,accessDetail,options={}){
   return type==='bundle'?jellyfin+stremioInstallSection(safe,token,options):jellyfin;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,accessTruthPanel,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};
+module.exports={...v2,body,serviceType,customerFacingDetail,jellyfinPasswordSupport,activeSubscription,desiredAccessForDetail,accessTruthPanel,accessWorkspaceSection,manualServerAssignmentForm,assignmentCapacityLabel,reenableJellyfinForm,stripLegacyReconcileForms};
