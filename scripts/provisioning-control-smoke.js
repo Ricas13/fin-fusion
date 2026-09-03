@@ -74,6 +74,9 @@ assert(reconciliationLock.includes('Do not coalesce concurrent calls.')&&reconci
 assert(reconciliationLock.includes("CUSTOMER_RECONCILIATION_LOCK_TIMEOUT"),'reconciliation lock contention must fail with an explicit retryable error');
 assert(reconciliationLock.includes('RECONCILIATION_MAX_CONCURRENCY')&&reconciliationLock.includes('acquireProcessSlot')&&reconciliationLock.includes('releaseProcessSlot'),'reconciliation must bound dedicated PostgreSQL lock connections per process');
 assert(reconciliationLock.includes('concurrencySnapshot'),'reconciliation connection pressure must be observable');
+assert(reconciliationLock.includes('metricsSnapshot')&&reconciliationLock.includes('totalDurationMs')&&reconciliationLock.includes('totalProcessSlotWaitMs')&&reconciliationLock.includes('totalDatabaseLockWaitMs'),'reconciliation diagnostics must expose aggregate duration and queue/lock wait pressure');
+assert(reconciliationLock.includes('lockTimeouts')&&reconciliationLock.includes('cleanupFailures')&&reconciliationLock.includes('lastErrorCode'),'reconciliation diagnostics must retain failure, timeout and cleanup health signals');
+assert(reconciliationLock.includes('Customer reconciliation database connection cleanup failed.')&&!reconciliationLock.includes('client.end().catch(() => {})'),'dedicated reconciliation connection cleanup failures must be observable rather than silently discarded');
 assert(/async function reconcileCustomer\(customerId\)\s*\{[\s\S]{0,160}withCustomerReconciliationLock/.test(resilientProvisioning),'resilient multi-lane reconciliation must serialize per customer');
 assert(provisioningFacade.includes("require('./provisioning-helpers')"),'legacy provisioning imports must use the dependency-safe helper surface');
 assert(provisioningHelpers.includes("require('./provisioning-engine')"),'helper surface must be the only low-level provisioning engine owner');
