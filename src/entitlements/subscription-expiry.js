@@ -189,7 +189,7 @@ async function expireDueSubscriptions({ syncRecurring = null } = {}) {
     });
 }
 
-async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onReconcileError = null, syncRecurring = null, detail = false } = {}) {
+async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onAutoDowngradeError = null, onReconcileError = null, syncRecurring = null, detail = false } = {}) {
     if (typeof reconcileCustomer !== 'function') throw new Error('A subscription-expiry reconcile callback is required.');
     const verifyRecurring = typeof syncRecurring === 'function'
         ? syncRecurring
@@ -199,7 +199,15 @@ async function expireAndReconcile({ reconcileCustomer, autoDowngrade = null, onR
     for (const row of expired) {
         const customerId = row.customer_id;
         let downgraded = null;
-        if (row.had_paid_expiry && typeof autoDowngrade === 'function') downgraded = await autoDowngrade(customerId);
+        if (row.had_paid_expiry && typeof autoDowngrade === 'function') {
+            try {
+                downgraded = await autoDowngrade(customerId, row);
+            } catch (error) {
+                failed += 1;
+                if (typeof onAutoDowngradeError === 'function') onAutoDowngradeError(customerId, error);
+                else throw error;
+            }
+        }
         if (downgraded) continue;
         try { await reconcileCustomer(customerId); }
         catch (error) {
