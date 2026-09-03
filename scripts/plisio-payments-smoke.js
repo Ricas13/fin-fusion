@@ -9,13 +9,20 @@ function source(f){return fs.readFileSync(path.join(__dirname,'..',f),'utf8');}
 expect(plisio.API_BASE==='https://api.plisio.net','Plisio must use the documented API host.');
 expect(plisio.moneyMinor('12.34')===1234,'Plisio source amount conversion must preserve minor units.');
 expect(plisio.moneyMinor('bad')===null,'Invalid Plisio amount must fail verification.');
+
+// Plisio's callback protocol signs JSON.stringify(parsedJsonWithoutVerifyHash)
+// with HMAC-SHA1. Pin a literal vector so this test proves serialization and
+// key-order behavior instead of calculating its own expected value at runtime.
 const key='merchant-secret-for-smoke';
 const payload={txn_id:'txn-1',order_number:'intent-1',status:'completed',source_currency:'GBP',source_amount:'6.00'};
+const protocolDigest='4ca68d28b4ee3a3ad231f9aa1293ebeb41b998b5';
 const digest=plisio.callbackDigest(key,payload);
-expect(/^[0-9a-f]{40}$/.test(digest),'Plisio verify_hash must be HMAC-SHA1 hex.');
-const signed={...payload,verify_hash:digest};
-expect(plisio.callbackDigest(key,signed)===digest,'verify_hash must be excluded from Plisio callback digest.');
-expect(plisio.safeEqual(digest,digest)&&!plisio.safeEqual(digest,'0'.repeat(40)),'Plisio signature comparison must be timing-safe and reject mismatches.');
+expect(digest===protocolDigest,'Plisio callback digest must match the pinned JSON/HMAC-SHA1 protocol vector.');
+const signed={...payload,verify_hash:protocolDigest};
+expect(plisio.callbackDigest(key,signed)===protocolDigest,'verify_hash must be excluded from Plisio callback digest.');
+expect(plisio.safeEqual(protocolDigest,protocolDigest)&&!plisio.safeEqual(protocolDigest,'0'.repeat(40)),'Plisio signature comparison must be timing-safe and reject mismatches.');
+const reordered={status:'completed',txn_id:'txn-1',order_number:'intent-1',source_currency:'GBP',source_amount:'6.00'};
+expect(plisio.callbackDigest(key,reordered)!==protocolDigest,'Plisio callback verification must preserve parsed JSON key order and must not silently sort callback keys.');
 const parsed=plisio.parseCallback(Buffer.from(JSON.stringify(signed)),'application/json');
 expect(parsed.txn_id==='txn-1','Plisio JSON callback parsing failed.');
 let rejected=false;try{plisio.parseCallback(Buffer.from('txn_id=x'),'application/x-www-form-urlencoded');}catch(_){rejected=true;}expect(rejected,'Plisio callbacks must require JSON mode so signed serialization is deterministic.');
@@ -28,6 +35,7 @@ expect(moduleSource.includes('getOperation(providerId)'),'Plisio callback must i
 expect(moduleSource.includes('verifiedProviderContract'),'Plisio completion must verify amount/currency against immutable local checkout terms.');
 expect(moduleSource.includes("fields.status === 'completed'"),'Only completed Plisio operations may activate access.');
 expect(moduleSource.includes('timingSafeEqual'),'Plisio callback comparison must use timingSafeEqual.');
+expect(!moduleSource.includes('.sort('),'Plisio callback signing must not reorder JSON keys before JSON.stringify.');
 
 const settings=source('src/payments/provider-settings.js');
 expect(settings.includes("const PROVIDERS = ['stripe', 'paypal', 'plisio']"),'Provider settings must contain only the supported gateways.');

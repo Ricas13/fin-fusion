@@ -5,8 +5,25 @@ const fs = require('fs');
 const path = require('path');
 
 const LEGACY_MIGRATION_COUNT = 60;
-const LEGACY_PATTERN = /^\d{3}_[a-z0-9][a-z0-9_]*\.sql$/;
+const LEGACY_PATTERN = /^(\d{3})_[a-z0-9][a-z0-9_]*\.sql$/;
 const TIMESTAMP_PATTERN = /^(\d{14})_[a-z0-9][a-z0-9_]*\.sql$/;
+const GRANDFATHERED_LEGACY_PREFIX_COLLISIONS = Object.freeze({
+    '012': ['012_admin_dashboard_layout.sql', '012_support_tickets.sql'],
+    '017': ['017_stremio_install_credential_recovery.sql', '017_stremio_managed_playback_lifecycle.sql'],
+    '045': ['045_parallel_free_jellyfin_access.sql', '045_service_scoped_recurring_constraint.sql']
+});
+
+function legacyPrefixCollisions(files) {
+    const groups = new Map();
+    for (const file of files.filter(file => file.endsWith('.sql')).sort()) {
+        const match = LEGACY_PATTERN.exec(file);
+        if (!match) continue;
+        const prefix = match[1];
+        if (!groups.has(prefix)) groups.set(prefix, []);
+        groups.get(prefix).push(file);
+    }
+    return Object.fromEntries([...groups.entries()].filter(([, names]) => names.length > 1));
+}
 
 function validateMigrationIds(files) {
     const sqlFiles = files.filter(file => file.endsWith('.sql')).sort();
@@ -17,6 +34,15 @@ function validateMigrationIds(files) {
         legacy.length,
         LEGACY_MIGRATION_COUNT,
         `historical migrations are frozen (${LEGACY_MIGRATION_COUNT} legacy files expected); future migrations must use YYYYMMDDHHMMSS_description.sql`
+    );
+
+    // Historical filenames are schema_migrations identities and therefore must
+    // never be renamed merely to clean up old numeric-prefix collisions. Freeze
+    // the three known collisions exactly and reject any new or changed group.
+    assert.deepStrictEqual(
+        legacyPrefixCollisions(sqlFiles),
+        GRANDFATHERED_LEGACY_PREFIX_COLLISIONS,
+        'historical legacy migration prefix collisions changed; do not add/rename numeric migrations—use a unique timestamp migration'
     );
 
     const seen = new Map();
@@ -30,25 +56,31 @@ function validateMigrationIds(files) {
     return { legacy: legacy.length, timestamped: seen.size };
 }
 
-// Prove the guard rejects the exact future-collision class it is meant to stop.
+const frozenCollisionFiles = Object.values(GRANDFATHERED_LEGACY_PREFIX_COLLISIONS).flat();
+const frozenLegacyFixture = [
+    ...Array.from({ length: LEGACY_MIGRATION_COUNT - frozenCollisionFiles.length }, (_, index) => `${String(index + 100).padStart(3, '0')}_legacy_${index}.sql`),
+    ...frozenCollisionFiles
+];
+
+// Prove the guard rejects both future timestamp collisions and attempts to add
+// another old-style numeric migration/prefix collision.
 assert.throws(
     () => validateMigrationIds([
-        ...Array.from({ length: LEGACY_MIGRATION_COUNT }, (_, index) => `${String(index).padStart(3, '0')}_legacy_${index}.sql`),
+        ...frozenLegacyFixture,
         '20260829170000_first.sql',
         '20260829170000_second.sql'
     ]),
     /duplicate migration timestamp/
 );
+const alteredLegacyFixture = frozenLegacyFixture.filter(file => file !== '100_legacy_0.sql');
+alteredLegacyFixture.push('012_third_collision.sql');
 assert.throws(
-    () => validateMigrationIds([
-        ...Array.from({ length: LEGACY_MIGRATION_COUNT }, (_, index) => `${String(index).padStart(3, '0')}_legacy_${index}.sql`),
-        '109_new_legacy_style.sql'
-    ]),
-    /historical migrations are frozen/
+    () => validateMigrationIds(alteredLegacyFixture),
+    /historical legacy migration prefix collisions changed/
 );
 
 const dir = path.join(__dirname, '..', 'db', 'migrations');
 const result = validateMigrationIds(fs.readdirSync(dir));
 console.log(`migration id smoke: ok (${result.legacy} frozen legacy, ${result.timestamped} timestamped)`);
 
-module.exports = { validateMigrationIds, LEGACY_MIGRATION_COUNT, LEGACY_PATTERN, TIMESTAMP_PATTERN };
+module.exports = { validateMigrationIds, legacyPrefixCollisions, LEGACY_MIGRATION_COUNT, LEGACY_PATTERN, TIMESTAMP_PATTERN, GRANDFATHERED_LEGACY_PREFIX_COLLISIONS };

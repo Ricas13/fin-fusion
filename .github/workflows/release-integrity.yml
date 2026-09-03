@@ -60,11 +60,19 @@ jobs:
       - name: Workflow trigger and suite hygiene
         run: node scripts/workflow-trigger-hygiene-smoke.js
 
+      - name: Migration identity and auth boundary hardening
+        run: |
+          node scripts/migration-id-smoke.js
+          node scripts/grok-hardening-smoke.js
+
       - name: Apply schema on production PostgreSQL major
         run: npm run db:migrate
 
       - name: Database release checks
         run: npm run check:db
+
+      - name: Payment event replay contract
+        run: node scripts/payment-event-replay-db-smoke.js
 
       - name: Global assembled route ownership
         run: node scripts/assembled-route-ownership-smoke.js
