@@ -55,9 +55,23 @@ assert(worker.includes('Automation request-service settings refresh failed durin
     'Best-effort automation settings refresh failures must remain visible to operators');
 
 const compose = read('docker-compose.yml');
+const envExample = read('.env.example');
 const roleScript = read('scripts/configure-runtime-db-roles.js');
 const maintenanceLock = read('src/security/maintenance-lock.js');
 const reconciliationLock = read('src/jellyfin/reconciliation-lock.js');
+assert(compose.includes('RECONCILIATION_MAX_CONCURRENCY: ${RECONCILIATION_MAX_CONCURRENCY:-4}'),
+    'Compose must pass the documented web reconciliation limit into the web runtime');
+assert(compose.includes('AUTOMATION_RECONCILIATION_MAX_CONCURRENCY: ${AUTOMATION_RECONCILIATION_MAX_CONCURRENCY:-1}'),
+    'Compose must pass the automation-specific reconciliation budget into the worker');
+assert(compose.includes('AUTOMATION_MAINTENANCE_LOCK_POOL_MAX: ${AUTOMATION_MAINTENANCE_LOCK_POOL_MAX:-4}'),
+    'Compose must pass the automation-specific maintenance-lock budget into the worker');
+for (const setting of [
+    'RECONCILIATION_MAX_CONCURRENCY=4',
+    'AUTOMATION_RECONCILIATION_MAX_CONCURRENCY=1',
+    'AUTOMATION_MAINTENANCE_LOCK_POOL_MAX=4'
+]) {
+    assert(envExample.includes(setting), `.env.example must document effective runtime setting ${setting}`);
+}
 const automationRoleLimit = Number(/automation:\s*\{[^}]*connectionLimit:\s*(\d+)/s.exec(roleScript)?.[1]);
 const automationPoolDefault = Number(/AUTOMATION_DB_POOL_SIZE:-([0-9]+)/.exec(compose)?.[1]);
 assert(Number.isFinite(automationRoleLimit), 'Automation database role must have an explicit connection limit');
