@@ -22,10 +22,10 @@
 .liveDot{animation:storePulse 1.6s cubic-bezier(.2,.8,.2,1) infinite}
 
 .paymentMethodsSection{padding:0 0 26px}
-.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr);gap:14px;padding:12px;border:1px solid rgba(76,201,240,.28);border-radius:20px;background:linear-gradient(115deg,rgba(19,52,66,.72),rgba(15,23,32,.96) 58%,rgba(11,17,24,.98));box-shadow:0 24px 80px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.035);backdrop-filter:blur(14px)}
+.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr);gap:14px;padding:12px;border:1px solid rgba(76,201,240,.36);border-radius:20px;background:linear-gradient(115deg,rgba(19,52,66,.82),rgba(15,23,32,.97) 58%,rgba(11,17,24,.98));box-shadow:0 24px 80px rgba(0,0,0,.24),inset 0 1px rgba(255,255,255,.035);backdrop-filter:blur(14px)}
 .paymentMethodsShowcase.paymentsOnly{grid-template-columns:1fr}
-.paymentMethodsCard,.affiliatePromoCard{position:relative;overflow:hidden;min-height:240px;border-radius:16px}
-.paymentMethodsCard{display:flex;flex-direction:column;justify-content:space-between;gap:16px;padding:22px;border:1px solid rgba(76,201,240,.28);background:radial-gradient(circle at 4% 5%,rgba(76,201,240,.12),transparent 31%),linear-gradient(115deg,rgba(18,45,57,.68),rgba(15,23,32,.92) 58%,rgba(11,17,24,.95));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.paymentMethodsCard,.affiliatePromoCard{position:relative;overflow:hidden;min-height:auto;border-radius:16px}
+.paymentMethodsCard{display:flex;flex-direction:column;justify-content:space-between;gap:16px;padding:22px;border:1px solid rgba(76,201,240,.36);background:radial-gradient(circle at 4% 5%,rgba(76,201,240,.12),transparent 31%),linear-gradient(115deg,rgba(19,52,66,.82),rgba(15,23,32,.97) 58%,rgba(11,17,24,.98));box-shadow:inset 0 1px rgba(255,255,255,.025)}
 .paymentMethodsCard:after{content:"";position:absolute;width:235px;height:235px;right:-88px;top:-65px;border:1px solid rgba(76,201,240,.07);border-radius:50%;box-shadow:0 0 0 22px rgba(76,201,240,.018),0 0 0 44px rgba(76,201,240,.014),0 0 0 66px rgba(76,201,240,.01);pointer-events:none}
 .paymentMethodsHeading{display:flex;align-items:flex-start;gap:16px;position:relative;z-index:1}
 .paymentSecurityMark{display:grid;place-items:center;flex:0 0 62px;width:62px;height:62px;border-radius:50%;color:#78dcf8;background:radial-gradient(circle,rgba(76,201,240,.13),rgba(11,17,24,.55) 69%);border:1px solid rgba(76,201,240,.24);box-shadow:0 0 28px rgba(76,201,240,.1)}
@@ -44,7 +44,7 @@
 .cryptoGlyph{color:#ffcb63;font-size:1.65rem;border:1px solid rgba(224,157,31,.4);background:rgba(131,78,8,.15);text-shadow:0 0 11px rgba(255,187,57,.28)}
 .paymentMethodCopy{display:flex;min-width:0;flex-direction:column;gap:3px}.paymentMethod strong{font-size:.8rem;color:#f3f7ff}.paymentMethod small{font-size:.66rem;line-height:1.28;color:#9dafc5}
 
-.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr);align-items:center;gap:8px;padding:22px;border:1px solid rgba(76,201,240,.28);background:radial-gradient(circle at 90% 18%,rgba(76,201,240,.12),transparent 33%),linear-gradient(115deg,rgba(18,45,57,.66),rgba(15,23,32,.92) 58%,rgba(11,17,24,.95));box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr);align-items:center;gap:8px;padding:22px;border:1px solid rgba(76,201,240,.36);background:radial-gradient(circle at 90% 18%,rgba(76,201,240,.12),transparent 33%),linear-gradient(115deg,rgba(19,52,66,.82),rgba(15,23,32,.97) 58%,rgba(11,17,24,.98));box-shadow:inset 0 1px rgba(255,255,255,.025)}
 .affiliatePromoCard:before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 54%,rgba(76,201,240,.024));pointer-events:none}
 .affiliatePromoContent{position:relative;z-index:2;display:flex;align-items:flex-start;flex-direction:column;min-width:0}
 .affiliatePromoStar{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;border:1px solid rgba(76,201,240,.25);color:#78dcf8;font-size:.9rem;background:rgba(18,62,79,.18);letter-spacing:0}
