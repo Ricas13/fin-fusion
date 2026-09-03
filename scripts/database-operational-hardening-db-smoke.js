@@ -4,6 +4,7 @@ require('dotenv').config();
 const assert = require('assert');
 const crypto = require('crypto');
 const { getPool } = require('../src/db');
+const operationalMetrics = require('../src/platform/operational-metrics');
 
 async function main() {
     const client = await getPool().connect();
@@ -81,6 +82,19 @@ async function main() {
 
         const audit = await client.query("SELECT 1 FROM audit_log WHERE action='data.retention.batch' AND entity_type='data_retention' LIMIT 1");
         assert(audit.rowCount === 1, 'retention runs must be auditable');
+
+        // Operator observability SQL must compile against the production schema and
+        // return only aggregate counters. The fixture writes above are intentionally
+        // uncommitted; this second pooled connection validates the durable schema
+        // contract without depending on fixture visibility.
+        const backlog = await operationalMetrics.backlogSnapshot();
+        assert.strictEqual(backlog.available, true, 'operational backlog snapshot must compile against the migrated database');
+        for (const key of ['paymentEventRetries','providerRecovery','providerManualReview','freeDowngradeRetries','freeDowngradeDue','provisioningProblems','provisioningRunning']) {
+            assert(Number.isFinite(backlog[key]) && backlog[key] >= 0, `${key} must be a non-negative aggregate counter`);
+        }
+        const support = operationalMetrics.supportSnapshot({ databasePool: operationalMetrics.poolSnapshot(), reconciliation: {}, backlog });
+        assert(Number.isFinite(support.databasePool.total) && Number.isFinite(support.databasePool.max), 'live pg pool counters must be numeric');
+        assert.strictEqual(support.backlog.available, true);
 
         await client.query('ROLLBACK');
         console.log('Database operational hardening DB smoke: OK');
