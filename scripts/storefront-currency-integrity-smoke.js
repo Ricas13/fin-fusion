@@ -68,7 +68,10 @@ assert(storefront.includes('class="paymentMethodsShowcase ${affiliateCard?\'hasA
 assert(storefront.includes('class="paymentMethodsCard"')&&storefront.includes('class="affiliatePromoCard"'),'Storefront must keep payment methods and Affiliate in separate large cards');
 assert(storefrontRefinement.includes('.paymentMethodsShowcase{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.95fr)'),'Desktop storefront must use the intended two-card split layout');
 assert(storefrontRefinement.includes('.paymentMethodsList{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))'),'Payment method mini-cards must remain a three-column row inside the payment card');
-assert(storefrontRefinement.includes('.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(175px,.72fr)'),'Affiliate promotion must reserve a dedicated visual column for its artwork');
+assert(storefrontRefinement.includes('.affiliatePromoCard{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.5fr)'),'Affiliate promotion must reserve a compact dedicated visual column for its artwork');
+assert(storefrontRefinement.includes('.paymentMethodsCard,.affiliatePromoCard{position:relative;overflow:hidden;min-height:240px'),'Payment and affiliate feature cards must stay compact at Free Server banner scale');
+assert(storefrontRefinement.includes('background:linear-gradient(115deg,rgba(19,52,66,.72),rgba(15,23,32,.96) 58%,rgba(11,17,24,.98))'),'Payment showcase must use the same restrained teal/dark palette family as the Free Server banner');
+assert(!storefrontRefinement.includes('rgba(95,87,255,.58)'),'Affiliate card must not regress to the purple treatment that clashes with the Free Server banner');
 assert(storefrontRefinement.includes('@media(max-width:1050px)')&&storefrontRefinement.includes('.paymentMethodsShowcase{grid-template-columns:1fr}'),'The two-card showcase must stack cleanly on narrower displays');
 
 assert(storefront.includes('publicShell.publicHeader({site,nav,logged,registrationOpen})'),'Storefront must render the shared public header');
@@ -100,4 +103,4 @@ assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence 
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 
-console.log('storefront currency integrity smoke: master-currency architecture, two-card affiliate showcase, shared public shell and UI surfaces ok');
+console.log('storefront currency integrity smoke: master-currency architecture, compact two-card affiliate showcase, shared public shell and UI surfaces ok');
