@@ -28,13 +28,19 @@ function automationConnectionBudget(env = process.env) {
         1,
         50
     );
+    // Keep the web application's RECONCILIATION_MAX_CONCURRENCY independent.
+    // A developer running the worker directly loads the same .env file, so
+    // reusing the web value here could accidentally turn a safe web setting of
+    // four into four extra long-lived automation-role connections.
     const reconciliationMax = boundedInteger(
-        env.RECONCILIATION_MAX_CONCURRENCY,
+        env.AUTOMATION_RECONCILIATION_MAX_CONCURRENCY,
         AUTOMATION_DEFAULT_RECONCILIATION_MAX,
         1,
         50
     );
-    const explicitMaintenance = String(env.MAINTENANCE_LOCK_POOL_MAX || '').trim();
+    const explicitMaintenance = String(
+        env.AUTOMATION_MAINTENANCE_LOCK_POOL_MAX || env.MAINTENANCE_LOCK_POOL_MAX || ''
+    ).trim();
     const availableForMaintenance = AUTOMATION_ROLE_CONNECTION_LIMIT
         - primaryPoolMax
         - reconciliationMax
@@ -43,7 +49,7 @@ function automationConnectionBudget(env = process.env) {
     if (availableForMaintenance < 2) {
         throw new Error(
             `Unsafe automation database pool budget: DB_POOL_SIZE=${primaryPoolMax} and `
-            + `RECONCILIATION_MAX_CONCURRENCY=${reconciliationMax} leave fewer than 2 maintenance-lock `
+            + `AUTOMATION_RECONCILIATION_MAX_CONCURRENCY=${reconciliationMax} leave fewer than 2 maintenance-lock `
             + `connections under the ${AUTOMATION_ROLE_CONNECTION_LIMIT}-connection role limit.`
         );
     }
@@ -56,8 +62,8 @@ function automationConnectionBudget(env = process.env) {
     );
     if (explicitMaintenance && requestedMaintenance > availableForMaintenance) {
         throw new Error(
-            `Unsafe automation maintenance-lock pool: MAINTENANCE_LOCK_POOL_MAX=${requestedMaintenance}, `
-            + `DB_POOL_SIZE=${primaryPoolMax}, and RECONCILIATION_MAX_CONCURRENCY=${reconciliationMax} `
+            `Unsafe automation maintenance-lock pool: requested=${requestedMaintenance}, `
+            + `DB_POOL_SIZE=${primaryPoolMax}, and AUTOMATION_RECONCILIATION_MAX_CONCURRENCY=${reconciliationMax} `
             + `exceed the ${AUTOMATION_ROLE_CONNECTION_LIMIT}-connection role budget.`
         );
     }
