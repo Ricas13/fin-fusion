@@ -42,7 +42,7 @@ const group=key=>nav.groups.find(item=>item.key===key);
 const pageKeys=key=>group(key).pages.map(item=>item[0]);
 const childKeys=key=>nav.childPages(key).map(item=>item[0]);
 assert.deepStrictEqual(nav.groups.map(item=>item.key),['dashboard','customers','servers','commerce','operations','settings'],'Admin navigation must retain the fixed six-section rail');
-assert.strictEqual(nav.groups.reduce((sum,item)=>sum+item.pages.length,0),17,'Admin navigation must retain exactly seventeen permanent destinations');
+assert.strictEqual(nav.groups.reduce((sum,item)=>sum+item.pages.length,0),19,'Admin navigation must retain exactly nineteen permanent destinations');
 assert(!pageKeys('dashboard').includes('search'),'Search must not be a primary sidebar destination');
 assert(nav.hiddenPages.search?.parentKey==='dashboard'&&!childKeys('dashboard').includes('search'),'Quick-find results must retain Dashboard ownership without appearing as a nested sidebar item');
 assert(pageKeys('customers').includes('users')&&customersList.includes('/admin/jellyfin-import'),'Customers navigation must expose the shared customer list and link to Jellyfin Import');
@@ -55,7 +55,7 @@ assert(nav.hiddenPages['request-service']?.groupKey==='settings'&&nav.hiddenPage
 assert(!nav.hiddenPages['request-plan-limits']&&!pageKeys('commerce').includes('request-plan-limits'),'Request policy must not return as a standalone Request limits navigation destination');
 assert(/Requests \/ Jellyseerr/.test(requestPlanPolicy)&&/requestPlanPolicy\.planCard\(req, p\)/.test(jellyfinPlanEditor)&&/requestPlanPolicy\.planCard\(req, p, \{ variant: 'stremio' \}\)/.test(stremioPlanEditor),'Jellyseerr request policy must live inside the canonical Jellyfin and Stremio plan editors');
 assert(/res\.redirect\(302, '\/admin\/plans'\)/.test(requestPlanPolicy)&&!/href=\"\/admin\/request-plan-policy\"/.test(plansList),'legacy Request limits URL must redirect to Plans and Plans must not expose a duplicate overview link');
-assert(!pageKeys('commerce').includes('referrals')&&nav.hiddenPages.referrals?.parentKey==='orders'&&nav.relatedPages('orders').some(page=>page[0]==='referrals'),'Affiliates must remain non-primary but discoverable from Orders');
+assert(pageKeys('commerce').includes('discounts')&&pageKeys('commerce').includes('referrals')&&!nav.hiddenPages.discounts&&!nav.hiddenPages.referrals,'Discounts and Affiliates must remain permanent Commerce destinations');
 assert(!pageKeys('servers').includes('fleet-operations')&&nav.hiddenPages['fleet-operations']?.parentKey==='servers'&&nav.viewsFor('servers').some(page=>page[0]==='fleet-operations')&&nav.activeKey('fleet-operations')==='fleet-operations','Placement & capacity must remain a non-primary Servers-owned view with exact contextual identity');
 for(const item of nav.groups)for(const page of item.pages)assert.deepStrictEqual(nav.childPages(page[0]),[],`${page[1]} must not manufacture a third rail level`);
 assert(!/Request service|Plan limits/.test(provisioningTabs),'Provisioning tabs must not contain request-service configuration');
