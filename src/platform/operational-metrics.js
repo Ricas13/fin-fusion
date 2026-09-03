@@ -66,18 +66,31 @@ async function backlogSnapshot() {
   }
 }
 
+function reconciliationSnapshot() {
+  try {
+    const snapshot = reconciliationLock.metricsSnapshot();
+    return {
+      ...snapshot,
+      active: number(snapshot.concurrency?.active),
+      queued: number(snapshot.concurrency?.queued),
+      limit: number(snapshot.concurrency?.limit)
+    };
+  } catch (error) {
+    console.warn('Reconciliation diagnostics unavailable.', { error: String(error?.message || error).slice(0, 300) });
+    return {
+      active: 0, queued: 0, limit: 0, started: 0, succeeded: 0, failed: 0, lockTimeouts: 0,
+      cleanupFailures: 0, averageDurationMs: 0, averageProcessSlotWaitMs: 0,
+      averageDatabaseLockWaitMs: 0, maxDurationMs: 0, maxProcessSlotWaitMs: 0,
+      maxDatabaseLockWaitMs: 0, unavailable: true
+    };
+  }
+}
+
 async function collect() {
   const backlog = await backlogSnapshot();
-  let reconciliation;
-  try {
-    reconciliation = reconciliationLock.concurrencySnapshot();
-  } catch (error) {
-    console.warn('Reconciliation concurrency diagnostics unavailable.', { error: String(error?.message || error).slice(0, 300) });
-    reconciliation = { active: 0, queued: 0, limit: 0, total: 0, succeeded: 0, failed: 0, lockTimeouts: 0, canceled: 0, unavailable: true };
-  }
   return {
     databasePool: poolSnapshot(),
-    reconciliation,
+    reconciliation: reconciliationSnapshot(),
     backlog,
     generatedAt: new Date().toISOString()
   };
@@ -93,11 +106,11 @@ function supportSnapshot(metrics = {}) {
     },
     reconciliation: {
       active: number(reconciliation.active), queued: number(reconciliation.queued), limit: number(reconciliation.limit),
-      total: number(reconciliation.total), succeeded: number(reconciliation.succeeded), failed: number(reconciliation.failed),
-      lockTimeouts: number(reconciliation.lockTimeouts), canceled: number(reconciliation.canceled),
-      averageDurationMs: number(reconciliation.averageDurationMs), averageSlotWaitMs: number(reconciliation.averageSlotWaitMs),
-      averageDbLockWaitMs: number(reconciliation.averageDbLockWaitMs), maxDurationMs: number(reconciliation.maxDurationMs),
-      maxSlotWaitMs: number(reconciliation.maxSlotWaitMs), maxDbLockWaitMs: number(reconciliation.maxDbLockWaitMs),
+      started: number(reconciliation.started), succeeded: number(reconciliation.succeeded), failed: number(reconciliation.failed),
+      lockTimeouts: number(reconciliation.lockTimeouts), cleanupFailures: number(reconciliation.cleanupFailures),
+      averageDurationMs: number(reconciliation.averageDurationMs), averageProcessSlotWaitMs: number(reconciliation.averageProcessSlotWaitMs),
+      averageDatabaseLockWaitMs: number(reconciliation.averageDatabaseLockWaitMs), maxDurationMs: number(reconciliation.maxDurationMs),
+      maxProcessSlotWaitMs: number(reconciliation.maxProcessSlotWaitMs), maxDatabaseLockWaitMs: number(reconciliation.maxDatabaseLockWaitMs),
       unavailable: reconciliation.unavailable === true
     },
     backlog: {
@@ -109,4 +122,4 @@ function supportSnapshot(metrics = {}) {
   };
 }
 
-module.exports = { collect, backlogSnapshot, poolSnapshot, supportSnapshot, number };
+module.exports = { collect, backlogSnapshot, poolSnapshot, reconciliationSnapshot, supportSnapshot, number };
