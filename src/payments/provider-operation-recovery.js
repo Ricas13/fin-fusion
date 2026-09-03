@@ -18,6 +18,11 @@ const MAX_AUTOMATIC_ATTEMPTS = 12;
 function manual(message) { const error = new Error(message); error.providerOperationManual = true; return error; }
 function superseded(message) { const error = new Error(message); error.providerOperationSuperseded = true; return error; }
 function stripePriceId(subscription) { const price = subscription?.items?.data?.[0]?.price; return typeof price === 'string' ? price : price?.id || null; }
+function stripeResourceMissing(error) {
+  const status = Number(error?.statusCode || error?.raw?.statusCode || error?.raw?.status || 0);
+  const code = String(error?.code || error?.raw?.code || '');
+  return status === 404 || code === 'resource_missing';
+}
 function scheduleTargetPrice(schedule) {
   let target = null;
   for (const phase of schedule?.phases || []) for (const item of phase?.items || []) {
@@ -105,7 +110,13 @@ async function recoverImmediate(op) {
 async function matchingSchedule(client, remote, op, request) {
   let schedule = remote.schedule || null;
   if (typeof schedule === 'string') schedule = await client.subscriptionSchedules.retrieve(schedule);
-  if (!schedule && op.provider_reference) { try { schedule = await client.subscriptionSchedules.retrieve(op.provider_reference); } catch (_) {} }
+  if (!schedule && op.provider_reference) {
+    try {
+      schedule = await client.subscriptionSchedules.retrieve(op.provider_reference);
+    } catch (error) {
+      if (!stripeResourceMissing(error)) throw error;
+    }
+  }
   if (!schedule) return null;
   const owner = String(schedule.metadata?.internal_customer_id || '');
   const changeId = String(schedule.metadata?.captainfin_plan_change_id || '');
