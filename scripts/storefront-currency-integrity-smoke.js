@@ -9,6 +9,7 @@ const providerPricing=read('src/payments/provider-plan-pricing.js');
 const discounts=read('src/payments/discounts.js');
 const reporting=read('src/platform/reporting-currency.js');
 const storefront=read('src/platform/storefront.js');
+const storefrontRefinement=read('public/css/storefront-refinement.css');
 const publicPages=read('src/platform/public-pages.js');
 const publicShellSource=read('src/platform/public-shell.js');
 const checkout=read('src/platform/flexible-checkout.js');
@@ -55,6 +56,15 @@ assert(!customerDashboard.includes('enabledCurrencies()'),'Customer account must
 assert(!onboarding.includes('name="currency"'),'Customer checkout forms must not post a customer-selected currency');
 assert(onboarding.includes('All paid prices use <strong><%='),'Customer onboarding must present the single portal currency explicitly');
 
+assert(storefront.includes("const affiliateCredits=require('../affiliate-credits');"),'Storefront affiliate strip must use the canonical affiliate-credit service');
+assert(storefront.includes('async function storefrontAffiliate(customerId,currency)')&&storefront.includes('affiliateCredits.loadSettings()')&&storefront.includes('affiliateCredits.balances(customerId)'),'Storefront must derive affiliate enablement and signed-in balances from the canonical ledger');
+assert(storefront.includes("if(!affiliate?.enabled)return'';"),'Disabled affiliate programs must render no storefront affiliate promotion');
+assert(storefront.includes("balances.find(row=>String(row.currency||'').toUpperCase()===String(currency||'GBP').toUpperCase())"),'Storefront affiliate balance must follow the master storefront currency');
+assert(storefront.includes('paymentMethodsStrip(paymentMethods,affiliate,currency,logged)'),'Affiliate promotion must live inside the existing payment-method panel');
+assert(storefront.includes("logged?'/account/affiliate':'/account/login?next=%2Faccount%2Faffiliate'"),'Affiliate CTA must send signed-in customers to Affiliate and anonymous visitors through sign-in');
+assert(storefront.includes("title=`${money(available,currency)} available`")&&storefront.includes("title=`${money(pending,currency)} pending`"),'Signed-in storefront must surface real available and pending affiliate credit');
+assert(storefrontRefinement.includes('.affiliatePromo{')&&storefrontRefinement.includes('flex:1 0 100%'),'Affiliate promotion must remain a subordinate full-width strip rather than a fourth payment method');
+
 assert(storefront.includes('publicShell.publicHeader({site,nav,logged,registrationOpen})'),'Storefront must render the shared public header');
 assert(storefront.includes('publicShell.publicFooter({site,support:shellSupport,registrationOpen})'),'Storefront must render the shared public footer');
 assert(publicPages.includes('publicShell.publicHeader({site,nav,active,logged,registrationOpen})'),'Information pages must render the same shared public header');
@@ -84,4 +94,4 @@ assert(embyHeader.includes('href="/#emby">Emby Shares</a>'),'Emby plan presence 
 const footer=publicShell.publicFooter({site:'CAPTAiNFiN',registrationOpen:true});
 assert(footer.includes('Customer sign in')&&footer.includes('Create account')&&footer.includes('FAQ')&&footer.includes('Contact')&&footer.includes('Trust & security'),'Shared public footer must keep account and help destinations together');
 
-console.log('storefront currency integrity smoke: master-currency architecture, shared public shell and UI surfaces ok');
+console.log('storefront currency integrity smoke: master-currency architecture, affiliate strip, shared public shell and UI surfaces ok');
