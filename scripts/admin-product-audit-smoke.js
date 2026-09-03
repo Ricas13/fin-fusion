@@ -42,10 +42,10 @@ assert.deepStrictEqual(pageKeys.dashboard,['dashboard','attention'],'Dashboard m
 assert.deepStrictEqual(pageKeys.customers,['users','tickets'],'Customers must expose All customers and Support');
 assert.deepStrictEqual(pageKeys.servers,['servers','stremio-sources','activity'],'Servers must expose Jellyfin, Stremio and Playback');
 assert.strictEqual(pageKeys[`${retiredProduct}s`],undefined,'Retired product routes must not appear as a shipped primary sidebar module');
-assert.deepStrictEqual(pageKeys.commerce,['plans','orders','payments'],'Commerce must expose Plans, Orders and Payments');
+assert.deepStrictEqual(pageKeys.commerce,['plans','orders','discounts','referrals','payments'],'Commerce must expose Plans, Orders, Discounts, Affiliates and Payments');
 assert.deepStrictEqual(pageKeys.operations,['provisioning','automation-jobs','backups'],'Operations must expose Provisioning, Automation and Backups');
 assert.deepStrictEqual(pageKeys.settings,['settings-general','settings-security','settings-integrations','system'],'Settings must expose General, Security, Connections and System');
-assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),17,'Permanent rail must remain limited to seventeen destinations');
+assert.equal(nav.groups.reduce((sum,group)=>sum+group.pages.length,0),19,'Permanent rail must expose nineteen destinations');
 for(const group of nav.groups)for(const page of group.pages)assert.deepStrictEqual(nav.childPages(page[0]),[],`${page[1]} must not manufacture a third rail level`);
 
 assert(nav.hiddenPages.search?.parentKey==='dashboard','Search results must remain routable under Dashboard without consuming a rail slot');
@@ -56,8 +56,8 @@ assert(nav.relatedPages('servers').some(page=>page[0]==='libraries')&&nav.SIDEBA
 assert(!nav.aliases['fleet-operations']&&!nav.aliases.libraries,'Placement and Libraries must retain exact contextual identities rather than aliasing away to Servers');
 assert(nav.hiddenPages['stremio-playback']?.parentKey==='stremio-sources'&&nav.settingsFor('stremio-sources').some(page=>page[0]==='stremio-playback'),'Stremio IP access must remain a parent-owned Stremio setting');
 assert(nav.hiddenPages['users-dashboard']?.parentKey==='users'&&nav.viewsFor('users').some(page=>page[0]==='users-dashboard'),'Customer activity must remain a parent-owned Customers view');
-assert(nav.hiddenPages.discounts?.parentKey==='orders'&&nav.hiddenPages.referrals?.parentKey==='orders','Discounts and Affiliates must remain owned by Orders');
-assert(nav.relatedPages('orders').some(page=>page[0]==='discounts')&&nav.relatedPages('orders').some(page=>page[0]==='referrals'),'Discounts and Affiliates must remain discoverable from Orders without occupying the rail');
+assert(!nav.hiddenPages.discounts&&!nav.hiddenPages.referrals,'Discounts and Affiliates must be permanent Commerce destinations rather than hidden Orders pages');
+assert(pageKeys.commerce.includes('discounts')&&pageKeys.commerce.includes('referrals'),'Discounts and Affiliates must remain directly discoverable in Commerce');
 assert(nav.hiddenPages['storefront-order']?.parentKey==='plans'&&nav.settingsFor('plans').some(page=>page[0]==='storefront-order'),'Storefront order must remain a Plans-owned setting');
 assert(nav.hiddenPages.events?.parentKey==='automation-jobs'&&nav.relatedPages('automation-jobs').some(page=>page[0]==='events'),'Audit history must remain discoverable from Automation without occupying the rail');
 assert(nav.hiddenPages.branding?.parentKey==='settings-general'&&nav.hiddenPages['support-policy']?.parentKey==='settings-general','Branding and Support & Legal must stay under General');
