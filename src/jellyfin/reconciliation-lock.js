@@ -1,24 +1,33 @@
 'use strict';
 
 const { Client } = require('pg');
+const {
+    AUTOMATION_ROLE,
+    AUTOMATION_DEFAULT_RECONCILIATION_MAX,
+    boundedInteger,
+    databaseRole,
+    automationConnectionBudget
+} = require('../security/database-connection-budget');
 
 const LOCK_NAMESPACE = 761932;
 const LOCK_TIMEOUT_MS = 30000;
 const LOCK_POLL_MS = 100;
 const DEFAULT_MAX_CONCURRENCY = 4;
 
-function boundedInteger(value, fallback, min, max) {
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed)) return fallback;
-    return Math.max(min, Math.min(max, parsed));
+function reconciliationConcurrencyLimit() {
+    const role = databaseRole(process.env.DATABASE_URL);
+    if (role === AUTOMATION_ROLE) {
+        return automationConnectionBudget().reconciliationMax;
+    }
+    return boundedInteger(
+        process.env.RECONCILIATION_MAX_CONCURRENCY,
+        DEFAULT_MAX_CONCURRENCY,
+        1,
+        50
+    );
 }
 
-const MAX_CONCURRENCY = boundedInteger(
-    process.env.RECONCILIATION_MAX_CONCURRENCY,
-    DEFAULT_MAX_CONCURRENCY,
-    1,
-    50
-);
+const MAX_CONCURRENCY = reconciliationConcurrencyLimit();
 let activeSlots = 0;
 const slotWaiters = [];
 
@@ -126,9 +135,11 @@ module.exports = {
     LOCK_TIMEOUT_MS,
     LOCK_POLL_MS,
     DEFAULT_MAX_CONCURRENCY,
+    AUTOMATION_DEFAULT_RECONCILIATION_MAX,
     MAX_CONCURRENCY,
     cleanCustomerId,
     clientConfig,
+    reconciliationConcurrencyLimit,
     acquireProcessSlot,
     releaseProcessSlot,
     concurrencySnapshot,
