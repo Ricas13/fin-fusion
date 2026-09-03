@@ -19,12 +19,7 @@ function navItems(nav={}){
     nav.free&&['free','Free','/#free-access'],
     nav.plans&&['plans','Plans','/#plans'],
     nav.stremio&&['stremio','Stremio','/#stremio'],
-    nav.emby&&['emby','Emby Shares','/#emby'],
-    ['about','About','/about'],
-    ['faq','FAQ','/faq'],
-    ['help','Help','/help'],
-    ['contact','Contact','/contact'],
-    ['trust','Trust','/trust']
+    nav.emby&&['emby','Emby Shares','/#emby']
   ].filter(Boolean);
 }
 

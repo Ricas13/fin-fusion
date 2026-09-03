@@ -80,7 +80,9 @@ assert(publicPages.includes('publicShell.publicHeader({site,nav,active,logged,re
 assert(publicPages.includes('publicShell.publicFooter({site,support,registrationOpen})'),'Information pages must render the same shared public footer');
 assert(!publicPages.includes('<header class="storeHeader">'),'Information pages must not maintain a separate public header implementation');
 assert(!publicPages.includes('<footer class="storeFooter">'),'Information pages must not maintain a separate public footer implementation');
-assert(publicShellSource.includes("['trust','Trust','/trust']"),'Trust must be part of the permanent public navigation');
+for(const [key,label] of [['about','About'],['faq','FAQ'],['help','Help'],['contact','Contact'],['trust','Trust']]){
+  assert(!publicShellSource.includes(`['${key}','${label}',`),`${label} must stay out of the public top navigation`);
+}
 
 const nav=publicShell.navFromPlans([
   {service_type:'jellyfin',is_free_tier:true},
@@ -89,12 +91,13 @@ const nav=publicShell.navFromPlans([
 ]);
 assert.deepStrictEqual(nav,{free:true,plans:true,stremio:true,emby:false},'Shared public shell must discover present storefront sections and keep absent Emby hidden');
 const header=publicShell.publicHeader({site:'CAPTAiNFiN',nav,active:'faq',registrationOpen:true});
-const permanent=['Free','Plans','Stremio','About','FAQ','Contact','Trust'];
+const permanent=['Free','Plans','Stremio'];
 let previous=-1;
 for(const label of permanent){const index=header.indexOf(`>${label}</a>`);assert(index>previous,`Public header is missing or reorders ${label}`);previous=index;}
+for(const label of ['About','FAQ','Help','Contact','Trust']) assert(!header.includes(`>${label}</a>`),`${label} must stay out of the public top navigation`);
 assert(!header.includes('>Emby Shares</a>'),'Emby navigation must stay hidden when no Emby plan exists');
 assert(header.includes('href="/#free-access"')&&header.includes('href="/#plans"')&&header.includes('href="/#stremio"'),'Section links must work from both the homepage and information pages');
-assert(header.includes('aria-current="page" href="/faq">FAQ</a>'),'Only the current information destination should receive page-current state');
+assert(!header.includes('aria-current="page"'),'Hidden information destinations must not receive page-current state in the public header');
 assert(header.includes('>Sign in</a>')&&header.includes('>Get started</a>'),'Public header actions must remain consistent on information pages');
 const embyNav=publicShell.navFromPlans([{service_type:'emby',is_free_tier:false}]);
 assert.deepStrictEqual(embyNav,{free:false,plans:false,stremio:false,emby:true},'Emby navigation must appear automatically when an Emby plan exists');
