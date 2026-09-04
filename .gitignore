@@ -40,3 +40,6 @@ Thumbs.db
 *.tmp
 *.temp
 expired-check-result.txt
+
+# Local Playwright test artifacts (screenshots, traces)
+test-results/
