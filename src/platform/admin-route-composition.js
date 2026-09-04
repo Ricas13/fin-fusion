@@ -161,6 +161,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminPlanPlacementRouter());
   app.use(createAdminJobsRouter());
   app.use(createAdminBulkCustomersRouter());
+  app.use(createAdminCustomerOperatorRouter());
   app.use(createAdminCustomersListRouter());
   app.use(createAdminPlanLibrariesRouter());
   app.use(createAdminServerFleetDashboardRouter());
@@ -172,7 +173,6 @@ function mountAdminRoutes(app) {
   app.use(createAdminJellyfinReenableRouter());
   app.use(createAdminCustomerAccessHoldsRouter());
   app.use(createAdminCustomerManagementRouter());
-  app.use(createAdminCustomerOperatorRouter());
   app.use(createAdminManualEntitlementRouter());
 
   mountCritical('impersonation', createAdminImpersonationRouter());
