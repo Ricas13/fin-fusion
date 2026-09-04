@@ -5,14 +5,12 @@ const provisioning=require('./provisioning');
 const placement=require('./placement');
 const adminControl=require('./admin-control');
 const subscriptionState=require('../entitlements/subscription-state');
+const userCapacity=require('./user-capacity');
 
 function accessKind(plan){if(plan?.billing_interval==='trial')return'trial';return Number(plan?.price_minor||0)===0?'free':'paid';}
 function serviceType(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
 async function activeAccounts(customerId){const r=await query(`SELECT ja.*,js.name AS server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.updated_at DESC`,[customerId]);return r.rows;}
-// max_users is a public/automatic placement boundary, not an administrator
-// ceiling. We still count every active managed Jellyfin identity so Customer 360
-// can show the real 50/50, 51/50, 1000/50 state before a deliberate assignment.
-async function assignedUsers(serverId){const r=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`,[serverId]);return Number(r.rows[0]?.n||0);}
+async function assignedUsers(serverId){const state=await userCapacity.serverState(serverId);return Number(state?.assigned_users||0);}
 
 async function candidates(customerId){
   // A deliberate operator command may need to repair access precisely when
@@ -26,8 +24,8 @@ async function candidates(customerId){
 
   // This is an operator picker, not automatic placement. Show every configured,
   // enabled Jellyfin server regardless of plan mapping, pool/class, capacity,
-  // allow_new_users, paid/trial admission or placement mode. The remote server
-  // still has to be technically usable when the administrator submits.
+  // allow_new_users, paid/trial admission or placement mode. Capacity facts still
+  // come from the same managed-user counter used everywhere else.
   const raw=await query(`
     SELECT js.*
     FROM jellyfin_servers js
@@ -36,10 +34,11 @@ async function candidates(customerId){
     ORDER BY CASE js.health_status WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,
              js.priority,js.name
   `);
+  const decorated=await userCapacity.decorateServers(raw.rows);
   const servers=[];
   const kind=accessKind(entitlement);
-  for(const server of raw.rows){
-    const users=await assignedUsers(server.id),max=Number(server.max_users||0),full=max>0&&users>=max;
+  for(const server of decorated){
+    const users=Number(server.assigned_users||0),max=Number(server.max_users||0),full=Boolean(server.full);
     const warnings=[];
     if(server.server_class!==entitlement.server_class)warnings.push('different plan pool');
     if(!server.allow_new_users)warnings.push('closed to automatic new users');
@@ -61,10 +60,9 @@ async function assign(customerId,targetServerId,{actorUserId=null}={}){
   const server=state.servers.find(s=>String(s.id)===String(targetServerId));
   if(!server)throw new Error('Choose an enabled Jellyfin server.');
 
-  // Deliberate administrator assignment ignores application-level admission
-  // rules. max_users remains unchanged and continues to gate storefront/public
-  // acquisition and automatic placement. A 50/50 server can therefore become
-  // 51/50 without advertising a new public place.
+  // max_users is the automatic customer-user ceiling, never an administrator
+  // ceiling. A deliberate admin assignment can turn 80/80 into 81/80 without
+  // changing the configured capacity or reopening public signup.
   const capacityOverride=Boolean(server.full);
   const assignedUsersBefore=Number(server.assigned_users||0);
   const maxUsers=Number(server.max_users||0)||null;
@@ -87,9 +85,6 @@ async function assign(customerId,targetServerId,{actorUserId=null}={}){
     account.password_setup_required=true;
   }
 
-  // Persist the exact operator choice only after target access exists. Future
-  // background reconciliation then keeps this server instead of re-running
-  // automatic placement and undoing the administrator's decision.
   await adminControl.forceServer(customerId,state.entitlement.subscription_id,server.id,{actorUserId,reason:'Manual Jellyfin server assignment'});
 
   const assignedUsersAfter=await assignedUsers(server.id);
