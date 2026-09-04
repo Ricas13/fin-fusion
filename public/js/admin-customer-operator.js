@@ -14,11 +14,6 @@
   function text(node){return String(node?.textContent||'').trim();}
   function el(tag,className='',value=''){const node=document.createElement(tag);if(className)node.className=className;if(value!==undefined&&value!==null&&value!=='')node.textContent=String(value);return node;}
   function fmtDate(value){if(!value)return'Never';const d=new Date(value);if(Number.isNaN(d.getTime()))return'—';return new Intl.DateTimeFormat('en-GB',{day:'2-digit',month:'short',year:'numeric'}).format(d);}
-  function relativeDate(value){
-    if(!value)return'No playback recorded';const time=new Date(value).getTime();if(!Number.isFinite(time))return'No playback recorded';
-    const sec=Math.max(0,Math.floor((Date.now()-time)/1000));
-    if(sec<60)return'Just now';if(sec<3600)return`${Math.floor(sec/60)}m ago`;if(sec<86400)return`${Math.floor(sec/3600)}h ago`;if(sec<86400*30)return`${Math.floor(sec/86400)}d ago`;return fmtDate(value);
-  }
   function money(minor,currency){
     try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP'),currencyDisplay:'narrowSymbol',minimumFractionDigits:0,maximumFractionDigits:2}).format(Number(minor||0)/100);}catch(_){const value=(Number(minor||0)/100).toFixed(2),symbol={GBP:'£',USD:'$',EUR:'€'}[String(currency||'GBP').toUpperCase()]||'';return`${symbol}${value}`;}
   }
@@ -29,13 +24,21 @@
     const last=metric?.payment?.lastPayment;
     return{main,sub:last?`Last payment ${money(last.amountMinor,last.currency)} · ${fmtDate(last.at)}`:'Recorded provider total'};
   }
-  function usageSummary(metric){
-    const active=Number(metric?.activeStreams||0),hours=Number(metric?.watchSeconds30d||0)/3600;
-    if(active>0)return{main:`Streaming now · ${active} stream${active===1?'':'s'}`,sub:`${hours.toFixed(hours>=10?0:1)}h watched in 30 days`,live:true};
-    return{main:`${hours.toFixed(hours>=10?0:1)}h / 30d`,sub:`Last played ${relativeDate(metric?.lastPlaybackAt)}`,live:false};
-  }
   function cellByLabel(row,label){return [...row.children].find(cell=>cell.getAttribute('data-label')===label)||null;}
   function statusBadge(label,tone){const span=el('span',`pill ${tone||''}`,label);return span;}
+  function headerKey(th){return text(th).replace(/[↑↓]/g,'').trim();}
+  function sortableHeading(label,sourceLabel,sortLinks){
+    const th=el('th');
+    const source=sortLinks.get(sourceLabel);
+    if(!source){th.textContent=label;return th;}
+    const link=source.cloneNode(true),arrow=link.querySelector('.sortArrow');
+    link.replaceChildren(document.createTextNode(label));
+    if(arrow)link.append(document.createTextNode(' '),arrow);
+    th.appendChild(link);
+    const sourceTh=source.closest('th');
+    if(sourceTh?.hasAttribute('aria-sort'))th.setAttribute('aria-sort',sourceTh.getAttribute('aria-sort'));
+    return th;
+  }
 
   async function enhanceCustomerList(){
     const table=document.querySelector('#customersTable');if(!table||table.dataset.operatorFriendly==='1')return;
@@ -50,17 +53,24 @@
     }
 
     const head=table.tHead?.rows?.[0];if(head){
+      const oldCheckbox=head.querySelector('#checkAllPage')?.cloneNode(true)||null;
+      const sortLinks=new Map([...head.cells].map(th=>[headerKey(th),th.querySelector('a.tableSortLink')]).filter(([,link])=>link));
       head.replaceChildren();
-      ['','Customer','Paid','Usage','Current plan','Access','Server','Registered','Actions'].forEach((label,index)=>{
-        const th=el('th','',label);if(index===0){const old=document.querySelector('#checkAllPage');if(old){const clone=old.cloneNode(true);th.replaceChildren(clone);}}head.appendChild(th);
-      });
+      const selectTh=el('th');if(oldCheckbox)selectTh.appendChild(oldCheckbox);head.appendChild(selectTh);
+      head.appendChild(sortableHeading('Customer','Customer',sortLinks));
+      head.appendChild(el('th','','Paid'));
+      head.appendChild(sortableHeading('Current plan','Plan',sortLinks));
+      head.appendChild(sortableHeading('Access','Status',sortLinks));
+      head.appendChild(sortableHeading('Server','Server',sortLinks));
+      head.appendChild(sortableHeading('Registered','Registered',sortLinks));
+      head.appendChild(el('th','','Actions'));
     }
 
     rows.forEach(row=>{
       const customer=cellByLabel(row,'Customer'),plan=cellByLabel(row,'Plan'),status=cellByLabel(row,'Status'),jellyfin=cellByLabel(row,'Jellyfin'),server=cellByLabel(row,'Server'),registered=cellByLabel(row,'Registered');
       const link=customer?.querySelector('a[href^="/admin/users/"]'),match=(link?.getAttribute('href')||'').match(/^\/admin\/users\/([0-9a-f-]{36})/i),id=match?.[1],metric=metrics[id]||{};
       const accountText=text(jellyfin),accountCount=Number.parseInt(accountText,10)||0,disabled=/disabled/i.test(accountText),planText=text(plan)||'No plan',statusText=text(status).toLowerCase(),freePlan=/free/i.test(planText);
-      const paid=paidSummary(metric,freePlan),usage=usageSummary(metric);
+      const paid=paidSummary(metric,freePlan);
       let accessLabel='No plan',accessTone='';
       if(metric.adminMode==='removed'){accessLabel='Removed by admin';accessTone='warn';}
       else if(metric.permanent){accessLabel='Permanent User';accessTone='good';}
@@ -72,13 +82,12 @@
       const checkbox=row.cells[0]?.cloneNode(true)||el('td');
       const customerCell=customer?.cloneNode(true)||el('td','',id||'Customer');customerCell.setAttribute('data-label','Customer');
       const paidCell=el('td','operatorMetricCell');paidCell.setAttribute('data-label','Paid');paidCell.append(el('strong','operatorMetricMain',paid.main),el('span','operatorMetricSub',paid.sub));
-      const usageCell=el('td','operatorMetricCell');usageCell.setAttribute('data-label','Usage');usageCell.append(el('strong',`operatorMetricMain${usage.live?' live':''}`,usage.main),el('span','operatorMetricSub',usage.sub));
       const planCell=el('td','operatorMetricCell');planCell.setAttribute('data-label','Current plan');planCell.append(el('strong','operatorMetricMain',planText),el('span','operatorMetricSub',statusText&&statusText!=='none'?statusText.replaceAll('_',' '):'No active subscription'));
       const accessCell=el('td','operatorAccessCell');accessCell.setAttribute('data-label','Access');accessCell.append(statusBadge(accessLabel,accessTone));if(metric.adminMode==='forced_server')accessCell.append(el('span','operatorMetricSub','Server chosen by admin'));
       const serverCell=server?.cloneNode(true)||el('td','', '—');serverCell.setAttribute('data-label','Server');
       const registeredCell=registered?.cloneNode(true)||el('td','', '—');registeredCell.setAttribute('data-label','Registered');
       const actionCell=el('td','operatorRowActions');actionCell.setAttribute('data-label','Actions');if(link){const manage=el('a',`button ${accessLabel==='Needs access'?'':'secondary'} btn-sm`,accessLabel==='Needs access'?'Fix access':'Manage');manage.href=link.getAttribute('href');actionCell.appendChild(manage);}
-      row.replaceChildren(checkbox,customerCell,paidCell,usageCell,planCell,accessCell,serverCell,registeredCell,actionCell);
+      row.replaceChildren(checkbox,customerCell,paidCell,planCell,accessCell,serverCell,registeredCell,actionCell);
     });
 
     document.querySelectorAll('.formGroup').forEach(group=>{
