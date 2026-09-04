@@ -227,7 +227,7 @@ async function setLibrarySelectionForAccount(customerId, accountId, names) {
 }
 
 async function adoptExistingFreeAccount(customerId, accounts, freeEntitlement, primaryEntitlement) {
-    if (!freeEntitlement?.is_free_tier || accounts.some(account => account.access_lane === 'free')) return accounts;
+    if (!freeEntitlement?.is_free_tier || freeEntitlement.blocked || accounts.some(account => account.access_lane === 'free')) return accounts;
     const primaryStart = primaryEntitlement?.starts_at ? new Date(primaryEntitlement.starts_at).getTime() : null;
     const candidates = accounts.filter(account =>
         account.server_enabled
@@ -387,18 +387,22 @@ async function reconcileCustomerUnlocked(customerId) {
         controlEntitlement,
         activePlanIds,
         blockers,
-        desired
+        desired,
+        jellyfinRemovedByAdmin
     } = desiredState;
+    const freeLaneEntitlement = jellyfinRemovedByAdmin && freeEntitlement
+        ? { ...freeEntitlement, blocked: true, admin_jellyfin_suppressed_by_primary: true }
+        : freeEntitlement;
 
     await control.markCustomerRunning(customerId, controlEntitlement);
     try {
         const outcome = await recordRun(customerId, controlEntitlement?.subscription_id || null, async () => {
             let accounts = await normalAccounts(customerId);
-            accounts = await adoptExistingFreeAccount(customerId, accounts, freeEntitlement, primaryEntitlement);
+            accounts = await adoptExistingFreeAccount(customerId, accounts, freeLaneEntitlement, primaryEntitlement);
             const primary = await reconcileLane(customerId, primaryEntitlement, 'primary', accounts, {
                 makePrimary: Boolean(primaryEntitlement)
             });
-            const free = await reconcileLane(customerId, freeEntitlement, 'free', accounts, {
+            const free = await reconcileLane(customerId, freeLaneEntitlement, 'free', accounts, {
                 makePrimary: !primaryEntitlement && desired.freeJellyfin
             });
             if (!primaryEntitlement && !free.active) await disableAccounts(accounts);
@@ -425,7 +429,7 @@ async function reconcileCustomerUnlocked(customerId) {
                 discord
             };
             assertLanePostcondition('Primary', primaryEntitlement, primary);
-            assertLanePostcondition('Free', freeEntitlement, free);
+            assertLanePostcondition('Free', freeLaneEntitlement, free);
             return result;
         });
         await control.markCustomerHealthy(customerId, stateDetail(controlEntitlement, outcome));
