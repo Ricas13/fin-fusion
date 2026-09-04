@@ -29,6 +29,12 @@ assert(manual.includes('recurring-provider link') && manual.includes('audit reco
 assert(manual.includes('<script src="/js/admin-manual-entitlement.js" defer></script>'), 'manual form behavior must use an external CSP-safe script');
 assert(!manual.includes('<script>(function'), 'manual entitlement UI must not introduce inline JavaScript');
 assert(clientScript.includes("plan.addEventListener('change'") && clientScript.includes("start.addEventListener('change'"), 'external script must preserve plan-duration defaults');
+assert(manual.includes("require('../jellyfin/manual-assignment')") && manual.includes("require('../jellyfin/plan-servers')"), 'manual grant must reuse the canonical admin server-assignment primitive, not reimplement capacity logic');
+assert(manual.includes('eligibleServersForGrant') && manual.includes('manualAssignment.accessKind') && manual.includes('manualAssignment.assignedUsers'), 'grant form server choices must reflect real eligibility and live occupancy per plan');
+assert(manual.includes('name="serverId"') && manual.includes('manualGrantServerGroup') && manual.includes('data-servers='), 'grant form must let an administrator pick a specific Jellyfin server per plan');
+assert(manual.includes('input.serverId') && manual.includes('manualAssignment.assign(customerId, input.serverId'), 'choosing a server during a manual grant must call the capacity-overriding assignment path, not the capacity-respecting automatic reconcile');
+assert(manual.includes('can exceed that server') && manual.includes("this server was already at or over its configured capacity"), 'UI and confirmation copy must make the capacity override explicit, not silent');
+assert(clientScript.includes('manualGrantServerGroup') && clientScript.includes('dataset.service'), 'client script must rebuild the server list per plan and hide it for non-Jellyfin plans');
 assert(manual.includes("surface === 'access' || surface === 'billing'"), 'manual grant form must appear on both Customer 360 Billing and Access');
 assert(manual.includes("surface !== 'overview'") && manual.includes("'overview' : null"), 'Customer 360 overview must still participate in the empty-account guard without rendering a second grant form');
 assert(manual.includes('currentPrimarySubscription') && manual.includes('if (!existing)'), 'manual grant form must only appear when there is no effective primary subscription');
