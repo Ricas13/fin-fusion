@@ -158,7 +158,7 @@ function discountScriptFor(options={}){
 
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
-    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script><script src="/js/customer-360-navigation.js" defer></script><script src="/js/admin-customer-operator.js" defer></script>';
+    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script><script src="/js/admin-customer-operator.js" defer></script>';
     const canonicalBody=canonicalizeRetiredAdminDestinations(options.body);
     options={...options,body:workflow+canonicalBody+scripts};
     const safeBody=stripInlineScripts(options.body);

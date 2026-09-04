@@ -98,8 +98,8 @@ assert(customer360View.includes("require('../entitlements/customer-access-desire
 assert(customer360View.includes('function accessTruthPanel(detail)'), 'Customer 360 overview must keep a dedicated access-truth explanation surface');
 assert(customer360View.includes('Commercial state') && customer360View.includes('Active blockers') && customer360View.includes('Observed state') && customer360View.includes('Reconciliation'),
   'Customer 360 access truth must separate entitlement, blockers, observed state and reconciliation');
-assert(customer360View.includes("tab==='overview'?rendered.replace('</nav>',`</nav>${accessTruthPanel(safe)}`):rendered"),
-  'Customer 360 access truth must stay on Overview without duplicating the dedicated Access workspace');
+assert(customer360View.includes('${v2.history(safe)}${accessTruthPanel(safe)}'),
+  'Customer 360 is now a single unified page: access truth must be appended exactly once, not duplicated across tabs');
 assert(customer360View.includes('Entitlement currently blocked'),'Customer 360 must distinguish a blocked canonical entitlement even when no display hold row is available');
 
 const nav = read('src/platform/admin-nav.js');

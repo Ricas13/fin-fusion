@@ -10,6 +10,7 @@ const migration = read('db/migrations/106_customer_override_gaps.sql');
 const policy = read('src/jellyfin/policy.js');
 const viewV2 = read('src/platform/customer-360-view-v2.js');
 const lanePolicy = read('src/platform/admin-lane-policy.js');
+const accessCards = read('src/platform/customer-360-access-cards.js');
 const provisioningEngine = read('src/jellyfin/provisioning-engine.js');
 const laneOverrides = read('src/jellyfin/lane-policy-overrides.js');
 const householdOverridesSource = read('src/entitlements/household-overrides.js');
@@ -17,14 +18,13 @@ const jellyfinHouseholdPolicy = read('src/jellyfin/household-network-policy.js')
 const stremioHouseholdAccess = read('src/stremio/household-access.js');
 const admin360 = read('src/platform/admin-customer-360.js');
 const bulkOperations = read('src/platform/bulk-operations.js');
-const customer360View = read('src/platform/customer-360-view.js');
 
 // allow_subtitle_editing: the one TECHNICAL_FIELDS entry with no storage
 // column anywhere before migration 106.
 assert(policy.includes("'allow_subtitle_editing'"), 'policy.js TECHNICAL_FIELDS must include allow_subtitle_editing');
 assert(migration.includes('customer_policy_overrides') && migration.includes('customer_lane_policy_overrides') && (migration.match(/ADD COLUMN IF NOT EXISTS allow_subtitle_editing boolean/g) || []).length === 2, 'migration 106 must add allow_subtitle_editing to both override tables');
-assert(viewV2.includes("allow_subtitle_editing:'Subtitle editing'"), 'customer-360-view-v2.js FIELD_LABELS must label allow_subtitle_editing');
-assert(lanePolicy.includes("allow_subtitle_editing: 'Subtitle editing'"), 'admin-lane-policy.js LABELS must label allow_subtitle_editing');
+assert(accessCards.includes("allow_subtitle_editing:'Subtitle editing'"), 'customer-360-access-cards.js FIELD_LABELS must label allow_subtitle_editing');
+assert(lanePolicy.includes("policy.TECHNICAL_FIELDS"), 'admin-lane-policy.js override routes must stay generic over TECHNICAL_FIELDS (including allow_subtitle_editing)');
 assert(provisioningEngine.includes('customer_id,${field}'), 'setPolicyOverrideField must write generically by field name so new TECHNICAL_FIELDS entries need no code change');
 assert(laneOverrides.includes('policy.TECHNICAL_FIELDS'), 'lane-scoped override writer must stay generic over TECHNICAL_FIELDS');
 
@@ -46,7 +46,7 @@ assert(stremioHouseholdAccess.includes("require('../entitlements/household-overr
 // "Reset all to plan" action) must cover household overrides too so it
 // stays a genuine reset-everything action.
 assert(admin360.includes("/admin/users/:customerId/household-overrides'") && admin360.includes("/admin/users/:customerId/household-overrides/reset-all'"), 'Customer 360 must expose save and reset-all routes for household overrides');
-assert(customer360View.includes('/household-overrides') && customer360View.includes('Stremio household network'), 'Stremio-only customers must also get a household override control, not just Jellyfin/bundle customers');
+assert(accessCards.includes('/household-overrides') && accessCards.includes('Stremio household network'), 'Stremio-only customers must also get a household override control, not just Jellyfin/bundle customers');
 assert(bulkOperations.includes("require('../entitlements/household-overrides')") && bulkOperations.includes('householdOverrides.SERVICES.map(service=>householdOverrides.reset(item.customer_id,service))'), "the reset_overrides bulk action ('Reset all to plan') must also clear household overrides");
 
 console.log('customer household overrides smoke: ok');

@@ -45,7 +45,7 @@ async function effectiveForAccount(customerId, plan, account) {
     const accessLane = account?.access_lane || (plan?.is_free_tier ? 'free' : 'primary');
     const [override, libOverrides, selection] = await Promise.all([
         laneOverrides.getPolicyOverride(customerId, accessLane),
-        provisioning.getLibraryOverrides(customerId),
+        provisioning.getLibraryOverrides(customerId, accessLane),
         scopedSelection(customerId, accountId)
     ]);
     const technicalRows = policy.effectiveTechnicalPolicy(plan, override);

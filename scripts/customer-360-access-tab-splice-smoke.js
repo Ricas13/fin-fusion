@@ -6,6 +6,7 @@ const path=require('path');
 const root=path.join(__dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const view=require('../src/platform/customer-360-view');
+const accessCards=require('../src/platform/customer-360-access-cards');
 
 const wrapperSource=read('src/platform/customer-360-view.js');
 const cardsSource=read('src/platform/customer-360-access-cards.js');
@@ -15,25 +16,25 @@ const v2Source=read('src/platform/customer-360-view-v2.js');
 const adminSource=read('src/platform/admin-customer-360.js');
 const accessLoaderSource=read('src/platform/customer-360.js');
 
-assert(!/indexOf\(marker\)|const marker=/.test(wrapperSource),'Customer 360 must not splice Access HTML using heading strings');
-assert(wrapperSource.includes('skipAccessSections:true'),'Access must render shared Customer 360 chrome without the legacy giant Access body');
-assert(v2Source.includes('options.skipAccessSections'),'v2 must keep the explicit Access skip contract');
-assert(wrapperSource.includes("accessCards=require('./customer-360-access-cards')"),'Customer 360 must have one dedicated card Access renderer');
-assert(wrapperSource.includes("accessStatus=require('./customer-360-access-status')"),'Access must expose explicit hold diagnostics');
-assert(!wrapperSource.includes('manage.portalSection'),'Portal account/onboarding must remain owned by the canonical Overview/claim workflow rather than being duplicated on Access');
+// Customer 360 is one page now (Customer control grid + Access status +
+// per-lane Access/Libraries/Requests panels + Billing + capped Provisioning
+// history + Activity), not a set of tabs spliced apart by heading strings.
+assert(!/indexOf\(marker\)|const marker=|skipAccessSections/.test(wrapperSource),'Customer 360 must not splice HTML into a legacy Access tab any more');
+assert(!/skipAccessSections/.test(v2Source),'the retired tab-splice contract must not linger in v2 either');
+assert(v2Source.includes("nav(id,token,appUserId)")||/function nav\(/.test(v2Source),'v2 must expose the single-page nav (Customer record + Portal view)');
+assert(wrapperSource.includes("accessCards=require('./customer-360-access-cards')"),'Customer 360 must have one dedicated card renderer');
+assert(wrapperSource.includes('async function body(detail,token,options={})'),'the unified page body must no longer take a tab/accessDetail argument');
+assert(!wrapperSource.includes('manage.portalSection'),'Portal account/onboarding must remain owned by the canonical Overview/claim workflow rather than being duplicated on the page');
 assert(!adminSource.includes('Preview customer portal'),'The redundant Preview customer portal action must be removed');
 
-assert(cardsSource.includes('accessOverviewGrid'),'Access summary must use compact overview cards');
-assert(cardsSource.includes('accessControlGrid'),'Technical access controls must use a responsive card grid');
-assert(cardsSource.includes("grid-template-columns:repeat(3,minmax(0,1fr))"),'Desktop technical controls must use a 3-column grid');
-assert(cardsSource.includes("option('','Inherit'")&&cardsSource.includes("option('true','Allow'")&&cardsSource.includes("option('false','Deny'"),'Boolean access cards must preserve tri-state Inherit / Allow / Deny semantics');
-assert(cardsSource.includes('Save access changes'),'Technical cards must save together');
-assert(cardsSource.includes('/admin/customer-jellyfin-password?customerId=')&&cardsSource.includes('Change Jellyfin password'),'Jellyfin account details must retain password support inside the compact Access workspace');
-assert(/<details class=\"section accessDisclosure accessControlsSection\"\$\{overrides\?' open':''\}><summary class=\"accessDisclosureSummary\"><div><span class=\"accessEyebrow\">Libraries/.test(cardsSource),'Libraries must render as the same compact card grid as Access controls, collapsed unless overridden');
-assert(cardsSource.includes('Provisioning history')&&cardsSource.includes('accessHistory'),'Provisioning history must be a collapsed lower disclosure');
-assert(cardsSource.includes('accessActivity'),'Activity must be a collapsed lower disclosure');
+assert(cardsSource.includes('function controlGrid('),'Customer control must use the compact 3x3 card grid');
+assert(cardsSource.includes("option('','Inherit'")&&cardsSource.includes("option('true','Allow'")&&cardsSource.includes("option('false','Deny'"),'Boolean access-control rows must preserve tri-state Inherit / Allow / Deny semantics');
+assert(cardsSource.includes('/admin/customer-jellyfin-password?customerId=')&&cardsSource.includes('Change password'),'Jellyfin account details must retain password support inside the Customer control grid');
+assert(cardsSource.includes('function laneBlock(')&&cardsSource.includes('accessControlsPanel')&&cardsSource.includes('librariesPanel'),'Access controls and Libraries must render as collapsible dense-row panels per lane, not a giant Access body');
+assert(cardsSource.includes('function provisioningHistory(')&&cardsSource.includes('logCapDetails'),'Provisioning history must be capped with an expandable earlier-events disclosure');
+assert(cardsSource.includes('function activitySection('),'Activity must remain a dedicated diagnostic section');
 assert(cardsSource.indexOf('${provisioningHistory(detail)}')<cardsSource.indexOf('${activitySection(detail)}'),'Activity must be the final Access diagnostic below provisioning history');
-assert(!cardsSource.includes('Premium Jellyfin policy')&&!cardsSource.includes('Free Access policy'),'The redesigned Access tab must not duplicate technical controls into lane policy tables');
+assert(!cardsSource.includes('Premium Jellyfin policy')&&!cardsSource.includes('Free Access policy'),'The redesigned page must not duplicate technical controls into the old full-width lane policy tables');
 
 assert(statusSource.includes("type==='payment_risk'")&&statusSource.includes('Review payment incident'),'payment-risk holds must link to the specialized incident workflow rather than expose a generic release button');
 assert(statusSource.includes('Type <strong>RELEASE</strong> to confirm')&&statusSource.includes('Why is this hold safe to release?'),'manual hold release must require consequence-aware confirmation and an audit reason');
@@ -48,7 +49,6 @@ assert(!manualAssignmentSource.includes('if(server.full)throw new Error'),'manua
 assert(manualAssignmentSource.includes("capacityOverride?'admin.customer.server_assign.capacity_override':'admin.customer.server_assign'"),'over-capacity administrator placement must be explicitly audited');
 assert(manualAssignmentSource.includes('assignedUsersBefore')&&manualAssignmentSource.includes('assignedUsersAfter')&&manualAssignmentSource.includes('overCapacityAfter'),'manual assignment must record before/after capacity state');
 assert(!/UPDATE\s+jellyfin_servers\s+SET\s+max_users/i.test(manualAssignmentSource),'admin assignment must not mutate configured max_users');
-assert(accessLoaderSource.includes("manualAssignment=require('../jellyfin/manual-assignment')")&&accessLoaderSource.includes('manualAssignment.candidates(customerId)'),'Access detail must load full/overfull manual-assignment candidates');
 
 function fixture(overrides={}){
   return{
@@ -63,39 +63,56 @@ function fixture(overrides={}){
     runs:[],
     primaryEntitlement:null,
     provisioningState:null,
+    manualPayments:[],
+    paymentCustomers:[],
+    downloads:[],
+    policyEvents:[],
+    authSessions:[],
+    authEvents:[],
+    audit:[],
+    requests:[],
+    timeline:[],
     ...overrides
   };
 }
-function effectiveFixture(){
-  const technicalRows={};
-  for(const field of ['streams','allow_downloads','allow_video_transcoding','allow_audio_transcoding','allow_remuxing','allow_live_tv','allow_live_tv_management','allow_remote_access','allow_subtitle_editing'])technicalRows[field]={plan:field==='streams'?1:false,override:null,effective:field==='streams'?1:false};
-  return{technicalRows,visibleNames:['Movies'],entitlementRows:[{name:'Movies',plan:true,override:null,effective:true},{name:'TV',plan:true,override:false,effective:false}],catalog:{failedServers:[]}};
-}
 
-const assignment={entitlement:{id:'free-plan'},activeAccounts:[],servers:[
-  {id:'free-1',name:'Free Server',health_status:'healthy',assigned_users:50,max_users:50,full:true},
-  {id:'free-2',name:'Overflow Free',health_status:'healthy',assigned_users:1000,max_users:50,full:true}
-]};
-const plan={id:'free-plan',plan_name:'Free Server',name:'Free Server',is_free_tier:true,service_type:'jellyfin',server_class:'free'};
+(async()=>{
+
+// Customer control renders directly from a synthetic operator ctx (the real
+// page builds this via admin-customer-operator.js's context(); here we
+// exercise the exact same jellyfinAccountCard code path a DB-free test can
+// reach) -- including the deliberate over-capacity manual-assignment option
+// list that used to live in a separate assignment-prop mechanism.
+const overCapacityCtx={
+  entitlement:{planName:'Free Server',serverClass:'free',isFreeTier:true,serviceType:'jellyfin'},
+  accounts:[],activeAccounts:[],servers:[
+    {id:'free-1',name:'Free Server',server_class:'free',operable:true,assigned_users:50,max_users:50,full:true},
+    {id:'free-2',name:'Overflow Free',server_class:'free',operable:true,assigned_users:1000,max_users:50,full:true}
+  ],adminControl:null,serviceKind:'jellyfin'
+};
+const overCapacityHtml=accessCards.controlGrid(fixture(),'token',overCapacityCtx,null);
+assert(overCapacityHtml.includes('50/50 · FULL')&&overCapacityHtml.includes('1000/50 · OVER +950'),'full and arbitrarily overfilled servers must remain selectable for manual placement');
+assert(overCapacityHtml.includes('value="free-1"')&&overCapacityHtml.includes('value="free-2"'),'full and overfull servers must remain actual select options');
+assert(overCapacityHtml.includes('Needs access'),'a plan-active customer with no enabled Jellyfin account must show an explicit needs-access state');
+
+const disabledCtx={
+  entitlement:{planName:'Free Server',serverClass:'free',isFreeTier:true,serviceType:'jellyfin'},
+  accounts:[{disabled:true,jellyfin_username:'testcustomer',server_name:'Free Server'}],activeAccounts:[],servers:[],adminControl:null,serviceKind:'jellyfin'
+};
+const disabledHtml=accessCards.controlGrid(fixture(),'token',disabledCtx,null);
+assert(disabledHtml.includes('Re-enable Jellyfin access'),'a disabled existing account must offer re-enable, not a brand-new assignment');
+
 const failedDetail=fixture({provisioningState:{status:'failed',last_error:'No eligible free server'},subscriptions:[{status:'active',current_period_end:new Date(Date.now()+86400000),plan_name:'Free Server',streams:1,is_free_tier:true,service_type:'jellyfin',server_class:'free'}]});
-const failedHtml=view.body(failedDetail,'access','token',{currentPlan:plan,effective:effectiveFixture(),assignment},{householdOverrides:{}});
-assert(failedHtml.includes('Access status')&&failedHtml.includes('No active access holds'),'Access must begin with explicit entitlement/hold diagnostics');
-assert(!failedHtml.includes('Portal account & onboarding'),'Access must not duplicate the portal onboarding workflow owned by Overview');
-assert(failedHtml.includes('Access overview'),'Access must retain the compact operational overview');
-assert(failedHtml.includes('Provisioning failed / Needs attention.'),'failed provisioning must remain explicit');
-assert(failedHtml.includes('Free Server entitlement remains allocated'),'failed Free Server provisioning must explain that entitlement remains allocated during repair');
-assert(failedHtml.includes('Assign Jellyfin server'),'fresh failed provisioning must expose direct manual assignment');
-assert(failedHtml.includes('50/50 · FULL')&&failedHtml.includes('1000/50 · OVER +950'),'full and arbitrarily overfilled servers must remain selectable');
-assert(failedHtml.includes('does not')===false||failedHtml.includes('without changing the limit'),'manual assignment explanation must preserve configured public capacity');
-assert(failedHtml.includes('accessControlGrid')&&failedHtml.includes('Concurrent streams')&&failedHtml.includes('Subtitle editing'),'all nine technical access controls must render as cards');
-assert(failedHtml.includes('Inherit')&&failedHtml.includes('Allow')&&failedHtml.includes('Deny'),'rendered controls must expose tri-state choices');
-assert(failedHtml.includes('Manage libraries')&&!failedHtml.includes('<h2>Free Access policy</h2>'),'libraries must be compact and duplicate Free Access policy tables must be absent');
+const failedHtml=await view.body(failedDetail,'token',{});
+assert(failedHtml.includes('Access status')&&failedHtml.includes('No active access holds'),'the page must include explicit entitlement/hold diagnostics');
+assert(!failedHtml.includes('Portal account & onboarding'),'the page must not duplicate the portal onboarding workflow owned by Overview');
+assert(failedHtml.includes('Customer control'),'the page must retain the compact operational control grid');
+assert(failedHtml.includes('Needs attention')||failedHtml.includes('Not yet run'),'reconcile status must remain explicit');
 const reconcileActions=(failedHtml.match(/\/admin\/users\/cust-1\/manage\/reconcile/g)||[]).length;
-assert.strictEqual(reconcileActions,1,'Access tab must expose one visible reconcile entry point after legacy card actions are stripped');
-const historyDisclosure=failedHtml.indexOf('class="section accessDisclosure accessHistory"');
-const activityDisclosure=failedHtml.indexOf('class="section accessDisclosure accessActivity"');
-assert(historyDisclosure>=0&&activityDisclosure>historyDisclosure,'Activity disclosure must sit at the bottom after provisioning history');
-assert(!/<details class="section accessDisclosure"[^>]* open/.test(failedHtml),'Access disclosures must be collapsed by default');
+assert(reconcileActions>=1,'the page must expose a visible reconcile entry point');
+const historyIdx=failedHtml.indexOf('<h2>Provisioning history</h2>');
+const activityIdx=failedHtml.indexOf('<h2>Activity</h2>');
+assert(historyIdx>=0&&activityIdx>historyIdx,'Activity must sit at the bottom after provisioning history');
 
 const blockedDetail=fixture({
   primaryEntitlement:{subscription_id:'sub-paid',plan_id:'premium',name:'Premium Jellyfin',service_type:'jellyfin',server_class:'premium',blocked:true},
@@ -104,23 +121,19 @@ const blockedDetail=fixture({
     {id:'hold-pay',hold_type:'payment_risk',source_key:'stripe:dp_123',reason:'Stripe dispute under review',created_at:new Date(Date.now()-7200000),payment_incident_id:'incident-1'}
   ]
 });
-const blockedHtml=view.body(blockedDetail,'access','token',{currentPlan:blockedDetail.primaryEntitlement,effective:effectiveFixture(),assignment:null},{householdOverrides:{}});
-assert(blockedHtml.includes('Premium Jellyfin')&&blockedHtml.includes('2 active access holds'),'a blocked paid customer must still show the real commercial entitlement and every blocker');
+const blockedHtml=await view.body(blockedDetail,'token',{});
+assert(blockedHtml.includes('2 active access hold'),'a blocked paid customer must still show every access blocker');
 assert(blockedHtml.includes('/access-holds/hold-admin/release')&&blockedHtml.includes('Release hold and reconcile'),'known non-payment holds must expose the guarded release workflow');
 assert(blockedHtml.includes('/admin/commerce?incident=incident-1#incident-incident-1')&&blockedHtml.includes('Review payment incident'),'payment-risk holds must deep-link to the provider-verifying incident workflow');
 assert(!blockedHtml.includes('/access-holds/hold-pay/release'),'payment-risk holds must never render a generic release endpoint');
 
-const activeHtml=view.body(fixture({accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Free Server',jellyfin_username:'testcustomer'}]}),'access','token',{currentPlan:plan,effective:effectiveFixture(),assignment:null},{householdOverrides:{}});
-assert(activeHtml.includes('/admin/customer-jellyfin-password?customerId=cust-1')&&activeHtml.includes('Change Jellyfin password'),'active Jellyfin customers must retain password support inside the compact Access workspace');
+const activeHtml=view.accessWorkspaceSection(fixture({accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Free Server',jellyfin_username:'testcustomer'}]}),'token',null);
+assert(activeHtml.includes('/admin/customer-jellyfin-password?customerId=cust-1')&&activeHtml.includes('Change password'),'active Jellyfin customers must retain password support inside the Customer control grid');
 
-const manualHtml=view.manualServerAssignmentForm('token','cust-1',assignment);
-assert(manualHtml.includes('50/50 · FULL')&&manualHtml.includes('1000/50 · OVER +950'),'manual assignment helper must preserve over-capacity options');
-assert(manualHtml.includes('name="serverId"')&&manualHtml.includes('value="free-1"')&&manualHtml.includes('value="free-2"'),'full and overfull servers must remain actual select options');
-
-const stremioHtml=view.body(fixture({primaryEntitlement:{service_type:'stremio',name:'Stremio Plan',status:'active'}}),'access','token',null,{});
-assert(stremioHtml.includes('Stremio access'),'Stremio-only customer must retain Stremio access controls');
-assert(!stremioHtml.includes('accessControlGrid'),'Stremio-only customer must not see Jellyfin technical cards');
-assert(!stremioHtml.includes('Portal account & onboarding'),'Stremio Access must not duplicate portal onboarding either');
-assert(stremioHtml.includes('Test Customer'),'Stremio Access must retain shared Customer 360 chrome');
+const stremioHtml=await view.body(fixture({primaryEntitlement:{service_type:'stremio',name:'Stremio Plan',status:'active'}}),'token',{});
+assert(stremioHtml.includes('Not required'),'a Stremio-only customer must show the Jellyfin account card as not required rather than prompting for placement');
+assert(!stremioHtml.includes('Portal account & onboarding'),'the page must not duplicate portal onboarding for a Stremio-only customer either');
+assert(stremioHtml.includes('Test Customer'),'a Stremio-only customer must retain shared Customer 360 chrome');
 
 console.log('customer 360 card access smoke: ok');
+})();

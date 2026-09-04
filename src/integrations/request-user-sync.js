@@ -92,7 +92,7 @@ async function syncCandidates() {
       e.request_movie_quota_limit,e.request_movie_quota_days,
       e.request_tv_quota_limit,e.request_tv_quota_days,
       COALESCE(p.request_access_enabled,TRUE) AS request_access_enabled,
-      p.request_permissions,p.request_watchlist_sync_movies,p.request_watchlist_sync_tv,
+      p.request_permissions,cpo.permission_mask AS request_permission_override,p.request_watchlist_sync_movies,p.request_watchlist_sync_tv,
       p.request_locale,p.request_discover_region,p.request_streaming_region,p.request_original_language,
       (e.subscription_id IS NOT NULL AND e.blocked=FALSE) AS entitlement_active,
       rus.external_user_id,rus.external_email,rus.external_username,
@@ -113,6 +113,7 @@ async function syncCandidates() {
       WHERE ja.customer_id=c.id AND ja.disabled=FALSE AND js.enabled=TRUE
     ) jf ON TRUE
     LEFT JOIN request_user_sync rus ON rus.customer_id=c.id
+    LEFT JOIN customer_request_permission_overrides cpo ON cpo.customer_id=c.id
     ORDER BY COALESCE(NULLIF(u.username,''),NULLIF(c.display_name,''),jf.jellyfin_username,'user')
   `);
   return result.rows;
@@ -185,6 +186,9 @@ async function mark(customerId, fields = {}) {
   `, [customerId, fields.externalUserId || null, fields.email || null, fields.username || null, status, Boolean(fields.passwordResetRequired), fields.error ? String(fields.error).slice(0, 1000) : null, fields.activePermissions == null ? null : Math.max(0, Number(fields.activePermissions) || 0), Boolean(fields.accessSuspended), fields.planId || null, fields.movieQuotaLimit == null ? null : Number(fields.movieQuotaLimit), fields.movieQuotaDays == null ? null : Number(fields.movieQuotaDays), fields.tvQuotaLimit == null ? null : Number(fields.tvQuotaLimit), fields.tvQuotaDays == null ? null : Number(fields.tvQuotaDays)]);
 }
 function desiredPermissions(candidate, currentPermissions) {
+  if (candidate.request_permission_override !== null && candidate.request_permission_override !== undefined) {
+    return planPolicy.sanitizePermissionMask(candidate.request_permission_override) ?? REQUEST_PERMISSION;
+  }
   const remembered = Number(candidate.active_permissions);
   const fallback = Number.isInteger(remembered) && remembered > 0 ? remembered : currentPermissions > 0 ? currentPermissions : REQUEST_PERMISSION;
   return planPolicy.planPermissionMask(candidate, fallback) ?? REQUEST_PERMISSION;

@@ -20,7 +20,7 @@ const notifications = read('src/platform/admin-notification-preferences.js');
 const payments = read('src/platform/admin-payment-settings.js');
 const commerce = read('src/platform/admin-commerce.js');
 const plans = read('src/platform/admin-plans-list.js');
-const stableCustomerNav = read('public/js/customer-360-navigation.js');
+const customer360ViewV2 = read('src/platform/customer-360-view-v2.js');
 const orders = read('src/platform/admin-orders.js');
 const billing = read('src/platform/admin-billing.js');
 const support = read('src/platform/admin-support-tickets.js');
@@ -99,11 +99,7 @@ assert(!plans.includes('Plan policies & storefront tools') && plans.includes('/a
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search'), 'Plans must not render filters for the deliberately small catalogue');
 assert(plans.includes('archived=1') && plans.includes('Retired catalogue versions'), 'Archived plan versions must remain reachable without cluttering the active catalogue');
 
-for (const tab of ["['overview','Overview'", "['access','Access'", "['billing','Billing'", "['activity','Activity'"]) {
-  assert(stableCustomerNav.includes(tab), `Customer 360 primary workspace must retain ${tab}`);
-}
-assert(!stableCustomerNav.includes("['manage','Manage'") && !stableCustomerNav.includes("['security','Security'") && !stableCustomerNav.includes("['history','History'"), 'Customer 360 primary navigation must be exactly Overview, Access, Billing and Activity');
-assert(stableCustomerNav.includes("link.setAttribute('href',href)") && stableCustomerNav.includes('MutationObserver'), 'late service-aware enrichment must not mutate Customer 360 navigation after render');
+assert(customer360ViewV2.includes('Customer record') && customer360ViewV2.includes("action=\"/admin/users/${encodeURIComponent(id)}/impersonate\""), 'Customer 360 is one page now: nav must be exactly "Customer record" plus a Portal view impersonation action, not a multi-tab bar');
 
 assert(orders.includes('Transaction desk') && orders.includes('Open customer billing →'), 'Orders must act as a transaction trail into customer billing rather than a raw record table');
 assert(orders.includes("ui.detailDisclosure({title:`Full purchase history"), 'Older order history must be progressively disclosed');

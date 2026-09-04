@@ -92,39 +92,6 @@
     }
   }
 
-  function hidden(form,name,value){const input=document.createElement('input');input.type='hidden';input.name=name;input.value=String(value??'');form.appendChild(input);return input;}
-  function postForm(action,token,fields,label,{tone='secondary',className='plainForm'}={}){
-    const form=el('form',className);form.method='post';form.action=action;form.dataset.nativeSubmit='true';hidden(form,'_csrf',token);Object.entries(fields||{}).forEach(([key,value])=>hidden(form,key,value));const button=el('button',`button ${tone}`,label);button.type='submit';form.appendChild(button);return form;
-  }
-  function bulkForm(customerId,token,action,label,tone='secondary'){return postForm('/admin/customers/bulk/preview',token,{customerId,action},label,{tone});}
-  function serverLabel(server){
-    const assigned=Number(server.assigned_users||0),max=Number(server.max_users||0);let capacity=max?`${assigned}/${max}`:`${assigned} users`;
-    if(max&&assigned>max)capacity+=` · OVER +${assigned-max}`;else if(max&&assigned===max)capacity+=' · FULL';
-    const flags=[];if(!server.enabled)flags.push('disabled');if(server.health_status&&server.health_status!=='healthy')flags.push(server.health_status);
-    return`${server.name} · ${capacity}${flags.length?` · ${flags.join(', ')}`:''}`;
-  }
-  function serverSelect(context,name='serverId'){
-    const select=el('select','input operatorServerSelect');select.name=name;select.required=true;
-    const first=document.createElement('option');first.value='';first.textContent='Choose a server…';select.appendChild(first);
-    for(const server of context.servers||[]){const option=document.createElement('option');option.value=server.id;option.textContent=serverLabel(server);option.disabled=!server.operable;option.dataset.full=server.full?'1':'0';option.dataset.assigned=String(server.assigned_users||0);option.dataset.max=String(server.max_users||0);option.dataset.serverName=server.name||'Server';option.dataset.serverClass=server.server_class||'';select.appendChild(option);}
-    return select;
-  }
-  function addServerAction(panel,context,customerId,mode){
-    const form=el('form','operatorServerAction');form.method='post';form.action=`/admin/users/${encodeURIComponent(customerId)}/operator/${mode}`;form.dataset.nativeSubmit='true';hidden(form,'_csrf',context.csrfToken);
-    const select=serverSelect(context);form.appendChild(select);
-    const button=el('button','button primary',mode==='move'?'Move to server':'Add to server');button.type='submit';form.appendChild(button);
-    const warning=el('div','operatorOverrideWarning');warning.hidden=true;form.appendChild(warning);
-    select.addEventListener('change',()=>{
-      const option=select.selectedOptions[0];if(!option?.value){warning.hidden=true;button.textContent=mode==='move'?'Move to server':'Add to server';return;}
-      const assigned=Number(option.dataset.assigned||0),max=Number(option.dataset.max||0),full=option.dataset.full==='1';const differentPool=context.entitlement?.serverClass&&option.dataset.serverClass&&context.entitlement.serverClass!==option.dataset.serverClass;
-      const notices=[];
-      if(full&&max)notices.push(`${option.dataset.serverName} is ${assigned}/${max}. Admin override is allowed; this customer will make it ${assigned+1}/${max} and public capacity stays full.`);
-      if(differentPool)notices.push(`This server is outside the plan's normal ${context.entitlement.serverClass} pool. Your admin choice overrides automatic placement.`);
-      warning.textContent=notices.join(' ');warning.hidden=!notices.length;button.textContent=full?(mode==='move'?'Move anyway':'Add anyway'):(mode==='move'?'Move to server':'Add to server');
-    });
-    panel.appendChild(form);
-  }
-
   function friendlyNoticeCopy(){
     document.querySelectorAll('.notice').forEach(node=>{
       const current=text(node);if(/service access reconciled|reconciled against|reconcile(d|ment)? access/i.test(current))node.textContent='Jellyfin access updated successfully.';
@@ -160,45 +127,6 @@
     });
   }
 
-  function operatorStatus(context){
-    if(context.adminControl?.mode==='removed')return['Removed by admin','warn','Automatic setup is paused for this entitlement.'];
-    if(context.permanent)return['Permanent User','good','Payments, expiry and inactivity cannot remove access.'];
-    if(context.activeAccounts?.length)return['Active','good',context.adminControl?.mode==='forced_server'?'Server placement is pinned by administrator.':'Normal lifecycle rules apply.'];
-    if(context.entitlement)return['Needs access','bad','The customer has a Jellyfin plan but no enabled Jellyfin account.'];
-    return['No Jellyfin plan','','Choose a plan before adding Jellyfin access.'];
-  }
-
-  function buildOperatorPanel(context,customerId){
-    const section=el('section','section operatorCustomerActions');section.id='customer-operator-actions';
-    const head=el('div','sectionHead'),headText=el('div');headText.append(el('h2','','What do you want to do?'),el('div','muted','Direct administrator controls. Capacity and automatic placement rules never block an explicit server choice.'));
-    const [status,tone,sub]=operatorStatus(context),badge=statusBadge(status,tone);head.append(headText,badge);section.appendChild(head);
-
-    const summary=el('div','operatorCustomerSummary');
-    const summaryItems=[['Plan',context.entitlement?.planName||'No Jellyfin plan'],['Jellyfin',context.activeAccounts?.length?`${context.activeAccounts.length} active account${context.activeAccounts.length===1?'':'s'}`:'No active account'],['Server',context.activeAccounts?.map(a=>a.server_name).filter(Boolean).join(', ')||context.adminControl?.serverName||'—'],['Management',context.permanent?'Permanent User':context.adminControl?.mode==='forced_server'?'Admin-selected server':context.adminControl?.mode==='removed'?'Removed by admin':'Automatic rules']];
-    for(const [label,value] of summaryItems){const item=el('div');item.append(el('span','',label),el('strong','',value));summary.appendChild(item);}section.append(summary,el('div','operatorCustomerRule','',));section.lastChild.textContent=sub;
-
-    const primary=el('div','operatorPrimaryActions');
-    if(context.entitlement){
-      if(context.activeAccounts?.length)addServerAction(primary,context,customerId,'move');else addServerAction(primary,context,customerId,'assign');
-      primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/operator/fix`,context.csrfToken,{},'Fix access',{tone:'secondary'}));
-      if(context.activeAccounts?.length||context.adminControl?.mode==='forced_server')primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/operator/remove`,context.csrfToken,{reason:'Removed from Jellyfin by administrator'},'Remove Jellyfin access',{tone:'secondary'}));
-      if(context.adminControl)primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/operator/automatic`,context.csrfToken,{},'Return to automatic management',{tone:'secondary'}));
-    }
-    // Rendered even with no active entitlement: the server route itself
-    // explains "Give the customer an active plan before making access
-    // permanent" rather than silently having no affordance for the action.
-    primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/permanent-access`,context.csrfToken,{action:context.permanent?'revoke':'enable',reason:context.permanent?'Permanent status removed from customer operator console':'Permanent User enabled from customer operator console'},context.permanent?'Remove Permanent Status':'Make Permanent User',{tone:context.permanent?'secondary':'primary'}));
-    primary.appendChild(bulkForm(customerId,context.csrfToken,'plan_change','Change plan','secondary'));
-    section.appendChild(primary);
-
-    const more=el('details','operatorMoreActions');more.appendChild(el('summary','','More actions'));
-    const moreBody=el('div','operatorMoreActionsBody');
-    if(context.entitlement){moreBody.appendChild(bulkForm(customerId,context.csrfToken,'suspend','Suspend service access','secondary'));moreBody.appendChild(bulkForm(customerId,context.csrfToken,'end_jellyfin_plan','Cancel / end current plan','secondary'));}
-    if(context.accounts?.length)moreBody.appendChild(bulkForm(customerId,context.csrfToken,'jellyfin_delete','Delete Jellyfin account(s)','secondary'));
-    moreBody.appendChild(bulkForm(customerId,context.csrfToken,'portal_delete','Delete customer…','secondary'));more.appendChild(moreBody);section.appendChild(more);
-    return section;
-  }
-
   function relocatePortalAndTopActions(customerId){
     document.querySelectorAll('.topBarActions a,.coherenceSectionActions a').forEach(link=>{
       const href=link.getAttribute('href')||'';const label=text(link);
@@ -212,27 +140,19 @@
     }
   }
 
-  async function enhanceCustomerDetail(customerId){
+  // The Customer control grid (Plan/Jellyfin account/Server/Management/
+  // Access holds/Expiry/Reconcile/Portal/More) is server-rendered directly
+  // from this same operator context on page load, so this no longer fetches
+  // context or builds a client-side actions panel -- doing so would inject a
+  // second, differently-styled duplicate of the server-rendered grid.
+  function enhanceCustomerDetail(customerId){
     friendlyNoticeCopy();replaceExactVisibleText();relocatePortalAndTopActions(customerId);
-    let context=null;
-    try{const response=await fetch(`/admin/users/${encodeURIComponent(customerId)}/operator/context`,{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'});if(response.ok)context=await response.json();}catch(_){context=null;}
-    // Stremio-only customers have no Jellyfin server to add/move/remove --
-    // the retained server-rendered "Customer control centre" already covers
-    // their plan/expiry/permanent/lease actions, so skip injecting a
-    // Jellyfin-server picker that would not apply to them. context.entitlement
-    // only ever reflects the jellyfin/bundle lane (null for Stremio-only
-    // customers), so this must check the explicit serviceKind field instead.
-    const stremioOnly=context?.serviceKind==='stremio';
-    if(context?.ok&&!stremioOnly&&!document.querySelector('#customer-operator-actions')){
-      const panel=buildOperatorPanel(context,customerId),nav=document.querySelector('.customerContextTabs,.detailTabs');
-      if(nav)nav.insertAdjacentElement('afterend',panel);else(document.querySelector('.summaryGrid')||document.querySelector('.profileHero'))?.insertAdjacentElement('afterend',panel);
-    }
     collapseTechnicalSections();replaceExactVisibleText();relocatePortalAndTopActions(customerId);
   }
 
   if(path==='/admin/users')enhanceCustomerList().catch(()=>{});
   else if(customerMatch){
-    const customerId=customerMatch[1];enhanceCustomerDetail(customerId).catch(()=>{});
+    const customerId=customerMatch[1];try{enhanceCustomerDetail(customerId);}catch(_){}
     // Other admin scripts add support actions shortly after first paint. Keep
     // the customer header/navigation compact if those nodes arrive late.
     const observer=new MutationObserver(()=>relocatePortalAndTopActions(customerId));observer.observe(document.body,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),5000);
