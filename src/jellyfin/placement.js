@@ -44,13 +44,19 @@ function fleetLoad(server) {
     const metric = metricFor(server);
     const managedUsers = number(server?.assigned_users, 0);
     const managedStreams = number(server?.active_streams, 0);
+    const explicitUsers = Number(server?.capacity_users);
+    const hasExplicitUsers = Number.isFinite(explicitUsers) && explicitUsers >= 0;
     return {
-        users: metric?.totalUsers == null ? managedUsers : number(metric.totalUsers, managedUsers),
+        users: hasExplicitUsers
+            ? explicitUsers
+            : metric?.totalUsers == null
+                ? managedUsers
+                : number(metric.totalUsers, managedUsers),
         streams: metric?.activeStreams == null ? managedStreams : number(metric.activeStreams, managedStreams),
         managedUsers,
         managedStreams,
-        source: metric ? 'fleet' : 'managed',
-        observedAt: metric?.observedAt || null
+        source: hasExplicitUsers ? 'capacity' : metric ? 'fleet' : 'managed',
+        observedAt: hasExplicitUsers ? (server?.capacity_observed_at || null) : (metric?.observedAt || null)
     };
 }
 
@@ -191,6 +197,7 @@ module.exports = {
     fleetLoad,
     atCapacity,
     selectServer,
+    metricsStaleMs: staleMs,
     refreshFleetSnapshot,
     startFleetSnapshotRefresh,
     snapshotStatus,

@@ -72,19 +72,32 @@ async function selectServerForPlan(plan) {
   const usage = await query(`
     SELECT js.id,
            COUNT(DISTINCT ja.id)::int AS assigned_users,
-           COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams
+           COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams,
+           m.total_users AS observed_total_users,
+           m.observed_at AS metrics_observed_at
     FROM jellyfin_servers js
     LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id AND ja.disabled=FALSE
     LEFT JOIN active_playback_sessions aps ON aps.server_id=js.id
+    LEFT JOIN jellyfin_server_metrics m ON m.server_id=js.id
     WHERE js.id=ANY($1::uuid[])
-    GROUP BY js.id
+    GROUP BY js.id,m.total_users,m.observed_at
   `, [ids]);
   const counts = new Map(usage.rows.map(row => [String(row.id), row]));
-  const candidates = available.map(server => ({
-    ...server,
-    assigned_users: Number(counts.get(String(server.id))?.assigned_users || 0),
-    active_streams: Number(counts.get(String(server.id))?.active_streams || 0)
-  })).filter(server => server.max_users == null || Number(server.max_users) === 0 || server.assigned_users < Number(server.max_users));
+  const staleMs = placement.metricsStaleMs();
+  const candidates = available.map(server => {
+    const row = counts.get(String(server.id));
+    const assignedUsers = Number(row?.assigned_users || 0);
+    const observedAt = row?.metrics_observed_at ? new Date(row.metrics_observed_at).getTime() : NaN;
+    const metricsFresh = Number.isFinite(observedAt) && Date.now() - observedAt <= staleMs;
+    const observedUsers = metricsFresh ? Math.max(0, Number(row?.observed_total_users || 0)) : 0;
+    return {
+      ...server,
+      assigned_users: assignedUsers,
+      capacity_users: Math.max(assignedUsers, observedUsers),
+      capacity_observed_at: metricsFresh ? row.metrics_observed_at : null,
+      active_streams: Number(row?.active_streams || 0)
+    };
+  }).filter(server => server.max_users == null || Number(server.max_users) === 0 || server.capacity_users < Number(server.max_users));
   return placement.selectServer(candidates, plan?.placement_strategy);
 }
 
