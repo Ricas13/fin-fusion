@@ -30,7 +30,8 @@ async function main(){
     await query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)`,[free.id,serverId]);
 
     const before=await capacity.usage(free.id);
-    const temporaryLimit=Number(before.streamUsed||0)+Number(before.streamReserved||0)+1;
+    assert.equal(before.model,'fleet_users','Free Access must use server customer-user capacity');
+    const temporaryLimit=Number(before.userUsed||0)+Number(before.reservedUsers||0)+1;
     await query(`UPDATE jellyfin_servers SET max_users=$2,updated_at=NOW() WHERE id=$1`,[serverId,temporaryLimit]);
 
     const firstSession=`${tag}:session-a`;
@@ -43,8 +44,8 @@ async function main(){
     const idempotent=await pending.reserveFreeAccess({sessionId:firstSession});
     assert.equal(String(idempotent.id),String(firstHold.id),'same browser session created a second Free Access hold');
     const held=await capacity.usage(free.id);
-    assert.equal(held.streamReserved,Number(before.streamReserved||0)+1,'reservation was not counted against real Jellyfin fleet capacity');
-    assert.equal(held.remaining,0,'last available Free Access place was not held immediately');
+    assert.equal(held.reservedUsers,Number(before.reservedUsers||0)+1,'reservation was not counted as one customer place');
+    assert.equal(held.remaining,0,'last available Free Access customer place was not held immediately');
 
     let blockedMessage='';
     try{await pending.reserveFreeAccess({sessionId:`${tag}:session-b`});}
@@ -76,10 +77,10 @@ async function main(){
     assert.equal(String(converted.customer_id),String(created.customer.id),'reservation did not record the customer');
     assert.equal(String(converted.subscription_id),String(subscriptionId),'reservation did not record the resulting subscription');
     const after=await capacity.usage(free.id);
-    assert.equal(after.streamReserved,Number(before.streamReserved||0),'converted hold still consumes reservation capacity');
-    assert(after.entitlementStreamUsed>=Number(before.entitlementStreamUsed||0)+1,'converted hold did not become a live subscription');
+    assert.equal(after.reservedUsers,Number(before.reservedUsers||0),'converted hold still consumes reservation capacity');
+    assert(after.userUsed>=Number(before.userUsed||0)+1,'converted hold did not become one owed/managed customer place');
 
-    const terminalLimit=Number(after.streamUsed||0)+Number(after.streamReserved||0)+1;
+    const terminalLimit=Number(after.userUsed||0)+Number(after.reservedUsers||0)+1;
     await query(`UPDATE jellyfin_servers SET max_users=$2,updated_at=NOW() WHERE id=$1`,[serverId,terminalLimit]);
     const terminalSession=`${tag}:terminal`;
     const terminalHold=await pending.reserveFreeAccess({sessionId:terminalSession});
@@ -87,7 +88,7 @@ async function main(){
     terminal=await pending.begin({email:`${tag}-terminal@example.test`,username:`${tag}-terminal`.slice(0,40),password:'ReservationSmoke!2026',freeAccess:true,ttlMinutes:60,freeReservationId:terminalHold.id,freeReservationSessionId:terminalSession});
     assert.equal(String(terminal.freeReservation?.id),String(terminalHold.id),'terminal registration did not retain its pre-hold');
     const terminalHeld=await capacity.usage(free.id);
-    assert.equal(terminalHeld.streamReserved,Number(after.streamReserved||0)+1,'terminal registration reservation was not counted');
+    assert.equal(terminalHeld.reservedUsers,Number(after.reservedUsers||0)+1,'terminal registration reservation was not counted as one place');
 
     const sourceHash=(await query(`SELECT password_hash FROM app_users WHERE id=$1`,[created.user.id])).rows[0]?.password_hash;
     assert(sourceHash,'source password hash missing');
@@ -104,20 +105,20 @@ async function main(){
     assert(!releasedReservation?.consumed_at,'terminal reservation was incorrectly consumed');
     assert(releasedReservation?.released_at,'terminal reservation was not released');
     const afterRelease=await capacity.usage(free.id);
-    assert.equal(afterRelease.streamReserved,Number(after.streamReserved||0),'terminal rejection continued to consume Free Access capacity');
+    assert.equal(afterRelease.reservedUsers,Number(after.reservedUsers||0),'terminal rejection continued to consume a customer place');
 
-    const expiryLimit=Number(afterRelease.streamUsed||0)+Number(afterRelease.streamReserved||0)+1;
+    const expiryLimit=Number(afterRelease.userUsed||0)+Number(afterRelease.reservedUsers||0)+1;
     await query(`UPDATE jellyfin_servers SET max_users=$2,updated_at=NOW() WHERE id=$1`,[serverId,expiryLimit]);
     const expiringHold=await pending.reserveFreeAccess({sessionId:`${tag}:expiry-a`});
     reservationIds.push(expiringHold.id);
     await query(`UPDATE free_access_registration_reservations SET expires_at=NOW()-INTERVAL '1 second',updated_at=NOW() WHERE id=$1`,[expiringHold.id]);
     const afterExpiry=await capacity.usage(free.id);
-    assert.equal(afterExpiry.streamReserved,Number(afterRelease.streamReserved||0),'expired hold still consumed capacity');
+    assert.equal(afterExpiry.reservedUsers,Number(afterRelease.reservedUsers||0),'expired hold still consumed a customer place');
     const replacementHold=await pending.reserveFreeAccess({sessionId:`${tag}:expiry-b`});
     reservationIds.push(replacementHold.id);
-    assert(replacementHold?.id,'expired capacity was not immediately reservable by another browser');
+    assert(replacementHold?.id,'expired customer place was not immediately reservable by another browser');
 
-    console.log('Free Access registration reservation DB smoke: ok');
+    console.log('Free Access one-user-one-place reservation DB smoke: ok');
   } finally {
     for(const id of reservationIds)await query(`DELETE FROM free_access_registration_reservations WHERE id=$1`,[id]).catch(()=>{});
     if(subscriptionId)await query(`DELETE FROM subscriptions WHERE id=$1`,[subscriptionId]).catch(()=>{});
