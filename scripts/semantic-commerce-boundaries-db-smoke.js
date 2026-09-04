@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const intents = require('../src/payments/checkout-intents');
 const discounts = require('../src/payments/discounts');
+const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
 const suffix = crypto.randomBytes(6).toString('hex');
 function unique(label) { return `${label}-${suffix}-${crypto.randomBytes(3).toString('hex')}`; }
@@ -15,6 +16,23 @@ async function customer(label) {
         'INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *',
         [label, `${unique(label)}@example.invalid`]
     )).rows[0];
+}
+
+// Fleet capacity now fails closed for any jellyfin premium/free plan with no
+// matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
+// gate) -- without this, both checkout intents below are rejected as sold
+// out before the discount-boundary assertions this test exists for ever run.
+async function ensurePremiumServer() {
+    const apiKey = encryptWithEnv(`test-${suffix}`, 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
+    return (await query(`
+        INSERT INTO jellyfin_servers(
+            name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+            enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+        )
+        VALUES($1,$2,'premium','jellyfin','https://example.invalid','https://example.invalid',$3,
+               TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+        RETURNING id
+    `, [unique('semantic-boundary-server'), unique('semantic-boundary-server'), apiKey])).rows[0].id;
 }
 
 async function plan(label) {
@@ -44,6 +62,7 @@ function snapshotFor(p, overrides = {}) {
 }
 
 async function restrictedDiscountCannotCrossCheckoutPlan() {
+    await ensurePremiumServer();
     const owner = await customer('discount-plan-binding');
     const planA = await plan('Restricted plan A');
     const planB = await plan('Target plan B');
