@@ -136,12 +136,27 @@
     ]);
     document.querySelectorAll('button,a,summary,h2,h3,.kvLabel,.accessEyebrow').forEach(node=>{const value=text(node);if(replacements.has(value))node.textContent=replacements.get(value);});
   }
+  function wrapInDisclosure(sections,label){
+    if(!sections.length||sections[0].closest('details.operatorLegacyDetails'))return;
+    const details=el('details','operatorLegacyDetails');const summary=el('summary','',label);
+    sections[0].parentNode.insertBefore(details,sections[0]);details.appendChild(summary);
+    for(const section of sections)details.appendChild(section);
+  }
   function collapseTechnicalSections(){
-    const targets=[...document.querySelectorAll('.customerAccessTruth,.customerServiceTruth,.customerControlCentre,.accessOverviewSection')];
-    targets.forEach((section,index)=>{
-      if(section.closest('details.operatorLegacyDetails'))return;
-      const details=el('details','operatorLegacyDetails');const summary=el('summary','',section.classList.contains('customerControlCentre')?'More customer controls':section.classList.contains('accessOverviewSection')?'Access details':'Advanced diagnostics');
-      section.parentNode.insertBefore(details,section);details.append(summary,section);if(index===0&&section.classList.contains('customerControlCentre'))details.open=false;
+    // Access truth and Service reconciliation truth are always rendered as
+    // adjacent siblings (accessTruthPanel appends serviceTruthPanel directly)
+    // and describe the same "why is access in this state" diagnosis, so they
+    // share one disclosure instead of two separate ones both labeled
+    // "Advanced diagnostics".
+    const accessTruth=document.querySelector('.customerAccessTruth');
+    if(accessTruth&&!accessTruth.closest('details.operatorLegacyDetails')){
+      const serviceTruth=accessTruth.nextElementSibling?.classList.contains('customerServiceTruth')?accessTruth.nextElementSibling:null;
+      wrapInDisclosure(serviceTruth?[accessTruth,serviceTruth]:[accessTruth],'Advanced diagnostics');
+    }
+    const orphanServiceTruth=document.querySelector('.customerServiceTruth');
+    if(orphanServiceTruth&&!orphanServiceTruth.closest('details.operatorLegacyDetails'))wrapInDisclosure([orphanServiceTruth],'Advanced diagnostics');
+    document.querySelectorAll('.customerControlCentre,.accessOverviewSection').forEach(section=>{
+      wrapInDisclosure([section],section.classList.contains('customerControlCentre')?'More customer controls':'Access details');
     });
   }
 
@@ -198,7 +213,14 @@
     friendlyNoticeCopy();replaceExactVisibleText();relocatePortalAndTopActions(customerId);
     let context=null;
     try{const response=await fetch(`/admin/users/${encodeURIComponent(customerId)}/operator/context`,{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store'});if(response.ok)context=await response.json();}catch(_){context=null;}
-    if(context?.ok&&!document.querySelector('#customer-operator-actions')){
+    // Stremio-only customers have no Jellyfin server to add/move/remove --
+    // the retained server-rendered "Customer control centre" already covers
+    // their plan/expiry/permanent/lease actions, so skip injecting a
+    // Jellyfin-server picker that would not apply to them. context.entitlement
+    // only ever reflects the jellyfin/bundle lane (null for Stremio-only
+    // customers), so this must check the explicit serviceKind field instead.
+    const stremioOnly=context?.serviceKind==='stremio';
+    if(context?.ok&&!stremioOnly&&!document.querySelector('#customer-operator-actions')){
       const panel=buildOperatorPanel(context,customerId),nav=document.querySelector('.customerContextTabs,.detailTabs');
       if(nav)nav.insertAdjacentElement('afterend',panel);else(document.querySelector('.summaryGrid')||document.querySelector('.profileHero'))?.insertAdjacentElement('afterend',panel);
     }

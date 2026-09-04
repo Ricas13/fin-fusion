@@ -65,6 +65,12 @@ async function metricsFor(ids){
 
 async function context(customerId,req){
   const entitlement=await provisioning.currentEntitlementTruth(customerId);
+  // currentEntitlementTruth only sees the jellyfin/bundle lane, so a
+  // Stremio-only customer always has entitlement=null here even though they
+  // have a live plan. Without this, the client can't tell "no plan at all"
+  // apart from "has a Stremio plan" and wrongly shows the Jellyfin-server
+  // picker for Stremio customers.
+  const stremioEntitlement=entitlement?null:await require('../stremio/entitlements').entitledSubscription(customerId).catch(()=>null);
   const [customer,accounts,permanent,control,rawServers]=await Promise.all([
     query(`SELECT c.id,COALESCE(NULLIF(c.display_name,''),u.username,c.email,'Customer') AS name,c.email,u.username AS portal_username FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE c.id=$1`,[customerId]),
     query(`SELECT ja.id,ja.server_id,ja.jellyfin_username,ja.disabled,ja.is_primary,js.name AS server_name,js.server_class FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.updated_at DESC`,[customerId]),
@@ -84,6 +90,7 @@ async function context(customerId,req){
   return{
     ok:true,csrfToken:csrf.token(req),customer:customer.rows[0],
     entitlement:entitlement?{subscriptionId:entitlement.subscription_id,planId:entitlement.plan_id,planName,serviceType:String(entitlement.service_type_snapshot||entitlement.service_type||'jellyfin'),serverClass:entitlement.server_class||null,isFreeTier:Boolean(entitlement.is_free_tier),blocked:Boolean(entitlement.blocked)}:null,
+    serviceKind:entitlement?String(entitlement.service_type_snapshot||entitlement.service_type||'jellyfin'):stremioEntitlement?'stremio':'none',
     accounts:accounts.rows,activeAccounts,
     permanent:Boolean(permanent?.active),adminControl:control?{mode:control.mode,serverId:control.server_id||null,serverName:control.server_name||null,reason:control.reason||null}:null,
     servers:servers.map(server=>({...server,assigned_users:Number(server.assigned_users||0),full:Boolean(server.full),overBy:Number(server.over_capacity_by||0),operable:Boolean(server.enabled)}))
