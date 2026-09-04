@@ -2,16 +2,18 @@
 
 const db = require('../src/db');
 const serversAdmin = require('../src/platform/admin-servers');
+const userCapacity = require('../src/jellyfin/user-capacity');
 
 const originalQuery = db.query;
 const originalServerList = serversAdmin.serverList;
+const originalDecorateServers = userCapacity.decorateServers;
 const checkedAt = new Date('2026-08-14T14:13:39.850Z');
 
 (async () => {
     try {
-        // The canonical status endpoint now lives in the fleet dashboard. Stub
-        // its metrics query before requiring the module so this remains a fast,
-        // database-independent contract test.
+        // The canonical status endpoint now lives in the fleet dashboard and
+        // delegates managed-user occupancy to user-capacity. Stub both data
+        // owners so this remains a fast, database-independent contract test.
         db.query = async () => ({ rows: [] });
         serversAdmin.serverList = async () => [{
             id: 'server-1',
@@ -24,6 +26,14 @@ const checkedAt = new Date('2026-08-14T14:13:39.850Z');
             assigned_users: 12,
             active_streams: 3
         }];
+        userCapacity.decorateServers = async servers => servers.map(server => ({
+            ...server,
+            assigned_users: 12,
+            capacity_users: 12,
+            remaining_users: 88,
+            full: false,
+            over_capacity_by: 0
+        }));
         delete require.cache[require.resolve('../src/platform/admin-server-fleet-dashboard')];
         const dashboard = require('../src/platform/admin-server-fleet-dashboard');
 
@@ -45,6 +55,7 @@ const checkedAt = new Date('2026-08-14T14:13:39.850Z');
     } finally {
         db.query = originalQuery;
         serversAdmin.serverList = originalServerList;
+        userCapacity.decorateServers = originalDecorateServers;
     }
 })().catch(error => {
     console.error(error);
