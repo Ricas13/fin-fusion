@@ -63,6 +63,9 @@ function persistentMessage(remaining,publicBaseUrl){
   });
 }
 function discordMissing(error){return /(?:HTTP|Discord)\s*404|unknown message/i.test(String(error?.message||error||''));}
+function becameAvailable(previousRemaining,remaining){
+  return previousRemaining===0&&Number(remaining)>0;
+}
 async function sendDiscordMessage({channelId,text,message=null,allowEveryone=false}){
   const channel=notificationSettings.snowflake(channelId);
   if(!channel)throw new Error('Discord channel ID is required.');
@@ -92,6 +95,9 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 
   return transactionFn(async client=>{
     const db=(sql,params)=>client.query(sql,params);
+    // Keep the decision + Discord mutation serialized. In particular, only one
+    // worker may observe the durable 0 -> positive transition and create the
+    // fresh message that should surface as a new Discord notification.
     await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:discord-free-places-status',$1::bigint))`,[LOCK_SEED]);
     const plan=await freePlan(db);
     if(!plan)return{processed:1,updated:0,skipped:'free_plan_not_found'};
@@ -100,10 +106,15 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     const remaining=Math.max(0,Math.floor(Number(state.remaining))),text=persistentText(remaining,publicBaseUrl),message=persistentMessage(remaining,publicBaseUrl),signature=JSON.stringify(message),channelId=String(cfg.discordFreePlacesChannelId);
     let stored=await loadState(db);
     if(stored.channelId!==channelId)stored={channelId,messageId:'',text:'',remaining:null,updatedAt:null};
-    if(stored.messageId&&stored.text===signature)return{processed:1,updated:0,remaining,messageId:stored.messageId,unchanged:true};
+    const availabilityRestored=becameAvailable(stored.remaining,remaining);
+    if(stored.messageId&&stored.text===signature&&!availabilityRestored)return{processed:1,updated:0,remaining,messageId:stored.messageId,unchanged:true};
 
     let sentMessage=null,created=false;
-    if(stored.messageId){
+    // Routine changes are PATCHed in place, which avoids creating a new channel
+    // message. The one intentional exception is a known 0 -> positive change:
+    // POST a fresh message so Discord treats availability reopening as new
+    // activity. The fresh message id then becomes the canonical one we edit.
+    if(stored.messageId&&!availabilityRestored){
       try{sentMessage=await edit({channelId,messageId:stored.messageId,text,message});}
       catch(error){if(!discordMissing(error))throw error;}
     }
@@ -114,9 +125,9 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     const messageId=String(sentMessage?.id||stored.messageId||'');
     if(!messageId)throw new Error('Discord did not return an availability message ID.');
     await saveState(db,{channelId,messageId,text:signature,remaining});
-    return{processed:1,updated:1,created:created?1:0,remaining,messageId};
+    return{processed:1,updated:1,created:created?1:0,availabilityRestored:availabilityRestored?1:0,remaining,messageId};
   });
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,sendDiscordMessage,discordMissing};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
