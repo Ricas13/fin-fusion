@@ -21,6 +21,16 @@ async function customer(label) {
 async function balance(customerId) {
     return (await affiliateCredits.balances(customerId)).find(row => row.currency === 'GBP') || { available_minor: 0, recoverable_minor: 0 };
 }
+async function jellyfinServer(serverClass, maxUsers, label) {
+    return (await query(`
+        INSERT INTO jellyfin_servers(
+            name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+            enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+        ) VALUES($1,$2,$3,'jellyfin','https://example.invalid','https://example.invalid','test-key',
+                 TRUE,1,$4,'healthy',TRUE,TRUE,TRUE,'active')
+        RETURNING *
+    `, [`${label} ${suffix}`, unique(label), serverClass, maxUsers])).rows[0];
+}
 
 async function affiliateDeletionInvariant() {
     const affiliate = await customer('delete-affiliate');
@@ -73,13 +83,15 @@ async function affiliateDeletionInvariant() {
 }
 
 async function capacitySettlementInvariant() {
+    const capacityClass = `capacity-${suffix}`;
     const plan = (await query(`
         INSERT INTO plans(
             code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,
             capacity_limit,visible,active,streams,server_class
-        ) VALUES($1,$2,'jellyfin','direct','month',30,1000,'GBP',1,TRUE,TRUE,1,'custom')
+        ) VALUES($1,$2,'jellyfin','direct','month',30,1000,'GBP',1,TRUE,TRUE,1,$3)
         RETURNING *
-    `, [unique('capacity-plan'), `Capacity settlement ${suffix}`])).rows[0];
+    `, [unique('capacity-plan'), `Capacity settlement ${suffix}`, capacityClass])).rows[0];
+    const server = await jellyfinServer(capacityClass, 1, 'capacity-server');
     const lateCustomer = await customer('late-settlement');
     const occupyingCustomer = await customer('occupying-customer');
     const snapshot = {
@@ -98,7 +110,8 @@ async function capacitySettlementInvariant() {
         providerMappingId: null,
         providerMappingRecordId: null,
         streams: 1,
-        stremioHouseholdNetworkLimit: 1
+        stremioHouseholdNetworkLimit: 1,
+        serverClass: capacityClass
     };
 
     const intent = await checkoutIntents.createIntent({
@@ -134,7 +147,7 @@ async function capacitySettlementInvariant() {
     } catch (error) {
         capacityError = error;
     }
-    assert(capacityError, 'late provider settlement overbooked a full plan');
+    assert(capacityError, 'late provider settlement overbooked a full server user pool');
     assert.strictEqual(capacityError.code, 'PLAN_CAPACITY_EXHAUSTED', `unexpected settlement failure: ${capacityError.message}`);
     assert.strictEqual(capacityError.paidButUnfulfilled, true, 'paid-but-unfulfilled state was not surfaced to the provider event owner');
     assert.strictEqual((await query(`SELECT 1 FROM subscriptions WHERE customer_id=$1 AND source='stripe' AND provider_subscription_id=$2`, [lateCustomer.id, providerPaymentId])).rowCount, 0, 'capacity failure still created access');
@@ -157,7 +170,7 @@ async function capacitySettlementInvariant() {
         providerStatus: 'active',
         commercialSnapshot: { ...snapshot, checkoutIntentId: intent.id }
     });
-    assert(recovered?.id, 'provider settlement did not converge after capacity became available');
+    assert(recovered?.id, 'provider settlement did not converge after one server user place became available');
     await checkoutIntents.completeVerifiedProvider('stripe', providerCheckoutId, 'completed');
     const recoveredIncident = (await query('SELECT incident_status,resolved_at FROM payment_incidents WHERE id=$1', [openIncident.id])).rows[0];
     assert.strictEqual(recoveredIncident.incident_status, 'resolved', 'capacity incident did not settle after successful retry');
@@ -165,7 +178,7 @@ async function capacitySettlementInvariant() {
     const finalSubscriptions = await query(`SELECT id FROM subscriptions WHERE plan_id=$1 AND superseded_by IS NULL AND status IN ('active','trialing','past_due','paused') AND current_period_end>NOW()`, [plan.id]);
     assert.strictEqual(finalSubscriptions.rowCount, 1, 'capacity recovery created more than one live occupant');
 
-    return { planId: plan.id, customerIds: [lateCustomer.id, occupyingCustomer.id], incidentId: openIncident.id };
+    return { planId: plan.id, serverId: server.id, customerIds: [lateCustomer.id, occupyingCustomer.id], incidentId: openIncident.id };
 }
 
 function replaySnapshot(plan, priceId) {
@@ -184,7 +197,8 @@ function replaySnapshot(plan, priceId) {
         checkoutMode: 'subscription',
         providerMappingId: priceId,
         providerMappingRecordId: null,
-        streams: 1
+        streams: 1,
+        serverClass: plan.server_class
     };
 }
 
@@ -197,6 +211,7 @@ async function historicalCheckoutReplayInvariant() {
         INSERT INTO plans(code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,visible,active,streams,server_class)
         VALUES($1,$2,'jellyfin','direct','month',30,1500,'GBP',TRUE,TRUE,1,'custom') RETURNING *
     `, [unique('replay-plan-b'), `Replay plan B ${suffix}`])).rows[0];
+    const server = await jellyfinServer('custom', 100, 'replay-server');
     const replayCustomer = await customer('historical-replay');
     const providerSubscriptionId = `sub_replay_${suffix}`;
     const priceA = `price_replay_a_${suffix}`;
@@ -276,11 +291,11 @@ async function historicalCheckoutReplayInvariant() {
     assert(paymentCustomerAfterRecovery, 'open checkout recovery lost the provider-customer mapping');
     assert.strictEqual(paymentCustomerAfterRecovery.provider_customer_id, recoveryProviderCustomerId, 'open checkout recovery did not converge the provider-customer mapping');
 
-    return { customerId: replayCustomer.id, planIds: [planA.id, planB.id] };
+    return { customerId: replayCustomer.id, planIds: [planA.id, planB.id], serverId: server.id };
 }
 
 async function main() {
-    const cleanup = { customerIds: [], planIds: [], jobIds: [] };
+    const cleanup = { customerIds: [], planIds: [], serverIds: [], jobIds: [] };
     try {
         const affiliate = await affiliateDeletionInvariant();
         cleanup.customerIds.push(affiliate.affiliateId);
@@ -289,12 +304,14 @@ async function main() {
         const capacity = await capacitySettlementInvariant();
         cleanup.customerIds.push(...capacity.customerIds);
         cleanup.planIds.push(capacity.planId);
+        cleanup.serverIds.push(capacity.serverId);
 
         const replay = await historicalCheckoutReplayInvariant();
         cleanup.customerIds.push(replay.customerId);
         cleanup.planIds.push(...replay.planIds);
+        cleanup.serverIds.push(replay.serverId);
 
-        console.log('Residual temporal invariant DB smoke passed: affiliate deletion + late settlement capacity + historical checkout replay.');
+        console.log('Residual temporal invariant DB smoke passed: affiliate deletion + late settlement user capacity + historical checkout replay.');
     } finally {
         for (const customerId of cleanup.customerIds) {
             await query('DELETE FROM payment_incidents WHERE customer_id=$1', [customerId]).catch(() => {});
@@ -304,6 +321,7 @@ async function main() {
             await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
         }
         for (const planId of cleanup.planIds) await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
+        for (const serverId of cleanup.serverIds) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
         for (const jobId of cleanup.jobIds) await query('DELETE FROM customer_deletion_jobs WHERE id=$1', [jobId]).catch(() => {});
         await getPool().end();
     }
