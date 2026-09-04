@@ -61,11 +61,13 @@ assert.strictEqual(plansList.priceLabel({ price_minor: 0, currency: 'USD' }), 'F
 assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), '$6.00');
 
 const capacitySource=fs.readFileSync('src/entitlements/plan-capacity.js','utf8');
+const provisioningSource=fs.readFileSync('src/jellyfin/provisioning-helpers.js','utf8');
 const pendingRegistrationSource=fs.readFileSync('src/security/pending-registration.js','utf8');
 const acquisition=capacity.acquisitionSql('p');
 assert(capacitySource.includes('enabledAccountFloor')&&capacitySource.includes('observedUserFloor')&&capacitySource.includes('placementUserFloor')&&capacitySource.includes('capacityGap'),'fleet runtime capacity must expose managed, observed and canonical placement occupancy');
 assert(acquisition.includes('jellyfin_server_metrics occupancy_metric')&&acquisition.includes('COUNT(DISTINCT capacity_account.id)')&&acquisition.includes('server_load.capacity_users'),'fleet acquisition SQL must use the same managed-vs-live Jellyfin occupancy floor as placement');
 assert(acquisition.includes("COALESCE(occupancy_server.media_server_type,'jellyfin')='jellyfin'")&&capacitySource.includes("COALESCE(js.media_server_type,'jellyfin')='jellyfin'"),'Jellyfin capacity must not count Emby or other media servers that provisioning cannot select');
+assert(provisioningSource.includes('LEFT JOIN jellyfin_server_metrics m ON m.server_id=js.id')&&provisioningSource.includes('capacity_users: Math.max(assignedUsers, observedUsers)')&&provisioningSource.includes('placement.metricsStaleMs()'),'provisioning must consume the same fresh remote-user occupancy truth as advertised capacity');
 assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a manual plan limit when no server capacity is configured');
 assert(pendingRegistrationSource.includes('async function reserveFreeAccess')&&pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,plan.id')&&pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),'Free Access reservation must consume derived fleet capacity even when plans.capacity_limit is null');
 
