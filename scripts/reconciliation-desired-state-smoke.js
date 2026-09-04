@@ -39,6 +39,14 @@ assert(
     !source.includes('a.is_primary && a.server_class === entitlement.server_class && a.server_enabled'),
     'lane selection must not let an existing same-class server override an exact admin pin'
 );
+assert(
+    source.includes('const freeLaneEntitlement = jellyfinRemovedByAdmin && freeEntitlement'),
+    'explicit removal of the current paid Jellyfin entitlement must suppress free-lane fallback during reconciliation'
+);
+assert(
+    source.includes('freeEntitlement.blocked || accounts.some'),
+    'blocked or operator-suppressed free access must not adopt another account into the free lane'
+);
 
 const paid = { plan_id: 'paid', is_free_tier: false, blocked: false };
 const free = { plan_id: 'free', is_free_tier: true, blocked: false };
@@ -56,5 +64,18 @@ assert.strictEqual(derived.primaryEntitlement, paid, 'paid Jellyfin entitlement 
 assert.strictEqual(derived.controlEntitlement, paid, 'control entitlement precedence must remain paid → free → Stremio → Emby');
 assert.deepStrictEqual(derived.activePlanIds, ['paid', 'free', 'stremio'], 'blocked service plans must not be assigned through Discord desired state');
 assert.deepStrictEqual(derived.blockers.map(row => row.type), ['payment_delinquency'], 'typed blockers must be normalized once by the shared calculator');
+
+const removedPaid = { ...paid, blocked: true, admin_jellyfin_removed: true };
+const removed = desiredState.deriveCustomerAccessDesiredState({
+    effectiveJellyfin: removedPaid,
+    freeEntitlement: free,
+    stremioEntitlement: stremio,
+    embyEntitlement: null
+});
+assert.strictEqual(removed.jellyfinRemovedByAdmin, true, 'explicit paid-lane removal must be surfaced as customer-wide Jellyfin suppression');
+assert.strictEqual(removed.desired.primaryJellyfin, false, 'removed paid Jellyfin lane must stay disabled');
+assert.strictEqual(removed.desired.freeJellyfin, false, 'Free Server must not silently restore Jellyfin after an explicit operator removal');
+assert.strictEqual(removed.desired.stremio, true, 'Jellyfin removal must not suppress unrelated Stremio access');
+assert.deepStrictEqual(removed.activePlanIds, ['stremio'], 'Discord desired roles must not keep paid/free Jellyfin plan roles after explicit Jellyfin removal');
 
 console.log('reconciliation desired-state ownership smoke: ok');
