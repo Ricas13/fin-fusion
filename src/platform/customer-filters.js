@@ -219,11 +219,11 @@ const SELECT_COLUMNS = `
 `;
 
 function normalizeCustomerSort(input = {}) {
-    if (typeof input === 'string') return tableSort.normalize({ sort: input }, CUSTOMER_SORTS, 'recent');
-    return tableSort.normalize(input, CUSTOMER_SORTS, 'recent');
+    if (typeof input === 'string') return tableSort.normalize({ sort: input }, CUSTOMER_SORTS, 'registered');
+    return tableSort.normalize(input, CUSTOMER_SORTS, 'registered');
 }
 
-async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'recent', dir } = {}) {
+async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'registered', dir } = {}) {
     const { whereSql, params } = buildWhere(filters, scope);
     const sortState = normalizeCustomerSort(typeof sort === 'object' ? sort : { sort, dir });
     const orderSql = tableSort.orderBy(sortState, CUSTOMER_SORTS, 'c.id ASC');
