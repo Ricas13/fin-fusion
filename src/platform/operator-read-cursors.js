@@ -2,7 +2,7 @@
 
 const { query, transaction } = require('../db');
 
-const AREAS = new Set(['customers', 'orders', 'tickets']);
+const AREAS = new Set(['customers', 'orders', 'tickets', 'payments']);
 const NAV_PREFIX = 'operator.business.';
 
 function area(value) {
@@ -31,6 +31,9 @@ async function latestFor(client, key) {
     }
     if (key === 'orders') {
         return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused')`)).rows[0].seen_at;
+    }
+    if (key === 'payments') {
+        return (await client.query(`SELECT COALESCE(MAX(created_at),NOW()) seen_at FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`)).rows[0].seen_at;
     }
     return (await client.query(`SELECT COALESCE(MAX(COALESCE(last_customer_reply_at,created_at)),NOW()) seen_at FROM support_tickets WHERE status IN ('open','awaiting_staff')`)).rows[0].seen_at;
 }

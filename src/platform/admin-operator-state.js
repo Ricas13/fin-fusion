@@ -50,7 +50,7 @@ async function snapshot(adminUserId=null){
     query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM subscriptions WHERE created_at>NOW()-INTERVAL '7 days' AND source IN ('stripe','paypal') AND status IN ('active','trialing','past_due','paused') AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.orders||null]),
     attention.openSummary(),
     query(`SELECT COUNT(*)::int n,MAX(last_health_check) updated FROM jellyfin_servers WHERE enabled=TRUE AND health_status IN ('degraded','offline')`),
-    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL)`),
+    query(`SELECT COUNT(*)::int n,MAX(created_at) updated FROM payment_events WHERE created_at>NOW()-INTERVAL '7 days' AND (processing_error IS NOT NULL OR processed_at IS NULL) AND ($1::timestamptz IS NULL OR created_at>$1::timestamptz)`,[seen.payments||null]),
     tickets.staffQueueSummary(seen.tickets||null),
     headerMetrics()
   ]);
