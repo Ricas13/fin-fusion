@@ -20,7 +20,7 @@
     if(sec<60)return'Just now';if(sec<3600)return`${Math.floor(sec/60)}m ago`;if(sec<86400)return`${Math.floor(sec/3600)}h ago`;if(sec<86400*30)return`${Math.floor(sec/86400)}d ago`;return fmtDate(value);
   }
   function money(minor,currency){
-    try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP'),currencyDisplay:'narrowSymbol',minimumFractionDigits:0,maximumFractionDigits:2}).format(Number(minor||0)/100);}catch(_){return`${currency||''} ${(Number(minor||0)/100).toFixed(2)}`.trim();}
+    try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:String(currency||'GBP'),currencyDisplay:'narrowSymbol',minimumFractionDigits:0,maximumFractionDigits:2}).format(Number(minor||0)/100);}catch(_){const value=(Number(minor||0)/100).toFixed(2),symbol={GBP:'£',USD:'$',EUR:'€'}[String(currency||'GBP').toUpperCase()]||'';return`${symbol}${value}`;}
   }
   function paidSummary(metric,freePlan){
     const totals=metric?.payment?.totals||{},entries=Object.entries(totals).filter(([,minor])=>Number(minor)!==0);
