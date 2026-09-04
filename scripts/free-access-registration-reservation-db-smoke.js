@@ -71,7 +71,7 @@ async function main(){
 
     await query(`
       UPDATE free_access_registration_reservations
-      SET released_at=NOW(),release_reason='capacity_smoke_release',updated_at=NOW()
+      SET released_at=NOW(),updated_at=NOW()
       WHERE id=ANY($1::uuid[])
     `,[accepted.map(hold=>hold.id)]);
     const burstReleased=await capacity.usage(free.id);
