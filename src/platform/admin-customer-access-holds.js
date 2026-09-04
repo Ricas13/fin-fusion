@@ -20,6 +20,73 @@ async function reconcileCustomerForAdmin(customerId,actorUserId){
   return outcome;
 }
 
+async function forceReleaseAllHolds(customerId,actorUserId,client=null){
+  const execute=async db=>{
+    const released=await db.query(`
+      UPDATE customer_access_holds
+      SET released_at=NOW(),released_by=$2
+      WHERE customer_id=$1 AND released_at IS NULL
+      RETURNING id,hold_type,source_key
+    `,[customerId,actorUserId]);
+    await accessHolds.syncLegacySummary(customerId,db);
+    await db.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+      VALUES($1,'admin.customer.break_glass.clear_all_holds','customer',$2,$3::jsonb)`,[
+        actorUserId,customerId,JSON.stringify({released:released.rowCount,holds:released.rows.map(row=>({id:row.id,type:row.hold_type,sourceKey:row.source_key||null}))})
+      ]);
+    return released.rows;
+  };
+  if(client)return execute(client);
+  return transaction(execute);
+}
+
+async function forceAccessOn(customerId,subscriptionId,actorUserId){
+  let released=[];
+  await transaction(async client=>{
+    const selected=await client.query(`
+      SELECT s.id,s.plan_id,COALESCE(p.is_addon,FALSE) is_addon,
+             COALESCE(s.plan_name_snapshot,p.name) plan_name
+      FROM subscriptions s
+      JOIN plans p ON p.id=s.plan_id
+      WHERE s.id=$1 AND s.customer_id=$2
+      FOR UPDATE
+    `,[subscriptionId,customerId]);
+    if(!selected.rowCount)throw new Error('That subscription does not belong to this customer.');
+    if(selected.rows[0].is_addon)throw new Error('Break-glass access must pin a primary plan, not an add-on.');
+    released=await forceReleaseAllHolds(customerId,actorUserId,client);
+    await client.query(`
+      INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason,created_by,updated_by,created_at,updated_at,revoked_at,revoked_by)
+      VALUES($1,$2,TRUE,'Break-glass administrator override',$3,$3,NOW(),NOW(),NULL,NULL)
+      ON CONFLICT(customer_id) DO UPDATE
+      SET subscription_id=EXCLUDED.subscription_id,
+          permanent_access=TRUE,
+          reason=EXCLUDED.reason,
+          updated_by=EXCLUDED.updated_by,
+          updated_at=NOW(),
+          revoked_at=NULL,
+          revoked_by=NULL
+    `,[customerId,subscriptionId,actorUserId]);
+    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+      VALUES($1,'admin.customer.break_glass.force_access_on','customer',$2,$3::jsonb)`,[
+        actorUserId,customerId,JSON.stringify({subscriptionId,planName:selected.rows[0].plan_name||null,releasedHolds:released.length})
+      ]);
+  });
+  return{released};
+}
+
+async function returnToAutomation(customerId,actorUserId){
+  const result=await query(`
+    UPDATE customer_entitlement_overrides
+    SET permanent_access=FALSE,revoked_at=NOW(),revoked_by=$2,updated_by=$2,updated_at=NOW()
+    WHERE customer_id=$1 AND permanent_access=TRUE AND revoked_at IS NULL
+    RETURNING subscription_id
+  `,[customerId,actorUserId]);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+    VALUES($1,'admin.customer.break_glass.return_to_automation','customer',$2,$3::jsonb)`,[
+      actorUserId,customerId,JSON.stringify({revokedOverride:Boolean(result.rowCount),subscriptionId:result.rows[0]?.subscription_id||null})
+    ]);
+  return Boolean(result.rowCount);
+}
+
 async function reconcileRoute(req,res){
   if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
   const customerId=req.params.customerId;
@@ -36,6 +103,16 @@ async function reconcileRoute(req,res){
   }
 }
 
+async function reconcileAfterBreakGlass(res,customerId,actorUserId,successMessage){
+  try{
+    await reconcileCustomerForAdmin(customerId,actorUserId);
+    return res.redirect(accessPath(customerId,'message',successMessage));
+  }catch(error){
+    console.error('Break-glass reconciliation failed:',{customerId,error:error.message});
+    return res.redirect(accessPath(customerId,'error',`${successMessage} Reconciliation then failed: ${clean(error.message||error,300)}. The override change itself was kept; retry reconciliation when the external service is ready.`));
+  }
+}
+
 function createAdminCustomerAccessHoldsRouter(){
   const router=express.Router();
   router.use('/admin/users',gate,noStore);
@@ -45,6 +122,43 @@ function createAdminCustomerAccessHoldsRouter(){
   // cannot trigger a second Stremio reconciliation.
   router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute);
   router.post('/admin/users/:customerId/reconcile',reconcileRoute);
+
+  // Break-glass actions are deliberately stronger than the normal workflow.
+  // They remain admin-only, CSRF-protected and audited, but they do not defer to
+  // payment-risk or specialized hold ownership. Their purpose is to let an
+  // administrator recover a customer when automation cannot converge.
+  router.post('/admin/users/:customerId/manage/force/clear-blockers',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+    const customerId=req.params.customerId;
+    try{
+      const released=await forceReleaseAllHolds(customerId,req.session.authUserId);
+      return reconcileAfterBreakGlass(res,customerId,req.session.authUserId,`Break-glass override cleared ${released.length} active blocker${released.length===1?'':'s'}.`);
+    }catch(error){
+      return res.redirect(accessPath(customerId,'error',`Could not clear blockers: ${clean(error.message||error,300)}`));
+    }
+  });
+  router.post('/admin/users/:customerId/manage/force/access-on',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+    const customerId=req.params.customerId,subscriptionId=clean(req.body.subscriptionId,80);
+    try{
+      if(!subscriptionId)throw new Error('Choose the subscription/plan that should own forced access.');
+      const result=await forceAccessOn(customerId,subscriptionId,req.session.authUserId);
+      return reconcileAfterBreakGlass(res,customerId,req.session.authUserId,`FORCED ACCESS is now pinned to the selected plan. ${result.released.length} blocker${result.released.length===1?' was':'s were'} cleared.`);
+    }catch(error){
+      return res.redirect(accessPath(customerId,'error',`Could not force access on: ${clean(error.message||error,300)}`));
+    }
+  });
+  router.post('/admin/users/:customerId/manage/force/automation',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+    const customerId=req.params.customerId;
+    try{
+      const changed=await returnToAutomation(customerId,req.session.authUserId);
+      return reconcileAfterBreakGlass(res,customerId,req.session.authUserId,changed?'Break-glass access override removed. Normal entitlement automation is authoritative again.':'No active break-glass entitlement override existed; normal automation remains authoritative.');
+    }catch(error){
+      return res.redirect(accessPath(customerId,'error',`Could not return to automation: ${clean(error.message||error,300)}`));
+    }
+  });
+
   router.post('/admin/users/:customerId/access-holds/:holdId/release',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     const customerId=req.params.customerId,holdId=String(req.params.holdId||'').trim();
@@ -81,4 +195,4 @@ function createAdminCustomerAccessHoldsRouter(){
   return router;
 }
 
-module.exports={createAdminCustomerAccessHoldsRouter,MANUAL_RELEASE_TYPES,reconcileCustomerForAdmin,reconcileRoute};
+module.exports={createAdminCustomerAccessHoldsRouter,MANUAL_RELEASE_TYPES,reconcileCustomerForAdmin,reconcileRoute,forceReleaseAllHolds,forceAccessOn,returnToAutomation};
