@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 require('./free-access-inactivity-consistency-smoke');
+require('./free-places-discord-notification-smoke');
 
 const provision = fs.readFileSync('src/jellyfin/provisioning-helpers.js', 'utf8');
 const dash = fs.readFileSync('src/platform/customer-dashboard.js', 'utf8');
@@ -45,6 +46,8 @@ assert(!/public, max-age=60/.test(storefront),'storefront must not retain the ol
 assert(/STATE_KEY='discord_free_places_status_v1'/.test(freePlaces),'Discord Free Server availability must persist the canonical message identity');
 assert(/persistentMessage\(remaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Reserve \/ Create Free Account/.test(freePlaces),'Discord Free Server availability must render a structured status card with a reservation action');
 assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===signature/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged structured capacity');
+assert(/availabilityRestored=becameAvailable\(stored\.remaining,remaining\)/.test(freePlaces),'Discord availability must explicitly recognize a durable zero-to-positive reopening');
+assert(/stored\.messageId&&!availabilityRestored/.test(freePlaces),'routine capacity changes must PATCH in place while reopening bypasses the edit path');
 assert(/No free places currently available/.test(freePlaces)&&/10 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
