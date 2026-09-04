@@ -25,15 +25,15 @@ const cards=require('../src/platform/admin-integration-card');
 assert(dashboardDataSource.includes('attention.list().catch(() => [])'),'Dashboard must read the canonical Needs Attention list instead of recreating operational queries');
 assert(!dashboardDataSource.includes('attention.openSummary().catch'),'Dashboard must not query the same attention source once for summary and again for detail');
 assert(dashboardDataSource.includes('items: sources.slice(0, 5)'),'Dashboard must cap attention detail while preserving the total count');
-assert(dashboardSource.includes('${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${rangeControls(ctx.range)}${html}'),'Live streams must render directly below Profit / Live streams / Needs attention and before historical range analytics');
+assert(dashboardSource.includes('${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${rangeControls(ctx.range)}${html}'),'Live streams must render directly below Profit / Server users / Needs attention and before historical range analytics');
 assert(!dashboardSource.includes('function attentionOverview')&&!dashboardSource.includes('setupCompact'),'Home must not reintroduce separate Needs Attention or setup tiles outside the target hero + live streams + three-widget layout');
 assert(!dashboardSource.includes('function operationalAlerts'),'Legacy duplicate operational alert counters must not remain as a second dashboard exception model');
 
-const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},streamGauge:{active:2,capacity:10},attention:{count:0}}});
-assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Live streams')&&clear.includes('Needs attention'),'Dashboard hero must expose exactly the four requested business/operational signals');
-assert(clear.includes('2 / 10')&&clear.includes('used / sellable stream capacity'),'Dashboard hero must show the live-stream gauge against sellable capacity');
+const clear=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:10000},previous:{profitMinor:5000},ytd:{profitMinor:30000}},userGauge:{active:2,capacity:10},attention:{count:0}}});
+assert(clear.includes('Profit this month')&&clear.includes('Profit YTD')&&clear.includes('Server users')&&clear.includes('Needs attention'),'Dashboard hero must expose profit, server-user capacity and attention state');
+assert(clear.includes('2 / 10')&&clear.includes('managed customers / configured user capacity'),'Dashboard hero must show managed users against configured server user capacity');
 assert(clear.includes('No current intervention required')&&clear.includes('/admin/attention'),'Clear attention state must remain linked to the canonical operational inbox');
-const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},streamGauge:{active:4,capacity:8},attention:{count:2}}});
+const problems=dashboard.dashboardHero({reporting:{currency:'GBP'},data:{profitability:{currency:'GBP',current:{profitMinor:-1000},previous:{profitMinor:500},ytd:{profitMinor:2000}},userGauge:{active:4,capacity:8},attention:{count:2}}});
 assert(problems.includes('profitHeroCard bad')&&problems.includes('2 current issues require review'),'Negative profit and non-zero attention must use meaningful danger styling/copy in the hero');
 
 const livePanel=liveStreams.renderLiveStreamsPanel({session:{authUserId:'admin-smoke',authRole:'admin',adminId:'admin-smoke'}});
