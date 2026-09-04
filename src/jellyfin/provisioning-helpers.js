@@ -1,6 +1,7 @@
 'use strict';
 
 const core = require('./provisioning-engine');
+const durableCreation = require('./durable-account-creation');
 const { query } = require('../db');
 const subscriptionState = require('../entitlements/subscription-state');
 const planServers = require('./plan-servers');
@@ -150,7 +151,7 @@ async function notifyNewJellyfinAccess(customerId, account) {
 }
 
 async function createJellyfinAccount(customerId, server, effective, options = {}) {
-  const account = await core.createJellyfinAccount(customerId, server, effective, options);
+  const account = await durableCreation.createJellyfinAccount(customerId, server, effective, options);
   if (options.passwordSetupRequired !== false) {
     await markPasswordSetupRequired(account.id);
     account.password_setup_required = true;
