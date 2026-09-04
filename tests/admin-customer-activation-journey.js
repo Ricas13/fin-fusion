@@ -67,6 +67,12 @@ async function main(){
     const customer360Text=await admin.locator('body').innerText();
     assert(/Browser Portal Customer/.test(customer360Text),'Customer 360 did not render the selected customer identity');
     assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
+    // This customer has no Jellyfin/Stremio entitlement, so the permanent-
+    // access control lives in the customer-operator console, which the client
+    // injects asynchronously after fetching /operator/context (it is no
+    // longer part of the initial server-rendered HTML). Wait for that panel
+    // before looking for the form.
+    await admin.waitForSelector('#customer-operator-actions',{timeout:15000});
     await shot(admin,'customer-360');
 
     // HTMLFormElement exposes named controls as form properties. The permanent

@@ -21,7 +21,14 @@ assert(/Where settings live/.test(settings)&&/Daily work belongs in Customers, D
 assert(!/allowPrivateConnected/.test(settings),'settings identifier was corrupted');
 assert(/discoveryWarning/.test(stremioPool)&&/source was saved/.test(stremioAdmin),'Stremio source resilience missing');
 assert(/\{query,transaction\}=require\('..\/db'\)/.test(customer),'Customer 360 override routes must import transaction');
-assert(/Customer control centre/.test(customer)&&/plan_change/.test(customer)&&/set_expiry/.test(customer)&&/migrate_server/.test(customer),'Customer 360 must expose direct safe customer controls');
+assert(/Customer control centre/.test(customer)&&/plan_change/.test(customer)&&/set_expiry/.test(customer),'Customer 360 must expose direct safe customer controls');
+// Moving a customer to another Jellyfin server is now owned by the customer-
+// operator console (admin-customer-operator.js), which persists the admin's
+// exact server choice so background reconciliation cannot silently move it
+// again -- Customer 360 no longer duplicates that action for Jellyfin/bundle
+// customers.
+const customerOperator=read('src/platform/admin-customer-operator.js');
+assert(/operator\/move/.test(customerOperator)&&/forceMove\.move/.test(customerOperator),'Customer operator console must own the direct server-move control');
 assert(!/marketing\/withdraw|Marketing consent|marketingConsentChanged|name=\"marketingOptIn\"/.test(customer+view),'Customer administration must not retain retired Marketing consent controls');
 assert(!/<script>document\.addEventListener/.test(attention)&&/admin-attention-bulk\.js/.test(attention),'Needs Attention bulk selection must use external CSP-safe JS');
 assert(/form=\"bulkForm\" name=\"customerId\"/.test(customersList),'customer row selections must submit with the bulk form');

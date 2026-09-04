@@ -78,11 +78,16 @@ function accessOverview(detail,token,accessDetail){
 
 function technicalChoice(field,row){
   const label=FIELD_LABELS[field]||field,hasOverride=row?.override!==null&&row?.override!==undefined;
+  // Plan/Effective only differ from each other when there's an override, so
+  // showing that breakdown -- and the redundant Inherited/Override pill --
+  // for the common all-defaults case just repeats the value already shown.
+  const meta=hasOverride?`<div class="accessControlMeta">${field==='streams'?`<span>Plan <strong>${esc(row?.plan??'—')}</strong></span>`:`<span>Plan <strong>${esc(booleanLabel(Boolean(row?.plan)))}</strong></span>`}</div>`:'';
+  const overridePill=hasOverride?pill('Override','accent'):'';
   if(field==='streams'){
-    return `<article class="accessControlCard"><div class="accessControlHead"><div><span class="accessEyebrow">${esc(label)}</span><strong>${esc(row?.effective??'—')}</strong></div>${pill(hasOverride?'Override':'Inherited',hasOverride?'accent':'')}</div><div class="accessControlMeta"><span>Plan <strong>${esc(row?.plan??'—')}</strong></span><span>Effective <strong>${esc(row?.effective??'—')}</strong></span></div><label class="accessNumberControl"><span>Override</span><input class="input compact" type="number" name="${esc(field)}" min="1" max="50" placeholder="Inherit" value="${hasOverride?esc(row.override):''}"></label></article>`;
+    return `<article class="accessControlCard"><div class="accessControlHead"><div><span class="accessEyebrow">${esc(label)}</span><strong>${esc(row?.effective??'—')}</strong></div>${overridePill}</div>${meta}<label class="accessNumberControl"><span>Override</span><input class="input compact" type="number" name="${esc(field)}" min="1" max="50" placeholder="Inherit" value="${hasOverride?esc(row.override):''}"></label></article>`;
   }
   const option=(value,text,checked)=>`<label class="accessChoice"><input type="radio" name="${esc(field)}" value="${esc(value)}" ${checked?'checked':''}><span>${esc(text)}</span></label>`;
-  return `<article class="accessControlCard"><div class="accessControlHead"><div><span class="accessEyebrow">${esc(label)}</span><strong>${esc(booleanLabel(Boolean(row?.effective)))}</strong></div>${pill(hasOverride?'Override':'Inherited',hasOverride?'accent':'')}</div><div class="accessControlMeta"><span>Plan <strong>${esc(booleanLabel(Boolean(row?.plan)))}</strong></span><span>Effective <strong>${esc(booleanLabel(Boolean(row?.effective)))}</strong></span></div><div class="accessChoices">${option('','Inherit',!hasOverride)}${option('true','Allow',hasOverride&&row.override===true)}${option('false','Deny',hasOverride&&row.override===false)}</div></article>`;
+  return `<article class="accessControlCard"><div class="accessControlHead"><div><span class="accessEyebrow">${esc(label)}</span><strong>${esc(booleanLabel(Boolean(row?.effective)))}</strong></div>${overridePill}</div>${meta}<div class="accessChoices">${option('','Inherit',!hasOverride)}${option('true','Allow',hasOverride&&row.override===true)}${option('false','Deny',hasOverride&&row.override===false)}</div></article>`;
 }
 
 function technicalControls(detail,token,accessDetail){
