@@ -83,10 +83,6 @@ function compactStyles(){return `<style>
 @media(max-width:620px){.customer360Core .ctlGrid,.customer360Core .accessWorkspace .laneWrap{grid-template-columns:1fr}}
 </style>`;}
 
-function cleanupScript(customerId){
-  return `<script>(function(){function tidy(){const root=document.querySelector('[data-customer360-core]');if(!root)return;const forms=[...document.querySelectorAll('form[action="/admin/users/${encodeURIComponent(customerId)}/impersonate"]')];const keep=forms.find(form=>form.closest('.detailTabs,.customerContextTabs'))||forms[0];for(const form of forms){if(form!==keep)form.remove();}if(keep){const button=keep.querySelector('button');if(button)button.textContent='View Portal';}let node=root.nextElementSibling;while(node){const next=node.nextElementSibling;if(node.matches?.('.section'))node.remove();node=next;}}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',tidy,{once:true});else tidy();})();</script>`;
-}
-
 async function render(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const operatorContext=require('./admin-customer-operator').context;
@@ -95,7 +91,7 @@ async function render(detail,token,options={}){
   const withManual={...detail,manualPayments};
   const access=await base.accessLibrariesRequests(detail,token,options).catch(error=>`<section class="section"><div class="notice error">Access, libraries &amp; requests could not be loaded. ${esc(String(error?.message||'Try again.').slice(0,200))}</div></section>`);
   const core=`<div class="customer360Core" data-customer360-core>${compactControl(detail,token,ctx,options.permanent)}${accessStatus.render(detail,token)}${collapsedAccess(access)}${base.billingSection(withManual,token)}${base.activitySection(detail)}${collapsedProvisioning(detail)}</div>`;
-  return `${base.styles()}${compactStyles()}${core}${cleanupScript(detail.customer.id)}`;
+  return `${base.styles()}${compactStyles()}${core}`;
 }
 
 module.exports={render,compactControl,collapsedAccess,collapsedProvisioning,compactStyles};
