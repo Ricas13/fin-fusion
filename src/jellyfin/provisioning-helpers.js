@@ -5,6 +5,7 @@ const { query } = require('../db');
 const subscriptionState = require('../entitlements/subscription-state');
 const planServers = require('./plan-servers');
 const placement = require('./placement');
+const adminControl = require('./admin-control');
 
 // This module is the dependency-safe helper surface used by the canonical
 // multi-service reconciler. It intentionally exposes only low-level account,
@@ -54,6 +55,14 @@ async function markPasswordSetupRequired(accountId) {
 }
 
 async function selectServerForPlan(plan) {
+  // An explicit admin pin is an imperative command, not a placement hint.
+  // Return the exact configured Jellyfin target before evaluating public
+  // capacity, plan mappings, allow_new_users, health ranking or pool priority.
+  // If the pinned server is technically unavailable, provisioning fails on
+  // that server rather than silently moving the customer somewhere else.
+  const forced = await adminControl.forcedServerForPlan(plan);
+  if (forced) return forced;
+
   const accessKind = String(plan?.billing_interval || plan?.contract_billing_interval || '') === 'trial'
     ? 'trial'
     : Number(plan?.price_minor ?? plan?.contract_price_minor ?? 0) === 0
