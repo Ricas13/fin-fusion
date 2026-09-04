@@ -18,6 +18,7 @@ function uuid(value){return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 function path(customerId,key,message){return `/admin/users/${encodeURIComponent(customerId)}?tab=access&${encodeURIComponent(key)}=${encodeURIComponent(message)}`;}
 function serviceType(entitlement){return String(entitlement?.service_type_snapshot||entitlement?.service_type||'jellyfin').toLowerCase();}
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
+function breakGlassControls(customerId,token){return `<div class="breakGlassControls"><form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/manage/force/reconcile" data-native-submit="true">${csrfHidden(token)}<button class="button secondary sm" type="submit">FORCE RECONCILE NOW</button></form><form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/manage/force/clear-blockers" data-native-submit="true">${csrfHidden(token)}<button class="button danger sm" type="submit">CLEAR ALL BLOCKERS</button></form></div>`;}
 
 async function forceAccess(customerId,serverId,{actorUserId=null}={}){
   const initial=await manualAssignment.candidates(customerId);
@@ -64,12 +65,13 @@ async function returnToPlanRules(customerId,{actorUserId=null}={}){
 
 async function panel(detail,token,req,permanent){
   if(!detail?.customer?.id)return'';
-  const ctx=await operator.context(detail.customer.id,req).catch(()=>null);
-  if(!ctx)return'';
   const customerId=detail.customer.id;
+  const emergency=breakGlassControls(customerId,token);
+  const ctx=await operator.context(customerId,req).catch(()=>null);
+  if(!ctx)return `${styles()}<section class="forceAccessBar breakGlassOnly"><div class="forceAccessCopy"><strong>Admin override</strong><span>Customer state could not be fully loaded. Emergency controls are still available.</span></div>${emergency}</section>`;
   const entitlement=ctx.entitlement;
   if(!entitlement||!['jellyfin','bundle'].includes(String(entitlement.serviceType||'jellyfin').toLowerCase())){
-    return `<section class="forceAccessBar"><div><strong>Jellyfin access</strong><span>No Jellyfin plan. Add a Jellyfin or bundle plan first.</span></div></section>${styles()}`;
+    return `${styles()}<section class="forceAccessBar breakGlassOnly"><div class="forceAccessCopy"><strong>Admin override</strong><span>No Jellyfin plan to pin. You can still clear every access hold or force the reconciliation worker to retry immediately.</span></div>${emergency}</section>`;
   }
   const servers=(ctx.servers||[]).filter(server=>server.operable);
   const options=servers.map(server=>{
@@ -84,14 +86,14 @@ async function panel(detail,token,req,permanent){
   }).join('');
   const forced=Boolean(permanent?.active||ctx.adminControl?.mode==='forced_server');
   const status=forced?`Admin force active${ctx.adminControl?.serverName?` · ${ctx.adminControl.serverName}`:''}`:(entitlement.blocked?'Plan exists but access is currently blocked':'Following normal plan rules');
-  const form=servers.length?`<form class="forceAccessForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/force-jellyfin-access" data-native-submit="true">${csrfHidden(token)}<select class="input" name="serverId" required><option value="">Choose any Jellyfin server…</option>${options}</select><button class="button primary" type="submit">Force Jellyfin access</button></form>`:'<span class="forceAccessProblem">No enabled Jellyfin servers are configured.</span>';
+  const form=servers.length?`<form class="forceAccessForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/force-jellyfin-access" data-native-submit="true">${csrfHidden(token)}<select class="input" name="serverId" required><option value="">Choose any Jellyfin server…</option>${options}</select><button class="button primary" type="submit">FORCE JELLYFIN ACCESS</button></form>`:'<span class="forceAccessProblem">No enabled Jellyfin servers are configured.</span>';
   const reset=forced?`<form class="plainForm" method="post" action="/admin/users/${encodeURIComponent(customerId)}/force-jellyfin-access/reset" data-native-submit="true">${csrfHidden(token)}<button class="button secondary sm" type="submit">Return to plan rules</button></form>`:'';
-  return `${styles()}<section class="forceAccessBar ${forced?'isForced':''}"><div class="forceAccessCopy"><strong>Jellyfin access override</strong><span>${esc(status)}. Force access ignores payment/refund holds, expiry, server-pool admission and capacity for this customer; the plan itself must still exist.</span></div>${form}${reset}</section>`;
+  return `${styles()}<section class="forceAccessBar ${forced?'isForced':''}"><div class="forceAccessCopy"><strong>Admin override / break glass</strong><span>${esc(status)}. Force Jellyfin access ignores payment/refund holds, expiry, server-pool admission and capacity. CLEAR ALL BLOCKERS releases every active hold regardless of workflow ownership. Provider billing is never changed by these controls.</span></div><div class="forceAccessStack">${form}${emergency}</div>${reset}</section>`;
 }
 
 function styles(){return `<style>
-.forceAccessBar{display:grid;grid-template-columns:minmax(220px,.9fr) minmax(360px,1.4fr) auto;gap:10px;align-items:center;border:1px solid color-mix(in srgb,var(--h-customers,#6ec7ff) 55%,var(--border,#29333d));border-radius:10px;padding:10px 12px;margin:10px 0 12px;background:color-mix(in srgb,var(--h-customers,#6ec7ff) 5%,transparent)}
-.forceAccessBar.isForced{border-color:color-mix(in srgb,var(--warning,#e0ad5c) 60%,var(--border,#29333d))}.forceAccessCopy{display:grid;gap:2px}.forceAccessCopy strong{font-size:.8rem}.forceAccessCopy span,.forceAccessProblem{font-size:.67rem;color:var(--muted,#9aa7b5);line-height:1.35}.forceAccessForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.forceAccessForm .input{min-width:0}.forceAccessForm .button{white-space:nowrap}@media(max-width:1000px){.forceAccessBar{grid-template-columns:1fr}.forceAccessForm{grid-template-columns:1fr}}
+.forceAccessBar{display:grid;grid-template-columns:minmax(240px,.95fr) minmax(420px,1.45fr) auto;gap:10px;align-items:center;border:1px solid color-mix(in srgb,var(--warning,#e0ad5c) 55%,var(--border,#29333d));border-radius:10px;padding:10px 12px;margin:10px 0 12px;background:color-mix(in srgb,var(--warning,#e0ad5c) 5%,transparent)}
+.forceAccessBar.isForced{border-color:color-mix(in srgb,var(--danger,#e16c72) 60%,var(--border,#29333d))}.forceAccessBar.breakGlassOnly{grid-template-columns:minmax(260px,1fr) auto}.forceAccessCopy{display:grid;gap:2px}.forceAccessCopy strong{font-size:.8rem}.forceAccessCopy span,.forceAccessProblem{font-size:.67rem;color:var(--muted,#9aa7b5);line-height:1.35}.forceAccessStack{display:grid;gap:6px}.forceAccessForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.forceAccessForm .input{min-width:0}.forceAccessForm .button{white-space:nowrap}.breakGlassControls{display:flex;gap:6px;flex-wrap:wrap}.breakGlassControls .button{white-space:nowrap}@media(max-width:1000px){.forceAccessBar,.forceAccessBar.breakGlassOnly{grid-template-columns:1fr}.forceAccessForm{grid-template-columns:1fr}}
 </style>`;}
 
 function createAdminCustomerForceAccessRouter(){
@@ -123,4 +125,4 @@ function createAdminCustomerForceAccessRouter(){
   return router;
 }
 
-module.exports={createAdminCustomerForceAccessRouter,forceAccess,returnToPlanRules,panel,styles};
+module.exports={createAdminCustomerForceAccessRouter,forceAccess,returnToPlanRules,panel,styles,breakGlassControls};
