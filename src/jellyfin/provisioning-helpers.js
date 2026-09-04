@@ -6,6 +6,7 @@ const subscriptionState = require('../entitlements/subscription-state');
 const planServers = require('./plan-servers');
 const placement = require('./placement');
 const adminControl = require('./admin-control');
+const userCapacity = require('./user-capacity');
 
 // This module is the dependency-safe helper surface used by the canonical
 // multi-service reconciler. It intentionally exposes only low-level account,
@@ -58,8 +59,6 @@ async function selectServerForPlan(plan) {
   // An explicit admin pin is an imperative command, not a placement hint.
   // Return the exact configured Jellyfin target before evaluating public
   // capacity, plan mappings, allow_new_users, health ranking or pool priority.
-  // If the pinned server is technically unavailable, provisioning fails on
-  // that server rather than silently moving the customer somewhere else.
   const forced = await adminControl.forcedServerForPlan(plan);
   if (forced) return forced;
 
@@ -77,36 +76,18 @@ async function selectServerForPlan(plan) {
         : true);
   if (!available.length) return null;
 
-  const ids = available.map(server => server.id);
-  const usage = await query(`
-    SELECT js.id,
-           COUNT(DISTINCT ja.id)::int AS assigned_users,
-           COUNT(DISTINCT aps.jellyfin_session_id)::int AS active_streams,
-           m.total_users AS observed_total_users,
-           m.observed_at AS metrics_observed_at
-    FROM jellyfin_servers js
-    LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id AND ja.disabled=FALSE
-    LEFT JOIN active_playback_sessions aps ON aps.server_id=js.id
-    LEFT JOIN jellyfin_server_metrics m ON m.server_id=js.id
-    WHERE js.id=ANY($1::uuid[])
-    GROUP BY js.id,m.total_users,m.observed_at
+  // Server capacity has one meaning everywhere: enabled managed customer users.
+  // Every plan consumes exactly one user place regardless of its stream limit.
+  const candidates = await userCapacity.decorateServers(available);
+  const ids = candidates.map(server => server.id);
+  const playback = await query(`
+    SELECT server_id,COUNT(DISTINCT jellyfin_session_id)::int AS active_streams
+    FROM active_playback_sessions
+    WHERE server_id=ANY($1::uuid[])
+    GROUP BY server_id
   `, [ids]);
-  const counts = new Map(usage.rows.map(row => [String(row.id), row]));
-  const staleMs = placement.metricsStaleMs();
-  const candidates = available.map(server => {
-    const row = counts.get(String(server.id));
-    const assignedUsers = Number(row?.assigned_users || 0);
-    const observedAt = row?.metrics_observed_at ? new Date(row.metrics_observed_at).getTime() : NaN;
-    const metricsFresh = Number.isFinite(observedAt) && Date.now() - observedAt <= staleMs;
-    const observedUsers = metricsFresh ? Math.max(0, Number(row?.observed_total_users || 0)) : 0;
-    return {
-      ...server,
-      assigned_users: assignedUsers,
-      capacity_users: Math.max(assignedUsers, observedUsers),
-      capacity_observed_at: metricsFresh ? row.metrics_observed_at : null,
-      active_streams: Number(row?.active_streams || 0)
-    };
-  }).filter(server => server.max_users == null || Number(server.max_users) === 0 || server.capacity_users < Number(server.max_users));
+  const streams = new Map(playback.rows.map(row => [String(row.server_id), Number(row.active_streams || 0)]));
+  for (const server of candidates) server.active_streams = streams.get(String(server.id)) || 0;
   return placement.selectServer(candidates, plan?.placement_strategy);
 }
 
