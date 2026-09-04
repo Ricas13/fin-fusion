@@ -62,14 +62,20 @@ async function serviceMix(){
       (SELECT COUNT(DISTINCT customer_id)::int FROM effective_customer_entitlements WHERE blocked=FALSE AND access_expires_at>NOW() AND COALESCE(is_free_tier,FALSE)=TRUE) free`);
     const row=result.rows[0]||{};return{jellyfin:Number(row.jellyfin||0),stremio:Number(row.stremio||0),free:Number(row.free||0)};
 }
-function fleetCapacity(rows){const enabled=(rows||[]).filter(row=>row.enabled!==false);return{active:enabled.reduce((sum,row)=>sum+Number(row.fleet_metrics?.active_streams??row.active_streams??0),0),capacity:enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0)};}
+function fleetCapacity(rows){
+    const enabled=(rows||[]).filter(row=>row.enabled!==false);
+    return{
+        active:enabled.reduce((sum,row)=>sum+Number(row.assigned_users||row.capacity_users||0),0),
+        capacity:enabled.reduce((sum,row)=>sum+Number(row.max_users||0),0)
+    };
+}
 
 async function buildContext(req){
     const range=dashboardRange(req.query||{}),reporting=await reportingCurrency.getForUser(req.session.authUserId);
     const [data,profit,analytics,fleet,mix]=await Promise.all([
         dashboardData(range,reporting),profitability.dashboardProfitability(reporting),growthData.growthServerAnalytics(range,reporting),fleetDashboard.dashboardRows(),serviceMix()
     ]);
-    return{range,reporting,data:{...data,profitability:profit,growthAnalytics:analytics,serviceMix:mix,streamGauge:fleetCapacity(fleet)}};
+    return{range,reporting,data:{...data,profitability:profit,growthAnalytics:analytics,serviceMix:mix,userGauge:fleetCapacity(fleet)}};
 }
 registry.registerContextBuilder('main',buildContext);
 

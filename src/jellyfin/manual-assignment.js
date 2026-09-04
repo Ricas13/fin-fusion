@@ -2,29 +2,51 @@
 
 const {query}=require('../db');
 const provisioning=require('./provisioning');
-const planServers=require('./plan-servers');
 const placement=require('./placement');
+const adminControl=require('./admin-control');
+const subscriptionState=require('../entitlements/subscription-state');
+const userCapacity=require('./user-capacity');
 
 function accessKind(plan){if(plan?.billing_interval==='trial')return'trial';return Number(plan?.price_minor||0)===0?'free':'paid';}
 function serviceType(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
 async function activeAccounts(customerId){const r=await query(`SELECT ja.*,js.name AS server_name FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.disabled=FALSE AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.updated_at DESC`,[customerId]);return r.rows;}
-// max_users is a public/automatic placement boundary, not an administrator
-// ceiling. We still count every active managed Jellyfin identity so Customer 360
-// can show the real 50/50, 51/50, 1000/50 state before a deliberate assignment.
-async function assignedUsers(serverId){const r=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`,[serverId]);return Number(r.rows[0]?.n||0);}
-function admissionAllowed(plan,server){const kind=accessKind(plan);if(kind==='trial'&&!server.trial_enabled)return false;if(kind==='paid'&&!server.paid_enabled)return false;return true;}
+async function assignedUsers(serverId){const state=await userCapacity.serverState(serverId);return Number(state?.assigned_users||0);}
 
 async function candidates(customerId){
-  const entitlement=await provisioning.currentEntitlement(customerId);
-  if(!entitlement)return{entitlement:null,servers:[],activeAccounts:[]};
+  // A deliberate operator command may need to repair access precisely when
+  // ordinary lifecycle policy has blocked automatic provisioning. Keep the
+  // commercial entitlement visible here; the admin is choosing whether to
+  // override admission, not asking automation for permission.
+  const entitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
+  if(!entitlement)return{entitlement:null,servers:[],activeAccounts:await activeAccounts(customerId)};
   if(!['jellyfin','bundle'].includes(serviceType(entitlement)))return{entitlement,servers:[],activeAccounts:await activeAccounts(customerId)};
   const existing=await activeAccounts(customerId);
-  const raw=await planServers.eligibleServersForPlan(entitlement,{enabledOnly:true,forPlacement:true});
+
+  // This is an operator picker, not automatic placement. Show every configured,
+  // enabled Jellyfin server regardless of plan mapping, pool/class, capacity,
+  // allow_new_users, paid/trial admission or placement mode. Capacity facts still
+  // come from the same managed-user counter used everywhere else.
+  const raw=await query(`
+    SELECT js.*
+    FROM jellyfin_servers js
+    WHERE js.enabled=TRUE
+      AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
+    ORDER BY CASE js.health_status WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,
+             js.priority,js.name
+  `);
+  const decorated=await userCapacity.decorateServers(raw.rows);
   const servers=[];
-  for(const server of raw){
-    if(!server.allow_new_users||!admissionAllowed(entitlement,server))continue;
-    const users=await assignedUsers(server.id),max=Number(server.max_users||0),full=max>0&&users>=max;
-    servers.push({...server,assigned_users:users,remaining:max>0?Math.max(0,max-users):null,full,over_capacity_by:max>0?Math.max(0,users-max):0});
+  const kind=accessKind(entitlement);
+  for(const server of decorated){
+    const users=Number(server.assigned_users||0),max=Number(server.max_users||0),full=Boolean(server.full);
+    const warnings=[];
+    if(server.server_class!==entitlement.server_class)warnings.push('different plan pool');
+    if(!server.allow_new_users)warnings.push('closed to automatic new users');
+    if(kind==='trial'&&!server.trial_enabled)warnings.push('trial admission disabled');
+    if(kind==='paid'&&!server.paid_enabled)warnings.push('paid admission disabled');
+    if(server.health_status&&server.health_status!=='healthy')warnings.push(String(server.health_status));
+    if(full)warnings.push('configured capacity reached');
+    servers.push({...server,assigned_users:users,remaining:max>0?Math.max(0,max-users):null,full,over_capacity_by:max>0?Math.max(0,users-max):0,admin_warnings:warnings});
   }
   servers.sort((a,b)=>placement.healthRank(a.health_status)-placement.healthRank(b.health_status)||Number(a.priority||100)-Number(b.priority||100)||String(a.name).localeCompare(String(b.name)));
   return{entitlement,servers,activeAccounts:existing};
@@ -36,12 +58,11 @@ async function assign(customerId,targetServerId,{actorUserId=null}={}){
   if(!['jellyfin','bundle'].includes(serviceType(state.entitlement)))throw new Error('This plan does not include Jellyfin access.');
   if(state.activeAccounts.length)throw new Error('This customer already has active Jellyfin access. Use Move server instead.');
   const server=state.servers.find(s=>String(s.id)===String(targetServerId));
-  if(!server)throw new Error('Choose an eligible Jellyfin server for this plan.');
+  if(!server)throw new Error('Choose an enabled Jellyfin server.');
 
-  // Deliberate administrator assignment intentionally does NOT reject a full
-  // server. max_users remains unchanged and continues to gate storefront/public
-  // acquisition and automatic placement. An admin can therefore make 50/50
-  // become 51/50 (or exceed it by any amount) without advertising a new place.
+  // max_users is the automatic customer-user ceiling, never an administrator
+  // ceiling. A deliberate admin assignment can turn 80/80 into 81/80 without
+  // changing the configured capacity or reopening public signup.
   const capacityOverride=Boolean(server.full);
   const assignedUsersBefore=Number(server.assigned_users||0);
   const maxUsers=Number(server.max_users||0)||null;
@@ -64,11 +85,13 @@ async function assign(customerId,targetServerId,{actorUserId=null}={}){
     account.password_setup_required=true;
   }
 
+  await adminControl.forceServer(customerId,state.entitlement.subscription_id,server.id,{actorUserId,reason:'Manual Jellyfin server assignment'});
+
   const assignedUsersAfter=await assignedUsers(server.id);
   const overCapacityAfter=maxUsers?Math.max(0,assignedUsersAfter-maxUsers):0;
-  const resultMeta={manualAssignment:true,reusedExistingAccount:reused,serverName:server.name,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter};
+  const resultMeta={manualAssignment:true,adminForcedServer:true,reusedExistingAccount:reused,serverName:server.name,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter,overriddenRules:server.admin_warnings||[]};
   await query(`INSERT INTO customer_provisioning_state(customer_id,status,attempt_count,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at) VALUES($1,'healthy',1,0,NULL,NOW(),NOW(),NULL,$2,$3,$4,$5,$6::jsonb,NOW()) ON CONFLICT(customer_id) DO UPDATE SET status='healthy',consecutive_failures=0,last_error=NULL,last_attempt_at=NOW(),last_success_at=NOW(),next_attempt_at=NULL,subscription_id=EXCLUDED.subscription_id,plan_id=EXCLUDED.plan_id,jellyfin_account_id=EXCLUDED.jellyfin_account_id,server_id=EXCLUDED.server_id,last_result=EXCLUDED.last_result,updated_at=NOW()`,[customerId,state.entitlement.subscription_id,state.entitlement.plan_id,account.id,server.id,JSON.stringify(resultMeta)]);
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,capacityOverride?'admin.customer.server_assign.capacity_override':'admin.customer.server_assign',customerId,JSON.stringify({serverId:server.id,serverName:server.name,accountId:account.id,reusedExistingAccount:reused,planId:state.entitlement.plan_id,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter})]);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'customer',$3,$4::jsonb)`,[actorUserId,capacityOverride?'admin.customer.server_assign.capacity_override':'admin.customer.server_assign',customerId,JSON.stringify({serverId:server.id,serverName:server.name,accountId:account.id,reusedExistingAccount:reused,planId:state.entitlement.plan_id,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter,overriddenRules:server.admin_warnings||[]})]);
   return{account,server,reused,capacityOverride,assignedUsersBefore,assignedUsersAfter,maxUsers,overCapacityAfter};
 }
 

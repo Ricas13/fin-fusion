@@ -87,16 +87,13 @@ tbody:has(.planHiddenToggle:checked) .planHiddenDisclosure{background:linear-gra
 @media(max-width:760px){.planHiddenDisclosure{padding:10px 11px}.planHiddenDisclosureHint{font-size:9px}.planHiddenDisclosureTitle{font-size:12px}}
 </style>`;
 }
-/*
- * The capacity owner still distinguishes `${used} occupying · ${held} held · ${limit} sellable · ${esc(state.requiredStreams)} per new customer`
- * and the underlying drill-down remains equivalent to `View shared ${esc(state.pool)} capacity`.
- * Those stream-unit details are intentionally converted to customer places on this catalogue page.
- */
+
 function capacityCell(plan) {
   const link = `/admin/plans/${encodeURIComponent(plan.id)}/inventory`,state=plan.capacity_state||{},customers=Math.max(0,Number(plan.live_subscriber_count||0));
-  if(state.model==='fleet_streams'){
-    const remaining=Math.max(0,Number(state.remaining||0)),limit=state.limit==null?null:Math.max(0,Number(state.limit)),pct=limit?Math.min(100,Math.max(0,Math.round(((limit-remaining)/limit)*100))):100,near=pct>=85?' nearFull':'';
-    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${customers} ${plural(customers,'customer')} on this plan · ${remaining} new ${plural(remaining,'place')} available</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View shared ${esc(state.pool)} customer capacity →</a></div>`;
+  if(state.model==='fleet_users'){
+    const remaining=Math.max(0,Number(state.remaining||0)),limit=state.userLimit==null?null:Math.max(0,Number(state.userLimit)),used=limit==null?0:Math.max(0,limit-remaining),pct=limit?Math.min(100,Math.max(0,Math.round((used/limit)*100))):100,near=pct>=85?' nearFull':'';
+    const managed=Math.max(0,Number(state.managedUsers||0)),pending=Math.max(0,Number(state.pendingUsers||0)),held=Math.max(0,Number(state.reservedUsers||0));
+    return `<div class="capacityMeter"><strong class="${state.soldOut?'statusBad':remaining<=10?'statusWarn':'statusGood'}">${esc(state.label||`${remaining} available`)}</strong><div class="subText">${managed}/${limit??'—'} managed users${pending?` · ${pending} awaiting access`:''}${held?` · ${held} held`:''}</div><div class="capacityMeterLine"><span class="capacityMeterFill${near}" style="width:${pct}%"></span></div><a class="subText" href="${esc(link)}">View server user capacity →</a></div>`;
   }
   const limit=state.limit==null?null:Number(state.limit),used=Number(state.used||0)+Number(state.reserved||0);
   if(limit==null)return `<span class="statusPill statusWarn">Inventory not configured</span><div class="subText">${customers} ${plural(customers,'customer')} currently active · no customer limit configured</div><a class="subText" href="${esc(link)}">Set customer availability →</a>`;
@@ -122,7 +119,12 @@ async function withCapacity(rows) {
   if (!rows.length) return rows;
   const counts = await query(`SELECT plan_id,COUNT(DISTINCT customer_id)::int used FROM subscriptions WHERE superseded_by IS NULL AND status IN('active','trialing','past_due','paused') AND starts_at<=NOW() AND current_period_end>NOW() GROUP BY plan_id`);
   const map = new Map(counts.rows.map(row => [String(row.plan_id), Number(row.used || 0)]));
-  const states=await Promise.all(rows.map(row=>capacity.usage(row.id).catch(()=>({model:'manual_plan',limit:row.capacity_limit??null,used:map.get(String(row.id))||0,reserved:0,remaining:row.capacity_limit==null?null:Math.max(0,Number(row.capacity_limit)-(map.get(String(row.id))||0)),soldOut:row.capacity_limit!=null&&(map.get(String(row.id))||0)>=Number(row.capacity_limit),label:'Availability unavailable',kind:'warn'}))));
+  const states=await Promise.all(rows.map(row=>capacity.usage(row.id).catch(()=>{
+    const jellyfin=['jellyfin','bundle'].includes(String(row.service_type||''));
+    if(jellyfin)return{model:'fleet_users',userLimit:0,managedUsers:0,pendingUsers:0,reservedUsers:0,limit:0,used:0,reserved:0,remaining:0,soldOut:true,label:'Server capacity unavailable',kind:'warn'};
+    const used=map.get(String(row.id))||0,limit=row.capacity_limit??null;
+    return{model:'manual_plan',limit,used,reserved:0,remaining:limit==null?null:Math.max(0,Number(limit)-used),soldOut:limit!=null&&used>=Number(limit),label:'Availability unavailable',kind:'warn'};
+  })));
   return rows.map((row,index) => ({ ...row, live_subscriber_count: map.get(String(row.id)) || 0,capacity_state:states[index] }));
 }
 function sectionTable(key, title, description, rows, ctx, { keepEmpty = false, emptyHtml = '' } = {}) {
@@ -170,8 +172,8 @@ async function plansPage(req) {
   const showEmbyZeroState = !showArchived && (!type || type === 'emby');
   const embyEmpty = `<div class="emptyAction"><div><strong>No Emby Share plans yet.</strong><div>Create the first Emby Share when you want this product to appear on the public storefront.</div></div><a class="button" href="/admin/plans/new?type=emby">Add Emby Share plan</a></div>`;
   const sections = [
-    sectionTable('free', 'Free Server Plans', 'Free Jellyfin availability is shown as customer places; stream allowances remain enforced automatically in the background.', groups.free, ctx),
-    sectionTable('paid', 'Jellyfin Shares', 'Paid Jellyfin shares use shared Premium server capacity, shown here as customers and new customer places.', groups.paid, ctx),
+    sectionTable('free', 'Free Server Plans', 'Free Jellyfin availability comes directly from Free server user capacity. One customer uses one place.', groups.free, ctx),
+    sectionTable('paid', 'Jellyfin Shares', 'Paid Jellyfin availability comes directly from eligible server user capacity. One customer uses one place.', groups.paid, ctx),
     sectionTable('emby', 'Emby Shares', 'Standalone Emby Share plans use Emby-only server placement and an independent customer entitlement.', groups.emby, ctx, { keepEmpty: showEmbyZeroState, emptyHtml: embyEmpty }),
     sectionTable('stremio', 'Stremio Shares', 'Standalone Stremio shares use a manually configured customer place limit.', groups.stremio, ctx),
     sectionTable('reseller', 'Reseller Plans', 'Reseller catalogue plans remain separated from direct customer plans.', groups.reseller, ctx),

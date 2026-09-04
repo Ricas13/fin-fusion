@@ -23,19 +23,24 @@ async function freePlan(db=query){
   const result=await db(`SELECT id FROM plans WHERE is_free_tier=TRUE AND service_type='jellyfin' AND COALESCE(is_addon,FALSE)=FALSE AND active=TRUE AND visible=TRUE AND archived_at IS NULL AND audience IN('direct','both') ORDER BY sort_order,price_minor LIMIT 1`);
   return result.rows[0]||null;
 }
+function freeRegistrationUrl(publicBaseUrl){
+  const base=String(publicBaseUrl||'').replace(/\/+$/,'');
+  return base?`${base}/account/register?intent=free`:'';
+}
 function digestText(remaining,publicBaseUrl){
-  const count=Math.max(0,Number(remaining)||0),noun=count===1?'place':'places';
-  return `Free Server — ${count} ${noun} open\n${String(publicBaseUrl||'').replace(/\/+$/,'')}`;
+  const count=Math.max(0,Number(remaining)||0),noun=count===1?'place':'places',base=String(publicBaseUrl||'').replace(/\/+$/,'');
+  return `Free Server — ${count} ${noun} open\n${count>0?freeRegistrationUrl(base):base}`;
 }
 function persistentText(remaining,publicBaseUrl){
-  const count=Math.max(0,Math.floor(Number(remaining)||0)),base=String(publicBaseUrl||'').replace(/\/+$/,'');
+  const count=Math.max(0,Math.floor(Number(remaining)||0)),base=String(publicBaseUrl||'').replace(/\/+$/,''),reserveUrl=freeRegistrationUrl(base);
   if(count<=0)return `🔴 **Free Server availability**\nNo free places currently available.\n${base}\n\nA place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after 10 minutes.`;
   const noun=count===1?'place':'places';
-  return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nReserve / Create Free Account: ${base}\n\nPressing Reserve holds one place exclusively for 10 minutes while registration and email verification are completed.`;
+  return `🟢 **Free Server availability**\n${count} free ${noun} currently available.\nReserve / Create Free Account: ${reserveUrl}\n\nPressing Reserve holds one place exclusively for 10 minutes while registration and email verification are completed.`;
 }
 function persistentMessage(remaining,publicBaseUrl){
   const count=Math.max(0,Math.floor(Number(remaining)||0));
   const base=String(publicBaseUrl||'').replace(/\/+$/,'');
+  const reserveUrl=freeRegistrationUrl(base);
   const open=count>0;
   const noun=count===1?'place':'places';
   return discordMessage.card({
@@ -51,10 +56,10 @@ function persistentMessage(remaining,publicBaseUrl){
         : 'A place becomes unavailable as soon as somebody reserves it. Unfinished reservations are released automatically after 10 minutes.',
       inline:false
     }],
-    url:base,
+    url:open?reserveUrl:base,
     footer:'CAPTAiN FiN • Live Free Server availability',
     buttonLabel:open?'Reserve / Create Free Account':'View Free Server',
-    buttonUrl:base
+    buttonUrl:open?reserveUrl:base
   });
 }
 function discordMissing(error){return /(?:HTTP|Discord)\s*404|unknown message/i.test(String(error?.message||error||''));}
@@ -114,4 +119,4 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,sendDiscordMessage,discordMissing};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,sendDiscordMessage,discordMissing};

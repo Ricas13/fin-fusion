@@ -76,10 +76,10 @@ function main() {
     // the URL, even if the admin request is deliberately hostile.
     {
         const hostile=normalizeCustomerSort({sort:'c.id; DROP TABLE customers; --',dir:'desc NULLS FIRST; --'});
-        assert.deepStrictEqual(hostile,{key:'recent',direction:'desc'},'unknown sorting input must fall back to the safe default');
+        assert.deepStrictEqual(hostile,{key:'registered',direction:'desc'},'unknown sorting input must fall back to the safe registered-newest default');
         const sql=tableSort.orderBy(hostile,CUSTOMER_SORTS,'c.id ASC');
         assert.ok(!sql.includes('DROP TABLE')&&!sql.includes(';'),'raw sort input must never reach ORDER BY');
-        assert.ok(sql.includes('COALESCE(acc.last_activity_at,c.created_at) DESC'),'default recent sort must remain newest activity first');
+        assert.ok(sql.includes('c.created_at DESC'),'default customer sort must remain newest registrations first');
         assert.ok(sql.endsWith(', c.id ASC'),'sorting must have a deterministic customer-id tie breaker');
 
         const nameDesc=normalizeCustomerSort({sort:'name',dir:'desc'});
@@ -93,7 +93,7 @@ function main() {
     }
 
     // The shared Customers/Jellyfin/Stremio table must render sort links and
-    // carry sort state through pagination rather than snapping back to recent.
+    // carry sort state through pagination rather than snapping back to the default.
     {
         const source=fs.readFileSync(path.join(__dirname,'../src/platform/admin-customers-list.js'),'utf8');
         assert.ok(source.includes('tableSort.nextDirection'),'customer headings must use the shared sorting helper');

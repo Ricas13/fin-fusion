@@ -8,6 +8,7 @@ const runtimeSettings = require('./runtime-settings');
 const operations = require('./operations-settings');
 const placementPreview = require('../jellyfin/placement-preview');
 const planServers = require('../jellyfin/plan-servers');
+const userCapacity = require('../jellyfin/user-capacity');
 const { esc, layout } = require('./admin-html');
 
 function site() { return process.env.SITE_NAME || 'CAPTAiNFiN'; }
@@ -58,9 +59,10 @@ async function dashboardRows() {
                FROM jellyfin_server_metrics`),
         query(`SELECT id,COALESCE(placement_mode,'active') placement_mode FROM jellyfin_servers`)
     ]);
+    const canonicalServers = await userCapacity.decorateServers(servers);
     const metricMap = new Map(metrics.rows.map(row => [String(row.server_id), row]));
     const placementMap = new Map(placement.rows.map(row => [String(row.id), row.placement_mode]));
-    return servers.map(server => ({
+    return canonicalServers.map(server => ({
         ...server,
         placement_mode: placementMap.get(String(server.id)) || 'active',
         fleet_metrics: metricMap.get(String(server.id)) || null
@@ -85,7 +87,7 @@ function overview(summary) {
     return `<div class="serverControlOverview" data-admin-surface="overview">
         <div><span>Servers</span><strong>${summary.total}</strong><small>${summary.healthy} healthy</small></div>
         <div><span>Placement ready</span><strong>${summary.eligible}</strong><small>${summary.total - summary.eligible} excluded</small></div>
-        <div><span>Sellable stream capacity</span><strong>${summary.capacity || 'Not set'}</strong><small>${summary.managed} managed customer${summary.managed === 1 ? '' : 's'} across the fleet</small></div>
+        <div><span>Customer capacity</span><strong>${summary.capacity ? `${summary.managed}/${summary.capacity}` : 'Not set'}</strong><small>One managed customer = one place</small></div>
         <div><span>Live streams</span><strong>${summary.streams}</strong><small>${summary.offline + summary.degraded} server issue${summary.offline + summary.degraded === 1 ? '' : 's'}</small></div>
     </div>`;
 }
@@ -116,15 +118,16 @@ function testForm(req, server) {
 function serverTable(req, rows, settings) {
     if (!rows.length) return '<div class="empty">No Jellyfin servers configured.</div>';
     return `<div class="tableWrap serverControlTableWrap"><table class="dataTable responsiveTable serverControlTable">
-        <thead><tr><th>Server</th><th>Health</th><th>Sellable streams</th><th>Live</th><th>Placement</th><th>Libraries</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Server</th><th>Health</th><th>Customer capacity</th><th>Live</th><th>Placement</th><th>Libraries</th><th>Actions</th></tr></thead>
         <tbody>${rows.map(server => {
             const managed = Number(server.assigned_users || 0), max = server.max_users == null ? null : Number(server.max_users);
             const live = metricNumber(server, 'active_streams', server.active_streams);
             const reason = placementReason(server, settings), eligible = reason === 'Eligible';
+            const capacityText=max==null?`${managed} users`:`${managed}/${max}${managed>max?` · OVER +${managed-max}`:managed===max?' · FULL':` · ${Math.max(0,max-managed)} free`}`;
             return `<tr id="server-${esc(server.id)}">
                 <td class="serverControlIdentity"><strong>${esc(server.name)}</strong><small>${esc(server.server_class)}${server.location ? ` · ${esc(server.location)}` : ''} · priority ${esc(server.priority)}</small></td>
                 <td>${healthPill(server.health_status)}<small>Checked ${esc(formatDate(server.last_health_check))}</small></td>
-                <td><strong>${max == null ? 'Not set' : esc(max)}</strong><small>${managed} managed customer${managed === 1 ? '' : 's'} · storefront stream budget</small></td>
+                <td><strong>${esc(capacityText)}</strong><small>Managed customer users only</small></td>
                 <td><strong>${live}</strong><small>${metricNumber(server, 'transcode_streams', 0)} transcoding</small></td>
                 <td><div class="serverPlacementState"><span class="pill ${eligible ? 'good' : reason === 'Health blocked' ? 'bad' : 'warn'}">${esc(reason)}</span>${placementForm(req, server)}</div></td>
                 <td><div class="serverLibraryAction"><span>Jellyfin library</span>${scanForm(req, server)}</div></td>
@@ -144,7 +147,7 @@ function placementPolicy(req, settings) {
             <option value="fail_open" ${settings.placementHealthMode === 'fail_open' ? 'selected' : ''}>Any except offline</option>
         </select>
         <button class="button secondary" type="submit">Save policy</button>
-        <small>Controls which health states provisioning may use. Server mode and “allow new users” still apply.</small>
+        <small>Controls which health states automatic provisioning may use. Server mode and “allow new users” still apply.</small>
     </form>`;
 }
 function capacityPreviewForm(req, plans, selectedPlanId = '', selectedCount = 25) {
@@ -160,9 +163,9 @@ function capacityPreviewForm(req, plans, selectedPlanId = '', selectedCount = 25
 function capacityPreviewResult(preview) {
     if (!preview) return '';
     return `<div class="serverPreviewResult"><div class="notice ${preview.unplaced ? 'warn' : ''}"><strong>${esc(preview.requested)} simulated customers</strong> · ${esc(preview.unplaced)} unplaced</div>
-        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Server</th><th>Health</th><th>Existing</th><th>Simulated</th><th>Placement ceiling</th></tr></thead><tbody>
+        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Server</th><th>Health</th><th>Existing users</th><th>Simulated users</th><th>User capacity</th></tr></thead><tbody>
         ${preview.servers.map(server => `<tr><td>${esc(server.name)}</td><td>${esc(server.health)}</td><td>${esc(server.existingUsers)}</td><td><strong>${esc(server.simulatedNewUsers)}</strong></td><td>${esc(server.maxUsers || '∞')}</td></tr>`).join('')}
-        </tbody></table></div><div class="subText">Placement preview still models customer assignments. Storefront availability separately treats the configured server capacity as a sellable stream-entitlement budget.</div></div>`;
+        </tbody></table></div><div class="subText">Each simulated customer consumes exactly one server user place.</div></div>`;
 }
 
 async function pageData(req) {
@@ -187,8 +190,8 @@ async function body(req) {
     const data = await pageData(req), summary = fleetSummary(data.rows, data.settings);
     return `${notice(req.query.message)}${notice(req.query.error, 'error')}${overview(summary)}
         <section class="section serverControlSection" id="placement" data-admin-surface="control">
-            <div class="sectionHead"><div><h2>Servers</h2><p>Health, sellable stream capacity, placement and library maintenance in one place.</p></div><span class="muted">${data.rows.length} configured</span></div>
-            <div class="serverControlHint"><strong>Placement:</strong> Active can receive new customers; Drain and Maintenance stop new assignments without moving existing users.</div>
+            <div class="sectionHead"><div><h2>Servers</h2><p>Health, customer-user capacity, placement and library maintenance in one place.</p></div><span class="muted">${data.rows.length} configured</span></div>
+            <div class="serverControlHint"><strong>Capacity:</strong> one managed Jellyfin customer uses one place, regardless of that customer's concurrent-stream plan. <strong>Placement:</strong> Active can receive new customers; Drain and Maintenance stop new assignments without moving existing users.</div>
             ${serverTable(req, data.rows, data.settings)}
             <div class="securityNote">API keys stay write-only. Library Scan asks Jellyfin to refresh its library; it does not change plan library access.</div>
         </section>
@@ -207,11 +210,11 @@ async function statusJson(_req, res, next) {
                 const managedCustomers = Number(server.assigned_users || 0);
                 const managedStreams = metrics?.managed_streams == null ? Number(server.active_streams || 0) : Number(metrics.managed_streams);
                 const activeStreams = metrics?.active_streams == null ? null : Number(metrics.active_streams);
-                const streamCapacity = server.max_users == null ? null : Number(server.max_users);
+                const maxUsers = server.max_users == null ? null : Number(server.max_users);
                 return {
                     id: String(server.id), status: server.health_status || 'unknown',
                     lastHealthCheck: isoDate(server.last_health_check), totalUsers: metrics?.total_users == null ? null : Number(metrics.total_users),
-                    managedCustomers, maxUsers: streamCapacity, streamCapacity, activeStreams, managedStreams,
+                    managedCustomers, maxUsers, userCapacity: maxUsers, activeStreams, managedStreams,
                     unmanagedStreams: activeStreams == null ? null : Math.max(0, activeStreams - managedStreams),
                     transcodeStreams: metrics?.transcode_streams == null ? null : Number(metrics.transcode_streams),
                     pausedStreams: metrics?.paused_streams == null ? null : Number(metrics.paused_streams),
@@ -229,7 +232,7 @@ function createAdminServerFleetDashboardRouter() {
     router.get('/admin/servers', async (req, res, next) => {
         try {
             return res.send(layout({ siteName: site(), active: 'servers', title: 'Servers',
-                subtitle: 'Jellyfin fleet health, placement and sellable stream capacity', body: await body(req),
+                subtitle: 'Jellyfin fleet health, placement and customer capacity', body: await body(req),
                 action: '<a class="button" href="/admin/servers/new">Add server</a>' }));
         } catch (error) { return next(error); }
     });

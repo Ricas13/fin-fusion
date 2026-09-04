@@ -10,6 +10,8 @@
   const accessModel=form.querySelector('[data-jellyfin-access-model]');
   const replacement=form.querySelector('[data-stremio-replacement]');
   const commercial=form.querySelector('[data-commercial-card]');
+  const availability=form.querySelector('[data-availability-card]');
+  const capacityLimit=form.querySelector('input[name="capacityLimit"]');
   const paidJellyfin=form.querySelector('[data-paid-jellyfin-only]');
   const jellyfinBlocks=form.querySelectorAll('[data-jellyfin-access],[data-jellyfin-policy],[data-jellyfin-libraries]');
   const stremioBlocks=form.querySelectorAll('[data-stremio-access]');
@@ -33,9 +35,6 @@
     const kind=selectedKind();
     if(kind==='stremio')return;
     const paidRecurring=kind==='paid_jellyfin'&&frequency?.value!=='trial';
-    // Product defaults are intentionally conservative. Paid recurring Jellyfin
-    // includes downloads; Free and Trial do not. Conversion and Live TV stay
-    // opt-in so creating a plan cannot silently grant expensive capabilities.
     setChecked('allowDownloads',paidRecurring);
     setChecked('allowVideoTranscoding',false);
     setChecked('allowAudioTranscoding',false);
@@ -57,7 +56,7 @@
       const group=input?.closest('.formGroup');
       let help=group?.querySelector('.inlineHelp');
       if(group&&!help){help=document.createElement('div');help.className='inlineHelp';group.appendChild(help);}
-      if(help)help.textContent='0 = unlimited. Concurrent streams are independent of IP, registered-device and legacy household limits.';
+      if(help)help.textContent='0 = unlimited. This is a playback limit for this customer plan; it does not consume server capacity.';
     }
     if(accessModel){
       const group=accessModel.closest('.formGroup');
@@ -68,7 +67,7 @@
         if(option.value==='household_network')option.textContent='Also enforce household network lease';
       }
       const help=group?.querySelector('.inlineHelp');
-      if(help)help.textContent='Optional legacy network lease. It does not replace the concurrent-stream limit.';
+      if(help)help.textContent='Optional legacy network lease. It does not affect the server customer-capacity count.';
     }
   }
   function sync(){
@@ -84,6 +83,13 @@
     toggleAll(householdFields,household);
     setVisible(lifecycle,free);
     setVisible(replacementCooldown,stremio&&replacement?.value==='customer_cooldown');
+
+    // Jellyfin capacity is configured only on servers. Keep the legacy database
+    // field at zero for compatibility but do not ask the operator to manage a
+    // second, conflicting plan-level inventory number.
+    if(availability)availability.hidden=!stremio;
+    if(capacityLimit){capacityLimit.disabled=false;if(jellyfin)capacityLimit.value='0';}
+
     syncAccessCopy();
     const label=free?'FREE JELLYFIN':paid?'PAID JELLYFIN':'STREMIO';
     if(kindLabel)kindLabel.textContent=label;

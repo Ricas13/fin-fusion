@@ -50,7 +50,7 @@ assert(css.includes('.operatorHeroActions-compact{margin:0 0 12px}'), 'retired s
 assert(capability.includes("@import url('/css/admin-operator-clarity.css')"), 'operator clarity CSS must load through canonical admin capability bundle');
 
 assert(dashboard.includes('function dashboardHero(ctx)') && dashboard.includes('Profit this month') && dashboard.includes('Profit YTD'), 'Home must retain an explicit profit-first business hero');
-assert(dashboard.includes('used / sellable stream capacity') && dashboard.includes('Needs attention'), 'Home hero must pair live stream capacity with the canonical intervention count');
+assert(dashboard.includes('managed customers / configured user capacity') && dashboard.includes('Needs attention'), 'Home hero must pair managed-user capacity with the canonical intervention count');
 assert(dashboard.indexOf('dashboardHero(ctx)') < dashboard.indexOf('rangeControls(ctx.range)'), 'Home hero must remain before analytics controls in composition');
 assert(!dashboard.includes('function attentionOverview') && !dashboard.includes('setupCompact'), 'Home must not reintroduce a second attention list or setup tile outside the focused hero');
 assert(attention.includes('Current problem & next step') && attention.includes('actionLabel'), 'Needs Attention must present the current problem and the concrete recovery action separately from workflow controls');
@@ -169,7 +169,7 @@ assert(!migrations.includes('type="hidden" name="confirmation" value="ROLLBACK"'
 assert(migrations.includes("ui.detailDisclosure({title:'Customer move history'"), 'Routine customer move history must be progressively disclosed');
 
 assert(serverControl.includes('Placement ready') && serverControl.includes('fleetSummary(data.rows, data.settings)'), 'Servers must retain canonical current placement readiness');
-assert(serverControl.includes('placementReason(server, settings)') && serverControl.includes('Health, sellable stream capacity, placement and library maintenance in one place.'), 'Servers must show placement eligibility/blockers alongside current fleet state');
+assert(serverControl.includes('placementReason(server, settings)') && serverControl.includes('Health, customer-user capacity, placement and library maintenance in one place.'), 'Servers must show placement eligibility/blockers alongside current fleet state');
 assert(serverControl.includes('placementForm(req, server)') && serverControl.includes('>Active</option>') && serverControl.includes('>Drain</option>') && serverControl.includes('>Maintenance</option>'), 'Server placement mode must be an inline compact setting rather than a separate workflow');
 assert(serverControl.includes('operatorDetails') && serverControl.includes('Placement health policy') && serverControl.includes('Future capacity preview'), 'Advanced placement policy and simulation must remain progressively disclosed under Servers');
 assert(fleetOperations.includes("res.redirect(302,forward(req,'placement'))") && fleetOperations.includes("r.post('/admin/servers/operations/server/:id/placement-mode'"), 'Legacy Fleet operations must remain a compatibility and mutation owner while its UI redirects to Servers');

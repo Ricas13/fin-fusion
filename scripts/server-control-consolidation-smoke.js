@@ -15,13 +15,15 @@ const navModel = require('../src/platform/admin-nav');
 const css = read('public/css/admin-server-control.css');
 const capability = read('public/css/admin-capability.css');
 
-assert(fleet.includes('Health, sellable stream capacity, placement and library maintenance in one place.'), 'Servers must be the consolidated fleet control surface');
+assert(fleet.includes('Health, customer-user capacity, placement and library maintenance in one place.'), 'Servers must be the consolidated fleet control surface');
+assert(fleet.includes('one managed Jellyfin customer uses one place'), 'Servers must explain the canonical one-customer-one-place capacity rule');
 assert(fleet.includes('/admin/servers/operations/server/${esc(server.id)}/placement-mode'), 'server rows must own inline placement controls');
 assert(fleet.includes('/admin/libraries/${esc(server.id)}/refresh'), 'server rows must expose library Scan');
 assert(fleet.includes('>Active</option>') && fleet.includes('>Drain</option>') && fleet.includes('>Maintenance</option>'), 'placement selects must use compact labels');
 assert(!fleet.includes('Active — can receive new placements'), 'verbose placement prose must stay out of table controls');
 assert(fleet.includes('Placement health policy') && fleet.includes('Future capacity preview'), 'advanced placement tools must remain available on Servers');
 assert(fleet.includes('operatorDetails'), 'advanced placement tools must be collapsed disclosures');
+assert(!fleet.includes('sellable stream capacity'), 'server capacity must never be described as stream inventory');
 
 assert(operations.includes("res.redirect(302,forward(req,'placement'))"), 'legacy Fleet operations GET must redirect to Servers');
 assert(operations.includes('/admin/servers?message=') && operations.includes('#capacity-preview'), 'legacy placement mutations/previews must return to Servers');
@@ -41,6 +43,8 @@ assert(css.includes('.serverControlTable') && css.includes('.serverControlOvervi
 assert(serverForm.includes('serverEditorGrid') && serverForm.includes("server ? 'serverEditorGrid--existing' : 'serverEditorGrid--new'"), 'server editor must declare explicit existing/new responsive body states');
 assert(serverForm.includes('section class="section serverEditorConfigCard"') && serverForm.includes('section class="section serverEditorConnectivityCard"'), 'server configuration and connectivity must retain independent semantic cards inside the shared body grid');
 assert(serverForm.includes('serverEditorSafetyNote'), 'server destructive-workflow safety guidance must remain outside the compact card grid');
+assert(serverForm.includes('Customer capacity') && serverForm.includes('Every Jellyfin customer uses exactly one place'), 'server form must describe max_users as customer-user capacity');
+assert(!serverForm.includes('Sellable stream capacity') && !serverForm.includes('3-stream plan consumes'), 'server form must not contain retired stream-weighted capacity language');
 assert(css.includes('.serverEditorGrid--existing{grid-template-columns:minmax(0,2fr) minmax(280px,1fr)'), 'wide existing-server editors must devote two thirds to configuration and one third to the operational rail');
 assert(css.includes('.serverEditorGrid--existing>.serverEditorConfigCard{grid-column:1;grid-row:1 / span 2}'), 'configuration must occupy the full left side of the wide server editor');
 assert(css.includes('.serverEditorGrid--existing>.adminSettingsBasicServer{grid-column:2;grid-row:1}') && css.includes('.serverEditorGrid--existing>.serverEditorConnectivityCard{grid-column:2;grid-row:2}'), 'message and connectivity must stack in the right operational rail without changing their form owners');

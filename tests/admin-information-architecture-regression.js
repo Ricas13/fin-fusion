@@ -63,7 +63,7 @@ async function main(){
     assert.equal(new URL(page.url()).pathname,'/admin/servers','Legacy Operations page did not redirect to unified Servers');
     assert.deepStrictEqual(await labels(page.locator('.adminTab.active')),['Jellyfin'],'Unified server operations must keep Jellyfin as the permanent Jellyfin sidebar destination');
     const fleetText=await page.locator('body').innerText();
-    assert(/Placement ready/.test(fleetText)&&/Sellable stream capacity/.test(fleetText)&&/Live streams/.test(fleetText),'Unified Servers is missing fleet placement readiness or sellable stream capacity');
+    assert(/Placement ready/.test(fleetText)&&/Customer capacity/.test(fleetText)&&/Live streams/.test(fleetText),'Unified Servers is missing fleet placement readiness or customer capacity');
     assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Unified Servers still contains unrelated platform/security settings');
     const placementPolicyDetails=page.locator('details.operatorDetails').filter({has:page.locator('summary',{hasText:'Placement health policy'})}).first();
     assert.equal(await placementPolicyDetails.count(),1,'Server placement health policy disclosure is missing');

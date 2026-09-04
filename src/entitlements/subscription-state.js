@@ -3,11 +3,19 @@
 const {query}=require('../db');
 const serviceScope=require('./service-scope');
 const billingMode=require('../payments/subscription-billing-mode');
+const adminControl=require('../jellyfin/admin-control');
 const LIVE_STATUSES=Object.freeze(['active','trialing','past_due','paused']);
 const DIRECT_AUDIENCES=new Set(['direct']);
 function recurringProvider(row){return billingMode.isRecurring(row)}
 function audienceAllows(plan,channel){const audience=String(plan?.audience||'direct');if(channel==='customer')return DIRECT_AUDIENCES.has(audience);return false}
 function assertAudience(plan,channel){if(!audienceAllows(plan,channel))throw new Error('This plan is not available for direct customers.');return plan}
+
+async function applyOperatorSemantics(db,row,{includeBlocked=false}={}){
+ if(!row)return null;
+ const decorated=await adminControl.entitlementSemantics(row,{client:db});
+ if(!includeBlocked&&decorated?.blocked)return null;
+ return decorated;
+}
 
 async function effectiveSubscription(customerId,{client=null,includeBlocked=false}={}){
  const db=client||{query};const result=await db.query(`
@@ -36,7 +44,9 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
       OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
       OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
    )
-   AND ($2::boolean OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
+   AND ($2::boolean
+        OR (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+        OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
  -- Free Server is retained as its own access lane and may have a sentinel
  -- far-future expiry. A live paid/trial contract must therefore win before
  -- expiry is considered; the free lane is resolved independently.
@@ -47,7 +57,7 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
           END DESC,
           s.created_at DESC
  LIMIT 1
- `,[customerId,Boolean(includeBlocked)]);return result.rows[0]||null}
+ `,[customerId,Boolean(includeBlocked)]);return applyOperatorSemantics(db,result.rows[0]||null,{includeBlocked})}
 async function effectiveStremioSubscription(customerId,{client=null,includeBlocked=false}={}){
  const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
@@ -108,7 +118,7 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
  ORDER BY s.created_at DESC
  LIMIT 1
  `,[customerId]);
- const row=result.rows[0]||null;if(!row)return null;
+ let row=result.rows[0]||null;if(!row)return null;
  const laneHold=await db.query(`SELECT EXISTS(
    SELECT 1 FROM customer_access_holds h
    WHERE h.customer_id=$1 AND h.released_at IS NULL AND (
@@ -121,8 +131,7 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
    )
  ) AS blocked`,[customerId,row.plan_id]);
  row.blocked=Boolean(row.blocked||laneHold.rows[0]?.blocked);
- if(!includeBlocked&&row.blocked)return null;
- return row;
+ return applyOperatorSemantics(db,row,{includeBlocked});
 }
 async function effectiveAddons(customerId,{client=null,includeBlocked=false}={}){const db=client||{query};const result=await db.query(`
  SELECT s.*,p.*,s.id AS subscription_id,p.id AS plan_id,
