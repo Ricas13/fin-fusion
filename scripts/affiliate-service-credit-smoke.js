@@ -8,6 +8,24 @@ const provisioning=require('../src/jellyfin/resilient-provisioning');
 provisioning.reconcileCustomer=async()=>({active:true,smoke:true});
 const referrals=require('../src/referrals');
 const credits=require('../src/affiliate-credits');
+const {encryptWithEnv}=require('../src/security/purpose-crypto');
+
+// Fleet capacity fails closed for any jellyfin premium/free plan with no
+// matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
+// gate) -- without this, every credit redemption below is rejected as sold
+// out before the affiliate-credit assertions this file exists for ever run.
+async function ensurePremiumServer(suffix){
+  const apiKey=encryptWithEnv(`test-${suffix}`,'JELLYFIN_ENCRYPTION_KEY','jf1');
+  return (await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+      enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+    )
+    VALUES($1,$2,'premium','jellyfin','https://example.invalid','https://example.invalid',$3,
+           TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+    RETURNING id
+  `,[`credit-server-${suffix}`,`credit-server-${suffix}`,apiKey])).rows[0].id;
+}
 
 async function customer(label){
   const user=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,'smoke-hash','customer',TRUE) RETURNING id`,[label,`${label}@example.invalid`])).rows[0];
@@ -22,7 +40,9 @@ async function setProgramme(rewardPercent){
   await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES('affiliate_program',$1::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[JSON.stringify({enabled:true,rewardPercent,qualificationDelayDays:0,refundWindowDays:0})]);
 }
 async function main(){
-  const suffix=Date.now().toString(36),affiliate=await customer(`affiliate-${suffix}`),referred=await customer(`referred-${suffix}`);
+  const suffix=Date.now().toString(36);
+  await ensurePremiumServer(suffix);
+  const affiliate=await customer(`affiliate-${suffix}`),referred=await customer(`referred-${suffix}`);
   const paidPlan=await plan(`affiliate-paid-${suffix}`,'Referral purchase',1000),targetPlan=await plan(`affiliate-target-${suffix}`,'Credit activation',600);
   await setProgramme(15);
 

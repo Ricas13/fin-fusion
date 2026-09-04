@@ -15,12 +15,32 @@ provisioning.reconcileCustomer=async()=>({active:true,account:null});
 const lifecycle=require('../src/payments/lifecycle');
 const {addPlanDuration}=require('../src/payments/lifecycle-primitives');
 const {commercialSnapshot}=require('../src/platform/flexible-checkout');
+const {encryptWithEnv}=require('../src/security/purpose-crypto');
 
 function expect(condition,message){if(!condition)throw new Error(message);}
 async function expectReject(fn,pattern){let error=null;try{await fn();}catch(e){error=e;}if(!error)throw new Error('Expected operation to fail.');if(pattern&&!pattern.test(String(error.message||error)))throw error;}
 
+// Checkout-intent creation itself checks fleet capacity (independent of the
+// reconcileCustomer stub above), and fails closed for any jellyfin
+// premium/free plan with no matching, enabled jellyfin_servers row -- add
+// one so this contract test keeps depending only on the commercial contract,
+// not a live fleet.
+async function ensurePremiumServer(suffix){
+    const apiKey=encryptWithEnv(`test-${suffix}`,'JELLYFIN_ENCRYPTION_KEY','jf1');
+    return (await query(`
+        INSERT INTO jellyfin_servers(
+            name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+            enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+        )
+        VALUES($1,$2,'premium','jellyfin','https://example.invalid','https://example.invalid',$3,
+               TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+        RETURNING id
+    `,[`contract-server-${suffix}`,`contract-server-${suffix}`,apiKey])).rows[0].id;
+}
+
 async function main(){
     const suffix=crypto.randomBytes(4).toString('hex');
+    await ensurePremiumServer(suffix);
     const customer=(await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING id`,[`Contract ${suffix}`,`contract-${suffix}@example.invalid`])).rows[0];
     const plan=(await query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,server_class,active,visible) VALUES($1,$2,'direct','month',30,600,'USD',3,TRUE,FALSE,FALSE,FALSE,FALSE,'premium',TRUE,TRUE) RETURNING *`,[`contract-${suffix}`,`Contract ${suffix}`])).rows[0];
     const mapping=`price_contract_${suffix}`;
