@@ -91,16 +91,17 @@ function bestValueCode(plans) {
 
 function planService(plan){const value=String(plan?.service_type||plan?.service_type_snapshot||'jellyfin').toLowerCase();return['jellyfin','stremio','bundle'].includes(value)?value:'jellyfin';}
 function accessModel(plan){return planComponents.accessLabel(plan)||'Streaming access';}
+function freeClaimPlan(plan){return Boolean(plan?.is_free_tier)&&planService(plan)==='jellyfin'&&Number(plan?.price_minor||0)===0&&String(plan?.billing_interval||'').toLowerCase()!=='trial';}
 
 function targetForPlan(plan, { logged, registrationOpen }) {
     if (logged) return '/account#plans';
-    if (registrationOpen) return '/account/register';
+    if (registrationOpen) return freeClaimPlan(plan) ? '/account/register?intent=free' : '/account/register';
     return '/account/login?next=' + encodeURIComponent('/account#plans');
 }
 
 function ctaForPlan(plan, { logged, registrationOpen }) {
     if (logged) return Number(plan.price_minor || 0) === 0 ? 'Choose this plan' : 'Continue in account';
-    if (registrationOpen) return plan.billing_interval === 'trial' ? 'Start free trial' : 'Get started';
+    if (registrationOpen) return freeClaimPlan(plan) ? 'Reserve free place' : plan.billing_interval === 'trial' ? 'Start free trial' : 'Get started';
     return 'Sign in to choose';
 }
 
@@ -326,6 +327,8 @@ module.exports = {
     planCard,
     planService,
     accessModel,
+    freeClaimPlan,
+    targetForPlan,
     savingForPlan,
     monthlyEquivalent,
     bestValueCode
