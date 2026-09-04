@@ -146,6 +146,7 @@ function moreCard(num,token,customerId,ctx,permanent,sub){
     links.push(bulkPreviewForm(token,customerId,'end_jellyfin_plan','Cancel / end current plan','secondary'));
   }
   if(!permanent?.active&&sub&&!isRecurring(sub))links.push(expiryResetForm(token,customerId));
+  if(!permanent?.active)links.push(permanentForm(token,customerId,false));
   if((ctx.accounts||[]).length)links.push(bulkPreviewForm(token,customerId,'jellyfin_delete','Delete Jellyfin account(s)','secondary'));
   links.push(bulkPreviewForm(token,customerId,'portal_delete','Delete customer…','danger'));
   return `<article class="ctlCard ctlMore"><span class="ctlNum">${num}</span><div class="ctlTop"><div><span class="ctlLabel">More</span><strong>Rarely used</strong></div></div><div class="ctlMoreList">${links.join('')||'<span class="ctlNote">Nothing else to do here.</span>'}</div></article>`;
