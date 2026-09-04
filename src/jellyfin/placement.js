@@ -43,20 +43,19 @@ function metricFor(server) {
 function fleetLoad(server) {
     const metric = metricFor(server);
     const managedUsers = number(server?.assigned_users, 0);
-    const managedStreams = number(server?.active_streams, 0);
     const explicitUsers = Number(server?.capacity_users);
-    const hasExplicitUsers = Number.isFinite(explicitUsers) && explicitUsers >= 0;
+    const users = Number.isFinite(explicitUsers) && explicitUsers >= 0 ? explicitUsers : managedUsers;
+    const managedStreams = number(server?.active_streams, 0);
     return {
-        users: hasExplicitUsers
-            ? explicitUsers
-            : metric?.totalUsers == null
-                ? managedUsers
-                : number(metric.totalUsers, managedUsers),
+        // Capacity is intentionally customer-user based. Jellyfin's raw total_users
+        // can include administrators, service identities or unmanaged accounts and
+        // must never open/close storefront or automatic placement capacity.
+        users,
         streams: metric?.activeStreams == null ? managedStreams : number(metric.activeStreams, managedStreams),
         managedUsers,
         managedStreams,
-        source: hasExplicitUsers ? 'capacity' : metric ? 'fleet' : 'managed',
-        observedAt: hasExplicitUsers ? (server?.capacity_observed_at || null) : (metric?.observedAt || null)
+        source: Number.isFinite(explicitUsers) && explicitUsers >= 0 ? 'capacity' : 'managed',
+        observedAt: null
     };
 }
 
@@ -147,14 +146,13 @@ function selectServer(candidates, strategyValue, { randomInt = crypto.randomInt 
 
 async function refreshFleetSnapshot() {
     const result = await query(`
-        SELECT server_id,total_users,active_streams,managed_streams,observed_at
+        SELECT server_id,active_streams,managed_streams,observed_at
         FROM jellyfin_server_metrics
         WHERE observed_at IS NOT NULL
     `);
     const next = new Map();
     for (const row of result.rows) {
         next.set(String(row.server_id), {
-            totalUsers: row.total_users == null ? null : Number(row.total_users),
             activeStreams: row.active_streams == null ? null : Number(row.active_streams),
             managedStreams: row.managed_streams == null ? null : Number(row.managed_streams),
             observedAt: row.observed_at
@@ -181,7 +179,6 @@ function snapshotStatus() {
 
 function setFleetSnapshotForTests(entries) {
     fleetSnapshot = new Map((entries || []).map(entry => [String(entry.serverId), {
-        totalUsers: entry.totalUsers,
         activeStreams: entry.activeStreams,
         managedStreams: entry.managedStreams,
         observedAt: entry.observedAt || new Date()
