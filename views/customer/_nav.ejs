@@ -11,9 +11,8 @@
     <a class="customerPortalNavLink <%= active==='benefits'||active==='affiliate'?'active':'' %>" href="/account/affiliate">Affiliate</a>
   <% } %>
   <a class="customerPortalNavLink <%= active==='support'?'active':'' %>" href="/account/support">Support</a>
-  <a class="customerPortalNavLink <%= active==='docs'?'active':'' %>" href="/account/docs">Help</a>
+  <%# Help is intentionally no longer a top-level customer tab. Legacy Notifications route /account/communications and active==='notifications' are folded into Account. %>
   <a class="customerPortalNavLink <%= active==='account'||active==='security'?'active':'' %>" href="/account/security">Account</a>
-  <a class="customerPortalNavLink <%= active==='notifications'?'active':'' %>" href="/account/communications">Notifications</a>
   <% if (navOverseerrUrl) { %>
     <a class="customerPortalNavLink" href="<%= navOverseerrUrl %>" target="_blank" rel="noreferrer">Request content ↗</a>
   <% } %>
@@ -21,3 +20,4 @@
 <section class="customerNowPlaying" data-customer-now-playing aria-live="polite" hidden></section>
 <script src="/js/customer-now-playing.js" defer></script>
 <script src="/js/customer-home-access.js" defer></script>
+<script src="/js/customer-account-notifications.js" defer></script>
