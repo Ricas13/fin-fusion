@@ -19,14 +19,15 @@ function currentSubscriptions(detail){return (detail.subscriptions||[]).filter(s
 function recurring(sub){const ref=String(sub?.provider_subscription_id||'');return (sub?.source==='stripe'&&/^sub_/i.test(ref))||(sub?.source==='paypal'&&/^I-/i.test(ref));}
 
 async function supplementary(customerId){
-  const [media,request,payments,discord,plans]=await Promise.all([
+  const [media,request,payments,discord,plans,override]=await Promise.all([
     query(`SELECT ja.id,ja.jellyfin_username,ja.disabled,ja.is_primary,ja.password_setup_required,ja.password_reset_required,js.id server_id,js.name server_name,js.health_status,COALESCE(js.media_server_type,'jellyfin') media_server_type FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose<>'stremio_internal' ORDER BY CASE COALESCE(js.media_server_type,'jellyfin') WHEN 'jellyfin' THEN 0 ELSE 1 END,ja.is_primary DESC,ja.created_at`,[customerId]).catch(()=>({rows:[]})),
     requestUsers.requestAccessForCustomer(customerId).catch(()=>null),
     query(`SELECT provider,transaction_type,transaction_status,occurred_at,currency,gross_amount_minor FROM payment_history_transactions WHERE customer_id=$1 ORDER BY occurred_at DESC LIMIT 75`,[customerId]).catch(()=>({rows:[]})),
     query(`SELECT COALESCE(cp.discord_user_id,c.discord_user_id) discord_user_id,c.discord_username FROM customers c LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id WHERE c.id=$1`,[customerId]).catch(()=>({rows:[]})),
-    query(`SELECT id,name,duration_days,price_minor,currency,billing_interval FROM plans WHERE active=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN('direct','both') AND COALESCE(is_addon,FALSE)=FALSE AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') ORDER BY sort_order,price_minor,name`).catch(()=>({rows:[]}))
+    query(`SELECT id,name,duration_days,price_minor,currency,billing_interval FROM plans WHERE active=TRUE AND archived_at IS NULL AND (effective_from IS NULL OR effective_from<=NOW()) AND (effective_until IS NULL OR effective_until>NOW()) AND audience IN('direct','both') AND COALESCE(is_addon,FALSE)=FALSE AND COALESCE(service_type,'jellyfin') IN ('jellyfin','stremio') ORDER BY sort_order,price_minor,name`).catch(()=>({rows:[]})),
+    query(`SELECT o.subscription_id,o.reason,COALESCE(s.plan_name_snapshot,p.name) plan_name FROM customer_entitlement_overrides o JOIN subscriptions s ON s.id=o.subscription_id JOIN plans p ON p.id=s.plan_id WHERE o.customer_id=$1 AND o.permanent_access=TRUE AND o.revoked_at IS NULL LIMIT 1`,[customerId]).catch(()=>({rows:[]}))
   ]);
-  return{media:media.rows,request,payments:payments.rows,discord:discord.rows[0]||null,plans:plans.rows};
+  return{media:media.rows,request,payments:payments.rows,discord:discord.rows[0]||null,plans:plans.rows,override:override.rows[0]||null};
 }
 
 function portalEnrolForm(c,token){return `<details class="opInlineDetails"><summary>Enrol portal account…</summary><form class="opInlineForm" method="post" action="/admin/users/${encodeURIComponent(c.id)}/manage/portal/enrol" data-native-submit="true">${csrfHidden(token)}<label>Username<input class="input" name="username" minlength="3" maxlength="40" required value="${esc(c.display_name||'')}"></label><label>Email<input class="input" type="email" name="email" maxlength="254" required value="${esc(c.email||'')}"></label><small>Creates a disabled portal login and a recoverable onboarding link. The customer chooses the password.</small><button class="button primary sm">Enrol & create onboarding link</button></form></details>`;}
@@ -98,6 +99,16 @@ function holdsCard(detail,token){
   return card('Access / Holds',pill(holds.length?`${holds.length} active`:'Clear',holds.length?'warn':'good'),body,actions.join(''));
 }
 
+function overrideCard(detail,token,override){
+  const id=detail.customer.id,holds=detail.activeHolds||[],subs=(detail.subscriptions||[]).filter(sub=>!sub.is_addon&&!sub.superseded_by).slice(0,12),active=Boolean(override?.subscription_id);
+  const preferred=String(override?.subscription_id||detail.primaryEntitlement?.subscription_id||subs[0]?.id||'');
+  const options=subs.map(sub=>`<option value="${esc(sub.id)}" ${String(sub.id)===preferred?'selected':''}>${esc(sub.plan_name||sub.plan_code||'Plan')} · ${esc(String(sub.status||'unknown').replaceAll('_',' '))}${sub.current_period_end?` · ${esc(dt(sub.current_period_end))}`:''}</option>`).join('');
+  const body=`${stateRow('Automation',active?pill('OVERRIDDEN','bad'):pill('Normal','good'))}${stateRow('Active blockers',pill(String(holds.length),holds.length?'warn':'good'))}${active?stateRow('Pinned plan',esc(override.plan_name||'Selected subscription')):''}<p class="opHint">Break glass ignores normal hold ownership. Force Access ON pins the selected primary subscription as authoritative access and clears every active hold. Provider billing is not changed.</p>${options?`<form class="opInlineForm" method="post" action="/admin/users/${encodeURIComponent(id)}/manage/force/access-on" data-native-submit="true">${csrfHidden(token)}<label>Plan / subscription to force<select class="input" name="subscriptionId" required>${options}</select></label><button class="button danger sm" type="submit">FORCE ACCESS ON</button></form>`:'<div class="opEmpty">No primary subscription exists to pin. Add a plan manually first.</div>'}`;
+  const actions=[buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/force/clear-blockers`,'CLEAR ALL BLOCKERS',{tone:'danger'}),buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'FORCE RECONCILE')];
+  if(active)actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/force/automation`,'Return to automation',{tone:'primary'}));
+  return card('Admin Override',active?pill('BREAK GLASS ACTIVE','bad'):pill('Break glass','warn'),body,actions.join(''),'danger');
+}
+
 function dangerCard(detail,token,media,state){
   const id=detail.customer.id,actions=[],jellyfin=media.filter(a=>a.media_server_type!=='emby'),emby=media.filter(a=>a.media_server_type==='emby');
   if(jellyfin.length)actions.push(`<details class="dangerAction"><summary>Delete Jellyfin account(s)…</summary><p>Deletes customer Jellyfin account(s). It does not delete the portal customer, Emby account, payment history or unrelated service entitlements.</p>${bulkForm(token,id,'jellyfin_delete','Review Jellyfin deletion','danger')}</details>`);
@@ -124,9 +135,9 @@ async function render(detail,token,options={}){
   const accessHtml=await accessCards.accessLibrariesRequests(detail,token,options).catch(()=> '');
   const hasJellyfinPlan=currentSubscriptions(detail).some(sub=>['jellyfin','bundle'].includes(String(sub.service_type_snapshot||sub.service_type||'jellyfin').toLowerCase()));
   const planSettings=hasJellyfinPlan&&accessHtml?disclosure('Jellyfin & Overseerr settings','Library access · Jellyfin user settings · request access',`<div class="opNested">${accessHtml}</div>`):'';
-  const cards=[portalCard(detail,token),plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media),stremioCard(detail,token,options.stremioInfo),overseerrCard(detail,token,extra.request),discordCard(detail,token,extra.discord),holdsCard(detail,token),dangerCard(detail,token,extra.media,options.stremioInfo)];
+  const cards=[portalCard(detail,token),plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media),stremioCard(detail,token,options.stremioInfo),overseerrCard(detail,token,extra.request),discordCard(detail,token,extra.discord),holdsCard(detail,token),overrideCard(detail,token,extra.override),dangerCard(detail,token,extra.media,options.stremioInfo)];
   const core=`<div class="customer360Core" data-customer360-core><div class="opGrid">${cards.join('')}</div>${planSettings}${activityDisclosure(detail)}${paymentsDisclosure(extra.payments)}${logsDisclosure(detail)}</div>`;
   return `${accessCards.styles()}${styles()}${core}`;
 }
 
-module.exports={render,supplementary,portalCard,plansCard,mediaCard,stremioCard,overseerrCard,discordCard,holdsCard,dangerCard,activityDisclosure,paymentsDisclosure,logsDisclosure,styles};
+module.exports={render,supplementary,portalCard,plansCard,mediaCard,stremioCard,overseerrCard,discordCard,holdsCard,overrideCard,dangerCard,activityDisclosure,paymentsDisclosure,logsDisclosure,styles};
