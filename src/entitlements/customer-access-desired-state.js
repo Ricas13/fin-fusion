@@ -33,9 +33,15 @@ function deriveCustomerAccessDesiredState({
         ? effectiveJellyfin
         : null;
     const blockers = blockerState(holds);
+    // "Remove Jellyfin access" is a customer-facing operator command, not a
+    // request to fall back from the paid lane into a separate Free Server lane.
+    // Keep the override scoped to the current paid subscription so a later plan
+    // change starts cleanly, while suppressing every Jellyfin lane for the life
+    // of that explicit removal.
+    const jellyfinRemovedByAdmin = Boolean(primaryEntitlement?.admin_jellyfin_removed);
     const desired = {
-        primaryJellyfin: usable(primaryEntitlement),
-        freeJellyfin: usable(freeEntitlement),
+        primaryJellyfin: !jellyfinRemovedByAdmin && usable(primaryEntitlement),
+        freeJellyfin: !jellyfinRemovedByAdmin && usable(freeEntitlement),
         stremio: usable(stremioEntitlement),
         emby: usable(embyEntitlement)
     };
@@ -59,6 +65,7 @@ function deriveCustomerAccessDesiredState({
         controlEntitlement,
         blockers,
         desired,
+        jellyfinRemovedByAdmin,
         desiredAnyAccess: Object.values(desired).some(Boolean),
         activePlanIds
     };
