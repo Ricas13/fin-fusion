@@ -29,7 +29,6 @@ function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${es
 function activeSubscription(detail){return (detail.subscriptions||[]).find(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()))||detail.subscriptions?.[0]||null;}
 function fmtDate(value){if(!value)return'—';if(value===Infinity||String(value).toLowerCase()==='infinity')return'Never';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});}
 function isRecurring(sub){const ref=String(sub?.provider_subscription_id||'');return (sub?.source==='stripe'&&/^sub_/i.test(ref))||(sub?.source==='paypal'&&/^I-/i.test(ref));}
-function isPermanent(plan){return plan?.access_expires_at===Infinity||String(plan?.access_expires_at||'').toLowerCase()==='infinity';}
 function booleanLabel(value){return value?'Allowed':'Blocked';}
 function enabledLabel(value){return value?'Enabled':'Disabled';}
 function pill(value,tone=''){return `<span class="pill ${tone}">${esc(value)}</span>`;}
