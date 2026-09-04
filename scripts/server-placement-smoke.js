@@ -28,12 +28,10 @@ assert.strictEqual(placement.selectServer([a, b, c], 'balanced').id, 'b');
 assert.strictEqual(placement.selectServer([a], 'manual').id, 'a');
 assert.throws(() => placement.selectServer([a, b], 'manual'), /exactly one eligible/);
 
-const remotelyFull = { ...base, id: 'remote-full', name: 'Remote full', max_users: 10, assigned_users: 7, capacity_users: 10 };
-assert.strictEqual(
-    placement.selectServer([remotelyFull], 'balanced'),
-    null,
-    'canonical occupancy must stop provisioning when Jellyfin itself is already full even if only seven managed accounts exist'
-);
+const sevenOfTen = { ...base, id: 'seven', name: 'Seven of ten', max_users: 10, assigned_users: 7 };
+assert.strictEqual(placement.selectServer([sevenOfTen], 'balanced').id, 'seven', '7 managed customer users on a capacity-10 server must leave three places');
+const tenOfTen = { ...base, id: 'ten', name: 'Ten of ten', max_users: 10, assigned_users: 10 };
+assert.strictEqual(placement.selectServer([tenOfTen], 'balanced'), null, '10 managed customer users on a capacity-10 server must be full');
 
 const weighted = [
     { ...base, id: 'one', name: 'One', placement_weight: 50 },
@@ -62,45 +60,63 @@ assert.strictEqual(plansList.priceLabel({ price_minor: 600, currency: 'usd' }), 
 
 const capacitySource=fs.readFileSync('src/entitlements/plan-capacity.js','utf8');
 const provisioningSource=fs.readFileSync('src/jellyfin/provisioning-helpers.js','utf8');
+const userCapacitySource=fs.readFileSync('src/jellyfin/user-capacity.js','utf8');
 const pendingRegistrationSource=fs.readFileSync('src/security/pending-registration.js','utf8');
 const acquisition=capacity.acquisitionSql('p');
-assert(capacitySource.includes('enabledAccountFloor')&&capacitySource.includes('observedUserFloor')&&capacitySource.includes('placementUserFloor')&&capacitySource.includes('capacityGap'),'fleet runtime capacity must expose managed, observed and canonical placement occupancy');
-assert(acquisition.includes('jellyfin_server_metrics occupancy_metric')&&acquisition.includes('COUNT(DISTINCT capacity_account.id)')&&acquisition.includes('server_load.capacity_users'),'fleet acquisition SQL must use the same managed-vs-live Jellyfin occupancy floor as placement');
-assert(acquisition.includes("COALESCE(occupancy_server.media_server_type,'jellyfin')='jellyfin'")&&capacitySource.includes("COALESCE(js.media_server_type,'jellyfin')='jellyfin'"),'Jellyfin capacity must not count Emby or other media servers that provisioning cannot select');
-assert(provisioningSource.includes('LEFT JOIN jellyfin_server_metrics m ON m.server_id=js.id')&&provisioningSource.includes('capacity_users: Math.max(assignedUsers, observedUsers)')&&provisioningSource.includes('placement.metricsStaleMs()'),'provisioning must consume the same fresh remote-user occupancy truth as advertised capacity');
-assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a manual plan limit when no server capacity is configured');
-assert(pendingRegistrationSource.includes('async function reserveFreeAccess')&&pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,plan.id')&&pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),'Free Access reservation must consume derived fleet capacity even when plans.capacity_limit is null');
+assert(capacitySource.includes("return'fleet_users'")&&capacitySource.includes('managedUsers')&&capacitySource.includes('pendingUsers')&&capacitySource.includes('reservedUsers'),'fleet capacity must be expressed as customer users, pending owed users and reservations');
+assert(!capacitySource.includes("commercial_snapshot->'streams'")&&!capacitySource.includes('streamLimit')&&!capacitySource.includes('streamUsed')&&!capacitySource.includes('jellyfin_server_metrics'),'Jellyfin fleet capacity must not depend on stream entitlements or raw Jellyfin user metrics');
+assert(acquisition.includes("capacity_account.account_purpose='jellyfin'")&&acquisition.includes('COUNT(DISTINCT capacity_account.customer_id)')&&acquisition.includes('pending_subscription.customer_id'),'acquisition SQL must count one managed customer per server and reserve pending entitled customers');
+assert(!acquisition.includes("commercial_snapshot->'streams'")&&!acquisition.includes('occupancy_metric'),'acquisition SQL must not use stream weighting or Jellyfin total_users');
+assert(userCapacitySource.includes("COUNT(DISTINCT ja.customer_id)")&&userCapacitySource.includes("ja.account_purpose='jellyfin'")&&userCapacitySource.includes('ja.disabled=FALSE'),'server capacity truth must count enabled managed customer users exactly once');
+assert(provisioningSource.includes("require('./user-capacity')")&&provisioningSource.includes('userCapacity.decorateServers(available)'),'automatic placement must use the canonical managed-user counter');
+assert(capacitySource.includes('const fleetPlan=')&&capacitySource.includes('NOT ${fleetPlan}')&&capacitySource.includes('${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}'),'fleet Jellyfin acquisition must fail closed instead of falling back to a plan capacity_limit');
+assert(pendingRegistrationSource.includes('async function reserveFreeAccess')&&pendingRegistrationSource.includes('await planCapacity.lockAndAssert(client,plan.id')&&pendingRegistrationSource.includes('INSERT INTO free_access_registration_reservations'),'Free Access reservation must consume one fleet user place even when plans.capacity_limit is null');
+assert.strictEqual(capacity.capacityModel({service_type:'jellyfin',server_class:'free'}),'fleet_users');
+assert.strictEqual(capacity.capacityModel({service_type:'bundle',server_class:'premium'}),'fleet_users');
 
 (async()=>{
     const fakeDb=async sql=>{
-        if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-floor',capacity_limit:null,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true,streams:1}]};
+        if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-users',capacity_limit:999,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true}]};
         if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
-        if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,stream_limit:10,enabled_accounts:7,observed_users:10,placement_users:10}]};
-        if(sql.includes('AS stream_used'))return{rowCount:1,rows:[{stream_used:2}]};
-        if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:0}]};
-        if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{stream_reserved:0}]};
-        throw new Error(`Unexpected capacity-floor query: ${sql.slice(0,120)}`);
+        if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,user_limit:10,managed_users:7}]};
+        if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
+        if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
+        if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
+        throw new Error(`Unexpected user-capacity query: ${sql.slice(0,120)}`);
     };
-    const floor=await capacity.usage('free-floor',fakeDb);
-    assert.strictEqual(floor.entitlementStreamUsed,2,'subscription demand must remain visible independently');
-    assert.strictEqual(floor.enabledAccountFloor,7,'managed Jellyfin accounts must remain visible independently');
-    assert.strictEqual(floor.observedUserFloor,10,'fresh Jellyfin inventory must expose unmanaged users that placement can see');
-    assert.strictEqual(floor.placementUserFloor,10,'canonical occupancy must use the per-server maximum of managed and fresh Jellyfin users');
-    assert.strictEqual(floor.capacityGap,8,'capacity diagnostics must expose placement users not explained by current entitlement demand');
-    assert.strictEqual(floor.streamUsed,10,'effective occupancy must match the placement occupancy floor');
-    assert.strictEqual(floor.remaining,0,'a remotely full server must not advertise the three false Free places implied by seven managed accounts');
-    assert.strictEqual(floor.soldOut,true,'remote Jellyfin exhaustion must close acquisition before provisioning');
+    const state=await capacity.usage('free-users',fakeDb);
+    assert.strictEqual(state.model,'fleet_users');
+    assert.strictEqual(state.userLimit,10,'server max_users is the pool user capacity');
+    assert.strictEqual(state.managedUsers,7,'seven enabled managed customer users consume seven places');
+    assert.strictEqual(state.pendingUsers,2,'two active customers still owed accounts reserve two places');
+    assert.strictEqual(state.userUsed,9,'used capacity is managed users plus owed pending users');
+    assert.strictEqual(state.remaining,1,'one place remains regardless of any plan stream allowance');
+    assert.strictEqual(state.soldOut,false);
+    assert.strictEqual(state.manualLimit,null,'plans.capacity_limit must not cap a Free/Premium Jellyfin fleet');
+
+    const reservedDb=async sql=>{
+        if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-reserved',capacity_limit:null,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true}]};
+        if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
+        if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:1,user_limit:10,managed_users:7}]};
+        if(sql.includes('AS pending_users'))return{rowCount:1,rows:[{pending_users:2}]};
+        if(sql.includes('FROM billing_checkout_intents i JOIN plans p'))return{rowCount:1,rows:[{reserved_users:0}]};
+        if(sql.includes('FROM free_access_registration_reservations r JOIN plans p'))return{rowCount:1,rows:[{reserved_users:1}]};
+        throw new Error(`Unexpected reservation query: ${sql.slice(0,120)}`);
+    };
+    const reserved=await capacity.usage('free-reserved',reservedDb);
+    assert.strictEqual(reserved.remaining,0,'one registration reservation consumes the final user place');
+    assert.strictEqual(reserved.soldOut,true);
 
     const noServerDb=async sql=>{
-        if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-no-server',capacity_limit:3,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true,streams:1}]};
+        if(sql.includes('FROM plans WHERE id=$1'))return{rowCount:1,rows:[{id:'free-no-server',capacity_limit:3,service_type:'jellyfin',server_class:'free',billing_interval:'month',price_minor:0,is_free_tier:true}]};
         if(sql.includes("setting_key='operations_v1'"))return{rowCount:1,rows:[{setting_value:{placementHealthMode:'healthy_or_degraded'}}]};
-        if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:0,stream_limit:0,enabled_accounts:0,observed_users:0,placement_users:0}]};
+        if(sql.includes('WITH restriction AS'))return{rowCount:1,rows:[{configured_servers:0,user_limit:0,managed_users:0}]};
         throw new Error(`Unexpected no-server query: ${sql.slice(0,120)}`);
     };
     const noServer=await capacity.usage('free-no-server',noServerDb);
-    assert.strictEqual(noServer.remaining,0,'a manual capacity_limit must never advertise Free places when no Jellyfin server capacity exists');
-    assert.strictEqual(noServer.soldOut,true,'fleet plans with no Jellyfin server capacity must fail closed');
-    assert.match(noServer.fallbackReason,/No Jellyfin server capacity/);
+    assert.strictEqual(noServer.remaining,0,'a plan capacity_limit must never advertise places when no Jellyfin server user capacity exists');
+    assert.strictEqual(noServer.soldOut,true,'fleet plans with no Jellyfin server user capacity must fail closed');
+    assert.match(noServer.fallbackReason,/server user capacity/);
 
-    console.log('server placement + plans list + truthful fleet capacity smoke: ok');
+    console.log('server placement + plans list + one-user-one-place capacity smoke: ok');
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});
