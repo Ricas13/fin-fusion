@@ -19,6 +19,16 @@ function serviceType(entitlement) {
     return String(entitlement?.service_type_snapshot || entitlement?.service_type || 'jellyfin');
 }
 
+function sameId(a, b) {
+    return String(a || '') === String(b || '');
+}
+
+function accountMatchesEntitlementPlacement(account, entitlement) {
+    const forcedServerId = entitlement?.admin_forced_server_id || null;
+    if (forcedServerId) return sameId(account?.server_id, forcedServerId);
+    return account?.server_class === entitlement?.server_class;
+}
+
 function laneState(result) {
     return result ? {
         active: Boolean(result.active),
@@ -86,7 +96,16 @@ function assertDiscordSyncResult(result) {
 
 function assertLanePostcondition(name, entitlement, result) {
     if (!entitlement || entitlement.blocked) return;
-    if (result?.active && result?.account && !result.account.disabled) return;
+    if (result?.active && result?.account && !result.account.disabled) {
+        const forcedServerId = entitlement.admin_forced_server_id || null;
+        if (!forcedServerId || sameId(result.account.server_id, forcedServerId)) return;
+        const error = new Error(`${name} Jellyfin reconciliation did not converge to the administrator-forced server.`);
+        error.code = 'RECONCILIATION_FORCED_SERVER_MISMATCH';
+        error.lane = name.toLowerCase();
+        error.expectedServerId = forcedServerId;
+        error.actualServerId = result.account.server_id || null;
+        throw error;
+    }
     const error = new Error(`${name} Jellyfin reconciliation did not converge to an enabled account.`);
     error.code = 'RECONCILIATION_POSTCONDITION_FAILED';
     error.lane = name.toLowerCase();
@@ -208,7 +227,7 @@ async function setLibrarySelectionForAccount(customerId, accountId, names) {
 }
 
 async function adoptExistingFreeAccount(customerId, accounts, freeEntitlement, primaryEntitlement) {
-    if (!freeEntitlement?.is_free_tier || accounts.some(account => account.access_lane === 'free')) return accounts;
+    if (!freeEntitlement?.is_free_tier || freeEntitlement.blocked || accounts.some(account => account.access_lane === 'free')) return accounts;
     const primaryStart = primaryEntitlement?.starts_at ? new Date(primaryEntitlement.starts_at).getTime() : null;
     const candidates = accounts.filter(account =>
         account.server_enabled
@@ -256,9 +275,12 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
 
-    let account = laneAccounts.find(a => a.is_primary && a.server_class === entitlement.server_class && a.server_enabled)
-        || laneAccounts.find(a => !a.disabled && a.server_class === entitlement.server_class && a.server_enabled)
-        || laneAccounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
+    const eligibleAccounts = laneAccounts.filter(account =>
+        account.server_enabled && accountMatchesEntitlementPlacement(account, entitlement)
+    );
+    let account = eligibleAccounts.find(a => a.is_primary)
+        || eligibleAccounts.find(a => !a.disabled)
+        || eligibleAccounts[0];
     let effective;
 
     if (!account) {
@@ -286,6 +308,7 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         subscriptionId: entitlement.subscription_id,
         planCode: entitlement.contract_plan_code || entitlement.code,
         serverId: account.server_id,
+        forcedServerId: entitlement.admin_forced_server_id || null,
         jellyfinAccountId: account.id
     })]);
     return { active: true, blocked: false, entitlement, account, effective };
@@ -364,18 +387,22 @@ async function reconcileCustomerUnlocked(customerId) {
         controlEntitlement,
         activePlanIds,
         blockers,
-        desired
+        desired,
+        jellyfinRemovedByAdmin
     } = desiredState;
+    const freeLaneEntitlement = jellyfinRemovedByAdmin && freeEntitlement
+        ? { ...freeEntitlement, blocked: true, admin_jellyfin_suppressed_by_primary: true }
+        : freeEntitlement;
 
     await control.markCustomerRunning(customerId, controlEntitlement);
     try {
         const outcome = await recordRun(customerId, controlEntitlement?.subscription_id || null, async () => {
             let accounts = await normalAccounts(customerId);
-            accounts = await adoptExistingFreeAccount(customerId, accounts, freeEntitlement, primaryEntitlement);
+            accounts = await adoptExistingFreeAccount(customerId, accounts, freeLaneEntitlement, primaryEntitlement);
             const primary = await reconcileLane(customerId, primaryEntitlement, 'primary', accounts, {
                 makePrimary: Boolean(primaryEntitlement)
             });
-            const free = await reconcileLane(customerId, freeEntitlement, 'free', accounts, {
+            const free = await reconcileLane(customerId, freeLaneEntitlement, 'free', accounts, {
                 makePrimary: !primaryEntitlement && desired.freeJellyfin
             });
             if (!primaryEntitlement && !free.active) await disableAccounts(accounts);
@@ -402,7 +429,7 @@ async function reconcileCustomerUnlocked(customerId) {
                 discord
             };
             assertLanePostcondition('Primary', primaryEntitlement, primary);
-            assertLanePostcondition('Free', freeEntitlement, free);
+            assertLanePostcondition('Free', freeLaneEntitlement, free);
             return result;
         });
         await control.markCustomerHealthy(customerId, stateDetail(controlEntitlement, outcome));
@@ -515,5 +542,6 @@ module.exports = {
     setLibrarySelectionForAccount,
     reconciliationLock,
     assertDiscordSyncResult,
-    assertLanePostcondition
+    assertLanePostcondition,
+    accountMatchesEntitlementPlacement
 };
