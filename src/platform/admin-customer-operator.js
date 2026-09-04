@@ -7,6 +7,7 @@ const provisioning=require('../jellyfin/resilient-provisioning');
 const manualAssignment=require('../jellyfin/manual-assignment');
 const forceMove=require('../jellyfin/admin-force-move');
 const adminControl=require('../jellyfin/admin-control');
+const userCapacity=require('../jellyfin/user-capacity');
 const permanentAccess=require('../entitlements/permanent-access');
 const {historyKind}=require('../payments/history-accounting');
 
@@ -58,22 +59,20 @@ async function metricsFor(ids){
 
 async function context(customerId,req){
   const entitlement=await provisioning.currentEntitlementTruth(customerId);
-  const [customer,accounts,permanent,control,servers]=await Promise.all([
+  const [customer,accounts,permanent,control,rawServers]=await Promise.all([
     query(`SELECT c.id,COALESCE(NULLIF(c.display_name,''),u.username,c.email,'Customer') AS name,c.email,u.username AS portal_username FROM customers c LEFT JOIN app_users u ON u.id=c.user_id WHERE c.id=$1`,[customerId]),
     query(`SELECT ja.id,ja.server_id,ja.jellyfin_username,ja.disabled,ja.is_primary,js.name AS server_name,js.server_class FROM jellyfin_accounts ja JOIN jellyfin_servers js ON js.id=ja.server_id WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin' ORDER BY ja.is_primary DESC,ja.disabled ASC,ja.updated_at DESC`,[customerId]),
     permanentAccess.status(customerId).catch(()=>null),
     entitlement?adminControl.state(customerId,entitlement.subscription_id).catch(()=>null):Promise.resolve(null),
     query(`
-      SELECT js.id,js.name,js.server_class,js.enabled,js.health_status,js.allow_new_users,js.max_users,
-             COUNT(ja.id) FILTER(WHERE ja.disabled=FALSE)::int AS assigned_users
+      SELECT js.id,js.name,js.server_class,js.enabled,js.health_status,js.allow_new_users,js.max_users,js.priority
       FROM jellyfin_servers js
-      LEFT JOIN jellyfin_accounts ja ON ja.server_id=js.id
       WHERE COALESCE(js.media_server_type,'jellyfin')='jellyfin'
-      GROUP BY js.id
       ORDER BY js.enabled DESC,CASE js.health_status WHEN 'healthy' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END,js.priority,js.name
     `)
   ]);
   if(!customer.rowCount)return null;
+  const servers=await userCapacity.decorateServers(rawServers.rows);
   const activeAccounts=accounts.rows.filter(row=>!row.disabled);
   const planName=entitlement?.contract_plan_name||entitlement?.name||entitlement?.plan_name_snapshot||entitlement?.contract_plan_code||null;
   return{
@@ -81,26 +80,12 @@ async function context(customerId,req){
     entitlement:entitlement?{subscriptionId:entitlement.subscription_id,planId:entitlement.plan_id,planName,serviceType:String(entitlement.service_type_snapshot||entitlement.service_type||'jellyfin'),serverClass:entitlement.server_class||null,isFreeTier:Boolean(entitlement.is_free_tier),blocked:Boolean(entitlement.blocked)}:null,
     accounts:accounts.rows,activeAccounts,
     permanent:Boolean(permanent?.active),adminControl:control?{mode:control.mode,serverId:control.server_id||null,serverName:control.server_name||null,reason:control.reason||null}:null,
-    servers:servers.rows.map(server=>{const max=Number(server.max_users||0)||null,assigned=Number(server.assigned_users||0);return{...server,assigned_users:assigned,full:Boolean(max&&assigned>=max),overBy:max?Math.max(0,assigned-max):0,operable:Boolean(server.enabled)};})
+    servers:servers.map(server=>({...server,assigned_users:Number(server.assigned_users||0),full:Boolean(server.full),overBy:Number(server.over_capacity_by||0),operable:Boolean(server.enabled)}))
   };
 }
 
 function createAdminCustomerOperatorRouter(){
   const router=express.Router();router.use('/admin/users',gate,noStore);
-
-  // Registered date is the operator's natural default: the newest customer is
-  // the first row. Preserve every active filter while making that default
-  // explicit in the URL; deliberate column sorts continue to work normally.
-  router.get('/admin/users',(req,res,next)=>{
-    if(req.query.sort)return next();
-    const params=new URLSearchParams();
-    for(const [key,value] of Object.entries(req.query||{})){
-      if(Array.isArray(value))value.forEach(item=>params.append(key,String(item)));
-      else if(value!==undefined&&value!==null)params.set(key,String(value));
-    }
-    params.set('sort','registered');params.set('dir','desc');
-    return res.redirect(302,`/admin/users?${params.toString()}`);
-  });
 
   router.get('/admin/users/operator/metrics',async(req,res)=>{
     try{
@@ -115,7 +100,7 @@ function createAdminCustomerOperatorRouter(){
 
   router.post('/admin/users/:customerId/operator/assign',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a Jellyfin server.');const result=await manualAssignment.assign(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`${result.account.jellyfin_username} was added to ${result.server.name}${result.capacityOverride?' even though the configured capacity is full':''}.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not add this customer to Jellyfin. ${clean(error.message,300)}`);}
+    try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a Jellyfin server.');const result=await manualAssignment.assign(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`${result.account.jellyfin_username} was added to ${result.server.name}${result.capacityOverride?' even though the configured user capacity is full':''}.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not add this customer to Jellyfin. ${clean(error.message,300)}`);}
   });
 
   router.post('/admin/users/:customerId/operator/move',async(req,res)=>{
@@ -130,7 +115,7 @@ function createAdminCustomerOperatorRouter(){
 
   router.post('/admin/users/:customerId/operator/automatic',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
-    try{const entitlement=await provisioning.currentEntitlementTruth(req.params.customerId);if(!entitlement)throw new Error('This customer has no current Jellyfin entitlement.');await adminControl.clear(req.params.customerId,entitlement.subscription_id,{actorUserId:req.session.authUserId});let warning='';try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){warning=` Automatic setup still needs attention: ${clean(error.message,220)}`;}return redirect(res,req.params.customerId,warning?'error':'message',warning?`Returned to automatic management.${warning}`:'Returned to automatic Jellyfin management. Normal plan, capacity and lifecycle rules apply again.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not return this customer to automatic management. ${clean(error.message,300)}`);}
+    try{const entitlement=await provisioning.currentEntitlementTruth(req.params.customerId);if(!entitlement)throw new Error('This customer has no current Jellyfin entitlement.');await adminControl.clear(req.params.customerId,entitlement.subscription_id,{actorUserId:req.session.authUserId});let warning='';try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){warning=` Automatic setup still needs attention: ${clean(error.message,220)}`;}return redirect(res,req.params.customerId,warning?'error':'message',warning?`Returned to automatic management.${warning}`:'Returned to automatic Jellyfin management. Normal plan, user-capacity and lifecycle rules apply again.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not return this customer to automatic management. ${clean(error.message,300)}`);}
   });
 
   router.post('/admin/users/:customerId/operator/fix',async(req,res)=>{
