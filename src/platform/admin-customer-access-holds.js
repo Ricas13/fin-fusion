@@ -5,6 +5,7 @@ const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const accessHolds=require('../entitlements/access-holds');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const reconciliationControl=require('../jellyfin/reconciliation-control');
 
 const MANUAL_RELEASE_TYPES=new Set(['inactivity_policy','jellyfin_cleanup','admin_disabled','admin_suspended','admin_hold','legacy']);
 
@@ -13,11 +14,29 @@ function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private
 function accessPath(customerId,key,message){return `/admin/users/${encodeURIComponent(customerId)}?tab=access&${encodeURIComponent(key)}=${encodeURIComponent(message)}`;}
 function clean(value,max=500){return String(value==null?'':value).trim().slice(0,max);}
 
-async function reconcileCustomerForAdmin(customerId,actorUserId){
+async function reconcileCustomerForAdmin(customerId,actorUserId,{forceDue=false}={}){
+  if(forceDue)await reconciliationControl.forceCustomerDue(customerId);
   const outcome=await provisioning.reconcileCustomer(customerId);
   const blockers=Array.isArray(outcome?.blockers)?outcome.blockers:[];
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.service.reconcile','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({status:outcome?.status||null,active:Boolean(outcome?.active),blockers:blockers.map(row=>({type:row.type,sourceKey:row.sourceKey||null}))})]);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.service.reconcile','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({status:outcome?.status||null,active:Boolean(outcome?.active),forced:Boolean(forceDue),blockers:blockers.map(row=>({type:row.type,sourceKey:row.sourceKey||null}))})]);
   return outcome;
+}
+
+async function forceReleaseAllHolds(customerId,actorUserId){
+  return transaction(async client=>{
+    const released=await client.query(`
+      UPDATE customer_access_holds
+      SET released_at=NOW(),released_by=$2
+      WHERE customer_id=$1 AND released_at IS NULL
+      RETURNING id,hold_type,source_key
+    `,[customerId,actorUserId]);
+    await accessHolds.syncLegacySummary(customerId,client);
+    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+      VALUES($1,'admin.customer.break_glass.clear_all_holds','customer',$2,$3::jsonb)`,[
+        actorUserId,customerId,JSON.stringify({released:released.rowCount,holds:released.rows.map(row=>({id:row.id,type:row.hold_type,sourceKey:row.source_key||null}))})
+      ]);
+    return released.rows;
+  });
 }
 
 async function reconcileRoute(req,res){
@@ -36,15 +55,43 @@ async function reconcileRoute(req,res){
   }
 }
 
+async function forceReconcileRoute(req,res){
+  if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+  const customerId=req.params.customerId;
+  try{
+    const outcome=await reconcileCustomerForAdmin(customerId,req.session.authUserId,{forceDue:true});
+    const blockers=Array.isArray(outcome?.blockers)?outcome.blockers:[];
+    const message=blockers.length
+      ? `Forced reconciliation ran immediately after resetting retry/backoff state. ${blockers.length} hold${blockers.length===1?' still blocks':'s still block'} access; use CLEAR ALL BLOCKERS to override them.`
+      : 'Forced reconciliation ran immediately after resetting retry/backoff state.';
+    return res.redirect(accessPath(customerId,'message',message));
+  }catch(error){
+    console.error('Forced customer reconciliation failed:',{customerId,error:error.message});
+    return res.redirect(accessPath(customerId,'error',`Forced reconciliation failed: ${clean(error.message||error,300)}`));
+  }
+}
+
 function createAdminCustomerAccessHoldsRouter(){
   const router=express.Router();
   router.use('/admin/users',gate,noStore);
-  // Two route spellings remain for compatibility, but both are thin wrappers
-  // over the same service-aware reconciliation owner. This router is mounted
-  // before the legacy customer-management router, so its older duplicate route
-  // cannot trigger a second Stremio reconciliation.
   router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute);
   router.post('/admin/users/:customerId/reconcile',reconcileRoute);
+
+  router.post('/admin/users/:customerId/manage/force/reconcile',forceReconcileRoute);
+  router.post('/admin/users/:customerId/manage/force/clear-blockers',async(req,res)=>{
+    if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+    const customerId=req.params.customerId;
+    try{
+      const released=await forceReleaseAllHolds(customerId,req.session.authUserId);
+      let reconcileError='';
+      try{await reconcileCustomerForAdmin(customerId,req.session.authUserId,{forceDue:true});}catch(error){reconcileError=clean(error.message||error,240);}
+      const prefix=`Break-glass override cleared ${released.length} active blocker${released.length===1?'':'s'}, including specialized/payment-risk holds.`;
+      return res.redirect(accessPath(customerId,reconcileError?'error':'message',reconcileError?`${prefix} Reconciliation then failed: ${reconcileError}. The holds remain cleared.`:prefix));
+    }catch(error){
+      return res.redirect(accessPath(customerId,'error',`Could not clear blockers: ${clean(error.message||error,300)}`));
+    }
+  });
+
   router.post('/admin/users/:customerId/access-holds/:holdId/release',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     const customerId=req.params.customerId,holdId=String(req.params.holdId||'').trim();
@@ -81,4 +128,4 @@ function createAdminCustomerAccessHoldsRouter(){
   return router;
 }
 
-module.exports={createAdminCustomerAccessHoldsRouter,MANUAL_RELEASE_TYPES,reconcileCustomerForAdmin,reconcileRoute};
+module.exports={createAdminCustomerAccessHoldsRouter,MANUAL_RELEASE_TYPES,reconcileCustomerForAdmin,reconcileRoute,forceReconcileRoute,forceReleaseAllHolds};
