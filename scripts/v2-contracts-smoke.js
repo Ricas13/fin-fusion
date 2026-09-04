@@ -94,13 +94,17 @@ assert(composition.includes('createAdminProrataRefundsRouter'), 'the staff pro-r
 assert(composition.includes('assertAdminRouteOrder(criticalOrder)'), 'production startup must enforce critical route precedence');
 
 const customer360View = read('src/platform/customer-360-view.js');
-assert(customer360View.includes("require('../entitlements/customer-access-desired-state')"),'Customer 360 must consume the shared pure desired-access calculator instead of re-deriving blocker semantics');
-assert(customer360View.includes('function accessTruthPanel(detail)'), 'Customer 360 overview must keep a dedicated access-truth explanation surface');
-assert(customer360View.includes('Commercial state') && customer360View.includes('Active blockers') && customer360View.includes('Observed state') && customer360View.includes('Reconciliation'),
-  'Customer 360 access truth must separate entitlement, blockers, observed state and reconciliation');
-assert(customer360View.includes('${v2.history(safe)}${accessTruthPanel(safe)}'),
-  'Customer 360 is now a single unified page: access truth must be appended exactly once, not duplicated across tabs');
-assert(customer360View.includes('Entitlement currently blocked'),'Customer 360 must distinguish a blocked canonical entitlement even when no display hold row is available');
+const customer360Compact = read('src/platform/customer-360-compact.js');
+assert(customer360View.includes("require('../entitlements/customer-access-desired-state')"),'Customer 360 must retain the shared pure desired-access calculator for diagnostic/helper callers');
+assert(customer360View.includes('function accessTruthPanel(detail)'), 'Customer 360 must retain the diagnostic access-truth helper without forcing it onto the main operator page');
+assert(customer360View.includes("const compact=require('./customer-360-compact')") && customer360View.includes('const main=await compact.render(safe,token,options)'),
+  'Customer 360 must render the focused action-first control panel');
+for (const label of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone']) {
+  assert(customer360Compact.includes(label), `Customer 360 action-first surface is missing ${label}`);
+}
+for (const label of ['Activity','Payments','Logs']) assert(customer360Compact.includes(`disclosure('${label}'`), `Customer 360 must keep ${label} as a bottom disclosure`);
+assert(!customer360View.includes('${v2.history(safe)}${accessTruthPanel(safe)}'), 'default Customer 360 must not append legacy history/diagnostic panels below the action-first surface');
+assert(customer360View.includes('Entitlement currently blocked'),'Customer 360 diagnostic helper must still distinguish a blocked canonical entitlement');
 
 const nav = read('src/platform/admin-nav.js');
 const retiredProduct = ['re','seller'].join('');
