@@ -88,6 +88,20 @@ async function context(customerId,req){
 function createAdminCustomerOperatorRouter(){
   const router=express.Router();router.use('/admin/users',gate,noStore);
 
+  // Registered date is the operator's natural default: the newest customer is
+  // the first row. Preserve every active filter while making that default
+  // explicit in the URL; deliberate column sorts continue to work normally.
+  router.get('/admin/users',(req,res,next)=>{
+    if(req.query.sort)return next();
+    const params=new URLSearchParams();
+    for(const [key,value] of Object.entries(req.query||{})){
+      if(Array.isArray(value))value.forEach(item=>params.append(key,String(item)));
+      else if(value!==undefined&&value!==null)params.set(key,String(value));
+    }
+    params.set('sort','registered');params.set('dir','desc');
+    return res.redirect(302,`/admin/users?${params.toString()}`);
+  });
+
   router.get('/admin/users/operator/metrics',async(req,res)=>{
     try{
       const ids=String(req.query.ids||'').split(',').map(v=>v.trim()).filter(uuid).slice(0,100);
