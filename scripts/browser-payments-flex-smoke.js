@@ -89,6 +89,14 @@ async function main() {
         ($1,'paypal',NULL,'payment',TRUE),
         ($1,'paypal','P-RECURRING','subscription',TRUE)`, [planId]);
 
+    // Fleet capacity fails closed for any jellyfin premium/free plan with no
+    // matching, enabled jellyfin_servers row (see plan-capacity.js's
+    // fleetPlan gate), and getProviderOptions/getProviderPlan below check
+    // that capacity -- so these servers must exist before those calls, not
+    // just before the later customer-filters assertions.
+    const serverA = await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled,max_users,health_status) VALUES('Premium A','premium-a','premium','https://a.invalid','x',TRUE,1000,'healthy') RETURNING id`);
+    const serverB = await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled,max_users,health_status) VALUES('Premium B','premium-b','premium','https://b.invalid','x',TRUE,1000,'healthy') RETURNING id`);
+
     const stripeOptions = await lifecycle.getProviderOptions('flex-month', 'stripe');
     assert.deepEqual(stripeOptions.map(x => x.checkout_mode), ['payment', 'subscription']);
     assert.equal((await lifecycle.getProviderPlan('flex-month','stripe','payment')).external_id, 'price_once');
@@ -96,9 +104,6 @@ async function main() {
     const paypalOptions = await lifecycle.getProviderOptions('flex-month', 'paypal');
     assert.equal(paypalOptions.length, 2);
     assert.equal((await lifecycle.getProviderPlan('flex-month','paypal','payment')).external_id, null);
-
-    const serverA = await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled) VALUES('Premium A','premium-a','premium','https://a.invalid','x',TRUE) RETURNING id`);
-    const serverB = await query(`INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled) VALUES('Premium B','premium-b','premium','https://b.invalid','x',TRUE) RETURNING id`);
     const customer = await query(`INSERT INTO customers(display_name,email) VALUES('Server User','server@example.test') RETURNING id`);
     const customerId = customer.rows[0].id;
     await query(`INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary) VALUES

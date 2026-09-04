@@ -61,7 +61,8 @@ assert(expirySource.includes("COALESCE(p.is_free_tier,FALSE)=FALSE"), 'non-expir
 assert(expirySource.includes('customer_entitlement_overrides')&&expirySource.includes('o.permanent_access=TRUE AND o.revoked_at IS NULL'), 'active Permanent Access must suppress expiry warnings for its pinned subscription');
 assert(/async function notifyExpiringSubscriptions\(\)\s*\{\s*return subscriptionExpiry\.notifyExpiringSubscriptions\(\);\s*\}/.test(provisioning), 'subscription-expiry notification behavior must remain behind the provisioning facade');
 assert(/async function expireSubscriptionsAndReconcile\(\)\s*\{\s*return subscriptionExpiry\.expireAndReconcile\(\{\s*reconcileCustomer\b/.test(resilientProvisioning), 'resilient provisioning must own lane-aware expiry reconciliation');
-assert(jobs.includes('const{expireSubscriptionsAndReconcile,notifyExpiringSubscriptions}=require(\'../jellyfin/resilient-provisioning\')'), 'automation must consume expiry behavior through the canonical multi-lane provisioning owner');
+assert(jobs.includes("const{expireSubscriptionsAndReconcile}=require('../jellyfin/resilient-provisioning');"), 'automation must consume lane-aware expiry reconciliation through resilient provisioning');
+assert(jobs.includes("const{notifyExpiringSubscriptions}=require('../jellyfin/provisioning');"), 'automation must consume expiry notifications through the provisioning compatibility facade');
 assert(jobs.includes('warnings=await notifyExpiringSubscriptions()'), 'the existing entitlement automation must generate expiry warnings');
 assert(jobs.indexOf('notifyExpiringSubscriptions()') < jobs.indexOf('expireSubscriptionsAndReconcile()'), 'warnings must be checked before due subscriptions are expired');
 

@@ -10,6 +10,7 @@ const lifecycle = require('../src/payments/lifecycle');
 const subscriptionExpiry = require('../src/entitlements/subscription-expiry');
 const householdAccess = require('../src/stremio/household-access');
 const networkLeases = require('../src/access/network-leases');
+const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
 const FAILURE_LIMIT = Math.max(3, Math.min(10, Number(process.env.AUTH_FAILURE_LIMIT || 5)));
 
@@ -19,6 +20,26 @@ function mockReq(sessionID) {
 
 async function createCustomer(label, suffix) {
   return (await query(`INSERT INTO customers(display_name,email) VALUES($1,$2) RETURNING *`, [label, `${label}-${suffix}@example.invalid`])).rows[0];
+}
+
+// Fleet capacity fails closed for any jellyfin premium/free plan with no
+// matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
+// gate). The auto-downgrade target below reuses the database's single
+// canonical is_free_tier plan, whose server_class is 'free' (not 'premium'),
+// so both classes need a matching server or the downgrade is rejected as
+// sold out before the eligibility assertion ever runs.
+async function ensureFleetServers(suffix) {
+  const apiKey = encryptWithEnv(`test-${suffix}`, 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
+  for (const serverClass of ['premium', 'free']) {
+    await query(`
+      INSERT INTO jellyfin_servers(
+        name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+        enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+      )
+      VALUES($1,$2,$3,'jellyfin','https://example.invalid','https://example.invalid',$4,
+             TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+    `, [`post451-server-${serverClass}-${suffix}`, `post451-server-${serverClass}-${suffix}`, serverClass, apiKey]);
+  }
 }
 
 async function createStaff(username, password) {
@@ -343,6 +364,7 @@ async function reconnectDiscoveryFailureLeavesDegradedState() {
 
 async function main() {
   const suffix = Date.now().toString(36);
+  await ensureFleetServers(suffix);
   await staffFailureCounterConcurrency(suffix);
   await twoFactorAccountGlobalLockout(suffix);
   await disableTotpToctou(suffix);

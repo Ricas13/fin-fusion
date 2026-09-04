@@ -11,9 +11,27 @@ const credits=require('../src/affiliate-credits');
 const incidents=require('../src/payments/incidents');
 const reservations=require('../src/payments/service-credit-reservations');
 const checkoutIntents=require('../src/payments/checkout-intents');
+const {encryptWithEnv}=require('../src/security/purpose-crypto');
 
 const suffix=crypto.randomBytes(5).toString('hex');
 const uniq=label=>`${label}-${suffix}-${crypto.randomBytes(3).toString('hex')}`;
+
+// Fleet capacity fails closed for any jellyfin premium/free plan with no
+// matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
+// gate) -- without this, every checkout intent this file creates is
+// rejected as sold out before the affiliate-reversal assertions ever run.
+async function ensurePremiumServer(){
+  const apiKey=encryptWithEnv(`test-${suffix}`,'JELLYFIN_ENCRYPTION_KEY','jf1');
+  return (await query(`
+    INSERT INTO jellyfin_servers(
+      name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+      enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+    )
+    VALUES($1,$2,'premium','jellyfin','https://example.invalid','https://example.invalid',$3,
+           TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+    RETURNING id
+  `,[`reversal-server-${suffix}`,`reversal-server-${suffix}`,apiKey])).rows[0].id;
+}
 
 function functionSlice(source,name,nextName){const start=source.indexOf(`async function ${name}`);assert(start>=0,`Missing ${name}`);const end=nextName?source.indexOf(`async function ${nextName}`,start+1):-1;return source.slice(start,end>start?end:source.length);}
 function assertCheckoutLockOrder(){
@@ -67,6 +85,7 @@ async function balance(customerId){return (await credits.balances(customerId)).f
 
 async function main(){
   assertCheckoutLockOrder();
+  await ensurePremiumServer();
   await setRate();
 
   // Reservation cancelled: reversal waits while held, then removes the whole reward.

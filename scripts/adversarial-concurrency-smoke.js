@@ -8,10 +8,30 @@ const discounts = require('../src/payments/discounts');
 const intents = require('../src/payments/checkout-intents');
 const lifecycle = require('../src/payments/lifecycle');
 const providerOps = require('../src/payments/provider-operations');
+const { encryptWithEnv } = require('../src/security/purpose-crypto');
 
 const suffix = crypto.randomBytes(6).toString('hex');
 const code = name => `race-${name}-${suffix}`;
 const email = name => `race-${name}-${suffix}@example.invalid`;
+
+// Fleet capacity fails closed for any jellyfin premium/free plan with no
+// matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
+// gate) -- without this, every checkout intent below (and the canonical
+// Free Access claim race, which is on the 'free' class) is rejected as sold
+// out before the concurrency/race assertions this file exists for ever run.
+async function ensureFleetServers() {
+    const apiKey = encryptWithEnv(`test-${suffix}`, 'JELLYFIN_ENCRYPTION_KEY', 'jf1');
+    for (const serverClass of ['premium', 'free']) {
+        await query(`
+            INSERT INTO jellyfin_servers(
+                name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+                enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+            )
+            VALUES($1,$2,$3,'jellyfin','https://example.invalid','https://example.invalid',$4,
+                   TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+        `, [`race-server-${serverClass}-${suffix}`, `race-server-${serverClass}-${suffix}`, serverClass, apiKey]);
+    }
+}
 
 async function plan(name,{price=500,audience='direct',interval='month',streams=2}={}) {
     return (await query(`INSERT INTO plans(code,name,audience,billing_interval,duration_days,price_minor,currency,streams,server_class,active,visible)
@@ -114,6 +134,7 @@ async function workerCrashRecovery() {
 
 async function main(){
     try{
+        await ensureFleetServers();
         await lastDiscountUse();
         await freeClaimRace();
         await checkoutSurvivesCatalogueRetirement();

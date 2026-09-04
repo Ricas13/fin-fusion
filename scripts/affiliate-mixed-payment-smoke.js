@@ -3,9 +3,28 @@ const assert=require('assert');
 const {query,getPool}=require('../src/db');
 const reservations=require('../src/payments/service-credit-reservations');
 const checkoutIntents=require('../src/payments/checkout-intents');
+const {encryptWithEnv}=require('../src/security/purpose-crypto');
+
+// Fleet capacity fails closed for any jellyfin premium/free plan with no
+// matching, enabled jellyfin_servers row (see plan-capacity.js's fleetPlan
+// gate) -- without this, both checkout intents below are rejected as sold
+// out before the affiliate-credit assertions this file exists for ever run.
+async function ensurePremiumServer(suffix){
+ const apiKey=encryptWithEnv(`test-${suffix}`,'JELLYFIN_ENCRYPTION_KEY','jf1');
+ return (await query(`
+   INSERT INTO jellyfin_servers(
+     name,slug,server_class,media_server_type,base_url,public_url,api_key_encrypted,
+     enabled,priority,max_users,health_status,allow_new_users,trial_enabled,paid_enabled,placement_mode
+   )
+   VALUES($1,$2,'premium','jellyfin','https://example.invalid','https://example.invalid',$3,
+          TRUE,1,1000,'healthy',TRUE,TRUE,TRUE,'active')
+   RETURNING id
+ `,[`mixed-server-${suffix}`,`mixed-server-${suffix}`,apiKey])).rows[0].id;
+}
 
 async function main(){
  const suffix=Date.now().toString(36);
+ await ensurePremiumServer(suffix);
  const user=(await query(`INSERT INTO app_users(username,email,password_hash,role,active) VALUES($1,$2,'x','customer',TRUE) RETURNING id`,[`mixed-${suffix}`,`mixed-${suffix}@example.invalid`])).rows[0];
  const customer=(await query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING id`,[user.id,`Mixed ${suffix}`,`mixed-${suffix}@example.invalid`])).rows[0];
  await query(`INSERT INTO affiliate_profiles(customer_id,active) VALUES($1,TRUE)`,[customer.id]);
