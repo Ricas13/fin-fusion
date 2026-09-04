@@ -1,8 +1,10 @@
 'use strict';
 
 const express=require('express');
+const {rateLimit}=require('express-rate-limit');
 const {query}=require('../db');
 const csrf=require('../auth/csrf');
+const routeRateLimit=require('../security/route-rate-limit');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const manualAssignment=require('../jellyfin/manual-assignment');
 const forceMove=require('../jellyfin/admin-force-move');
@@ -10,6 +12,10 @@ const adminControl=require('../jellyfin/admin-control');
 const userCapacity=require('../jellyfin/user-capacity');
 const permanentAccess=require('../entitlements/permanent-access');
 const {historyKind}=require('../payments/history-accounting');
+
+const surfaceLimit=rateLimit({windowMs:60000,limit:300,standardHeaders:'draft-8',legacyHeaders:false,message:'Too many customer-management requests. Try again shortly.'});
+const readLimit=routeRateLimit.middleware({scope:'admin-customer-operator-read',max:120,windowSeconds:60,reason:'admin_customer_operator_read'});
+const writeLimit=routeRateLimit.middleware({scope:'admin-customer-operator-write',max:60,windowSeconds:60,reason:'admin_customer_operator_write'});
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
@@ -48,13 +54,13 @@ async function metricsFor(ids){
     query(`SELECT customer_id,TRUE AS permanent FROM customer_entitlement_overrides WHERE customer_id=ANY($1::uuid[]) AND permanent_access=TRUE AND revoked_at IS NULL`,[ids]),
     query(`SELECT DISTINCT ON(customer_id) customer_id,mode,server_id,reason FROM customer_jellyfin_admin_control WHERE customer_id=ANY($1::uuid[]) ORDER BY customer_id,updated_at DESC`,[ids]).catch(()=>({rows:[]}))
   ]);
-  const out={};for(const id of ids)out[id]={activeStreams:0,watchSeconds30d:0,lastPlaybackAt:null,permanent:false,adminMode:null,payment:{totals:{},lastPayment:null}};
-  for(const row of usage.rows){if(!out[row.id])continue;out[row.id].activeStreams=Number(row.active_streams||0);out[row.id].watchSeconds30d=Number(row.watch_seconds_30d||0);out[row.id].lastPlaybackAt=row.last_playback_at||null;}
-  const transactionGroups=new Map();for(const row of transactions.rows){if(!row.customer_id)continue;const list=transactionGroups.get(String(row.customer_id))||[];list.push(row);transactionGroups.set(String(row.customer_id),list);}
-  for(const [id,rows] of transactionGroups)if(out[id])out[id].payment=moneySummary(rows);
-  for(const row of permanent.rows)if(out[row.customer_id])out[row.customer_id].permanent=true;
-  for(const row of controls.rows)if(out[row.customer_id]){out[row.customer_id].adminMode=row.mode;out[row.customer_id].adminServerId=row.server_id||null;out[row.customer_id].adminReason=row.reason||null;}
-  return out;
+  const out=new Map(ids.map(id=>[String(id),{activeStreams:0,watchSeconds30d:0,lastPlaybackAt:null,permanent:false,adminMode:null,payment:{totals:{},lastPayment:null}}]));
+  for(const row of usage.rows){const item=out.get(String(row.id));if(!item)continue;item.activeStreams=Number(row.active_streams||0);item.watchSeconds30d=Number(row.watch_seconds_30d||0);item.lastPlaybackAt=row.last_playback_at||null;}
+  const transactionGroups=new Map();for(const row of transactions.rows){if(!row.customer_id)continue;const key=String(row.customer_id),list=transactionGroups.get(key)||[];list.push(row);transactionGroups.set(key,list);}
+  for(const [id,rows] of transactionGroups){const item=out.get(id);if(item)item.payment=moneySummary(rows);}
+  for(const row of permanent.rows){const item=out.get(String(row.customer_id));if(item)item.permanent=true;}
+  for(const row of controls.rows){const item=out.get(String(row.customer_id));if(!item)continue;item.adminMode=row.mode;item.adminServerId=row.server_id||null;item.adminReason=row.reason||null;}
+  return Object.fromEntries(out);
 }
 
 async function context(customerId,req){
@@ -85,40 +91,40 @@ async function context(customerId,req){
 }
 
 function createAdminCustomerOperatorRouter(){
-  const router=express.Router();router.use('/admin/users',gate,noStore);
+  const router=express.Router();router.use('/admin/users',surfaceLimit,gate,noStore);
 
-  router.get('/admin/users/operator/metrics',async(req,res)=>{
+  router.get('/admin/users/operator/metrics',readLimit,async(req,res)=>{
     try{
       const ids=String(req.query.ids||'').split(',').map(v=>v.trim()).filter(uuid).slice(0,100);
       return res.json({ok:true,customers:await metricsFor(ids)});
     }catch(error){console.error('Customer operator metrics failed:',error.message);return res.status(500).json({ok:false,error:'Customer metrics are temporarily unavailable.'});}
   });
 
-  router.get('/admin/users/:customerId/operator/context',async(req,res)=>{
+  router.get('/admin/users/:customerId/operator/context',readLimit,async(req,res)=>{
     try{if(!uuid(req.params.customerId))return res.status(404).json({ok:false});const result=await context(req.params.customerId,req);if(!result)return res.status(404).json({ok:false,error:'Customer not found'});return res.json(result);}catch(error){console.error('Customer operator context failed:',error.message);return res.status(500).json({ok:false,error:'Customer controls are temporarily unavailable.'});}
   });
 
-  router.post('/admin/users/:customerId/operator/assign',async(req,res)=>{
+  router.post('/admin/users/:customerId/operator/assign',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a Jellyfin server.');const result=await manualAssignment.assign(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`${result.account.jellyfin_username} was added to ${result.server.name}${result.capacityOverride?' even though the configured user capacity is full':''}.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not add this customer to Jellyfin. ${clean(error.message,300)}`);}
   });
 
-  router.post('/admin/users/:customerId/operator/move',async(req,res)=>{
+  router.post('/admin/users/:customerId/operator/move',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{const serverId=clean(req.body.serverId,80);if(!uuid(serverId))throw new Error('Choose a destination server.');const result=await forceMove.move(req.params.customerId,serverId,{actorUserId:req.session.authUserId});return redirect(res,req.params.customerId,'message',`Jellyfin access moved to ${result.target.name}. Automatic placement will keep this administrator-selected server.`);}catch(error){return redirect(res,req.params.customerId,'error',`Could not move this customer. ${clean(error.message,300)}`);}
   });
 
-  router.post('/admin/users/:customerId/operator/remove',async(req,res)=>{
+  router.post('/admin/users/:customerId/operator/remove',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{const entitlement=await provisioning.currentEntitlementTruth(req.params.customerId);if(!entitlement)throw new Error('This customer has no Jellyfin entitlement to control.');await adminControl.remove(req.params.customerId,entitlement.subscription_id,{actorUserId:req.session.authUserId,reason:clean(req.body.reason,500)||'Removed from Jellyfin by administrator'});await provisioning.reconcileCustomer(req.params.customerId);return redirect(res,req.params.customerId,'message','Jellyfin access removed by administrator. Background automation will not re-add this entitlement until you return it to automatic management.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not remove Jellyfin access. ${clean(error.message,300)}`);}
   });
 
-  router.post('/admin/users/:customerId/operator/automatic',async(req,res)=>{
+  router.post('/admin/users/:customerId/operator/automatic',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{const entitlement=await provisioning.currentEntitlementTruth(req.params.customerId);if(!entitlement)throw new Error('This customer has no current Jellyfin entitlement.');await adminControl.clear(req.params.customerId,entitlement.subscription_id,{actorUserId:req.session.authUserId});let warning='';try{await provisioning.reconcileCustomer(req.params.customerId);}catch(error){warning=` Automatic setup still needs attention: ${clean(error.message,220)}`;}return redirect(res,req.params.customerId,warning?'error':'message',warning?`Returned to automatic management.${warning}`:'Returned to automatic Jellyfin management. Normal plan, user-capacity and lifecycle rules apply again.');}catch(error){return redirect(res,req.params.customerId,'error',`Could not return this customer to automatic management. ${clean(error.message,300)}`);}
   });
 
-  router.post('/admin/users/:customerId/operator/fix',async(req,res)=>{
+  router.post('/admin/users/:customerId/operator/fix',writeLimit,async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     try{await provisioning.reconcileCustomer(req.params.customerId);return redirect(res,req.params.customerId,'message','Jellyfin access checked and updated to match the current customer settings.');}catch(error){return redirect(res,req.params.customerId,'error',`Jellyfin access still needs attention. ${clean(error.message,300)}`);}
   });
