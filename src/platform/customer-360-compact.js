@@ -56,9 +56,9 @@ function plansCard(detail,token,plans){
   return card('Plans & Subscriptions',pill(`${current.length} active`,current.length?'good':''),body,actions.join(''));
 }
 
-function mediaCard(detail,token,media,accessHtml){
+function mediaCard(detail,token,media){
   const id=detail.customer.id,jellyfin=media.filter(a=>a.media_server_type!=='emby'),emby=media.filter(a=>a.media_server_type==='emby');
-  const body=`${media.length?media.map(account=>`<div class="opItem"><div><strong>${esc(account.media_server_type==='emby'?'Emby':'Jellyfin')} · ${esc(account.jellyfin_username)}</strong><span>${esc(account.server_name||'Server')} · ${esc(account.disabled?'disabled':account.health_status||'active')}</span></div>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'warn':'good')}</div>`).join(''):'<div class="opEmpty">No Jellyfin / Emby account.</div>'}${accessHtml?`<details class="opInlineDetails opAccessSettings"><summary>Permissions, libraries & requests…</summary><div class="opNested">${accessHtml}</div></details>`:''}`;
+  const body=`${media.length?media.map(account=>`<div class="opItem"><div><strong>${esc(account.media_server_type==='emby'?'Emby':'Jellyfin')} · ${esc(account.jellyfin_username)}</strong><span>${esc(account.server_name||'Server')} · ${esc(account.disabled?'disabled':account.health_status||'active')}</span></div>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'warn':'good')}</div>`).join(''):'<div class="opEmpty">No Jellyfin / Emby account.</div>'}`;
   const actions=[];
   if(media.length){if(jellyfin.length)actions.push(`<a class="button secondary sm" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(id)}">Reset Jellyfin password</a>`);if(jellyfin.length)actions.push(bulkForm(token,id,'migrate_server','Move Jellyfin server'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));}
   else actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Create / provision',{tone:'primary'}));
@@ -121,8 +121,10 @@ async function render(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const extra=await supplementary(detail.customer.id);
   const accessHtml=await accessCards.accessLibrariesRequests(detail,token,options).catch(()=> '');
-  const cards=[portalCard(detail,token),plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media,accessHtml),stremioCard(detail,token,options.stremioInfo),overseerrCard(detail,token,extra.request),discordCard(detail,token,extra.discord),holdsCard(detail,token),dangerCard(detail,token,extra.media,options.stremioInfo)];
-  const core=`<div class="customer360Core" data-customer360-core><div class="opGrid">${cards.join('')}</div>${activityDisclosure(detail)}${paymentsDisclosure(extra.payments)}${logsDisclosure(detail)}</div>`;
+  const hasJellyfinPlan=currentSubscriptions(detail).some(sub=>['jellyfin','bundle'].includes(String(sub.service_type_snapshot||sub.service_type||'jellyfin').toLowerCase()));
+  const planSettings=hasJellyfinPlan&&accessHtml?disclosure('Jellyfin & Overseerr settings','Library access · Jellyfin user settings · request access',`<div class="opNested">${accessHtml}</div>`):'';
+  const cards=[portalCard(detail,token),plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media),stremioCard(detail,token,options.stremioInfo),overseerrCard(detail,token,extra.request),discordCard(detail,token,extra.discord),holdsCard(detail,token),dangerCard(detail,token,extra.media,options.stremioInfo)];
+  const core=`<div class="customer360Core" data-customer360-core><div class="opGrid">${cards.join('')}</div>${planSettings}${activityDisclosure(detail)}${paymentsDisclosure(extra.payments)}${logsDisclosure(detail)}</div>`;
   return `${accessCards.styles()}${styles()}${core}`;
 }
 
