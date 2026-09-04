@@ -5,18 +5,21 @@ const {query,transaction}=require('../db');
 const csrf=require('../auth/csrf');
 const accessHolds=require('../entitlements/access-holds');
 const provisioning=require('../jellyfin/resilient-provisioning');
+const reconciliationControl=require('../jellyfin/reconciliation-control');
 
 const MANUAL_RELEASE_TYPES=new Set(['inactivity_policy','jellyfin_cleanup','admin_disabled','admin_suspended','admin_hold','legacy']);
+const FORCEABLE_PRIMARY_SERVICES=new Set(['jellyfin','bundle']);
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
 function accessPath(customerId,key,message){return `/admin/users/${encodeURIComponent(customerId)}?tab=access&${encodeURIComponent(key)}=${encodeURIComponent(message)}`;}
 function clean(value,max=500){return String(value==null?'':value).trim().slice(0,max);}
 
-async function reconcileCustomerForAdmin(customerId,actorUserId){
+async function reconcileCustomerForAdmin(customerId,actorUserId,{forceDue=false}={}){
+  if(forceDue)await reconciliationControl.forceCustomerDue(customerId);
   const outcome=await provisioning.reconcileCustomer(customerId);
   const blockers=Array.isArray(outcome?.blockers)?outcome.blockers:[];
-  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.service.reconcile','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({status:outcome?.status||null,active:Boolean(outcome?.active),blockers:blockers.map(row=>({type:row.type,sourceKey:row.sourceKey||null}))})]);
+  await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.service.reconcile','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({status:outcome?.status||null,active:Boolean(outcome?.active),forced:Boolean(forceDue),blockers:blockers.map(row=>({type:row.type,sourceKey:row.sourceKey||null}))})]);
   return outcome;
 }
 
@@ -44,6 +47,7 @@ async function forceAccessOn(customerId,subscriptionId,actorUserId){
   await transaction(async client=>{
     const selected=await client.query(`
       SELECT s.id,s.plan_id,COALESCE(p.is_addon,FALSE) is_addon,
+             LOWER(COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin')) service_type,
              COALESCE(s.plan_name_snapshot,p.name) plan_name
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
@@ -51,7 +55,9 @@ async function forceAccessOn(customerId,subscriptionId,actorUserId){
       FOR UPDATE
     `,[subscriptionId,customerId]);
     if(!selected.rowCount)throw new Error('That subscription does not belong to this customer.');
-    if(selected.rows[0].is_addon)throw new Error('Break-glass access must pin a primary plan, not an add-on.');
+    const chosen=selected.rows[0];
+    if(chosen.is_addon)throw new Error('Break-glass access must pin a primary plan, not an add-on.');
+    if(!FORCEABLE_PRIMARY_SERVICES.has(String(chosen.service_type||'')))throw new Error('Permanent break-glass pinning currently applies to Jellyfin/bundle primary plans. Use the service-specific Stremio/Emby controls for those services.');
     released=await forceReleaseAllHolds(customerId,actorUserId,client);
     await client.query(`
       INSERT INTO customer_entitlement_overrides(customer_id,subscription_id,permanent_access,reason,created_by,updated_by,created_at,updated_at,revoked_at,revoked_by)
@@ -67,7 +73,7 @@ async function forceAccessOn(customerId,subscriptionId,actorUserId){
     `,[customerId,subscriptionId,actorUserId]);
     await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES($1,'admin.customer.break_glass.force_access_on','customer',$2,$3::jsonb)`,[
-        actorUserId,customerId,JSON.stringify({subscriptionId,planName:selected.rows[0].plan_name||null,releasedHolds:released.length})
+        actorUserId,customerId,JSON.stringify({subscriptionId,serviceType:chosen.service_type,planName:chosen.plan_name||null,releasedHolds:released.length})
       ]);
   });
   return{released};
@@ -103,9 +109,25 @@ async function reconcileRoute(req,res){
   }
 }
 
+async function forceReconcileRoute(req,res){
+  if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
+  const customerId=req.params.customerId;
+  try{
+    const outcome=await reconcileCustomerForAdmin(customerId,req.session.authUserId,{forceDue:true});
+    const blockers=Array.isArray(outcome?.blockers)?outcome.blockers:[];
+    const message=blockers.length
+      ? `Forced reconciliation ran immediately after clearing retry/backoff state. ${blockers.length} entitlement hold${blockers.length===1?' still blocks':'s still block'} access; use CLEAR ALL BLOCKERS if you want to override them.`
+      : 'Forced reconciliation ran immediately and ignored the queued retry/backoff schedule.';
+    return res.redirect(accessPath(customerId,'message',message));
+  }catch(error){
+    console.error('Forced customer service reconciliation failed:',{customerId,error:error.message});
+    return res.redirect(accessPath(customerId,'error',`Forced reconciliation failed: ${clean(error.message||error,300)}`));
+  }
+}
+
 async function reconcileAfterBreakGlass(res,customerId,actorUserId,successMessage){
   try{
-    await reconcileCustomerForAdmin(customerId,actorUserId);
+    await reconcileCustomerForAdmin(customerId,actorUserId,{forceDue:true});
     return res.redirect(accessPath(customerId,'message',successMessage));
   }catch(error){
     console.error('Break-glass reconciliation failed:',{customerId,error:error.message});
@@ -116,17 +138,14 @@ async function reconcileAfterBreakGlass(res,customerId,actorUserId,successMessag
 function createAdminCustomerAccessHoldsRouter(){
   const router=express.Router();
   router.use('/admin/users',gate,noStore);
-  // Two route spellings remain for compatibility, but both are thin wrappers
-  // over the same service-aware reconciliation owner. This router is mounted
-  // before the legacy customer-management router, so its older duplicate route
-  // cannot trigger a second Stremio reconciliation.
   router.post('/admin/users/:customerId/manage/reconcile',reconcileRoute);
   router.post('/admin/users/:customerId/reconcile',reconcileRoute);
 
-  // Break-glass actions are deliberately stronger than the normal workflow.
-  // They remain admin-only, CSRF-protected and audited, but they do not defer to
-  // payment-risk or specialized hold ownership. Their purpose is to let an
-  // administrator recover a customer when automation cannot converge.
+  // Break-glass routes intentionally bypass normal workflow ownership. They are
+  // admin-only, CSRF-protected and audited, but never ask for a reason or typed
+  // confirmation. They exist so an operator can recover a customer even when
+  // the normal portal/worker path cannot converge.
+  router.post('/admin/users/:customerId/manage/force/reconcile',forceReconcileRoute);
   router.post('/admin/users/:customerId/manage/force/clear-blockers',async(req,res)=>{
     if(!csrf.verify(req))return res.status(403).send('Invalid or expired security token');
     const customerId=req.params.customerId;
@@ -195,4 +214,4 @@ function createAdminCustomerAccessHoldsRouter(){
   return router;
 }
 
-module.exports={createAdminCustomerAccessHoldsRouter,MANUAL_RELEASE_TYPES,reconcileCustomerForAdmin,reconcileRoute,forceReleaseAllHolds,forceAccessOn,returnToAutomation};
+module.exports={createAdminCustomerAccessHoldsRouter,MANUAL_RELEASE_TYPES,FORCEABLE_PRIMARY_SERVICES,reconcileCustomerForAdmin,reconcileRoute,forceReconcileRoute,forceReleaseAllHolds,forceAccessOn,returnToAutomation};
