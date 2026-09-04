@@ -3,7 +3,6 @@
 const crypto = require('crypto');
 const { query, transaction } = require('../db');
 const registry = require('./registry');
-const core = require('./provisioning-engine');
 const compensation = require('./provisioning-compensation');
 
 function randomPassword() {
@@ -263,7 +262,12 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
   if (!intent) throw new Error('Jellyfin account creation intent disappeared before persistence');
   if (!intent.remote_user_id && created?.Id) intent = await setIntent(intent.id, { status: 'remote_created', remoteUserId: String(created.Id) });
 
-  const libraryAccess = await core.resolveLibraryAccessForServer(
+  // Keep the legacy provisioning engine behind its single dependency-safe
+  // ownership surface. This lazy import is safe in both directions: the helper
+  // module may call this durable creator, while this creator only consumes the
+  // already-exported low-level policy/library primitives at execution time.
+  const helpers = require('./provisioning-helpers');
+  const libraryAccess = await helpers.resolveLibraryAccessForServer(
     server.id,
     effective.unrestricted,
     effective.visibleNames,
@@ -273,7 +277,7 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
   try {
     await registry.request(server.id, `/Users/${created.Id}/Policy`, {
       method: 'POST',
-      body: core.policyBody(effective.technical, false, libraryAccess)
+      body: helpers.policyBody(effective.technical, false, libraryAccess)
     });
   } catch (error) {
     await rollbackUnsafeRemote(intent, customerId, created, 'policy_apply', error);
@@ -317,12 +321,12 @@ async function createJellyfinAccount(customerId, server, effective, options = {}
 
   if (libraryAccess.missing.length) {
     const message = `Missing on server: ${libraryAccess.missing.join(', ')}`;
-    await core.upsertReconciliationStatus(account.id, customerId, 'failed', message);
+    await helpers.upsertReconciliationStatus(account.id, customerId, 'failed', message);
     throw new Error(`Jellyfin account created with a narrowed library set -- ${message}`);
   }
-  await core.upsertReconciliationStatus(account.id, customerId, 'successful', null);
+  await helpers.upsertReconciliationStatus(account.id, customerId, 'successful', null);
   if (options.makePrimary !== false) {
-    await core.markPrimaryAccount(customerId, account.id);
+    await helpers.markPrimaryAccount(customerId, account.id);
     account.is_primary = true;
   }
   return account;
