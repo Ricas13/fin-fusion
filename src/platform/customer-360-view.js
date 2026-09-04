@@ -3,6 +3,7 @@
 const v2=require('./customer-360-view-v2');
 const accessCards=require('./customer-360-access-cards');
 const compact=require('./customer-360-compact');
+const forceAccess=require('./admin-customer-force-access');
 const desiredState=require('../entitlements/customer-access-desired-state');
 const serviceTruth=require('./customer-360-service-truth');
 
@@ -66,18 +67,17 @@ function accessTruthPanel(detail){
   return `<section class="section customerAccessTruth"><div class="sectionHead"><div><h2>Access truth</h2><div class="muted">Commercial entitlement, blockers, actual Jellyfin state and the last reconciliation result are shown separately so support can see why access is in its current state.</div></div></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Commercial state</h2><span class="pill ${entitlement?'good':''}">${escapeHtml(commercialStatus)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Entitlement</div><div class="kvValue">${escapeHtml(planName)}</div></div><div class="kvRow"><div class="kvLabel">Effective access</div><div class="kvValue"><span class="pill ${statusTone}">${escapeHtml(desired)}</span></div></div><div class="kvRow"><div class="kvLabel">Active blockers</div><div class="kvValue">${escapeHtml(holdDetail)}</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Observed state</h2><span class="pill ${enabledAccounts.length?'good':ordinaryAccounts.length?'warn':''}">${escapeHtml(`${enabledAccounts.length}/${ordinaryAccounts.length} enabled`)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Jellyfin</div><div class="kvValue">${escapeHtml(serverDetail)}</div></div><div class="kvRow"><div class="kvLabel">Reconciliation</div><div class="kvValue"><span class="pill ${reconTone}">${escapeHtml(reconcileStatus)}</span></div></div><div class="kvRow"><div class="kvLabel">Last result</div><div class="kvValue">${escapeHtml(reconcileDetail)}</div></div></div></div></section></div></section>${serviceTruthPanel(detail)}`;
 }
 
-// Focused Customer 360: identity/summary, one portal entry, compact customer
-// controls, collapsed access workspace, Billing, Activity, then a subdued
-// collapsed provisioning log. Legacy duplicate profile/security/history/
-// provider panels remain available through their dedicated admin surfaces,
-// rather than repeating them below this support workspace.
+// Focused Customer 360: identity/summary, explicit emergency Jellyfin access,
+// compact customer controls, collapsed access workspace, Billing, Activity,
+// then a subdued collapsed provisioning log.
 async function body(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const safe=customerFacingDetail(detail);
   const heroSummary=v2.heroAndSummary(safe);
   const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
+  const forceBar=await forceAccess.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const main=await compact.render(safe,token,options);
-  return `${heroSummary}${navBar}${main}`;
+  return `${heroSummary}${navBar}${forceBar}${main}`;
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,activeSubscription,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection};
