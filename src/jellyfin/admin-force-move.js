@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const provisioning=require('./provisioning');
 const adminControl=require('./admin-control');
+const userCapacity=require('./user-capacity');
 
 function same(a,b){return String(a||'')===String(b||'');}
 
@@ -37,6 +38,7 @@ async function move(customerId,targetServerId,{actorUserId=null}={}){
   const accounts=await customerAccounts(customerId);
   const current=accounts.find(account=>!account.disabled&&account.is_primary)||accounts.find(account=>!account.disabled)||accounts[0]||null;
   if(!current)throw new Error('This customer has no Jellyfin account to move. Use Add to server instead.');
+  if(same(current.server_id,target.id)&&!current.disabled)throw new Error(`This customer is already on ${target.name}.`);
 
   const effective=await provisioning.effectivePolicyForCustomer(customerId,entitlement);
   const targetLibraries=await provisioning.resolveLibraryAccessForServer(target.id,effective.unrestricted,effective.visibleNames,false);
@@ -57,9 +59,8 @@ async function move(customerId,targetServerId,{actorUserId=null}={}){
     created=true;
   }
 
-  // Persist the target before touching the source. If a later source disable
-  // fails, automation still converges toward the administrator-selected target
-  // rather than silently placing the customer elsewhere.
+  // Persist the exact operator choice before touching the source. Capacity,
+  // plan-pool and automatic placement rules have no veto over this admin move.
   await adminControl.forceServer(customerId,entitlement.subscription_id,target.id,{actorUserId,reason:'Jellyfin server moved explicitly by administrator'});
   await provisioning.markPrimaryAccount(customerId,targetAccount.id);
 
@@ -70,8 +71,8 @@ async function move(customerId,targetServerId,{actorUserId=null}={}){
     disabled.push(account.id);
   }
 
-  const assigned=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`,[target.id]);
-  const activeUsers=Number(assigned.rows[0]?.n||0),maxUsers=Number(target.max_users||0)||null;
+  const state=await userCapacity.serverState(target.id);
+  const activeUsers=Number(state?.assigned_users||0),maxUsers=state?.max_users==null?null:Number(state.max_users);
   await query(`
     INSERT INTO customer_provisioning_state(customer_id,status,consecutive_failures,last_error,last_attempt_at,last_success_at,next_attempt_at,subscription_id,plan_id,jellyfin_account_id,server_id,last_result,updated_at)
     VALUES($1,'healthy',0,NULL,NOW(),NOW(),NULL,$2,$3,$4,$5,$6::jsonb,NOW())
