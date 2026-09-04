@@ -3,9 +3,11 @@
 const express = require('express');
 const { query } = require('../db');
 const csrf = require('../auth/csrf');
+const routeRateLimit = require('../security/route-rate-limit');
 
 const METHOD_LABELS = { cash: 'Cash', bank_transfer: 'Bank transfer', crypto: 'Crypto', other: 'Other' };
 const CURRENCIES = ['GBP', 'USD', 'EUR'];
+const writeLimit = routeRateLimit.middleware({ scope: 'admin-customer-billing-write', max: 30, windowSeconds: 60, reason: 'admin_customer_billing_write' });
 
 function gate(req, res, next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
@@ -52,7 +54,7 @@ function createAdminCustomerBillingRouter() {
     const router = express.Router();
     router.use('/admin/users', gate);
 
-    router.post('/admin/users/:customerId/manual-payment', async (req, res) => {
+    router.post('/admin/users/:customerId/manual-payment', writeLimit, async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
             const amountMinor = cleanAmountMinor(req.body.amount);
