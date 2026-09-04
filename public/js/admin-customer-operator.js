@@ -183,8 +183,11 @@
       primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/operator/fix`,context.csrfToken,{},'Fix access',{tone:'secondary'}));
       if(context.activeAccounts?.length||context.adminControl?.mode==='forced_server')primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/operator/remove`,context.csrfToken,{reason:'Removed from Jellyfin by administrator'},'Remove Jellyfin access',{tone:'secondary'}));
       if(context.adminControl)primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/operator/automatic`,context.csrfToken,{},'Return to automatic management',{tone:'secondary'}));
-      primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/permanent-access`,context.csrfToken,{action:context.permanent?'revoke':'enable',reason:context.permanent?'Permanent status removed from customer operator console':'Permanent User enabled from customer operator console'},context.permanent?'Remove Permanent Status':'Make Permanent User',{tone:context.permanent?'secondary':'primary'}));
     }
+    // Rendered even with no active entitlement: the server route itself
+    // explains "Give the customer an active plan before making access
+    // permanent" rather than silently having no affordance for the action.
+    primary.appendChild(postForm(`/admin/users/${encodeURIComponent(customerId)}/permanent-access`,context.csrfToken,{action:context.permanent?'revoke':'enable',reason:context.permanent?'Permanent status removed from customer operator console':'Permanent User enabled from customer operator console'},context.permanent?'Remove Permanent Status':'Make Permanent User',{tone:context.permanent?'secondary':'primary'}));
     primary.appendChild(bulkForm(customerId,context.csrfToken,'plan_change','Change plan','secondary'));
     section.appendChild(primary);
 
