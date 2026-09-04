@@ -19,6 +19,16 @@ function serviceType(entitlement) {
     return String(entitlement?.service_type_snapshot || entitlement?.service_type || 'jellyfin');
 }
 
+function sameId(a, b) {
+    return String(a || '') === String(b || '');
+}
+
+function accountMatchesEntitlementPlacement(account, entitlement) {
+    const forcedServerId = entitlement?.admin_forced_server_id || null;
+    if (forcedServerId) return sameId(account?.server_id, forcedServerId);
+    return account?.server_class === entitlement?.server_class;
+}
+
 function laneState(result) {
     return result ? {
         active: Boolean(result.active),
@@ -86,7 +96,16 @@ function assertDiscordSyncResult(result) {
 
 function assertLanePostcondition(name, entitlement, result) {
     if (!entitlement || entitlement.blocked) return;
-    if (result?.active && result?.account && !result.account.disabled) return;
+    if (result?.active && result?.account && !result.account.disabled) {
+        const forcedServerId = entitlement.admin_forced_server_id || null;
+        if (!forcedServerId || sameId(result.account.server_id, forcedServerId)) return;
+        const error = new Error(`${name} Jellyfin reconciliation did not converge to the administrator-forced server.`);
+        error.code = 'RECONCILIATION_FORCED_SERVER_MISMATCH';
+        error.lane = name.toLowerCase();
+        error.expectedServerId = forcedServerId;
+        error.actualServerId = result.account.server_id || null;
+        throw error;
+    }
     const error = new Error(`${name} Jellyfin reconciliation did not converge to an enabled account.`);
     error.code = 'RECONCILIATION_POSTCONDITION_FAILED';
     error.lane = name.toLowerCase();
@@ -256,9 +275,12 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
 
-    let account = laneAccounts.find(a => a.is_primary && a.server_class === entitlement.server_class && a.server_enabled)
-        || laneAccounts.find(a => !a.disabled && a.server_class === entitlement.server_class && a.server_enabled)
-        || laneAccounts.find(a => a.server_class === entitlement.server_class && a.server_enabled);
+    const eligibleAccounts = laneAccounts.filter(account =>
+        account.server_enabled && accountMatchesEntitlementPlacement(account, entitlement)
+    );
+    let account = eligibleAccounts.find(a => a.is_primary)
+        || eligibleAccounts.find(a => !a.disabled)
+        || eligibleAccounts[0];
     let effective;
 
     if (!account) {
@@ -286,6 +308,7 @@ async function reconcileLane(customerId, entitlement, lane, accounts, { makePrim
         subscriptionId: entitlement.subscription_id,
         planCode: entitlement.contract_plan_code || entitlement.code,
         serverId: account.server_id,
+        forcedServerId: entitlement.admin_forced_server_id || null,
         jellyfinAccountId: account.id
     })]);
     return { active: true, blocked: false, entitlement, account, effective };
@@ -515,5 +538,6 @@ module.exports = {
     setLibrarySelectionForAccount,
     reconciliationLock,
     assertDiscordSyncResult,
-    assertLanePostcondition
+    assertLanePostcondition,
+    accountMatchesEntitlementPlacement
 };
