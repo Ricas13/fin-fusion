@@ -14,6 +14,7 @@ const communicationsRouter=read('src/platform/customer-communications.js');
 const jobs=read('src/automation/jobs.js');
 const automationLabels=read('src/platform/admin-automation.js');
 const adminMarketing=read('src/platform/admin-marketing.js');
+const adminDiscounts=read('src/platform/admin-discounts.js');
 const campaigns=read('src/marketing/campaigns.js');
 const segments=read('src/marketing/segments.js');
 const customerFilters=read('src/platform/customer-filters.js');
@@ -77,8 +78,18 @@ assert(segments.includes('marketing.segment.create')&&segments.includes('marketi
 assert(adminMarketing.includes("router.post('/admin/marketing/segments', marketingWriteLimit"),'saved segment creation must be explicitly rate-limited');
 assert(adminMarketing.includes("router.post('/admin/marketing/segments/:id', marketingWriteLimit"),'saved segment updates must be explicitly rate-limited');
 assert(adminMarketing.includes("router.post('/admin/marketing/segments/:id/delete', marketingWriteLimit"),'saved segment deletion must be explicitly rate-limited');
-assert(adminMarketing.includes('Counts are live and aggregate-only'),'admin Marketing must explain count-only segment previews');
-assert(adminMarketing.includes('A selected saved segment overrides the one-off fields below and is copied into the campaign as a snapshot.'),'campaign composer must explain saved-segment snapshot behavior');
+assert(adminDiscounts.includes('Counts are live and aggregate-only'),'the merged Discounts & campaigns page must explain count-only segment previews');
+assert(adminDiscounts.includes('A selected saved segment overrides the one-off fields below and is copied into the campaign as a snapshot.'),'campaign composer must explain saved-segment snapshot behavior');
+
+// Discounts and campaigns were deliberately merged onto one page (matching the
+// approved mockup): the old standalone campaign list/create UI is retired in
+// favor of admin-discounts.js, with only campaign detail and the mutation
+// routes (still POSTed to from the merged page) staying under /admin/marketing.
+assert(!adminMarketing.includes('function listPage'),'the standalone campaign list page must be retired now that Discounts & campaigns is merged');
+assert(adminMarketing.includes("router.get('/admin/marketing', (req, res) => {")&&adminMarketing.includes("res.redirect('/admin/discounts'"),'GET /admin/marketing must redirect old links into the merged Discounts & campaigns page');
+assert(adminDiscounts.includes("require('./admin-marketing')")&&adminDiscounts.includes('marketing.audienceFields')&&adminDiscounts.includes('marketing.audienceSummary')&&adminDiscounts.includes('marketing.segmentsWithCounts'),'the merged page must reuse the real campaign/segment presentation helpers rather than duplicating them');
+assert(adminDiscounts.includes("require('../marketing/campaigns')")&&adminDiscounts.includes("require('../marketing/segments')"),'the merged page must read campaigns and saved segments from the real marketing modules');
+assert(adminDiscounts.includes('Discounts & campaigns'),'the merged page must present itself as one workspace, not just discount codes');
 
 assert(campaigns.includes("channel==='email'"),'campaigns module must support email delivery');
 assert(campaigns.includes("channel==='discord'"),'campaigns module must support discord delivery');
