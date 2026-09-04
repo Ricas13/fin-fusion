@@ -84,26 +84,35 @@ function campaignStatusPill(status) {
     return pill(status, kind);
 }
 
-function discountRow(req, row, campaignsByCode) {
+function discountCompactCard(req, row, campaignsByCode) {
     const usage = row.max_redemptions ? `${row.redemption_count} / ${row.max_redemptions}` : `${row.redemption_count} (unlimited)`;
     const expiry = row.expires_at ? new Date(row.expires_at).toLocaleDateString('en-GB') : 'No expiry';
+    const plans = Array.isArray(row.plan_codes) && row.plan_codes.length ? row.plan_codes.join(', ') : 'Any plan';
     const usedBy = campaignsByCode.get(String(row.id)) || [];
-    return `<tr>
-        <td data-label="Code"><div class="codeCell"><strong class="mono">${esc(row.code)}</strong>${row.description ? `<div class="subText">${esc(row.description)}</div>` : ''}</div></td>
-        <td data-label="Value">${esc(amountLabel(row))}</td>
-        <td data-label="Plans">${Array.isArray(row.plan_codes) && row.plan_codes.length ? esc(row.plan_codes.join(', ')) : 'Any plan'}</td>
-        <td data-label="Redemptions">${esc(usage)}</td>
-        <td data-label="Per customer">${esc(row.per_customer_limit)}</td>
-        <td data-label="Expires">${esc(expiry)}</td>
-        <td data-label="Status"><div class="metaStack">${pill(row.active ? 'Active' : 'Disabled', row.active ? 'good' : 'bad')}${usedBy.length ? `<a class="usedByLink" href="/admin/marketing/${esc(usedBy[0].id)}">Used in ${esc(usedBy[0].name)}${usedBy.length>1?` +${usedBy.length-1} more`:''}</a>` : ''}</div></td>
-        <td data-label="">
+    return `<article class="discountCodeItem">
+        <div class="discountCodeTop">
+            <div class="codeCell">
+                <strong class="mono">${esc(row.code)}</strong>
+                ${row.description ? `<div class="subText">${esc(row.description)}</div>` : ''}
+            </div>
+            ${pill(row.active ? 'Active' : 'Disabled', row.active ? 'good' : 'bad')}
+        </div>
+        <div class="discountCodeValue">${esc(amountLabel(row))}</div>
+        <div class="discountCodeMeta">
+            <div><span>Plans</span><strong>${esc(plans)}</strong></div>
+            <div><span>Redemptions</span><strong>${esc(usage)}</strong></div>
+            <div><span>Per customer</span><strong>${esc(row.per_customer_limit)}</strong></div>
+            <div><span>Expires</span><strong>${esc(expiry)}</strong></div>
+        </div>
+        <div class="discountCodeActions">
+            ${usedBy.length ? `<a class="usedByLink" href="/admin/marketing/${esc(usedBy[0].id)}">Used in ${esc(usedBy[0].name)}${usedBy.length>1?` +${usedBy.length-1} more`:''}</a>` : '<span></span>'}
             <form class="plainForm" method="post" action="/admin/discounts/${esc(row.id)}/toggle">
                 ${csrfInput(req)}
                 <input type="hidden" name="active" value="${row.active ? 'false' : 'true'}">
                 <button class="button ${row.active ? 'btn-danger' : 'btn-success'} btn-sm">${row.active ? 'Disable' : 'Enable'}</button>
             </form>
-        </td>
-    </tr>`;
+        </div>
+    </article>`;
 }
 
 function campaignRow(row, discountById) {
@@ -168,7 +177,7 @@ async function page(req) {
     const queuedCampaigns = campaignList.filter(r => r.status === 'queued').length;
     const scheduledCampaigns = campaignList.filter(r => r.status === 'scheduled').length;
 
-    const body = `${notice(req)}
+    const body = `<div class="discountsPage">${notice(req)}
         <div class="metrics">
             <div class="metric"><div class="metricLabel">Active codes</div><div class="metricValue">${active}</div></div>
             <div class="metric"><div class="metricLabel">Total redemptions</div><div class="metricValue">${totalRedemptions}</div></div>
@@ -179,23 +188,43 @@ async function page(req) {
 
         <section class="section discountsHue">
             <div class="sectionHead"><h2>Discount codes</h2><span class="muted">Applies at Stripe checkout for both modes, and at PayPal one-time checkout</span></div>
-            <form class="formPanel" method="post" action="/admin/discounts">
-                ${csrfInput(req)}
-                <div class="formGrid">
-                    <div class="formGroup"><label>Code</label><input class="input" name="code" required maxlength="40" pattern="[A-Za-z0-9-]{3,40}" placeholder="SUMMER25"></div>
-                    <div class="formGroup"><label>Type</label><select class="input" name="discountType"><option value="percent">Percent off</option><option value="fixed">Fixed amount off</option></select></div>
-                    <div class="formGroup"><label>Percent off (1-100)</label><input class="input" type="number" name="percentOff" min="1" max="100"></div>
-                    <div class="formGroup"><label>Fixed amount off</label><input class="input" type="number" step="0.01" min="0.01" name="fixedOff"></div>
-                    <div class="formGroup"><label>Currency (for fixed)</label><select class="input" name="currency"><option value="GBP">GBP</option><option value="USD">USD</option><option value="EUR">EUR</option></select><div class="inlineHelp">Percentage discounts work naturally across currencies. Fixed discounts apply only in the selected currency.</div></div>
-                    <div class="formGroup"><label>Eligible plans</label><select class="input" name="planCodes" multiple size="6">${plans.map(plan=>`<option value="${esc(plan.code)}">${esc(plan.name)} · ${esc(moneyFormat.formatMinor(plan.price_minor,plan.currency||'GBP'))} · ${esc(plan.billing_interval)}</option>`).join('')}</select><div class="inlineHelp">Leave all plans unselected to allow the code on any plan. Use Ctrl/Cmd-click to choose several.</div></div>
-                    <div class="formGroup"><label>Max redemptions <span class="muted">(blank = unlimited)</span></label><input class="input" type="number" min="1" name="maxRedemptions"></div>
-                    <div class="formGroup"><label>Per-customer limit</label><input class="input" type="number" min="1" max="1000" name="perCustomerLimit" value="1"></div>
-                    <div class="formGroup"><label>Expires</label><input class="input" type="date" name="expiresAt"></div>
-                </div>
-                <div class="formGroup"><label>Description</label><input class="input" name="description" maxlength="200"></div>
-                <button class="button primaryHue">+ Create discount code</button>
-            </form>
-            ${discountRows.length ? `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Code</th><th>Value</th><th>Plans</th><th>Redemptions</th><th>Per customer</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>${discountRows.map(row => discountRow(req, row, campaignsByCode)).join('')}</tbody></table></div>` : '<div class="empty">No discount codes yet.</div>'}
+            <form id="createDiscountForm" method="post" action="/admin/discounts">${csrfInput(req)}</form>
+            <div class="discountCardGrid">
+                <section class="discountCard">
+                    <div class="discountCardHead"><span class="discountCardIndex">1</span><div><h3>Basic setup</h3><p>Code, discount type and value</p></div></div>
+                    <div class="discountMiniGrid">
+                        <div class="formGroup discountWide"><label>Code</label><input class="input" form="createDiscountForm" name="code" required maxlength="40" pattern="[A-Za-z0-9-]{3,40}" placeholder="SUMMER25"></div>
+                        <div class="formGroup"><label>Type</label><select class="input" form="createDiscountForm" name="discountType"><option value="percent">Percent off</option><option value="fixed">Fixed amount off</option></select></div>
+                        <div class="formGroup"><label>Currency <span class="muted">(fixed)</span></label><select class="input" form="createDiscountForm" name="currency"><option value="GBP">GBP</option><option value="USD">USD</option><option value="EUR">EUR</option></select></div>
+                        <div class="formGroup"><label>Percent off (1-100)</label><input class="input" form="createDiscountForm" type="number" name="percentOff" min="1" max="100"></div>
+                        <div class="formGroup"><label>Fixed amount off</label><input class="input" form="createDiscountForm" type="number" step="0.01" min="0.01" name="fixedOff"></div>
+                    </div>
+                    <div class="inlineHelp discountCardHelp">Percentage discounts work across currencies. Fixed discounts use the selected currency.</div>
+                </section>
+
+                <section class="discountCard">
+                    <div class="discountCardHead"><span class="discountCardIndex">2</span><div><h3>Eligibility & limits</h3><p>Choose plans and redemption limits</p></div></div>
+                    <div class="formGroup"><label>Eligible plans</label><select class="input discountPlanSelect" form="createDiscountForm" name="planCodes" multiple size="5">${plans.map(plan=>`<option value="${esc(plan.code)}">${esc(plan.name)} · ${esc(moneyFormat.formatMinor(plan.price_minor,plan.currency||'GBP'))} · ${esc(plan.billing_interval)}</option>`).join('')}</select><div class="inlineHelp">Leave all plans unselected to allow the code on any plan. Use Ctrl/Cmd-click to choose several.</div></div>
+                    <div class="discountMiniGrid">
+                        <div class="formGroup"><label>Max redemptions <span class="muted">(unlimited)</span></label><input class="input" form="createDiscountForm" type="number" min="1" name="maxRedemptions"></div>
+                        <div class="formGroup"><label>Per-customer limit</label><input class="input" form="createDiscountForm" type="number" min="1" max="1000" name="perCustomerLimit" value="1"></div>
+                    </div>
+                </section>
+
+                <section class="discountCard">
+                    <div class="discountCardHead"><span class="discountCardIndex">3</span><div><h3>Scheduling & description</h3><p>Expiry and internal context</p></div></div>
+                    <div class="discountMiniGrid">
+                        <div class="formGroup"><label>Expires</label><input class="input" form="createDiscountForm" type="date" name="expiresAt"></div>
+                        <div class="formGroup"><label>Description</label><input class="input" form="createDiscountForm" name="description" maxlength="200" placeholder="Optional internal description"></div>
+                    </div>
+                    <div class="discountCreateAction"><button class="button primaryHue" form="createDiscountForm">+ Create discount code</button></div>
+                </section>
+
+                <section class="discountCard discountCodesCard">
+                    <div class="discountCardHead"><span class="discountCardIndex">4</span><div><h3>Existing discount codes</h3><p>${discountRows.length} total · ${active} active</p></div></div>
+                    ${discountRows.length ? `<div class="discountCodeList">${discountRows.map(row => discountCompactCard(req, row, campaignsByCode)).join('')}</div>` : '<div class="empty compactEmpty">No discount codes yet.</div>'}
+                </section>
+            </div>
         </section>
 
         <section class="section campaignsHue" id="new-campaign">
@@ -225,7 +254,8 @@ async function page(req) {
 
             <div class="sectionHead innerHead"><h3>Campaigns</h3><span class="muted">${campaignList.length} total</span></div>
             ${campaignList.length ? `<div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Campaign</th><th>Status</th><th>Code</th><th>Recipients</th><th>Queued</th><th>Scheduled for</th><th>Created</th></tr></thead><tbody>${campaignList.map(row => campaignRow(row, discountById)).join('')}</tbody></table></div>` : '<div class="empty">No campaigns yet.</div>'}
-        </section>`;
+        </section>
+    </div>`;
 
     return layout({
         siteName: runtimeSettings.siteName(),
@@ -239,21 +269,52 @@ async function page(req) {
 
 function styles() {
     return `<style>
-.discountsPage .codeCell{display:grid;gap:2px}
+.discountsPage .metrics{grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-bottom:12px}
+.discountsPage .metric{padding:11px 13px}
+.discountsPage .metricLabel{margin-bottom:4px}
+.discountsPage .metricValue{font-size:20px}
+.discountsPage .codeCell{display:grid;gap:2px;min-width:0}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.metaStack{display:grid;gap:5px}
-.usedByLink{font-size:10.5px;color:var(--hue);text-decoration:none}
+.usedByLink{font-size:10.5px;color:var(--hue);text-decoration:none;overflow-wrap:anywhere}
 .usedByLink:hover{text-decoration:underline}
 .newTag{font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:none;color:var(--hue);background:color-mix(in srgb,var(--hue) 14%,transparent);border:1px solid color-mix(in srgb,var(--hue) 30%,transparent);padding:2px 8px;border-radius:999px;margin-left:8px;vertical-align:middle}
 .innerHead{margin-top:22px;padding-top:16px;border-top:1px solid var(--border-soft)}
 .button.primaryHue{background:var(--hue);border-color:var(--hue);color:#1a1102}
 .button.primaryHue:hover{filter:brightness(1.08)}
 .section.discountsHue .sectionHead,.section.campaignsHue .sectionHead{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--hue) 55%,transparent)}
+.discountCardGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px 16px 16px}
+.discountCard{min-width:0;padding:13px 14px;border:1px solid var(--border-soft);border-radius:10px;background:var(--panel2)}
+.discountCardHead{display:flex;align-items:flex-start;gap:9px;margin-bottom:12px}
+.discountCardHead h3{margin:0;color:var(--text-strong);font-size:13px;font-weight:700;line-height:1.25}
+.discountCardHead p{margin:2px 0 0;color:var(--muted2);font-size:10.5px;line-height:1.35}
+.discountCardIndex{display:grid;place-items:center;flex:0 0 22px;width:22px;height:22px;border-radius:7px;border:1px solid color-mix(in srgb,var(--hue) 30%,var(--border-soft));background:color-mix(in srgb,var(--hue) 11%,transparent);color:var(--hue);font-size:10px;font-weight:800}
+.discountMiniGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px}
+.discountWide{grid-column:1/-1}
+.discountCard .formGroup{margin-bottom:10px}
+.discountCard .formGroup label{font-size:11px}
+.discountCard .input{min-height:36px;padding:7px 9px;font-size:12px}
+.discountPlanSelect{min-height:116px!important}
+.discountCard .inlineHelp{font-size:10px;line-height:1.35}
+.discountCardHelp{margin:-2px 0 0}
+.discountCreateAction{display:flex;justify-content:flex-end;margin-top:2px;padding-top:10px;border-top:1px solid var(--border-soft)}
+.discountCreateAction .button{min-height:34px}
+.discountCodeList{display:grid;gap:8px}
+.discountCodeItem{min-width:0;padding:10px;border:1px solid var(--border-soft);border-radius:8px;background:color-mix(in srgb,var(--panel) 74%,transparent)}
+.discountCodeTop{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.discountCodeValue{margin-top:8px;color:var(--text-strong);font-size:15px;font-weight:720}
+.discountCodeMeta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 12px;margin-top:9px}
+.discountCodeMeta div{display:grid;gap:1px;min-width:0}
+.discountCodeMeta span{color:var(--muted2);font-size:9.5px}
+.discountCodeMeta strong{color:var(--text);font-size:10.5px;font-weight:650;overflow-wrap:anywhere}
+.discountCodeActions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border-soft)}
+.compactEmpty{padding:22px 10px}
 .segEdit{margin-top:8px}
 .segEdit summary{cursor:pointer;color:var(--muted2);font-size:11px;font-weight:700;list-style:none}
 .segEdit summary::-webkit-details-marker{display:none}
 .segEdit[open] summary{color:var(--hue)}
-@media(max-width:640px){.buttonRow{flex-direction:column}.buttonRow .button{width:100%}}
+@media(max-width:1050px){.discountsPage .metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.discountCardGrid{grid-template-columns:1fr}}
+@media(max-width:640px){.discountsPage .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.discountCardGrid{padding:10px}.discountMiniGrid,.discountCodeMeta{grid-template-columns:1fr}.discountWide{grid-column:auto}.discountCodeActions{align-items:flex-start;flex-direction:column}.buttonRow{flex-direction:column}.buttonRow .button{width:100%}}
+@media(max-width:420px){.discountsPage .metrics{grid-template-columns:1fr}}
 </style>`;
 }
 
