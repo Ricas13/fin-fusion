@@ -1,10 +1,8 @@
 'use strict';
 
 const {query}=require('../db');
-const placement=require('../jellyfin/placement');
 
 const LIVE_STATUSES=['active','trialing','past_due','paused'];
-const FLEET_OCCUPANT_STATUSES=['active','trialing'];
 const FLEET_ACCESS_HOLD_TYPES=['inactivity_policy','jellyfin_cleanup'];
 const RESERVATION_SQL=`consumed_at IS NULL AND released_at IS NULL AND expires_at>NOW()`;
 const FLEET_CLASSES=new Set(['premium','free']);
@@ -13,13 +11,12 @@ function positiveInt(value,fallback=1){const n=Number(value);return Number.isInt
 function serviceType(plan){return String(plan?.service_type||'').toLowerCase();}
 function serverClass(plan){return String(plan?.server_class||'').toLowerCase();}
 function isTrial(plan){return String(plan?.billing_interval||'').toLowerCase()==='trial';}
-function isFleetJellyfin(plan){return serviceType(plan)==='jellyfin'&&FLEET_CLASSES.has(serverClass(plan));}
+function isFleetJellyfin(plan){return['jellyfin','bundle'].includes(serviceType(plan))&&FLEET_CLASSES.has(serverClass(plan));}
 function isStremio(plan){return serviceType(plan)==='stremio';}
-function metricStaleSeconds(){return Math.max(60,Math.ceil(placement.metricsStaleMs()/1000));}
 function capacityModel(plan){
   if(!plan||!plan.service_type)return'legacy_plan';
-  if(serviceType(plan)==='stremio'||serviceType(plan)==='bundle'||serverClass(plan)==='custom')return'manual_plan';
-  if(isFleetJellyfin(plan))return'fleet_streams';
+  if(isFleetJellyfin(plan))return'fleet_users';
+  if(serviceType(plan)==='stremio')return'manual_households';
   return'manual_plan';
 }
 function scarcity(state){
@@ -42,7 +39,7 @@ function checkoutReservationSql(alias='i'){
   )))`;
 }
 async function loadPlan(planId,db=query){
-  const result=await db(`SELECT id,capacity_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,streams,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
+  const result=await db(`SELECT id,capacity_limit,service_type,server_class,billing_interval,price_minor,is_free_tier,stremio_household_network_limit FROM plans WHERE id=$1`,[planId]);
   if(!result.rowCount)throw new Error('Plan not found.');
   return result.rows[0];
 }
@@ -86,8 +83,8 @@ function healthSql(alias,mode){
   if(mode==='fail_open')return`COALESCE(${alias}.health_status,'unknown')<>'offline'`;
   return`${alias}.health_status IN('healthy','degraded')`;
 }
-async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
-  const cls=serverClass(plan),healthMode=await placementHealthMode(db),health=healthSql('js',healthMode),staleSeconds=metricStaleSeconds();
+async function fleetUsers(plan,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null}={}){
+  const cls=serverClass(plan),healthMode=await placementHealthMode(db),health=healthSql('js',healthMode);
   const serviceFlag=cls==='free'?'TRUE':isTrial(plan)?'js.trial_enabled=TRUE':'js.paid_enabled=TRUE';
   const configured=await db(`WITH restriction AS (
       SELECT EXISTS(
@@ -110,15 +107,10 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeChec
         AND ${health}
         AND ${serviceFlag}
     ), server_occupancy AS (
-      SELECT es.id,es.max_users,
-             COUNT(DISTINCT ja.id)::int AS enabled_accounts,
-             CASE WHEN m.observed_at IS NOT NULL
-                       AND m.observed_at>NOW()-($3::int*INTERVAL '1 second')
-                  THEN GREATEST(0,COALESCE(m.total_users,0)) ELSE 0 END::int AS observed_users
+      SELECT es.id,es.max_users,COUNT(DISTINCT ja.customer_id)::int AS managed_users
       FROM eligible_servers es
-      LEFT JOIN jellyfin_accounts ja ON ja.server_id=es.id AND ja.disabled=FALSE
-      LEFT JOIN jellyfin_server_metrics m ON m.server_id=es.id
-      GROUP BY es.id,es.max_users,m.total_users,m.observed_at
+      LEFT JOIN jellyfin_accounts ja ON ja.server_id=es.id AND ja.disabled=FALSE AND ja.account_purpose='jellyfin'
+      GROUP BY es.id,es.max_users
     )
     SELECT
       (SELECT COUNT(*)::int
@@ -129,61 +121,71 @@ async function fleetStreams(plan,db=query,{excludeReservationId=null,excludeChec
          AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
          AND js.max_users IS NOT NULL
          AND (NOT r.restricted OR pse.server_id IS NOT NULL)) AS configured_servers,
-      COALESCE(SUM(so.max_users),0)::int AS stream_limit,
-      COALESCE(SUM(so.enabled_accounts),0)::int AS enabled_accounts,
-      COALESCE(SUM(so.observed_users),0)::int AS observed_users,
-      COALESCE(SUM(GREATEST(so.enabled_accounts,so.observed_users)),0)::int AS placement_users
-    FROM server_occupancy so`,[plan.id,cls,staleSeconds]);
-  const configuredServers=Number(configured.rows[0]?.configured_servers||0),streamLimit=Number(configured.rows[0]?.stream_limit||0),enabledAccountFloor=Number(configured.rows[0]?.enabled_accounts||0),observedUserFloor=Number(configured.rows[0]?.observed_users||0),placementUserFloor=Number(configured.rows[0]?.placement_users||0);
+      COALESCE(SUM(so.max_users),0)::int AS user_limit,
+      COALESCE(SUM(so.managed_users),0)::int AS managed_users
+    FROM server_occupancy so`,[plan.id,cls]);
+  const configuredServers=Number(configured.rows[0]?.configured_servers||0),userLimit=Number(configured.rows[0]?.user_limit||0),managedUsers=Number(configured.rows[0]?.managed_users||0);
   if(!configuredServers)return null;
-  const used=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(s.commercial_snapshot->'streams')='number' THEN (s.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_used
-    FROM subscriptions s JOIN plans p ON p.id=s.plan_id
-    WHERE s.superseded_by IS NULL AND s.status=ANY($2::text[]) AND s.starts_at<=NOW() AND s.current_period_end>NOW()
+
+  // An already-entitled customer who has not yet received an enabled account
+  // owns one place. This prevents a failed provisioning run from reopening that
+  // place to somebody else before the owed customer is repaired.
+  const pending=await db(`SELECT COUNT(DISTINCT s.customer_id)::int AS pending_users
+    FROM subscriptions s
+    JOIN plans p ON p.id=s.plan_id
+    LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
+    WHERE s.superseded_by IS NULL AND s.starts_at<=NOW()
       AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
-      AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)`,[cls,FLEET_OCCUPANT_STATUSES,FLEET_ACCESS_HOLD_TYPES]);
+      AND (
+        (o.permanent_access=TRUE AND o.revoked_at IS NULL)
+        OR (s.status=ANY($2::text[]) AND s.current_period_end>NOW())
+        OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
+      )
+      AND NOT EXISTS(SELECT 1 FROM customer_access_holds h WHERE h.customer_id=s.customer_id AND h.hold_type=ANY($3::text[]) AND h.released_at IS NULL)
+      AND NOT EXISTS(
+        SELECT 1 FROM jellyfin_accounts existing
+        JOIN jellyfin_servers existing_server ON existing_server.id=existing.server_id
+        WHERE existing.customer_id=s.customer_id
+          AND existing.disabled=FALSE
+          AND existing.account_purpose='jellyfin'
+          AND existing_server.server_class=$1
+          AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
+      )`,[cls,LIVE_STATUSES,FLEET_ACCESS_HOLD_TYPES]);
   const checkoutHold=checkoutReservationSql('i');
-  const checkout=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(CASE WHEN jsonb_typeof(i.commercial_snapshot->'streams')='number' THEN (i.commercial_snapshot->>'streams')::int END,p.streams,1))),0)::int AS stream_reserved
+  const checkout=await db(`SELECT COUNT(*)::int AS reserved_users
     FROM billing_checkout_intents i JOIN plans p ON p.id=i.plan_id
     WHERE ${checkoutHold} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
       AND ($2::uuid IS NULL OR i.id<>$2::uuid)`,[cls,excludeCheckoutIntentId]);
-  const freeHolds=await db(`SELECT COALESCE(SUM(GREATEST(1,COALESCE(p.streams,1))),0)::int AS stream_reserved
+  const freeHolds=await db(`SELECT COUNT(*)::int AS reserved_users
     FROM free_access_registration_reservations r JOIN plans p ON p.id=r.plan_id
-    WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1 AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
-  const entitlementStreamUsed=Number(used.rows[0]?.stream_used||0),streamUsed=Math.max(entitlementStreamUsed,placementUserFloor),streamReserved=Number(checkout.rows[0]?.stream_reserved||0)+Number(freeHolds.rows[0]?.stream_reserved||0),streamRemaining=Math.max(0,streamLimit-streamUsed-streamReserved),capacityGap=Math.max(0,placementUserFloor-entitlementStreamUsed);
-  return{pool:cls,configuredServers,streamLimit,streamUsed,entitlementStreamUsed,enabledAccountFloor,observedUserFloor,placementUserFloor,capacityGap,streamReserved,streamRemaining,healthMode};
+    WHERE ${RESERVATION_SQL} AND p.service_type IN('jellyfin','bundle') AND p.server_class=$1
+      AND ($2::uuid IS NULL OR r.id<>$2::uuid)`,[cls,excludeReservationId]);
+  const pendingUsers=Number(pending.rows[0]?.pending_users||0),reservedUsers=Number(checkout.rows[0]?.reserved_users||0)+Number(freeHolds.rows[0]?.reserved_users||0),userUsed=managedUsers+pendingUsers,userRemaining=Math.max(0,userLimit-userUsed-reservedUsers);
+  return{pool:cls,configuredServers,userLimit,userUsed,managedUsers,pendingUsers,reservedUsers,userRemaining,healthMode};
 }
-async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
+async function usage(planId,db=query,{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
   const plan=await loadPlan(planId,db),model=capacityModel(plan);
   if(isStremio(plan))return stremioHouseholdUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId,households});
-  if(model!=='fleet_streams')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
-  const fleet=await fleetStreams(plan,db,{excludeReservationId,excludeCheckoutIntentId});
-  const requiredStreams=positiveInt(streams,positiveInt(plan.streams,1));
+  if(model!=='fleet_users')return legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
+  const fleet=await fleetUsers(plan,db,{excludeReservationId,excludeCheckoutIntentId});
   if(!fleet){
-    const state={planId:plan.id,plan,model:'fleet_streams',pool:serverClass(plan),configuredServers:0,requiredStreams,streamLimit:0,streamUsed:0,entitlementStreamUsed:0,enabledAccountFloor:0,observedUserFloor:0,placementUserFloor:0,capacityGap:0,streamReserved:0,streamRemaining:0,healthMode:null,limit:0,used:0,reserved:0,remaining:0,soldOut:true,manualLimit:null,manualUsed:0,manualReserved:0,fallbackReason:'No Jellyfin server capacity is configured for this fleet plan.'};
+    const state={planId:plan.id,plan,model:'fleet_users',pool:serverClass(plan),configuredServers:0,userLimit:0,userUsed:0,managedUsers:0,pendingUsers:0,reservedUsers:0,userRemaining:0,healthMode:null,limit:0,used:0,reserved:0,remaining:0,soldOut:true,manualLimit:null,manualUsed:0,manualReserved:0,fallbackReason:'No Jellyfin server user capacity is configured for this plan.'};
     return{...state,...scarcity(state)};
   }
-  const fleetLimit=Math.floor(fleet.streamLimit/requiredStreams),fleetRemaining=Math.floor(fleet.streamRemaining/requiredStreams),fleetUsed=Math.max(0,fleetLimit-fleetRemaining);
-  let remaining=fleetRemaining,limit=fleetLimit,manualLimit=null,manualUsed=0,manualReserved=0;
-  if(isTrial(plan)){
-    const manual=await legacyUsage(plan,db,{excludeReservationId,excludeCheckoutIntentId});
-    manualLimit=manual.limit;manualUsed=manual.used;manualReserved=manual.reserved;
-    if(manual.remaining!=null)remaining=Math.min(remaining,manual.remaining);
-    if(manual.limit!=null)limit=Math.min(limit,manual.limit);
-  }
-  const state={planId:plan.id,plan,model:'fleet_streams',pool:fleet.pool,configuredServers:fleet.configuredServers,requiredStreams,streamLimit:fleet.streamLimit,streamUsed:fleet.streamUsed,entitlementStreamUsed:fleet.entitlementStreamUsed,enabledAccountFloor:fleet.enabledAccountFloor,observedUserFloor:fleet.observedUserFloor,placementUserFloor:fleet.placementUserFloor,capacityGap:fleet.capacityGap,streamReserved:fleet.streamReserved,streamRemaining:fleet.streamRemaining,healthMode:fleet.healthMode,limit,used:fleetUsed,reserved:0,remaining,soldOut:remaining===0,manualLimit,manualUsed,manualReserved};
+  const state={planId:plan.id,plan,model:'fleet_users',pool:fleet.pool,configuredServers:fleet.configuredServers,userLimit:fleet.userLimit,userUsed:fleet.userUsed,managedUsers:fleet.managedUsers,pendingUsers:fleet.pendingUsers,reservedUsers:fleet.reservedUsers,userRemaining:fleet.userRemaining,healthMode:fleet.healthMode,limit:fleet.userLimit,used:fleet.userUsed,reserved:fleet.reservedUsers,remaining:fleet.userRemaining,soldOut:fleet.userRemaining===0,manualLimit:null,manualUsed:0,manualReserved:0};
   return{...state,...scarcity(state)};
 }
 
-async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
-  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,streams,households});
+async function assertAvailable(planId,{db=query,label='This plan',excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+  const state=await usage(planId,db,{excludeReservationId,excludeCheckoutIntentId,households});
   if(state.soldOut){const error=new Error(`${label} is currently sold out.`);error.code='PLAN_CAPACITY_EXHAUSTED';error.planId=String(planId);throw error;}
   return state;
 }
 
-async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,streams=null,households=null}={}){
-  const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_streams'?`fleet:${serverClass(plan)}`:`plan:${planId}`;
+async function lockAndAssert(client,planId,label='This plan',{excludeReservationId=null,excludeCheckoutIntentId=null,households=null}={}){
+  const plan=await loadPlan(planId,(sql,params)=>client.query(sql,params)),model=capacityModel(plan),key=model==='fleet_users'?`fleet-users:${serverClass(plan)}`:`plan:${planId}`;
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('captainfin:capacity:'||$1::text, 77133))`,[key]);
-  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,streams,households});
+  return assertAvailable(planId,{db:(sql,params)=>client.query(sql,params),label,excludeReservationId,excludeCheckoutIntentId,households});
 }
 
 function legacyAcquisitionSql(alias='p'){
@@ -216,7 +218,7 @@ function fleetRestrictionSql(planAlias,serverAlias){
 }
 function fleetConfiguredSql(alias='p'){
   const restriction=fleetRestrictionSql(alias,'configured_server');
-  return `(${alias}.service_type='jellyfin' AND ${alias}.server_class IN('premium','free') AND EXISTS(
+  return `(${alias}.service_type IN('jellyfin','bundle') AND ${alias}.server_class IN('premium','free') AND EXISTS(
     SELECT 1 FROM jellyfin_servers configured_server
     WHERE configured_server.server_class=${alias}.server_class
       AND COALESCE(configured_server.media_server_type,'jellyfin')='jellyfin'
@@ -225,14 +227,14 @@ function fleetConfiguredSql(alias='p'){
   ))`;
 }
 function fleetAvailableSql(alias='p'){
-  const restriction=fleetRestrictionSql(alias,'capacity_server'),occupancyRestriction=fleetRestrictionSql(alias,'occupancy_server'),staleSeconds=metricStaleSeconds();
+  const restriction=fleetRestrictionSql(alias,'capacity_server'),occupancyRestriction=fleetRestrictionSql(alias,'occupancy_server');
   const healthMode=`COALESCE((SELECT setting_value->>'placementHealthMode' FROM platform_settings WHERE setting_key='operations_v1'),'healthy_or_degraded')`;
   const healthFor=serverAlias=>`CASE ${healthMode}
     WHEN 'healthy_only' THEN ${serverAlias}.health_status='healthy'
     WHEN 'fail_open' THEN COALESCE(${serverAlias}.health_status,'unknown')<>'offline'
     ELSE ${serverAlias}.health_status IN('healthy','degraded')
   END`;
-  const streamCapacity=`(
+  const userCapacity=`(
     SELECT COALESCE(SUM(capacity_server.max_users),0)
     FROM jellyfin_servers capacity_server
     WHERE capacity_server.server_class=${alias}.server_class
@@ -247,35 +249,13 @@ function fleetAvailableSql(alias='p'){
         OR (${alias}.billing_interval='trial' AND capacity_server.trial_enabled=TRUE)
         OR (${alias}.billing_interval<>'trial' AND capacity_server.paid_enabled=TRUE))
   )`;
-  const activeStreams=`(
-    SELECT COALESCE(SUM(GREATEST(1,COALESCE(
-      CASE WHEN jsonb_typeof(active_subscription.commercial_snapshot->'streams')='number' THEN (active_subscription.commercial_snapshot->>'streams')::int END,
-      active_plan.streams,1))),0)
-    FROM subscriptions active_subscription
-    JOIN plans active_plan ON active_plan.id=active_subscription.plan_id
-    WHERE active_subscription.superseded_by IS NULL
-      AND active_subscription.status IN ('active','trialing')
-      AND active_subscription.starts_at<=NOW() AND active_subscription.current_period_end>NOW()
-      AND active_plan.service_type IN('jellyfin','bundle')
-      AND active_plan.server_class=${alias}.server_class
-      AND NOT EXISTS(SELECT 1 FROM customer_access_holds capacity_access_hold
-        WHERE capacity_access_hold.customer_id=active_subscription.customer_id
-          AND capacity_access_hold.hold_type IN ('inactivity_policy','jellyfin_cleanup')
-          AND capacity_access_hold.released_at IS NULL)
-  )`;
-  const placementUsers=`(
-    SELECT COALESCE(SUM(server_load.capacity_users),0)
+  const managedUsers=`(
+    SELECT COALESCE(SUM(server_load.managed_users),0)
     FROM (
-      SELECT occupancy_server.id,
-             GREATEST(
-               COUNT(DISTINCT capacity_account.id),
-               CASE WHEN occupancy_metric.observed_at IS NOT NULL
-                         AND occupancy_metric.observed_at>NOW()-INTERVAL '${staleSeconds} seconds'
-                    THEN GREATEST(0,COALESCE(occupancy_metric.total_users,0)) ELSE 0 END
-             ) AS capacity_users
+      SELECT occupancy_server.id,COUNT(DISTINCT capacity_account.customer_id) AS managed_users
       FROM jellyfin_servers occupancy_server
-      LEFT JOIN jellyfin_accounts capacity_account ON capacity_account.server_id=occupancy_server.id AND capacity_account.disabled=FALSE
-      LEFT JOIN jellyfin_server_metrics occupancy_metric ON occupancy_metric.server_id=occupancy_server.id
+      LEFT JOIN jellyfin_accounts capacity_account ON capacity_account.server_id=occupancy_server.id
+        AND capacity_account.disabled=FALSE AND capacity_account.account_purpose='jellyfin'
       WHERE occupancy_server.server_class=${alias}.server_class
         AND COALESCE(occupancy_server.media_server_type,'jellyfin')='jellyfin'
         AND occupancy_server.max_users IS NOT NULL
@@ -287,14 +267,40 @@ function fleetAvailableSql(alias='p'){
         AND (${alias}.server_class='free'
           OR (${alias}.billing_interval='trial' AND occupancy_server.trial_enabled=TRUE)
           OR (${alias}.billing_interval<>'trial' AND occupancy_server.paid_enabled=TRUE))
-      GROUP BY occupancy_server.id,occupancy_metric.total_users,occupancy_metric.observed_at
+      GROUP BY occupancy_server.id
     ) server_load
+  )`;
+  const pendingUsers=`(
+    SELECT COUNT(DISTINCT pending_subscription.customer_id)
+    FROM subscriptions pending_subscription
+    JOIN plans pending_plan ON pending_plan.id=pending_subscription.plan_id
+    LEFT JOIN customer_entitlement_overrides pending_override ON pending_override.customer_id=pending_subscription.customer_id AND pending_override.subscription_id=pending_subscription.id
+    WHERE pending_subscription.superseded_by IS NULL
+      AND pending_subscription.starts_at<=NOW()
+      AND pending_plan.service_type IN('jellyfin','bundle')
+      AND pending_plan.server_class=${alias}.server_class
+      AND (
+        (pending_override.permanent_access=TRUE AND pending_override.revoked_at IS NULL)
+        OR (pending_subscription.status IN('active','trialing','past_due','paused') AND pending_subscription.current_period_end>NOW())
+        OR (COALESCE(pending_subscription.service_extension_days,0)>0 AND pending_subscription.status IN('active','trialing','past_due','paused','cancelled','expired') AND (pending_subscription.current_period_end+((pending_subscription.service_extension_days||' days')::interval))>NOW())
+      )
+      AND NOT EXISTS(SELECT 1 FROM customer_access_holds pending_hold
+        WHERE pending_hold.customer_id=pending_subscription.customer_id
+          AND pending_hold.hold_type IN('inactivity_policy','jellyfin_cleanup')
+          AND pending_hold.released_at IS NULL)
+      AND NOT EXISTS(
+        SELECT 1 FROM jellyfin_accounts existing_account
+        JOIN jellyfin_servers existing_server ON existing_server.id=existing_account.server_id
+        WHERE existing_account.customer_id=pending_subscription.customer_id
+          AND existing_account.disabled=FALSE
+          AND existing_account.account_purpose='jellyfin'
+          AND existing_server.server_class=${alias}.server_class
+          AND COALESCE(existing_server.media_server_type,'jellyfin')='jellyfin'
+      )
   )`;
   const checkoutHold=checkoutReservationSql('capacity_checkout');
   const checkoutHolds=`(
-    SELECT COALESCE(SUM(GREATEST(1,COALESCE(
-      CASE WHEN jsonb_typeof(capacity_checkout.commercial_snapshot->'streams')='number' THEN (capacity_checkout.commercial_snapshot->>'streams')::int END,
-      checkout_plan.streams,1))),0)
+    SELECT COUNT(*)
     FROM billing_checkout_intents capacity_checkout
     JOIN plans checkout_plan ON checkout_plan.id=capacity_checkout.plan_id
     WHERE ${checkoutHold}
@@ -302,7 +308,7 @@ function fleetAvailableSql(alias='p'){
       AND checkout_plan.server_class=${alias}.server_class
   )`;
   const freeHolds=`(
-    SELECT COALESCE(SUM(GREATEST(1,COALESCE(free_plan.streams,1))),0)
+    SELECT COUNT(*)
     FROM free_access_registration_reservations capacity_free_hold
     JOIN plans free_plan ON free_plan.id=capacity_free_hold.plan_id
     WHERE capacity_free_hold.consumed_at IS NULL
@@ -311,11 +317,11 @@ function fleetAvailableSql(alias='p'){
       AND free_plan.service_type IN('jellyfin','bundle')
       AND free_plan.server_class=${alias}.server_class
   )`;
-  return `(${streamCapacity} >= (GREATEST(${activeStreams},${placementUsers}) + ${checkoutHolds} + ${freeHolds} + GREATEST(1,COALESCE(${alias}.streams,1))))`;
+  return `(${userCapacity} >= (${managedUsers} + ${pendingUsers} + ${checkoutHolds} + ${freeHolds} + 1))`;
 }
 function acquisitionSql(alias='p'){
-  const fleetPlan=`(${alias}.service_type='jellyfin' AND ${alias}.server_class IN('premium','free'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
-  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable} AND (${alias}.billing_interval<>'trial' OR ${manualAvailable})))`;
+  const fleetPlan=`(${alias}.service_type IN('jellyfin','bundle') AND ${alias}.server_class IN('premium','free'))`,fleetConfigured=fleetConfiguredSql(alias),fleetAvailable=fleetAvailableSql(alias),manualAvailable=legacyAcquisitionSql(alias);
+  return `((NOT ${fleetPlan} AND ${manualAvailable}) OR (${fleetPlan} AND ${fleetConfigured} AND ${fleetAvailable}))`;
 }
 
 module.exports={LIVE_STATUSES,usage,assertAvailable,lockAndAssert,acquisitionSql,legacyAcquisitionSql,capacityModel,scarcity,isFleetJellyfin,stremioHouseholdUsage,checkoutReservationSql};
