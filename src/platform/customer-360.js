@@ -3,7 +3,6 @@
 const {query}=require('../db');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const accessHolds=require('../entitlements/access-holds');
-const manualAssignment=require('../jellyfin/manual-assignment');
 
 function seconds(value){return Number(value||0)}
 function bytes(value){return Number(value||0)}
@@ -88,17 +87,4 @@ async function customer360(customerId){
     };
 }
 
-// Computed separately (not inside customer360()) because it makes live
-// Jellyfin discovery calls -- only the Access tab needs it, so other tabs
-// (Overview/Activity/Billing/Security/History) stay fast and don't depend
-// on Jellyfin server availability to render.
-async function customerAccessDetail(customerId){
-    const currentPlan=await provisioning.currentEntitlementTruth(customerId);
-    const [effective,assignment]=await Promise.all([
-        provisioning.effectivePolicyForCustomer(customerId,currentPlan),
-        manualAssignment.candidates(customerId)
-    ]);
-    return{currentPlan,effective,assignment};
-}
-
-module.exports={customer360,customerAccessDetail,primaryFirst,paymentIncidentForHold};
+module.exports={customer360,primaryFirst,paymentIncidentForHold};

@@ -13,7 +13,7 @@ const compact=value=>String(value||'').replace(/\s+/g,'');
 const commerce=read('src/platform/admin-commerce.js');
 const backupTabs=read('src/platform/backup-workflow-tabs.js');
 const settings=read('src/platform/admin-original-settings.js');
-const customer360View=read('src/platform/customer-360-view.js');
+const customer360AccessCards=read('src/platform/customer-360-access-cards.js');
 const securityRoutes=read('src/platform/admin-security-routes.js');
 const adminHtml=read('src/platform/admin-html.js');
 const adminHtmlCore=read('src/platform/admin-html-core.js');
@@ -123,7 +123,7 @@ assert(commerce.includes('upcomingExpiries')&&commerce.includes('New subscribers
 for(const retired of ['src/platform/admin-revenue-forecast.js','public/css/admin-dashboard-forecast-compact.css','public/js/admin-plan-create.js'])assert(!exists(retired),`retired admin asset must remain absent: ${retired}`);
 assert(exists('public/js/admin-plan-create-v2.js'),'canonical Jellyfin/general plan creation browser controller must remain available');
 
-assert(customer360View.includes('/admin/customer-jellyfin-password?customerId='),'Customer 360 Access must expose the existing administrator Jellyfin password-support workflow');
+assert(customer360AccessCards.includes('/admin/customer-jellyfin-password?customerId='),'Customer 360 must expose the existing administrator Jellyfin password-support workflow');
 assert(securityRoutes.includes("const { layout, esc } = require('./admin-html')")&&securityRoutes.includes("active:'admin-2fa-policy'"),'Administrator 2FA policy must use the canonical admin layout');
 assert(!securityRoutes.includes("res.render('admin/security-policy'"),'Administrator 2FA policy must not fall back to the retired EJS shell');
 assert(!exists('views/admin/security-policy.ejs'),'retired standalone 2FA policy shell must remain absent');

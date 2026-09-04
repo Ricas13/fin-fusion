@@ -69,7 +69,7 @@ const requestUsersSource=fs.readFileSync(path.join(root,'src/platform/admin-requ
 const accessCardsSource=fs.readFileSync(path.join(root,'src/platform/customer-360-access-cards.js'),'utf8');
 assert(bulkCustomersSource.includes("['plan_change','Manual entitlement edit',"),'the plan_change bulk-action catalog must label itself as a manual entitlement edit at the source, not via a rendering-time patch');
 assert(!bulkCustomersSource.includes("'Change plan'"),'no bulk-action catalog entry should still say "Change plan"');
-assert(customer360Source.includes("bulkActionForm(token,c.id,'plan_change','Manual entitlement edit')"),'Customer 360 overview must label plan_change as a manual entitlement edit at the source door');
+assert(accessCardsSource.includes("bulkPreviewForm(token,customerId,'plan_change','Manual entitlement edit'"),'Customer 360 overview must label plan_change as a manual entitlement edit at the source door');
 assert(!requestUsersSource.includes('Change plan'),'the request-users bulk plan-change button must not still say "Change plan"');
 assert(requestUsersSource.includes('Manual entitlement edit'),'the request-users bulk plan-change button must say "Manual entitlement edit"');
 assert(!fs.readFileSync(path.join(root,'src/platform/admin-html-core.js'),'utf8').includes('clarifyManualEntitlementLabels'),'the label-rewriting patch should be removed once every source site labels itself correctly');
@@ -82,8 +82,8 @@ assert(customerManagementSource.includes('function accessPath(')&&customerManage
 assert(customerManagementSource.includes("r.get('/admin/users/:customerId/manage'")&&customerManagementSource.includes('return res.redirect(accessPath(req.params.customerId,key,message))'),'GET /manage must redirect into Access and preserve an existing message/error');
 
 const localAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[{...subscription(false),source:'manual',billing_mode:'payment',provider_subscription_id:null}],accounts:[{disabled:false,account_purpose:'jellyfin',server_name:'Server A',recon_status:'successful'}]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
-for(const label of ['Change entitlement','Move server','Use plan placement','Change expiry','Reset expiry to plan term','Reconcile'])assert(localAccessHtml.includes(label),`Access overview must expose ${label} without leaving the customer workspace`);
-assert(accessCardsSource.includes('Reset access controls to plan'),'the compact Access workspace must retain an explicit reset-to-plan policy action');
+for(const label of ['Manual entitlement edit','Move server','Use plan placement','Change expiry','Reset expiry to plan term','Reconcile'])assert(localAccessHtml.includes(label),`Access overview must expose ${label} without leaving the customer workspace`);
+assert(accessCardsSource.includes('Reset to plan'),'the compact Access workspace must retain an explicit reset-to-plan policy action');
 assert(localAccessHtml.includes('/server-placement/reset')&&localAccessHtml.includes('name="confirmation"')&&localAccessHtml.includes('placeholder="PLACE"'),'automatic plan placement reset must be an explicit typed-confirmation customer action');
 assert(localAccessHtml.includes('/expiry/reset'),'locally controlled expiry must have a direct reset-to-plan action');
 assert(customer360Source.includes("/admin/users/:customerId/server-placement/reset'")&&customer360Source.includes('provisioning.selectServerForPlan(entitlement)')&&customer360Source.includes('serverMigration.createMigration')&&customer360Source.includes('serverMigration.executeMigration'),'server reset must use canonical plan placement plus the guarded migration service when a move is required');

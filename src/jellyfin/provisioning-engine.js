@@ -6,6 +6,11 @@ const registry = require('./registry');
 const policy = require('./policy');
 const planServers = require('./plan-servers');
 const compensation = require('./provisioning-compensation');
+const laneOverrides = require('./lane-policy-overrides');
+
+function laneFor(plan) {
+    return plan?.is_free_tier ? 'free' : 'primary';
+}
 
 // Low-level Jellyfin primitives only. Customer reconciliation, entitlement
 // selection, access holds and subscription expiry are intentionally owned by
@@ -97,29 +102,37 @@ async function resetAllPolicyOverrides(customerId, actorUserId) {
     `, [customerId, actorUserId || null]);
 }
 
-async function getLibraryOverrides(customerId) {
-    const result = await query('SELECT library_name,granted FROM customer_library_overrides WHERE customer_id=$1', [customerId]);
+function libraryLane(accessLane) {
+    const normalized = String(accessLane || 'primary').toLowerCase();
+    if (!['primary', 'free'].includes(normalized)) throw new Error('Unknown Jellyfin access lane');
+    return normalized;
+}
+
+async function getLibraryOverrides(customerId, accessLane = 'primary') {
+    const result = await query('SELECT library_name,granted FROM customer_library_overrides WHERE customer_id=$1 AND access_lane=$2', [
+        customerId, libraryLane(accessLane)
+    ]);
     return result.rows;
 }
 
-async function setLibraryOverride(customerId, libraryName, granted, actorUserId) {
+async function setLibraryOverride(customerId, libraryName, granted, actorUserId, accessLane = 'primary') {
     const name = String(libraryName || '').trim().slice(0, 200);
     if (!name) throw new Error('Library name is required');
     await query(`
-        INSERT INTO customer_library_overrides(customer_id,library_name,granted,updated_by,updated_at)
-        VALUES($1,$2,$3,$4,NOW())
-        ON CONFLICT (customer_id,library_name) DO UPDATE SET granted=EXCLUDED.granted,updated_by=EXCLUDED.updated_by,updated_at=NOW()
-    `, [customerId, name, Boolean(granted), actorUserId || null]);
+        INSERT INTO customer_library_overrides(customer_id,library_name,access_lane,granted,updated_by,updated_at)
+        VALUES($1,$2,$3,$4,$5,NOW())
+        ON CONFLICT (customer_id,library_name,access_lane) DO UPDATE SET granted=EXCLUDED.granted,updated_by=EXCLUDED.updated_by,updated_at=NOW()
+    `, [customerId, name, libraryLane(accessLane), Boolean(granted), actorUserId || null]);
 }
 
-async function resetLibraryOverride(customerId, libraryName) {
-    await query('DELETE FROM customer_library_overrides WHERE customer_id=$1 AND library_name=$2', [
-        customerId, String(libraryName || '').trim().slice(0, 200)
+async function resetLibraryOverride(customerId, libraryName, accessLane = 'primary') {
+    await query('DELETE FROM customer_library_overrides WHERE customer_id=$1 AND library_name=$2 AND access_lane=$3', [
+        customerId, String(libraryName || '').trim().slice(0, 200), libraryLane(accessLane)
     ]);
 }
 
-async function resetAllLibraryOverrides(customerId) {
-    await query('DELETE FROM customer_library_overrides WHERE customer_id=$1', [customerId]);
+async function resetAllLibraryOverrides(customerId, accessLane = 'primary') {
+    await query('DELETE FROM customer_library_overrides WHERE customer_id=$1 AND access_lane=$2', [customerId, libraryLane(accessLane)]);
 }
 
 // ---- Customer's own library deselection (self-service) ----------------
@@ -140,10 +153,11 @@ async function setLibrarySelection(customerId, names) {
 
 // ---- Effective policy computation --------------------------------------
 
-async function effectivePolicyForCustomer(customerId, plan) {
+async function effectivePolicyForCustomer(customerId, plan, accessLane = null) {
+    const lane = accessLane || laneFor(plan);
     const [override, libOverrides, selection] = await Promise.all([
-        getPolicyOverride(customerId),
-        getLibraryOverrides(customerId),
+        laneOverrides.getPolicyOverride(customerId, lane),
+        getLibraryOverrides(customerId, lane),
         getLibrarySelection(customerId)
     ]);
     const technicalRows = policy.effectiveTechnicalPolicy(plan, override);

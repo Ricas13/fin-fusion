@@ -68,8 +68,14 @@ assert(/access_lane/.test(accountPolicy), 'account policy must use Jellyfin acce
 assert(/getPolicyOverride/.test(laneOverrides)&&/setPolicyOverrideField/.test(laneOverrides)&&/resetAllPolicyOverrides/.test(laneOverrides), 'lane override service must expose scoped lifecycle operations');
 
 // Customer 360 shows and mutates Free and Premium policy independently.
-assert(/Premium Jellyfin policy/.test(adminLane)&&/Free Access policy/.test(adminLane), 'Customer 360 must show separate Premium and Free policy sections');
-assert(/name="accessLane" value="\$\{esc\(accessLane\)\}"/.test(adminLane), 'policy mutation forms must submit the lane explicitly');
+// Deliberate reversal: the old full-width "Premium Jellyfin policy"/"Free
+// Access policy" tables were replaced by per-lane dense panels rendered by
+// customer-360-access-cards.js's laneBlock(), keyed off LANE_LABEL.
+const accessCardsSourceForLane = read('src/platform/customer-360-access-cards.js');
+assert(/LANE_LABEL=\{primary:'Premium',free:'Free Server'\}/.test(accessCardsSourceForLane), 'Customer 360 must label the Premium and Free Server lanes');
+assert(/laneBlock\('primary'/.test(accessCardsSourceForLane)&&/laneBlock\('free'/.test(accessCardsSourceForLane), 'Customer 360 must render a per-lane panel for both the primary and free lanes');
+assert(!/lanePanel|laneSections/.test(adminLane), 'the old server-rendered lane policy tables must be removed in favor of the dense per-lane panels');
+assert(/name="accessLane" value="\$\{esc\(lane\)\}"/.test(accessCardsSourceForLane), 'policy mutation forms must submit the lane explicitly');
 assert(/setPolicyOverrideField\(req\.params\.customerId,\s*accessLane/.test(adminLane), 'admin override writes must be lane scoped');
 const lanePos = composition.indexOf("mountCritical('lanePolicy', createAdminLanePolicyRouter())");
 const customer360Pos = composition.indexOf("mountCritical('customer360', createAdminCustomer360Router())");

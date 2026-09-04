@@ -8,64 +8,20 @@ const overrides = require('../jellyfin/lane-policy-overrides');
 const subscriptionState = require('../entitlements/subscription-state');
 const provisioning = require('../jellyfin/resilient-provisioning');
 
-const LABELS = {
-    streams: 'Concurrent streams',
-    allow_downloads: 'Downloads',
-    allow_video_transcoding: 'Video transcode',
-    allow_audio_transcoding: 'Audio transcode',
-    allow_remuxing: 'Remuxing',
-    allow_live_tv: 'Live TV',
-    allow_live_tv_management: 'Live TV recording',
-    allow_remote_access: 'Remote access',
-    allow_subtitle_editing: 'Subtitle editing'
-};
-
-function esc(value) {
-    return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-}
 function gate(req,res,next) {
     if (req.session?.authUserId && req.session?.authRole === 'admin' && req.session?.adminId) return next();
     return res.redirect('/login?session=expired');
 }
 function targetLane(value) { return overrides.lane(value || 'primary'); }
-function fieldValue(field, value) {
-    if (value === null || value === undefined) return '—';
-    if (field === 'streams') return esc(value);
-    return value ? 'Yes' : 'No';
-}
-function fieldControl(field, row) {
-    const has = row.override !== null;
-    if (field === 'streams') return `<input class="input compact" type="number" name="${esc(field)}" min="1" max="50" placeholder="Inherit" value="${has ? esc(row.override) : ''}">`;
-    return `<select class="input compact" name="${esc(field)}"><option value="" ${!has?'selected':''}>Inherit</option><option value="true" ${has&&row.override===true?'selected':''}>On</option><option value="false" ${has&&row.override===false?'selected':''}>Off</option></select>`;
-}
+// Which Jellyfin lanes (Premium/Free Access) this customer currently holds.
+// Consumed by customer-360-access-cards.js to render one Access/Libraries/
+// Requests panel per lane the customer actually holds.
 async function laneEntitlements(customerId) {
     const [primaryRaw, free] = await Promise.all([
         subscriptionState.effectiveSubscription(customerId, { includeBlocked: true }),
         subscriptionState.liveFreeJellyfinSubscription(customerId, { includeBlocked: true })
     ]);
     return { primary: primaryRaw && !primaryRaw.is_free_tier ? primaryRaw : null, free: free || null };
-}
-async function lanePanel(req, customerId, accessLane, plan) {
-    const title = accessLane === 'free' ? 'Free Access policy' : 'Premium Jellyfin policy';
-    if (!plan) return `<section class="section"><div class="sectionHead"><div><h2>${title}</h2><div class="muted">No current ${accessLane === 'free' ? 'Free' : 'Premium'} Jellyfin entitlement.</div></div><span class="pill">Inactive</span></div></section>`;
-    const effective = await overrides.effectiveTechnical(customerId, accessLane, plan);
-    const rows = policy.TECHNICAL_FIELDS.map(field => {
-        const row = effective.technicalRows[field];
-        return `<tr><td>${esc(LABELS[field] || field)}</td><td>${fieldValue(field,row.plan)}</td><td>${fieldValue(field,row.override)}</td><td><strong>${fieldValue(field,row.effective)}</strong></td><td>${fieldControl(field,row)}</td></tr>`;
-    }).join('');
-    const planName = plan.contract_plan_name || plan.name || plan.code || accessLane;
-    return `<section class="section"><div class="sectionHead"><div><h2>${title}</h2><div class="muted">${esc(planName)} · overrides affect only this Jellyfin identity/lane.</div></div><span class="pill ${plan.blocked?'warn':'good'}">${plan.blocked?'Blocked':'Active'}</span></div><form class="formPanel" method="post" action="/admin/users/${encodeURIComponent(customerId)}/lane-policy-overrides"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="accessLane" value="${esc(accessLane)}"><div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Field</th><th>Plan</th><th>Override</th><th>Effective</th><th>Set override</th></tr></thead><tbody>${rows}</tbody></table></div><div class="buttonRow"><button class="button">Save ${accessLane === 'free' ? 'Free' : 'Premium'} overrides</button></div></form><form class="formPanel compactAction" method="post" action="/admin/users/${encodeURIComponent(customerId)}/lane-policy-overrides/reset-all"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><input type="hidden" name="accessLane" value="${esc(accessLane)}"><button class="button secondary">Reset this lane to plan</button></form></section>`;
-}
-async function laneSections(req, customerId) {
-    const entitlements = await laneEntitlements(customerId);
-    return `<div class="notice">Playback quotas and Jellyfin technical permissions are enforced independently per access lane. Free capacity never reduces or expands Premium capacity.</div>${await lanePanel(req,customerId,'primary',entitlements.primary)}${await lanePanel(req,customerId,'free',entitlements.free)}`;
-}
-function replaceLegacyEffectivePolicy(html, replacement) {
-    if (typeof html !== 'string') return html;
-    const pattern = /<section class="section"><div class="sectionHead"><h2>Effective policy<\/h2>[\s\S]*?<\/section>/;
-    if (pattern.test(html)) return html.replace(pattern, replacement);
-    const marker = '<section class="section"><div class="sectionHead"><h2>Provisioning history</h2>';
-    return html.includes(marker) ? html.replace(marker, replacement + marker) : html;
 }
 
 function createAdminLanePolicyRouter() {
@@ -109,19 +65,7 @@ function createAdminLanePolicyRouter() {
         }
     });
 
-    router.use('/admin/users/:customerId', gate, async (req,res,next) => {
-        if (req.method !== 'GET' || String(req.query.tab || 'overview') !== 'access') return next();
-        try {
-            const sections = await laneSections(req, req.params.customerId);
-            const send = res.send.bind(res);
-            res.send = body => send(replaceLegacyEffectivePolicy(body, sections));
-            return next();
-        } catch (error) {
-            return next(error);
-        }
-    });
-
     return router;
 }
 
-module.exports = { createAdminLanePolicyRouter, laneEntitlements, laneSections, replaceLegacyEffectivePolicy };
+module.exports = { createAdminLanePolicyRouter, laneEntitlements };
