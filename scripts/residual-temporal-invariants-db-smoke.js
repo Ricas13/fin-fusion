@@ -83,7 +83,9 @@ async function affiliateDeletionInvariant() {
 }
 
 async function capacitySettlementInvariant() {
-    const capacityClass = `capacity-${suffix}`;
+    // server_class is schema-constrained. Isolate this test with explicit plan/server
+    // eligibility rather than inventing a synthetic class name.
+    const capacityClass = 'custom';
     const plan = (await query(`
         INSERT INTO plans(
             code,name,service_type,audience,billing_interval,duration_days,price_minor,currency,
@@ -92,6 +94,7 @@ async function capacitySettlementInvariant() {
         RETURNING *
     `, [unique('capacity-plan'), `Capacity settlement ${suffix}`, capacityClass])).rows[0];
     const server = await jellyfinServer(capacityClass, 1, 'capacity-server');
+    await query(`INSERT INTO plan_server_eligibility(plan_id,server_id,weight) VALUES($1,$2,100)`, [plan.id, server.id]);
     const lateCustomer = await customer('late-settlement');
     const occupyingCustomer = await customer('occupying-customer');
     const snapshot = {
@@ -320,7 +323,10 @@ async function main() {
             await query('DELETE FROM payment_customers WHERE customer_id=$1', [customerId]).catch(() => {});
             await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
         }
-        for (const planId of cleanup.planIds) await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
+        for (const planId of cleanup.planIds) {
+            await query('DELETE FROM plan_server_eligibility WHERE plan_id=$1', [planId]).catch(() => {});
+            await query('DELETE FROM plans WHERE id=$1', [planId]).catch(() => {});
+        }
         for (const serverId of cleanup.serverIds) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});
         for (const jobId of cleanup.jobIds) await query('DELETE FROM customer_deletion_jobs WHERE id=$1', [jobId]).catch(() => {});
         await getPool().end();
