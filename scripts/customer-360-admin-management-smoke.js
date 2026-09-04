@@ -85,12 +85,16 @@ assert(!management.includes('function page(req)')&&!management.includes('functio
 assert(management.includes('module.exports=')&&management.includes('portalSection')&&management.includes('stremioSection')&&management.includes('activationState')&&management.includes('stremioState'),'management helpers must remain exported for the workspaces that still own them');
 
 const view360=read('src/platform/customer-360-view.js');
+const compact360=read('src/platform/customer-360-compact.js');
 const accessCards=read('src/platform/customer-360-access-cards.js');
-assert(accessCards.includes("require('./admin-customer-management')")&&accessCards.includes('manage.stremioSection('),'Customer 360 must retain Stremio installation controls for Stremio/bundle access');
-assert(view360.includes("accessCards=require('./customer-360-access-cards')")&&view360.includes('accessCards.render('),'the dedicated compact Access renderer must own Jellyfin access controls');
-assert(accessCards.includes('Customer control')&&accessCards.includes('ctlGrid')&&accessCards.includes('Access, libraries &amp; requests'),'Customer 360 must expose the consolidated Customer control grid and lane-aware Access/Libraries/Requests panels');
-assert(accessCards.includes("bulkPreviewForm(token,customerId,'migrate_server','Move server (guided)'")&&accessCards.includes('Reset to plan'),'Customer 360 must keep customer-scoped server movement and reset-to-plan operations');
-assert(accessCards.includes('Provisioning history')&&accessCards.includes('Activity'),'large diagnostic tables must remain available as capped/collapsed lower sections');
+assert(view360.includes("compact=require('./customer-360-compact')")&&view360.includes('compact.render(safe,token,options)'),'the focused Customer 360 renderer must own the default operator page');
+for(const title of ['Customer / Portal','Plans & Subscriptions','Jellyfin / Emby','Stremio','Overseerr','Discord','Access / Holds','Danger Zone'])assert(compact360.includes(title),`action-first Customer 360 is missing ${title}`);
+assert(compact360.includes('accessCards.accessLibrariesRequests(detail,token,options)')&&compact360.includes('Permissions, libraries & requests…'),'lane-aware access/library/request overrides must remain available as a secondary action inside the service control panel');
+assert(compact360.includes("bulkForm(token,id,'migrate_server','Move Jellyfin server')")&&compact360.includes("bulkForm(token,id,'end_jellyfin_plan','Revoke current plan now','danger')"),'Customer 360 must preserve guarded server movement and immediate plan-revocation workflows');
+assert(compact360.includes('/access-holds/${encodeURIComponent(hold.id)}/release')&&compact360.includes('Type RELEASE'),'hold release must remain a typed-confirm canonical workflow');
+assert(compact360.includes("disclosure('Activity'")&&compact360.includes("disclosure('Payments'")&&compact360.includes("disclosure('Logs'"),'only the three operator-support disclosures must own lower-page history/technical data');
+assert(!compact360.includes('Jellyfin account details')&&!compact360.includes('Service reconciliation truth'),'redundant account-detail and diagnostic tables must stay off the main action-first page');
+assert(accessCards.includes('Access, libraries &amp; requests')&&accessCards.includes('Reset to plan'),'canonical lane override renderer must remain available to the action-first wrapper');
 
 // Imported Jellyfin customers use the dedicated claim flow, not ordinary portal
 // activation. The page enhancement is deliberately progressive; the server-side
@@ -110,12 +114,9 @@ assert(!operator.includes("link.textContent='Change Jellyfin password';link.setA
 assert(operator.includes("form.dataset.nativeSubmit='true'"),'Customer 360 bulk preview controls must submit as full-page workflows');
 assert(operator.includes('repairCustomerVerificationMarkup'),'escaped email-verification pill markup must be repaired safely in Customer 360');
 
-// Customer 360 is a single server-rendered page now (Customer control grid +
-// lane-aware Access/Libraries/Requests + Billing + Overview/Security/History
-// folded in below), so the client-side multi-tab navigation stabilizer this
-// used to guard against async rewrites is retired along with the tab bar it
-// stabilized. Only the impersonation ("Portal view") relocation remains, and
-// that runs from admin-customer-operator.js.
+// Customer 360 remains one server-rendered page with only one record nav entry
+// plus the Portal view action. The retired multi-tab navigation stabilizer must
+// not return now that operational actions live directly in the eight cards.
 const viewV2=read('src/platform/customer-360-view-v2.js');
 assert(viewV2.includes('Customer record')&&viewV2.includes('detailTab active'),'Customer 360 must keep one active "Customer record" nav entry');
 assert(!fs.existsSync(path.join(root,'public/js/customer-360-navigation.js')),'the retired multi-tab navigation stabilizer must not be reintroduced');

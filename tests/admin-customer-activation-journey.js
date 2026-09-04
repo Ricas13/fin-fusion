@@ -53,8 +53,6 @@ async function main(){
     assert.equal(Number(dbCustomer.subscriptions),0,'Portal-only customer unexpectedly received a streaming subscription');
     assert.equal(dbCustomer.active,false,'Customer became active before using the activation link');
 
-    // Reproduce the operator action that previously failed: open Customers and
-    // click the newly-created real customer into Customer 360.
     await gotoPage(admin,`${BASE}/admin/users`);
     const customerLink=admin.locator(`a[href="/admin/users/${dbCustomer.id}"]`).first();
     assert.equal(await customerLink.count(),1,'Customers list does not link the real customer to Customer 360');
@@ -66,32 +64,29 @@ async function main(){
     assert.equal(new URL(admin.url()).pathname,`/admin/users/${dbCustomer.id}`,'Customer link did not land on the Customer 360 record');
     const customer360Text=await admin.locator('body').innerText();
     assert(/Browser Portal Customer/.test(customer360Text),'Customer 360 did not render the selected customer identity');
+    assert(/Customer \/ Portal/.test(customer360Text)&&/Plans & Subscriptions/.test(customer360Text),'Action-first Customer 360 cards did not render');
     assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
-    // This customer has no Jellyfin/Stremio entitlement, so the permanent-
-    // access control lives in the "More" card of the server-rendered
-    // Customer control grid (it is part of the initial HTML, not injected
-    // asynchronously). Wait for that form before interacting with it.
-    await admin.waitForSelector(`form[action="/admin/users/${dbCustomer.id}/permanent-access"]`,{timeout:15000});
-    await shot(admin,'customer-360');
 
-    // HTMLFormElement exposes named controls as form properties. The permanent
-    // access form deliberately contains input[name="action"], which previously
-    // shadowed form.action in the generic AJAX enhancer and posted to the global
-    // 404 fallback. Exercise the rendered form in Chromium so route existence
-    // alone can never be mistaken for a working button again.
-    const permanentForm=admin.locator(`form[action="/admin/users/${dbCustomer.id}/permanent-access"]`);
-    assert.equal(await permanentForm.count(),1,'Customer 360 permanent-access form is missing');
-    assert.equal(await permanentForm.locator('input[name="action"]').inputValue(),'enable','new customer should render the permanent-access enable action');
+    // The action-first Customer / Portal card must expose the canonical account
+    // lifecycle route directly. This account is intentionally still inactive,
+    // so trying to enable it before password setup must be rejected safely and
+    // must return through the mounted Customer 360 owner rather than falling
+    // through to a generic 404/AJAX failure.
+    const statusForm=admin.locator(`form[action="/admin/users/${dbCustomer.id}/manage/portal/status"]`);
+    await statusForm.waitFor({state:'visible',timeout:15000});
+    assert.equal(await statusForm.count(),1,'Customer / Portal enable action is missing');
+    assert.equal(await statusForm.locator('input[name="active"]').inputValue(),'1','inactive customer should render the enable action');
+    await shot(admin,'customer-360');
     await Promise.all([
       admin.waitForNavigation({waitUntil:'domcontentloaded',timeout:15000}),
-      permanentForm.getByRole('button',{name:'Make permanent'}).click()
+      statusForm.getByRole('button',{name:'Enable portal'}).click()
     ]);
     await settle(admin);
-    assert.equal(new URL(admin.url()).pathname,`/admin/users/${dbCustomer.id}`,'Permanent-access button did not return through the mounted Customer 360 owner');
-    const permanentResultText=await admin.locator('body').innerText();
-    assert(/Give the customer an active plan before making access permanent/i.test(permanentResultText),'Mounted permanent-access handler did not return its expected no-plan validation');
-    assert(!/Not found|Request failed/i.test(permanentResultText),'Permanent-access form fell through to the global Not found/request failure path');
-    await shot(admin,'permanent-access-mounted');
+    assert.equal(new URL(admin.url()).pathname,`/admin/users/${dbCustomer.id}`,'Portal-status action did not return through the mounted Customer 360 owner');
+    const statusResultText=await admin.locator('body').innerText();
+    assert(/onboarding link|choose their password|password/i.test(statusResultText),'Mounted portal-status handler did not return its expected pre-onboarding validation');
+    assert(!/Not found|Request failed/i.test(statusResultText),'Portal-status action fell through to the global Not found/request failure path');
+    await shot(admin,'portal-status-mounted');
 
     // Duplicate creation must explain the problem rather than create a second identity.
     await gotoPage(admin,`${BASE}/admin/users/new`);
@@ -117,7 +112,6 @@ async function main(){
     assert(/Account activated/.test(await customer.locator('body').innerText()),'Customer activation did not complete cleanly');
     await shot(customer,'account-activated');
 
-    // The activation token is one-use even after success.
     const replay=await customerContext.newPage();
     response=await gotoPage(replay,activationLink);
     assert(response&&response.status()===410,'Consumed activation token remained reusable');
