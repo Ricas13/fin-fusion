@@ -63,7 +63,7 @@ const SETTING_HELP=Object.freeze({
     'Duration (days)':'Access period used when this plan creates a time-limited entitlement.',
     'Server class':'Default server pool class eligible to host customers on this plan.',
     'Sort order':'Controls relative display order; lower values appear earlier where sorting uses this field.',
-    'Concurrent streams':'Maximum simultaneous playback sessions allowed by this plan policy.',
+    'Concurrent streams':'Maximum simultaneous playback sessions allowed by this plan policy. This does not consume server customer capacity.',
     'Price':'Catalogue price before any eligible discount or referral adjustment.',
     'Currency':'Three-letter ISO currency used for catalogue pricing and payment-provider validation.',
     'Stripe price ID':'Stripe-side recurring price or product mapping used for new Stripe checkouts.',
@@ -72,7 +72,7 @@ const SETTING_HELP=Object.freeze({
     'Public URL':'Externally reachable URL customers and playback clients should use.',
     'API key':'Credential CAPTAiNFiN uses for authenticated server-to-server requests. Treat it as a secret.',
     'Priority':'Placement preference used when more than one eligible server can host a customer.',
-    'Max users':'Optional server capacity limit used by placement decisions.',
+    'Max users':'Maximum managed customer users automatic placement may put on this server. Every customer counts once.',
     'SMTP host':'Mail server hostname used for transactional email delivery.',
     'SMTP port':'Mail server TCP port used by the configured SMTP security mode.',
     'From email':'Sender address customers see on transactional emails.',
@@ -158,7 +158,7 @@ function discountScriptFor(options={}){
 
 function layout(options={}){
     const workflow=notificationTabsFor(options)+provisioningTabsFor(options)+integrationTabsFor(options)+backupTabsFor(options);
-    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script><script src="/js/customer-360-navigation.js" defer></script>';
+    const scripts=notificationTestScriptFor(options)+planWorkflowScriptFor(options)+discountScriptFor(options)+'<script src="/js/operator-business-indicators.js" defer></script><script src="/js/customer-360-navigation.js" defer></script><script src="/js/admin-customer-operator.js" defer></script>';
     const canonicalBody=canonicalizeRetiredAdminDestinations(options.body);
     options={...options,body:workflow+canonicalBody+scripts};
     const safeBody=stripInlineScripts(options.body);
