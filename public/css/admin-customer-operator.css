@@ -1,0 +1,30 @@
+.operatorCustomerActions{margin-top:14px;border-color:#2c4250;background:linear-gradient(180deg,rgba(20,31,39,.98),rgba(16,24,31,.98))}
+.operatorCustomerActions .sectionHead{align-items:flex-start;gap:16px}
+.operatorCustomerSummary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}
+.operatorCustomerSummary>div{min-width:0;padding:12px 13px;border:1px solid #293640;border-radius:9px;background:#121a21}
+.operatorCustomerSummary span{display:block;margin-bottom:4px;color:#8493a2;font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em}
+.operatorCustomerSummary strong{display:block;overflow-wrap:anywhere;color:#edf4f8;font-size:13px}
+.operatorCustomerRule{margin:0 0 14px;padding:9px 12px;border-left:3px solid #3384a0;border-radius:6px;background:rgba(51,132,160,.08);color:#9db0bd;font-size:12px}
+.operatorPrimaryActions{display:flex;align-items:flex-start;flex-wrap:wrap;gap:8px}
+.operatorServerAction{display:grid;grid-template-columns:minmax(250px,1fr) auto;gap:8px;min-width:min(100%,520px);margin:0}
+.operatorServerSelect{min-width:260px}
+.operatorOverrideWarning{grid-column:1/-1;padding:9px 11px;border:1px solid rgba(239,180,64,.35);border-radius:7px;background:rgba(239,180,64,.07);color:#d8bc7d;font-size:11px;line-height:1.45}
+.operatorOverrideWarning[hidden]{display:none}
+.operatorMoreActions{margin-top:12px;border-top:1px solid #27343e;padding-top:10px}
+.operatorMoreActions>summary{width:max-content;cursor:pointer;color:#9fb0bd;font-size:12px;font-weight:700}
+.operatorMoreActionsBody{display:flex;flex-wrap:wrap;gap:8px;padding-top:10px}
+.operatorLegacyDetails{margin-top:12px;border:1px solid #25313b;border-radius:9px;background:#111920}
+.operatorLegacyDetails>summary{cursor:pointer;padding:10px 13px;color:#8fa0ad;font-size:11px;font-weight:750}
+.operatorLegacyDetails>section,.operatorLegacyDetails>.customerControlCentre{margin:0;border:0;border-top:1px solid #25313b;border-radius:0;background:transparent}
+.customerPortalTab{display:flex;margin:0;padding:0}
+.customerPortalTab form{display:flex;margin:0}
+.customerPortalTab .detailTab{appearance:none;border:0;background:transparent;font:inherit;cursor:pointer}
+#customersTable .operatorMetricCell{min-width:118px}
+#customersTable .operatorMetricMain{display:block;color:#e6eef4;font-size:12px;font-weight:750;white-space:nowrap}
+#customersTable .operatorMetricMain.live{color:#8bd6a2}
+#customersTable .operatorMetricSub{display:block;margin-top:3px;color:#788996;font-size:10px;line-height:1.35}
+#customersTable .operatorAccessCell{min-width:105px}
+#customersTable .operatorAccessCell .operatorMetricSub{display:block;margin-top:4px;color:#788996;font-size:10px}
+#customersTable .operatorRowActions{white-space:nowrap}
+@media(max-width:1050px){.operatorCustomerSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.operatorCustomerSummary{grid-template-columns:1fr}.operatorServerAction{grid-template-columns:1fr;width:100%}.operatorServerAction .button{width:100%}.operatorServerSelect{min-width:0;width:100%}.operatorPrimaryActions{display:grid;grid-template-columns:1fr}.operatorPrimaryActions>.plainForm,.operatorPrimaryActions>.plainForm .button{width:100%}.customerPortalTab{width:100%}.customerPortalTab form,.customerPortalTab .detailTab{width:100%}}
