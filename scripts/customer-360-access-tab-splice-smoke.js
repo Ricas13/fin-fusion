@@ -29,7 +29,7 @@ assert(cardsSource.includes("grid-template-columns:repeat(3,minmax(0,1fr))"),'De
 assert(cardsSource.includes("option('','Inherit'")&&cardsSource.includes("option('true','Allow'")&&cardsSource.includes("option('false','Deny'"),'Boolean access cards must preserve tri-state Inherit / Allow / Deny semantics');
 assert(cardsSource.includes('Save access changes'),'Technical cards must save together');
 assert(cardsSource.includes('/admin/customer-jellyfin-password?customerId=')&&cardsSource.includes('Change Jellyfin password'),'Jellyfin account details must retain password support inside the compact Access workspace');
-assert(/<details class=\"section accessDisclosure\"><summary class=\"accessDisclosureSummary\"><div><span class=\"accessEyebrow\">Libraries/.test(cardsSource),'Libraries must be collapsed behind a compact summary');
+assert(/<details class=\"section accessDisclosure accessControlsSection\"\$\{overrides\?' open':''\}><summary class=\"accessDisclosureSummary\"><div><span class=\"accessEyebrow\">Libraries/.test(cardsSource),'Libraries must render as the same compact card grid as Access controls, collapsed unless overridden');
 assert(cardsSource.includes('Provisioning history')&&cardsSource.includes('accessHistory'),'Provisioning history must be a collapsed lower disclosure');
 assert(cardsSource.includes('accessActivity'),'Activity must be a collapsed lower disclosure');
 assert(cardsSource.indexOf('${provisioningHistory(detail)}')<cardsSource.indexOf('${activitySection(detail)}'),'Activity must be the final Access diagnostic below provisioning history');
