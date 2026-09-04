@@ -4,6 +4,7 @@ const {query}=require('../db');
 const provisioning=require('./provisioning');
 const placement=require('./placement');
 const adminControl=require('./admin-control');
+const subscriptionState=require('../entitlements/subscription-state');
 
 function accessKind(plan){if(plan?.billing_interval==='trial')return'trial';return Number(plan?.price_minor||0)===0?'free':'paid';}
 function serviceType(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
@@ -14,7 +15,11 @@ async function activeAccounts(customerId){const r=await query(`SELECT ja.*,js.na
 async function assignedUsers(serverId){const r=await query(`SELECT COUNT(*)::int n FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`,[serverId]);return Number(r.rows[0]?.n||0);}
 
 async function candidates(customerId){
-  const entitlement=await provisioning.currentEntitlement(customerId);
+  // A deliberate operator command may need to repair access precisely when
+  // ordinary lifecycle policy has blocked automatic provisioning. Keep the
+  // commercial entitlement visible here; the admin is choosing whether to
+  // override admission, not asking automation for permission.
+  const entitlement=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
   if(!entitlement)return{entitlement:null,servers:[],activeAccounts:await activeAccounts(customerId)};
   if(!['jellyfin','bundle'].includes(serviceType(entitlement)))return{entitlement,servers:[],activeAccounts:await activeAccounts(customerId)};
   const existing=await activeAccounts(customerId);
