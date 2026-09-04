@@ -116,7 +116,7 @@ assert(lifecycle.includes('await inactivityHolds.releaseObsoleteForCustomer(inpu
 
 // Server-scoped user import owns execution even though Customers exposes the entry point.
 assert(serverForm.includes('Users / Import')&&serverForm.includes('/users'),'Each Jellyfin server must expose Users / Import in its local tabs');
-assert(serverForm.includes('Sellable stream capacity'),'Jellyfin server configuration must expose the shared storefront stream-capacity budget');
+assert(serverForm.includes('Customer capacity'),'Jellyfin server configuration must expose the shared storefront customer-capacity budget');
 assert(serverUsers.includes("'/admin/servers/:serverId/users'")&&serverUsers.includes('importer.discover({serverId:s.id})'),'Import must be scoped to exactly one Jellyfin server');
 assert(serverUsers.includes("'/admin/jellyfin-import'")&&serverUsers.includes('res.send(await importLanding(req))'),'Global Jellyfin Import must render the server-picker landing page');
 assert(serverUsers.includes('Choose Jellyfin server')&&serverUsers.includes('/admin/servers/${esc(s.id)}/users'),'Jellyfin Import landing must guide the operator into a server-scoped import');

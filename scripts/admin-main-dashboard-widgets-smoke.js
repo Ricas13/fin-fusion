@@ -57,7 +57,7 @@ async function main(){
     for(const spec of specs){const html=await spec.render(ctx);assert(typeof html==='string'&&html.length>0,`widget ${spec.key} must render non-empty HTML`);}
     assert(ctx.data.profitability&&Number.isFinite(Number(ctx.data.profitability.current.profitMinor)),'dashboard must expose current-month profit');
     assert(ctx.data.profitability&&Number.isFinite(Number(ctx.data.profitability.ytd.profitMinor)),'dashboard must expose YTD profit');
-    assert(ctx.data.streamGauge&&Number.isFinite(Number(ctx.data.streamGauge.active))&&Number.isFinite(Number(ctx.data.streamGauge.capacity)),'dashboard must expose live streams over sellable capacity');
+    assert(ctx.data.userGauge&&Number.isFinite(Number(ctx.data.userGauge.active))&&Number.isFinite(Number(ctx.data.userGauge.capacity)),'dashboard must expose managed customers over configured user capacity');
     assert(ctx.data.growthAnalytics,'dashboard must expose canonical growth/server analytics data');
     assert(Array.isArray(ctx.data.growthAnalytics.growth.rows)&&ctx.data.growthAnalytics.growth.rows.length>0,'growth analytics must expose a filled historical series');
     assert(Number(ctx.data.growthAnalytics.growth.current)>=1,'paid active subscriber series must count the seeded paid customer');
@@ -84,7 +84,7 @@ async function main(){
     assert(growthSource.includes('date_trunc')&&growthSource.includes('generate_series'),'time-adjusted analytics must bucket historical data in PostgreSQL rather than fabricate client-side points');
     assert(growthSource.includes('reactivations')&&growthSource.includes('opening_active')&&growthSource.includes('churn_rate'),'growth series must distinguish reactivation and preserve the opening churn denominator');
     assert(growthSource.includes('avg_concurrent')&&growthSource.includes('directplay_seconds')&&growthSource.includes('directstream_seconds')&&growthSource.includes('transcode_seconds'),'server analytics must derive concurrency and play-method watch time from playback history');
-    assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('used / sellable stream capacity')&&dashboardSource.includes('Needs attention'),'dashboard hero must keep the original top signals');
+    assert(dashboardSource.includes('Profit this month')&&dashboardSource.includes('Profit YTD')&&dashboardSource.includes('managed customers / configured user capacity')&&dashboardSource.includes('Needs attention'),'dashboard hero must keep the original top signals');
     assert(dashboardSource.includes('renderLiveStreamsPanel(req)'),'existing live playback panel must remain intact above analytics');
     assert(!dashboardSource.includes('attentionOverview(stats)')&&!dashboardSource.includes("label: 'MRR'"),'home dashboard must not duplicate the old attention block or MRR tile');
     assert(publicAuthSource.includes('verificationRequired:true'),'public registration page must always disclose email verification');

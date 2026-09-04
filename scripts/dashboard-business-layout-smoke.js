@@ -28,7 +28,7 @@ assert(!main.includes("registry.register('main','cashFlow'")&&!main.includes("re
 assert(main.includes('Growth & server analytics')&&main.includes('/css/admin-dashboard-growth.css'),'Dashboard must identify and style the new analytics section');
 
 assert(dashboard.includes('Profit this month')&&dashboard.includes('Profit YTD'),'Dashboard hero must lead with profit');
-assert(dashboard.includes('used / sellable stream capacity')&&dashboard.includes('Needs attention'),'Dashboard hero must keep live-stream capacity and attention intact');
+assert(dashboard.includes('managed customers / configured user capacity')&&dashboard.includes('Needs attention'),'Dashboard hero must keep user capacity and attention intact');
 assert(dashboard.includes("renderLiveStreamsPanel(req)"),'Live Playback panel must remain directly owned by the existing live-stream renderer');
 assert(dashboard.includes('adminDashboardCompactBody')&&dashboard.includes('profitMetricPair'),'Dashboard must keep the compact top-body contract and paired month/YTD profit');
 

@@ -159,7 +159,7 @@ ejs.compile(access,{filename:'views/customer/jellyfin.ejs'});
   assert.strictEqual(sent.length,1);
   assert.strictEqual(edited.length,0);
   assert.strictEqual(sent[0].allowEveryone,false);
-  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='Reserve / Create Free Account: https://portal.example')&&sent[0].text.includes('10 minutes'));
+  assert(sent[0].text.includes('3 free places currently available.')&&sent[0].text.split('\n').some(line=>line==='Reserve / Create Free Account: https://portal.example/account/register?intent=free')&&sent[0].text.includes('10 minutes'));
   assert(freePlanQuery.includes('visible=TRUE')&&freePlanQuery.includes("audience IN('direct','both')")&&freePlanQuery.includes('ORDER BY sort_order,price_minor'));
   const fullStatus=await digest.run({settings:digestSettings,usage:async()=>({remaining:0}),send,edit,transactionFn,operationsConfig:{publicBaseUrl:'https://portal.example'}});
   assert.strictEqual(fullStatus.updated,1);
