@@ -47,7 +47,11 @@ assert(/STATE_KEY='discord_free_places_status_v1'/.test(freePlaces),'Discord Fre
 assert(/persistentMessage\(remaining,publicBaseUrl\)/.test(freePlaces)&&/discordMessage\.card/.test(freePlaces)&&/Reserve \/ Create Free Account/.test(freePlaces),'Discord Free Server availability must render a structured status card with a reservation action');
 assert(/method:'PATCH'/.test(freePlaces)&&/stored\.messageId&&stored\.text===signature/.test(freePlaces),'Discord availability must edit one message in place and skip unchanged structured capacity');
 assert(/availabilityRestored=becameAvailable\(stored\.remaining,remaining\)/.test(freePlaces),'Discord availability must explicitly recognize a durable zero-to-positive reopening');
-assert(/stored\.messageId&&!availabilityRestored/.test(freePlaces),'routine capacity changes must PATCH in place while reopening bypasses the edit path');
+const routinePatchGuard=/stored\.messageId&&!availabilityRestored/.test(freePlaces)||/else if\(stored\.messageId\)/.test(freePlaces);
+assert(routinePatchGuard,'routine capacity changes must PATCH the canonical message while reopening bypasses the edit path');
+if(/deleteDiscordMessage/.test(freePlaces)){
+  assert(/stored\.messageId&&availabilityRestored/.test(freePlaces)&&/await remove\(\{channelId,messageId:stored\.messageId\}\)/.test(freePlaces),'reopened Free availability must retire the stale full message before posting the fresh notification');
+}
 assert(/No free places currently available/.test(freePlaces)&&/10 minutes/.test(freePlaces),'persistent Discord status must explain full capacity and reservation expiry');
 assert(/discordMissing\(error\)/.test(freePlaces)&&/send\(\{channelId,text,message,allowEveryone:false\}\)/.test(freePlaces),'deleted Discord status messages must be recreated without @everyone spam');
 assert(/refreshFreePlacesStatus\('reservation_created'\)/.test(pendingRegistration),'a successful Free Server reservation must nudge the persistent Discord status immediately after commit');
