@@ -14,7 +14,11 @@ let lastSyncAt = 0;
 let inFlight = null;
 
 function objectId(value) { return typeof value === 'string' ? value : value?.id || null; }
-function positiveInteger(value) { const n = Number(value); return Number.isFinite(n) && n >= 0 ? Math.round(n) : null; }
+function positiveInteger(value) {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
 function occurredAt(charge) { const created = Number(charge?.created); return Number.isFinite(created) && created > 0 ? new Date(created * 1000) : new Date(); }
 function mergedMetadata(charge) {
     const paymentIntent = charge?.payment_intent && typeof charge.payment_intent === 'object' ? charge.payment_intent : null;
@@ -70,7 +74,8 @@ function historyValues(charge, balanceTransaction, customerId) {
     const amount = positiveInteger(charge?.amount);
     if (!charge?.id || !charge?.paid || amount == null || amount <= 0) return null;
     const fee = positiveInteger(balanceTransaction?.fee);
-    const net = Number(balanceTransaction?.net);
+    const rawNet = balanceTransaction?.net;
+    const net = rawNet == null || rawNet === '' ? Number.NaN : Number(rawNet);
     if (fee == null || !Number.isFinite(net)) return null;
     const metadata = mergedMetadata(charge);
     return {
