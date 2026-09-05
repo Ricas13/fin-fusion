@@ -16,6 +16,9 @@ function noStore(_req, res, next) {
     res.setHeader('Pragma', 'no-cache');
     next();
 }
+function safeLog(value, max = 500) {
+    return String(value == null ? '' : value).replace(/[\r\n\t\u2028\u2029]+/g, ' ').slice(0, max);
+}
 function customerPath(customerId, key = '', message = '') {
     const notice = key ? `&${encodeURIComponent(key)}=${encodeURIComponent(message)}` : '';
     return `/admin/users/${encodeURIComponent(customerId)}?tab=access${notice}`;
@@ -27,7 +30,7 @@ async function resyncService(customerId, service) {
     }
     if (service === 'overseerr') {
         try { await requestUserSync.syncOneCustomer(customerId); }
-        catch (error) { console.warn('Overseerr resync after admin-authority change deferred:', error.message); }
+        catch (error) { console.warn('Overseerr resync after admin-authority change deferred:', safeLog(error.message)); }
     }
 }
 
