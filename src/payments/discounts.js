@@ -1,6 +1,7 @@
 'use strict';
 
 const { query, transaction } = require('../db');
+const winbackOffers = require('../marketing/winback-offers');
 
 function normalizeCode(raw) { return String(raw || '').trim().toUpperCase(); }
 function normalizeCurrency(raw) { return String(raw || '').trim().toUpperCase(); }
@@ -41,6 +42,7 @@ async function validateForCheckout({ code, planId, planCode, customerId, currenc
         const used = await query('SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2', [discount.id, customerId]);
         if (used.rows[0].n >= discount.per_customer_limit) throw new Error('You have already used that discount code');
     }
+    if (discount.winback_kind) await winbackOffers.validateDiscountEligibility({ kind:discount.winback_kind, customerId, planId });
     return discount;
 }
 function computeDiscountedMinor(baseMinor, discount) {
@@ -74,6 +76,11 @@ async function reserveForIntent({ code, planCode, customerId, checkoutIntentId, 
         if (d.max_redemptions !== null && Number(d.redemption_count || 0) + Number(totals.total || 0) >= Number(d.max_redemptions)) throw new Error('That discount code has reached its redemption limit');
         const used = await client.query('SELECT COUNT(*)::int n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2', [d.id, customerId]);
         if (Number(used.rows[0].n || 0) + Number(totals.customer_total || 0) >= Number(d.per_customer_limit || 1)) throw new Error('You have already used or reserved that discount code');
+        if (d.winback_kind) {
+            const planId = intent.commercial_snapshot?.planId;
+            if (!planId) throw discountConflict('Checkout contract is missing the authoritative plan identity required by the win-back offer.');
+            await winbackOffers.reserveDiscountTx(client, { kind:d.winback_kind, customerId, planId, checkoutIntentId, discountCodeId:d.id });
+        }
         const discounted = computeDiscountedMinor(baseMinor, d), applied = Math.max(0, Number(baseMinor || 0) - discounted);
         const requestedExpiry = new Date(Date.now() + Math.max(5, Math.min(180, Number(ttlMinutes) || 30)) * 60000);
         // Reservation coverage is an invariant: a still-valid checkout may never
@@ -88,6 +95,7 @@ async function releaseIntentReservation(checkoutIntentId, state = 'released') {
     if (!checkoutIntentId) return 0;
     const normalized = state === 'consumed' ? 'consumed' : 'released';
     const r = await query(`UPDATE discount_checkout_reservations SET state=$2,consumed_at=CASE WHEN $2='consumed' THEN NOW() ELSE consumed_at END,released_at=CASE WHEN $2='released' THEN NOW() ELSE released_at END,updated_at=NOW() WHERE checkout_intent_id=$1 AND state='reserved' RETURNING id`, [checkoutIntentId, normalized]);
+    if (normalized === 'released') await winbackOffers.releaseCheckoutReservation(checkoutIntentId);
     return r.rowCount;
 }
 
@@ -140,6 +148,7 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
             subscriptionId,
             amountAppliedMinor: Number(frozen.amount_applied_minor || 0)
         });
+        if (row.winback_kind && !result.alreadyRecorded) await winbackOffers.markRedeemedTx(client, { customerId, discountCodeId, subscriptionId });
         return { ...result, frozenReservation: true, reservationId: frozen.id };
     }
 
@@ -148,7 +157,9 @@ async function redeemForSubscriptionTx(client, { discountCodeId, customerId, sub
         const used = await client.query('SELECT COUNT(*)::int AS n FROM discount_redemptions WHERE discount_code_id=$1 AND customer_id=$2', [discountCodeId, customerId]);
         if (used.rows[0].n >= row.per_customer_limit) throw redemptionDivergence(`Discount ${row.code} can no longer be attributed to this customer without exceeding its per-customer limit.`);
     }
-    return recordRedemption(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor });
+    const result = await recordRedemption(client, { discountCodeId, customerId, subscriptionId, amountAppliedMinor });
+    if (row.winback_kind && !result.alreadyRecorded) await winbackOffers.markRedeemedTx(client, { customerId, discountCodeId, subscriptionId });
+    return result;
 }
 
 module.exports = { normalizeCode, normalizeCurrency, assertDiscountCurrency, findActiveCode, validateForCheckout, computeDiscountedMinor, reserveForIntent, releaseIntentReservation, redeemForSubscriptionTx, frozenReservationForSubscription, redemptionDivergence };
