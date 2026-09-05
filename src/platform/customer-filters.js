@@ -12,16 +12,27 @@ const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
 const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
 const SERVICE_VALUES = ['jellyfin', 'stremio'];
-const ACCESS_VALUES = ['active', 'attention', 'provisioning', 'expired', 'no_entitlement', 'portal_disabled'];
+const ACCESS_VALUES = ['active', 'needs_access', 'attention', 'provisioning', 'expired', 'no_entitlement', 'portal_disabled'];
 const PRICE_TYPES = ['free', 'paid'];
 const BILLING_INTERVALS = ['trial', 'month', '6_months', 'year', 'custom'];
 const MAX_MATCHING = 5000;
-const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
+const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND ja_identity.account_purpose='jellyfin' AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
 const SERVICE_EXPR = `COALESCE(NULLIF(cur.service_type_snapshot,''),p.service_type,'jellyfin')`;
-const LIVE_EXPR = `(cur.status IN ('active','trialing') AND (COALESCE(p.is_free_tier,FALSE)=TRUE OR cur.current_period_end IS NULL OR cur.current_period_end>NOW()))`;
+// is_current comes from effective_customer_entitlements. It is deliberately
+// independent of raw subscription status so permanent access and extension
+// windows use the same authority as the provisioning engine.
+const LIVE_EXPR = `(COALESCE(cur.is_current,FALSE)=TRUE)`;
 const CUSTOMER_JELLYFIN_REQUIRED = `(${SERVICE_EXPR} IN ('jellyfin','bundle'))`;
 const MISSING_JELLYFIN = `(${CUSTOMER_JELLYFIN_REQUIRED} AND COALESCE(acc.customer_account_count,0)=0)`;
-const ATTENTION_EXPR = `(cur.status='past_due' OR COALESCE(recon.rank,99) IN (1,2,3) OR (${LIVE_EXPR} AND ${MISSING_JELLYFIN}) OR au.active=FALSE)`;
+const PROVISIONING_EXPR = `(${LIVE_EXPR} AND ${MISSING_JELLYFIN} AND provision.status IN ('pending','running'))`;
+const NEEDS_ACCESS_EXPR = `(${LIVE_EXPR} AND ${MISSING_JELLYFIN} AND COALESCE(provision.status,'') NOT IN ('pending','running'))`;
+const ATTENTION_EXPR = `(
+    (${LIVE_EXPR} AND cur.status='past_due')
+    OR ${NEEDS_ACCESS_EXPR}
+    OR (${LIVE_EXPR} AND ${CUSTOMER_JELLYFIN_REQUIRED} AND COALESCE(acc.customer_account_count,0)>0 AND COALESCE(recon.rank,4)=1)
+    OR (NOT ${LIVE_EXPR} AND COALESCE(acc.customer_account_count,0)>0)
+    OR au.active=FALSE
+)`;
 
 const CUSTOMER_SORTS = Object.freeze({
     attention: { expression: `CASE WHEN ${ATTENTION_EXPR} THEN 0 ELSE 1 END`, defaultDirection: 'asc' },
@@ -29,8 +40,8 @@ const CUSTOMER_SORTS = Object.freeze({
     registered: { expression: 'c.created_at', defaultDirection: 'desc', nulls: 'last' },
     name: { expression: CUSTOMER_NAME_SORT, defaultDirection: 'asc', nulls: 'last' },
     plan: { expression: "COALESCE(p.name,'')", defaultDirection: 'asc' },
-    access: { expression: `CASE WHEN ${ATTENTION_EXPR} THEN 0 WHEN ${LIVE_EXPR} THEN 1 WHEN cur.id IS NULL THEN 3 ELSE 2 END`, defaultDirection: 'asc' },
-    expiring: { expression: 'CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END', defaultDirection: 'asc', nulls: 'last' },
+    access: { expression: `CASE WHEN ${NEEDS_ACCESS_EXPR} THEN 0 WHEN ${PROVISIONING_EXPR} THEN 1 WHEN ${LIVE_EXPR} THEN 2 WHEN cur.id IS NULL THEN 4 ELSE 3 END`, defaultDirection: 'asc' },
+    expiring: { expression: 'CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE COALESCE(cur.access_expires_at,cur.current_period_end) END', defaultDirection: 'asc', nulls: 'last' },
     server: { expression: "COALESCE(acc.server_names,'')", defaultDirection: 'asc' }
 });
 
@@ -49,8 +60,23 @@ function baseJoins() {
         FROM customers c
         LEFT JOIN app_users au ON au.id=c.user_id
         LEFT JOIN LATERAL (
-            SELECT s.* FROM subscriptions s WHERE s.customer_id=c.id
-            ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1
+            SELECT selected.*
+            FROM (
+                SELECT s.*,TRUE AS is_current,e.access_expires_at
+                FROM effective_customer_entitlements e
+                JOIN subscriptions s ON s.id=e.subscription_id
+                WHERE e.customer_id=c.id
+                UNION ALL
+                SELECT s.*,FALSE AS is_current,NULL::timestamptz AS access_expires_at
+                FROM subscriptions s
+                JOIN plans hp ON hp.id=s.plan_id
+                WHERE s.customer_id=c.id
+                  AND s.superseded_by IS NULL
+                  AND COALESCE(hp.is_addon,FALSE)=FALSE
+                  AND NOT EXISTS (SELECT 1 FROM effective_customer_entitlements e2 WHERE e2.customer_id=c.id)
+            ) selected
+            ORDER BY selected.is_current DESC,selected.starts_at DESC NULLS LAST,selected.current_period_end DESC NULLS LAST,selected.created_at DESC
+            LIMIT 1
         ) cur ON TRUE
         LEFT JOIN plans p ON p.id=cur.plan_id
         LEFT JOIN LATERAL (
@@ -58,15 +84,16 @@ function baseJoins() {
                    COUNT(*) FILTER (WHERE ja.account_purpose='jellyfin')::int AS customer_account_count,
                    COUNT(*) FILTER (WHERE ja.account_purpose='stremio_internal')::int AS stremio_account_count,
                    MAX(ja.last_activity_at) AS last_activity_at,
-                   STRING_AGG(DISTINCT js.name, ', ' ORDER BY js.name) AS server_names
+                   STRING_AGG(DISTINCT js.name, ', ' ORDER BY js.name) FILTER (WHERE ja.account_purpose='jellyfin') AS server_names
             FROM jellyfin_accounts ja
             JOIN jellyfin_servers js ON js.id=ja.server_id
             WHERE ja.customer_id=c.id
         ) acc ON TRUE
         LEFT JOIN LATERAL (
             SELECT MIN(CASE jpr.status WHEN 'failed' THEN 1 WHEN 'pending' THEN 2 WHEN 'running' THEN 3 ELSE 4 END) AS rank
-            FROM jellyfin_accounts ja2 JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id
-            WHERE ja2.customer_id=c.id
+            FROM jellyfin_accounts ja2
+            JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id
+            WHERE ja2.customer_id=c.id AND ja2.account_purpose='jellyfin'
         ) recon ON TRUE
         LEFT JOIN LATERAL (
             SELECT provider FROM payment_customers pc WHERE pc.customer_id=c.id ORDER BY pc.updated_at DESC LIMIT 1
@@ -99,7 +126,7 @@ function buildWhere(filters, scope) {
     if (filters.q) {
         const term = `%${String(filters.q).trim().slice(0, 80)}%`;
         const idx = p(term);
-        where.push(`(COALESCE(c.display_name,'') ILIKE ${idx} OR COALESCE(c.email,'') ILIKE ${idx} OR COALESCE(au.username,'') ILIKE ${idx} OR EXISTS (SELECT 1 FROM jellyfin_accounts jaq WHERE jaq.customer_id=c.id AND jaq.jellyfin_username ILIKE ${idx}))`);
+        where.push(`(COALESCE(c.display_name,'') ILIKE ${idx} OR COALESCE(c.email,'') ILIKE ${idx} OR COALESCE(au.username,'') ILIKE ${idx} OR EXISTS (SELECT 1 FROM jellyfin_accounts jaq WHERE jaq.customer_id=c.id AND jaq.account_purpose='jellyfin' AND jaq.jellyfin_username ILIKE ${idx}))`);
     }
 
     if (filters.service && SERVICE_VALUES.includes(filters.service)) {
@@ -113,7 +140,7 @@ function buildWhere(filters, scope) {
         )`);
     }
 
-    if (filters.serverId && isUuid(filters.serverId)) where.push(`EXISTS (SELECT 1 FROM jellyfin_accounts jas WHERE jas.customer_id=c.id AND jas.server_id=${p(filters.serverId)})`);
+    if (filters.serverId && isUuid(filters.serverId)) where.push(`EXISTS (SELECT 1 FROM jellyfin_accounts jas WHERE jas.customer_id=c.id AND jas.account_purpose='jellyfin' AND jas.server_id=${p(filters.serverId)})`);
     if (filters.planId && isUuid(filters.planId)) where.push(`cur.plan_id=${p(filters.planId)}`);
 
     if (filters.status) {
@@ -121,10 +148,11 @@ function buildWhere(filters, scope) {
         else if (STATUS_VALUES.includes(filters.status)) where.push(`cur.status=${p(filters.status)}`);
     }
 
-    if (filters.access === 'active') where.push(`${LIVE_EXPR} AND NOT ${MISSING_JELLYFIN} AND COALESCE(recon.rank,4)=4 AND au.active IS DISTINCT FROM FALSE`);
+    if (filters.access === 'active') where.push(`${LIVE_EXPR} AND NOT ${MISSING_JELLYFIN}`);
+    else if (filters.access === 'needs_access') where.push(NEEDS_ACCESS_EXPR);
     else if (filters.access === 'attention') where.push(ATTENTION_EXPR);
-    else if (filters.access === 'provisioning') where.push(`(COALESCE(recon.rank,99) IN (1,2,3) OR provision.status IN ('pending','running','failed','blocked'))`);
-    else if (filters.access === 'expired') where.push(`cur.id IS NOT NULL AND (cur.status IN ('expired','cancelled') OR (COALESCE(p.is_free_tier,FALSE)=FALSE AND cur.current_period_end<=NOW()))`);
+    else if (filters.access === 'provisioning') where.push(PROVISIONING_EXPR);
+    else if (filters.access === 'expired') where.push(`NOT ${LIVE_EXPR} AND cur.id IS NOT NULL`);
     else if (filters.access === 'no_entitlement') where.push('cur.id IS NULL');
     else if (filters.access === 'portal_disabled') where.push('au.active=FALSE');
 
@@ -139,12 +167,7 @@ function buildWhere(filters, scope) {
     const lapsedDays = boundedInt(filters.lapsedDays, 0, 3650);
     if (lapsedDays !== null) {
         const days = p(lapsedDays);
-        where.push(`NOT EXISTS (
-            SELECT 1 FROM subscriptions live
-            WHERE live.customer_id=c.id AND live.superseded_by IS NULL
-              AND live.status IN ('active','trialing','past_due','paused')
-              AND (live.current_period_end IS NULL OR live.current_period_end>NOW())
-        ) AND EXISTS (
+        where.push(`NOT EXISTS (SELECT 1 FROM effective_customer_entitlements live WHERE live.customer_id=c.id) AND EXISTS (
             SELECT 1 FROM subscriptions hist_lapsed
             WHERE hist_lapsed.customer_id=c.id
             GROUP BY hist_lapsed.customer_id
@@ -154,10 +177,9 @@ function buildWhere(filters, scope) {
 
     const expiresWithinDays = boundedInt(filters.expiresWithinDays, 1, 365);
     if (expiresWithinDays !== null) {
-        where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE
-            AND cur.status IN ('active','trialing','past_due','paused')
-            AND cur.current_period_end>=NOW()
-            AND cur.current_period_end<=NOW()+(${p(expiresWithinDays)}::int*INTERVAL '1 day')`);
+        where.push(`${LIVE_EXPR} AND COALESCE(p.is_free_tier,FALSE)=FALSE
+            AND COALESCE(cur.access_expires_at,cur.current_period_end)>=NOW()
+            AND COALESCE(cur.access_expires_at,cur.current_period_end)<=NOW()+(${p(expiresWithinDays)}::int*INTERVAL '1 day')`);
     }
 
     const inactivePlaybackDays = boundedInt(filters.inactivePlaybackDays, 1, 3650);
@@ -170,8 +192,8 @@ function buildWhere(filters, scope) {
         )`);
     }
 
-    // Legacy accountStatus remains accepted only for portal sign-in state.
-    // Managed Jellyfin identities no longer have a disabled state.
+    // Portal sign-in is deliberately separate from media-service access.
+    // Managed Jellyfin identities no longer have a disabled lifecycle state.
     if (filters.accountStatus === 'portal_disabled') where.push('au.active=FALSE');
 
     if (filters.paymentProvider) {
@@ -179,8 +201,8 @@ function buildWhere(filters, scope) {
         else if (PAYMENT_PROVIDERS.includes(filters.paymentProvider)) where.push(`pay.provider=${p(filters.paymentProvider)}`);
     }
 
-    if (filters.expiryFrom) where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE AND cur.current_period_end >= ${p(filters.expiryFrom)}::timestamptz`);
-    if (filters.expiryTo) where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE AND cur.current_period_end <= ${p(filters.expiryTo)}::timestamptz`);
+    if (filters.expiryFrom) where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(cur.access_expires_at,cur.current_period_end) >= ${p(filters.expiryFrom)}::timestamptz`);
+    if (filters.expiryTo) where.push(`COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(cur.access_expires_at,cur.current_period_end) <= ${p(filters.expiryTo)}::timestamptz`);
     if (filters.lastActiveFrom) where.push(`acc.last_activity_at >= ${p(filters.lastActiveFrom)}::timestamptz`);
     if (filters.lastActiveTo) where.push(`acc.last_activity_at <= ${p(filters.lastActiveTo)}::timestamptz`);
     if (filters.registeredFrom) where.push(`c.created_at >= ${p(filters.registeredFrom)}::timestamptz`);
@@ -218,10 +240,11 @@ const SELECT_COLUMNS = `
     au.username AS login_username,au.active AS login_active,
     (SELECT ja_identity.jellyfin_username
        FROM jellyfin_accounts ja_identity
-      WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL
+      WHERE ja_identity.customer_id=c.id AND ja_identity.account_purpose='jellyfin' AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL
       ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,ja_identity.created_at ASC
       LIMIT 1) AS jellyfin_username,
-    cur.status AS subscription_status,cur.current_period_end,
+    cur.status AS subscription_status,cur.starts_at AS subscription_starts_at,cur.current_period_end,cur.access_expires_at,
+    COALESCE(cur.is_current,FALSE) AS has_current_entitlement,
     p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,
     p.billing_interval,p.price_minor,COALESCE(p.is_free_tier,FALSE) AS is_free_tier,
     ${SERVICE_EXPR} AS service_type,
