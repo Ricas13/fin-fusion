@@ -29,6 +29,7 @@ assert(css.includes('.adminFilterAdvanced[hidden]'), 'secondary filter panel mus
 assert(!plans.includes('data-plan-filters') && !plans.includes('data-plan-search') && !plans.includes('admin-plans-table.js'), 'Plans must not render filtering UI for the deliberately small catalogue');
 assert(plans.includes("href=\"/admin/plans?archived=1\""), 'Plans must retain a compact archived-plan route instead of using filters to hide retired versions');
 assert(events.includes('method="get" action="/admin/events"') && events.includes('Filter history'), 'Audit history must retain a no-JS GET fallback for the shared enhancer');
-assert(customers.includes('compactFilterForm') && customers.includes('>Apply<'), 'Customers must retain a no-JS GET fallback while the shared enhancer owns the interactive UI');
+assert(customers.includes('method="get" action="/admin/users"') && customers.includes('compactFilterForm') && customers.includes('>Apply filters<'), 'Customers must retain a no-JS GET fallback while its dedicated toolbar owns the interactive UI');
+assert(customers.includes('data-native-submit="true"') && customers.includes('customerMoreFilters'), 'Customers must opt out of the shared DOM-rewriting enhancer and own exactly one secondary filter disclosure');
 
 console.log('global admin filter-bar smoke: ok');
