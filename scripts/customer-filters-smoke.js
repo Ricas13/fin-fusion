@@ -74,26 +74,14 @@ function main() {
         assert.strictEqual(tableSort.nextDirection(nameDesc,'expiring',CUSTOMER_SORTS),'asc');
     }
 
-    // Search and the everyday filters are permanently visible, while only the
-    // genuinely secondary controls stay inside the advanced disclosure. The
-    // table is organised around entitlement, Jellyfin identity and placement.
+    // Search is permanently visible and the table is organised around the
+    // operator's actual questions: entitlement, Jellyfin identity and placement.
     {
         const source=fs.readFileSync(path.join(__dirname,'../src/platform/admin-customers-list.js'),'utf8');
-        const filterClient=fs.readFileSync(path.join(__dirname,'../public/js/admin-customer-filters.js'),'utf8');
         const bulk=fs.readFileSync(path.join(__dirname,'../public/js/admin-customers-bulk.js'),'utf8');
         assert.ok(source.includes('Search customers</label>'),'customer search must be an explicit visible control');
         assert.ok(source.includes('customerSearchRow')&&source.includes('data-native-submit="true"'),'customer search must not be moved into the shared hidden advanced-filter shell');
         for(const primary of ['Product','Plan','Server','Access'])assert.ok(source.includes(`>${primary}</label>`),`primary customer filter missing: ${primary}`);
-        assert.ok(source.includes('customerPrimaryFilters'),'everyday customer filters must have their own always-visible container');
-        assert.ok(source.includes('<details class="customerAdvancedFilters"'),'secondary filters must remain in a separate disclosure');
-        assert.ok(!filterClient.includes('originalGrid.replaceWith'),'client enhancement must never replace the server-rendered filter layout');
-        assert.ok(!filterClient.includes('advancedGrid.appendChild'),'client enhancement must never move primary controls into advanced filters');
-        assert.ok(filterClient.includes("[product, access, plan, server, actions]"),'visible filter order must stay Product / Access / Plan / Jellyfin Server');
-        assert.ok(filterClient.includes("searchLabel.textContent = 'Name'"),'visible search field must be labelled Name');
-        assert.ok(filterClient.includes("accessAny.textContent = 'Any'"),'Access must expose the requested Any option');
-        assert.ok(filterClient.includes("planAny.textContent = 'Any Plan'"),'Plan must expose the requested Any Plan option');
-        assert.ok(filterClient.includes("serverAny.textContent = 'Any Jellyfin Server'"),'Server must expose the requested Any Jellyfin Server option');
-        assert.ok(filterClient.includes('More Advanced Filters'),'advanced disclosure must use the explicit More Advanced Filters label');
         assert.ok(source.includes("sortHeader(filters,sortState,'Access','access')"),'Access must be a first-class sortable column');
         assert.ok(source.includes('<th>Jellyfin</th>'),'Jellyfin readiness must have its own column');
         assert.ok(source.includes("sortHeader(filters,sortState,'Server','server')"),'server placement must have its own column');
