@@ -1,1 +1,166 @@
-.page-commerce-orders .content{max-width:none}.ordersHeroLine{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin:-4px 0 12px}.ordersHeroLine>div:first-child>p{margin:0 0 10px;color:var(--muted);font-size:.78rem}.ordersRangeForm{display:flex;align-items:flex-start;gap:8px;position:relative}.ordersRangeSelect{display:grid;grid-template-columns:auto minmax(155px,1fr);align-items:center;gap:0 8px;min-width:225px;padding:8px 10px;border:1px solid #263e4c;border-radius:9px;background:#0e1820}.ordersRangeSelect>span{grid-row:1/3;color:#91a7b5}.ordersRangeSelect .input{height:28px;min-height:28px;padding:0 24px 0 0;border:0;background:transparent;font-size:.72rem;font-weight:700}.ordersRangeSelect small{grid-column:2;color:#7e909e;font-size:.59rem}.ordersCustomRange{position:absolute;right:0;top:54px;z-index:90;display:flex;align-items:end;gap:8px;padding:10px;border:1px solid #29485a;border-radius:9px;background:#0d171f;box-shadow:0 18px 45px rgba(0,0,0,.45)}.ordersCustomRange[hidden]{display:none}.ordersCustomRange label{display:grid;gap:4px;color:#8fa0ac;font-size:.61rem}.ordersCustomRange .input{min-width:140px;height:34px;min-height:34px}.ordersAttention,.ordersPurchases,.ordersChartCard,.ordersRenewalStrip,.ordersDisclosure{border:1px solid #243b49;border-radius:9px;background:linear-gradient(160deg,#101b23,#0d171e)}.ordersAttention{margin-bottom:10px;overflow:hidden}.ordersAttentionHead{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:11px 13px;border-bottom:1px solid #223744}.ordersAttentionHead h2{display:flex;align-items:center;gap:8px;margin:0;color:#edf4f7;font-size:.77rem}.ordersAttentionHead p{margin:3px 0 0;color:#7f909d;font-size:.61rem}.ordersAttentionHead>a{color:#56c7ef;text-decoration:none;font-size:.64rem}.ordersBadge{display:inline-grid;place-items:center;min-width:20px;height:19px;padding:0 6px;border-radius:999px;background:#16435e;color:#bceaff;font-size:.57rem;font-weight:800}.ordersBadge.bad{background:#a63242;color:#fff}.ordersAttention .tableWrap{margin:0 8px 8px;border:1px solid #243744;border-radius:7px}.ordersAttentionTable th{background:#1a2933!important;font-size:.57rem!important}.ordersAttentionTable td{font-size:.63rem!important}.ordersInlineGood{margin:9px 12px 12px;padding:9px 11px;border-radius:7px;background:#102d26;color:#6ee2ac;font-size:.65rem}.ordersKpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 10px}.ordersKpis .analyticsKpi{min-height:84px;padding:12px!important;border:1px solid #263d4b!important;border-radius:8px!important;background:linear-gradient(155deg,#101b23,#0e1820)!important}.ordersKpis .analyticsKpiLabel{font-size:.62rem}.ordersKpis .analyticsKpiValue{margin:7px 0 5px;font-size:1.25rem;letter-spacing:-.035em}.ordersKpis .analyticsKpiMeta{font-size:.55rem}.ordersAnalyticsGrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;margin-bottom:9px}.ordersChartCard{grid-column:span 4;min-width:0;overflow:hidden}.ordersChartCard.ordersChartWide{grid-column:span 6}.ordersChartCard:nth-child(2){grid-column:span 3}.ordersChartCard:nth-child(3){grid-column:span 3}.ordersChartCard:nth-child(4){grid-column:span 4}.ordersChartCard:nth-child(5){grid-column:span 4}.ordersChartCard:nth-child(6){grid-column:span 4}.ordersCardHead{min-height:50px;padding:10px 12px 6px}.ordersCardHead h2{margin:0;color:#eef4f7;font-size:.7rem}.ordersCardHead p{margin:3px 0 0;color:#7e909e;font-size:.56rem;line-height:1.3}.ordersChartBody{min-height:185px;padding:2px 10px 10px}.ordersChartBody .chartFrame{min-height:175px}.ordersChartBody .chartSvg{height:185px}.ordersChartBody .chartDonutWrap{display:grid;grid-template-columns:minmax(100px,130px) minmax(0,1fr);align-items:center;gap:8px}.ordersChartBody .chartDonut{width:120px;height:120px}.ordersChartBody .chartLegend{font-size:.57rem;gap:5px}.ordersChartBody .chartDonutTotal{font-size:12px}.ordersChartBody .barList{gap:7px;padding-top:8px}.ordersChartBody .barItem{grid-template-columns:minmax(90px,1fr) minmax(80px,1.4fr) 38px;font-size:.58rem}.ordersRevenuePair{display:grid;grid-template-columns:1fr 1fr;gap:9px;height:100%;align-content:center}.ordersRevenuePair>div{padding:14px;border:1px solid #233947;border-radius:8px;background:#0c171e}.ordersRevenuePair span{display:block;color:#8b9ba8;font-size:.61rem}.ordersRevenuePair strong{display:block;margin-top:7px;color:#f0f5f8;font-size:1.18rem}.ordersRevenuePair>div:first-child strong{color:#ff7b85}.ordersRevenuePair>div:last-child strong{color:#58dda0}.ordersRenewalStrip{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:9px;padding:9px 12px}.ordersRenewalStrip>div:first-child{display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:#91a2af;font-size:.61rem}.ordersRenewalStrip strong{color:#eaf1f5;font-size:.67rem}.ordersRenewalStrip b{color:#dce8ee}.ordersRenewalActions{display:flex;align-items:center;gap:9px}.ordersAvatars{display:flex;align-items:center}.ordersAvatars span{display:grid;place-items:center;width:25px;height:25px;margin-left:-5px;border:2px solid #0e1820;border-radius:50%;background:#1c4c6d;color:#d9effd;font-size:.52rem;font-weight:800}.ordersAvatars span:first-child{margin-left:0}.ordersPurchases{padding:0;overflow:hidden}.ordersSectionHead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:11px 12px 8px}.ordersSectionHead h2{margin:0;color:#f1f5f8;font-size:.8rem}.ordersSectionHead p{margin:3px 0 0;color:#82929f;font-size:.58rem}.ordersSectionHead>div:last-child{display:flex;align-items:center;gap:10px;color:#a0afba;font-size:.59rem}.ordersPerPage{padding:6px 9px;border:1px solid #2d4655;border-radius:7px;background:#0d1820;color:#d3dee5}.ordersPurchaseFilters{display:grid;grid-template-columns:minmax(260px,1.7fr) repeat(3,minmax(120px,.65fr)) minmax(270px,1.2fr) auto auto;gap:7px;align-items:center;padding:0 12px 10px}.ordersPurchaseFilters .input{height:34px;min-height:34px;background:#0c171e;border-color:#294657;font-size:.62rem}.ordersSearch{position:relative}.ordersSearch>span{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#8096a4;z-index:1}.ordersSearch .input{width:100%;padding-left:30px}.ordersDateFilter{display:grid;grid-template-columns:1fr auto 1fr;gap:5px;align-items:center}.ordersDateFilter span{color:#657986}.ordersClear{color:#4dc6ef;text-decoration:none;font-size:.58rem;white-space:nowrap}.ordersPurchases>.tableWrap{margin:0 12px;border:1px solid #223642;border-radius:7px}.ordersTable th{background:#192731!important;font-size:.55rem!important}.ordersTable td{font-size:.61rem!important}.ordersTable .button{min-height:27px;padding:4px 8px;font-size:.55rem}.ordersTableFooter{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;color:#8999a5;font-size:.58rem}.ordersPagination{display:flex;align-items:center;gap:4px}.ordersPage{display:grid;place-items:center;min-width:28px;height:27px;padding:0 7px;border:1px solid #273e4c;border-radius:6px;color:#99a8b3;text-decoration:none}.ordersPage.active{border-color:#24bfe0;background:#113142;color:#6edaf5}.ordersPage.disabled{opacity:.35;pointer-events:none}.ordersDisclosures{display:grid;gap:7px;margin-top:10px}.ordersDisclosure{overflow:hidden}.ordersDisclosure summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:43px;padding:8px 12px;cursor:pointer;list-style:none}.ordersDisclosure summary::-webkit-details-marker{display:none}.ordersDisclosure summary>div{display:flex;align-items:center;gap:9px;min-width:0}.ordersDisclosure summary strong{color:#e8eff3;font-size:.65rem}.ordersDisclosure summary small{color:#758895;font-size:.56rem}.ordersDisclosure summary>span{color:#8ba0ad}.ordersDisclosure[open] summary{border-bottom:1px solid #243845}.ordersDisclosureBody{padding:10px 12px}.ordersPolicyGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}.ordersPolicyGrid>div{padding:10px;border:1px solid #243b49;border-radius:7px;background:#0b161d}.ordersPolicyGrid span{display:block;color:#82949f;font-size:.57rem}.ordersPolicyGrid strong{display:block;margin-top:5px;color:#e5edf2;font-size:.66rem}@media(max-width:1320px){.ordersKpis{grid-template-columns:repeat(3,1fr)}.ordersPurchaseFilters{grid-template-columns:minmax(240px,1fr) repeat(3,minmax(110px,.55fr));}.ordersDateFilter{grid-column:1/3}.ordersPurchaseFilters>.button{grid-column:3}.ordersClear{grid-column:4}}@media(max-width:980px){.ordersHeroLine{flex-direction:column}.ordersRangeForm{align-self:stretch}.ordersRangeSelect{width:100%}.ordersCustomRange{left:0;right:auto}.ordersAnalyticsGrid{grid-template-columns:1fr 1fr}.ordersChartCard,.ordersChartCard.ordersChartWide,.ordersChartCard:nth-child(n){grid-column:span 1}.ordersPurchaseFilters{grid-template-columns:1fr 1fr}.ordersSearch{grid-column:1/-1}.ordersDateFilter{grid-column:1/-1}.ordersPurchaseFilters>.button,.ordersClear{grid-column:auto}.ordersRenewalStrip{align-items:flex-start;flex-direction:column}.ordersTableFooter{align-items:flex-start;flex-direction:column}}@media(max-width:720px){.ordersKpis{grid-template-columns:1fr 1fr}.ordersAnalyticsGrid{grid-template-columns:1fr}.ordersChartCard,.ordersChartCard.ordersChartWide,.ordersChartCard:nth-child(n){grid-column:1}.ordersAttentionHead{align-items:flex-start}.ordersAttention .tableWrap{overflow-x:auto}.ordersAttentionTable{min-width:780px}.ordersPurchaseFilters{grid-template-columns:1fr}.ordersPurchaseFilters>*{grid-column:1!important}.ordersDateFilter{grid-template-columns:1fr}.ordersDateFilter span{display:none}.ordersPurchases>.tableWrap{overflow-x:auto}.ordersTable{min-width:760px}.ordersPolicyGrid{grid-template-columns:1fr}.ordersDisclosure summary>div{align-items:flex-start;flex-wrap:wrap}.ordersDisclosure summary small{flex-basis:100%}}@media(max-width:480px){.ordersKpis{grid-template-columns:1fr}.ordersCustomRange{position:fixed;left:10px;right:10px;top:80px;flex-direction:column;align-items:stretch}.ordersCustomRange .input{width:100%}.ordersChartBody .chartDonutWrap{grid-template-columns:1fr}.ordersChartBody .chartDonut{margin:auto}.ordersSectionHead{flex-direction:column}.ordersTableFooter{padding-bottom:12px}.ordersPagination{max-width:100%;overflow-x:auto}}
+.page-commerce-orders .content{max-width:none}
+.ordersHeroLine{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin:-4px 0 12px}
+.ordersHeroLine>div:first-child>p{margin:0 0 10px;color:var(--muted);font-size:.78rem}
+.ordersRangeForm{display:flex;align-items:flex-start;gap:8px;position:relative}
+.ordersRangeSelect{display:grid;grid-template-columns:auto minmax(155px,1fr);align-items:center;gap:0 8px;min-width:225px;padding:8px 10px;border:1px solid #263e4c;border-radius:9px;background:#0e1820}
+.ordersRangeSelect>span{grid-row:1/3;color:#91a7b5}
+.ordersRangeSelect .input{height:28px;min-height:28px;padding:0 24px 0 0;border:0;background:transparent;font-size:.72rem;font-weight:700}
+.ordersRangeSelect small{grid-column:2;color:#7e909e;font-size:.59rem}
+.ordersCustomRange{position:absolute;right:0;top:54px;z-index:90;display:flex;align-items:end;gap:8px;padding:10px;border:1px solid #29485a;border-radius:9px;background:#0d171f;box-shadow:0 18px 45px rgba(0,0,0,.45)}
+.ordersCustomRange[hidden]{display:none}
+.ordersCustomRange label{display:grid;gap:4px;color:#8fa0ac;font-size:.61rem}
+.ordersCustomRange .input{min-width:140px;height:34px;min-height:34px}
+.ordersAttention,.ordersPurchases,.ordersChartCard,.ordersRenewalStrip,.ordersDisclosure{border:1px solid #243b49;border-radius:9px;background:linear-gradient(160deg,#101b23,#0d171e)}
+.ordersAttention{margin-bottom:10px;overflow:visible}
+.ordersAttentionHead{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:11px 13px;border-bottom:1px solid #223744}
+.ordersAttentionHead h2{display:flex;align-items:center;gap:8px;margin:0;color:#edf4f7;font-size:.77rem}
+.ordersAttentionHead p{margin:3px 0 0;color:#7f909d;font-size:.61rem}
+.ordersAttentionHead>a{color:#56c7ef;text-decoration:none;font-size:.64rem}
+.ordersPanelIcon,.ordersCalendarIcon{color:#4fc9ef}
+.ordersBadge{display:inline-grid;place-items:center;min-width:20px;height:19px;padding:0 6px;border-radius:999px;background:#16435e;color:#bceaff;font-size:.57rem;font-weight:800}
+.ordersBadge.bad{background:#a63242;color:#fff}
+.ordersAttention .tableWrap{margin:0 8px 8px;border:1px solid #243744;border-radius:7px;overflow:visible}
+.ordersAttentionTable th{background:#1a2933!important;font-size:.57rem!important}
+.ordersAttentionTable td{font-size:.63rem!important}
+.ordersAttentionTable td:last-child{white-space:nowrap}
+.ordersIssueActions,.ordersPurchaseActions{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+.ordersInlineGood{margin:9px 12px 12px;padding:9px 11px;border-radius:7px;background:#102d26;color:#6ee2ac;font-size:.65rem}
+.ordersKpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 10px}
+.ordersKpis .analyticsKpi{min-height:84px;padding:12px!important;border:1px solid #263d4b!important;border-radius:8px!important;background:linear-gradient(155deg,#101b23,#0e1820)!important}
+.ordersKpis .analyticsKpiLabel{font-size:.62rem}
+.ordersKpis .analyticsKpiValue{margin:7px 0 5px;font-size:1.25rem;letter-spacing:-.035em}
+.ordersKpis .analyticsKpiMeta{font-size:.55rem}
+.ordersAnalyticsGrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;margin-bottom:9px}
+.ordersChartCard{grid-column:span 4;min-width:0;overflow:hidden}
+.ordersChartCard.ordersChartWide{grid-column:span 6}
+.ordersChartCard:nth-child(2){grid-column:span 3}
+.ordersChartCard:nth-child(3){grid-column:span 3}
+.ordersChartCard:nth-child(4){grid-column:span 4}
+.ordersChartCard:nth-child(5){grid-column:span 4}
+.ordersChartCard:nth-child(6){grid-column:span 4}
+.ordersCardHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-height:50px;padding:10px 12px 6px}
+.ordersCardHead h2{margin:0;color:#eef4f7;font-size:.7rem}
+.ordersCardHead p{margin:3px 0 0;color:#7e909e;font-size:.56rem;line-height:1.3}
+.ordersChartSelect{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;padding:6px 9px;border:1px solid #2c4554;border-radius:6px;background:#0c171e;color:#ced9df;font-size:.57rem;font-weight:700}
+.ordersChartBody{min-height:185px;padding:2px 10px 10px}
+.ordersChartBody .chartFrame{min-height:175px}
+.ordersChartBody .chartSvg{height:185px}
+.ordersChartBody .chartDonutWrap{display:grid;grid-template-columns:minmax(100px,130px) minmax(0,1fr);align-items:center;gap:8px}
+.ordersChartBody .chartDonut{width:120px;height:120px}
+.ordersChartBody .chartLegend{font-size:.57rem;gap:5px}
+.ordersChartBody .chartDonutTotal{font-size:12px}
+.ordersChartBody .barList{gap:7px;padding-top:8px}
+.ordersChartBody .barItem{grid-template-columns:minmax(90px,1fr) minmax(80px,1.4fr) 38px;font-size:.58rem}
+.ordersRevenuePair{display:grid;grid-template-columns:1fr 1fr;gap:9px;height:100%;align-content:center}
+.ordersRevenuePair>div{padding:14px;border:1px solid #233947;border-radius:8px;background:#0c171e}
+.ordersRevenuePair span{display:block;color:#8b9ba8;font-size:.61rem}
+.ordersRevenuePair strong{display:block;margin-top:7px;color:#f0f5f8;font-size:1.18rem}
+.ordersRevenuePair>div:first-child strong{color:#ff7b85}
+.ordersRevenuePair>div:last-child strong{color:#58dda0}
+.ordersRenewalStrip{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:9px;padding:9px 12px}
+.ordersRenewalStrip>div:first-child{display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:#91a2af;font-size:.61rem}
+.ordersRenewalStrip strong{display:flex;align-items:center;gap:7px;color:#eaf1f5;font-size:.67rem}
+.ordersRenewalStrip b{color:#dce8ee}
+.ordersRenewalActions{display:flex;align-items:center;gap:9px}
+.ordersAvatars{display:flex;align-items:center}
+.ordersAvatars span{display:grid;place-items:center;width:25px;height:25px;margin-left:-5px;border:2px solid #0e1820;border-radius:50%;background:#1c4c6d;color:#d9effd;font-size:.52rem;font-weight:800}
+.ordersAvatars span:first-child{margin-left:0}
+.ordersPurchases{padding:0;overflow:visible}
+.ordersSectionHead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:11px 12px 8px}
+.ordersSectionHead h2{margin:0;color:#f1f5f8;font-size:.8rem}
+.ordersSectionHead p{margin:3px 0 0;color:#82929f;font-size:.58rem}
+.ordersSectionHead>div:last-child{display:flex;align-items:center;gap:10px;color:#a0afba;font-size:.59rem}
+.ordersPerPage{display:inline-flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid #2d4655;border-radius:7px;background:#0d1820;color:#d3dee5}
+.ordersPerPage b{font-size:.55rem;color:#7f94a1}
+.ordersPurchaseFilters{display:grid;grid-template-columns:minmax(260px,1.7fr) repeat(3,minmax(120px,.65fr)) minmax(220px,1.05fr) auto;gap:7px;align-items:center;padding:0 12px 10px}
+.ordersPurchaseFilters .input{height:34px;min-height:34px;background:#0c171e;border-color:#294657;font-size:.62rem}
+.ordersSearch{position:relative}
+.ordersSearch>span{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#8096a4;z-index:1}
+.ordersSearch .input{width:100%;padding-left:30px}
+.ordersDatePicker{position:relative;min-width:0}
+.ordersDatePicker>summary{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid #294657;border-radius:7px;background:#0c171e;color:#c8d3da;font-size:.6rem;cursor:pointer;list-style:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ordersDatePicker>summary::-webkit-details-marker{display:none}
+.ordersDatePicker>summary>span{color:#79909e}
+.ordersDatePicker>summary>b{margin-left:auto;color:#748995;font-size:.55rem}
+.ordersDatePopover{position:absolute;right:0;top:40px;z-index:95;display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:7px;min-width:390px;padding:10px;border:1px solid #29485a;border-radius:8px;background:#0d171f;box-shadow:0 18px 45px rgba(0,0,0,.45)}
+.ordersDatePopover label{display:grid;gap:4px;color:#8799a5;font-size:.56rem}
+.ordersDatePopover .input{min-width:135px}
+.ordersClear{color:#4dc6ef;text-decoration:none;font-size:.58rem;white-space:nowrap;text-align:center}
+.ordersPurchases>.tableWrap{margin:0 12px;border:1px solid #223642;border-radius:7px;overflow:visible}
+.ordersTable th{background:#192731!important;font-size:.55rem!important}
+.ordersTable td{font-size:.61rem!important}
+.ordersTable .button{min-height:27px;padding:4px 8px;font-size:.55rem}
+.ordersTable .mediaTitle{font-weight:700}
+.ordersTable .subText{font-size:.52rem}
+.ordersRowMenu{position:relative}
+.ordersRowMenu>summary{display:grid;place-items:center;min-width:28px;height:27px;color:#93a6b2;cursor:pointer;list-style:none;border-radius:6px}
+.ordersRowMenu>summary::-webkit-details-marker{display:none}
+.ordersRowMenu>summary:hover{background:#152631;color:#d8e6ed}
+.ordersRowMenu>div{position:absolute;right:0;top:32px;z-index:120;display:grid;min-width:150px;padding:5px;border:1px solid #2a4352;border-radius:7px;background:#0d171f;box-shadow:0 16px 34px rgba(0,0,0,.45)}
+.ordersRowMenu>div a{padding:7px 9px;border-radius:5px;color:#c9d5dc;text-decoration:none;font-size:.58rem}
+.ordersRowMenu>div a:hover{background:#172934;color:#f3f7f9}
+.ordersTableFooter{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;color:#8999a5;font-size:.58rem}
+.ordersPagination{display:flex;align-items:center;gap:4px}
+.ordersPage{display:grid;place-items:center;min-width:28px;height:27px;padding:0 7px;border:1px solid #273e4c;border-radius:6px;color:#99a8b3;text-decoration:none}
+.ordersPage.active{border-color:#24bfe0;background:#113142;color:#6edaf5}
+.ordersPage.disabled{opacity:.35;pointer-events:none}
+.ordersDisclosures{display:grid;gap:7px;margin-top:10px}
+.ordersDisclosure{overflow:hidden}
+.ordersDisclosure summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:43px;padding:8px 12px;cursor:pointer;list-style:none}
+.ordersDisclosure summary::-webkit-details-marker{display:none}
+.ordersDisclosure summary>div{display:flex;align-items:center;gap:9px;min-width:0}
+.ordersDisclosure summary strong{display:flex;align-items:center;gap:7px;color:#e8eff3;font-size:.65rem}
+.ordersDisclosure summary small{color:#758895;font-size:.56rem}
+.ordersDisclosure summary>span{color:#8ba0ad}
+.ordersDisclosure[open] summary{border-bottom:1px solid #243845}
+.ordersDisclosureBody{padding:10px 12px}
+.ordersPolicyGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.ordersPolicyGrid>div{padding:10px;border:1px solid #243b49;border-radius:7px;background:#0b161d}
+.ordersPolicyGrid span{display:block;color:#82949f;font-size:.57rem}
+.ordersPolicyGrid strong{display:block;margin-top:5px;color:#e5edf2;font-size:.66rem}
+@media(max-width:1320px){
+ .ordersKpis{grid-template-columns:repeat(3,1fr)}
+ .ordersPurchaseFilters{grid-template-columns:minmax(240px,1fr) repeat(3,minmax(110px,.55fr))}
+ .ordersDatePicker{grid-column:1/3}
+ .ordersClear{grid-column:4}
+}
+@media(max-width:980px){
+ .ordersHeroLine{flex-direction:column}
+ .ordersRangeForm{align-self:stretch}
+ .ordersRangeSelect{width:100%}
+ .ordersCustomRange{left:0;right:auto}
+ .ordersAnalyticsGrid{grid-template-columns:1fr 1fr}
+ .ordersChartCard,.ordersChartCard.ordersChartWide,.ordersChartCard:nth-child(n){grid-column:span 1}
+ .ordersPurchaseFilters{grid-template-columns:1fr 1fr}
+ .ordersSearch{grid-column:1/-1}
+ .ordersDatePicker{grid-column:1/-1}
+ .ordersClear{grid-column:auto}
+ .ordersRenewalStrip{align-items:flex-start;flex-direction:column}
+ .ordersTableFooter{align-items:flex-start;flex-direction:column}
+}
+@media(max-width:720px){
+ .ordersKpis{grid-template-columns:1fr 1fr}
+ .ordersAnalyticsGrid{grid-template-columns:1fr}
+ .ordersChartCard,.ordersChartCard.ordersChartWide,.ordersChartCard:nth-child(n){grid-column:1}
+ .ordersAttentionHead{align-items:flex-start}
+ .ordersAttention .tableWrap{overflow-x:auto}
+ .ordersAttentionTable{min-width:920px}
+ .ordersPurchaseFilters{grid-template-columns:1fr}
+ .ordersPurchaseFilters>*{grid-column:1!important}
+ .ordersDatePopover{left:0;right:auto;grid-template-columns:1fr;min-width:min(360px,calc(100vw - 50px))}
+ .ordersPurchases>.tableWrap{overflow-x:auto}
+ .ordersTable{min-width:760px}
+ .ordersPolicyGrid{grid-template-columns:1fr}
+ .ordersDisclosure summary>div{align-items:flex-start;flex-wrap:wrap}
+ .ordersDisclosure summary small{flex-basis:100%}
+}
+@media(max-width:480px){
+ .ordersKpis{grid-template-columns:1fr}
+ .ordersCustomRange{position:fixed;left:10px;right:10px;top:80px;flex-direction:column;align-items:stretch}
+ .ordersCustomRange .input{width:100%}
+ .ordersChartBody .chartDonutWrap{grid-template-columns:1fr}
+ .ordersChartBody .chartDonut{margin:auto}
+ .ordersSectionHead{flex-direction:column}
+ .ordersTableFooter{padding-bottom:12px}
+ .ordersPagination{max-width:100%;overflow-x:auto}
+}
