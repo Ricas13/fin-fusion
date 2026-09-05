@@ -34,4 +34,10 @@
       if (chevron) chevron.textContent = details.open ? '⌃' : '⌄';
     });
   });
+
+  document.addEventListener('click', event => {
+    document.querySelectorAll('.ordersDatePicker[open],.ordersRowMenu[open]').forEach(details => {
+      if (!details.contains(event.target)) details.removeAttribute('open');
+    });
+  });
 })();
