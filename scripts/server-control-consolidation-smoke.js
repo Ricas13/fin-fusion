@@ -21,8 +21,9 @@ assert(fleet.includes('/admin/servers/operations/server/${esc(server.id)}/placem
 assert(fleet.includes('/admin/libraries/${esc(server.id)}/refresh'), 'server rows must expose library Scan');
 assert(fleet.includes('>Active</option>') && fleet.includes('>Drain</option>') && fleet.includes('>Maintenance</option>'), 'placement selects must use compact labels');
 assert(!fleet.includes('Active — can receive new placements'), 'verbose placement prose must stay out of table controls');
-assert(fleet.includes('Placement health policy') && fleet.includes('Future capacity preview'), 'advanced placement tools must remain available on Servers');
-assert(fleet.includes('operatorDetails'), 'advanced placement tools must be collapsed disclosures');
+const renderedBody = fleet.slice(fleet.indexOf('async function body(req) {'), fleet.indexOf('async function statusJson'));
+assert(!renderedBody.includes('Placement health policy') && !renderedBody.includes('Future capacity preview'), 'advanced placement panels must not render on the compact Servers page');
+assert(!renderedBody.includes('serverAdvancedGrid') && !renderedBody.includes('operatorDetails'), 'Servers page must end after the primary fleet control section');
 assert(!fleet.includes('sellable stream capacity'), 'server capacity must never be described as stream inventory');
 
 assert(operations.includes("res.redirect(302,forward(req,'placement'))"), 'legacy Fleet operations GET must redirect to Servers');

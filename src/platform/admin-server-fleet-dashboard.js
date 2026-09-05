@@ -6,7 +6,6 @@ const { query } = require('../db');
 const serversAdmin = require('./admin-servers');
 const runtimeSettings = require('./runtime-settings');
 const operations = require('./operations-settings');
-const placementPreview = require('../jellyfin/placement-preview');
 const planServers = require('../jellyfin/plan-servers');
 const userCapacity = require('../jellyfin/user-capacity');
 const { esc, layout } = require('./admin-html');
@@ -137,53 +136,12 @@ function serverTable(req, rows, settings) {
     </table></div>`;
 }
 
-function placementPolicy(req, settings) {
-    return `<form class="serverAdvancedForm" method="post" action="/admin/servers/operations/placement-policy">
-        ${csrfInput(req)}
-        <label for="placement-health-policy">Eligible server health</label>
-        <select id="placement-health-policy" class="input" name="placementHealthMode">
-            <option value="healthy_only" ${settings.placementHealthMode === 'healthy_only' ? 'selected' : ''}>Healthy only</option>
-            <option value="healthy_or_degraded" ${settings.placementHealthMode === 'healthy_or_degraded' ? 'selected' : ''}>Healthy or degraded</option>
-            <option value="fail_open" ${settings.placementHealthMode === 'fail_open' ? 'selected' : ''}>Any except offline</option>
-        </select>
-        <button class="button secondary" type="submit">Save policy</button>
-        <small>Controls which health states automatic provisioning may use. Server mode and “allow new users” still apply.</small>
-    </form>`;
-}
-function capacityPreviewForm(req, plans, selectedPlanId = '', selectedCount = 25) {
-    return `<form class="serverAdvancedForm serverPreviewForm" method="post" action="/admin/servers/operations/placement-preview">
-        ${csrfInput(req)}
-        <label for="preview-plan">Plan</label>
-        <select id="preview-plan" class="input" name="planId" required>${plans.map(plan => `<option value="${esc(plan.id)}" ${String(plan.id) === String(selectedPlanId) ? 'selected' : ''}>${esc(plan.name)}</option>`).join('')}</select>
-        <label for="preview-count">New customers</label>
-        <input id="preview-count" class="input" type="number" name="count" min="1" max="1000" value="${esc(selectedCount)}">
-        <button class="button secondary" type="submit">Preview</button>
-    </form>`;
-}
-function capacityPreviewResult(preview) {
-    if (!preview) return '';
-    return `<div class="serverPreviewResult"><div class="notice ${preview.unplaced ? 'warn' : ''}"><strong>${esc(preview.requested)} simulated customers</strong> · ${esc(preview.unplaced)} unplaced</div>
-        <div class="tableWrap"><table class="dataTable"><thead><tr><th>Server</th><th>Health</th><th>Existing users</th><th>Simulated users</th><th>User capacity</th></tr></thead><tbody>
-        ${preview.servers.map(server => `<tr><td>${esc(server.name)}</td><td>${esc(server.health)}</td><td>${esc(server.existingUsers)}</td><td><strong>${esc(server.simulatedNewUsers)}</strong></td><td>${esc(server.maxUsers || '∞')}</td></tr>`).join('')}
-        </tbody></table></div><div class="subText">Each simulated customer consumes exactly one server user place.</div></div>`;
-}
-
-async function pageData(req) {
-    const [rows, settings, plans] = await Promise.all([
+async function pageData(_req) {
+    const [rows, settings] = await Promise.all([
         dashboardRows(),
-        operations.get(),
-        query(`SELECT id,name,placement_strategy FROM plans WHERE active=TRUE AND archived_at IS NULL
-               AND (effective_from IS NULL OR effective_from<=NOW())
-               AND (effective_until IS NULL OR effective_until>NOW()) ORDER BY sort_order,name`)
+        operations.get()
     ]);
-    let preview = null;
-    const previewPlanId = String(req.query.previewPlanId || '').trim();
-    const previewCount = Math.max(1, Math.min(1000, Number(req.query.previewCount) || 25));
-    if (previewPlanId) {
-        try { preview = await placementPreview.preview(previewPlanId, previewCount); }
-        catch (_) { preview = null; }
-    }
-    return { rows, settings, plans: plans.rows, preview, previewPlanId, previewCount };
+    return { rows, settings };
 }
 async function body(req) {
     await runtimeSettings.ensureLoaded();
@@ -194,11 +152,7 @@ async function body(req) {
             <div class="serverControlHint"><strong>Capacity:</strong> one managed Jellyfin customer uses one place, regardless of that customer's concurrent-stream plan. <strong>Placement:</strong> Active can receive new customers; Drain and Maintenance stop new assignments without moving existing users.</div>
             ${serverTable(req, data.rows, data.settings)}
             <div class="securityNote">API keys stay write-only. Library Scan asks Jellyfin to refresh its library; it does not change plan library access.</div>
-        </section>
-        <div class="serverAdvancedGrid">
-            <details class="operatorDetails" id="placement-policy"><summary><span>Placement health policy</span><small>Advanced fleet-wide eligibility rule</small></summary><div class="operatorDetailsBody">${placementPolicy(req, data.settings)}</div></details>
-            <details class="operatorDetails" id="capacity-preview" ${data.preview ? 'open' : ''}><summary><span>Future capacity preview</span><small>Simulate placement without creating customers</small></summary><div class="operatorDetailsBody">${capacityPreviewForm(req, data.plans, data.previewPlanId, data.previewCount)}${capacityPreviewResult(data.preview)}</div></details>
-        </div>`;
+        </section>`;
 }
 
 async function statusJson(_req, res, next) {
