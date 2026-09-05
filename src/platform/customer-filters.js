@@ -12,25 +12,30 @@ const STATUS_VALUES = ['trialing', 'active', 'past_due', 'paused', 'cancelled', 
 const RECON_VALUES = ['pending', 'running', 'successful', 'failed'];
 const PAYMENT_PROVIDERS = ['stripe', 'paypal', 'manual'];
 const SERVICE_VALUES = ['jellyfin', 'stremio'];
+const ACCESS_VALUES = ['active', 'attention', 'provisioning', 'expired', 'no_entitlement', 'portal_disabled'];
 const PRICE_TYPES = ['free', 'paid'];
 const BILLING_INTERVALS = ['trial', 'month', '6_months', 'year', 'custom'];
 const MAX_MATCHING = 5000;
-const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
+const CUSTOMER_NAME_SORT = `COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),(SELECT ja_identity.jellyfin_username FROM jellyfin_accounts ja_identity WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,ja_identity.created_at ASC LIMIT 1),NULLIF(c.email,''))`;
+const SERVICE_EXPR = `COALESCE(NULLIF(cur.service_type_snapshot,''),p.service_type,'jellyfin')`;
+const LIVE_EXPR = `(cur.status IN ('active','trialing') AND (COALESCE(p.is_free_tier,FALSE)=TRUE OR cur.current_period_end IS NULL OR cur.current_period_end>NOW()))`;
+const CUSTOMER_JELLYFIN_REQUIRED = `(${SERVICE_EXPR} IN ('jellyfin','bundle'))`;
+const MISSING_JELLYFIN = `(${CUSTOMER_JELLYFIN_REQUIRED} AND COALESCE(acc.customer_account_count,0)=0)`;
+const ATTENTION_EXPR = `(cur.status='past_due' OR COALESCE(recon.rank,99) IN (1,2,3) OR (${LIVE_EXPR} AND ${MISSING_JELLYFIN}) OR au.active=FALSE)`;
+
 const CUSTOMER_SORTS = Object.freeze({
+    attention: { expression: `CASE WHEN ${ATTENTION_EXPR} THEN 0 ELSE 1 END`, defaultDirection: 'asc' },
     recent: { expression: 'COALESCE(acc.last_activity_at,c.created_at)', defaultDirection: 'desc', nulls: 'last' },
     registered: { expression: 'c.created_at', defaultDirection: 'desc', nulls: 'last' },
     name: { expression: CUSTOMER_NAME_SORT, defaultDirection: 'asc', nulls: 'last' },
     plan: { expression: "COALESCE(p.name,'')", defaultDirection: 'asc' },
-    status: { expression: "COALESCE(cur.status,'')", defaultDirection: 'asc' },
+    access: { expression: `CASE WHEN ${ATTENTION_EXPR} THEN 0 WHEN ${LIVE_EXPR} THEN 1 WHEN cur.id IS NULL THEN 3 ELSE 2 END`, defaultDirection: 'asc' },
     expiring: { expression: 'CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END', defaultDirection: 'asc', nulls: 'last' },
-    jellyfin: { expression: 'COALESCE(acc.account_count,0)', defaultDirection: 'desc' },
-    server: { expression: "COALESCE(acc.server_names,'')", defaultDirection: 'asc' },
-    sync: { expression: 'COALESCE(recon.rank,99)', defaultDirection: 'asc' },
-    custom: { expression: 'COALESCE(ovr.has_override,FALSE)', defaultDirection: 'desc' }
+    server: { expression: "COALESCE(acc.server_names,'')", defaultDirection: 'asc' }
 });
 
 function isUuid(v) {
-    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 function boundedInt(value, min, max) {
@@ -49,8 +54,10 @@ function baseJoins() {
         ) cur ON TRUE
         LEFT JOIN plans p ON p.id=cur.plan_id
         LEFT JOIN LATERAL (
-            SELECT COUNT(*)::int AS account_count,MAX(ja.last_activity_at) AS last_activity_at,
-                   BOOL_OR(NOT ja.disabled) AS has_enabled_account,
+            SELECT COUNT(*)::int AS account_count,
+                   COUNT(*) FILTER (WHERE ja.account_purpose='jellyfin')::int AS customer_account_count,
+                   COUNT(*) FILTER (WHERE ja.account_purpose='stremio_internal')::int AS stremio_account_count,
+                   MAX(ja.last_activity_at) AS last_activity_at,
                    STRING_AGG(DISTINCT js.name, ', ' ORDER BY js.name) AS server_names
             FROM jellyfin_accounts ja
             JOIN jellyfin_servers js ON js.id=ja.server_id
@@ -64,6 +71,11 @@ function baseJoins() {
         LEFT JOIN LATERAL (
             SELECT provider FROM payment_customers pc WHERE pc.customer_id=c.id ORDER BY pc.updated_at DESC LIMIT 1
         ) pay ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT cps.status,cps.last_error
+            FROM customer_provisioning_state cps WHERE cps.customer_id=c.id
+            LIMIT 1
+        ) provision ON TRUE
         LEFT JOIN LATERAL (
             SELECT EXISTS(
                 SELECT 1 FROM customer_policy_overrides cpo WHERE cpo.customer_id=c.id AND (
@@ -101,25 +113,25 @@ function buildWhere(filters, scope) {
         )`);
     }
 
-    if (filters.serverId && isUuid(filters.serverId)) {
-        where.push(`EXISTS (SELECT 1 FROM jellyfin_accounts jas WHERE jas.customer_id=c.id AND jas.server_id=${p(filters.serverId)})`);
-    }
-
-    if (filters.planId && isUuid(filters.planId)) {
-        where.push(`cur.plan_id=${p(filters.planId)}`);
-    }
+    if (filters.serverId && isUuid(filters.serverId)) where.push(`EXISTS (SELECT 1 FROM jellyfin_accounts jas WHERE jas.customer_id=c.id AND jas.server_id=${p(filters.serverId)})`);
+    if (filters.planId && isUuid(filters.planId)) where.push(`cur.plan_id=${p(filters.planId)}`);
 
     if (filters.status) {
         if (filters.status === 'none') where.push('cur.id IS NULL');
         else if (STATUS_VALUES.includes(filters.status)) where.push(`cur.status=${p(filters.status)}`);
     }
 
+    if (filters.access === 'active') where.push(`${LIVE_EXPR} AND NOT ${MISSING_JELLYFIN} AND COALESCE(recon.rank,4)=4 AND au.active IS DISTINCT FROM FALSE`);
+    else if (filters.access === 'attention') where.push(ATTENTION_EXPR);
+    else if (filters.access === 'provisioning') where.push(`(COALESCE(recon.rank,99) IN (1,2,3) OR provision.status IN ('pending','running','failed','blocked'))`);
+    else if (filters.access === 'expired') where.push(`cur.id IS NOT NULL AND (cur.status IN ('expired','cancelled') OR (COALESCE(p.is_free_tier,FALSE)=FALSE AND cur.current_period_end<=NOW()))`);
+    else if (filters.access === 'no_entitlement') where.push('cur.id IS NULL');
+    else if (filters.access === 'portal_disabled') where.push('au.active=FALSE');
+
     if (filters.priceType === 'free') where.push(`cur.id IS NOT NULL AND (COALESCE(p.is_free_tier,FALSE)=TRUE OR COALESCE(p.price_minor,0)=0)`);
     else if (filters.priceType === 'paid') where.push(`cur.id IS NOT NULL AND COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(p.price_minor,0)>0`);
 
-    if (filters.billingInterval && BILLING_INTERVALS.includes(filters.billingInterval)) {
-        where.push(`p.billing_interval=${p(filters.billingInterval)}`);
-    }
+    if (filters.billingInterval && BILLING_INTERVALS.includes(filters.billingInterval)) where.push(`p.billing_interval=${p(filters.billingInterval)}`);
 
     const accountAgeDays = boundedInt(filters.accountAgeDays, 0, 3650);
     if (accountAgeDays !== null) where.push(`c.created_at<=NOW()-(${p(accountAgeDays)}::int*INTERVAL '1 day')`);
@@ -129,8 +141,7 @@ function buildWhere(filters, scope) {
         const days = p(lapsedDays);
         where.push(`NOT EXISTS (
             SELECT 1 FROM subscriptions live
-            WHERE live.customer_id=c.id
-              AND live.superseded_by IS NULL
+            WHERE live.customer_id=c.id AND live.superseded_by IS NULL
               AND live.status IN ('active','trialing','past_due','paused')
               AND (live.current_period_end IS NULL OR live.current_period_end>NOW())
         ) AND EXISTS (
@@ -159,9 +170,9 @@ function buildWhere(filters, scope) {
         )`);
     }
 
+    // Legacy accountStatus remains accepted only for portal sign-in state.
+    // Managed Jellyfin identities no longer have a disabled state.
     if (filters.accountStatus === 'portal_disabled') where.push('au.active=FALSE');
-    else if (filters.accountStatus === 'enabled') where.push('acc.has_enabled_account=TRUE');
-    else if (filters.accountStatus === 'disabled') where.push('(acc.has_enabled_account IS NOT TRUE)');
 
     if (filters.paymentProvider) {
         if (filters.paymentProvider === 'none') where.push('pay.provider IS NULL');
@@ -182,7 +193,6 @@ function buildWhere(filters, scope) {
 
     if (filters.hasOverride === true) where.push('ovr.has_override=TRUE');
     else if (filters.hasOverride === false) where.push('(ovr.has_override IS NOT TRUE)');
-
     if (filters.isFreeTier === true) where.push('COALESCE(p.is_free_tier,FALSE)=TRUE');
 
     if (filters.library) {
@@ -209,24 +219,28 @@ const SELECT_COLUMNS = `
     (SELECT ja_identity.jellyfin_username
        FROM jellyfin_accounts ja_identity
       WHERE ja_identity.customer_id=c.id AND NULLIF(ja_identity.jellyfin_username,'') IS NOT NULL
-      ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,COALESCE(ja_identity.disabled,FALSE) ASC,ja_identity.created_at ASC
+      ORDER BY COALESCE(ja_identity.is_primary,FALSE) DESC,ja_identity.created_at ASC
       LIMIT 1) AS jellyfin_username,
-    cur.status AS subscription_status,
-    CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN NULL ELSE cur.current_period_end END AS current_period_end,
-    p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,COALESCE(p.is_free_tier,FALSE) AS is_free_tier,
-    acc.account_count,acc.last_activity_at,acc.has_enabled_account,acc.server_names,
-    recon.rank AS recon_rank,pay.provider AS payment_provider,ovr.has_override
+    cur.status AS subscription_status,cur.current_period_end,
+    p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,
+    p.billing_interval,p.price_minor,COALESCE(p.is_free_tier,FALSE) AS is_free_tier,
+    ${SERVICE_EXPR} AS service_type,
+    acc.account_count,acc.customer_account_count,acc.stremio_account_count,acc.last_activity_at,acc.server_names,
+    recon.rank AS recon_rank,pay.provider AS payment_provider,
+    provision.status AS provisioning_status,provision.last_error AS provisioning_error,
+    ovr.has_override,
+    EXISTS(SELECT 1 FROM customer_entitlement_overrides ceo WHERE ceo.customer_id=c.id AND ceo.permanent_access=TRUE AND ceo.revoked_at IS NULL AND ceo.subscription_id=cur.id) AS permanent_access
 `;
 
 function normalizeCustomerSort(input = {}) {
-    if (typeof input === 'string') return tableSort.normalize({ sort: input }, CUSTOMER_SORTS, 'registered');
-    return tableSort.normalize(input, CUSTOMER_SORTS, 'registered');
+    if (typeof input === 'string') return tableSort.normalize({ sort: input }, CUSTOMER_SORTS, 'attention');
+    return tableSort.normalize(input, CUSTOMER_SORTS, 'attention');
 }
 
-async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'registered', dir } = {}) {
+async function listCustomers(filters, scope, { page = 1, pageSize = 25, sort = 'attention', dir } = {}) {
     const { whereSql, params } = buildWhere(filters, scope);
     const sortState = normalizeCustomerSort(typeof sort === 'object' ? sort : { sort, dir });
-    const orderSql = tableSort.orderBy(sortState, CUSTOMER_SORTS, 'c.id ASC');
+    const orderSql = tableSort.orderBy(sortState, CUSTOMER_SORTS, 'COALESCE(acc.last_activity_at,c.created_at) DESC, c.id ASC');
     const boundedPageSize = Math.min(Math.max(parseInt(pageSize, 10) || 25, 5), 100);
     const boundedPage = Math.max(parseInt(page, 10) || 1, 1);
     const offset = (boundedPage - 1) * boundedPageSize;
@@ -264,6 +278,7 @@ module.exports = {
     RECON_VALUES,
     PAYMENT_PROVIDERS,
     SERVICE_VALUES,
+    ACCESS_VALUES,
     PRICE_TYPES,
     BILLING_INTERVALS,
     CUSTOMER_SORTS,

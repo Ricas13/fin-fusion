@@ -81,9 +81,9 @@ assert(attention.includes('class="dataTable responsiveTable attentionTable"'),'N
 for(const label of ['data-label="Severity"','data-label="Area"','data-label="Issue"','data-label="Owner"','data-label="Workflow"'])assert(attention.includes(label),`Needs Attention responsive table missing ${label}`);
 
 const customers=read('src/platform/admin-customers-list.js');
-for(const wording of ['Access sync','Custom access','Customer sign-in disabled','Customer health','customer sign-ins enabled','Customers who still need to verify their account'])assert(customers.includes(wording),`customers UI missing plain-language wording: ${wording}`);
-for(const jargon of ['data-label="Reconciliation"','<th>Reconciliation</th>','<label>Reconciliation status</label>','<label>Admin override</label>','portal logins enabled'])assert(!customers.includes(jargon),`customers UI still exposes jargon: ${jargon}`);
-for(const semantic of ['for="customerFilterProduct"','for="customerFilterSync"','aria-label="Select ${esc(customerName)}"','<caption class="srOnly">Customer results</caption>','aria-label="Customer pages"'])assert(customers.includes(semantic),`customers UI missing accessible structure: ${semantic}`);
+for(const wording of ['Needs attention','Provisioning','Customer settings','Portal sign-in','Customer health','customer sign-ins enabled','Customers who still need to verify their account'])assert(customers.includes(wording),`customers UI missing plain-language wording: ${wording}`);
+for(const jargon of ['data-label="Reconciliation"','<th>Reconciliation</th>','<label>Reconciliation status</label>','<label>Admin override</label>','Jellyfin disabled','portal logins enabled'])assert(!customers.includes(jargon),`customers UI still exposes retired or internal wording: ${jargon}`);
+for(const semantic of ['for="customerFilterProduct"','for="customerFilterAccess"','for="customerFilterSync"','aria-label="Select ${esc(customerName)}"','<caption class="srOnly">Customer results</caption>','aria-label="Customer pages"'])assert(customers.includes(semantic),`customers UI missing accessible structure: ${semantic}`);
 
 // The UX rename must not create parallel state or break backwards-compatible
 // query values used by existing links, exports and backend filters.
