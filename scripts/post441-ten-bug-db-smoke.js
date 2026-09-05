@@ -34,24 +34,23 @@ async function paymentEventCooldown(suffix) {
 }
 
 async function incidentReplay(customer, suffix) {
+  // A dispute is a commercial incident, not an access state: it must never
+  // create/restore a payment-risk hold (see 20260905010000_payment_risk_no_access_block.sql).
+  // This still exercises the replay/idempotency/identity-upgrade semantics
+  // that matter independent of that retired hold-based side effect.
   const eventId = `evt_dispute_${suffix}`;
   const caseId = `dp_${suffix}`;
   const first = await incidents.record({ provider:'stripe', eventId, caseId, kind:'dispute', status:'open', identity:{ scope:'direct', customerId:customer.id }, providerSubscriptionId:`sub_${suffix}` });
   assert.equal(first.duplicate, false);
-  assert((await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'initial dispute must apply payment-risk hold');
-
-  await accessHolds.releaseHold({ customerId:customer.id, type:'payment_risk', sourceKey:incidents.holdSource('stripe', caseId) });
-  assert(!(await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'test fixture must simulate missing incident side effect');
+  assert(!(await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'a dispute must never create a payment-risk access hold');
 
   const replay = await incidents.record({ provider:'stripe', eventId, caseId, kind:'dispute', status:'open', identity:{ scope:'direct', customerId:customer.id }, providerSubscriptionId:`sub_${suffix}` });
   assert.equal(replay.duplicate, true);
-  assert((await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'duplicate incident replay must restore missing payment-risk hold');
+  assert(!(await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'duplicate incident replay must not create a payment-risk hold either');
 
-  // A resolved incident that is reopened must restore its original suspensive side effect.
-  await accessHolds.releaseHold({ customerId:customer.id, type:'payment_risk', sourceKey:incidents.holdSource('stripe', caseId) });
   await query(`UPDATE payment_incidents SET incident_status='resolved',resolved_at=NOW() WHERE id=$1`, [first.incident.id]);
   await incidents.reopen(first.incident.id, null);
-  assert((await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk' && h.source_key === incidents.holdSource('stripe', caseId)), 'reopening a suspensive incident must reapply the payment-risk hold');
+  assert(!(await accessHolds.activeHolds(customer.id)).some(h => h.hold_type === 'payment_risk'), 'reopening a dispute must not apply a payment-risk hold');
 
   const unresolvedCustomer = await createCustomer('incident-upgrade', suffix);
   const unresolvedEvent = `evt_unresolved_${suffix}`;
@@ -63,7 +62,7 @@ async function incidentReplay(customer, suffix) {
   const stored = (await query('SELECT scope,customer_id FROM payment_incidents WHERE id=$1', [upgraded.incident.id])).rows[0];
   assert.equal(stored.scope, 'direct', 'incident replay must upgrade unresolved identity');
   assert.equal(String(stored.customer_id), String(unresolvedCustomer.id));
-  assert((await accessHolds.activeHolds(unresolvedCustomer.id)).some(h => h.hold_type === 'payment_risk'), 'identity upgrade must drive the pending suspension');
+  assert(!(await accessHolds.activeHolds(unresolvedCustomer.id)).some(h => h.hold_type === 'payment_risk'), 'identity upgrade must not retroactively create a payment-risk hold');
 }
 
 async function providerOperationFence(customer, suffix) {

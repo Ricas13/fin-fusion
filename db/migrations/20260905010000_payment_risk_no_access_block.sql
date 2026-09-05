@@ -7,6 +7,11 @@ BEGIN;
 -- decision may remove service access. payment_delinquency remains a
 -- legitimate, subscription-scoped signal for an unpaid renewal still inside
 -- its grace window (that is the "NOT PAID" case, not a refund/risk hold).
+--
+-- This must preserve the exact scoping 045_parallel_free_jellyfin_access.sql
+-- already introduced for inactivity_policy/jellyfin_cleanup (they only block
+-- the free_claim lane, not a simultaneous paid subscription) - only the
+-- payment_risk exclusion is new here.
 CREATE OR REPLACE FUNCTION public.subscription_access_blocked(
     p_customer_id uuid,
     p_source text,
@@ -22,12 +27,13 @@ AS $$
           AND h.released_at IS NULL
           AND h.hold_type <> 'payment_risk'
           AND (
-              h.hold_type <> 'payment_delinquency'
-              OR h.source_key = CASE
+              (h.hold_type='payment_delinquency' AND h.source_key = CASE
                   WHEN p_source='stripe' AND COALESCE(p_provider_subscription_id,'') LIKE 'sub\_%' ESCAPE '\' THEN 'stripe:' || p_provider_subscription_id
                   WHEN p_source='paypal' AND COALESCE(p_provider_subscription_id,'') LIKE 'I-%' THEN 'paypal:' || p_provider_subscription_id
                   ELSE NULL
-              END
+              END)
+              OR (h.hold_type IN ('inactivity_policy','jellyfin_cleanup') AND p_source='free_claim')
+              OR h.hold_type NOT IN ('payment_delinquency','inactivity_policy','jellyfin_cleanup','payment_risk')
           )
     );
 $$;
