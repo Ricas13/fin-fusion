@@ -42,6 +42,12 @@ function remoteShape(server, user) {
     };
 }
 
+function assertImportableIdentity(user) {
+    if (user?.disabled) {
+        throw new Error('Disabled Jellyfin users cannot be managed by CAPTAiNFiN. Enable the Jellyfin user before importing/linking it, or delete it if it should not have access.');
+    }
+}
+
 async function serversForDiscovery(serverId = null) {
     const servers = await registry.listServers({ enabledOnly: true });
     if (!serverId) return servers;
@@ -161,6 +167,7 @@ async function assertRemoteUnmanaged(client, serverId, user) {
 async function createImportedCustomer({ serverId, jellyfinUserId, planId = null, expiresAt = null, applyPolicy = false, actorUserId = null }) {
     const [{ server, user }, plan] = await Promise.all([getRemoteUser(serverId, jellyfinUserId), loadPlan(planId)]);
     if (user.administrator) throw new Error('Jellyfin administrator accounts cannot be imported as customers.');
+    assertImportableIdentity(user);
     await assertServerFitsPlan(server, plan);
     const periodEnd = expiryForPlan(plan, expiresAt);
     const created = await transaction(async client => {
@@ -174,9 +181,9 @@ async function createImportedCustomer({ serverId, jellyfinUserId, planId = null,
         const account = await client.query(`
             INSERT INTO jellyfin_accounts(
                 customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_activity_at,last_policy_sync,is_primary
-            ) VALUES($1,$2,$3,$4,$5,$6,NULL,TRUE)
+            ) VALUES($1,$2,$3,$4,FALSE,$5,NULL,TRUE)
             RETURNING *
-        `, [customerId, server.id, user.jellyfin_user_id, cleanName(user.jellyfin_username), user.disabled, user.last_activity_at]);
+        `, [customerId, server.id, user.jellyfin_user_id, cleanName(user.jellyfin_username), user.last_activity_at]);
         let subscription = null;
         if (plan) {
             const status = plan.billing_interval === 'trial' ? 'trialing' : 'active';
@@ -228,6 +235,7 @@ async function customerSummary(customerId) {
 async function linkExistingCustomer({ customerId, serverId, jellyfinUserId, makePrimary = true, applyPolicy = false, actorUserId = null }) {
     const [{ server, user }, customer] = await Promise.all([getRemoteUser(serverId, jellyfinUserId), customerSummary(customerId)]);
     if (user.administrator) throw new Error('Jellyfin administrator accounts cannot be linked as customer accounts.');
+    assertImportableIdentity(user);
     let plan = null;
     if (customer.plan_id) {
         plan = await loadPlan(customer.plan_id);
@@ -241,9 +249,9 @@ async function linkExistingCustomer({ customerId, serverId, jellyfinUserId, make
         const account = await client.query(`
             INSERT INTO jellyfin_accounts(
                 customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,last_activity_at,last_policy_sync,is_primary
-            ) VALUES($1,$2,$3,$4,$5,$6,NULL,$7)
+            ) VALUES($1,$2,$3,$4,FALSE,$5,NULL,$6)
             RETURNING *
-        `, [customerId, server.id, user.jellyfin_user_id, cleanName(user.jellyfin_username), user.disabled, user.last_activity_at, Boolean(makePrimary)]);
+        `, [customerId, server.id, user.jellyfin_user_id, cleanName(user.jellyfin_username), user.last_activity_at, Boolean(makePrimary)]);
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'jellyfin.import.link','customer',$2,$3::jsonb)
@@ -257,6 +265,7 @@ async function linkExistingCustomer({ customerId, serverId, jellyfinUserId, make
 async function rebindIdentity({ serverId, jellyfinUserId, actorUserId = null }) {
     const { server, user } = await getRemoteUser(serverId, jellyfinUserId);
     if (user.administrator) throw new Error('Administrator identities cannot be rebound as customer accounts.');
+    assertImportableIdentity(user);
     return transaction(async client => {
         const exact = await client.query('SELECT id FROM jellyfin_accounts WHERE server_id=$1 AND jellyfin_user_id=$2 LIMIT 1 FOR UPDATE', [server.id, user.jellyfin_user_id]);
         if (exact.rowCount) throw new Error('That Jellyfin identity is already managed.');
@@ -270,14 +279,14 @@ async function rebindIdentity({ serverId, jellyfinUserId, actorUserId = null }) 
         const oldUserId = account.jellyfin_user_id;
         await client.query(`
             UPDATE jellyfin_accounts
-            SET jellyfin_user_id=$1,disabled=$2,last_activity_at=$3,updated_at=NOW()
-            WHERE id=$4
-        `, [user.jellyfin_user_id, user.disabled, user.last_activity_at, account.id]);
+            SET jellyfin_user_id=$1,disabled=FALSE,last_activity_at=$2,updated_at=NOW()
+            WHERE id=$3
+        `, [user.jellyfin_user_id, user.last_activity_at, account.id]);
         await client.query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'jellyfin.import.rebind','jellyfin_account',$2,$3::jsonb)
         `, [actorUserId || null, account.id, JSON.stringify({ serverId: server.id, username: user.jellyfin_username, oldJellyfinUserId: oldUserId, newJellyfinUserId: user.jellyfin_user_id })]);
-        return { ...account, jellyfin_user_id: user.jellyfin_user_id, disabled: user.disabled };
+        return { ...account, jellyfin_user_id: user.jellyfin_user_id, disabled: false };
     });
 }
 
@@ -330,5 +339,6 @@ module.exports = {
     bulkImport,
     searchCustomers,
     assertServerFitsPlan,
-    expiryForPlan
+    expiryForPlan,
+    assertImportableIdentity
 };
