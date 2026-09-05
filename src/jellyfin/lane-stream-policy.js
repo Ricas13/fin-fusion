@@ -8,6 +8,8 @@ const legacyActivity = require('./activity');
 // lock serialises the full collect -> counter restore -> lane decision phase so
 // multiple activity workers can never enforce the same lane concurrently.
 const LANE_ADVISORY_LOCK_ID = 637441014;
+const STOP_VERIFY_ATTEMPTS = 4;
+const STOP_VERIFY_DELAY_MS = 750;
 
 function sessionKey(row) {
     return `${row.server_id}:${row.jellyfin_session_id}`;
@@ -196,6 +198,34 @@ async function freshAccountSnapshot(row, cfg) {
     };
 }
 
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function verifyCandidateStopped(row, streamLimit, cfg) {
+    let latest = null;
+    for (let attempt = 0; attempt < STOP_VERIFY_ATTEMPTS; attempt += 1) {
+        await delay(STOP_VERIFY_DELAY_MS);
+        latest = await freshAccountSnapshot(row, cfg);
+        if (!latest.reliable) return { reliable: false, error: latest.error, sessions: [] };
+        const countable = latest.sessions.filter(session => cfg.countPaused || !session.isPaused);
+        const candidate = latest.sessions.find(session => session.sessionId === String(row.jellyfin_session_id)) || null;
+        if (!candidate || countable.length <= streamLimit) {
+            return { reliable: true, candidate, countable, sessions: latest.sessions };
+        }
+    }
+    const countable = latest.sessions.filter(session => cfg.countPaused || !session.isPaused);
+    const candidate = latest.sessions.find(session => session.sessionId === String(row.jellyfin_session_id)) || null;
+    return { reliable: true, candidate, countable, sessions: latest.sessions };
+}
+
+async function finalizeLaneStop(row, streamCount, streamLimit, cfg, detail = {}) {
+    await query(`UPDATE playback_history SET ended_at=NOW(),ended_reason='policy_stop',last_seen_at=NOW() WHERE server_id=$1 AND playback_key=$2`, [row.server_id,row.playback_key]);
+    await query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND jellyfin_session_id=$2`, [row.server_id,row.jellyfin_session_id]);
+    await policyEvent(row, cfg, 'stopped', streamCount, streamLimit, 'confirmed_lane_concurrent_stream_limit', detail);
+    return true;
+}
+
 async function stopOverflowSession(row, streamCount, streamLimit, cfg) {
     const fresh = await freshAccountSnapshot(row, cfg);
     if (!fresh.reliable) {
@@ -207,11 +237,13 @@ async function stopOverflowSession(row, streamCount, streamLimit, cfg) {
         await policyEvent(row, cfg, 'skipped_safety', countable.length, streamLimit, 'violation_cleared_before_action');
         return false;
     }
-    if (!countable.some(session => session.sessionId === String(row.jellyfin_session_id))) {
+    const candidateBeforeStop = countable.find(session => session.sessionId === String(row.jellyfin_session_id));
+    if (!candidateBeforeStop) {
         await policyEvent(row, cfg, 'skipped_safety', countable.length, streamLimit, 'candidate_changed_before_action');
         return false;
     }
 
+    let noticeAccepted = false;
     try {
         await registry.request(row.server_id, `/Sessions/${encodeURIComponent(row.jellyfin_session_id)}/Message`, {
             method: 'POST',
@@ -222,30 +254,106 @@ async function stopOverflowSession(row, streamCount, streamLimit, cfg) {
                 TimeoutMs: 8000
             }
         });
+        noticeAccepted = true;
     } catch (_) {}
 
+    let directStopError = null;
     try {
         await registry.request(row.server_id, `/Sessions/${encodeURIComponent(row.jellyfin_session_id)}/Playing/Stop`, { method: 'POST' });
     } catch (error) {
-        await policyEvent(row, cfg, 'stop_failed', countable.length, streamLimit, 'jellyfin_stop_failed', { error: error.message });
-        return false;
+        directStopError = error;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 750));
-    const verified = await freshAccountSnapshot(row, cfg);
+    const verified = await verifyCandidateStopped(row, streamLimit, cfg);
     if (!verified.reliable) {
-        await policyEvent(row, cfg, 'stop_failed', countable.length, streamLimit, 'post_stop_revalidation_failed', { error: verified.error });
+        await policyEvent(row, cfg, 'stop_failed', countable.length, streamLimit, 'post_stop_revalidation_failed', {
+            error: verified.error,
+            directStopError: directStopError?.message || null,
+            noticeAccepted
+        });
         return false;
     }
-    if (verified.sessions.some(session => session.sessionId === String(row.jellyfin_session_id))) {
-        await policyEvent(row, cfg, 'stop_failed', countable.length, streamLimit, 'jellyfin_stop_did_not_end_session');
+    if (!verified.candidate) {
+        return finalizeLaneStop(row, streamCount, streamLimit, cfg, {
+            method: 'playback_stop',
+            noticeAccepted,
+            directStopError: directStopError?.message || null
+        });
+    }
+    if (verified.countable.length <= streamLimit) {
+        await policyEvent(row, cfg, 'skipped_safety', verified.countable.length, streamLimit, 'violation_cleared_before_fallback', {
+            directStopError: directStopError?.message || null,
+            noticeAccepted
+        });
         return false;
     }
 
-    await query(`UPDATE playback_history SET ended_at=NOW(),ended_reason='policy_stop',last_seen_at=NOW() WHERE server_id=$1 AND playback_key=$2`, [row.server_id,row.playback_key]);
-    await query(`DELETE FROM active_playback_sessions WHERE server_id=$1 AND jellyfin_session_id=$2`, [row.server_id,row.jellyfin_session_id]);
-    await policyEvent(row, cfg, 'stopped', streamCount, streamLimit, 'confirmed_lane_concurrent_stream_limit');
-    return true;
+    const deviceId = verified.candidate.deviceId || candidateBeforeStop.deviceId || null;
+    if (!deviceId) {
+        await policyEvent(row, cfg, 'stop_failed', verified.countable.length, streamLimit,
+            directStopError ? 'jellyfin_stop_failed' : 'jellyfin_stop_did_not_end_session', {
+                error: directStopError?.message || null,
+                fallback: 'device_id_unavailable',
+                noticeAccepted
+            });
+        return false;
+    }
+
+    const sameDeviceSessions = verified.countable.filter(session =>
+        session.sessionId !== String(row.jellyfin_session_id) && session.deviceId === deviceId
+    );
+    if (sameDeviceSessions.length) {
+        await policyEvent(row, cfg, 'stop_failed', verified.countable.length, streamLimit,
+            directStopError ? 'jellyfin_stop_failed' : 'jellyfin_stop_did_not_end_session', {
+                error: directStopError?.message || null,
+                fallback: 'device_logout_blocked_to_preserve_other_active_session',
+                sameDeviceActiveSessions: sameDeviceSessions.length,
+                noticeAccepted
+            });
+        return false;
+    }
+
+    try {
+        await registry.request(row.server_id, `/Devices?id=${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
+    } catch (error) {
+        await policyEvent(row, cfg, 'stop_failed', verified.countable.length, streamLimit, 'jellyfin_force_logout_failed', {
+            error: error.message,
+            directStopError: directStopError?.message || null,
+            noticeAccepted
+        });
+        return false;
+    }
+
+    const forced = await verifyCandidateStopped(row, streamLimit, cfg);
+    if (!forced.reliable) {
+        await policyEvent(row, cfg, 'stop_failed', verified.countable.length, streamLimit, 'post_stop_revalidation_failed', {
+            error: forced.error,
+            fallback: 'device_logout',
+            noticeAccepted
+        });
+        return false;
+    }
+    if (!forced.candidate) {
+        return finalizeLaneStop(row, streamCount, streamLimit, cfg, {
+            method: 'device_logout_fallback',
+            noticeAccepted,
+            directStopError: directStopError?.message || null
+        });
+    }
+    if (forced.countable.length <= streamLimit) {
+        await policyEvent(row, cfg, 'skipped_safety', forced.countable.length, streamLimit, 'violation_cleared_after_fallback', {
+            fallback: 'device_logout',
+            noticeAccepted
+        });
+        return false;
+    }
+
+    await policyEvent(row, cfg, 'stop_failed', forced.countable.length, streamLimit, 'jellyfin_stop_did_not_end_session', {
+        fallback: 'device_logout_did_not_clear_session',
+        directStopError: directStopError?.message || null,
+        noticeAccepted
+    });
+    return false;
 }
 
 async function evaluateLanePolicies(rows, failedServerIds, cfg) {
@@ -355,5 +463,7 @@ module.exports = {
     overflowRows,
     laneEntitlements,
     laneStreamOverrides,
-    restoreLaneConfirmations
+    restoreLaneConfirmations,
+    stopOverflowSession,
+    verifyCandidateStopped
 };
