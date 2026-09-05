@@ -68,10 +68,10 @@ async function assertSupportPolicyMutation(page,pool){
 }
 
 async function assertPersonalNotificationMutation(page,pool,adminUserId){
-  const events=await pool.query(`SELECT event_type,email_enabled,telegram_enabled,discord_enabled,whatsapp_enabled FROM notification_preferences WHERE event_scope IN ('admin','both') ORDER BY event_type`);
-  const event=events.rows.find(row=>row.email_enabled||row.telegram_enabled||row.discord_enabled||row.whatsapp_enabled);
+  const events=await pool.query(`SELECT event_type,email_enabled,telegram_enabled,discord_enabled FROM notification_preferences WHERE event_scope IN ('admin','both') ORDER BY event_type`);
+  const event=events.rows.find(row=>row.email_enabled||row.telegram_enabled||row.discord_enabled);
   assert(event,'notification fixture has no globally enabled administrator event/channel to exercise');
-  const channel=['email','telegram','discord','whatsapp'].find(name=>event[`${name}_enabled`]);
+  const channel=['email','telegram','discord'].find(name=>event[`${name}_enabled`]);
   assert(channel,'notification event has no available channel');
 
   await pool.query(`INSERT INTO admin_notification_preferences(admin_user_id,event_type,channel,enabled) VALUES($1,$2,$3,FALSE) ON CONFLICT(admin_user_id,event_type,channel) DO UPDATE SET enabled=FALSE,updated_at=NOW()`,[adminUserId,event.event_type,channel]);
