@@ -35,7 +35,7 @@ async function panel(detail,token,req,permanent){
   const id=detail.customer.id,c=detail.customer;
   const [plans,advanced]=await Promise.all([grantablePlans(),forceAccess.panel(detail,token,req,permanent).catch(()=> '')]);
   const jellyfin=(detail.accounts||[]).filter(row=>String(row.account_purpose||'jellyfin')!=='stremio_internal'&&String(row.media_server_type||'jellyfin')!=='emby');
-  const portal=c.app_user_id?`<form class="actionTileForm" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate">${csrfHidden(token)}<button class="actionTile" type="submit">${tileContent('portal','View portal','Open customer portal')}</button></form>`:`<div class="actionTile disabled">${tileContent('portal','View portal','Portal not enrolled')}</div>`;
+  const portal=c.app_user_id?`<form class="actionTileForm customerPortalTab" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate">${csrfHidden(token)}<button class="actionTile" type="submit">${tileContent('portal','View portal','Open customer portal')}</button></form>`:'';
   const isPermanent=Boolean(permanent?.active||permanent?.stale);
   const automationToggle=isPermanent
     ?directTile(token,`/admin/users/${encodeURIComponent(id)}/manage/normal-automation`,'Return to automation','Remove overrides & use plan rules','normal','normal')
