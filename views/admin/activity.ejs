@@ -4,12 +4,12 @@
   <title>Playback Operations · <%= siteName %></title>
   <%- include('_head') %>
 </head>
-<body>
+<body class="page-playback">
 <div class="appShell">
   <%- include('_nav',{siteName,activeNav:'activity'}) %>
   <main class="mainPane">
     <header class="topBar"><div>Jellyfin</div><div class="muted">Playback operations</div></header>
-    <div class="content">
+    <div class="content page-playback">
       <div class="pageHeader">
         <h1>Playback Operations</h1>
         <div class="muted">See live playback and concurrency exceptions first; policy controls and historical detail stay secondary.</div>

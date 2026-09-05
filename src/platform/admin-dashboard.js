@@ -31,7 +31,7 @@ async function dashboardPage(req,res){
     await Promise.all([runtimeSettings.ensureLoaded(),reportingCurrency.refreshRates().catch(()=>null)]);
     const{ctx,html}=await renderMain(req),stats=ctx.data;
     const body=`<div class="adminDashboardCompactBody">${messageBlock(req)}${dashboardHero(ctx)}${renderLiveStreamsPanel(req)}${rangeControls(ctx.range)}${html}</div>`;
-    return res.send(layout({siteName:runtimeSettings.siteName(),active:'dashboard',title:'Admin Dashboard',subtitle:`Profit, growth and user capacity · ${ctx.range.label} · ${ctx.reporting.currency}`,body,action:primaryAction(stats)}));
+    return res.send(layout({siteName:runtimeSettings.siteName(),active:'dashboard',title:'Admin Dashboard',subtitle:`Profit, growth and user capacity · ${ctx.range.label} · ${ctx.reporting.currency}`,body,action:primaryAction(stats),pageClass:'page-dashboard'}));
   }catch(error){
     console.error('Admin dashboard failed:',error.message);
     return res.status(500).render('auth/message',{siteName:runtimeSettings.siteName(),title:'Dashboard unavailable',message:'The administration dashboard could not be loaded safely.',link:'/admin/setup',linkText:'Open Setup'});

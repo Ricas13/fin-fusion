@@ -94,7 +94,7 @@ async function page(req) {
     const problemJobs=jobs.filter(job=>['degraded','failed','stale','missing'].includes(jobHealth.healthState(job)));
     const problems=problemJobs.length?`<section class="section" id="automation-problems">${ui.sectionHeader({title:'Fix these jobs first',description:'These jobs are degraded, failed, stale or missing. Run them for catch-up/diagnosis or correct the underlying worker/integration problem.'})}<div class="serverGrid">${problemJobs.map(job=>jobCard(req,job)).join('')}</div></section>`:'';
     const routine=ui.detailDisclosure({title:`All automation schedules (${jobs.length})`,summary:'Routine controls · open only when changing schedules or running a job manually',bodyHtml:`<div id="all-automation-jobs">${groupedJobs(req,jobs)}</div>`});
-    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${problems}${routine}`});
+    return layout({siteName:runtimeSettings.siteName(),active:'automation-jobs',title:'Automation',subtitle:'See background health first; routine schedules stay out of the way until you need them',body:`${ui.noticesFromRequest(req)}${automationHero(jobs,worker,workerAlive)}${problems}${routine}`,pageClass:'page-automation'});
 }
 
 function createAdminAutomationRouter(){

@@ -42,7 +42,7 @@ async function page(req){
  const optionalReady=optional.filter(row=>row.enabled&&row.configured).length,optionalEnabled=optional.filter(row=>row.enabled).length;
  const optionalSection=ui.detailDisclosure({title:'Optional integrations',summary:`${optionalReady} configured / ${optional.length} available · ${optionalEnabled} enabled · disabled services are intentionally quiet`,bodyHtml:integrationGrid(optional)});
  const body=`${ui.noticesFromRequest(req)}${integrationsHero(rows)}${issueSection}${coreSection}${optionalSection}`;
- return layout({siteName:runtimeSettings.siteName(),active:'settings-integrations',title:'Connections',subtitle:'External-service readiness, messaging and customer integration entry points',body});
+ return layout({siteName:runtimeSettings.siteName(),active:'settings-integrations',title:'Connections',subtitle:'External-service readiness, messaging and customer integration entry points',body,pageClass:'page-connections-directory'});
 }
 function createAdminIntegrationsOverviewRouter(){const router=express.Router();router.use('/admin/settings/integrations',gate,noStore);inline.registerRoutes(router);router.get('/admin/settings/integrations',async(req,res,next)=>{try{return res.send(await page(req))}catch(error){next(error)}});return router;}
 module.exports={createAdminIntegrationsOverviewRouter,integrationState,providerReady,catalogue,integrationsHero,connectionsCards,integrationRow,integrationCard,integrationGrid,statePill,page};
