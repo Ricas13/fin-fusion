@@ -35,7 +35,7 @@ const CUSTOMER_SORTS = Object.freeze({
 });
 
 function isUuid(v) {
-    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
 function boundedInt(value, min, max) {
