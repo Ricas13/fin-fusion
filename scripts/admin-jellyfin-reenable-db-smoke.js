@@ -54,11 +54,11 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
         `, [invariant.customerId, invariant.serverId, `enabled-${suffix}`, `Enabled_${suffix}`]);
         await assert.rejects(
             query(`
-                INSERT INTO jellyfin_policy_reconciliation(jellyfin_account_id,customer_id,status,desired_disabled)
-                VALUES($1,$2,'running',TRUE)
-            `, [invariantAccount.rows[0].id, invariant.customerId]),
+                INSERT INTO jellyfin_policy_drift(jellyfin_account_id,customer_id,server_id,status,desired_disabled)
+                VALUES($1,$2,$3,'unknown',TRUE)
+            `, [invariantAccount.rows[0].id, invariant.customerId, invariant.serverId]),
             error => String(error?.code || '') === '23514',
-            'a true desired-disabled reconciliation target must never be accepted'
+            'a true desired-disabled policy target must never be accepted'
         );
 
         const normal = await fixture('normal');
