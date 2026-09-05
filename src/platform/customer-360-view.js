@@ -3,7 +3,7 @@
 const v2=require('./customer-360-view-v2');
 const accessCards=require('./customer-360-access-cards');
 const compact=require('./customer-360-compact');
-const forceAccess=require('./admin-customer-force-access');
+const primaryActions=require('./admin-customer-primary-actions');
 const desiredState=require('../entitlements/customer-access-desired-state');
 const serviceTruth=require('./customer-360-service-truth');
 
@@ -12,7 +12,6 @@ function customerFacingDetail(detail){return{...detail,accounts:(detail.accounts
 function activeSubscription(detail){return (detail.subscriptions||[]).find(row=>['active','trialing','past_due','paused'].includes(String(row.status||''))&&(!row.current_period_end||new Date(row.current_period_end)>new Date()))||detail.subscriptions?.[0]||null;}
 function escapeHtml(value){return String(value==null?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
 
-// DB-free adapter retained for callers/tests that only have detail data.
 function accessWorkspaceSection(detail,token,accessDetail){
   const sub=activeSubscription(detail);
   const accounts=(detail.accounts||[]).filter(account=>String(account.account_purpose||'jellyfin')!=='stremio_internal');
@@ -34,8 +33,6 @@ function desiredAccessForDetail(detail,entitlement){
   return desiredState.deriveCustomerAccessDesiredState(input);
 }
 
-// Retained as diagnostic helpers for direct callers, but deliberately no
-// longer included on the default Customer 360 page.
 function serviceTruthPanel(detail){
   const rows=serviceTruth.resultRows(detail);
   const rowHtml=rows.map(row=>{
@@ -67,17 +64,14 @@ function accessTruthPanel(detail){
   return `<section class="section customerAccessTruth"><div class="sectionHead"><div><h2>Access truth</h2><div class="muted">Commercial entitlement, blockers, actual Jellyfin state and the last reconciliation result are shown separately so support can see why access is in its current state.</div></div></div><div class="profileGrid"><section class="profileCard"><div class="profileCardHead"><h2>Commercial state</h2><span class="pill ${entitlement?'good':''}">${escapeHtml(commercialStatus)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Entitlement</div><div class="kvValue">${escapeHtml(planName)}</div></div><div class="kvRow"><div class="kvLabel">Effective access</div><div class="kvValue"><span class="pill ${statusTone}">${escapeHtml(desired)}</span></div></div><div class="kvRow"><div class="kvLabel">Active blockers</div><div class="kvValue">${escapeHtml(holdDetail)}</div></div></div></div></section><section class="profileCard"><div class="profileCardHead"><h2>Observed state</h2><span class="pill ${enabledAccounts.length?'good':ordinaryAccounts.length?'warn':''}">${escapeHtml(`${enabledAccounts.length}/${ordinaryAccounts.length} enabled`)}</span></div><div class="profileCardBody"><div class="kvList"><div class="kvRow"><div class="kvLabel">Jellyfin</div><div class="kvValue">${escapeHtml(serverDetail)}</div></div><div class="kvRow"><div class="kvLabel">Reconciliation</div><div class="kvValue"><span class="pill ${reconTone}">${escapeHtml(reconcileStatus)}</span></div></div><div class="kvRow"><div class="kvLabel">Last result</div><div class="kvValue">${escapeHtml(reconcileDetail)}</div></div></div></div></section></div></section>${serviceTruthPanel(detail)}`;
 }
 
-// Focused Customer 360: identity/summary, explicit emergency Jellyfin access,
-// compact customer controls, collapsed access workspace, Billing, Activity,
-// then a subdued collapsed provisioning log.
 async function body(detail,token,options={}){
   if(!detail?.customer?.id)return'';
   const safe=customerFacingDetail(detail);
   const heroSummary=v2.heroAndSummary(safe);
   const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
-  const forceBar=await forceAccess.panel(safe,token,options.req,options.permanent).catch(()=> '');
+  const actions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const main=await compact.render(safe,token,options);
-  return `${heroSummary}${navBar}${forceBar}${main}`;
+  return `${heroSummary}${navBar}${actions}${main}`;
 }
 
 module.exports={...v2,body,serviceType,customerFacingDetail,activeSubscription,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection};
