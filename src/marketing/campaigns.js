@@ -4,6 +4,9 @@ const customerFilters=require('../platform/customer-filters');
 const segments=require('./segments');
 const emailOutbox=require('../integrations/email-outbox');
 const notificationOutbox=require('../integrations/notification-outbox');
+const {renderProfessionalEmail}=require('../integrations/email-template');
+const runtimeSettings=require('../platform/runtime-settings');
+const operations=require('../platform/operations-settings');
 
 function clean(value,min,max,label){const text=String(value||'').trim();if(text.length<min||text.length>max)throw new Error(`${label} must be between ${min} and ${max} characters.`);return text;}
 
@@ -70,9 +73,12 @@ async function snapshotRecipients(campaign){
   await query(`UPDATE marketing_campaigns SET recipient_count=(SELECT COUNT(*) FROM marketing_campaign_recipients WHERE campaign_id=$1),updated_at=NOW() WHERE id=$1`,[campaign.id]);
 }
 
-function renderMessage(campaign,recipient,discountCode){
+function renderMessage(campaign,recipient,discountCode,brand={}){
   const codeText=discountCode?` Use code ${discountCode.code}.`:'';
-  return{text:`${campaign.body_text}${codeText}`,html:null};
+  const text=`${campaign.body_text}${codeText}`;
+  const accountUrl=brand.publicBaseUrl?`${brand.publicBaseUrl.replace(/\/+$/,'')}/account`:'';
+  const html=renderProfessionalEmail({subject:campaign.subject,title:campaign.subject,text,eventLabel:'Offer',actionLabel:accountUrl?'Open your account':'',actionUrl:accountUrl,siteName:brand.siteName||'CAPTAiNFiN',publicBaseUrl:brand.publicBaseUrl||'',transactional:false});
+  return{text,html};
 }
 
 async function currentConsent(customerIds){
@@ -94,6 +100,8 @@ async function queue({campaignId,adminUserId=null}){
   data=await get(campaignId);
   if(!data.recipients.length)throw new Error('No eligible opted-in recipients are available for this campaign.');
   const consent=await currentConsent(data.recipients.map(r=>r.customer_id));
+  await runtimeSettings.ensureLoaded().catch(()=>{});
+  const brand={siteName:runtimeSettings.siteName(),publicBaseUrl:(await operations.get().catch(()=>operations.DEFAULTS)).publicBaseUrl||''};
   let queuedCount=0,suppressedCount=0;
   for(const recipient of data.recipients){
     const now=consent.get(String(recipient.customer_id));
@@ -112,7 +120,7 @@ async function queue({campaignId,adminUserId=null}){
       await query(`UPDATE marketing_campaign_recipients SET status='suppressed',suppression_reason='no_channel_available',updated_at=NOW() WHERE campaign_id=$1 AND customer_id=$2`,[campaignId,recipient.customer_id]);
       continue;
     }
-    const message=renderMessage(data.campaign,recipient,data.discountCode);
+    const message=renderMessage(data.campaign,recipient,data.discountCode,brand);
     for(const channel of channels){
       const dedupeKey=`marketing:${campaignId}:${recipient.customer_id}:${channel}`;
       let outboxId=null,status='queued';
