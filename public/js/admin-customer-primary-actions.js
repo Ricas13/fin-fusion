@@ -9,8 +9,17 @@
   const advancedLabels=new Set(['Reconcile','Fix access','Reconcile access','Sync roles / reconcile','Provision / re-provision','Re-provision / resync','Create / provision']);
 
   const style=document.createElement('style');
-  style.textContent='.opMoreActions{grid-column:1/-1}.opMoreActions>summary{cursor:pointer;list-style:none;font-size:.61rem;font-weight:750;color:var(--muted,#9aa7b5);padding:5px 7px;border:1px solid var(--border,#29333d);border-radius:6px;text-align:center}.opMoreActions>summary::-webkit-details-marker{display:none}.opMoreActionsBody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;width:100%;padding-top:6px}.opMoreActionsBody .plainForm,.opMoreActionsBody .button{width:100%}';
+  style.textContent='.content>.pageHeader{display:none!important}.topBarActions>a[href="/admin/users"]{display:none!important}.opMoreActions{grid-column:1/-1}.opMoreActions>summary{cursor:pointer;list-style:none;font-size:.61rem;font-weight:750;color:var(--muted,#9aa7b5);padding:5px 7px;border:1px solid var(--border,#29333d);border-radius:6px;text-align:center}.opMoreActions>summary::-webkit-details-marker{display:none}.opMoreActionsBody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;width:100%;padding-top:6px}.opMoreActionsBody .plainForm,.opMoreActionsBody .button{width:100%}';
   document.head.appendChild(style);
+
+  function customerName(){return text(document.querySelector('.customerMockName h1'))||text(document.querySelector('.customerMockEmail'))||'Customer';}
+  function alignBreadcrumb(){
+    const crumb=document.querySelector('.topBreadcrumb');
+    if(!crumb||crumb.dataset.customerCrumb==='1')return;
+    crumb.dataset.customerCrumb='1';
+    const name=customerName();
+    crumb.innerHTML=`<a href="/admin/users">Customers</a><span>/</span><a href="/admin/users">All customers</a><span>/</span><strong>${name.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</strong>`;
+  }
 
   function cleanLegacyHeader(){
     document.querySelectorAll('a,button').forEach(node=>{
@@ -70,7 +79,7 @@
     });
   }
 
-  function enhance(){cleanLegacyHeader();identifyCards();compactTechnicalActions();moveAdvancedIntoBottomStack();wireManualGrantForms();}
+  function enhance(){alignBreadcrumb();cleanLegacyHeader();identifyCards();compactTechnicalActions();moveAdvancedIntoBottomStack();wireManualGrantForms();}
   enhance();
   const observer=new MutationObserver(enhance);observer.observe(document.body,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),5000);
 })();
