@@ -93,22 +93,6 @@
     crumb.innerHTML=`<a href="/admin/users">Customers</a><span>/</span><a href="/admin/users">All customers</a><span>/</span><strong>${name}</strong>`;
   }
 
-  function promotePortalAction(){
-    const top=document.querySelector('.customerMockTopActions');
-    if(!top)return;
-    const action=`/admin/users/${customerId}/impersonate`;
-    let form=top.querySelector(`form[action="${action}"]`);
-    if(!form){
-      const outside=[...document.querySelectorAll(`form[action="${action}"]`)].find(node=>!node.closest('.customerPrimaryActions'));
-      const source=outside||document.querySelector(`.customerPrimaryActions form[action="${action}"]`);
-      if(source){form=outside||source.cloneNode(true);const edit=top.querySelector('a[href$="/edit-profile"]');top.insertBefore(form,edit||top.firstChild);}
-    }
-    if(!form)return;
-    form.classList.add('plainForm');form.style.display='inline';
-    const button=form.querySelector('button');
-    if(button){button.className='mockTopButton primary';button.textContent='View Portal as User';button.title='Open this customer portal in read-only support mode';}
-  }
-
   function wireMoreMenu(){
     const top=document.querySelector('.customerMockTopActions');
     if(!top||top.querySelector('.customerMockMore'))return;
@@ -133,9 +117,6 @@
     document.querySelectorAll('a,button').forEach(node=>{
       const label=text(node);
       if(label==='Change Jellyfin password'&&!node.closest('.customerMockHero')&&!node.closest('.customerPrimaryActions')&&!node.closest('.customer360Core'))node.remove();
-    });
-    document.querySelectorAll(`form[action="/admin/users/${customerId}/impersonate"]`).forEach(form=>{
-      if(!form.closest('.customerMockHero')&&!form.closest('.customerPrimaryActions'))form.remove();
     });
   }
 
@@ -223,7 +204,8 @@
     });
   }
 
-  function enhance(){alignBreadcrumb();promotePortalAction();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();foldPaymentIncidents();wireManualGrantForms();}
+  function enhance(){alignBreadcrumb();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();foldPaymentIncidents();wireManualGrantForms();}
   enhance();
-  const observer=new MutationObserver(enhance);observer.observe(document.body,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),5000);
+  requestAnimationFrame(enhance);
+  setTimeout(enhance,250);
 })();
