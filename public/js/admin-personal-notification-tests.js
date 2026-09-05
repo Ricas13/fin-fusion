@@ -32,16 +32,6 @@
 
     const discord=cardByTitle('Discord');
     appendTest(discord,'discord','Send test Discord',!discord||discord.textContent.includes('Not connected'));
-
-    const whatsapp=cardByTitle('WhatsApp');
-    if(whatsapp){
-      const phone=whatsapp.querySelector('input[name="phone"]');
-      const enabled=whatsapp.querySelector('input[name="enabled"]');
-      appendTest(whatsapp,'whatsapp','Send test WhatsApp',!(phone?.value&&enabled?.checked));
-      const test=whatsapp.querySelector('form[action="/admin/profile/notifications/test/whatsapp"] button');
-      const refresh=()=>{if(test)test.disabled=!(phone?.value.trim()&&enabled?.checked);};
-      phone?.addEventListener('input',refresh);enabled?.addEventListener('change',refresh);
-    }
   }
   document.addEventListener('DOMContentLoaded',setup);
 })();
