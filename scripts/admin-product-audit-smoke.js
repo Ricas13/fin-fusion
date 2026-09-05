@@ -19,6 +19,7 @@ const adminHtml=read('src/platform/admin-html.js');
 const adminHtmlCore=read('src/platform/admin-html-core.js');
 const discountUi=read('public/js/admin-discounts.js');
 const customerFilterUi=read('public/js/admin-customer-filters.js');
+const customerList=read('src/platform/admin-customers-list.js');
 const adminSettingsGuide=read('docs/guide/admin-settings.md');
 const gettingStartedGuide=read('docs/guide/getting-started.md');
 const productModules=read('src/platform/admin-product-modules.js');
@@ -99,9 +100,12 @@ assert(plansList.includes("planComponents.accessLabel(plan)"),'Plan list must us
 assert(architecture.includes('Do not create duplicate customer, order, payment, discount or notification systems'),'Architecture guide must protect shared business ownership');
 
 assert(adminHtmlCore.includes('/js/admin-customer-filters.js'),'canonical admin layout must load the progressive customer-filter controller');
-for(const term of ['customerFilterToolbar','More filters','customerFilterChips','Expiry: Next 30 days'])assert(customerFilterUi.includes(term),`compact customer filters must include ${term}`);
-assert(customerFilterUi.includes("['q', 'service', 'status', 'plan', 'server']"),'the default customer filter toolbar must keep only high-frequency filters visible');
-assert(customerFilterUi.includes("['accountStatus', 'paymentProvider', 'reconciliationStatus', 'hasOverride', 'library'"),'less-frequent filters must live in the advanced section');
+assert(customerList.includes('customerSearchRow')&&customerList.includes('customerPrimaryFilters'),'Customers must render Search and everyday filters outside the collapsed advanced section');
+assert(customerList.includes('<details class="customerAdvancedFilters"'),'Customers must keep secondary filters in an advanced disclosure');
+assert(customerFilterUi.includes('[product, access, plan, server, actions]'),'the progressive controller must preserve Product / Access / Plan / Server order');
+assert(customerFilterUi.includes("searchLabel.textContent = 'Name'")&&customerFilterUi.includes("accessAny.textContent = 'Any'")&&customerFilterUi.includes("planAny.textContent = 'Any Plan'")&&customerFilterUi.includes("serverAny.textContent = 'Any Jellyfin Server'"),'primary customer filter labels must match the operator-facing contract');
+assert(customerFilterUi.includes('More Advanced Filters'),'the advanced customer filter disclosure must retain its explicit label');
+assert(!customerFilterUi.includes('originalGrid.replaceWith')&&!customerFilterUi.includes('advancedGrid.appendChild'),'the progressive controller must never move everyday filters into the advanced panel');
 
 assert(stremioEditor.includes('Unlimited streams/devices')&&stremioEditor.includes('<span>Devices</span><strong>Unlimited</strong>')&&stremioEditor.includes('Household IPs')&&stremioEditor.includes('Connection lease'),'Stremio editor must expose household-first UX with unlimited streams/devices, Household IPs and one connection lease');
 assert(!stremioEditor.includes('name="replacementPolicy"')&&!stremioEditor.includes('name="cooldownMinutes"'),'Stremio basic access must not expose a competing replacement policy or cooldown control');
