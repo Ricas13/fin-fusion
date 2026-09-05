@@ -16,11 +16,22 @@
 .page-commerce-orders .ordersPurchases>.tableWrap{border-color:#284350}
 .page-commerce-orders .ordersTable th{background:#1a2b35!important}
 .page-commerce-orders .ordersDisclosure summary{min-height:42px}
-.page-commerce-orders .ordersPanelIcon,.page-commerce-orders .ordersCalendarIcon{display:inline-grid;place-items:center;width:15px;height:15px;flex:0 0 15px;color:#4bc8ef}
-.page-commerce-orders .ordersPanelIcon svg,.page-commerce-orders .ordersCalendarIcon svg{display:block;width:14px;height:14px;stroke:currentColor}
+.page-commerce-orders .ordersPanelIcon,.page-commerce-orders .ordersCalendarIcon,.page-commerce-orders .ordersSearchIcon{display:inline-grid;place-items:center;width:15px;height:15px;flex:0 0 15px;color:#4bc8ef}
+.page-commerce-orders .ordersPanelIcon svg,.page-commerce-orders .ordersCalendarIcon svg,.page-commerce-orders .ordersSearchIcon svg{display:block;width:14px;height:14px;stroke:currentColor}
+.page-commerce-orders .ordersSearchIcon{color:#78909e}
+.page-commerce-orders .ordersSearch>span{left:10px}
 @media(min-width:981px){
  .page-commerce-orders .ordersHeroLine{position:relative;margin:-16px 0 12px;min-height:34px}
  .page-commerce-orders .ordersRangeForm{position:absolute;right:0;top:-65px;z-index:40}
+ .page-commerce-orders .ordersAnalyticsGrid{grid-template-columns:repeat(24,minmax(0,1fr))}
+ .page-commerce-orders .ordersChartCard.ordersChartWide{grid-column:span 10}
+ .page-commerce-orders .ordersChartCard:nth-child(2),.page-commerce-orders .ordersChartCard:nth-child(3){grid-column:span 7}
+ .page-commerce-orders .ordersChartCard:nth-child(4),.page-commerce-orders .ordersChartCard:nth-child(5),.page-commerce-orders .ordersChartCard:nth-child(6){grid-column:span 8}
+}
+@media(min-width:1080px){
+ .page-commerce-orders .ordersKpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+ .page-commerce-orders .ordersPurchaseFilters{grid-template-columns:minmax(240px,1.7fr) repeat(3,minmax(100px,.65fr)) minmax(190px,1.05fr) auto}
+ .page-commerce-orders .ordersDatePicker,.page-commerce-orders .ordersClear{grid-column:auto}
 }
 @media(max-width:980px){
  .page-commerce-orders .ordersHeroLine{margin-top:-4px}
