@@ -46,7 +46,7 @@ async function expiredSubscriptions(since, until) {
         SELECT s.id,s.customer_id,s.current_period_end,s.updated_at,
                COALESCE(s.plan_name_snapshot,p.name,'Your plan') AS plan_name,
                COALESCE(s.billing_interval_snapshot,p.billing_interval)='trial' AS is_trial,
-               COALESCE(au.email,c.email) AS customer_email,
+               COALESCE(NULLIF(TRIM(c.email),''),NULLIF(TRIM(au.email),'')) AS customer_email,
                COALESCE(NULLIF(c.display_name,''),NULLIF(au.username,''),'there') AS customer_name
         FROM subscriptions s
         JOIN plans p ON p.id=s.plan_id
