@@ -26,6 +26,14 @@
 #customersTable .operatorAccessCell{min-width:105px}
 #customersTable .operatorAccessCell .operatorMetricSub{display:block;margin-top:4px;color:#788996;font-size:10px}
 #customersTable .operatorRowActions{white-space:nowrap}
+.customer360Core .opNested .laneWrap>.twoCol{grid-template-columns:repeat(3,minmax(0,1fr))}
+.customer360Core .opNested .laneWrap>.twoCol>.colStack{display:contents}
+.customer360Core .opNested .laneWrap>.twoCol>.colStack>details.panel:nth-child(1){order:1}
+.customer360Core .opNested .laneWrap>.twoCol>details.panel{order:2}
+.customer360Core .opNested .laneWrap>.twoCol>.colStack>details.panel:nth-child(2){order:3}
+.customer360Core .opNested .laneWrap>.twoCol>.colStack>details.panel:nth-child(n+3){order:4}
 @media(min-width:921px){.customer360Core .opGrid{align-items:stretch!important;grid-auto-rows:1fr}}
+@media(max-width:1150px){.customer360Core .opNested .laneWrap>.twoCol{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:1050px){.operatorCustomerSummary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.customer360Core .opNested .laneWrap>.twoCol{grid-template-columns:1fr}}
 @media(max-width:700px){.operatorCustomerSummary{grid-template-columns:1fr}.operatorServerAction{grid-template-columns:1fr;width:100%}.operatorServerAction .button{width:100%}.operatorServerSelect{min-width:0;width:100%}.operatorPrimaryActions{display:grid;grid-template-columns:1fr}.operatorPrimaryActions>.plainForm,.operatorPrimaryActions>.plainForm .button{width:100%}.customerPortalTab{width:100%}.customerPortalTab form,.customerPortalTab .detailTab{width:100%}}
