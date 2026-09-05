@@ -21,62 +21,80 @@
   syncPaymentReadiness();
 
   const csrfToken=document.querySelector('input[name="_csrf"]')?.value||'';
-  let timer=null,requestId=0,lastPreview=null;
+  const previewCache=new Map();
+  const previewTimers=new WeakMap();
+  const requestIds=new WeakMap();
 
-  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));}
   function promoInputs(){return Array.from(document.querySelectorAll('[data-promo-input]'));}
-  function targets(){return Array.from(document.querySelectorAll('[data-promo-target]'));}
   function cards(){return Array.from(document.querySelectorAll('[data-plan-code]'));}
+  function normalized(input){return input?String(input.value||'').trim().toUpperCase().slice(0,40):'';}
+  function inputCard(input){return input?.closest('[data-plan-code]')||null;}
+  function sharedInput(){return promoInputs().find(input=>!inputCard(input))||null;}
+  function promoInputForCard(card){return card?.querySelector('[data-promo-input]')||sharedInput();}
+  function promoCodeForCard(card){return normalized(promoInputForCard(card));}
+  function cardForPlanCode(planCode){return cards().find(card=>String(card.dataset.planCode||'')===String(planCode||''))||null;}
   function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:currency||'USD',currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}catch(_){return `${({'GBP':'£','USD':'$','EUR':'€'})[String(currency||'USD').toUpperCase()]||'¤'}${(Number(minor||0)/100).toFixed(2)}`;}}
-  function currentCode(){const first=promoInputs()[0];return first?String(first.value||'').trim().toUpperCase().slice(0,40):'';}
-  function sync(code){for(const input of promoInputs())if(input.value!==code)input.value=code;for(const target of targets())target.value=code;}
-  function inputCard(input){return input.closest('[data-plan-code]');}
-  function statusNodeFor(input){const group=input.closest('.planPromo, .sharedPromoPanel');if(!group)return null;let node=group.querySelector('[data-promo-status]');if(!node){const line=group.querySelector('.planPromoLine, .sharedPromoLine')||group;node=document.createElement('div');node.className='planPromoStatus';node.dataset.promoStatus='';node.setAttribute('aria-live','polite');line.insertAdjacentElement('afterend',node);}return node;}
+  function statusNodeFor(input){const group=input?.closest('.planPromo, .sharedPromoPanel');if(!group)return null;let node=group.querySelector('[data-promo-status]');if(!node){const line=group.querySelector('.planPromoLine, .sharedPromoLine')||group;node=document.createElement('div');node.className='planPromoStatus';node.dataset.promoStatus='';node.setAttribute('aria-live','polite');line.insertAdjacentElement('afterend',node);}return node;}
   function setInputStatus(input,message,state){const node=statusNodeFor(input);if(!node)return;node.textContent=message||'';node.dataset.state=state||'';}
-  function clearAllStatus(){for(const input of promoInputs())setInputStatus(input,'','');}
   function prepareCard(card){const price=card.querySelector('[data-plan-price]');if(price&&!price.dataset.originalPrice)price.dataset.originalPrice=price.textContent.trim();}
   function prepareCards(){for(const card of cards())prepareCard(card);}
-  function resetCard(card){const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');if(price&&price.dataset.originalPrice)price.textContent=price.dataset.originalPrice;if(note){note.hidden=true;note.textContent='';}card.classList.remove('promoApplied');}
+  function resetCard(card){if(!card)return;const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');if(price&&price.dataset.originalPrice)price.textContent=price.dataset.originalPrice;if(note){note.hidden=true;note.textContent='';}card.classList.remove('promoApplied');}
   function resetCards(){for(const card of cards())resetCard(card);}
   function discountedMinor(base,row){if(!row)return base;if(row.discountType==='percent')return Math.max(0,Math.round(base*(100-Number(row.percentOff||0))/100));if(row.discountType==='fixed')return Math.max(0,base-Number(row.fixedOffMinor||0));return Number.isFinite(Number(row.finalMinor))?Number(row.finalMinor):base;}
-  function applyPreview(payload){
-    lastPreview=payload||null;resetCards();
-    if(!payload||!payload.valid){for(const input of promoInputs())setInputStatus(input,payload?.message||'That promo code is not valid for the available plans.','error');return;}
-    clearAllStatus();
-    for(const input of promoInputs()){
-      const card=inputCard(input);
-      if(!card){setInputStatus(input,'Promo code is valid for eligible plans. The exact discounted amount will be confirmed before payment.','success');continue;}
-      const code=card.dataset.planCode,row=payload.plans&&payload.plans[code];
-      if(!row||!row.valid){setInputStatus(input,'Not valid for this plan.','error');continue;}
-      const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');
-      if(!price)continue;
-      const base=Number(card.dataset.planBaseMinor||row.baseMinor||0),currency=card.dataset.planCurrency||row.currency,final=discountedMinor(base,row),original=money(base,currency),discounted=money(final,currency);
-      price.textContent=discounted;card.classList.add('promoApplied');
-      if(note){const saving=Math.max(0,base-final);note.textContent=saving>0?`${original} normally · save ${money(saving,currency)} on this payment`:'Promo applies to this plan';note.hidden=false;}
-    }
+  function syncTargetsForInput(input){
+    if(!input)return;
+    const code=normalized(input);if(input.value!==code)input.value=code;
+    const card=inputCard(input),targets=card?card.querySelectorAll('[data-promo-target]'):document.querySelectorAll('[data-promo-target]');
+    for(const target of targets)target.value=code;
   }
-  async function preview(){
-    const inputEls=promoInputs();if(!inputEls.length)return;
-    const code=currentCode(),id=++requestId;
-    sync(code);
-    if(!code){lastPreview=null;resetCards();clearAllStatus();return;}
-    for(const input of inputEls)setInputStatus(input,'Checking…','pending');
+  function syncTargetsForCard(card){
+    const input=promoInputForCard(card),code=normalized(input);
+    for(const target of card?.querySelectorAll('[data-promo-target]')||[])target.value=code;
+  }
+  function applyPreview(input,payload){
+    const card=inputCard(input);
+    if(!card){
+      if(!payload||!payload.valid)setInputStatus(input,payload?.message||'That promo code is not valid for the available plans.','error');
+      else setInputStatus(input,payload.message||'Promo code is valid for eligible plans. The exact discounted amount will be confirmed before payment.','success');
+      return;
+    }
+    resetCard(card);
+    if(!payload||!payload.valid){setInputStatus(input,payload?.message||'That promo code is not valid for this plan.','error');return;}
+    const code=card.dataset.planCode,row=payload.plans&&payload.plans[code];
+    if(!row||!row.valid){setInputStatus(input,'Not valid for this plan.','error');return;}
+    const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');
+    if(!price){setInputStatus(input,payload.message||'Promo code applied.','success');return;}
+    const base=Number(card.dataset.planBaseMinor||row.baseMinor||0),currency=card.dataset.planCurrency||row.currency,final=discountedMinor(base,row),original=money(base,currency),discounted=money(final,currency);
+    price.textContent=discounted;card.classList.add('promoApplied');
+    if(note){const saving=Math.max(0,base-final);note.textContent=saving>0?`${original} normally · save ${money(saving,currency)} on this payment`:'Promo applies to this plan';note.hidden=false;}
+    setInputStatus(input,payload.message||'Promo code applied.','success');
+  }
+  async function preview(input){
+    if(!input)return;
+    syncTargetsForInput(input);
+    const code=normalized(input),card=inputCard(input);
+    if(!code){if(card)resetCard(card);else resetCards();setInputStatus(input,'','');return;}
+    const id=(requestIds.get(input)||0)+1;requestIds.set(input,id);setInputStatus(input,'Checking…','pending');
     try{
       const response=await fetch('/account/discount-preview?code='+encodeURIComponent(code),{headers:{Accept:'application/json'},credentials:'same-origin'}),payload=await response.json();
-      if(id!==requestId)return;
-      applyPreview(payload);
+      if(requestIds.get(input)!==id)return;
+      previewCache.set(code,payload);applyPreview(input,payload);
     }catch(_){
-      if(id!==requestId)return;
-      lastPreview=null;resetCards();
-      for(const input of inputEls)setInputStatus(input,'Promo preview is unavailable right now. You can still enter the code at checkout.','error');
+      if(requestIds.get(input)!==id)return;
+      if(card)resetCard(card);setInputStatus(input,'Promo preview is unavailable right now. You can still enter the code at checkout.','error');
     }
   }
-  function schedule(){sync(currentCode());clearTimeout(timer);timer=setTimeout(preview,350);}
+  function schedule(input){
+    syncTargetsForInput(input);
+    const existing=previewTimers.get(input);if(existing)clearTimeout(existing);
+    previewTimers.set(input,setTimeout(()=>preview(input),350));
+  }
 
   function providerLabel(provider){return provider==='stripe'?'Stripe':provider==='paypal'?'PayPal':'Plisio';}
   function buttonClass(provider){return provider==='stripe'?'stripe':provider==='paypal'?'paypal':'primary';}
   function accessLabel(kind,quantity){return kind==='households'?`${quantity} household connection${quantity===1?'':'s'} · unlimited streams & devices`:`${quantity} concurrent stream${quantity===1?'':'s'}`;}
-  function checkoutForm(plan,variant,provider,mode,label){return `<form class="plainForm checkoutForm" method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(currentCode())}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
+  function checkoutForm(plan,variant,provider,mode,label){const card=cardForPlanCode(plan.code),promo=promoCodeForCard(card);return `<form class="plainForm checkoutForm" method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(promo)}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
   function availableModes(variant,provider){return(variant.paymentOptions||[]).filter(option=>option.provider===provider).map(option=>option.checkoutMode);}
   function selectedOption(plan,select){return plan.variants.find(variant=>Number(variant.quantity)===Number(select.value))||plan.variants[0];}
   function actionMarkup(plan,variant){
@@ -102,8 +120,8 @@
     let scarcity=card.querySelector('[data-dashboard-variant-scarcity]');if(!scarcity){scarcity=document.createElement('div');scarcity.className='accessMeta';scarcity.dataset.dashboardVariantScarcity='';select.closest('.field')?.insertAdjacentElement('afterend',scarcity);}if(scarcity)scarcity.textContent=variant.scarcity||'Available';
     const actions=card.querySelector('.planActions');if(actions)actions.innerHTML=actionMarkup(plan,variant);
     card.classList.toggle('soldOut',Boolean(variant.soldOut));
-    sync(currentCode());
-    if(lastPreview&&currentCode())applyPreview(lastPreview);else resetCard(card);
+    syncTargetsForCard(card);
+    const input=promoInputForCard(card),code=normalized(input),cached=code&&previewCache.get(code);if(cached)applyPreview(input,cached);else resetCard(card);
   }
   function installVariantPicker(plan){
     const card=document.querySelector(`[data-plan-code="${CSS.escape(plan.code)}"]`);if(!card||card.dataset.variantPickerReady==='1')return;card.dataset.variantPickerReady='1';
@@ -118,13 +136,13 @@
 
   prepareCards();
   for(const input of promoInputs()){
-    input.addEventListener('input',schedule);
-    input.addEventListener('change',preview);
+    input.addEventListener('input',()=>schedule(input));
+    input.addEventListener('change',()=>preview(input));
+    syncTargetsForInput(input);
   }
   for(const clearButton of document.querySelectorAll('[data-promo-clear]')){
-    clearButton.addEventListener('click',()=>{sync('');preview();});
+    clearButton.addEventListener('click',()=>{const group=clearButton.closest('.planPromo, .sharedPromoPanel'),input=group?.querySelector('[data-promo-input]');if(!input)return;input.value='';preview(input);input.focus();});
   }
-  sync(currentCode());
-  document.addEventListener('submit',event=>{if(event.target&&event.target.matches('.checkoutForm'))sync(currentCode());},true);
+  document.addEventListener('submit',event=>{const form=event.target;if(!form||!form.matches('.checkoutForm'))return;const card=form.closest('[data-plan-code]'),input=promoInputForCard(card);if(input)syncTargetsForInput(input);},true);
   loadVariants();
 })();
