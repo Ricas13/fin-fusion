@@ -14,6 +14,20 @@
   if (window.__captainfinCustomerFiltersBound) return;
   window.__captainfinCustomerFiltersBound = true;
 
+  // admin-customer-operator.js still contains a compatibility enhancer for the
+  // retired customer table. The redesigned directory is fully rendered by the
+  // server, so mark that modern contract before the legacy enhancer runs. This
+  // prevents it from replacing Plan / product, Jellyfin / service, renewal and
+  // activity columns with the old Paid / Current plan / Registered layout.
+  const customerTable = document.querySelector('#customersTable');
+  if (customerTable) {
+    const headings = [...(customerTable.tHead?.rows?.[0]?.cells || [])]
+      .map(cell => String(cell.textContent || '').replace(/[↑↓]/g, '').trim());
+    if (headings.includes('Plan / product') && headings.includes('Jellyfin / service')) {
+      customerTable.dataset.operatorFriendly = '1';
+    }
+  }
+
   const filterForm = document.querySelector('form.compactFilterForm[action="/admin/users"]');
 
   const submit = form => {
