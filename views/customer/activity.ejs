@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
   <link rel="stylesheet" href="/css/customer-activity.css">
+  <script src="/js/customer-activity.js" defer></script>
 </head>
 <%
   function when(v){if(!v)return'Not recorded yet';const d=new Date(v);return Number.isNaN(d.getTime())?'Not recorded yet':d.toLocaleString();}
@@ -36,7 +37,7 @@
     <div><h1>Your activity</h1><p>A personalised overview of your watching habits and account activity.</p></div>
     <form class="activityPeriodSelect" method="get" action="/account/activity">
       <span aria-hidden="true">▣</span>
-      <select name="range" aria-label="Activity period" onchange="this.form.submit()">
+      <select name="range" aria-label="Activity period" data-activity-range-select>
         <% rangeOptions.forEach(function(option){ %><option value="<%= option.key %>" <%= option.key===range.key?'selected':'' %>><%= option.key==='30d'?'Last 30 days':option.label %></option><% }) %>
       </select>
     </form>
@@ -90,7 +91,7 @@
       <div class="activityRecentList">
         <% if(recent.length){recent.forEach(function(item,index){ %>
         <div class="activityRecentRow">
-          <div class="activityPoster poster<%= index%5 %>"><span aria-hidden="true">▶</span><% if(item.imageUrl){ %><img src="<%= item.imageUrl %>" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><% } %></div>
+          <div class="activityPoster poster<%= index%5 %>"><span aria-hidden="true">▶</span><% if(item.imageUrl){ %><img src="<%= item.imageUrl %>" alt="" loading="lazy" referrerpolicy="no-referrer" data-activity-poster-image><% } %></div>
           <div class="activityRecentInfo"><strong><%= item.title %></strong><span><%= item.subtitle||'Recorded playback' %></span></div>
           <time><%= timeAgo(item.lastSeenAt) %></time>
           <div class="activityProgress"><i><b style="width:<%= item.progress==null?0:item.progress %>%"></b></i><span><%= item.progress==null?'—':`${item.progress}%` %></span></div>
