@@ -45,17 +45,17 @@ ALTER TABLE jellyfin_accounts
     ADD CONSTRAINT jellyfin_accounts_never_disabled
     CHECK (disabled=FALSE);
 
--- Reconciliation may retain this compatibility column for old readers, but a
--- desired disabled policy is no longer a valid target state.
-UPDATE jellyfin_policy_reconciliation
+-- Policy-drift state may retain this compatibility column for old readers,
+-- but a desired disabled policy is no longer a valid target state.
+UPDATE jellyfin_policy_drift
 SET desired_disabled=FALSE
 WHERE desired_disabled=TRUE;
 
-ALTER TABLE jellyfin_policy_reconciliation
-    DROP CONSTRAINT IF EXISTS jellyfin_policy_reconciliation_never_disabled;
+ALTER TABLE jellyfin_policy_drift
+    DROP CONSTRAINT IF EXISTS jellyfin_policy_drift_never_disabled;
 
-ALTER TABLE jellyfin_policy_reconciliation
-    ADD CONSTRAINT jellyfin_policy_reconciliation_never_disabled
+ALTER TABLE jellyfin_policy_drift
+    ADD CONSTRAINT jellyfin_policy_drift_never_disabled
     CHECK (desired_disabled IS DISTINCT FROM TRUE);
 
 -- The old Free lifecycle used a pending disabled-account ledger. Close any
