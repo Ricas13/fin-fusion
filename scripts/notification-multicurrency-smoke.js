@@ -115,18 +115,19 @@ for(const route of [
   '/admin/profile/notifications/telegram/unlink',
   '/admin/profile/notifications/discord/start',
   '/admin/profile/notifications/discord/callback',
-  '/admin/profile/notifications/discord/unlink',
-  '/admin/profile/notifications/whatsapp'
+  '/admin/profile/notifications/discord/unlink'
 ]) assert(personalNotifications.includes(route),`Personal v2 notifications missing canonical route ${route}`);
+assert(!personalNotifications.toLowerCase().includes('whatsapp'),'Personal notification routes must not revive retired WhatsApp support');
 
 assert(platformRouter.includes('createAdminPersonalNotificationTestsRouter'),'Personal notification test routes must be mounted in the assembled platform router');
-for(const channel of ['email','telegram','discord','whatsapp'])assert(personalTests.includes(`/admin/profile/notifications/test/${channel}`),`Personal ${channel} delivery must have a test route`);
+for(const channel of ['email','telegram','discord'])assert(personalTests.includes(`/admin/profile/notifications/test/${channel}`),`Personal ${channel} delivery must have a test route`);
+assert(!personalTests.toLowerCase().includes('whatsapp'),'Personal delivery tests must not revive retired WhatsApp support');
 assert(personalTests.includes("notificationSettings.sendDiscord(testText(site,'Discord'),{userId:me.discord_user_id})"),'Discord test must send a real DM to the linked admin identity');
 assert(personalTests.includes("notificationSettings.sendTelegram(testText(site,'Telegram'),{chatId:me.telegram_chat_id})"),'Telegram test must send to the linked admin chat');
-assert(personalTests.includes("notificationSettings.sendWhatsapp(testText(site,'WhatsApp'),{to:me.phone_e164})"),'WhatsApp test must use the saved opted-in admin phone');
 assert(personalTests.includes("emailSettings.send({to:me.email"),'Email test must use the signed-in administrator email');
 assert(personalTests.includes("'admin.notifications.personal.test'"),'Personal delivery tests must be audit logged without masquerading as business events');
-assert(personalTestUi.includes('Send test Discord')&&personalTestUi.includes('Send test Telegram')&&personalTestUi.includes('Send test WhatsApp'),'My Notifications must expose real delivery test buttons');
+assert(personalTestUi.includes('Send test Discord')&&personalTestUi.includes('Send test Telegram'),'My Notifications must expose real delivery test buttons');
+assert(!personalTestUi.toLowerCase().includes('whatsapp'),'My Notifications test controls must not revive retired WhatsApp support');
 assert(adminHtml.includes('/js/admin-personal-notification-tests.js'),'The personal notification test controls must be loaded on My Notifications');
 
 console.log('notification + master currency smoke: ok');
