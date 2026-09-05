@@ -25,7 +25,7 @@
       const fidelityStyles = document.createElement('link');
       fidelityStyles.rel = 'stylesheet';
       fidelityStyles.href = '/css/admin-customers-fidelity.css';
-      document.head.appendChild(fidelityStyles);
+      document.head.append(fidelityStyles);
     }
     const headings = [...(customerTable.tHead?.rows?.[0]?.cells || [])]
       .map(cell => String(cell.textContent || '').replace(/[↑↓]/g, '').trim());
