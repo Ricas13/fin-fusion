@@ -69,11 +69,11 @@ async function insightData(customerId,rawRange){
     firstPlayback:rawSummary.first_playback||null,
     lastPlayback:rawSummary.last_playback||null
   };
-  const tops=topResult.rows.map(row=>({...row,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
-  const methods=methodResult.rows.map(row=>({...row,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
-  const methodTotal=Math.max(1,methods.reduce((sum,row)=>sum+number(row.seconds),0));
-  methods.forEach(row=>{row.percent=Math.round((number(row.seconds)/methodTotal)*100);delete row.seconds;});
-  const devices=deviceResult.rows.map(row=>({...row,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
+  const tops=topResult.rows.map(row=>({item_name:row.item_name,item_type:row.item_type,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
+  const methods=methodResult.rows.map(row=>({playback_method:row.playback_method,plays:number(row.plays),seconds:number(row.seconds),hours:Math.round((number(row.seconds)/3600)*10)/10}));
+  const methodTotal=Math.max(1,methods.reduce((sum,row)=>sum+row.seconds,0));
+  methods.forEach(row=>{row.percent=Math.round((row.seconds/methodTotal)*100);delete row.seconds;});
+  const devices=deviceResult.rows.map(row=>({device:row.device,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
   const timeline=timelineResult.rows.map(row=>({bucket:row.bucket,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
   return{
     range,
@@ -99,27 +99,9 @@ async function data(customerId,rawRange){
   const customer=portal?.customer||{};
   return{activity:activityRows.rows,events:eventRows.rows,freeUsage,insights,displayName:customer.display_name||customer.login_username||customer.username||null,navOptions:customerNav.optionsFromPortal(portal)};
 }
-async function nowPlaying(customerId){
-  const result=await query(`SELECT aps.item_name,aps.item_type,aps.device_name,aps.client_name,aps.playback_method,aps.is_paused,aps.position_ticks,aps.last_seen_at,js.name server_name,COALESCE(js.media_server_type,'jellyfin') media_server_type FROM active_playback_sessions aps JOIN jellyfin_servers js ON js.id=aps.server_id WHERE aps.customer_id=$1 AND aps.last_seen_at>NOW()-INTERVAL '2 minutes' ORDER BY aps.last_seen_at DESC`,[customerId]);
-  return result.rows.map(row=>({
-    title:row.item_name||'Playing media',
-    type:row.item_type||'Media',
-    device:row.device_name||null,
-    client:row.client_name||null,
-    method:String(row.playback_method||'').toLowerCase()==='transcode'?'Transcoding':String(row.playback_method||'').toLowerCase()==='directstream'?'Direct stream':String(row.playback_method||'').toLowerCase()==='directplay'?'Direct play':null,
-    paused:Boolean(row.is_paused),
-    positionSeconds:Math.max(0,Math.floor(number(row.position_ticks)/10000000)),
-    service:String(row.media_server_type||'jellyfin').toLowerCase()==='emby'?'Emby':(row.server_name||'Jellyfin')
-  }));
-}
 function createCustomerActivityRouter(){
   const r=express.Router();
-  r.get('/account/now-playing.json',requireCustomer,async(req,res)=>{
-    res.setHeader('Cache-Control','no-store, private, max-age=0');
-    res.setHeader('Pragma','no-cache');
-    try{return res.json({streams:await nowPlaying(req.session.customerId)});}catch(error){console.warn('Customer now-playing lookup failed:',{customerId:req.session.customerId,error:error.message});return res.status(503).json({streams:[]});}
-  });
   r.get('/account/activity',requireCustomer,async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const d=await data(req.session.customerId,req.query.range);res.setHeader('Cache-Control','no-store, private, max-age=0');return res.render('customer/activity',{siteName:runtimeSettings.siteName(),...d});}catch(error){return next(error)}});
   return r;
 }
-module.exports={createCustomerActivityRouter,data,insightData,nowPlaying,rangeOption,rangeStart,RANGE_OPTIONS};
+module.exports={createCustomerActivityRouter,data,insightData,rangeOption,rangeStart,timeOfDay,viewingPersonality,RANGE_OPTIONS};
