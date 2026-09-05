@@ -55,6 +55,8 @@ const drift = require('../src/jellyfin/drift-control');
         const context = await drift.customerContext(customer.id, new Map());
         const desired = await drift.desiredState(account, context);
         assert.strictEqual(desired.disabled, false);
+        assert.strictEqual(desired.shouldExist, true);
+        assert.strictEqual(desired.policy.IsDisabled, false);
         assert.strictEqual(desired.policy.EnableContentDownloading, false);
         assert.strictEqual(desired.policy.EnableVideoPlaybackTranscoding, false);
         assert.strictEqual(desired.policy.EnableAudioPlaybackTranscoding, true);
@@ -68,6 +70,7 @@ const drift = require('../src/jellyfin/drift-control');
 
         let state = (await query(`SELECT * FROM jellyfin_policy_drift WHERE jellyfin_account_id=$1`, [account.id])).rows[0];
         assert.strictEqual(state.status, 'in_sync');
+        assert.strictEqual(state.desired_disabled, false);
         assert(state.last_success_at);
         assert.strictEqual(state.last_error, null);
         assert(new Date(state.next_check_at) > new Date());
@@ -76,18 +79,20 @@ const drift = require('../src/jellyfin/drift-control');
         remoteUser = {
             Id: account.jellyfin_user_id,
             Name: `${account.jellyfin_username}-renamed`,
-            Policy: { ...desired.policy, EnableContentDownloading: true, EnableVideoPlaybackTranscoding: true }
+            Policy: { ...desired.policy, IsDisabled: true, EnableContentDownloading: true, EnableVideoPlaybackTranscoding: true }
         };
         result = await drift.auditAccount(account.id, { context, catalogCache: new Map() });
         assert.strictEqual(result.status, 'drift');
         const fields = result.differences.map(item => item.field);
         assert(fields.includes('Username'));
+        assert(fields.includes('IsDisabled'), 'out-of-band remote disable must be detected as drift against enabled desired state');
         assert(fields.includes('EnableContentDownloading'));
         assert(fields.includes('EnableVideoPlaybackTranscoding'));
-        assert.strictEqual(fields.length, 3, `unexpected policy fields: ${fields.join(', ')}`);
+        assert.strictEqual(fields.length, 4, `unexpected policy fields: ${fields.join(', ')}`);
 
         state = (await query(`SELECT * FROM jellyfin_policy_drift WHERE jellyfin_account_id=$1`, [account.id])).rows[0];
         assert.strictEqual(state.status, 'drift');
+        assert.strictEqual(state.desired_disabled, false, 'drift control must never persist disabled as desired state');
         assert.notStrictEqual(state.desired_hash, state.remote_hash);
         const columns = (await query(`SELECT column_name FROM information_schema.columns WHERE table_name='jellyfin_policy_drift'`)).rows.map(row => row.column_name);
         assert(!columns.some(name => /api.*key|credential|password|token/i.test(name)), 'drift state must not persist provider credentials');
@@ -107,28 +112,33 @@ const drift = require('../src/jellyfin/drift-control');
         assert.strictEqual(Number(state.consecutive_failures), 2);
         assert(new Date(state.next_check_at) > new Date());
 
+        // A stale managed mapping with no valid entitlement is not a disabled
+        // account target. It is an account-presence drift: reconciliation must
+        // remove the identity entirely.
         noPlanCustomer = (await query(`INSERT INTO customers(display_name) VALUES($1) RETURNING id`, [`No Plan Bob ${suffix}`])).rows[0];
         const noPlanAccount = (await query(`
             INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary)
-            VALUES($1,$2,$3,$4,TRUE,TRUE) RETURNING *
+            VALUES($1,$2,$3,$4,FALSE,TRUE) RETURNING *
         `, [noPlanCustomer.id, server.id, `remote-bob-${suffix}`, `NoPlanBob${suffix}`])).rows[0];
         const noPlanContext = await drift.customerContext(noPlanCustomer.id, new Map());
         const noPlanDesired = await drift.desiredState(noPlanAccount, noPlanContext);
-        assert.strictEqual(noPlanDesired.disabled, true);
-        assert.strictEqual(noPlanDesired.policy.IsDisabled, true);
+        assert.strictEqual(noPlanDesired.disabled, false);
+        assert.strictEqual(noPlanDesired.shouldExist, false);
+        assert.strictEqual(noPlanDesired.policy, null);
 
         registry.request = async (serverId, requestPath, options = {}) => {
             calls.push({ serverId: String(serverId), path: String(requestPath), method: String(options.method || 'GET').toUpperCase() });
             if (String(requestPath) === '/Library/VirtualFolders') return [{ Name: 'Movies', ItemId: 'lib-movies', CollectionType: 'movies' }];
             if (String(requestPath) === `/Users/${account.jellyfin_user_id}`) return { Id: account.jellyfin_user_id, Name: account.jellyfin_username, Policy: { ...desired.policy } };
-            if (String(requestPath) === `/Users/${noPlanAccount.jellyfin_user_id}`) return { Id: noPlanAccount.jellyfin_user_id, Name: noPlanAccount.jellyfin_username, Policy: { ...noPlanDesired.policy, IsDisabled: false, EnableMediaPlayback: true } };
+            if (String(requestPath) === `/Users/${noPlanAccount.jellyfin_user_id}`) return { Id: noPlanAccount.jellyfin_user_id, Name: noPlanAccount.jellyfin_username, Policy: { IsDisabled: false, EnableMediaPlayback: true } };
             throw new Error(`Unexpected Jellyfin request ${requestPath}`);
         };
 
         result = await drift.auditAccount(noPlanAccount.id, { context: noPlanContext, catalogCache: new Map() });
         assert.strictEqual(result.status, 'drift');
-        assert(result.differences.some(item => item.field === 'IsDisabled'));
-        assert(result.differences.some(item => item.field === 'EnableMediaPlayback'));
+        assert.deepStrictEqual(result.differences, [{ field: 'AccountPresence', expected: 'absent', actual: 'present' }]);
+        state = (await query(`SELECT * FROM jellyfin_policy_drift WHERE jellyfin_account_id=$1`, [noPlanAccount.id])).rows[0];
+        assert.strictEqual(state.desired_disabled, false);
 
         await query(`UPDATE jellyfin_policy_drift SET next_check_at=NOW() WHERE jellyfin_account_id IN ($1,$2)`, [account.id, noPlanAccount.id]);
         const batch = await drift.auditDue({ all: false, limit: 100 });
