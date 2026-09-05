@@ -20,13 +20,21 @@
     .customerMockEmail{font-size:.80rem!important;margin-top:5px!important}
     .customerMockMeta{font-size:.62rem!important;margin-top:7px!important}
     .customerMockPills{margin-top:7px!important}
-    .customerMockTopActions{gap:7px!important;margin-bottom:0!important}
+    .customerMockTopActions{gap:7px!important;margin-bottom:0!important;align-items:center!important}
+    .customerMockTopActions>.plainForm{margin:0!important}
     .mockTopButton{min-height:30px!important;padding:5px 12px!important;border-radius:7px!important;font-size:.67rem!important}
     .customerMockMetrics{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:9px!important}
     .customerMockMetric{min-height:70px!important;padding:9px 12px!important;border-radius:8px!important;background:#101a23!important}
     .customerMockMetric small{font-size:.60rem!important}
     .customerMockMetric strong{font-size:.86rem!important;margin-top:4px!important}
     .customerMockMetric span{font-size:.60rem!important;margin-top:3px!important}
+
+    .customerMockMore{position:relative;margin:0}
+    .customerMockMore>summary{list-style:none;cursor:pointer;min-width:40px;padding-inline:10px!important}
+    .customerMockMore>summary::-webkit-details-marker{display:none}
+    .customerMockMoreMenu{position:absolute;right:0;top:calc(100% + 5px);z-index:80;width:190px;padding:5px;border:1px solid #314352;border-radius:8px;background:#101922;box-shadow:0 14px 34px rgba(0,0,0,.45);display:grid;gap:2px}
+    .customerMockMoreMenu a,.customerMockMoreMenu button{box-sizing:border-box;width:100%;border:0;border-radius:5px;background:transparent;color:#dce7ef;text-decoration:none;text-align:left;padding:8px 9px;font:inherit;font-size:.66rem;cursor:pointer}
+    .customerMockMoreMenu a:hover,.customerMockMoreMenu button:hover{background:#182633}
 
     .customerPrimaryActions{margin:8px 0 9px!important;padding:10px 13px!important;border-radius:9px!important;background:#101922!important}
     .customerPrimaryHead h2{font-size:.91rem!important}
@@ -71,7 +79,7 @@
 
     @media(max-width:1450px){.customerActionGrid{grid-template-columns:repeat(4,minmax(0,1fr))!important}.customer360Core .opGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
     @media(max-width:1000px){.customerMockMetrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}.customerActionGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
-    @media(max-width:620px){.customer360Core .opGrid,.customerActionGrid,.customerMockMetrics{grid-template-columns:1fr!important}}
+    @media(max-width:620px){.customer360Core .opGrid,.customerActionGrid,.customerMockMetrics{grid-template-columns:1fr!important}.customerMockMoreMenu{right:auto;left:0}}
   `;
   document.head.appendChild(style);
 
@@ -83,6 +91,42 @@
     crumb.dataset.customerCrumb='1';
     const name=customerName().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     crumb.innerHTML=`<a href="/admin/users">Customers</a><span>/</span><a href="/admin/users">All customers</a><span>/</span><strong>${name}</strong>`;
+  }
+
+  function promotePortalAction(){
+    const top=document.querySelector('.customerMockTopActions');
+    if(!top)return;
+    const action=`/admin/users/${customerId}/impersonate`;
+    let form=top.querySelector(`form[action="${action}"]`);
+    if(!form){
+      const outside=[...document.querySelectorAll(`form[action="${action}"]`)].find(node=>!node.closest('.customerPrimaryActions'));
+      const source=outside||document.querySelector(`.customerPrimaryActions form[action="${action}"]`);
+      if(source){form=outside||source.cloneNode(true);const edit=top.querySelector('a[href$="/edit-profile"]');top.insertBefore(form,edit||top.firstChild);}
+    }
+    if(!form)return;
+    form.classList.add('plainForm');form.style.display='inline';
+    const button=form.querySelector('button');
+    if(button){button.className='mockTopButton primary';button.textContent='View Portal as User';button.title='Open this customer portal in read-only support mode';}
+  }
+
+  function wireMoreMenu(){
+    const top=document.querySelector('.customerMockTopActions');
+    if(!top||top.querySelector('.customerMockMore'))return;
+    const trigger=[...top.querySelectorAll('button')].find(node=>text(node)==='•••'||node.title==='More customer actions');
+    if(!trigger)return;
+    const details=document.createElement('details');details.className='customerMockMore';
+    const summary=document.createElement('summary');summary.className='mockTopButton';summary.title='More customer actions';summary.textContent='•••';
+    const menu=document.createElement('div');menu.className='customerMockMoreMenu';
+    const jump=document.createElement('button');jump.type='button';jump.textContent='Customer actions';
+    jump.addEventListener('click',()=>{details.open=false;document.querySelector('.customerPrimaryActions')?.scrollIntoView({block:'start',behavior:'smooth'});});
+    menu.appendChild(jump);
+    const password=document.querySelector(`a[href="/admin/customer-jellyfin-password?customerId=${customerId}"]`);
+    if(password){const link=document.createElement('a');link.href=password.href;link.textContent='Reset Jellyfin password';menu.appendChild(link);}
+    const advanced=document.createElement('button');advanced.type='button';advanced.textContent='Advanced / Recovery tools';
+    advanced.addEventListener('click',()=>{details.open=false;const panel=document.querySelector('.approvedAdvanced');if(panel){panel.open=true;panel.scrollIntoView({block:'center',behavior:'smooth'});}});
+    menu.appendChild(advanced);
+    const back=document.createElement('a');back.href='/admin/users';back.textContent='Back to all customers';menu.appendChild(back);
+    details.append(summary,menu);trigger.replaceWith(details);
   }
 
   function cleanLegacyHeader(){
@@ -179,7 +223,7 @@
     });
   }
 
-  function enhance(){alignBreadcrumb();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();foldPaymentIncidents();wireManualGrantForms();}
+  function enhance(){alignBreadcrumb();promotePortalAction();wireMoreMenu();cleanLegacyHeader();identifyCards();restoreVisibleCardActions();polishPlansCard();polishDangerCard();moveAdvancedIntoBottomStack();foldPaymentIncidents();wireManualGrantForms();}
   enhance();
   const observer=new MutationObserver(enhance);observer.observe(document.body,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),5000);
 })();
