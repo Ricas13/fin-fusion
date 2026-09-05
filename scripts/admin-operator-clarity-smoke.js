@@ -167,7 +167,7 @@ assert(migrations.includes("ui.detailDisclosure({title:'Customer move history'")
 assert(serverControl.includes('Placement ready') && serverControl.includes('fleetSummary(data.rows, data.settings)'), 'Servers must retain canonical current placement readiness');
 assert(serverControl.includes('placementReason(server, settings)') && serverControl.includes('Health, customer-user capacity, placement and library maintenance in one place.'), 'Servers must show placement eligibility/blockers alongside current fleet state');
 assert(serverControl.includes('placementForm(req, server)') && serverControl.includes('>Active</option>') && serverControl.includes('>Drain</option>') && serverControl.includes('>Maintenance</option>'), 'Server placement mode must be an inline compact setting rather than a separate workflow');
-assert(serverControl.includes('operatorDetails') && serverControl.includes('Placement health policy') && serverControl.includes('Future capacity preview'), 'Advanced placement policy and simulation must remain progressively disclosed under Servers');
+assert(!serverControl.includes('Placement health policy') && !serverControl.includes('Future capacity preview') && !serverControl.includes('operatorDetails'), 'Retired advanced placement policy and simulation panels must stay off the main Servers page');
 assert(fleetOperations.includes("res.redirect(302,forward(req,'placement'))") && fleetOperations.includes("r.post('/admin/servers/operations/server/:id/placement-mode'"), 'Legacy Fleet operations must remain a compatibility and mutation owner while its UI redirects to Servers');
 
 for (const label of ['Customer moves','Access consistency']) {
