@@ -56,7 +56,7 @@ async function resolve(customerId){
     SELECT e.customer_id,e.subscription_id,e.plan_id,
       p.name AS plan_name,p.code AS plan_code,e.access_expires_at AS current_period_end,
       COALESCE(CASE WHEN ((s.commercial_snapshot->>'requestMovieQuotaLimit') ~ '^[0-9]+$') THEN (s.commercial_snapshot->>'requestMovieQuotaLimit')::int END,p.request_movie_quota_limit) AS request_movie_quota_limit,
-      COALESCE(CASE WHEN ((s.commercial_snapshot->>'requestMovieQuotaDays') ~ '^[0-9]+$') THEN (s.commercial_snapshot->>'requestMovieQuotaDays')::int END,p.request_movie_quota_days,
+      COALESCE(CASE WHEN ((s.commercial_snapshot->>'requestMovieQuotaDays') ~ '^[0-9]+$') THEN (s.commercial_snapshot->>'requestMovieQuotaDays')::int END,p.request_movie_quota_days) AS request_movie_quota_days,
       COALESCE(CASE WHEN ((s.commercial_snapshot->>'requestTvQuotaLimit') ~ '^[0-9]+$') THEN (s.commercial_snapshot->>'requestTvQuotaLimit')::int END,p.request_tv_quota_limit) AS request_tv_quota_limit,
       COALESCE(CASE WHEN ((s.commercial_snapshot->>'requestTvQuotaDays') ~ '^[0-9]+$') THEN (s.commercial_snapshot->>'requestTvQuotaDays')::int END,p.request_tv_quota_days) AS request_tv_quota_days,
       p.request_permissions,p.request_watchlist_sync_movies,p.request_watchlist_sync_tv,
