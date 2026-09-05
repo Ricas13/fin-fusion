@@ -1,15 +1,5 @@
 'use strict';
 
-// Legacy static-audit compatibility markers. The old controller no longer
-// mutates labels or relocates controls; these comments keep the wider audit
-// green until that suite is rewritten around the new server-owned toolbar.
-// [product, access, plan, server, actions]
-// searchLabel.textContent = 'Name'
-// accessAny.textContent = 'Any'
-// planAny.textContent = 'Any Plan'
-// serverAny.textContent = 'Any Jellyfin Server'
-// More Advanced Filters
-
 (() => {
   if (window.__captainfinCustomerFiltersBound) return;
   window.__captainfinCustomerFiltersBound = true;
