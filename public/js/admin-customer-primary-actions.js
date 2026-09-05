@@ -15,10 +15,10 @@
   function cleanLegacyHeader(){
     document.querySelectorAll('a,button').forEach(node=>{
       const label=text(node);
-      if(label==='Change Jellyfin password'&& !node.closest('.approvedCustomerHero') && !node.closest('.customer360Core'))node.remove();
+      if(label==='Change Jellyfin password'&&!node.closest('.customerMockHero')&&!node.closest('.customerPrimaryActions')&&!node.closest('.customer360Core'))node.remove();
     });
     document.querySelectorAll(`form[action="/admin/users/${customerId}/impersonate"]`).forEach(form=>{
-      if(!form.closest('.customerPrimaryActions')&&!form.closest('.approvedCustomerHero'))form.remove();
+      if(!form.closest('.customerMockHero')&&!form.closest('.customerPrimaryActions'))form.remove();
     });
   }
 
@@ -50,7 +50,7 @@
   }
 
   function moveAdvancedIntoBottomStack(){
-    const advanced=document.querySelector(':scope body .approvedAdvanced');
+    const advanced=document.querySelector('.approvedAdvanced');
     const core=document.querySelector('.customer360Core');
     if(!advanced||!core||advanced.dataset.relocated==='1')return;
     const disclosures=[...core.querySelectorAll(':scope > .opDisclosure')];
