@@ -6,6 +6,7 @@ const {renderProfessionalEmail}=require('../integrations/email-template');
 const runtimeSettings=require('../platform/runtime-settings');
 const operations=require('../platform/operations-settings');
 const serviceScope=require('../entitlements/service-scope');
+const transactionClassifier=require('../payments/provider-transaction-classifier');
 
 const DEFAULT_DELAY_DAYS=3;
 const DEFAULT_OFFER_DAYS=7;
@@ -21,6 +22,8 @@ function scopesOverlap(left,right){return serviceScope.overlaps({service_type:le
 
 async function discoverCandidates({limit=200}={}){
   const cfg=config(),safeLimit=Math.max(1,Math.min(1000,Number(limit)||200));
+  const stripePaymentTypes=[...transactionClassifier.STRIPE_PAYMENT_CATEGORIES];
+  const paypalPaymentTypes=[...transactionClassifier.PAYPAL_PAYMENT_CODES];
   const candidates=(await query(`
     SELECT s.id subscription_id,s.customer_id,
            COALESCE(s.service_type_snapshot,p.service_type,'jellyfin') service_type,
@@ -50,6 +53,21 @@ async function discoverCandidates({limit=200}={}){
              CASE WHEN COALESCE(s.commercial_snapshot->>'discountedMinor','') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'discountedMinor')::integer END,
              s.price_minor_snapshot,p.price_minor,0
            )>0
+       -- A priced plan is not enough. The customer must have a provider-ledger
+       -- transaction that the canonical accounting classifier treats as a
+       -- successful positive payment before this membership became terminal.
+       AND EXISTS(
+         SELECT 1 FROM payment_history_transactions pht
+          WHERE pht.customer_id=s.customer_id
+            AND pht.occurred_at<=s.updated_at
+            AND pht.gross_amount_minor>0
+            AND (
+              (pht.provider='stripe' AND lower(pht.transaction_type)=ANY($2::text[]))
+              OR
+              (pht.provider='paypal' AND upper(pht.transaction_type)=ANY($3::text[])
+               AND upper(COALESCE(pht.transaction_status,''))=$4)
+            )
+       )
        AND NOT EXISTS(SELECT 1 FROM winback_offers w WHERE w.trigger_subscription_id=s.id)
        AND NOT EXISTS(
          SELECT 1 FROM audit_log terminal_audit
@@ -59,7 +77,7 @@ async function discoverCandidates({limit=200}={}){
        )
      ORDER BY s.updated_at,s.id
      LIMIT $1
-  `,[safeLimit])).rows;
+  `,[safeLimit,stripePaymentTypes,paypalPaymentTypes,transactionClassifier.PAYPAL_SUCCESS_STATUS])).rows;
   let discovered=0;
   for(const row of candidates){
     const reason=row.renewal_decision==='billing.renewal.stop'?'voluntary_cancel':(row.had_failed_renewal?'payment_failed':null);
