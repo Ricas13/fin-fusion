@@ -17,7 +17,10 @@ function noStore(_req, res, next) {
     next();
 }
 function safeLog(value, max = 500) {
-    return String(value == null ? '' : value).replace(/[\r\n\t\u2028\u2029]+/g, ' ').slice(0, max);
+    // JSON.stringify escapes newlines/control characters into a single-line
+    // \n-style representation - CodeQL's log-injection query recognizes this
+    // as a genuine sanitizer, unlike an ad hoc regex replace.
+    return JSON.stringify(String(value == null ? '' : value).slice(0, max));
 }
 function customerPath(customerId, key = '', message = '') {
     const notice = key ? `&${encodeURIComponent(key)}=${encodeURIComponent(message)}` : '';
