@@ -60,7 +60,8 @@ assert(automation.includes('class="checkRow"')&&automation.includes('name="enabl
 assert(payments.includes('providerConfigDetails(req,provider,status,url)')&&payments.includes("providerHealthCard(req,'stripe'")&&payments.includes("providerHealthCard(req,'paypal'")&&payments.includes("providerHealthCard(req,'plisio'")&&payments.includes('Configured — leave blank to keep current value'),'all active payment providers and configured secrets must remain discoverable through the shared inline configuration path');
 assert(payments.includes('name="payment-provider-config"'),'payment provider configuration must use one exclusive native disclosure group');
 assert(requestUsers.includes('action="/admin/request-users/settings"')&&requestUsers.includes('Configured — leave blank to keep current key'),'Request Service must expose a discoverable configuration form and state-preserving API-key field');
-assert(notifications.includes('telegramEnabled')&&notifications.includes('discordEnabled')&&notifications.includes('whatsappEnabled'),'global notification channel booleans must remain connected to persisted settings');
+assert(notifications.includes('telegramEnabled')&&notifications.includes('discordEnabled'),'global notification channel booleans must remain connected to persisted settings');
+assert(!notifications.toLowerCase().includes('whatsapp'),'retired WhatsApp settings must not reappear in the global notification surface');
 assert(personalNotifications.includes('notificationEventGroup')&&personalNotifications.includes('type="checkbox"'),'personal event routing must remain a boolean matrix for the shared enhancer');
 
 assert(indexLock.includes("INDEX_JOB_KEY='captainfin:stremio_media_index'")&&indexLock.includes('pg_try_advisory_xact_lock(hashtext($1))'),'manual Stremio index maintenance must use the same advisory key as the singleton worker');
