@@ -74,19 +74,34 @@ function main() {
         assert.strictEqual(tableSort.nextDirection(nameDesc,'expiring',CUSTOMER_SORTS),'asc');
     }
 
-    // Search is permanently visible and the table is organised around the
-    // operator's actual questions: entitlement, Jellyfin identity and placement.
+    // Search and the everyday filters are permanently visible, while only the
+    // genuinely secondary controls stay inside the advanced disclosure. The
+    // table is organised around entitlement, Jellyfin identity and placement.
     {
         const source=fs.readFileSync(path.join(__dirname,'../src/platform/admin-customers-list.js'),'utf8');
+        const filterClient=fs.readFileSync(path.join(__dirname,'../public/js/admin-customer-filters.js'),'utf8');
+        const mobileCss=fs.readFileSync(path.join(__dirname,'../public/css/admin-customers-list.css'),'utf8');
         const bulk=fs.readFileSync(path.join(__dirname,'../public/js/admin-customers-bulk.js'),'utf8');
-        assert.ok(source.includes('Search customers</label>'),'customer search must be an explicit visible control');
-        assert.ok(source.includes('customerSearchRow')&&source.includes('data-native-submit="true"'),'customer search must not be moved into the shared hidden advanced-filter shell');
-        for(const primary of ['Product','Plan','Server','Access'])assert.ok(source.includes(`>${primary}</label>`),`primary customer filter missing: ${primary}`);
+        assert.ok(source.includes('>Name</label>'),'customer search must be visibly labelled Name');
+        assert.ok(source.includes('customerSearchRow')&&source.includes('data-native-submit="true"'),'customer search must stay outside the hidden advanced-filter shell');
+        assert.ok(source.includes('customerPrimaryFilters'),'everyday customer filters must have their own always-visible container');
+        assert.ok(source.includes('<details class="customerAdvancedFilters"'),'secondary filters must remain in a separate disclosure');
+        assert.ok(source.includes('<option value="">All products</option>'),'Product must default to All products');
+        assert.ok(source.includes("const accessOptions=[['','Any']"),'Access must default to Any');
+        assert.ok(source.includes('<option value="">Any Plan</option>'),'Plan must default to Any Plan');
+        assert.ok(source.includes('<option value="">Any Jellyfin Server</option>'),'Server must default to Any Jellyfin Server');
+        assert.ok(source.includes('<summary>More Advanced Filters'),'advanced disclosure must be explicitly labelled More Advanced Filters');
+        const productPos=source.indexOf('id="customerFilterProduct"'),accessPos=source.indexOf('id="customerFilterAccess"'),planPos=source.indexOf('id="customerFilterPlan"'),serverPos=source.indexOf('id="customerFilterServer"');
+        assert.ok(productPos<accessPos&&accessPos<planPos&&planPos<serverPos,'server markup must render Product / Access / Plan / Jellyfin Server in the requested order');
+        assert.ok(!filterClient.includes('originalGrid.replaceWith'),'client enhancement must never replace the server-rendered filter layout');
+        assert.ok(!filterClient.includes('advancedGrid.appendChild'),'client enhancement must never move primary controls into advanced filters');
+        assert.ok(filterClient.includes('[product, access, plan, server, actions]'),'client must preserve Product / Access / Plan / Jellyfin Server order');
         assert.ok(source.includes("sortHeader(filters,sortState,'Access','access')"),'Access must be a first-class sortable column');
         assert.ok(source.includes('<th>Jellyfin</th>'),'Jellyfin readiness must have its own column');
         assert.ok(source.includes("sortHeader(filters,sortState,'Server','server')"),'server placement must have its own column');
         assert.ok(source.includes("sortHeader(filters,sortState,'Renews / expires','expiring')"),'commercial timing must be visible');
         assert.ok(source.includes("sortHeader(filters,sortState,'Last active','recent')"),'last activity must be visible');
+        assert.ok(source.includes('function planMeta(x)'),'Plan cell must expose Free/Paid/Trial, subscription state and product context');
         assert.ok(!source.includes("sortHeader(filters,sortState,'Attention','attention')"),'redundant Attention column must stay removed');
         assert.ok(source.includes('customerAccessReason'),'attention/reason context must sit beneath the Access state');
         assert.ok(!source.includes("sortHeader(filters,sortState,'Registered','registered')"),'registration date must not occupy the default table');
@@ -99,6 +114,15 @@ function main() {
         assert.ok(bulk.includes('bar.hidden=selected===0&&!matching'),'client must reveal bulk controls only for an active selection');
         assert.ok(source.includes("{...state,page:page+1}")&&source.includes("{...state,page:page-1}"),'pagination must preserve sort state');
         assert.ok(source.includes('aria-sort='),'sortable headings must remain accessible');
+
+        // The shared responsiveTable stylesheet normally turns each row into a
+        // card. Customers intentionally overrides that behaviour so operators
+        // can scan rows on phones instead of navigating tall stacked cards.
+        assert.ok(mobileCss.includes('.customerResults .tableWrap>.customerTable{display:table!important'),'mobile Customers must stay a real table instead of becoming cards');
+        assert.ok(mobileCss.includes('overflow-x:auto!important'),'mobile Customers must allow horizontal panning when all columns do not fit');
+        assert.ok(mobileCss.includes('.customerTable td::before{display:none!important;content:none!important}'),'mobile Customers must suppress card-style data-label pseudo headings');
+        assert.ok(mobileCss.includes('.customerTable th:nth-child(2),.customerTable td:nth-child(2){position:sticky!important'),'customer identity must stay pinned while the operator pans the table');
+        assert.ok(mobileCss.includes('.customerTable th:last-child,.customerTable td:last-child{position:sticky!important'),'row action must stay pinned on the right on mobile');
     }
 
     console.log('Customer filters smoke test passed.');

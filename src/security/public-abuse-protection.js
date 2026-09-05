@@ -121,6 +121,15 @@ function allowTurnstileCsp(res) {
   );
 }
 
+function exposeTurnstile(res, cfg, path) {
+  const protectedForm = shouldProtect(cfg, path);
+  res.locals.turnstileEnabled = protectedForm;
+  res.locals.turnstileSiteKey = cfg.siteKey || '';
+  res.locals.turnstileAction = actionForPath(path) || '';
+  if (protectedForm) allowTurnstileCsp(res);
+  return protectedForm;
+}
+
 async function verifyToken(token, remoteIp, { expectedAction = null } = {}) {
   const cfg = await get();
   if (!cfg.enabled) return { success: true, disabled: true };
@@ -159,15 +168,16 @@ async function middleware(req, res, next) {
   try {
     const cfg = await get();
     if (req.method === 'GET' && FORM_PATHS.has(req.path)) {
-      const protectedForm = shouldProtect(cfg, req.path);
-      res.locals.turnstileEnabled = protectedForm;
-      res.locals.turnstileSiteKey = cfg.siteKey || '';
-      res.locals.turnstileAction = actionForPath(req.path) || '';
-      if (protectedForm) allowTurnstileCsp(res);
+      exposeTurnstile(res, cfg, req.path);
       return next();
     }
 
     if (req.method === 'POST' && shouldProtect(cfg, req.path)) {
+      // A successful Turnstile token is single-use. If the downstream login
+      // handler re-renders the form after bad credentials, that POST response
+      // must already contain a fresh widget and the Cloudflare CSP allowances.
+      // Otherwise the next submit has no token and fails verification.
+      exposeTurnstile(res, cfg, req.path);
       const expectedAction = actionForPath(req.path);
       const result = await verifyToken(
         req.body?.['cf-turnstile-response'],
@@ -203,5 +213,6 @@ module.exports = {
   shouldProtect,
   actionForPath,
   allowTurnstileCsp,
+  exposeTurnstile,
   middleware
 };
