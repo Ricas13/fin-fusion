@@ -1,15 +1,5 @@
 'use strict';
 
-// Compatibility markers for repo-level static audits that still recognise the
-// previous client-owned filter labels. The controller below does not execute
-// any of these legacy mutations; the server owns the redesigned toolbar.
-// [product, access, plan, server, actions]
-// searchLabel.textContent = 'Name'
-// accessAny.textContent = 'Any'
-// planAny.textContent = 'Any Plan'
-// serverAny.textContent = 'Any Jellyfin Server'
-// More Advanced Filters
-
 (() => {
   if (window.__captainfinCustomerFiltersBound) return;
   window.__captainfinCustomerFiltersBound = true;
