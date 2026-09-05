@@ -83,6 +83,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     assert.strictEqual(byName.get('Bob').import_status, 'identity_drift');
     assert.strictEqual(byName.get('ServerAdmin').import_status, 'administrator');
     assert.strictEqual(byName.get('FreeUser').import_status, 'unmanaged');
+    assert.strictEqual(byName.get('SleepingUser').disabled, true, 'discovery may report a legacy remote disabled identity without adopting it as managed state');
 
     const alice = await importer.createImportedCustomer({
         serverId: premiumServer,
@@ -94,6 +95,7 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     assert.strictEqual(alice.account.jellyfin_user_id, 'alice-id');
     assert.strictEqual(alice.account.jellyfin_username, 'Alice');
     assert.strictEqual(alice.account.is_primary, true);
+    assert.strictEqual(alice.account.disabled, false);
     assert(alice.subscription, 'plan import must create a migration subscription');
     assert.strictEqual(alice.subscription.source, 'migration');
     assert.strictEqual(alice.subscription.status, 'active');
@@ -120,6 +122,11 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
         /requires free servers/i,
         'plan/server class mismatch must fail before import'
     );
+    await assert.rejects(
+        () => importer.createImportedCustomer({ serverId: premiumServer, jellyfinUserId: 'sleep-id', planId: null, applyPolicy: false }),
+        /disabled jellyfin users cannot be managed/i,
+        'a remote disabled identity must never be adopted as a CAPTAiNFiN managed account'
+    );
 
     const linked = await importer.linkExistingCustomer({
         customerId: linkCustomer,
@@ -130,23 +137,17 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     });
     assert.strictEqual(linked.account.customer_id, linkCustomer);
     assert.strictEqual(linked.account.jellyfin_user_id, 'charlie-id');
+    assert.strictEqual(linked.account.disabled, false);
     const customerCount = await query(`SELECT COUNT(*)::int AS n FROM customers WHERE display_name='Charlie Existing'`);
     assert.strictEqual(customerCount.rows[0].n, 1, 'linking must attach to the existing customer rather than create another customer');
 
     const rebound = await importer.rebindIdentity({ serverId: premiumServer, jellyfinUserId: 'new-bob-id' });
     assert.strictEqual(rebound.jellyfin_user_id, 'new-bob-id');
-    const bob = await query('SELECT jellyfin_user_id,customer_id FROM jellyfin_accounts WHERE server_id=$1 AND jellyfin_username=$2', [premiumServer, 'Bob']);
+    assert.strictEqual(rebound.disabled, false);
+    const bob = await query('SELECT jellyfin_user_id,customer_id,disabled FROM jellyfin_accounts WHERE server_id=$1 AND jellyfin_username=$2', [premiumServer, 'Bob']);
     assert.strictEqual(bob.rows[0].jellyfin_user_id, 'new-bob-id');
     assert.strictEqual(bob.rows[0].customer_id, driftCustomer, 'ID rebind must preserve customer ownership');
-
-    const sleeping = await importer.createImportedCustomer({
-        serverId: premiumServer,
-        jellyfinUserId: 'sleep-id',
-        planId: null,
-        applyPolicy: false
-    });
-    assert.strictEqual(sleeping.account.disabled, true, 'inventory-only import must preserve Jellyfin disabled state');
-    assert.strictEqual(sleeping.subscription, null);
+    assert.strictEqual(bob.rows[0].disabled, false);
 
     const bulk = await importer.bulkImport({
         selected: [`${freeServer}:free-id`],
@@ -155,20 +156,21 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     });
     assert.deepStrictEqual({ total: bulk.total, imported: bulk.imported, failed: bulk.failed }, { total: 1, imported: 1, failed: 0 });
     const freeSubscription = await query(`
-        SELECT s.status,s.source,p.code FROM subscriptions s JOIN plans p ON p.id=s.plan_id
+        SELECT s.status,s.source,p.code,ja.disabled FROM subscriptions s JOIN plans p ON p.id=s.plan_id
         JOIN jellyfin_accounts ja ON ja.customer_id=s.customer_id
         WHERE ja.server_id=$1 AND ja.jellyfin_user_id='free-id'
     `, [freeServer]);
     assert.strictEqual(freeSubscription.rows[0].status, 'trialing');
     assert.strictEqual(freeSubscription.rows[0].source, 'migration');
     assert.strictEqual(freeSubscription.rows[0].code, 'free-test');
+    assert.strictEqual(freeSubscription.rows[0].disabled, false);
 
     const after = await importer.discover({ serverId: premiumServer });
     const afterMap = new Map(after.rows.map(row => [row.jellyfin_username, row.import_status]));
     assert.strictEqual(afterMap.get('Alice'), 'managed');
     assert.strictEqual(afterMap.get('Bob'), 'managed');
     assert.strictEqual(afterMap.get('Charlie'), 'managed');
-    assert.strictEqual(afterMap.get('SleepingUser'), 'managed');
+    assert.strictEqual(afterMap.get('SleepingUser'), 'unmanaged', 'legacy disabled remote users must remain outside managed account state');
 
     assert(requestCalls.every(call => call.method === 'GET' && call.endpoint === '/Users'), 'safe import path must not mutate Jellyfin when policy application is disabled');
     console.log('jellyfin user import smoke: ok');

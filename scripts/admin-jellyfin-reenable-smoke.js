@@ -5,7 +5,6 @@ const express = require('express');
 const restore = require('../src/entitlements/jellyfin-inactivity-restore');
 const provisioning = require('../src/jellyfin/resilient-provisioning');
 const { createAdminJellyfinReenableRouter } = require('../src/platform/admin-jellyfin-reenable');
-const view = require('../src/platform/customer-360-view');
 
 const originalRestore = restore.restoreDisabledFreeAccess;
 const originalReconcile = provisioning.reconcileCustomer;
@@ -42,12 +41,12 @@ const originalReconcile = provisioning.reconcileCustomer;
             headers: { 'content-type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({ _csrf: 'reenable-test-token' })
         });
-        assert.strictEqual(response.status, 302, 'mounted re-enable POST must redirect after a successful mutation');
+        assert.strictEqual(response.status, 302, 'mounted Free Server restore POST must redirect after a successful mutation');
         assert(call, 'mounted route must invoke the canonical restore owner');
         assert.strictEqual(call.customerId, '00000000-0000-0000-0000-000000000003');
         assert.strictEqual(call.actorUserId, '00000000-0000-0000-0000-000000000001');
         assert.strictEqual(call.reconcileType, 'function', 'route must pass the canonical Jellyfin reconciliation owner');
-        assert((response.headers.get('location') || '').includes('Jellyfin%20access%20re-enabled'), 'success redirect must explain that access was re-enabled');
+        assert((response.headers.get('location') || '').includes('Free%20Server%20access%20restored'), 'success redirect must explain that Free access was restored by reprovisioning');
 
         const invalidCsrf = await fetch(`http://127.0.0.1:${address.port}/admin/users/00000000-0000-0000-0000-000000000003/jellyfin/re-enable`, {
             method: 'POST',
@@ -55,24 +54,14 @@ const originalReconcile = provisioning.reconcileCustomer;
             headers: { 'content-type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({ _csrf: 'wrong-token' })
         });
-        assert.strictEqual(invalidCsrf.status, 403, 'mounted re-enable POST must reject invalid CSRF');
-
-        const html = view.accessWorkspaceSection({
-            customer: { id: '00000000-0000-0000-0000-000000000003' },
-            primaryEntitlement: null,
-            subscriptions: [{ status: 'active', plan_name: 'Free Server', service_type: 'jellyfin', is_free_tier: true, server_class: 'free' }],
-            accounts: [{ id: 'a', disabled: true, account_purpose: 'jellyfin', server_name: 'Free Server', recon_status: 'successful' }]
-        }, 'reenable-test-token', { currentPlan: null });
-        assert(html.includes('Re-enable Jellyfin access'), 'disabled Free Server customer must get a visible re-enable action');
-        assert(html.includes('Free Server · disabled'), 'disabled existing account must not be rendered as unassigned');
-        assert(!html.includes('Create Jellyfin access'), 'disabled existing account must not be mistaken for an unprovisioned customer');
+        assert.strictEqual(invalidCsrf.status, 403, 'mounted restore POST must reject invalid CSRF');
     } finally {
         restore.restoreDisabledFreeAccess = originalRestore;
         provisioning.reconcileCustomer = originalReconcile;
         await new Promise(resolve => server.close(resolve));
     }
 
-    console.log('admin jellyfin re-enable mounted smoke: ok');
+    console.log('admin jellyfin Free Server restore mounted smoke: ok');
 })().catch(error => {
     restore.restoreDisabledFreeAccess = originalRestore;
     provisioning.reconcileCustomer = originalReconcile;

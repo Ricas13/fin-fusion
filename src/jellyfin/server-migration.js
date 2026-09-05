@@ -26,15 +26,14 @@ async function primaryAccount(customerId) {
         FROM jellyfin_accounts ja
         JOIN jellyfin_servers js ON js.id=ja.server_id
         WHERE ja.customer_id=$1 AND ja.account_purpose='jellyfin'
-        ORDER BY ja.is_primary DESC,ja.disabled ASC,js.enabled DESC,
-                 COALESCE(ja.updated_at,ja.created_at) DESC
+        ORDER BY ja.is_primary DESC,js.enabled DESC,COALESCE(ja.updated_at,ja.created_at) DESC
         LIMIT 1
     `, [customerId]);
     return result.rows[0] || null;
 }
 
 async function activeAccountCount(serverId) {
-    const result = await query(`SELECT COUNT(*)::int AS count FROM jellyfin_accounts WHERE server_id=$1 AND disabled=FALSE`, [serverId]);
+    const result = await query(`SELECT COUNT(*)::int AS count FROM jellyfin_accounts WHERE server_id=$1`, [serverId]);
     return Number(result.rows[0]?.count || 0);
 }
 
@@ -49,15 +48,15 @@ async function migrationForId(migrationId) {
                COALESCE(NULLIF(c.display_name,''),u.username,c.email,'Customer') AS customer_name,
                src.name AS source_server_name,src.slug AS source_server_slug,
                dst.name AS target_server_name,dst.slug AS target_server_slug,
-               sa.jellyfin_username AS source_username,
-               ta.jellyfin_username AS target_username,
+               COALESCE(sa.jellyfin_username,m.detail->>'sourceUsername',m.detail->>'username') AS source_username,
+               COALESCE(ta.jellyfin_username,m.detail->>'targetUsername') AS target_username,
                ta.password_setup_required AS target_password_reset_required
         FROM customer_server_migrations m
         JOIN customers c ON c.id=m.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id
         JOIN jellyfin_servers src ON src.id=m.source_server_id
         JOIN jellyfin_servers dst ON dst.id=m.target_server_id
-        JOIN jellyfin_accounts sa ON sa.id=m.source_account_id
+        LEFT JOIN jellyfin_accounts sa ON sa.id=m.source_account_id
         LEFT JOIN jellyfin_accounts ta ON ta.id=m.target_account_id
         WHERE m.id=$1
     `, [migrationId]);
@@ -70,7 +69,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
 
     const source = await primaryAccount(customerId);
     if (!source) throw new ServerMigrationError('NO_SOURCE_ACCOUNT', 'Customer has no Jellyfin account to migrate.', 'preflight');
-    if (source.disabled) throw new ServerMigrationError('SOURCE_ACCOUNT_DISABLED', 'The current Jellyfin account is disabled and cannot be migrated as active access.', 'preflight');
+    if (source.disabled) throw new ServerMigrationError('SOURCE_ACCOUNT_DISABLED', 'A disabled Jellyfin identity cannot be migrated. Managed accounts must be enabled or absent.', 'preflight');
     if (!source.server_enabled) throw new ServerMigrationError('SOURCE_SERVER_DISABLED', 'The source Jellyfin server is disabled.', 'preflight');
     if (expectedSourceAccountId && !same(source.id, expectedSourceAccountId)) {
         throw new ServerMigrationError('SOURCE_CHANGED', 'The customer\'s current Jellyfin account changed after preview.', 'preflight');
@@ -94,9 +93,7 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     }
 
     const alreadyRecorded = await query('SELECT id FROM jellyfin_accounts WHERE customer_id=$1 AND server_id=$2 LIMIT 1', [customerId, target.id]);
-    if (alreadyRecorded.rowCount) {
-        throw new ServerMigrationError('TARGET_ACCOUNT_EXISTS', 'This customer already has a CAPTAiNFiN Jellyfin account on the target server.', 'preflight');
-    }
+    if (alreadyRecorded.rowCount) throw new ServerMigrationError('TARGET_ACCOUNT_EXISTS', 'This customer already has a CAPTAiNFiN Jellyfin account on the target server.', 'preflight');
     if (!(await provisioning.usernameAvailable(target.id, source.jellyfin_username))) {
         throw new ServerMigrationError('TARGET_USERNAME_EXISTS', `Username ${source.jellyfin_username} already exists on the target Jellyfin server.`, 'preflight');
     }
@@ -113,19 +110,10 @@ async function preflight(customerId, targetServerId, { expectedSourceAccountId =
     }
 
     return {
-        customerId,
-        entitlement,
-        source,
-        target,
-        effective,
-        libraryAccess,
+        customerId, entitlement, source, target, effective, libraryAccess,
         allowOverCapacity: Boolean(allowOverCapacity),
         overCapacityOverride: targetAtCapacity && Boolean(allowOverCapacity),
-        capacity: {
-            assignedUsers,
-            maxUsers: maxUsers || null,
-            remaining: maxUsers > 0 ? Math.max(0, maxUsers - assignedUsers) : null
-        }
+        capacity: { assignedUsers, maxUsers: maxUsers || null, remaining: maxUsers > 0 ? Math.max(0, maxUsers - assignedUsers) : null }
     };
 }
 
@@ -137,22 +125,17 @@ async function createMigration(customerId, targetServerId, actorUserId, { allowO
                 customer_id,source_account_id,source_server_id,target_server_id,status,detail,requested_by
             ) VALUES($1,$2,$3,$4,'pending',$5::jsonb,$6)
             RETURNING *
-        `, [
-            customerId,
-            check.source.id,
-            check.source.server_id,
-            check.target.id,
-            JSON.stringify({
-                planId: check.entitlement.plan_id,
-                planCode: check.entitlement.code,
-                username: check.source.jellyfin_username,
-                effectiveStreams: check.effective.technical.streams,
-                visibleLibraryCount: check.effective.visibleNames.length,
-                passwordSetupRequiredAfterMove: true,
-                allowOverCapacity: Boolean(allowOverCapacity)
-            }),
-            actorUserId || null
-        ]);
+        `, [customerId, check.source.id, check.source.server_id, check.target.id, JSON.stringify({
+            planId: check.entitlement.plan_id,
+            planCode: check.entitlement.code,
+            username: check.source.jellyfin_username,
+            sourceUsername: check.source.jellyfin_username,
+            sourceJellyfinUserId: check.source.jellyfin_user_id,
+            effectiveStreams: check.effective.technical.streams,
+            visibleLibraryCount: check.effective.visibleNames.length,
+            passwordSetupRequiredAfterMove: true,
+            allowOverCapacity: Boolean(allowOverCapacity)
+        }), actorUserId || null]);
         return result.rows[0];
     } catch (error) {
         if (error.code === '23505') throw new ServerMigrationError('MIGRATION_ALREADY_OPEN', 'This customer already has a pending or running server migration.');
@@ -193,22 +176,10 @@ async function markFailed(migrationId, stage, error, cleanup) {
     `, [migrationId, stage, String(error?.message || error || 'Migration failed').slice(0, 4000), JSON.stringify({ cleanup })]);
 }
 
-async function restoreSource(migration) {
-    const entitlement = await provisioning.currentEntitlement(migration.customer_id);
-    if (!entitlement) return false;
-    const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
-    const source = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.source_account_id, migration.customer_id]);
-    if (!source.rowCount) return false;
-    await provisioning.applyPolicy(source.rows[0], effective, false);
-    await provisioning.markPrimaryAccount(migration.customer_id, migration.source_account_id);
-    return true;
-}
-
 async function executeMigration(migrationId) {
     const migration = await setRunning(migrationId);
     let stage = 'preflight';
     let targetAccount = null;
-    let sourceMayBeDisabled = false;
     try {
         const allowOverCapacity = Boolean(migration.detail?.allowOverCapacity);
         const check = await preflight(migration.customer_id, migration.target_server_id, {
@@ -222,19 +193,19 @@ async function executeMigration(migrationId) {
             requireExactUsername: true,
             makePrimary: false
         });
-        await query(`
-            UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1
-        `, [targetAccount.id]);
+        await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`, [targetAccount.id]);
         targetAccount.password_setup_required = true;
         await query(`
             UPDATE customer_server_migrations
             SET target_account_id=$2,detail=detail || $3::jsonb,updated_at=NOW()
             WHERE id=$1
-        `, [migrationId, targetAccount.id, JSON.stringify({ targetJellyfinUserId: targetAccount.jellyfin_user_id })]);
+        `, [migrationId, targetAccount.id, JSON.stringify({
+            targetJellyfinUserId: targetAccount.jellyfin_user_id,
+            targetUsername: targetAccount.jellyfin_username
+        })]);
 
-        stage = 'disable_source';
-        sourceMayBeDisabled = true;
-        await provisioning.disableJellyfinAccount(check.source);
+        stage = 'remove_source';
+        await provisioning.deleteJellyfinAccount(check.source, { reason: 'Server migration cutover', actorUserId: migration.requested_by || null });
 
         stage = 'switch_primary';
         await provisioning.markPrimaryAccount(migration.customer_id, targetAccount.id);
@@ -246,8 +217,8 @@ async function executeMigration(migrationId) {
             WHERE id=$1
         `, [migrationId, JSON.stringify({
             sourceUsername: check.source.jellyfin_username,
+            sourceRemoved: true,
             targetUsername: targetAccount.jellyfin_username,
-            sourceDisabled: true,
             primaryAccountId: targetAccount.id,
             passwordSetupRequired: true
         })]);
@@ -266,18 +237,16 @@ async function executeMigration(migrationId) {
         await markProvisioningDue(migration.customer_id, targetAccount.id, migration.target_server_id);
         return migrationForId(migrationId);
     } catch (error) {
-        const cleanup = { sourceRestored: false, targetDisabled: false };
-        if (sourceMayBeDisabled) {
-            try { cleanup.sourceRestored = await restoreSource(migration); } catch (_) {}
-        }
+        const cleanup = { targetRemoved: false };
         if (targetAccount) {
             try {
-                await provisioning.disableJellyfinAccount(targetAccount);
-                cleanup.targetDisabled = true;
+                await provisioning.deleteJellyfinAccount(targetAccount, { reason: 'Failed server migration cleanup', actorUserId: migration.requested_by || null });
+                cleanup.targetRemoved = true;
             } catch (_) {}
         }
         await markFailed(migrationId, stage, error, cleanup);
-        await markProvisioningDue(migration.customer_id, migration.source_account_id, migration.source_server_id);
+        const source = await primaryAccount(migration.customer_id);
+        await markProvisioningDue(migration.customer_id, source?.id || null, source?.server_id || migration.source_server_id);
         throw error;
     }
 }
@@ -300,38 +269,52 @@ async function rollbackMigration(migrationId, actorUserId) {
         throw new ServerMigrationError('ROLLBACK_SOURCE_NOT_ELIGIBLE', 'Original source server is no longer eligible/available for this plan.');
     }
 
-    const sourceResult = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.source_account_id, migration.customer_id]);
-    const targetResult = await query("SELECT * FROM jellyfin_accounts WHERE id=$1 AND customer_id=$2 AND account_purpose='jellyfin'", [migration.target_account_id, migration.customer_id]);
-    if (!sourceResult.rowCount || !targetResult.rowCount) throw new ServerMigrationError('ROLLBACK_ACCOUNT_MISSING', 'Source or target Jellyfin account is missing from CAPTAiNFiN.');
-    const source = sourceResult.rows[0];
-    const target = targetResult.rows[0];
+    const username = String(migration.source_username || migration.detail?.sourceUsername || migration.detail?.username || '').trim();
+    if (!username) throw new ServerMigrationError('ROLLBACK_SOURCE_IDENTITY_MISSING', 'Migration history does not contain the original Jellyfin username.');
+    if (!(await provisioning.usernameAvailable(sourceServer.id, username))) {
+        throw new ServerMigrationError('ROLLBACK_SOURCE_USERNAME_EXISTS', `Username ${username} already exists on the original Jellyfin server.`, 'preflight');
+    }
+
     const effective = await provisioning.effectivePolicyForCustomer(migration.customer_id, entitlement);
-    const sourceLibraries = await provisioning.resolveLibraryAccessForServer(source.server_id, effective.unrestricted, effective.visibleNames, false);
+    const sourceLibraries = await provisioning.resolveLibraryAccessForServer(sourceServer.id, effective.unrestricted, effective.visibleNames, false);
     if (sourceLibraries.missing.length) {
         throw new ServerMigrationError('ROLLBACK_LIBRARIES_MISSING', `Original server is missing required libraries: ${sourceLibraries.missing.join(', ')}`, 'preflight');
     }
 
-    let sourceEnabled = false;
+    let restoredSource = null;
     try {
-        await provisioning.applyPolicy(source, effective, false);
-        sourceEnabled = true;
-        await provisioning.disableJellyfinAccount(target);
-        await provisioning.markPrimaryAccount(migration.customer_id, source.id);
+        restoredSource = await provisioning.createJellyfinAccount(migration.customer_id, sourceServer, effective, {
+            preferredUsername: username,
+            requireExactUsername: true,
+            makePrimary: false
+        });
+        await query(`UPDATE jellyfin_accounts SET password_setup_required=TRUE,updated_at=NOW() WHERE id=$1`, [restoredSource.id]);
+
+        await provisioning.deleteJellyfinAccount(current, { reason: 'Server migration rollback', actorUserId: actorUserId || null });
+        await provisioning.markPrimaryAccount(migration.customer_id, restoredSource.id);
+
         await query(`
             UPDATE customer_server_migrations
             SET status='rolled_back',failure_stage=NULL,last_error=NULL,rolled_back_at=NOW(),updated_at=NOW(),
-                detail=detail || $2::jsonb
+                source_account_id=$2,
+                detail=detail || $3::jsonb
             WHERE id=$1
-        `, [migrationId, JSON.stringify({ rollbackActorUserId: actorUserId || null })]);
+        `, [migrationId, restoredSource.id, JSON.stringify({
+            rollbackActorUserId: actorUserId || null,
+            rollbackSourceAccountId: restoredSource.id,
+            rollbackSourceJellyfinUserId: restoredSource.jellyfin_user_id,
+            targetRemovedOnRollback: true,
+            passwordSetupRequiredAfterRollback: true
+        })]);
         await query(`
             INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
             VALUES($1,'admin.customer.server_migration.rolled_back','customer',$2,$3::jsonb)
-        `, [actorUserId || null, migration.customer_id, JSON.stringify({ migrationId })]);
-        await markProvisioningDue(migration.customer_id, source.id, source.server_id);
+        `, [actorUserId || null, migration.customer_id, JSON.stringify({ migrationId, restoredSourceAccountId: restoredSource.id })]);
+        await markProvisioningDue(migration.customer_id, restoredSource.id, restoredSource.server_id);
         return migrationForId(migrationId);
     } catch (error) {
-        if (sourceEnabled) {
-            try { await provisioning.disableJellyfinAccount(source); } catch (_) {}
+        if (restoredSource) {
+            try { await provisioning.deleteJellyfinAccount(restoredSource, { reason: 'Failed migration rollback cleanup', actorUserId: actorUserId || null }); } catch (_) {}
         }
         await query(`
             UPDATE customer_server_migrations
@@ -349,15 +332,15 @@ async function listMigrations(limit = 100) {
                COALESCE(NULLIF(c.display_name,''),u.username,c.email,'Customer') AS customer_name,
                src.name AS source_server_name,src.slug AS source_server_slug,
                dst.name AS target_server_name,dst.slug AS target_server_slug,
-               sa.jellyfin_username AS source_username,
-               ta.jellyfin_username AS target_username,
+               COALESCE(sa.jellyfin_username,m.detail->>'sourceUsername',m.detail->>'username') AS source_username,
+               COALESCE(ta.jellyfin_username,m.detail->>'targetUsername') AS target_username,
                ta.password_setup_required AS target_password_reset_required
         FROM customer_server_migrations m
         JOIN customers c ON c.id=m.customer_id
         LEFT JOIN app_users u ON u.id=c.user_id
         JOIN jellyfin_servers src ON src.id=m.source_server_id
         JOIN jellyfin_servers dst ON dst.id=m.target_server_id
-        JOIN jellyfin_accounts sa ON sa.id=m.source_account_id
+        LEFT JOIN jellyfin_accounts sa ON sa.id=m.source_account_id
         LEFT JOIN jellyfin_accounts ta ON ta.id=m.target_account_id
         ORDER BY m.requested_at DESC
         LIMIT $1
@@ -389,15 +372,14 @@ async function migrationCandidates(limit = 500) {
         JOIN LATERAL (
             SELECT account.* FROM jellyfin_accounts account
             WHERE account.customer_id=c.id AND account.account_purpose='jellyfin'
-            ORDER BY account.is_primary DESC,account.disabled ASC,account.updated_at DESC
+            ORDER BY account.is_primary DESC,account.updated_at DESC
             LIMIT 1
         ) ja ON TRUE
         JOIN jellyfin_servers js ON js.id=ja.server_id
-        WHERE ja.disabled=FALSE
-          AND NOT EXISTS (
+        WHERE NOT EXISTS (
             SELECT 1 FROM customer_server_migrations m
             WHERE m.customer_id=c.id AND m.status IN ('pending','running')
-          )
+        )
         ORDER BY customer_name
         LIMIT $1
     `, [n]);

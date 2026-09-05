@@ -108,7 +108,7 @@ async function main() {
     const customerId = customer.rows[0].id;
     await query(`INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,is_primary) VALUES
         ($1,$2,'jf-a','ServerUser',FALSE,TRUE),
-        ($1,$3,'jf-b','ServerUser',TRUE,FALSE)`, [customerId, serverA.rows[0].id, serverB.rows[0].id]);
+        ($1,$3,'jf-b','ServerUser',FALSE,FALSE)`, [customerId, serverA.rows[0].id, serverB.rows[0].id]);
 
     const list = await customerFilters.listCustomers({}, null, { page: 1, pageSize: 25 });
     const row = list.rows.find(x => x.id === customerId);

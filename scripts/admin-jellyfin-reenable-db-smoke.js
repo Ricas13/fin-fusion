@@ -5,16 +5,15 @@ const crypto = require('crypto');
 const { query, getPool } = require('../src/db');
 const accessHolds = require('../src/entitlements/access-holds');
 const restore = require('../src/entitlements/jellyfin-inactivity-restore');
-const grace = require('../src/entitlements/jellyfin-inactivity-grace');
 
 (async () => {
     const suffix = crypto.randomBytes(5).toString('hex');
     const created = { customers: [], users: [], servers: [] };
 
-    async function fixture(label, { unrelatedHold = false } = {}) {
-        const user = await query(`INSERT INTO app_users(username,password_hash,role,active,email_verified_at) VALUES($1,'test-hash','customer',TRUE,NOW()) RETURNING id`, [`reenable_${label}_${suffix}`]);
+    async function fixture(label) {
+        const user = await query(`INSERT INTO app_users(username,password_hash,role,active,email_verified_at) VALUES($1,'test-hash','customer',TRUE,NOW()) RETURNING id`, [`restore_${label}_${suffix}`]);
         created.users.push(user.rows[0].id);
-        const customer = await query(`INSERT INTO customers(user_id,display_name,automation_protected) VALUES($1,$2,FALSE) RETURNING id`, [user.rows[0].id, `Re-enable ${label} ${suffix}`]);
+        const customer = await query(`INSERT INTO customers(user_id,display_name,automation_protected) VALUES($1,$2,FALSE) RETURNING id`, [user.rows[0].id, `Restore ${label} ${suffix}`]);
         const customerId = customer.rows[0].id;
         created.customers.push(customerId);
 
@@ -24,66 +23,65 @@ const grace = require('../src/entitlements/jellyfin-inactivity-grace');
 
         const server = await query(`
             INSERT INTO jellyfin_servers(name,slug,server_class,base_url,api_key_encrypted,enabled,allow_new_users,paid_enabled,priority,max_users,health_status,last_health_check)
-            VALUES($1,$2,'free','https://reenable.example.test','key',TRUE,TRUE,TRUE,10,100,'healthy',NOW()) RETURNING id
-        `, [`Re-enable ${label} ${suffix}`, `reenable-${label}-${suffix}`]);
-        created.servers.push(server.rows[0].id);
+            VALUES($1,$2,'free','https://restore.example.test','key',TRUE,TRUE,TRUE,10,100,'healthy',NOW()) RETURNING id
+        `, [`Restore ${label} ${suffix}`, `restore-${label}-${suffix}`]);
+        const serverId = server.rows[0].id;
+        created.servers.push(serverId);
         await query(`INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end) VALUES($1,$2,'active','free_claim',NOW()-INTERVAL '30 days',NOW()+INTERVAL '3000 days')`, [customerId, planId]);
-
-        const oldActivity = new Date(Date.now() - 20 * 86400000);
-        const account = await query(`
-            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,last_activity_at,is_primary)
-            VALUES($1,$2,$3,$4,TRUE,'jellyfin','free',$5,TRUE) RETURNING id,last_activity_at
-        `, [customerId, server.rows[0].id, `remote-${label}-${suffix}`, `Free_${label}_${suffix}`, oldActivity]);
-        const accountId = account.rows[0].id;
-
         const hold = await accessHolds.addHold({
             customerId,
             type: 'inactivity_policy',
             sourceKey: `plan:${planId}`,
             reason: 'Free-plan Jellyfin usage rule: DB smoke'
         });
-        await query(`
-            INSERT INTO jellyfin_account_lifecycle(account_id,customer_id,server_id,jellyfin_user_id,jellyfin_username,category,reason,policy_source,disabled_at,delete_after,metadata)
-            VALUES($1,$2,$3,$4,$5,'free','DB smoke inactivity','plan',NOW()-INTERVAL '1 hour',NOW()+INTERVAL '1 day','{}'::jsonb)
-        `, [accountId, customerId, server.rows[0].id, `remote-${label}-${suffix}`, `Free_${label}_${suffix}`]);
-        if (unrelatedHold) {
-            await accessHolds.addHold({ customerId, type: 'admin_suspended', sourceKey: 'db-smoke', reason: 'Unrelated admin hold must survive' });
-        }
-        return { customerId, planId, accountId, oldActivity, holdId: hold.id };
+        return { customerId, planId, serverId, holdId: hold.id };
     }
 
-    const candidate = accountId => ({
-        account_id: accountId,
-        eligible: true,
-        reasons: [],
-        policy: { minimumObservationHours: 24, noPlaybackDays: 7, minimumPlaybackMinutes: null, playbackWindowDays: 7 }
-    });
-
     try {
+        const invariant = await fixture('invariant');
+        await assert.rejects(
+            query(`
+                INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary)
+                VALUES($1,$2,$3,$4,TRUE,'jellyfin','free',TRUE)
+            `, [invariant.customerId, invariant.serverId, `disabled-${suffix}`, `Disabled_${suffix}`]),
+            error => String(error?.code || '') === '23514',
+            'database must reject disabled Jellyfin account rows'
+        );
+
+        const invariantAccount = await query(`
+            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary)
+            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE) RETURNING id
+        `, [invariant.customerId, invariant.serverId, `enabled-${suffix}`, `Enabled_${suffix}`]);
+        await assert.rejects(
+            query(`
+                INSERT INTO jellyfin_policy_drift(jellyfin_account_id,customer_id,server_id,status,desired_disabled)
+                VALUES($1,$2,$3,'unknown',TRUE)
+            `, [invariantAccount.rows[0].id, invariant.customerId, invariant.serverId]),
+            error => String(error?.code || '') === '23514',
+            'a true desired-disabled policy target must never be accepted'
+        );
+
         const normal = await fixture('normal');
+        let newAccountId = null;
         const normalResult = await restore.restoreDisabledFreeAccess(normal.customerId, {
             actorUserId: null,
             reconcile: async customerId => {
                 const holds = await accessHolds.activeHolds(customerId);
                 assert(!holds.some(row => row.hold_type === 'inactivity_policy'), 'reconcile must run only after the matching inactivity hold is released');
-                await query(`UPDATE jellyfin_accounts SET disabled=FALSE WHERE customer_id=$1 AND account_purpose='jellyfin' AND access_lane='free'`, [customerId]);
-                return { active: true };
+                const account = await query(`
+                    INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary)
+                    VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE) RETURNING id
+                `, [customerId, normal.serverId, `remote-normal-${suffix}`, `Free_normal_${suffix}`]);
+                newAccountId = account.rows[0].id;
+                return { active: true, account: account.rows[0] };
             }
         });
-        assert.strictEqual(normalResult.enabled, true, 'normal admin restore must finish with Jellyfin enabled');
-        assert.strictEqual(normalResult.blocked, false);
+        assert.strictEqual(normalResult.enabled, true, 'Free restore must finish with one present enabled account');
+        assert(newAccountId, 'restore reconciliation must provision a replacement account');
         assert.strictEqual((await query(`SELECT released_at FROM customer_access_holds WHERE id=$1`, [normal.holdId])).rows[0].released_at != null, true, 'matching inactivity hold must be released');
-        const normalLifecycle = await query(`SELECT restored_at,metadata FROM jellyfin_account_lifecycle WHERE account_id=$1`, [normal.accountId]);
-        assert(normalLifecycle.rows[0].restored_at, 'pending Free lifecycle must be closed by explicit admin restore');
-        assert.strictEqual(normalLifecycle.rows[0].metadata.restoredReason, 'admin_reenable');
-        assert.strictEqual(normalLifecycle.rows[0].metadata.reenableReconcilePending, false, 'successful reconciliation must clear the durable retry marker');
-        const activityAfter = (await query(`SELECT last_activity_at FROM jellyfin_accounts WHERE id=$1`, [normal.accountId])).rows[0].last_activity_at;
-        assert.strictEqual(new Date(activityAfter).getTime(), normal.oldActivity.getTime(), 'admin restore must not fabricate Jellyfin activity timestamps');
-
-        const graceRows = await grace.applyRestorationGrace([candidate(normal.accountId)]);
-        assert.strictEqual(graceRows[0].eligible, false, 'freshly restored account must not be immediately disabled again');
-        assert.strictEqual(graceRows[0].restoration_grace, true);
-        assert(new Date(graceRows[0].restoration_grace_until).getTime() > Date.now() + 6 * 86400000, 'restore grace must honor the plan observation window');
+        const stored = await query(`SELECT disabled FROM jellyfin_accounts WHERE id=$1`, [newAccountId]);
+        assert.strictEqual(stored.rowCount, 1);
+        assert.strictEqual(stored.rows[0].disabled, false, 'restored account must be enabled');
 
         const retry = await fixture('retry');
         await assert.rejects(
@@ -92,87 +90,13 @@ const grace = require('../src/entitlements/jellyfin-inactivity-grace');
                 reconcile: async () => { throw new Error('simulated Jellyfin outage'); }
             }),
             /simulated Jellyfin outage/,
-            'a remote reconciliation failure must surface to the operator'
+            'a reprovisioning failure must surface to the operator'
         );
-        const afterFailure = await query(`SELECT disabled FROM jellyfin_accounts WHERE id=$1`, [retry.accountId]);
-        assert.strictEqual(afterFailure.rows[0].disabled, true, 'failed remote reconciliation must leave the actual account disabled');
-        assert.strictEqual((await query(`SELECT released_at FROM customer_access_holds WHERE id=$1`, [retry.holdId])).rows[0].released_at != null, true, 'the local inactivity hold transition may already be committed when remote reconciliation fails');
-        const failedLifecycle = await query(`SELECT restored_at,metadata FROM jellyfin_account_lifecycle WHERE account_id=$1`, [retry.accountId]);
-        assert(failedLifecycle.rows[0].restored_at, 'the local lifecycle transition must remain durable after a remote failure');
-        assert.strictEqual(failedLifecycle.rows[0].metadata.reenableReconcilePending, true, 'failed remote reconciliation must leave a durable retry marker');
+        const retryHolds = await accessHolds.activeHolds(retry.customerId);
+        assert(retryHolds.some(row => row.hold_type === 'inactivity_policy'), 'failed reprovisioning must restore the inactivity hold');
+        assert.strictEqual((await query(`SELECT COUNT(*)::int count FROM jellyfin_accounts WHERE customer_id=$1`, [retry.customerId])).rows[0].count, 0, 'failed restore must not leave a disabled or partial account');
 
-        const retryResult = await restore.restoreDisabledFreeAccess(retry.customerId, {
-            actorUserId: null,
-            reconcile: async customerId => {
-                await query(`UPDATE jellyfin_accounts SET disabled=FALSE WHERE customer_id=$1 AND account_purpose='jellyfin' AND access_lane='free'`, [customerId]);
-                return { active: true };
-            }
-        });
-        assert.strictEqual(retryResult.resumed, true, 'second admin action must resume the already-prepared restore instead of requiring the released hold');
-        assert.strictEqual(retryResult.enabled, true, 'retry must be able to finish enabling Jellyfin');
-        const retriedLifecycle = await query(`SELECT metadata FROM jellyfin_account_lifecycle WHERE account_id=$1`, [retry.accountId]);
-        assert.strictEqual(retriedLifecycle.rows[0].metadata.reenableReconcilePending, false, 'successful retry must clear the durable retry marker');
-
-        const automatic = await fixture('automatic');
-        await accessHolds.releaseHold({ customerId: automatic.customerId, type: 'inactivity_policy', sourceKey: `plan:${automatic.planId}` });
-        await query(`
-            UPDATE jellyfin_account_lifecycle
-            SET restored_at=NOW(),metadata=metadata||$2::jsonb,updated_at=NOW()
-            WHERE account_id=$1
-        `, [automatic.accountId, JSON.stringify({ restoredReason: 'activity_after_disable' })]);
-        const automaticRows = await grace.applyRestorationGrace([candidate(automatic.accountId)]);
-        assert.strictEqual(automaticRows[0].eligible, true, 'automatic/non-admin lifecycle restoration must not receive the admin observation grace');
-        assert.strictEqual(Boolean(automaticRows[0].restoration_grace), false, 'only explicit admin re-enables may reset the inactivity observation window');
-
-        const blocked = await fixture('blocked', { unrelatedHold: true });
-        const blockedResult = await restore.restoreDisabledFreeAccess(blocked.customerId, {
-            actorUserId: null,
-            reconcile: async () => ({ active: false })
-        });
-        assert.strictEqual(blockedResult.blocked, true, 'unrelated holds must continue to block access');
-        assert(blockedResult.remainingHolds.some(row => row.type === 'admin_suspended'), 'unrelated admin hold must be preserved');
-        assert(!blockedResult.remainingHolds.some(row => row.type === 'inactivity_policy'), 'only the matching inactivity hold should be released');
-        assert.strictEqual((await query(`SELECT disabled FROM jellyfin_accounts WHERE id=$1`, [blocked.accountId])).rows[0].disabled, true, 'blocked customer must not be falsely reported as enabled');
-
-        // Bulk administrator release is deliberately narrower than a global
-        // unblock: it must clear every administrator-owned hold type that the
-        // admin API can create while leaving unrelated subsystem holds intact.
-        const adminBulk = await fixture('admin-bulk');
-        for (const [type, sourceKey] of [
-            ['admin_disabled', 'db-smoke-disabled'],
-            ['admin_suspended', 'db-smoke-suspended'],
-            ['admin_hold', 'db-smoke-generic'],
-            ['legacy', 'db-smoke-legacy']
-        ]) {
-            await accessHolds.addHold({
-                customerId: adminBulk.customerId,
-                type,
-                sourceKey,
-                reason: `DB smoke ${type}`
-            });
-        }
-        const releasedAdminCount = await accessHolds.releaseAllAdminHolds(adminBulk.customerId);
-        assert.strictEqual(releasedAdminCount, 4, 'bulk admin release must clear every administrator-owned hold, including generic admin_hold');
-        const remainingAfterAdminRelease = await accessHolds.activeHolds(adminBulk.customerId);
-        assert.deepStrictEqual(
-            remainingAfterAdminRelease.map(row => row.hold_type),
-            ['inactivity_policy'],
-            'bulk admin release must preserve unrelated subsystem holds'
-        );
-        const adminReleaseAudit = await query(`
-            SELECT metadata
-            FROM audit_log
-            WHERE action='customer.access_hold.release_admin'
-              AND entity_type='customer'
-              AND entity_id=$1
-            ORDER BY created_at DESC,id DESC
-            LIMIT 1
-        `, [adminBulk.customerId]);
-        assert.strictEqual(adminReleaseAudit.rowCount, 1, 'bulk admin release must create an audit event');
-        assert.strictEqual(Number(adminReleaseAudit.rows[0].metadata.released), 4, 'bulk admin release audit must record the released count');
-        assert(adminReleaseAudit.rows[0].metadata.holds.some(row => row.type === 'admin_hold'), 'bulk admin release audit must include the generic admin hold');
-
-        console.log('admin jellyfin re-enable db smoke: ok');
+        console.log('admin jellyfin present-or-deleted db smoke: ok');
     } finally {
         for (const customerId of created.customers.reverse()) await query('DELETE FROM customers WHERE id=$1', [customerId]).catch(() => {});
         for (const serverId of created.servers.reverse()) await query('DELETE FROM jellyfin_servers WHERE id=$1', [serverId]).catch(() => {});

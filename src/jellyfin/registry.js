@@ -36,9 +36,14 @@ function operationError(server,method,url,timeoutMs,error){
 }
 
 async function managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevicePolicy=false}={}){
+    if(String(method||'GET').toUpperCase()==='POST'&&body&&typeof body==='object'&&!Array.isArray(body)&&/^\/Users\/[^/]+\/Policy(?:\?.*)?$/i.test(String(endpoint||''))&&body.IsDisabled===true){
+        const error=new Error('Managed media users cannot be disabled. Remove the account when access ends.');
+        error.code='MEDIA_USER_DISABLED_STATE_FORBIDDEN';
+        throw error;
+    }
     if(bypassDevicePolicy||String(method||'GET').toUpperCase()!=='POST'||!body||typeof body!=='object'||Array.isArray(body))return body;
     const match=String(endpoint||'').match(/^\/Users\/([^/]+)\/Policy(?:\?.*)?$/i);
-    if(!match||body.IsDisabled===true)return body;
+    if(!match)return body;
     let userId;
     try{userId=decodeURIComponent(match[1]);}catch{return body;}
     const result=await query(`
