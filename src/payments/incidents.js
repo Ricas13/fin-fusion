@@ -1,12 +1,11 @@
 'use strict';
 
-const { query, transaction } = require('../db');
+const { query } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
 const subscriptionTermination = require('./subscription-termination');
 
-const POLICY_KEY = 'payment_risk_policy';
 // A refund/dispute/chargeback under review is a commercial incident, not an
 // access state ("a customer asking for a refund is not an access state").
 // Suspending access via a payment-risk hold is retired entirely - it is no
@@ -17,7 +16,6 @@ const POLICY_KEY = 'payment_risk_policy';
 // second automatic hold-based lifecycle running alongside plan removal.
 const DEFAULTS = Object.freeze({ refundAction:'preserve',disputeAction:'preserve',chargebackAction:'preserve',failedRenewalAction:'provider_state' });
 async function policy(){return{...DEFAULTS}}
-async function savePolicy(input,actorUserId=null){const value={...DEFAULTS};await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[POLICY_KEY,JSON.stringify(value)]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_risk_policy.update','platform_setting',$2,$3::jsonb)`,[actorUserId,POLICY_KEY,JSON.stringify(value)])});return value}
 async function identityFromProviderSubscription(provider,providerSubscriptionId){if(!providerSubscriptionId)return{scope:'unresolved',customerId:null};const direct=await query(`SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 ORDER BY created_at DESC LIMIT 1`,[provider,providerSubscriptionId]);if(direct.rowCount)return{scope:'direct',customerId:direct.rows[0].customer_id};return{scope:'unresolved',customerId:null}}
 async function identityFromMetadata(metadata={}){if(metadata.internal_customer_id)return{scope:'direct',customerId:metadata.internal_customer_id};return{scope:'unresolved',customerId:null}}
 async function reconcileMany(ids){for(const id of ids){try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Payment incident reconcile failed for customer ${id}:`,error.message)}}}
@@ -107,4 +105,4 @@ async function reopen(id,actorUserId){
 }
 async function notes(id){const r=await query(`SELECT n.*,u.username actor_username FROM payment_incident_notes n LEFT JOIN app_users u ON u.id=n.actor_user_id WHERE n.incident_id=$1 ORDER BY n.created_at DESC`,[id]);return r.rows}
 async function recent(limit=100){const result=await query(`SELECT pi.*,c.display_name customer_name,au.username assigned_username FROM payment_incidents pi LEFT JOIN customers c ON c.id=pi.customer_id LEFT JOIN app_users au ON au.id=pi.assigned_to ORDER BY pi.created_at DESC LIMIT $1`,[Math.max(1,Math.min(500,Number(limit)||100))]);return result.rows}
-module.exports={policy,savePolicy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed};
+module.exports={policy,record,recent,get,acknowledge,assign,addNote,resolve,reopen,notes,identityFromProviderSubscription,identityFromMetadata,holdSource,restoreEvidenceAllowed};
