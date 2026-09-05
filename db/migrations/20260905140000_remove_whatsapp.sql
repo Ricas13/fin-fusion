@@ -1,11 +1,14 @@
 BEGIN;
 
--- WhatsApp has been retired from CAPTAiNFiN. Remove persisted channel state,
--- credentials, schema columns and channel allowances so no live WhatsApp
--- contract remains after this migration.
+-- WhatsApp has been retired from CAPTAiNFiN. Purge channel state and credentials,
+-- while retaining legacy nullable columns for rollback/older-node compatibility.
 DELETE FROM admin_notification_preferences WHERE channel='whatsapp';
 DELETE FROM customer_notification_preferences WHERE channel='whatsapp';
 DELETE FROM notification_outbox WHERE channel='whatsapp';
+
+UPDATE notification_preferences SET whatsapp_enabled=FALSE WHERE whatsapp_enabled=TRUE;
+UPDATE customer_communication_preferences SET phone_e164=NULL,whatsapp_opt_in=FALSE,whatsapp_opted_in_at=NULL WHERE phone_e164 IS NOT NULL OR whatsapp_opt_in=TRUE OR whatsapp_opted_in_at IS NOT NULL;
+UPDATE admin_communication_preferences SET phone_e164=NULL,whatsapp_opt_in=FALSE,whatsapp_opted_in_at=NULL WHERE phone_e164 IS NOT NULL OR whatsapp_opt_in=TRUE OR whatsapp_opted_in_at IS NOT NULL;
 
 ALTER TABLE admin_notification_preferences
   DROP CONSTRAINT IF EXISTS admin_notification_preferences_channel_check;
@@ -24,19 +27,6 @@ ALTER TABLE notification_outbox
 ALTER TABLE notification_outbox
   ADD CONSTRAINT notification_outbox_channel_check
   CHECK (channel = ANY (ARRAY['email'::text,'telegram'::text,'webhook'::text,'discord'::text]));
-
-ALTER TABLE notification_preferences
-  DROP COLUMN IF EXISTS whatsapp_enabled;
-
-ALTER TABLE customer_communication_preferences
-  DROP COLUMN IF EXISTS whatsapp_opted_in_at,
-  DROP COLUMN IF EXISTS whatsapp_opt_in,
-  DROP COLUMN IF EXISTS phone_e164;
-
-ALTER TABLE admin_communication_preferences
-  DROP COLUMN IF EXISTS whatsapp_opted_in_at,
-  DROP COLUMN IF EXISTS whatsapp_opt_in,
-  DROP COLUMN IF EXISTS phone_e164;
 
 UPDATE platform_settings
 SET setting_value = setting_value
