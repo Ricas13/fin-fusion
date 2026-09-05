@@ -8,6 +8,7 @@ const capacity = require('../entitlements/plan-capacity');
 
 const CHECKOUT_PROVIDERS = ['stripe', 'paypal', 'plisio'];
 const PROVIDER_CAPACITY_HOLD_MINUTES = Object.freeze({ stripe: 70, paypal: 420, plisio: 190 });
+const CUSTOMER_CHECKOUT_LOCK_MINUTES = 10;
 
 function hash(raw) { return crypto.createHash('sha256').update(String(raw)).digest('hex'); }
 function rawNonce() { return crypto.randomBytes(32).toString('base64url'); }
@@ -145,9 +146,14 @@ async function createIntent({
         const expired = await client.query(`
             UPDATE billing_checkout_intents
             SET state='expired',updated_at=NOW()
-            WHERE customer_id=$1 AND state='open' AND expires_at<=NOW()
+            WHERE customer_id=$1
+              AND state='open'
+              AND (
+                expires_at<=NOW()
+                OR created_at<=NOW()-($2::int * INTERVAL '1 minute')
+              )
             RETURNING id
-        `, [customerId]);
+        `, [customerId, CUSTOMER_CHECKOUT_LOCK_MINUTES]);
         for (const x of expired.rows) await settleReservation(client, x.id, 'expired');
 
         const existing = await client.query(`
@@ -156,7 +162,7 @@ async function createIntent({
             WHERE customer_id=$1 AND state='open'
             LIMIT 1 FOR UPDATE
         `, [customerId]);
-        if (existing.rowCount) throw new Error('A checkout is already in progress. Finish or cancel it before starting another one.');
+        if (existing.rowCount) throw new Error(`A checkout is already in progress. Finish or cancel it, or wait up to ${CUSTOMER_CHECKOUT_LOCK_MINUTES} minutes before starting another one.`);
 
         if (planId) {
             await capacity.lockAndAssert(client,planId,snapshot.planName || 'This plan', {
@@ -444,9 +450,12 @@ async function getOpenForOwner(scope, ownerId) {
     const result = await query(`
         SELECT *
         FROM billing_checkout_intents
-        WHERE customer_id=$1 AND state='open' AND expires_at>NOW()
+        WHERE customer_id=$1
+          AND state='open'
+          AND expires_at>NOW()
+          AND created_at>NOW()-($2::int * INTERVAL '1 minute')
         ORDER BY created_at DESC LIMIT 1
-    `, [ownerId]);
+    `, [ownerId, CUSTOMER_CHECKOUT_LOCK_MINUTES]);
     return result.rows[0] || null;
 }
 
@@ -474,6 +483,7 @@ async function cancelForOwner(scope, ownerId) {
 module.exports = {
     CHECKOUT_PROVIDERS,
     PROVIDER_CAPACITY_HOLD_MINUTES,
+    CUSTOMER_CHECKOUT_LOCK_MINUTES,
     createIntent,
     attachProviderCheckout,
     findById,
