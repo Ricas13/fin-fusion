@@ -13,7 +13,7 @@ const {esc,layout}=require('./admin-html');
 
 function gate(req,res,next){return req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId?next():res.redirect('/login?session=expired');}
 function noStore(_req,res,next){res.setHeader('Cache-Control','no-store, private, max-age=0');res.setHeader('Pragma','no-cache');next();}
-async function integrationState(){await Promise.all([runtimeSettings.ensureLoaded(),providerSettings.ensureLoaded(),requestServiceSettings.ensureLoaded()]);const [stripe,paypal,plisio,requests,email,notifications]=await Promise.all([providerSettings.status('stripe'),providerSettings.status('paypal'),providerSettings.status('plisio'),requestServiceSettings.status(),emailSettings.status().catch(()=>({configured:false,enabled:false})),notificationSettings.status().catch(()=>({telegramEnabled:false,telegramConfigured:false,discordEnabled:false,discordConfigured:false,whatsappEnabled:false,whatsappConfigured:false}))]);return{stripe,paypal,plisio,requests,email,notifications};}
+async function integrationState(){await Promise.all([runtimeSettings.ensureLoaded(),providerSettings.ensureLoaded(),requestServiceSettings.ensureLoaded()]);const [stripe,paypal,plisio,requests,email,notifications]=await Promise.all([providerSettings.status('stripe'),providerSettings.status('paypal'),providerSettings.status('plisio'),requestServiceSettings.status(),emailSettings.status().catch(()=>({configured:false,enabled:false})),notificationSettings.status().catch(()=>({telegramEnabled:false,telegramConfigured:false,discordEnabled:false,discordConfigured:false}))]);return{stripe,paypal,plisio,requests,email,notifications};}
 function providerReady(status){return Boolean(status?.credentialsConfigured&&status?.webhookConfigured);}
 function item(key,name,{enabled=false,configured=false,core=false,href,detail}){const issue=Boolean(enabled&&!configured);return{key,name,enabled:Boolean(enabled),configured:Boolean(configured),core,href,detail,issue};}
 function catalogue(state){const n=state.notifications||{};return[
@@ -23,8 +23,7 @@ function catalogue(state){const n=state.notifications||{};return[
  item('email','Transactional email',{enabled:state.email?.enabled,configured:state.email?.configured,core:true,href:'/admin/notifications',detail:'Activation, password reset and support replies'}),
  item('requests','Request service',{enabled:state.requests?.enabled,configured:state.requests?.configured,href:'/admin/request-users',detail:'Optional Overseerr / Jellyseerr / Seerr account sync'}),
  item('telegram','Telegram',{enabled:n.telegramEnabled,configured:n.telegramConfigured,href:'/admin/notifications/preferences',detail:'Optional notification delivery'}),
- item('discord','Discord',{enabled:n.discordEnabled,configured:n.discordConfigured,href:'/admin/notifications/preferences',detail:'Optional notification delivery'}),
- item('whatsapp','WhatsApp',{enabled:n.whatsappEnabled,configured:n.whatsappConfigured,href:'/admin/notifications/preferences',detail:'Optional notification delivery'})
+ item('discord','Discord',{enabled:n.discordEnabled,configured:n.discordConfigured,href:'/admin/notifications/preferences',detail:'Optional notification delivery'})
  ];}
 function statePill(row){if(row.issue)return'<span class="integrationOverviewStatus bad"><span aria-hidden="true">!</span>Needs setup</span>';if(row.enabled&&row.configured)return'<span class="integrationOverviewStatus good"><span aria-hidden="true">✓</span>Ready</span>';return'<span class="integrationOverviewStatus"><span aria-hidden="true">○</span>Disabled</span>';}
 function rowTarget(row){return row.core?`#integration-${row.key}`:row.href;}
