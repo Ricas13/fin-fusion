@@ -48,12 +48,16 @@ const restore = require('../src/entitlements/jellyfin-inactivity-restore');
             'database must reject disabled Jellyfin account rows'
         );
 
+        const invariantAccount = await query(`
+            INSERT INTO jellyfin_accounts(customer_id,server_id,jellyfin_user_id,jellyfin_username,disabled,account_purpose,access_lane,is_primary)
+            VALUES($1,$2,$3,$4,FALSE,'jellyfin','free',TRUE) RETURNING id
+        `, [invariant.customerId, invariant.serverId, `enabled-${suffix}`, `Enabled_${suffix}`]);
         await assert.rejects(
             query(`
                 INSERT INTO jellyfin_policy_reconciliation(jellyfin_account_id,customer_id,status,desired_disabled)
-                SELECT id,$1,'running',TRUE FROM jellyfin_accounts WHERE customer_id=$1 LIMIT 1
-            `, [invariant.customerId]),
-            () => true,
+                VALUES($1,$2,'running',TRUE)
+            `, [invariantAccount.rows[0].id, invariant.customerId]),
+            error => String(error?.code || '') === '23514',
             'a true desired-disabled reconciliation target must never be accepted'
         );
 
