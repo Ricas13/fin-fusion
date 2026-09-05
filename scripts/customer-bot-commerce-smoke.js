@@ -82,8 +82,8 @@ const telegramApiBody=telegramMessage.body(telegramCard,{chatId:'123456789',fall
 assert.strictEqual(telegramApiBody.chat_id,'123456789','Telegram structured delivery must bind the intended chat id');
 assert.strictEqual(telegramApiBody.parse_mode,'HTML','Telegram structured delivery must preserve safe HTML parse mode');
 
-assert(registration.includes('name="whatsappOptIn"')&&registration.includes('name="telegramOptIn"')&&registration.includes('name="discordOptIn"'),'Registration must collect secondary-channel preferences');
-assert(registration.includes('+447700900123')&&registration.toLowerCase().includes('international format'),'Registration must explain the WhatsApp country-code destination format');
+assert(registration.includes('name="telegramOptIn"')&&registration.includes('name="discordOptIn"'),'Registration must collect the remaining secondary-channel preferences');
+for(const source of [settings,dispatch,outbox,communications,registration,communicationView,adminNotifications])assert(!source.toLowerCase().includes('whatsapp'),'Retired WhatsApp runtime/UI references must not reappear');
 assert(adminNotifications.includes('Notification control room')&&adminNotifications.includes('Global event catalogue'),'Global Notifications must remain the operator control centre for shared messaging infrastructure and event routing');
 assert(adminNotifications.includes('/admin/profile/notifications'),'Global Notifications must link to each admin profile notification matrix');
 assert(adminNotifications.includes('customer_opt_in_allowed'),'Global Notifications must control which customer events may be exposed');

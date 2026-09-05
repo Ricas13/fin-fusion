@@ -21,14 +21,9 @@ function refreshFreePlacesStatus(reason='capacity_changed'){
     });
 }
 function cleanCommunicationPreferences(value={}){
-    const phone=String(value.phone_e164||value.phone||'').trim().slice(0,32);
     const telegram=String(value.telegram_handle||value.telegram||'').trim().replace(/^@/,'').slice(0,64);
     const discord=String(value.discord_handle||value.discord||'').trim().slice(0,100);
-    const whatsapp=Boolean(value.whatsapp_opt_in);
-    if(whatsapp&&(!phone||!/^\+[1-9]\d{7,14}$/.test(phone.replace(/[\s()-]/g,''))))throw new Error('WhatsApp requires an international phone number such as +447700900123.');
     return {
-        phone_e164:phone?phone.replace(/[\s()-]/g,''):null,
-        whatsapp_opt_in:Boolean(phone&&whatsapp),
         telegram_handle:telegram||null,
         telegram_opt_in:Boolean(value.telegram_opt_in),
         discord_handle:discord||null,
@@ -101,7 +96,7 @@ async function begin({email,username,password,referralCode=null,communicationPre
         if(freeReservation){
             freeReservation=(await client.query(`UPDATE free_access_registration_reservations SET pending_registration_id=$2,normalized_email=$3,updated_at=NOW() WHERE id=$1 RETURNING id,plan_id,expires_at,pending_registration_id,normalized_email`,[freeReservation.id,created.rows[0].id,email])).rows[0];
         }
-        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.pending','pending_registration',$1,$2::jsonb)`,[created.rows[0].id,JSON.stringify({email,username,expiresAt,referral:Boolean(ref),freeAccess:Boolean(freeAccess),freeHoldExpiresAt:freeReservation?.expires_at||null,freeReservationId:freeReservation?.id||null,optionalChannels:{whatsapp:prefs.whatsapp_opt_in,telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
+        await client.query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('customer.registration.pending','pending_registration',$1,$2::jsonb)`,[created.rows[0].id,JSON.stringify({email,username,expiresAt,referral:Boolean(ref),freeAccess:Boolean(freeAccess),freeHoldExpiresAt:freeReservation?.expires_at||null,freeReservationId:freeReservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
         return{...created.rows[0],freeReservation};
     });
     return{...row,token:raw};
@@ -121,10 +116,10 @@ async function consume(rawToken){
         try{await assertNoUnclaimedJellyfinUsername(client,pending.username);}catch(error){return terminalize(client,pending.id,error.message);}
         const user=(await client.query(`INSERT INTO app_users(email,username,password_hash,role,email_verified_at) VALUES($1,$2,$3,'customer',NOW()) RETURNING id,email,username,role,active,email_verified_at,created_at,session_version`,[pending.email,pending.username,pending.password_hash])).rows[0];
         const customer=(await client.query(`INSERT INTO customers(user_id,display_name,email) VALUES($1,$2,$3) RETURNING *`,[user.id,pending.username,pending.email])).rows[0];
-        await client.query(`INSERT INTO customer_communication_preferences(customer_id,phone_e164,whatsapp_opt_in,whatsapp_opted_in_at,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,CASE WHEN $3 THEN NOW() ELSE NULL END,$4,$5,$6,$7) ON CONFLICT(customer_id) DO UPDATE SET phone_e164=EXCLUDED.phone_e164,whatsapp_opt_in=EXCLUDED.whatsapp_opt_in,whatsapp_opted_in_at=EXCLUDED.whatsapp_opted_in_at,telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.phone_e164,prefs.whatsapp_opt_in,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
+        await client.query(`INSERT INTO customer_communication_preferences(customer_id,telegram_handle,telegram_opt_in,discord_handle,discord_opt_in) VALUES($1,$2,$3,$4,$5) ON CONFLICT(customer_id) DO UPDATE SET telegram_handle=EXCLUDED.telegram_handle,telegram_opt_in=EXCLUDED.telegram_opt_in,discord_handle=EXCLUDED.discord_handle,discord_opt_in=EXCLUDED.discord_opt_in,updated_at=NOW()`,[customer.id,prefs.telegram_handle,prefs.telegram_opt_in,prefs.discord_handle,prefs.discord_opt_in]);
         let referralCodeId=null;if(pending.referral_code&&await referrals.attributionEnabled(client))referralCodeId=await referrals.attributeReferral(customer.id,pending.referral_code,client);
         await client.query(`UPDATE pending_registrations SET consumed_at=NOW(),updated_at=NOW() WHERE id=$1`,[pending.id]);
-        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,referralAttributed:Boolean(referralCodeId),freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,optionalChannels:{whatsapp:prefs.whatsapp_opt_in,telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
+        await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'customer.registration.verified','customer',$2,$3::jsonb)`,[user.id,customer.id,JSON.stringify({pendingRegistrationId:pending.id,emailVerified:true,referralAttributed:Boolean(referralCodeId),freeAccessRequested:Boolean(pending.free_access_requested),freeReservationId:reservation?.id||null,optionalChannels:{telegram:prefs.telegram_opt_in,discord:prefs.discord_opt_in}})]);
         return{user,customer,referralCodeId,pendingRegistrationId:pending.id,freeAccessRequested:Boolean(pending.free_access_requested),freeReservation:reservation};
     });
     if(!created)return null;

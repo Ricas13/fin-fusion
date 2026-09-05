@@ -21,21 +21,19 @@ assert.deepStrictEqual(communications.deliveryChannels({
     telegramEnabled:true,
     telegramConfigured:true,
     discordEnabled:true,
-    discordConfigured:false,
-    whatsappEnabled:false,
-    whatsappConfigured:true
+    discordConfigured:false
 }),['telegram'],'only globally enabled and configured channels may be visible to customers');
 assert.deepStrictEqual(communications.deliveryChannels({
     telegramEnabled:true,
     telegramConfigured:true,
     discordEnabled:true,
-    discordConfigured:true,
-    whatsappEnabled:true,
-    whatsappConfigured:true
-}),['telegram','discord','whatsapp'],'all ready channels should remain available');
+    discordConfigured:true
+}),['telegram','discord'],'all ready channels should remain available');
 assert.deepStrictEqual(communications.deliveryChannels({}),[],'missing delivery configuration must expose no optional channel cards');
 assert(!view.includes("'Unavailable'")&&!view.includes('>Unavailable<'),'customer communications must not render unavailable channel cards');
-assert(view.includes("channels.includes('telegram')")&&view.includes("channels.includes('discord')")&&view.includes("channels.includes('whatsapp')"),'channel cards must be gated by the shared visible-channel list');
+assert(view.includes("channels.includes('telegram')")&&view.includes("channels.includes('discord')"),'channel cards must be gated by the shared visible-channel list');
+assert(!view.toLowerCase().includes('whatsapp'),'retired WhatsApp UI must not reappear');
+assert(!source.toLowerCase().includes('whatsapp'),'retired WhatsApp routing must not reappear');
 assert(view.includes('channels.forEach(function(channel)'),'event columns must use the same visible-channel list as cards');
 
 console.log('customer communications page resilience smoke passed');
