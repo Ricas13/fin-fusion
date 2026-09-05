@@ -29,6 +29,7 @@ const stremioSourceIndex=require('../stremio/source-index');
 const stremioExternalTokens=require('../stremio/external-token-maintenance');
 const stremioManagedEntitlements=require('../stremio/managed-entitlements');
 const customerDeletion=require('../platform/customer-deletion');
+const winbackOffers=require('../marketing/winback-offers');
 require('../platform/bulk-operations');
 require('../platform/operator-bulk-operations');
 async function notificationLifecycleSafeRun(){const checkpoint=await notificationLifecycle.loadState(new Date());const result=await notificationLifecycle.run();if(Number(result?.failed||0)>0){await query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[notificationLifecycle.STATE_KEY,JSON.stringify({cursor:checkpoint.cursor.toISOString(),servers:checkpoint.servers})]);return{...result,cursorRetained:true};}return result;}
@@ -53,6 +54,7 @@ const jobs={
  async plan_changes(){const stripe=await customerPlanChange.applyDueStripe(),paypalExpiry=await customerPlanChange.expireDuePaypal();return{...stripe,paypalExpiry,processed:Number(stripe.succeeded||0)+Number(paypalExpiry.notified||0),waiting:Number(stripe.pending||0),failed:Number(stripe.failed||0)+Number(paypalExpiry.failed||0)}},
  async referral_rewards(){return referrals.processDueRewards({limit:100})},
  async marketing_campaigns(){return require('../marketing/campaigns').runDue({limit:20})},
+ async winback_offers(){return winbackOffers.run({limit:100})},
  async activation_cleanup(){return activationCleanup.process()},
  async pending_registration_cleanup(){return pendingRegistrations.cleanupExpired(500)},
  async stremio_managed_accounts(){return stremioManagedEntitlements.syncActive()},
