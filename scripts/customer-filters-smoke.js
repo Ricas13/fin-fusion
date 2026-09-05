@@ -86,28 +86,36 @@ function main() {
         for(const label of ['Total customers','Active access','Recently active','Needs attention','Customer health','Plan mix','Access & support'])assert.ok(source.includes(label),`overview card missing: ${label}`);
 
         assert.ok(source.includes('customerPrimaryFilters'),'primary customer controls must share one visible toolbar');
-        assert.ok(source.includes('placeholder="Search customers, name or email…"'),'customer search must remain visible');
+        assert.ok(source.includes('placeholder="Name, email or Jellyfin username"'),'customer search must match the approved Name-first filter while retaining useful identity search');
         assert.ok(source.includes('<option value="">All products</option>'),'Product must default to All products');
-        assert.ok(source.includes("const accessOptions=[['','All access states']"),'Access must default to All access states');
-        assert.ok(source.includes('<option value="">All plans</option>'),'Plan must default to All plans');
-        assert.ok(source.includes('<option value="">All servers</option>'),'Server must default to All servers');
-        assert.ok(source.includes('<details class="customerMoreFilters"'),'there must be one secondary More filters disclosure');
+        assert.ok(source.includes("const accessOptions=[['','Any']"),'Access must default to Any');
+        assert.ok(source.includes('<option value="">Any Plan</option>'),'Plan must default to Any Plan');
+        assert.ok(source.includes('<option value="">Any Jellyfin Server</option>'),'Server must default to Any Jellyfin Server');
+        assert.ok(source.includes('More Advanced Filters'),'secondary filters must use the approved disclosure label');
+        assert.ok(source.includes('<details class="customerMoreFilters"'),'there must be one secondary filter disclosure');
         const productPos=source.indexOf('id="customerFilterProduct"'),accessPos=source.indexOf('id="customerFilterAccess"'),planPos=source.indexOf('id="customerFilterPlan"'),serverPos=source.indexOf('id="customerFilterServer"');
         assert.ok(productPos<accessPos&&accessPos<planPos&&planPos<serverPos,'toolbar order must stay Product / Access / Plan / Server');
         assert.ok(!filterClient.includes('appendChild'),'client filter code must never relocate server-rendered controls');
         assert.ok(filterClient.includes('[data-primary-filter]'),'primary selects should auto-apply without another nested Apply row');
 
-        assert.ok(source.includes("sortHeader(filters,sortState,'Plan / product','plan'"),'table must expose Plan / product');
-        assert.ok(source.includes("sortHeader(filters,sortState,'Access status','access'"),'table must expose Access status');
-        assert.ok(source.includes('<th>Jellyfin / service</th>'),'table must expose Jellyfin / service state');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Plan','plan'"),'table must expose the approved Plan column');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Access','access'"),'table must expose the approved Access column');
+        assert.ok(source.includes('<th>Jellyfin</th>'),'table must expose the approved Jellyfin column');
         assert.ok(source.includes("sortHeader(filters,sortState,'Server','server'"),'server placement must stay visible');
-        assert.ok(source.includes("sortHeader(filters,sortState,'Renewal / expiry','expiring'"),'renewal/expiry must stay visible');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Renews / expires','expiring'"),'renewal/expiry must use the approved wording');
         assert.ok(source.includes("sortHeader(filters,sortState,'Last active','recent'"),'last activity must stay visible');
+        assert.ok(source.includes('<th>Action</th>'),'table must expose the approved singular Action column');
+        assert.ok(source.includes("x.plan_name||'No plan'"),'Plan cells must show the actual plan name rather than replacing it with billing type');
+        assert.ok(source.includes('function planMeta(x)'),'Plan cells must retain Free/Paid/Trial and product context beneath the plan name');
+        assert.ok(!source.includes("formatMinor(Number(x.price_minor||0),'USD'"),'Customers must not invent USD pricing for plans whose currency is not selected');
+        assert.ok(source.includes('function serviceActivity(x)'),'Jellyfin/service cells must expose recency like the approved mockup');
+        assert.ok(source.includes('Last used ${relativeTime(x.last_activity_at)}'),'service recency must be derived from recorded activity');
         assert.ok(source.includes('customerAvatar'),'rows must keep the high-scanability identity treatment');
         assert.ok(source.includes('customerRowActions'),'row actions must stay explicit');
         assert.ok(source.includes('customerAccessReason'),'attention/reason context must sit beneath the Access state');
         assert.ok(source.includes('customerPageSize'),'table must expose a rows-per-page control');
         assert.ok(source.includes("{sort:'recent',dir:'desc'}"),'Customers should default to last-active sorting like the approved mockup');
+        assert.ok(!source.includes('customerViewButtons'),'do not show a decorative grid/list switch when only list view exists');
         assert.ok(!source.includes("sortHeader(filters,sortState,'Registered','registered'"),'registration date must not occupy the default table');
         assert.ok(!source.includes('Jellyfin disabled'),'the retired Jellyfin disabled state must not be exposed');
 
