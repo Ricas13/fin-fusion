@@ -174,6 +174,21 @@ async function disableAccounts(accounts) {
     }
 }
 
+// Present or deleted, never lingering disabled. Used for the primary
+// (paid) lane once entitlement is definitively gone (no valid entitlement
+// at all, or an explicit admin removal) - an ambiguous/grace-window block
+// (e.g. a still-retryable payment_delinquency hold on an otherwise-valid
+// subscription, where `entitlement` is non-null) still only disables, same
+// as before. Free Server keeps its own careful grace-period-then-delete
+// lifecycle (customer-inactivity-scoped.js) rather than this immediate path.
+async function retireAccounts(accounts, { deleteAccounts = false, reason = '' } = {}) {
+    for (const account of accounts) {
+        if (!account.server_enabled) continue;
+        if (deleteAccounts) await base.deleteJellyfinAccount(account, { reason });
+        else if (!account.disabled) await base.disableJellyfinAccount(account);
+    }
+}
+
 async function entitlementForAccount(customerId, account) {
     if (!account) return null;
     if (String(account.access_lane || 'primary') === 'free') {
@@ -271,7 +286,11 @@ async function createLaneAccount(customerId, entitlement, lane, makePrimary) {
 async function reconcileLane(customerId, entitlement, lane, accounts, { makePrimary = false } = {}) {
     const laneAccounts = accounts.filter(account => account.access_lane === lane);
     if (!entitlement || entitlement.blocked) {
-        await disableAccounts(laneAccounts);
+        const definitivelyGone = lane === 'primary' && (!entitlement || entitlement.admin_jellyfin_removed === true);
+        await retireAccounts(laneAccounts, {
+            deleteAccounts: definitivelyGone,
+            reason: entitlement?.admin_jellyfin_removed ? 'Jellyfin access removed by administrator' : 'No valid paid entitlement'
+        });
         return { active: false, blocked: Boolean(entitlement?.blocked), entitlement: entitlement || null, account: null };
     }
 
@@ -405,7 +424,15 @@ async function reconcileCustomerUnlocked(customerId) {
             const free = await reconcileLane(customerId, freeLaneEntitlement, 'free', accounts, {
                 makePrimary: !primaryEntitlement && desired.freeJellyfin
             });
-            if (!primaryEntitlement && !free.active) await disableAccounts(accounts);
+            if (!primaryEntitlement && !free.active) {
+                // primary/free lanes above already retired their own accounts
+                // (disable or, for a definitively-ended primary lane, delete);
+                // this only catches accounts tagged to neither lane so a
+                // stray/mis-tagged row doesn't operate on an id retireAccounts
+                // may have just deleted.
+                const stray = accounts.filter(account => !['primary', 'free'].includes(account.access_lane));
+                if (stray.length) await disableAccounts(stray);
+            }
 
             const stremio = require('../stremio/entitlements');
             let stremioOutcome = null;

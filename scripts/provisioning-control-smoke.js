@@ -95,7 +95,7 @@ assert(accessHolds.includes("hold_type IN ('admin_disabled','admin_suspended','a
 assert(accessHolds.includes("'customer.access_hold.release_admin'"),'bulk admin hold release must remain auditable');
 
 const paidPriority=subscriptionState.indexOf("ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC");
-const expiryPriority=subscriptionState.indexOf("CASE WHEN o.permanent_access=TRUE",paidPriority);
+const expiryPriority=subscriptionState.indexOf("CASE WHEN (o.permanent_access=TRUE",paidPriority);
 assert(paidPriority>=0&&expiryPriority>paidPriority,'effective Jellyfin entitlement selection must prefer paid/trial contracts before comparing expiry, so Free Server sentinel dates cannot outrank Premium');
 assert(subscriptionState.includes('free lane is resolved independently'),'entitlement precedence must document why retained Free Server access does not own the primary lane');
 

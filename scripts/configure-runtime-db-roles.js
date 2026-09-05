@@ -21,7 +21,10 @@ const APP_DELETE_TABLES = Object.freeze([
     // Runtime caches/leases are not durable business history.
     'stremio_source_playback_leases','stremio_media_index','stremio_source_media_index','active_playback_sessions',
     // Jellyfin account removal is an explicit provisioning operation; customer rows themselves are finalized only through finalize_customer_deletion().
-    'jellyfin_accounts'
+    'jellyfin_accounts',
+    // Durable account-creation intents are deleted by the web process once local persistence succeeds
+    // (or updated then superseded); canonical admin-authority rows are deleted on "return to automatic".
+    'jellyfin_account_creation_intents','customer_service_admin_control'
 ]);
 
 const APP_APPEND_ONLY_TABLES = Object.freeze([

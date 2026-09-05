@@ -4,12 +4,20 @@ const { query, transaction } = require('../db');
 const accessHolds = require('../entitlements/access-holds');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const providerReconciliation = require('./incident-reconciliation');
+const subscriptionTermination = require('./subscription-termination');
 
 const POLICY_KEY = 'payment_risk_policy';
-const DEFAULTS = Object.freeze({ refundAction:'preserve',disputeAction:'suspend',chargebackAction:'suspend',failedRenewalAction:'provider_state' });
-function cleanAction(value,allowed,fallback){return allowed.includes(String(value||''))?String(value):fallback}
-async function policy(){const result=await query('SELECT setting_value FROM platform_settings WHERE setting_key=$1',[POLICY_KEY]);const value=result.rows[0]?.setting_value||{};return{refundAction:cleanAction(value.refundAction,['preserve','suspend_full_refund'],DEFAULTS.refundAction),disputeAction:cleanAction(value.disputeAction,['preserve','suspend'],DEFAULTS.disputeAction),chargebackAction:cleanAction(value.chargebackAction,['preserve','suspend'],DEFAULTS.chargebackAction),failedRenewalAction:'provider_state'}}
-async function savePolicy(input,actorUserId=null){const value={refundAction:cleanAction(input.refundAction,['preserve','suspend_full_refund'],DEFAULTS.refundAction),disputeAction:cleanAction(input.disputeAction,['preserve','suspend'],DEFAULTS.disputeAction),chargebackAction:cleanAction(input.chargebackAction,['preserve','suspend'],DEFAULTS.chargebackAction),failedRenewalAction:'provider_state'};await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[POLICY_KEY,JSON.stringify(value)]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_risk_policy.update','platform_setting',$2,$3::jsonb)`,[actorUserId,POLICY_KEY,JSON.stringify(value)])});return value}
+// A refund/dispute/chargeback under review is a commercial incident, not an
+// access state ("a customer asking for a refund is not an access state").
+// Suspending access via a payment-risk hold is retired entirely - it is no
+// longer a configurable choice, so every kind always resolves to 'preserve'.
+// An administrator who genuinely wants to remove service for a customer
+// under review does so explicitly (service-admin-control "Remove access"),
+// which is a real, auditable, admin-authoritative action rather than a
+// second automatic hold-based lifecycle running alongside plan removal.
+const DEFAULTS = Object.freeze({ refundAction:'preserve',disputeAction:'preserve',chargebackAction:'preserve',failedRenewalAction:'provider_state' });
+async function policy(){return{...DEFAULTS}}
+async function savePolicy(input,actorUserId=null){const value={...DEFAULTS};await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[POLICY_KEY,JSON.stringify(value)]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_risk_policy.update','platform_setting',$2,$3::jsonb)`,[actorUserId,POLICY_KEY,JSON.stringify(value)])});return value}
 async function identityFromProviderSubscription(provider,providerSubscriptionId){if(!providerSubscriptionId)return{scope:'unresolved',customerId:null};const direct=await query(`SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 ORDER BY created_at DESC LIMIT 1`,[provider,providerSubscriptionId]);if(direct.rowCount)return{scope:'direct',customerId:direct.rows[0].customer_id};return{scope:'unresolved',customerId:null}}
 async function identityFromMetadata(metadata={}){if(metadata.internal_customer_id)return{scope:'direct',customerId:metadata.internal_customer_id};return{scope:'unresolved',customerId:null}}
 async function reconcileMany(ids){for(const id of ids){try{await provisioning.reconcileCustomer(id)}catch(error){console.warn(`Payment incident reconcile failed for customer ${id}:`,error.message)}}}
@@ -49,6 +57,26 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   let effectIdentity=incident.scope==='unresolved'&&resolvedIdentity.scope!=='unresolved'
     ? resolvedIdentity
     : {scope:incident.scope||resolvedIdentity.scope||'unresolved',customerId:incident.customer_id||resolvedIdentity.customerId||null};
+  // "REFUND = REMOVE PLAN": a confirmed full refund removes the associated
+  // paid plan so normal NOT-PAID=REMOVE reconciliation deprovisions the
+  // service, exactly like an expiry or cancellation would. This is separate
+  // from (and no longer coupled to) any access-hold mechanism above, and it
+  // never touches admin authority - an active admin_present directive keeps
+  // the service eligible regardless of the subscription row's status.
+  // Guarded on !incident.duplicate so a retried/out-of-order webhook
+  // delivery cannot re-run this side effect twice.
+  if(kind==='refund'&&metadata?.fullRefund===true&&!incident.duplicate&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
+    const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
+    if(subscriptionRef){
+      const matched=await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND customer_id=$3 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`,[provider,subscriptionRef,effectIdentity.customerId]);
+      if(matched.rowCount){
+        try{
+          const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`Confirmed full refund (${provider} ${kind} ${incident.id})`,reference:incident.id});
+          if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
+        }catch(error){console.warn(`Refund-triggered plan termination failed for customer ${effectIdentity.customerId}:`,error.message)}
+      }
+    }
+  }
   let affected=0;
   if(effectiveAction==='suspend'&&incident.provider_case_id&&effectIdentity.scope!=='unresolved')affected=await applyHold(effectIdentity,provider,incident.provider_case_id,`${provider} ${kind} is under review`);
   else if(effectiveAction==='restore'&&incident.provider_case_id){

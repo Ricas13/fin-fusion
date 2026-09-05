@@ -26,11 +26,14 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
+        CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                  OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
              THEN 'infinity'::timestamptz
              ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
         END AS access_expires_at,
-        public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+        (public.subscription_admin_removed(s.customer_id,'jellyfin')
+            OR (public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
+                AND NOT public.subscription_admin_present(s.customer_id,'jellyfin',s.id))) AS blocked
  FROM subscriptions s
  JOIN plans p ON p.id=s.plan_id
  LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
@@ -41,17 +44,21 @@ async function effectiveSubscription(customerId,{client=null,includeBlocked=fals
    AND s.starts_at<=NOW()
    AND (
       (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+      OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
       OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
       OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
    )
    AND ($2::boolean
         OR (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
-        OR public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)=FALSE)
+        OR NOT (public.subscription_admin_removed(s.customer_id,'jellyfin')
+            OR (public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id)
+                AND NOT public.subscription_admin_present(s.customer_id,'jellyfin',s.id))))
  -- Free Server is retained as its own access lane and may have a sentinel
  -- far-future expiry. A live paid/trial contract must therefore win before
  -- expiry is considered; the free lane is resolved independently.
  ORDER BY CASE WHEN COALESCE(p.is_free_tier,FALSE) THEN 1 ELSE 0 END ASC,
-          CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id
+          CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                    OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
                THEN 'infinity'::timestamptz
                ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval)
           END DESC,
@@ -99,8 +106,12 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
         COALESCE(s.currency_snapshot,p.currency) AS contract_currency,
         COALESCE(s.billing_interval_snapshot,p.billing_interval) AS contract_billing_interval,
         COALESCE(s.duration_days_snapshot,p.duration_days) AS contract_duration_days,
-        CASE WHEN o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id THEN 'infinity'::timestamptz ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval) END AS access_expires_at,
-        public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked
+        CASE WHEN (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+                  OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
+             THEN 'infinity'::timestamptz ELSE s.current_period_end+((COALESCE(s.service_extension_days,0)||' days')::interval) END AS access_expires_at,
+        public.subscription_access_blocked(s.customer_id,s.source,s.provider_subscription_id) AS blocked,
+        public.subscription_admin_present(s.customer_id,'jellyfin',s.id) AS admin_present,
+        public.subscription_admin_removed(s.customer_id,'jellyfin') AS admin_removed
  FROM subscriptions s
  JOIN plans p ON p.id=s.plan_id
  LEFT JOIN customer_entitlement_overrides o ON o.customer_id=s.customer_id AND o.subscription_id=s.id
@@ -112,6 +123,7 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
    AND s.starts_at<=NOW()
    AND (
       (o.permanent_access=TRUE AND o.revoked_at IS NULL AND o.subscription_id=s.id)
+      OR public.subscription_admin_present(s.customer_id,'jellyfin',s.id)
       OR (s.status IN ('active','trialing','past_due','paused') AND s.current_period_end>NOW())
       OR (COALESCE(s.service_extension_days,0)>0 AND s.status IN ('active','trialing','past_due','paused','cancelled','expired') AND (s.current_period_end+((s.service_extension_days||' days')::interval))>NOW())
    )
@@ -119,6 +131,13 @@ async function liveFreeJellyfinSubscription(customerId,{client=null,includeBlock
  LIMIT 1
  `,[customerId]);
  let row=result.rows[0]||null;if(!row)return null;
+ // Free Server is managed by its own inactivity/capacity automation, but an
+ // active admin directive still wins: admin_removed forces the lane absent
+ // regardless of inactivity state, and admin_present protects it from the
+ // inactivity-hold lane check below (customer-inactivity-scoped.js separately
+ // consults the same authority before ever deleting the account).
+ if(row.admin_removed){row.blocked=true;return applyOperatorSemantics(db,row,{includeBlocked});}
+ if(row.admin_present){row.blocked=false;return applyOperatorSemantics(db,row,{includeBlocked});}
  const laneHold=await db.query(`SELECT EXISTS(
    SELECT 1 FROM customer_access_holds h
    WHERE h.customer_id=$1 AND h.released_at IS NULL AND (

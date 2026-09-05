@@ -223,6 +223,28 @@ jobs:
               await client.query("INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('ci.runtime.app','ci','app','{}'::jsonb)");
               await client.query('ROLLBACK');
               await denied(client, 'CREATE TABLE ci_app_forbidden(id int)', 'app DDL');
+
+              // Regression coverage for the production bug fixed by
+              // 20260905001000_fix_jellyfin_account_creation_intent_permissions.sql:
+              // the web process (steamfusion_app) must have full CRUD on the
+              // durable Jellyfin account-creation intent table and on the
+              // canonical service-scoped admin-authority table, or provisioning
+              // and "return to automatic management" fail in production even
+              // though the table exists.
+              await client.query('BEGIN');
+              const server = await client.query("SELECT id FROM jellyfin_servers LIMIT 1");
+              const customer = await client.query("INSERT INTO customers(display_name,email,registration_source) VALUES('CI runtime role check','ci-runtime-role-check@example.invalid','public') RETURNING id");
+              const customerId = customer.rows[0].id;
+              if (server.rowCount) {
+                const serverId = server.rows[0].id;
+                await client.query('INSERT INTO jellyfin_account_creation_intents(customer_id,server_id,username) VALUES($1,$2,$3)', [customerId, serverId, 'ci-role-check-user']);
+                await client.query("UPDATE jellyfin_account_creation_intents SET status='remote_created',remote_user_id='ci-role-check-remote' WHERE customer_id=$1", [customerId]);
+                await client.query('DELETE FROM jellyfin_account_creation_intents WHERE customer_id=$1', [customerId]);
+              }
+              await client.query("INSERT INTO customer_service_admin_control(customer_id,service,mode,reason) VALUES($1,'jellyfin','admin_present','ci role check')", [customerId]);
+              await client.query("UPDATE customer_service_admin_control SET reason='ci role check updated' WHERE customer_id=$1 AND service='jellyfin'", [customerId]);
+              await client.query("DELETE FROM customer_service_admin_control WHERE customer_id=$1 AND service='jellyfin'", [customerId]);
+              await client.query('ROLLBACK');
             });
 
             await use(urls.automation, async client => {

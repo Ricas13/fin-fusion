@@ -1,23 +1,25 @@
 'use strict';
 
 const {query,transaction}=require('../db');
+const serviceAdminControl=require('../entitlements/service-admin-control');
 
-function note(value,fallback){return String(value||fallback||'Administrator override').trim().slice(0,500)||String(fallback||'Administrator override');}
 function same(a,b){return String(a||'')===String(b||'');}
 
+// Backward-compatible Jellyfin-scoped facade over the canonical, service-
+// scoped src/entitlements/service-admin-control.js (customer_service_admin_control).
+//
+// Existing callers pass a subscriptionId because authority used to be keyed
+// to one specific subscription row (customer_jellyfin_admin_control). That
+// parameter is accepted here for source compatibility but is no longer part
+// of the storage key: authority is now customer+service scoped, so an
+// admin directive survives subscription churn (a plan change, a renewal, a
+// new checkout after a payment failure) instead of silently stopping the
+// moment the subscription it was recorded against is superseded.
 async function state(customerId,subscriptionId,{client=null}={}){
-  if(!customerId||!subscriptionId)return null;
-  const db=client||{query};
-  const result=await db.query(`
-    SELECT c.*,js.name AS server_name,js.server_class AS forced_server_class,
-           js.enabled AS server_enabled,js.health_status AS server_health,
-           js.max_users AS server_max_users
-    FROM customer_jellyfin_admin_control c
-    LEFT JOIN jellyfin_servers js ON js.id=c.server_id
-    WHERE c.customer_id=$1 AND c.subscription_id=$2
-    LIMIT 1
-  `,[customerId,subscriptionId]);
-  return result.rows[0]||null;
+  if(!customerId)return null;
+  const row=await serviceAdminControl.state(customerId,'jellyfin',{client});
+  if(!row)return null;
+  return {...row,subscription_id:subscriptionId||null,forced_server_class:row.server_class,server_max_users:null};
 }
 
 async function entitlementSemantics(entitlement,{client=null}={}){
@@ -33,8 +35,8 @@ async function entitlementSemantics(entitlement,{client=null}={}){
     FROM subscriptions s
     LEFT JOIN customer_entitlement_overrides o
       ON o.customer_id=s.customer_id AND o.subscription_id=s.id
-    LEFT JOIN customer_jellyfin_admin_control ctl
-      ON ctl.customer_id=s.customer_id AND ctl.subscription_id=s.id
+    LEFT JOIN customer_service_admin_control ctl
+      ON ctl.customer_id=s.customer_id AND ctl.service='jellyfin'
     LEFT JOIN jellyfin_servers js ON js.id=ctl.server_id
     WHERE s.id=$1 AND s.customer_id=$2
     LIMIT 1
@@ -48,11 +50,15 @@ async function entitlementSemantics(entitlement,{client=null}={}){
   // operator command, not an automated lifecycle signal.
   if(permanent)decorated.blocked=false;
 
-  if(control.mode==='removed'){
+  if(control.mode==='admin_removed'){
     decorated.blocked=true;
     decorated.admin_jellyfin_mode='removed';
     decorated.admin_jellyfin_removed=true;
-  }else if(control.mode==='forced_server'&&control.server_id){
+  }else if(control.mode==='admin_present'){
+    decorated.blocked=false;
+    decorated.admin_jellyfin_mode='present';
+  }else if(control.mode==='admin_server_pin'&&control.server_id){
+    decorated.blocked=false;
     decorated.admin_jellyfin_mode='forced_server';
     decorated.admin_forced_server_id=control.server_id;
     decorated.admin_forced_server_name=control.forced_server_name||null;
@@ -67,68 +73,39 @@ async function entitlementSemantics(entitlement,{client=null}={}){
 }
 
 async function forcedServerForPlan(plan){
-  if(!plan?.customer_id||!plan?.subscription_id)return null;
+  if(!plan?.customer_id)return null;
   const result=await query(`
     SELECT js.*
-    FROM customer_jellyfin_admin_control ctl
+    FROM customer_service_admin_control ctl
     JOIN jellyfin_servers js ON js.id=ctl.server_id
-    WHERE ctl.customer_id=$1 AND ctl.subscription_id=$2
-      AND ctl.mode='forced_server'
+    WHERE ctl.customer_id=$1 AND ctl.service='jellyfin'
+      AND ctl.mode='admin_server_pin'
       AND COALESCE(js.media_server_type,'jellyfin')='jellyfin'
     LIMIT 1
-  `,[plan.customer_id,plan.subscription_id]);
+  `,[plan.customer_id]);
   return result.rows[0]||null;
 }
 
 async function forceServer(customerId,subscriptionId,serverId,{actorUserId=null,reason=''}={}){
-  const why=note(reason,'Server selected explicitly by administrator');
-  return transaction(async client=>{
-    const subscription=await client.query('SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subscriptionId,customerId]);
-    if(!subscription.rowCount)throw new Error('The selected entitlement no longer belongs to this customer.');
-    const server=await client.query(`SELECT id,name,server_class,media_server_type,enabled,health_status,max_users FROM jellyfin_servers WHERE id=$1 FOR UPDATE`,[serverId]);
-    if(!server.rowCount||String(server.rows[0].media_server_type||'jellyfin')!=='jellyfin')throw new Error('Choose a configured Jellyfin server.');
-    await client.query(`
-      INSERT INTO customer_jellyfin_admin_control(customer_id,subscription_id,mode,server_id,reason,created_by,updated_by,updated_at)
-      VALUES($1,$2,'forced_server',$3,$4,$5,$5,NOW())
-      ON CONFLICT(customer_id,subscription_id) DO UPDATE SET
-        mode='forced_server',server_id=EXCLUDED.server_id,reason=EXCLUDED.reason,
-        updated_by=EXCLUDED.updated_by,updated_at=NOW()
-    `,[customerId,subscriptionId,serverId,why,actorUserId]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.jellyfin.force_server','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId,serverId,serverName:server.rows[0].name,serverClass:server.rows[0].server_class,serverEnabled:server.rows[0].enabled,serverHealth:server.rows[0].health_status,maxUsers:server.rows[0].max_users,reason:why})]);
-    return server.rows[0];
-  });
+  const result=await serviceAdminControl.pinServer(customerId,serverId,{actorUserId,reason:reason||'Server selected explicitly by administrator'});
+  const server=await query(`SELECT id,name,server_class,media_server_type,enabled,health_status,max_users FROM jellyfin_servers WHERE id=$1`,[result.serverId]);
+  return server.rows[0]||null;
 }
 
 async function remove(customerId,subscriptionId,{actorUserId=null,reason=''}={}){
-  const why=note(reason,'Jellyfin access removed explicitly by administrator');
-  return transaction(async client=>{
-    const subscription=await client.query('SELECT id FROM subscriptions WHERE id=$1 AND customer_id=$2 FOR UPDATE',[subscriptionId,customerId]);
-    if(!subscription.rowCount)throw new Error('The selected entitlement no longer belongs to this customer.');
-    await client.query(`
-      INSERT INTO customer_jellyfin_admin_control(customer_id,subscription_id,mode,server_id,reason,created_by,updated_by,updated_at)
-      VALUES($1,$2,'removed',NULL,$3,$4,$4,NOW())
-      ON CONFLICT(customer_id,subscription_id) DO UPDATE SET
-        mode='removed',server_id=NULL,reason=EXCLUDED.reason,updated_by=EXCLUDED.updated_by,updated_at=NOW()
-    `,[customerId,subscriptionId,why,actorUserId]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.jellyfin.remove_override','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId,reason:why})]);
-    return{mode:'removed',subscriptionId};
-  });
+  await serviceAdminControl.setRemoved(customerId,'jellyfin',{actorUserId,reason:reason||'Jellyfin access removed explicitly by administrator'});
+  return{mode:'removed',subscriptionId:subscriptionId||null};
 }
 
 async function clear(customerId,subscriptionId,{actorUserId=null,reason=''}={}){
-  const why=note(reason,'Returned to automatic Jellyfin management');
-  return transaction(async client=>{
-    const previous=await client.query('SELECT * FROM customer_jellyfin_admin_control WHERE customer_id=$1 AND subscription_id=$2 FOR UPDATE',[customerId,subscriptionId]);
-    if(!previous.rowCount)return{changed:false};
-    await client.query('DELETE FROM customer_jellyfin_admin_control WHERE customer_id=$1 AND subscription_id=$2',[customerId,subscriptionId]);
-    await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.customer.jellyfin.return_to_automatic','customer',$2,$3::jsonb)`,[actorUserId,customerId,JSON.stringify({subscriptionId,previousMode:previous.rows[0].mode,previousServerId:previous.rows[0].server_id||null,reason:why})]);
-    return{changed:true,previous:previous.rows[0]};
-  });
+  const result=await serviceAdminControl.clear(customerId,'jellyfin',{actorUserId,reason:reason||'Returned to automatic Jellyfin management'});
+  if(!result.changed)return{changed:false};
+  return{changed:true,previous:{mode:result.previous.mode,server_id:result.previous.server_id||null}};
 }
 
 async function isForcedTo(customerId,subscriptionId,serverId){
   const current=await state(customerId,subscriptionId);
-  return Boolean(current?.mode==='forced_server'&&same(current.server_id,serverId));
+  return Boolean(current?.mode==='admin_server_pin'&&same(current.server_id,serverId));
 }
 
 module.exports={state,entitlementSemantics,forcedServerForPlan,forceServer,remove,clear,isForcedTo};

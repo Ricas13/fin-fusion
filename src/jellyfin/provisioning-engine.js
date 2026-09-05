@@ -397,6 +397,41 @@ async function disableJellyfinAccount(account) {
     return applyPolicy(account, DISABLED_EFFECTIVE, true);
 }
 
+// Shared "present or deleted, never lingering disabled" primitive. When a
+// customer's entitlement to this account ends and no admin authority
+// protects it, the account is removed rather than left disabled forever.
+// Tolerates a remote 404 (already gone) so this is safe to retry.
+async function deleteJellyfinAccount(account, { reason = '', actorUserId = null } = {}) {
+    try {
+        await registry.request(account.server_id, `/Users/${encodeURIComponent(account.jellyfin_user_id)}`, { method: 'DELETE' });
+    } catch (error) {
+        const message = String(error?.message || error);
+        if (!/\b404\b|not found/i.test(message)) throw error;
+    }
+    try {
+        await transaction(async client => {
+            await client.query('DELETE FROM jellyfin_accounts WHERE id=$1', [account.id]);
+            await client.query(
+                `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'jellyfin.account.delete','jellyfin_account',$2,$3::jsonb)`,
+                [actorUserId, account.id, JSON.stringify({ customerId: account.customer_id, serverId: account.server_id, accessLane: account.access_lane || null, reason: String(reason || '').slice(0, 500) || 'Entitlement ended' })]
+            );
+        });
+    } catch (error) {
+        // customer_server_migrations.source_account_id is RESTRICT (it is
+        // permanent migration history, unlike the other FKs on this table
+        // which CASCADE/SET NULL) - an account that was ever a migration
+        // source cannot be deleted. Fall back to disabling rather than
+        // letting reconciliation crash; the remote account is already gone
+        // at this point either way, so the local row is inert.
+        if (error?.code === '23503') {
+            await disableJellyfinAccount(account).catch(() => {});
+            return { deleted: false, disabledInstead: true, reason: 'referenced_by_server_migration_history' };
+        }
+        throw error;
+    }
+    return { deleted: true };
+}
+
 async function recordRun(customerId, subscriptionId, action, fn) {
     const started = await query(`
         INSERT INTO provisioning_runs(customer_id,subscription_id,action,status)
@@ -479,6 +514,7 @@ module.exports = {
     createJellyfinAccount,
     applyPolicy,
     disableJellyfinAccount,
+    deleteJellyfinAccount,
     markPrimaryAccount,
     setJellyfinPassword,
     renameJellyfinAccount

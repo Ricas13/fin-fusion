@@ -29,7 +29,7 @@ async function resolve(customerId){
       p.request_permissions,p.request_watchlist_sync_movies,p.request_watchlist_sync_tv,
       p.request_locale,p.request_discover_region,p.request_streaming_region,p.request_original_language,
       TRUE AS request_access_enabled,
-      (e.subscription_id IS NOT NULL AND e.blocked=FALSE) AS entitlement_active
+      (e.subscription_id IS NOT NULL AND e.blocked=FALSE AND NOT public.subscription_admin_removed(e.customer_id,'overseerr')) AS entitlement_active
     FROM lane_entitlements e
     JOIN plans p ON p.id=e.plan_id
     JOIN subscriptions s ON s.id=e.subscription_id
