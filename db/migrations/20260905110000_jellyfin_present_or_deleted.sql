@@ -19,9 +19,20 @@ ALTER TABLE customer_server_migrations
     REFERENCES jellyfin_accounts(id)
     ON DELETE SET NULL;
 
+-- Every legacy disabled identity is reconciled immediately after deployment.
+-- Valid entitlement/activity will force an enabled policy; invalid access will
+-- remove the identity. This also catches managed Stremio internal identities.
+INSERT INTO customer_provisioning_state(customer_id,status,next_attempt_at,updated_at)
+SELECT DISTINCT customer_id,'pending',NOW(),NOW()
+FROM jellyfin_accounts
+WHERE disabled=TRUE
+ON CONFLICT(customer_id) DO UPDATE SET
+    status='pending',
+    next_attempt_at=NOW(),
+    updated_at=NOW();
+
 -- Existing disabled rows are legacy state. Mark them enabled locally so the
--- deployment can reconcile them to one of the only two valid outcomes:
--- enabled if entitlement/activity still grants access, deleted otherwise.
+-- database can adopt the new invariant before the queued remote reconciliation.
 UPDATE jellyfin_accounts
 SET disabled=FALSE,
     updated_at=NOW()
