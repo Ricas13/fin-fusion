@@ -10,10 +10,9 @@ const adminControl = require('./admin-control');
 const userCapacity = require('./user-capacity');
 
 // This module is the dependency-safe helper surface used by the canonical
-// multi-service reconciler. It intentionally exposes only low-level account,
-// policy and override primitives. Customer reconciliation, access holds and
-// subscription expiry are owned elsewhere and must never be re-exported from
-// the legacy single-lane provisioning engine.
+// multi-service reconciler. Jellyfin customer accounts have one invariant:
+// present means enabled. When access is no longer entitled, remove the account
+// instead of representing access loss as a disabled Jellyfin user.
 const {
   discoverServerLibraries,
   libraryCatalogForServerClass,
@@ -30,15 +29,43 @@ const {
   getLibrarySelection,
   setLibrarySelection,
   effectivePolicyForCustomer,
-  policyBody,
-  resolveLibraryAccessForServer,
   usernameAvailable,
-  applyPolicy,
-  disableJellyfinAccount,
-  deleteJellyfinAccount,
   markPrimaryAccount,
   renameJellyfinAccount
 } = core;
+
+function policyBody(effectiveTechnical, disabledOrLibraryAccess, maybeLibraryAccess) {
+  const libraryAccess = maybeLibraryAccess || disabledOrLibraryAccess;
+  return core.policyBody(effectiveTechnical, false, libraryAccess);
+}
+
+function resolveLibraryAccessForServer(serverId, unrestricted, visibleNames) {
+  return core.resolveLibraryAccessForServer(serverId, unrestricted, visibleNames, false);
+}
+
+async function applyPolicy(account, effective) {
+  return core.applyPolicy(account, effective, false);
+}
+
+async function deleteJellyfinAccount(account, options = {}) {
+  const result = await core.deleteJellyfinAccount(account, options);
+  if (result?.disabledInstead) {
+    const error = new Error('Jellyfin account deletion fell back to a disabled state, which is forbidden.');
+    error.code = 'JELLYFIN_DISABLED_STATE_FORBIDDEN';
+    throw error;
+  }
+  return result;
+}
+
+// Compatibility name retained while callers are migrated. Its semantics are
+// deliberately delete, never disable. This makes every legacy suspension path
+// converge on the binary account-presence invariant.
+async function disableJellyfinAccount(account, options = {}) {
+  return deleteJellyfinAccount(account, {
+    ...options,
+    reason: options.reason || 'Jellyfin entitlement no longer grants access'
+  });
+}
 
 function safeLog(value, max = 500) {
   return String(value == null ? '' : value).replace(/[\r\n\t\u2028\u2029]+/g, ' ').slice(0, max);
@@ -78,8 +105,8 @@ async function selectServerForPlan(plan) {
         : true);
   if (!available.length) return null;
 
-  // Server capacity has one meaning everywhere: enabled managed customer users.
-  // Every plan consumes exactly one user place regardless of its stream limit.
+  // Server capacity has one meaning everywhere: managed customer users that
+  // actually exist. There is no disabled-user bucket to count or reserve.
   const candidates = await userCapacity.decorateServers(available);
   const ids = candidates.map(server => server.id);
   const playback = await query(`
