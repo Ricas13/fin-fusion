@@ -80,6 +80,7 @@ function main() {
     {
         const source=fs.readFileSync(path.join(__dirname,'../src/platform/admin-customers-list.js'),'utf8');
         const filterClient=fs.readFileSync(path.join(__dirname,'../public/js/admin-customer-filters.js'),'utf8');
+        const mobileCss=fs.readFileSync(path.join(__dirname,'../public/css/admin-customers-list.css'),'utf8');
         const bulk=fs.readFileSync(path.join(__dirname,'../public/js/admin-customers-bulk.js'),'utf8');
         assert.ok(source.includes('>Name</label>'),'customer search must be visibly labelled Name');
         assert.ok(source.includes('customerSearchRow')&&source.includes('data-native-submit="true"'),'customer search must stay outside the hidden advanced-filter shell');
@@ -113,6 +114,15 @@ function main() {
         assert.ok(bulk.includes('bar.hidden=selected===0&&!matching'),'client must reveal bulk controls only for an active selection');
         assert.ok(source.includes("{...state,page:page+1}")&&source.includes("{...state,page:page-1}"),'pagination must preserve sort state');
         assert.ok(source.includes('aria-sort='),'sortable headings must remain accessible');
+
+        // The shared responsiveTable stylesheet normally turns each row into a
+        // card. Customers intentionally overrides that behaviour so operators
+        // can scan rows on phones instead of navigating tall stacked cards.
+        assert.ok(mobileCss.includes('.customerResults .tableWrap>.customerTable{display:table!important'),'mobile Customers must stay a real table instead of becoming cards');
+        assert.ok(mobileCss.includes('overflow-x:auto!important'),'mobile Customers must allow horizontal panning when all columns do not fit');
+        assert.ok(mobileCss.includes('.customerTable td::before{display:none!important;content:none!important}'),'mobile Customers must suppress card-style data-label pseudo headings');
+        assert.ok(mobileCss.includes('.customerTable th:nth-child(2),.customerTable td:nth-child(2){position:sticky!important'),'customer identity must stay pinned while the operator pans the table');
+        assert.ok(mobileCss.includes('.customerTable th:last-child,.customerTable td:last-child{position:sticky!important'),'row action must stay pinned on the right on mobile');
     }
 
     console.log('Customer filters smoke test passed.');
