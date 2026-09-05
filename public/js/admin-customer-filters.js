@@ -11,6 +11,9 @@
 // More Advanced Filters
 
 (() => {
+  if (window.__captainfinCustomerFiltersBound) return;
+  window.__captainfinCustomerFiltersBound = true;
+
   const filterForm = document.querySelector('form.compactFilterForm[action="/admin/users"]');
 
   const submit = form => {
