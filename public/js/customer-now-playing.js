@@ -15,33 +15,32 @@
   function elapsed(seconds){
     const value=Number(seconds);
     if(!Number.isFinite(value)||value<10)return'just started';
-    if(value<60)return`${Math.floor(value)}s into playback`;
+    if(value<60)return`${Math.floor(value)}s`;
     const minutes=Math.floor(value/60);
-    if(minutes<60)return`${minutes}m into playback`;
+    if(minutes<60)return`${minutes}m`;
     const hours=Math.floor(minutes/60),rest=minutes%60;
-    return `${hours}h ${String(rest).padStart(2,'0')}m into playback`;
+    return `${hours}:${String(rest).padStart(2,'0')}`;
   }
 
   function streamRow(stream){
     const row=element('div','customerNowPlayingRow');
-    const top=element('div','customerNowPlayingTop');
-    const titleWrap=element('div','customerNowPlayingTitleWrap');
-    titleWrap.append(element('span','customerNowPlayingType',String(stream.type||'Media').toUpperCase()));
-    titleWrap.append(element('strong','customerNowPlayingTitle',stream.title||'Playing media'));
-    top.append(titleWrap);
+    const poster=element('div','customerNowPlayingPoster');
+    poster.append(element('span','', '▶'));
+    if(stream.imageUrl){
+      const image=document.createElement('img');
+      image.src=stream.imageUrl;image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';
+      image.addEventListener('error',()=>image.remove(),{once:true});
+      poster.append(image);
+    }
+    row.append(poster);
 
-    const state=element('div','customerNowPlayingState');
-    state.append(element('span','customerNowPlayingService',stream.service||'Jellyfin'));
-    state.append(element('span',`pill ${stream.paused?'warn':'good'}`,stream.paused?'Paused':'Playing'));
-    top.append(state);
-    row.append(top);
-
-    row.append(element('div','customerNowPlayingTrack'));
-    const meta=element('div','customerNowPlayingMeta');
-    const left=[stream.device,stream.client,stream.method].filter(Boolean).join(' · ');
-    meta.append(element('span','',left||stream.service||'Streaming'));
-    meta.append(element('span','',elapsed(stream.positionSeconds)));
-    row.append(meta);
+    const copy=element('div','customerNowPlayingCopy');
+    copy.append(element('strong','customerNowPlayingTitle',stream.title||'Playing media'));
+    const detail=[stream.service,stream.device||stream.client,stream.paused?'Paused':null].filter(Boolean).join(' · ');
+    copy.append(element('span','customerNowPlayingDetail',detail||'Streaming now'));
+    copy.append(element('span','customerNowPlayingElapsed',elapsed(stream.positionSeconds)));
+    row.append(copy);
+    row.append(element('span','customerNowPlayingChevron','›'));
     return row;
   }
 
@@ -51,9 +50,8 @@
     const header=element('div','customerNowPlayingHeader');
     const heading=element('div','customerNowPlayingHeading');
     heading.append(element('span','customerNowPlayingPulse'));
-    heading.append(element('strong','', 'Right now'));
+    heading.append(element('strong','',`${list.length} live stream${list.length===1?'':'s'}`));
     header.append(heading);
-    header.append(element('span','customerNowPlayingCount',`${list.length} active`));
     const body=element('div','customerNowPlayingRows');
     list.forEach(stream=>body.append(streamRow(stream)));
     root.replaceChildren(header,body);
@@ -69,8 +67,7 @@
       const data=await response.json();
       render(data.streams);
     }catch(_){
-      // Keep the most recent successful snapshot rather than flashing the strip
-      // away during a brief portal/database hiccup.
+      // Keep the most recent successful snapshot during a brief portal/database hiccup.
     }
   }
 

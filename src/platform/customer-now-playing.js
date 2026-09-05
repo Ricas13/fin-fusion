@@ -22,12 +22,20 @@ function methodLabel(value){
   if(method==='transcode')return'Transcode';
   return'Playing';
 }
+function imageUrl(publicUrl,itemId){
+  if(!publicUrl||!itemId)return null;
+  try{
+    const base=new URL(String(publicUrl));
+    if(!['http:','https:'].includes(base.protocol)||base.username||base.password)return null;
+    return `${base.toString().replace(/\/$/,'')}/Items/${encodeURIComponent(String(itemId))}/Images/Primary?maxHeight=88&quality=82`;
+  }catch{return null;}
+}
 
 async function nowPlayingForCustomer(customerId){
   const result=await query(`
-    SELECT aps.item_name,aps.item_type,aps.client_name,aps.device_name,
+    SELECT aps.item_id,aps.item_name,aps.item_type,aps.client_name,aps.device_name,
            aps.playback_method,aps.is_paused,aps.position_ticks,aps.first_seen_at,aps.last_seen_at,
-           COALESCE(js.media_server_type,'jellyfin') AS media_server_type
+           js.public_url,COALESCE(js.media_server_type,'jellyfin') AS media_server_type
     FROM active_playback_sessions aps
     JOIN jellyfin_servers js ON js.id=aps.server_id
     WHERE aps.customer_id=$1
@@ -44,7 +52,8 @@ async function nowPlayingForCustomer(customerId){
     paused:Boolean(row.is_paused),
     positionSeconds:positionSeconds(row.position_ticks),
     startedAt:row.first_seen_at||null,
-    lastSeenAt:row.last_seen_at||null
+    lastSeenAt:row.last_seen_at||null,
+    imageUrl:imageUrl(row.public_url,row.item_id)
   }));
 }
 
@@ -59,4 +68,4 @@ function createCustomerNowPlayingRouter(){
   return router;
 }
 
-module.exports={createCustomerNowPlayingRouter,nowPlayingForCustomer,positionSeconds,serviceLabel,methodLabel};
+module.exports={createCustomerNowPlayingRouter,nowPlayingForCustomer,positionSeconds,serviceLabel,methodLabel,imageUrl};
