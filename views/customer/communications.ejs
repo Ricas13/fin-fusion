@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/css/customer-dashboard.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
   <style>
-    .notifyGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+    .notifyGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
     .notifyRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
     .notifyEvents{width:100%;border-collapse:collapse}
     .notifyEvents th,.notifyEvents td{padding:10px;border-bottom:1px solid var(--line);text-align:left}
@@ -69,17 +69,6 @@
         <span class="pill warn">Not connected</span>
         <p><form method="post" action="/account/communications/discord/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="button primary">Connect Discord</button></form></p>
       <% } %>
-    </section>
-    <% } %>
-    <% if(channels.includes('whatsapp')){ %>
-    <section class="panel"><h2>WhatsApp</h2>
-      <span class="pill <%= prefs.whatsapp_opt_in?'good':'warn' %>"><%= prefs.whatsapp_opt_in?'Enabled':'Off' %></span>
-      <form method="post" action="/account/communications/whatsapp">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <div class="field"><label>Mobile number</label><input class="input" name="phone" value="<%= prefs.phone_e164||'' %>" placeholder="+447700900123"></div>
-        <label class="libraryChoice"><input type="checkbox" name="enabled" value="1" <%= prefs.whatsapp_opt_in?'checked':'' %>><span>Enable optional WhatsApp messages</span></label>
-        <p><button class="button primary">Save WhatsApp</button></p>
-      </form>
     </section>
     <% } %>
   </div>
