@@ -35,4 +35,13 @@ assert(feedback.includes("/^\\/admin\\/users\\/[0-9a-f-]{36}(?:\\/|$)/i.test(pat
 assert(!/return\s+override\s*\?[^;]*:\s*\(form\.action\b/.test(feedback),'form.action must not be used as an enhanced-submit target because a named action control can shadow it');
 assert(!/String\(override\s*\|\|\s*form\.method\b/.test(feedback),'form.method must not be read directly by the enhancer');
 
+// The modern Customer 360 hero is the owner of "View User Page". The legacy
+// customer tab bar is hidden, so deferred enhancement must never move the
+// impersonation form into it after first paint.
+const customerOperator=fs.readFileSync(path.join(root,'public/js/admin-customer-operator.js'),'utf8');
+assert(customerOperator.includes('.customerMockTopActions form[action='),'Customer 360 enhancement must target the visible hero portal action');
+assert(customerOperator.includes("heroForm.dataset.nativeSubmit='true'"),'View User Page must remain a native POST/redirect flow');
+assert(customerOperator.includes("button.textContent='View User Page ↗'"),'Customer 360 must keep the requested View User Page label after enhancement');
+assert(!customerOperator.includes('nav.appendChild(wrapper)'),'Customer 360 must never relocate the portal form into the hidden legacy navigation');
+
 console.log('admin inline behavior audit: ok');
