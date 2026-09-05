@@ -6,6 +6,8 @@ const { decryptWithEnv } = require('../security/purpose-crypto');
 const outbound=require('../security/outbound-url-policy');
 const mediaProvider=require('../media-servers/provider');
 
+const responseCache=new Map();
+
 function normalizeBaseUrl(value) {
     let parsed;
     try { parsed = new URL(String(value || '').trim()); }
@@ -64,7 +66,19 @@ async function managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevi
     return{...body,EnableAllDevices:false,EnabledDevices:ids};
 }
 
-async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000,bypassDevicePolicy=false}={}){
+function cacheKey(serverId,method,endpoint){return `${String(serverId)}:${String(method||'GET').toUpperCase()}:${String(endpoint||'')}`;}
+function clearServerCache(serverId){const prefix=`${String(serverId)}:`;for(const key of responseCache.keys()){if(key.startsWith(prefix))responseCache.delete(key);}}
+
+async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000,bypassDevicePolicy=false,cacheTtlMs=0}={}){
+    const verb=String(method||'GET').toUpperCase();
+    const reusable=verb==='GET'&&(body===null||body===undefined);
+    const key=cacheKey(serverId,verb,endpoint);
+    const ttl=Math.max(0,Math.min(120000,Number(cacheTtlMs)||0));
+    if(reusable&&ttl>0){
+        const cached=responseCache.get(key);
+        if(cached&&Date.now()-cached.observedAt<=ttl)return cached.value;
+    }
+
     const server=await getServerSecret(serverId);
     if(!server||!server.enabled)throw new Error('Media server is unavailable or disabled');
     const policySafeBody=await managedDevicePolicyBody(serverId,endpoint,method,body,{bypassDevicePolicy});
@@ -80,7 +94,7 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
     }
     const text=await response.text();let parsed=null;if(text){try{parsed=JSON.parse(text)}catch{parsed=text}}
     if(!response.ok){
-        const verb=String(method||'GET').toUpperCase(),path=url.pathname||'/',providerLabel=mediaProvider.label(server.media_server_type);
+        const path=url.pathname||'/',providerLabel=mediaProvider.label(server.media_server_type);
         const err=new Error(`${providerLabel} ${server.name} ${verb} ${path} returned HTTP ${response.status}`);
         err.status=response.status;err.response=parsed;err.operation={provider:server.media_server_type,method:verb,path,timeoutMs:Number(timeoutMs||10000)};
         err.retryable=response.status===408||response.status===429||response.status>=500;
@@ -110,7 +124,10 @@ async function request(serverId,endpoint,{method='GET',body=null,timeoutMs=10000
         }
     }
 
-    return mediaProvider.responseBody(server.media_server_type,endpoint,parsed??{});
+    const value=mediaProvider.responseBody(server.media_server_type,endpoint,parsed??{});
+    if(reusable)responseCache.set(key,{observedAt:Date.now(),value});
+    else clearServerCache(serverId);
+    return value;
 }
 
 async function healthcheckServer(serverId){

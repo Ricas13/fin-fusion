@@ -145,16 +145,26 @@ async function persistFailure(serverId, error) {
     `, [serverId, message]);
 }
 
-async function pollServer(serverId, managedUserIds) {
+async function cachedTotalUsers(serverId) {
+    const result = await query('SELECT total_users FROM jellyfin_server_metrics WHERE server_id=$1', [serverId]);
+    return Number(result.rows[0]?.total_users || 0);
+}
+
+async function pollServer(serverId, managedUserIds, { refreshUsers = true } = {}) {
     const windowSeconds = activeWindowSeconds();
-    const [users, sessions] = await Promise.all([
-        registry.request(serverId, '/Users', { timeoutMs: 10000 }),
-        registry.request(serverId, `/Sessions?activeWithinSeconds=${encodeURIComponent(windowSeconds)}`, { timeoutMs: 10000 })
-    ]);
-    if (!Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
+    const sessionsPromise = registry.request(
+        serverId,
+        `/Sessions?activeWithinSeconds=${encodeURIComponent(windowSeconds)}`,
+        { timeoutMs: 10000, cacheTtlMs: 45000 }
+    );
+    const usersPromise = refreshUsers
+        ? registry.request(serverId, '/Users', { timeoutMs: 10000 })
+        : Promise.resolve(null);
+    const [users, sessions] = await Promise.all([usersPromise, sessionsPromise]);
+    if (refreshUsers && !Array.isArray(users)) throw new Error('Jellyfin users response was not an array');
     if (!Array.isArray(sessions)) throw new Error('Jellyfin sessions response was not an array');
 
-    const activity = await persistUserActivity(serverId, users);
+    const activity = refreshUsers ? await persistUserActivity(serverId, users) : { observed: 0, updated: 0 };
     const playing = sessions.filter(session => session?.Id && session?.UserId && session?.NowPlayingItem);
     let managedStreams = 0;
     let transcodeStreams = 0;
@@ -172,14 +182,15 @@ async function pollServer(serverId, managedUserIds) {
     }
 
     const metrics = {
-        totalUsers: users.length,
+        totalUsers: refreshUsers ? users.length : await cachedTotalUsers(serverId),
         activeStreams: playing.length,
         managedStreams,
         transcodeStreams,
         directStreamStreams,
         directPlayStreams,
         pausedStreams,
-        activityUpdates: activity.updated
+        activityUpdates: activity.updated,
+        usersRefreshed: refreshUsers
     };
     await persistSuccess(serverId, metrics);
     return metrics;
@@ -200,11 +211,12 @@ async function mapLimit(items, limit, worker) {
     return output;
 }
 
-async function refreshAll() {
+async function refreshAll(options = {}) {
     const rows = await inventory();
+    const refreshUsers = options.refreshUsers !== false;
     const results = await mapLimit(rows, 3, async row => {
         try {
-            const metrics = await pollServer(row.serverId, row.managedUserIds);
+            const metrics = await pollServer(row.serverId, row.managedUserIds, { refreshUsers });
             return { serverId: row.serverId, ok: true, ...metrics };
         } catch (error) {
             try { await persistFailure(row.serverId, error); } catch (_) {}

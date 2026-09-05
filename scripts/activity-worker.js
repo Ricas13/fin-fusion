@@ -24,11 +24,13 @@ const paygExpiryMessages = require('../src/jellyfin/payg-expiry-messages');
 
 const intervalSeconds = Math.max(15, Math.min(300, Number(process.env.STREAM_POLICY_POLL_SECONDS || 20)));
 const fleetIntervalSeconds = Math.max(30, Math.min(900, Number(process.env.FLEET_METRICS_POLL_SECONDS || 60)));
+const userActivityIntervalSeconds = Math.max(60, Math.min(3600, Number(process.env.FLEET_USER_ACTIVITY_POLL_SECONDS || 300)));
 const HEARTBEAT_MS = Math.max(5000, Math.min(60000, Number(process.env.ACTIVITY_WORKER_HEARTBEAT_MS || 15000)));
 const HEARTBEAT_FILE = process.env.ACTIVITY_HEARTBEAT_FILE || '/tmp/activity-heartbeat';
 const INSTANCE_ID = String(process.env.HOSTNAME || `activity-${crypto.randomUUID()}`).slice(0, 200);
 const COMMIT_SHA = String(process.env.COMMIT_SHA || process.env.CAPTAINFIN_BUILD_SHA || process.env.GITHUB_SHA || '').slice(0, 80) || null;
 let lastFleetRun = 0;
+let lastUserActivityRun = 0;
 let shuttingDown = false;
 let sleepTimer = null;
 let sleepResolve = null;
@@ -55,6 +57,7 @@ function operationalMetadata() {
   return {
     pollSeconds: intervalSeconds,
     fleetIntervalSeconds,
+    userActivityIntervalSeconds,
     heartbeatMs: HEARTBEAT_MS,
     lastCycleAt: cycleState.completedAt,
     lastCycleDurationMs: cycleState.durationMs,
@@ -103,11 +106,13 @@ async function refreshFleetMetricsIfDue() {
   const now = Date.now();
   if (now - lastFleetRun < fleetIntervalSeconds * 1000) return null;
   lastFleetRun = now;
-  const results = await fleetMetrics.refreshAll();
+  const refreshUsers = now - lastUserActivityRun >= userActivityIntervalSeconds * 1000;
+  if (refreshUsers) lastUserActivityRun = now;
+  const results = await fleetMetrics.refreshAll({ refreshUsers });
   const failures = results.filter(result => !result.ok);
   const streams = results.filter(result => result.ok).reduce((sum, result) => sum + Number(result.activeStreams || 0), 0);
   if (failures.length) console.warn(`Fleet metrics: ${failures.length}/${results.length} server(s) unavailable; observed streams=${streams}`);
-  return { total: results.length, failures: failures.length, streams };
+  return { total: results.length, failures: failures.length, streams, usersRefreshed: refreshUsers };
 }
 
 function sleep(ms) {
