@@ -25,7 +25,7 @@
   const previewTimers=new WeakMap();
   const requestIds=new WeakMap();
 
-  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));}
+  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function promoInputs(){return Array.from(document.querySelectorAll('[data-promo-input]'));}
   function cards(){return Array.from(document.querySelectorAll('[data-plan-code]'));}
   function normalized(input){return input?String(input.value||'').trim().toUpperCase().slice(0,40):'';}
