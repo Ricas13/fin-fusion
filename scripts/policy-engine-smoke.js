@@ -143,6 +143,7 @@ function main() {
         const fourK = read('src/jellyfin/four-k-transcode-policy.js');
         const payg = read('src/jellyfin/payg-expiry-messages.js');
         const household = read('src/jellyfin/household-network-policy.js');
+        const laneStream = read('src/jellyfin/lane-stream-policy.js');
         const worker = read('scripts/activity-worker.js');
 
         assert(!fourK.includes("COALESCE(js.media_server_type,'jellyfin')='jellyfin'"), '4K transcode enforcement must not silently exclude Emby servers');
@@ -162,6 +163,12 @@ function main() {
         assert(household.includes('failedServerIds.has(String(session.server_id))'), 'household enforcement must skip only the server whose poll failed');
         assert(worker.includes('runHouseholdNetworkCycle({ failedServerIds })'), 'activity worker must pass per-server failure identity to household enforcement');
         assert(!worker.includes('runHouseholdNetworkCycle({ pollsReliable: !failedServerIds.length })'), 'one unrelated server failure must not disable household enforcement fleet-wide');
+
+        assert(laneStream.includes('/Sessions/${encodeURIComponent(row.jellyfin_session_id)}/Playing/Stop'), 'lane stream enforcement must attempt the targeted Jellyfin playback stop first');
+        assert(laneStream.includes('/Devices?id=${encodeURIComponent(deviceId)}'), 'lane stream enforcement must retain the safe device logout fallback when a client ignores Playing/Stop');
+        assert(laneStream.includes("fallback: 'device_logout_blocked_to_preserve_other_active_session'"), 'lane stream fallback must never log out a device that is carrying another active allowed session');
+        assert(laneStream.includes("method: 'device_logout_fallback'"), 'lane stream policy must record successful fallback enforcement distinctly');
+        assert(laneStream.includes('STOP_VERIFY_ATTEMPTS = 4'), 'lane stream stop verification must allow clients time to process the stop before falling back');
     }
 
     console.log('Policy engine smoke test passed.');
