@@ -21,25 +21,43 @@
   // activity columns with the old Paid / Current plan / Registered layout.
   const customerTable = document.querySelector('#customersTable');
   if (customerTable) {
-    if (!document.querySelector('#customerMockupFidelityStyles')) {
-      const fidelityStyles = document.createElement('style');
-      fidelityStyles.id = 'customerMockupFidelityStyles';
-      fidelityStyles.textContent = `.content > .pageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}
-.content > .pageHeader > div:first-child{min-width:0}
-.content > .pageHeader .pageHeaderActions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 0 auto}
-.content > .pageHeader .pageHeaderActions .button{min-height:38px;white-space:nowrap}
-.content > .pageHeader .pageHeaderActions .button:first-child{border-color:#20cbbd;background:#22d5c3;color:#062522;box-shadow:0 0 0 1px rgba(34,213,195,.12);font-weight:750}
-.content > .pageHeader .pageHeaderActions .button:first-child:hover{background:#35decd;border-color:#35decd}
-@media(max-width:820px){.content > .pageHeader{display:block;margin-bottom:16px}.content > .pageHeader .pageHeaderActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.content > .pageHeader .pageHeaderActions .button{width:100%;justify-content:center}.content > .pageHeader .pageHeaderActions .button:last-child:nth-child(odd){grid-column:1/-1}}
-@media(max-width:420px){.content > .pageHeader .pageHeaderActions{grid-template-columns:1fr}}`;
-      document.head.append(fidelityStyles);
-    }
     const headings = [...(customerTable.tHead?.rows?.[0]?.cells || [])]
       .map(cell => String(cell.textContent || '').replace(/[↑↓]/g, '').trim());
     if (headings.includes('Plan / product') && headings.includes('Jellyfin / service')) {
       customerTable.dataset.operatorFriendly = '1';
     }
   }
+
+  // Navigation coherence moves page-scoped actions out of the global top bar.
+  // On Customers, finish that move with the approved mockup geometry: title on
+  // the left, actions on the right. The rAF pass runs after the shared
+  // navigation enhancer has created .pageHeaderActions.
+  const polishCustomersHeader = () => {
+    if (!customerTable) return;
+    const header = document.querySelector('.content > .pageHeader');
+    const actions = header?.querySelector(':scope > .pageHeaderActions');
+    if (!header || !actions) return;
+    if (window.matchMedia('(min-width:821px)').matches) {
+      header.style.setProperty('display', 'grid', 'important');
+      header.style.setProperty('grid-template-columns', 'minmax(0,1fr) auto', 'important');
+      header.style.setProperty('align-items', 'start', 'important');
+      header.style.setProperty('gap', '18px', 'important');
+      actions.style.setProperty('display', 'flex', 'important');
+      actions.style.setProperty('align-items', 'center', 'important');
+      actions.style.setProperty('justify-content', 'flex-end', 'important');
+      actions.style.setProperty('gap', '8px', 'important');
+      actions.style.setProperty('margin', '0', 'important');
+    }
+    const primary = actions.querySelector('.button');
+    if (primary) {
+      primary.style.setProperty('border-color', '#20cbbd', 'important');
+      primary.style.setProperty('background', '#22d5c3', 'important');
+      primary.style.setProperty('color', '#062522', 'important');
+      primary.style.setProperty('font-weight', '750', 'important');
+    }
+  };
+  polishCustomersHeader();
+  requestAnimationFrame(polishCustomersHeader);
 
   const filterForm = document.querySelector('form.compactFilterForm[action="/admin/users"]');
 
