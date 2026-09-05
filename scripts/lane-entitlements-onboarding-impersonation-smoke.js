@@ -112,7 +112,7 @@ assert(/customer_no_email_verification_state/.test(migration), 'email-less impor
 
 // Admin impersonation uses the real portal with a global read-only support policy.
 assert(/View portal \(read-only\)/.test(impersonation), 'Customer 360 must label impersonation as a read-only portal view');
-assert(/Nested impersonation is not allowed/.test(impersonation), 'nested impersonation must be blocked');
+assert(impersonation.includes("endedReason: 'switched_customer'")&&impersonation.includes('replacedImpersonationId:previous?.id||null'),'switching impersonation must supersede and audit the previous read-only view');
 assert(/row\?\.role === 'customer'/.test(impersonation), 'privileged/admin targets must not be impersonable');
 assert(/req\.session\.impersonation = \{/.test(impersonation)&&/actorUserId: req\.session\.authUserId/.test(impersonation), 'real admin actor identity must remain attached to impersonation');
 assert(/req\.session\.customerId = target\.customer_id/.test(impersonation)&&/return res\.redirect\('\/account'\)/.test(impersonation), 'impersonation must enter the real customer portal');
