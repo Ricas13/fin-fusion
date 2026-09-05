@@ -65,15 +65,9 @@ async function main(){
     const fleetText=await page.locator('body').innerText();
     assert(/Placement ready/.test(fleetText)&&/Customer capacity/.test(fleetText)&&/Live streams/.test(fleetText),'Unified Servers is missing fleet placement readiness or customer capacity');
     assert(!/Customer session lifetime/.test(fleetText)&&!/Public base URL/.test(fleetText),'Unified Servers still contains unrelated platform/security settings');
-    const placementPolicyDetails=page.locator('details.operatorDetails').filter({has:page.locator('summary',{hasText:'Placement health policy'})}).first();
-    assert.equal(await placementPolicyDetails.count(),1,'Server placement health policy disclosure is missing');
-    const capacityDetails=page.locator('#capacity-preview');
-    assert.equal(await capacityDetails.count(),1,'Server future capacity preview disclosure is missing');
-    const fleetForm=page.locator('form[action="/admin/servers/operations/placement-policy"]');
-    assert.equal(await fleetForm.count(),1,'Server placement policy form is missing');
-    await placementPolicyDetails.evaluate(element=>{element.open=true;});
-    await submit(fleetForm,'Save policy');
-    assert(/Placement health policy saved/.test(await page.locator('body').innerText()),'Server placement policy did not round-trip');
+    assert(!/Placement health policy/.test(fleetText)&&!/Future capacity preview/.test(fleetText),'Unified Servers must not render the retired advanced placement panels');
+    assert.equal(await page.locator('#capacity-preview').count(),0,'Server future capacity preview must stay off the main Servers page');
+    assert.equal(await page.locator('form[action="/admin/servers/operations/placement-policy"]').count(),0,'Server placement policy form must stay off the main Servers page');
     await screenshot(page,'servers-placement');
 
     const beforeGeneral=await operationsValue(pool);
