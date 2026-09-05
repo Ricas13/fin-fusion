@@ -9,7 +9,6 @@ const registry=require('../jellyfin/registry');
 const {sendCsv}=require('./export');
 const {BULK_ACTIONS}=require('./admin-bulk-customers');
 const {customerIdentity}=require('./customer-list-identity');
-const moneyFormat=require('./money-format');
 const supportTickets=require('../support/tickets');
 
 function gate(req,res,next){if(req.session?.authUserId&&req.session?.authRole==='admin'&&req.session?.adminId)return next();return res.redirect('/login?session=expired')}
@@ -76,18 +75,18 @@ function quickPresets(filters,counts={}){
 }
 function advancedActive(filters){return Boolean(filters.status||filters.accountStatus||filters.paymentProvider||filters.reconciliationStatus||filters.hasOverride!==undefined||filters.library||filters.expiryFrom||filters.expiryTo||filters.lastActiveFrom||filters.lastActiveTo||filters.registeredFrom||filters.registeredTo)}
 function filterForm(filters,options,sort,counts={}){
-    const accessOptions=[['','All access states'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
+    const accessOptions=[['','Any'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
     const advanced=advancedActive(filters);
     return `<form class="customerFilterPanel compactFilterForm" method="get" action="/admin/users" data-native-submit="true">
         <input type="hidden" name="sort" value="${esc(sort.key)}"><input type="hidden" name="dir" value="${esc(sort.direction)}">
         <div class="customerPrimaryFilters" role="search" aria-label="Customer filters">
-            <div class="customerSearch"><span class="customerSearchIcon" aria-hidden="true">⌕</span><label class="srOnly" for="customerFilterSearch">Search customers</label><input class="input" id="customerFilterSearch" type="search" name="q" value="${esc(filters.q||'')}" placeholder="Search customers, name or email…"></div>
+            <div class="customerSearch"><span class="customerSearchIcon" aria-hidden="true">⌕</span><label class="srOnly" for="customerFilterSearch">Name</label><input class="input" id="customerFilterSearch" type="search" name="q" value="${esc(filters.q||'')}" placeholder="Name, email or Jellyfin username"></div>
             <div class="formGroup"><label class="srOnly" for="customerFilterProduct">Product</label><select class="input" id="customerFilterProduct" name="service" data-primary-filter><option value="">All products</option><option value="jellyfin" ${filters.service==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${filters.service==='stremio'?'selected':''}>Stremio</option></select></div>
             <div class="formGroup"><label class="srOnly" for="customerFilterAccess">Access</label><select class="input" id="customerFilterAccess" name="access" data-primary-filter>${accessOptions.map(([value,label])=>`<option value="${esc(value)}" ${filters.access===value?'selected':''}>${esc(label)}</option>`).join('')}</select></div>
-            <div class="formGroup"><label class="srOnly" for="customerFilterPlan">Plan</label><select class="input" id="customerFilterPlan" name="plan" data-primary-filter><option value="">All plans</option>${optionList(options.plans,filters.planId)}</select></div>
-            <div class="formGroup"><label class="srOnly" for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server" data-primary-filter><option value="">All servers</option>${optionList(options.servers,filters.serverId)}</select></div>
+            <div class="formGroup"><label class="srOnly" for="customerFilterPlan">Plan</label><select class="input" id="customerFilterPlan" name="plan" data-primary-filter><option value="">Any Plan</option>${optionList(options.plans,filters.planId)}</select></div>
+            <div class="formGroup"><label class="srOnly" for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server" data-primary-filter><option value="">Any Jellyfin Server</option>${optionList(options.servers,filters.serverId)}</select></div>
             <details class="customerMoreFilters" ${advanced?'open':''}>
-                <summary class="button secondary"><span aria-hidden="true">▽</span> More filters${advanced?' · active':''}</summary>
+                <summary class="button secondary"><span aria-hidden="true">▽</span> More Advanced Filters${advanced?' · active':''}</summary>
                 <div class="customerMoreFiltersPanel">
                     <div class="formGroup"><label for="customerFilterSubscription">Subscription status</label><select class="input" id="customerFilterSubscription" name="status"><option value="">Any</option><option value="none" ${filters.status==='none'?'selected':''}>No subscription history</option>${customerFilters.STATUS_VALUES.map(s=>`<option value="${esc(s)}" ${filters.status===s?'selected':''}>${esc(titleCase(s))}</option>`).join('')}</select></div>
                     <div class="formGroup"><label for="customerFilterPayment">Payment provider</label><select class="input" id="customerFilterPayment" name="paymentProvider"><option value="">Any</option><option value="none" ${filters.paymentProvider==='none'?'selected':''}>None</option>${customerFilters.PAYMENT_PROVIDERS.map(pr=>`<option value="${esc(pr)}" ${filters.paymentProvider===pr?'selected':''}>${esc(titleCase(pr))}</option>`).join('')}</select></div>
@@ -133,17 +132,14 @@ function planCommercialType(x){
     if(!x.plan_id)return'No plan';
     if(x.billing_interval==='trial'||x.subscription_status==='trialing')return'Trial';
     if(x.is_free_tier)return'Free';
-    const label=({month:'Monthly','6_months':'6 months',year:'Yearly',custom:'Paid'})[String(x.billing_interval||'')]||'Paid';
-    return label==='Paid'?'Paid':`${label} - Paid`;
+    return'Paid';
 }
-function planPriceMeta(x){
-    if(!x.plan_id)return'No payment record';
-    if(x.is_free_tier)return'No payment required';
-    if(x.billing_interval==='trial'||x.subscription_status==='trialing')return'No charge during trial';
-    const money=moneyFormat.formatMinor(Number(x.price_minor||0),'USD',{trimZeroDecimals:true});
-    const suffix=({month:' / month','6_months':' / 6 months',year:' / year'})[String(x.billing_interval||'')]||'';
-    return `${money}${suffix}`;
+function planMeta(x){
+    if(!x.plan_id)return'No current plan';
+    const cadence=({month:'Monthly','6_months':'6 months',year:'Yearly',custom:'Custom'})[String(x.billing_interval||'')]||'';
+    return [planCommercialType(x),cadence,serviceLabel(x.service_type)||'Jellyfin'].filter(Boolean).join(' · ');
 }
+function serviceActivity(x){return x.last_activity_at?`Last used ${relativeTime(x.last_activity_at)}`:'Never used'}
 function rowState(x){
     const current=x.has_current_entitlement===true;
     const jellyfinRequired=['jellyfin','bundle',null,undefined].includes(x.service_type);
@@ -172,10 +168,10 @@ function serviceCell(x,state){
     const current=x.has_current_entitlement===true;
     const type=String(x.service_type||'jellyfin');
     const jfCount=Number(x.customer_account_count||0);
-    if(type==='stremio')return `<div class="customerServiceState ${current?'good':''}"><span class="customerStateDot"></span><strong>${current?'Active':'Not active'}</strong></div><div class="subText">Stremio${current?' entitlement active':' · no active entitlement'}</div>`;
+    if(type==='stremio')return `<div class="customerServiceState ${current?'good':''}"><span class="customerStateDot"></span><strong>${current?'Active':'Not active'}</strong></div><div class="subText">${esc(serviceActivity(x))}</div>`;
     if(jfCount>0){
-        if(current)return `<div class="customerServiceState good"><span class="customerStateDot"></span><strong>Active</strong></div>${x.jellyfin_username?`<div class="subText">${esc(x.jellyfin_username)}</div>`:'<div class="subText">Jellyfin linked</div>'}`;
-        return `<div class="customerServiceState bad"><span class="customerStateDot"></span><strong>Still present</strong></div>${x.jellyfin_username?`<div class="subText">${esc(x.jellyfin_username)} · remove access</div>`:'<div class="subText">Jellyfin access should be removed</div>'}`;
+        if(current)return `<div class="customerServiceState good"><span class="customerStateDot"></span><strong>Active</strong></div><div class="subText">${esc(serviceActivity(x))}</div>`;
+        return `<div class="customerServiceState bad"><span class="customerStateDot"></span><strong>Still present</strong></div><div class="subText">Remove Jellyfin access</div>`;
     }
     if(current)return `<div class="customerServiceState ${state.access==='Provisioning'?'warn':'bad'}"><span class="customerStateDot"></span><strong>${state.access==='Provisioning'?'Provisioning':'Not linked'}</strong></div><div class="subText">Add Jellyfin access</div>`;
     return `<div class="customerServiceState"><span class="customerStateDot"></span><strong>Not linked</strong></div><div class="subText">No Jellyfin account</div>`;
@@ -188,7 +184,7 @@ function row(x){
     return `<tr data-customer-row>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
         <td data-label="Customer"><div class="customerIdentityCell"><span class="customerAvatar" aria-hidden="true">${esc(initials(customerName))}</span><div><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</div></div></td>
-        <td data-label="Plan / product"><strong>${esc(planCommercialType(x))}</strong><div class="subText">${esc(planPriceMeta(x))}</div></td>
+        <td data-label="Plan / product"><strong>${esc(x.plan_name||'No plan')}</strong><div class="subText">${esc(planMeta(x))}</div></td>
         <td data-label="Access status">${pill(state.access,state.tone)}<div class="subText customerAccessReason">${esc(state.reason)}</div></td>
         <td data-label="Jellyfin / service">${serviceCell(x,state)}</td>
         <td data-label="Server">${serverCell(x)}</td>
@@ -281,15 +277,15 @@ function customerOverviewHtml(data){
 }
 function productContext(filters){if(!filters.service)return'';const label=serviceLabel(filters.service);return `<div class="securityNote standalone"><strong>${esc(label)} customer context</strong><div class="subText">This is the shared customer system filtered to customers with ${esc(label)} or bundle history. Change the Product filter below to switch context.</div></div>`}
 function tableToolbar(filters,sort,pageSize,total){
-    const sortOptions=[['recent','Last active'],['attention','Needs attention'],['name','Customer name'],['plan','Plan'],['access','Access status'],['expiring','Renewal / expiry'],['server','Server']];
-    return `<div class="customerTableToolbar"><div><h2>Customers <span>(${esc(number(total))})</span></h2></div><div class="customerTableControls"><form method="get" action="/admin/users" class="customerSortForm" data-auto-submit>${filterHiddenFields(filters)}<label for="customerSortSelect">Sort by</label><select class="input" id="customerSortSelect" name="sort"><option value="${esc(sort.key)}" selected hidden>${esc((sortOptions.find(([key])=>key===sort.key)||['','Last active'])[1])}</option>${sortOptions.filter(([key])=>key!==sort.key).map(([key,label])=>`<option value="${esc(key)}">${esc(label)}</option>`).join('')}</select><input type="hidden" name="dir" value="${esc(sort.direction)}"></form><div class="customerViewButtons" aria-label="Customer view"><span class="active" aria-label="List view">☷</span><span aria-hidden="true">▦</span></div><form method="get" action="/admin/users" class="customerPageSizeForm" data-auto-submit>${filterHiddenFields(filters)}<input type="hidden" name="sort" value="${esc(sort.key)}"><input type="hidden" name="dir" value="${esc(sort.direction)}"><label class="srOnly" for="customerPageSize">Rows per page</label><select class="input" id="customerPageSize" name="pageSize">${[25,50,100].map(size=>`<option value="${size}" ${size===pageSize?'selected':''}>${size} per page</option>`).join('')}</select></form></div></div>`;
+    const sortOptions=[['recent','Last active'],['attention','Needs attention'],['name','Customer name'],['plan','Plan'],['access','Access'],['expiring','Renews / expires'],['server','Server']];
+    return `<div class="customerTableToolbar"><div><h2>Customers <span>(${esc(number(total))})</span></h2></div><div class="customerTableControls"><form method="get" action="/admin/users" class="customerSortForm" data-auto-submit>${filterHiddenFields(filters)}<label for="customerSortSelect">Sort by</label><select class="input" id="customerSortSelect" name="sort"><option value="${esc(sort.key)}" selected hidden>${esc((sortOptions.find(([key])=>key===sort.key)||['','Last active'])[1])}</option>${sortOptions.filter(([key])=>key!==sort.key).map(([key,label])=>`<option value="${esc(key)}">${esc(label)}</option>`).join('')}</select><input type="hidden" name="dir" value="${esc(sort.direction)}"></form><form method="get" action="/admin/users" class="customerPageSizeForm" data-auto-submit>${filterHiddenFields(filters)}<input type="hidden" name="sort" value="${esc(sort.key)}"><input type="hidden" name="dir" value="${esc(sort.direction)}"><label class="srOnly" for="customerPageSize">Rows per page</label><select class="input" id="customerPageSize" name="pageSize">${[25,50,100].map(size=>`<option value="${size}" ${size===pageSize?'selected':''}>${size} per page</option>`).join('')}</select></form></div></div>`;
 }
 async function listPage(req){
     const filters=parseFilters(req.query),page=Math.max(parseInt(req.query.page,10)||1,1),pageSize=[25,50,100].includes(parseInt(req.query.pageSize,10))?parseInt(req.query.pageSize,10):100;
     const requestedSort=req.query.sort?req.query:{sort:'recent',dir:'desc'},sort=customerFilters.normalizeCustomerSort(requestedSort);
     const [options,result,overview]=await Promise.all([filterOptions(),customerFilters.listCustomers(filters,null,{page,pageSize,sort}),filters.service?Promise.resolve(null):customerOverview()]);
     const rows=result.rows,sortState=result.sort,context=serviceLabel(filters.service),active=filters.service==='jellyfin'?'jellyfin-customers':filters.service==='stremio'?'stremio-customers':'users',counts=overview?.presets||{};
-    const headers=`<th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th>${sortHeader(filters,sortState,'Customer','name',pageSize)}${sortHeader(filters,sortState,'Plan / product','plan',pageSize)}${sortHeader(filters,sortState,'Access status','access',pageSize)}<th>Jellyfin / service</th>${sortHeader(filters,sortState,'Server','server',pageSize)}${sortHeader(filters,sortState,'Renewal / expiry','expiring',pageSize)}${sortHeader(filters,sortState,'Last active','recent',pageSize)}<th>Actions</th>`;
+    const headers=`<th><input type="checkbox" id="checkAllPage" aria-label="Select all customers on this page"></th>${sortHeader(filters,sortState,'Customer','name',pageSize)}${sortHeader(filters,sortState,'Plan','plan',pageSize)}${sortHeader(filters,sortState,'Access','access',pageSize)}<th>Jellyfin</th>${sortHeader(filters,sortState,'Server','server',pageSize)}${sortHeader(filters,sortState,'Renews / expires','expiring',pageSize)}${sortHeader(filters,sortState,'Last active','recent',pageSize)}<th>Action</th>`;
     const resultMeta=`Showing ${rows.length?((result.page-1)*result.pageSize)+1:0}–${Math.min(result.page*result.pageSize,result.total)} of ${number(result.total)} customers`;
     const body=`<link rel="stylesheet" href="/css/admin-customers-list.css">${notice(req)}${filters.service?productContext(filters):customerOverviewHtml(overview)}${filterForm(filters,options,sortState,counts)}<section class="section customerResults">${tableToolbar(filters,sortState,result.pageSize,result.total)}${rows.length?`<div class="tableWrap"><table class="dataTable responsiveTable customerTable" id="customersTable"><caption class="srOnly">Customer results</caption><thead><tr>${headers}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div><div class="customerTableFooter"><span class="muted">${esc(resultMeta)}</span>${pagination(filters,sortState,result.page,result.pageSize,result.total)}</div>`:'<div class="empty">No customers match these filters.</div>'}</section>${result.total?bulkBar(req,filters,result.total):''}<script src="/js/admin-customer-filters.js" defer></script><script src="/js/admin-customers-bulk.js" defer></script>`;
     const common='<a class="button" href="/admin/users/new">+ Add customer</a>',jellyfinAction=filters.service==='stremio'?'':` <a class="button secondary" href="/admin/jellyfin-import">Import from Jellyfin</a>`;
