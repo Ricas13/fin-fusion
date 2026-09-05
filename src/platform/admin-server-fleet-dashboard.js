@@ -194,11 +194,7 @@ async function body(req) {
             <div class="serverControlHint"><strong>Capacity:</strong> one managed Jellyfin customer uses one place, regardless of that customer's concurrent-stream plan. <strong>Placement:</strong> Active can receive new customers; Drain and Maintenance stop new assignments without moving existing users.</div>
             ${serverTable(req, data.rows, data.settings)}
             <div class="securityNote">API keys stay write-only. Library Scan asks Jellyfin to refresh its library; it does not change plan library access.</div>
-        </section>
-        <div class="serverAdvancedGrid">
-            <details class="operatorDetails" id="placement-policy"><summary><span>Placement health policy</span><small>Advanced fleet-wide eligibility rule</small></summary><div class="operatorDetailsBody">${placementPolicy(req, data.settings)}</div></details>
-            <details class="operatorDetails" id="capacity-preview" ${data.preview ? 'open' : ''}><summary><span>Future capacity preview</span><small>Simulate placement without creating customers</small></summary><div class="operatorDetailsBody">${capacityPreviewForm(req, data.plans, data.previewPlanId, data.previewCount)}${capacityPreviewResult(data.preview)}</div></details>
-        </div>`;
+        </section>`;
 }
 
 async function statusJson(_req, res, next) {
