@@ -4,19 +4,12 @@
   if (window.__captainfinCustomerFiltersBound) return;
   window.__captainfinCustomerFiltersBound = true;
 
-  // admin-customer-operator.js still contains a compatibility enhancer for the
-  // retired customer table. The redesigned directory is fully rendered by the
-  // server, so mark that modern contract before the legacy enhancer runs. This
-  // prevents it from replacing Plan / product, Jellyfin / service, renewal and
-  // activity columns with the old Paid / Current plan / Registered layout.
+  // The redesigned Customers directory is server-rendered. Mark its table as
+  // authoritative before the legacy admin-customer-operator compatibility
+  // enhancer runs, so changing operator-facing column labels cannot cause the
+  // old Paid / Current plan / Registered table to be reconstructed at runtime.
   const customerTable = document.querySelector('#customersTable');
-  if (customerTable) {
-    const headings = [...(customerTable.tHead?.rows?.[0]?.cells || [])]
-      .map(cell => String(cell.textContent || '').replace(/[↑↓]/g, '').trim());
-    if (headings.includes('Plan / product') && headings.includes('Jellyfin / service')) {
-      customerTable.dataset.operatorFriendly = '1';
-    }
-  }
+  if (customerTable) customerTable.dataset.operatorFriendly = '1';
 
   // Navigation coherence moves page-scoped actions out of the global top bar.
   // On Customers, finish that move with the approved mockup geometry: title on
