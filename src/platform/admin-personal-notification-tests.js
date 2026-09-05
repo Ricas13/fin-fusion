@@ -20,7 +20,7 @@ function redirect(res,type,text){
   return res.redirect(`/admin/profile/notifications?${type}=${encodeURIComponent(text)}`);
 }
 async function identity(adminUserId){
-  const r=await query(`SELECT u.email,c.telegram_chat_id,c.telegram_handle,c.discord_user_id,c.discord_handle,c.phone_e164,c.whatsapp_opt_in
+  const r=await query(`SELECT u.email,c.telegram_chat_id,c.telegram_handle,c.discord_user_id,c.discord_handle
     FROM app_users u
     LEFT JOIN admin_communication_preferences c ON c.admin_user_id=u.id
     WHERE u.id=$1 AND u.role='admin'`,[adminUserId]);
@@ -82,20 +82,6 @@ function createAdminPersonalNotificationTestsRouter(){
       await audit(req.session.authUserId,'discord',true);
       return redirect(res,'message',`Test Discord DM sent${me.discord_handle?` to ${me.discord_handle}`:''}.`);
     }catch(error){await audit(req.session.authUserId,'discord',false,error.message);return redirect(res,'error',`Discord test failed: ${error.message}`);}
-  });
-
-  r.post('/admin/profile/notifications/test/whatsapp',async(req,res)=>{
-    if(!csrf.verify(req))return res.status(403).send('Invalid security token');
-    try{
-      const me=await identity(req.session.authUserId);
-      if(!me.whatsapp_opt_in||!me.phone_e164)throw new Error('Save your WhatsApp number and opt in first.');
-      const status=await notificationSettings.status();
-      if(!status.whatsappConfigured)throw new Error('WhatsApp is not configured globally.');
-      const site=runtimeSettings.siteName();
-      await notificationSettings.sendWhatsapp(testText(site,'WhatsApp'),{to:me.phone_e164});
-      await audit(req.session.authUserId,'whatsapp',true);
-      return redirect(res,'message',`Test WhatsApp message sent to ${me.phone_e164}.`);
-    }catch(error){await audit(req.session.authUserId,'whatsapp',false,error.message);return redirect(res,'error',`WhatsApp test failed: ${error.message}`);}
   });
 
   return r;
