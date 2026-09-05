@@ -77,7 +77,6 @@ assert(customers.includes('ctx.data.needsAttention'), 'Customer health must reus
 assert(automation.includes('Automation control room') && automation.includes('automationHero(jobs,worker,workerAlive)'), 'Automation must retain worker/job health calculation');
 assert(automation.includes('Fix these jobs first') && automation.includes('All automation schedules'), 'Automation must expose failures before progressively disclosed routine schedules');
 assert(automation.includes("jobHealth.healthState(job)"), 'Automation clarity must reuse canonical job-health state');
-
 assert(notifications.includes('Notification control room') && notifications.includes('Fix failed deliveries first'), 'Notifications must retain delivery failure health calculation before configuration');
 assert(notifications.includes("ui.detailDisclosure({title:'Messaging apps & credentials'") && notifications.includes('Global event catalogue'), 'Notification credentials and routing catalogue must be progressively disclosed');
 assert(!notifications.includes('<th>Destination</th>'), 'Default notification history must not expose recipient destinations');
@@ -101,9 +100,15 @@ assert(plans.includes('archived=1') && plans.includes('Retired catalogue version
 
 assert(customer360ViewV2.includes('Customer record') && customer360ViewV2.includes("action=\"/admin/users/${encodeURIComponent(id)}/impersonate\""), 'Customer 360 is one page now: nav must be exactly "Customer record" plus a Portal view impersonation action, not a multi-tab bar');
 
-assert(orders.includes('Transaction desk') && orders.includes('Open customer billing →'), 'Orders must act as a transaction trail into customer billing rather than a raw record table');
-assert(orders.includes("ui.detailDisclosure({title:`Full purchase history"), 'Older order history must be progressively disclosed');
-assert(!orders.includes('provider_subscription_id'), 'Orders must not expose provider subscription identifiers in the normal transaction view');
+assert(orders.includes("title:'Orders'") && orders.includes('Open customer billing →'), 'Orders must remain a transaction trail into customer billing rather than a raw provider-record table');
+assert(orders.includes('const PAGE_SIZE=10') && orders.includes('ordersPurchaseFilters') && orders.includes('ordersDatePicker'), 'Orders must keep the approved ten-per-page searchable and filterable purchase browser');
+for (const rangeLabel of ['Weekly','Monthly','3 months','6 months','1 year','YTD','Since beginning','Specific time frame']) {
+  assert(orders.includes(`'${rangeLabel}'`), `Orders reporting range must include ${rangeLabel}`);
+}
+for (const disclosure of ['Upcoming expires','Commercial policies and detailed payment state','Resolved payment history']) {
+  assert(orders.includes(disclosure), `Orders must retain the approved collapsed section: ${disclosure}`);
+}
+assert(!orders.includes('<th>Provider ID</th>') && !orders.includes('data-label="Provider ID"'), 'Orders must not expose provider subscription identifiers as an operator-facing column');
 
 assert(billing.includes('Billing operations') && billing.includes('Fix these subscriptions first'), 'Billing must expose customer-impacting recurring problems before routine reconciliation');
 assert(billing.includes('Boolean(row.last_error)') && billing.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'Billing problems must derive from canonical subscription/provider-sync state while excluding intentional end-of-period cancellations');

@@ -1,0 +1,39 @@
+.page-commerce-orders .ordersHeroLine .buttonRow{margin-top:0!important;margin-bottom:0!important}
+.page-commerce-orders .ordersHeroLine .button{min-height:34px;padding:7px 12px;font-size:.64rem}
+.page-commerce-orders .ordersRangeSelect{min-width:242px;padding:9px 11px;border-color:#294555;border-radius:10px;background:linear-gradient(160deg,#0f1b23,#0b151c);box-shadow:inset 0 1px 0 rgba(255,255,255,.015)}
+.page-commerce-orders .ordersRangeSelect .input{font-size:.7rem}
+.page-commerce-orders .ordersRangeSelect small{font-size:.56rem;letter-spacing:.01em}
+.page-commerce-orders .ordersAttention,.page-commerce-orders .ordersPurchases,.page-commerce-orders .ordersChartCard,.page-commerce-orders .ordersRenewalStrip,.page-commerce-orders .ordersDisclosure{border-color:#264252;background:linear-gradient(160deg,#101c24,#0c161d)}
+.page-commerce-orders .ordersKpis{gap:9px}
+.page-commerce-orders .ordersKpis .analyticsKpi{min-height:92px!important;padding:13px!important;border-color:#294555!important;background:linear-gradient(155deg,#101c24,#0d171f)!important}
+.page-commerce-orders .ordersKpis .analyticsKpiValue{font-size:1.33rem;line-height:1.05}
+.page-commerce-orders .ordersKpis .analyticsKpiMeta{margin-top:4px}
+.page-commerce-orders .ordersAttentionHead{padding:10px 13px}
+.page-commerce-orders .ordersAttention .tableWrap{margin:0 8px 8px}
+.page-commerce-orders .ordersCardHead{padding:10px 12px 5px}
+.page-commerce-orders .ordersChartCard{box-shadow:inset 0 1px 0 rgba(255,255,255,.012)}
+.page-commerce-orders .ordersRenewalStrip{min-height:43px;padding:8px 12px}
+.page-commerce-orders .ordersPurchases>.tableWrap{border-color:#284350}
+.page-commerce-orders .ordersTable th{background:#1a2b35!important}
+.page-commerce-orders .ordersDisclosure summary{min-height:42px}
+.page-commerce-orders .ordersPanelIcon,.page-commerce-orders .ordersCalendarIcon,.page-commerce-orders .ordersSearchIcon{display:inline-grid;place-items:center;width:15px;height:15px;flex:0 0 15px;color:#4bc8ef}
+.page-commerce-orders .ordersPanelIcon svg,.page-commerce-orders .ordersCalendarIcon svg,.page-commerce-orders .ordersSearchIcon svg{display:block;width:14px;height:14px;stroke:currentColor}
+.page-commerce-orders .ordersSearchIcon{color:#78909e}
+.page-commerce-orders .ordersSearch>span{left:10px}
+@media(min-width:981px){
+ .page-commerce-orders .ordersHeroLine{position:relative;margin:-16px 0 12px;min-height:34px}
+ .page-commerce-orders .ordersRangeForm{position:absolute;right:0;top:-65px;z-index:40}
+ .page-commerce-orders .ordersAnalyticsGrid{grid-template-columns:repeat(24,minmax(0,1fr))}
+ .page-commerce-orders .ordersChartCard.ordersChartWide{grid-column:span 10}
+ .page-commerce-orders .ordersChartCard:nth-child(2),.page-commerce-orders .ordersChartCard:nth-child(3){grid-column:span 7}
+ .page-commerce-orders .ordersChartCard:nth-child(4),.page-commerce-orders .ordersChartCard:nth-child(5),.page-commerce-orders .ordersChartCard:nth-child(6){grid-column:span 8}
+}
+@media(min-width:1080px){
+ .page-commerce-orders .ordersKpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+ .page-commerce-orders .ordersPurchaseFilters{grid-template-columns:minmax(240px,1.7fr) repeat(3,minmax(100px,.65fr)) minmax(190px,1.05fr) auto}
+ .page-commerce-orders .ordersDatePicker,.page-commerce-orders .ordersClear{grid-column:auto}
+}
+@media(max-width:980px){
+ .page-commerce-orders .ordersHeroLine{margin-top:-4px}
+ .page-commerce-orders .ordersRangeSelect{min-width:0}
+}
