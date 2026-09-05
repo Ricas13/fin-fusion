@@ -3,6 +3,7 @@
 const {query}=require('../db');
 const requestUsers=require('../integrations/request-user-sync');
 const accessCards=require('./customer-360-access-cards');
+const serviceDesiredState=require('../entitlements/service-desired-state');
 const {esc}=require('./admin-html');
 
 function csrfHidden(token){return `<input type="hidden" name="_csrf" value="${esc(token)}">`;}
@@ -56,30 +57,45 @@ function plansCard(detail,token,plans){
   return card('Plans & Subscriptions',pill(`${current.length} active`,current.length?'good':''),body,actions.join(''));
 }
 
-function mediaCard(detail,token,media){
+function authorityRows(authority){
+  const isAdmin=authority?.authority==='admin';
+  const desired=isAdmin?authority.desiredState:null;
+  return `${stateRow('Authority',pill(isAdmin?'Admin':'Automatic',isAdmin?'warn':''))}${stateRow('Desired',isAdmin?pill(desired==='present'?'Present':'Removed',desired==='present'?'good':'bad'):esc('Automatic'))}`;
+}
+function authorityActions(id,token,service,authority){
+  const isAdmin=authority?.authority==='admin',desired=isAdmin?authority.desiredState:null,actions=[];
+  if(!(isAdmin&&desired==='present'))actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/service-authority/${service}/present`,'Grant / force access'));
+  if(!(isAdmin&&desired==='absent'))actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/service-authority/${service}/removed`,'Remove access',{tone:'danger'}));
+  if(isAdmin)actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/service-authority/${service}/automatic`,'Return to Automatic'));
+  return actions;
+}
+
+function mediaCard(detail,token,media,authority){
   const id=detail.customer.id,jellyfin=media.filter(a=>a.media_server_type!=='emby'),emby=media.filter(a=>a.media_server_type==='emby');
-  const body=`${media.length?media.map(account=>`<div class="opItem"><div><strong>${esc(account.media_server_type==='emby'?'Emby':'Jellyfin')} · ${esc(account.jellyfin_username)}</strong><span>${esc(account.server_name||'Server')} · ${esc(account.disabled?'disabled':account.health_status||'active')}</span></div>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'warn':'good')}</div>`).join(''):'<div class="opEmpty">No Jellyfin / Emby account.</div>'}`;
-  const actions=[];
-  if(media.length){if(jellyfin.length)actions.push(`<a class="button secondary sm" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(id)}">Reset Jellyfin password</a>`);if(jellyfin.length)actions.push(bulkForm(token,id,'migrate_server','Move Jellyfin server'));actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));}
-  else actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Create / provision',{tone:'primary'}));
+  const body=`${authorityRows(authority)}${media.length?media.map(account=>`<div class="opItem"><div><strong>${esc(account.media_server_type==='emby'?'Emby':'Jellyfin')} · ${esc(account.jellyfin_username)}</strong><span>${esc(account.server_name||'Server')} · ${esc(account.disabled?'disabled':account.health_status||'active')}</span></div>${pill(account.disabled?'Disabled':'Enabled',account.disabled?'warn':'good')}</div>`).join(''):'<div class="opEmpty">No Jellyfin / Emby account (present or deleted - never left disabled indefinitely).</div>'}`;
+  const actions=authorityActions(id,token,'jellyfin',authority);
+  if(media.length){if(jellyfin.length)actions.push(`<a class="button secondary sm" href="/admin/customer-jellyfin-password?customerId=${encodeURIComponent(id)}">Reset Jellyfin password</a>`);if(jellyfin.length)actions.push(bulkForm(token,id,'migrate_server','Move Jellyfin server'));}
+  actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));
   if(emby.length&&!jellyfin.length)actions.push('<span class="opActionNote">Emby-specific destructive/credential actions are not exposed unless backed by a safe service lifecycle route.</span>');
   return card('Jellyfin / Emby',pill(`${media.filter(a=>!a.disabled).length}/${media.length} enabled`,media.some(a=>!a.disabled)?'good':''),body,actions.join(''));
 }
 
-function stremioCard(detail,token,state){
+function stremioCard(detail,token,state,authority){
   const id=detail.customer.id,row=state?.row||null,status=String(row?.status||'not provisioned').replaceAll('_',' ');
-  const body=`${stateRow('Entitlement',row?pill(status,row.status==='active'?'good':'warn'):pill('Not provisioned','warn'))}${stateRow('Install access',esc(state?.manifestUrl?'Available':row?.status==='active'?'Rotate to recover':'Not issued'))}`;
-  const actions=[buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/stremio/install`,state?.recovered?'Rotate credentials':'Provision / re-provision')];
+  const body=`${authorityRows(authority)}${stateRow('Entitlement',row?pill(status,row.status==='active'?'good':'warn'):pill('Not provisioned','warn'))}${stateRow('Install access',esc(state?.manifestUrl?'Available':row?.status==='active'?'Rotate to recover':'Not issued'))}`;
+  const actions=authorityActions(id,token,'stremio',authority);
+  actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/stremio/install`,state?.recovered?'Rotate credentials':'Provision / re-provision'));
   if(row&&row.status!=='revoked')actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/stremio/revoke`,'Revoke install'));
   if(row)actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/stremio-household/reset`,'Reset household/IP'));
   actions.push(buttonForm(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Reconcile'));
   return card('Stremio',row?pill(status,row.status==='active'?'good':'warn'):pill('Not provisioned','warn'),body,actions.join(''));
 }
 
-function overseerrCard(detail,token,request){
+function overseerrCard(detail,token,request,authority){
   const id=detail.customer.id,status=request?.status||'not provisioned',linked=Boolean(request?.external_user_id),eligible=Boolean(request?.entitlement_active);
-  const body=`${stateRow('Account',linked?esc(request.external_username||request.external_email||'Linked'):'Not created')}${stateRow('Access',pill(eligible&&!request?.access_suspended?'Enabled':'Not active',eligible&&!request?.access_suspended?'good':'warn'))}${request?.last_error?stateRow('Problem',esc(String(request.last_error).slice(0,120))):''}`;
-  const actions=[buttonForm(token,`/admin/request-users/${encodeURIComponent(id)}/sync`,linked?'Re-provision / resync':'Create / provision')];
+  const body=`${authorityRows(authority)}${stateRow('Account',linked?esc(request.external_username||request.external_email||'Linked'):'Not created')}${stateRow('Access',pill(eligible&&!request?.access_suspended?'Enabled':'Not active',eligible&&!request?.access_suspended?'good':'warn'))}${request?.last_error?stateRow('Problem',esc(String(request.last_error).slice(0,120))):''}`;
+  const actions=authorityActions(id,token,'overseerr',authority);
+  actions.push(buttonForm(token,`/admin/request-users/${encodeURIComponent(id)}/sync`,linked?'Re-provision / resync':'Create / provision'));
   if(linked)actions.push(`<a class="button secondary sm" href="/admin/request-users">Open request-service manager</a>`);
   return card('Overseerr',pill(status,status==='synced'?'good':status==='failed'?'bad':'warn'),body,actions.join(''));
 }
@@ -119,12 +135,18 @@ function styles(){return `<style>
 
 async function render(detail,token,options={}){
   if(!detail?.customer?.id)return'';
-  const extra=await supplementary(detail.customer.id);
+  const customerId=detail.customer.id;
+  const [extra,jellyfinAuthority,stremioAuthority,overseerrAuthority]=await Promise.all([
+    supplementary(customerId),
+    serviceDesiredState.resolveServiceDesiredState(customerId,'jellyfin').catch(()=>({authority:'automatic',desiredState:null})),
+    serviceDesiredState.resolveServiceDesiredState(customerId,'stremio').catch(()=>({authority:'automatic',desiredState:null})),
+    serviceDesiredState.resolveServiceDesiredState(customerId,'overseerr').catch(()=>({authority:'automatic',desiredState:null}))
+  ]);
   // Lane-aware "Permissions, libraries & requests…" remain available through the compact Jellyfin & Overseerr settings disclosure below.
   const accessHtml=await accessCards.accessLibrariesRequests(detail,token,options).catch(()=> '');
   const hasJellyfinPlan=currentSubscriptions(detail).some(sub=>['jellyfin','bundle'].includes(String(sub.service_type_snapshot||sub.service_type||'jellyfin').toLowerCase()));
   const planSettings=hasJellyfinPlan&&accessHtml?disclosure('Jellyfin & Overseerr settings','Library access · Jellyfin user settings · request access',`<div class="opNested">${accessHtml}</div>`):'';
-  const cards=[portalCard(detail,token),plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media),stremioCard(detail,token,options.stremioInfo),overseerrCard(detail,token,extra.request),discordCard(detail,token,extra.discord),holdsCard(detail,token),dangerCard(detail,token,extra.media,options.stremioInfo)];
+  const cards=[portalCard(detail,token),plansCard(detail,token,extra.plans),mediaCard(detail,token,extra.media,jellyfinAuthority),stremioCard(detail,token,options.stremioInfo,stremioAuthority),overseerrCard(detail,token,extra.request,overseerrAuthority),discordCard(detail,token,extra.discord),holdsCard(detail,token),dangerCard(detail,token,extra.media,options.stremioInfo)];
   const core=`<div class="customer360Core" data-customer360-core><div class="opGrid">${cards.join('')}</div>${planSettings}${activityDisclosure(detail)}${paymentsDisclosure(extra.payments)}${logsDisclosure(detail)}</div>`;
   return `${accessCards.styles()}${styles()}${core}`;
 }

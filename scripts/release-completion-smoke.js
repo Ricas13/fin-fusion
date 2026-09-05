@@ -10,8 +10,14 @@ function lacks(source,fragment,message){assert(!source.includes(fragment),messag
 
 const customerDashboard=read('views/customer/dashboard.ejs');
 const customerNav=read('views/customer/_nav.ejs');
-has(customerNav,'href="/account/docs"','customer Help guide must always be available');
-has(customerNav,'>Help</a>','customer Help guide label must remain distinct');
+// Pre-existing drift from an unrelated commit (56f604f1 "Simplify customer
+// nav and move Notifications into Account"): Help is intentionally no
+// longer a top-level customer nav tab (see the comment in
+// views/customer/_nav.ejs) and instead lives on the dashboard's "Manage my
+// account" section. Fixed here only because it blocked verifying an
+// unrelated change's own test suite.
+has(customerDashboard,'href="/account/docs"','customer Help guide must always be available');
+has(customerDashboard,'>Help</a>','customer Help guide label must remain distinct');
 has(customerNav,'href="/account/support"','customer Support must remain a separate destination from Help');
 lacks(customerNav,'Help &amp; support','customer Help guide and Support must not collapse back into one ambiguous tab');
 has(customerDashboard,'Everything you have, in one place.','customer Home must summarize simultaneous active access');

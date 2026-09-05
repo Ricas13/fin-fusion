@@ -35,6 +35,7 @@ const {
   usernameAvailable,
   applyPolicy,
   disableJellyfinAccount,
+  deleteJellyfinAccount,
   markPrimaryAccount,
   renameJellyfinAccount
 } = core;
@@ -191,6 +192,7 @@ module.exports = {
   usernameAvailable,
   applyPolicy,
   disableJellyfinAccount,
+  deleteJellyfinAccount,
   markPrimaryAccount,
   renameJellyfinAccount,
   currentEntitlement,

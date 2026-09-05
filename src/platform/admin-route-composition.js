@@ -72,6 +72,7 @@ const { createAdminCustomerOperatorRouter } = require('./admin-customer-operator
 const { createAdminCustomerForceAccessRouter } = require('./admin-customer-force-access');
 const { createAdminJellyfinReenableRouter } = require('./admin-jellyfin-reenable');
 const { createAdminManualEntitlementRouter } = require('./admin-manual-entitlement');
+const { createAdminServiceAuthorityRouter } = require('./admin-service-authority');
 const { createAdminImpersonationRouter } = require('./admin-impersonation');
 const { createAdminLanePolicyRouter } = require('./admin-lane-policy');
 const { createAdminCustomerBillingRouter } = require('./admin-customer-billing');
@@ -177,6 +178,7 @@ function mountAdminRoutes(app) {
   app.use(createAdminCustomerAccessHoldsRouter());
   app.use(createAdminCustomerManagementRouter());
   app.use(createAdminManualEntitlementRouter());
+  app.use(createAdminServiceAuthorityRouter());
 
   mountCritical('impersonation', createAdminImpersonationRouter());
   mountCritical('lanePolicy', createAdminLanePolicyRouter());

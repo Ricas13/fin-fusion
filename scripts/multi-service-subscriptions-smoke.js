@@ -12,6 +12,12 @@ const state=require('../src/entitlements/subscription-state');
 function source(file){return fs.readFileSync(path.join(__dirname,'..',file),'utf8');}
 function staticContracts(){
   const dashboard=source('views/customer/dashboard.ejs'),checkoutJs=source('public/js/customer-checkout.js'),activity=source('src/platform/customer-activity.js'),nav=source('views/customer/_nav.ejs'),affiliate=source('views/customer/affiliate.ejs'),adminCore=source('src/platform/admin-html-core.js'),inactivity=source('src/automation/customer-inactivity.js'),subscriptionState=source('src/entitlements/subscription-state.js'),provisioning=source('src/jellyfin/resilient-provisioning.js'),migration=source('db/migrations/045_parallel_free_jellyfin_access.sql');
+  // Pre-existing drift from an unrelated commit (56f604f1 "Simplify customer
+  // nav and move Notifications into Account"), unrelated to this refactor:
+  // Help is intentionally no longer a top-level customer nav tab (see the
+  // comment in views/customer/_nav.ejs) and instead lives on the dashboard's
+  // "Manage my account" section. Fixed here only because it blocked
+  // verifying this change's own test suite.
   assert(dashboard.includes('Your active access')&&dashboard.includes('accessRows.forEach'),'customer home must render all live subscriptions instead of one plan');
   assert(dashboard.includes("if(s&&s.is_free_tier)return'Free Server'")&&dashboard.includes("return String(s&&s.billing_interval_snapshot||s&&s.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin'"),'customer Home active-access summary must identify Free and Premium Jellyfin lanes');
   assert(dashboard.includes('stremioInstallUrl')&&dashboard.includes('Install in Stremio'),'customer home must expose the recovered Stremio installation link');
@@ -20,7 +26,7 @@ function staticContracts(){
   assert(!dashboard.includes('discountField'),'provider-specific promo inputs must not return');
   assert(activity.includes('FROM stream_policy_events')&&!activity.includes('FROM playback_policy_events'),'Activity must query the current stream-policy event table');
   assert(!nav.includes('>Setup<')&&!nav.includes('Plan &amp; billing'),'redundant Setup and Plan & Billing navigation must stay retired');
-  assert(nav.includes('href="/account/docs">Help</a>'),'customer Help must use customer-only docs');
+  assert(dashboard.includes('href="/account/docs">Help</a>'),'customer Help must use customer-only docs');
   assert(adminCore.includes('href="/admin/docs"')&&!adminCore.includes('class="topHelpLink" href="/help"'),'admin Help must use admin-only docs');
   assert(affiliate.indexOf('Your referral link')<affiliate.indexOf('Available'),'Benefits must show the referral link before credit metrics');
   assert(inactivity.includes("ja.access_lane='free'")&&inactivity.includes('ph.server_id=ja.server_id'),'Free inactivity must use only Free-lane server playback');
