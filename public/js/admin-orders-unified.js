@@ -4,6 +4,16 @@
   if (window.__captainfinOrdersUnifiedBound) return;
   window.__captainfinOrdersUnifiedBound = true;
 
+  const accessibleLabels = {
+    orderStatus: 'Filter purchases by status',
+    orderProvider: 'Filter purchases by provider',
+    orderPlan: 'Filter purchases by plan'
+  };
+  for (const [name, label] of Object.entries(accessibleLabels)) {
+    const control = document.querySelector(`[name="${name}"]`);
+    if (control && !control.getAttribute('aria-label')) control.setAttribute('aria-label', label);
+  }
+
   const rangeForm = document.querySelector('[data-orders-range-form]');
   const range = rangeForm?.querySelector('[data-orders-range]');
   const custom = rangeForm?.querySelector('[data-orders-custom]');
