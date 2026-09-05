@@ -75,10 +75,6 @@ function quickPresets(filters,counts={}){
     return `<nav class="customerQuickFilters" aria-label="Customer quick filters">${items.map(([key,label])=>{const count=counts[key];return `<a class="customerQuickFilter ${current===key?'active':''}" href="${esc(presetHref(filters,key))}"><span>${esc(label)}</span>${Number.isFinite(Number(count))?`<span class="customerQuickCount">${esc(number(count))}</span>`:''}</a>`}).join('')}</nav>`;
 }
 function advancedActive(filters){return Boolean(filters.status||filters.accountStatus||filters.paymentProvider||filters.reconciliationStatus||filters.hasOverride!==undefined||filters.library||filters.expiryFrom||filters.expiryTo||filters.lastActiveFrom||filters.lastActiveTo||filters.registeredFrom||filters.registeredTo)}
-// Legacy static-audit markers retained while the repo-level product audit is
-// migrated to the new single-toolbar Customers design. These are comments only:
-// customerSearchRow
-// <details class="customerAdvancedFilters"
 function filterForm(filters,options,sort,counts={}){
     const accessOptions=[['','All access states'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
     const advanced=advancedActive(filters);
@@ -125,7 +121,7 @@ function relativeTime(value,{never='Never'}={}){
 function expiryInfo(x){
     if(!x.plan_id)return{primary:'—',secondary:''};
     if(x.permanent_access)return{primary:'Permanent',secondary:'No expiry'};
-    if(x.is_free_tier)return{primary:'Activity based',secondary:'Free access rules'};
+    if(x.is_free_tier)return{primary:'—',secondary:''};
     const end=x.access_expires_at||x.current_period_end;
     if(!end)return{primary:'—',secondary:''};
     if(!x.has_current_entitlement)return{primary:formatDate(end),secondary:`Expired ${relativeTime(end)}`,tone:'bad'};
@@ -138,14 +134,14 @@ function planCommercialType(x){
     if(x.billing_interval==='trial'||x.subscription_status==='trialing')return'Trial';
     if(x.is_free_tier)return'Free';
     const label=({month:'Monthly','6_months':'6 months',year:'Yearly',custom:'Paid'})[String(x.billing_interval||'')]||'Paid';
-    return `${label} · Paid`;
+    return label==='Paid'?'Paid':`${label} - Paid`;
 }
 function planPriceMeta(x){
     if(!x.plan_id)return'No payment record';
     if(x.is_free_tier)return'No payment required';
     if(x.billing_interval==='trial'||x.subscription_status==='trialing')return'No charge during trial';
-    const money=moneyFormat.formatMinor(Number(x.price_minor||0),'USD');
-    const suffix=({month:'/ month','6_months':' / 6 months',year:'/ year'})[String(x.billing_interval||'')]||'';
+    const money=moneyFormat.formatMinor(Number(x.price_minor||0),'USD',{trimZeroDecimals:true});
+    const suffix=({month:' / month','6_months':' / 6 months',year:' / year'})[String(x.billing_interval||'')]||'';
     return `${money}${suffix}`;
 }
 function rowState(x){
@@ -176,8 +172,11 @@ function serviceCell(x,state){
     const current=x.has_current_entitlement===true;
     const type=String(x.service_type||'jellyfin');
     const jfCount=Number(x.customer_account_count||0);
-    if(type==='stremio')return `<div class="customerServiceState good"><span class="customerStateDot"></span><strong>Stremio</strong></div><div class="subText">${current?'Entitlement active':'No active entitlement'}</div>`;
-    if(jfCount>0)return `<div class="customerServiceState good"><span class="customerStateDot"></span><strong>Active</strong></div>${x.jellyfin_username?`<div class="subText">${esc(x.jellyfin_username)}</div>`:'<div class="subText">Jellyfin linked</div>'}`;
+    if(type==='stremio')return `<div class="customerServiceState ${current?'good':''}"><span class="customerStateDot"></span><strong>${current?'Active':'Not active'}</strong></div><div class="subText">Stremio${current?' entitlement active':' · no active entitlement'}</div>`;
+    if(jfCount>0){
+        if(current)return `<div class="customerServiceState good"><span class="customerStateDot"></span><strong>Active</strong></div>${x.jellyfin_username?`<div class="subText">${esc(x.jellyfin_username)}</div>`:'<div class="subText">Jellyfin linked</div>'}`;
+        return `<div class="customerServiceState bad"><span class="customerStateDot"></span><strong>Still present</strong></div>${x.jellyfin_username?`<div class="subText">${esc(x.jellyfin_username)} · remove access</div>`:'<div class="subText">Jellyfin access should be removed</div>'}`;
+    }
     if(current)return `<div class="customerServiceState ${state.access==='Provisioning'?'warn':'bad'}"><span class="customerStateDot"></span><strong>${state.access==='Provisioning'?'Provisioning':'Not linked'}</strong></div><div class="subText">Add Jellyfin access</div>`;
     return `<div class="customerServiceState"><span class="customerStateDot"></span><strong>Not linked</strong></div><div class="subText">No Jellyfin account</div>`;
 }
@@ -189,7 +188,7 @@ function row(x){
     return `<tr data-customer-row>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
         <td data-label="Customer"><div class="customerIdentityCell"><span class="customerAvatar" aria-hidden="true">${esc(initials(customerName))}</span><div><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</div></div></td>
-        <td data-label="Plan / product"><strong>${esc(planCommercialType(x))}</strong><div class="subText">${esc(planPriceMeta(x))}</div><div class="subText customerProductMeta">${esc(serviceLabel(x.service_type)||'Jellyfin')}</div></td>
+        <td data-label="Plan / product"><strong>${esc(planCommercialType(x))}</strong><div class="subText">${esc(planPriceMeta(x))}</div></td>
         <td data-label="Access status">${pill(state.access,state.tone)}<div class="subText customerAccessReason">${esc(state.reason)}</div></td>
         <td data-label="Jellyfin / service">${serviceCell(x,state)}</td>
         <td data-label="Server">${serverCell(x)}</td>
@@ -229,18 +228,41 @@ function planMixPanel(plans,total){
     return `<article class="customerInsight customerPlanMix"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon blue">⌁</span> Plan mix</h3><p>Current customer distribution.</p></div></div><div class="customerPlanMixBody"><div class="customerPlanDonut" style="background:conic-gradient(${esc(stops.join(','))})"><div><strong>${esc(number(total))}</strong><span>customers</span></div></div><div class="customerPlanLegend">${rows.map((row,index)=>`<div><span class="customerPlanName"><i style="background:${colors[index%colors.length]}"></i>${esc(row.name)}</span><strong>${esc(number(row.count))}</strong><span>${pct(row.count,total)}%</span></div>`).join('')}</div></div></article>`;
 }
 function readinessRow(label,value,total,tone='good'){return `<div class="customerReadinessRow"><span>${esc(label)}</span><strong>${esc(number(value))}</strong><div class="customerReadinessTrack"><i class="${tone}" style="width:${pct(value,total)}%"></i></div><small>${pct(value,total)}%</small></div>`}
-function accessSupportPanel(summary,supportCount,total){return `<article class="customerInsight customerReadiness"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon blue">⚙</span> Access & support</h3><p>Activation, service readiness and support.</p></div></div><div class="customerReadinessRows">${readinessRow('Activated & ready',summary.healthy_access||0,total,'good')}${readinessRow('Pending activation',summary.provisioning_pending||0,total,'blue')}${readinessRow('Missing Jellyfin access',summary.missing_jellyfin||0,total,'bad')}${readinessRow('Support requests',supportCount||0,total,'warn')}</div></article>`}
+function accessSupportPanel(summary,supportCount,total){return `<article class="customerInsight customerReadiness"><div class="customerInsightHead"><div><h3><span class="customerInsightIcon blue">⚙</span> Access & support</h3><p>Activation, service readiness and support.</p></div></div><div class="customerReadinessRows">${readinessRow('Activated & ready',summary.ready_access||0,total,'good')}${readinessRow('Pending activation',summary.provisioning_pending||0,total,'blue')}${readinessRow('Missing Jellyfin access',summary.missing_jellyfin||0,total,'bad')}${readinessRow('Support requests',supportCount||0,total,'warn')}</div></article>`}
 async function customerOverview(){
     const [summary,plans,support]=await Promise.all([
         query(`SELECT
             (SELECT COUNT(*)::int FROM customers) total,
             (SELECT COUNT(*)::int FROM customers WHERE created_at>=NOW()-INTERVAL '30 days') new_30d,
             (SELECT COUNT(DISTINCT customer_id)::int FROM playback_history WHERE customer_id IS NOT NULL AND started_at>=NOW()-INTERVAL '30 days') active_30d,
-            (SELECT COUNT(*)::int FROM effective_customer_entitlements) active_access,
-            (SELECT COUNT(*)::int FROM effective_customer_entitlements e WHERE e.status<>'past_due' AND (COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') NOT IN ('jellyfin','bundle') OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin'))) healthy_access,
-            (SELECT COUNT(*)::int FROM effective_customer_entitlements e WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle') AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')) missing_jellyfin,
-            (SELECT COUNT(*)::int FROM effective_customer_entitlements e WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle') AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin') AND EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=e.customer_id AND cps.status IN('pending','running'))) provisioning_pending,
-            (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e WHERE e.status='past_due' OR (COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle') AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin'))) attention,
+            (SELECT COUNT(DISTINCT customer_id)::int FROM effective_customer_entitlements) active_access,
+            (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e
+                WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') NOT IN ('jellyfin','bundle')
+                   OR EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')) ready_access,
+            (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e
+                WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                  AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')) missing_jellyfin,
+            (SELECT COUNT(DISTINCT e.customer_id)::int FROM effective_customer_entitlements e
+                WHERE COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                  AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=e.customer_id AND ja.account_purpose='jellyfin')
+                  AND EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=e.customer_id AND cps.status IN('pending','running'))) provisioning_pending,
+            (SELECT COUNT(DISTINCT c.id)::int FROM customers c
+                LEFT JOIN app_users au ON au.id=c.user_id
+                WHERE au.active=FALSE
+                   OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
+                       WHERE e.customer_id=c.id AND e.status='past_due')
+                   OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
+                       WHERE e.customer_id=c.id
+                         AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                         AND NOT EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')
+                         AND NOT EXISTS(SELECT 1 FROM customer_provisioning_state cps WHERE cps.customer_id=c.id AND cps.status IN('pending','running')))
+                   OR EXISTS(SELECT 1 FROM effective_customer_entitlements e
+                       WHERE e.customer_id=c.id
+                         AND COALESCE(NULLIF(e.service_type_snapshot,''),e.service_type,'jellyfin') IN ('jellyfin','bundle')
+                         AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin')
+                         AND EXISTS(SELECT 1 FROM jellyfin_accounts ja2 JOIN jellyfin_policy_reconciliation jpr ON jpr.jellyfin_account_id=ja2.id WHERE ja2.customer_id=c.id AND ja2.account_purpose='jellyfin' AND jpr.status='failed'))
+                   OR (NOT EXISTS(SELECT 1 FROM effective_customer_entitlements e WHERE e.customer_id=c.id)
+                       AND EXISTS(SELECT 1 FROM jellyfin_accounts ja WHERE ja.customer_id=c.id AND ja.account_purpose='jellyfin'))) attention,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE p.billing_interval='trial' OR e.status='trialing') trials,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE COALESCE(p.is_free_tier,FALSE)=TRUE OR COALESCE(p.price_minor,0)=0) free,
             (SELECT COUNT(*)::int FROM effective_customer_entitlements e JOIN plans p ON p.id=e.plan_id WHERE COALESCE(p.is_free_tier,FALSE)=FALSE AND COALESCE(p.price_minor,0)>0) paid,
@@ -250,11 +272,11 @@ async function customerOverview(){
         supportTickets.staffQueueSummary().catch(()=>({count:0}))
     ]);
     const s=summary.rows[0]||{};
-    const presets={all:Number(s.total||0),attention:Number(s.attention||0),active:Number(s.active_access||0),trials:Number(s.trials||0),free:Number(s.free||0),paid:Number(s.paid||0),no_plan:Number(s.no_plan||0)};
+    const presets={all:Number(s.total||0),attention:Number(s.attention||0),active:Number(s.ready_access||0),trials:Number(s.trials||0),free:Number(s.free||0),paid:Number(s.paid||0),no_plan:Number(s.no_plan||0)};
     return{summary:s,plans:plans.rows,presets,supportCount:Number(support.count||0)};
 }
 function customerOverviewHtml(data){
-    const s=data.summary||{},p=data.presets||{},total=Number(s.total||p.all||0),active=Number(p.active||s.active_access||0),recent=Number(s.active_30d||0),attention=Number(p.attention||0),healthy=Math.min(Number(s.healthy_access||active),Math.max(total-attention,0));
+    const s=data.summary||{},p=data.presets||{},total=Number(s.total||p.all||0),active=Number(s.active_access||0),ready=Number(p.active||s.ready_access||0),recent=Number(s.active_30d||0),attention=Number(p.attention||0),healthy=Math.max(0,Math.min(ready,total-attention));
     return `<section class="customerOverview"><div class="customerKpiGrid">${kpiCard({kind:'customers',label:'Total customers',value:total,meta:`${number(s.new_30d)} joined in the last 30 days`,detail:s.new_30d?`+${number(s.new_30d)}`:'',tone:'blue'})}${kpiCard({kind:'active',label:'Active access',value:active,meta:`${pct(active,total)}% of total`,detail:`${pct(active,total)}%`,tone:'good'})}${kpiCard({kind:'recent',label:'Recently active',value:recent,meta:'active in the last 30 days',detail:`${pct(recent,total)}%`,tone:'blue'})}${kpiCard({kind:'attention',label:'Needs attention',value:attention,meta:'need your attention',detail:attention?'Review':'Clear',tone:attention?'bad':'good'})}</div><div class="customerInsightGrid">${healthPanel({total,healthy,attention})}${planMixPanel(data.plans,total)}${accessSupportPanel(s,data.supportCount,total)}</div></section>`;
 }
 function productContext(filters){if(!filters.service)return'';const label=serviceLabel(filters.service);return `<div class="securityNote standalone"><strong>${esc(label)} customer context</strong><div class="subText">This is the shared customer system filtered to customers with ${esc(label)} or bundle history. Change the Product filter below to switch context.</div></div>`}
