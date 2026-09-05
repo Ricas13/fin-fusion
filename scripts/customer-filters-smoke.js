@@ -74,50 +74,52 @@ function main() {
         assert.strictEqual(tableSort.nextDirection(nameDesc,'expiring',CUSTOMER_SORTS),'asc');
     }
 
-    // Search and the everyday filters are permanently visible, while only the
-    // genuinely secondary controls stay inside the advanced disclosure. The
-    // table is organised around entitlement, Jellyfin identity and placement.
+    // Customers is a single compact operator workspace: dashboard overview,
+    // one primary filter toolbar, one secondary disclosure and an actionable table.
     {
         const source=fs.readFileSync(path.join(__dirname,'../src/platform/admin-customers-list.js'),'utf8');
         const filterClient=fs.readFileSync(path.join(__dirname,'../public/js/admin-customer-filters.js'),'utf8');
         const mobileCss=fs.readFileSync(path.join(__dirname,'../public/css/admin-customers-list.css'),'utf8');
         const bulk=fs.readFileSync(path.join(__dirname,'../public/js/admin-customers-bulk.js'),'utf8');
-        assert.ok(source.includes('>Name</label>'),'customer search must be visibly labelled Name');
-        assert.ok(source.includes('customerSearchRow')&&source.includes('data-native-submit="true"'),'customer search must stay outside the hidden advanced-filter shell');
-        assert.ok(source.includes('customerPrimaryFilters'),'everyday customer filters must have their own always-visible container');
-        assert.ok(source.includes('<details class="customerAdvancedFilters"'),'secondary filters must remain in a separate disclosure');
+
+        assert.ok(source.includes('customerKpiGrid')&&source.includes('customerInsightGrid'),'customer overview must use the compact KPI + insight layout');
+        for(const label of ['Total customers','Active access','Recently active','Needs attention','Customer health','Plan mix','Access & support'])assert.ok(source.includes(label),`overview card missing: ${label}`);
+
+        assert.ok(source.includes('customerPrimaryFilters'),'primary customer controls must share one visible toolbar');
+        assert.ok(source.includes('placeholder="Search customers, name or email…"'),'customer search must remain visible');
         assert.ok(source.includes('<option value="">All products</option>'),'Product must default to All products');
-        assert.ok(source.includes("const accessOptions=[['','Any']"),'Access must default to Any');
-        assert.ok(source.includes('<option value="">Any Plan</option>'),'Plan must default to Any Plan');
-        assert.ok(source.includes('<option value="">Any Jellyfin Server</option>'),'Server must default to Any Jellyfin Server');
-        assert.ok(source.includes('<summary>More Advanced Filters'),'advanced disclosure must be explicitly labelled More Advanced Filters');
+        assert.ok(source.includes("const accessOptions=[['','All access states']"),'Access must default to All access states');
+        assert.ok(source.includes('<option value="">All plans</option>'),'Plan must default to All plans');
+        assert.ok(source.includes('<option value="">All servers</option>'),'Server must default to All servers');
+        assert.ok(source.includes('<details class="customerMoreFilters"'),'there must be one secondary More filters disclosure');
         const productPos=source.indexOf('id="customerFilterProduct"'),accessPos=source.indexOf('id="customerFilterAccess"'),planPos=source.indexOf('id="customerFilterPlan"'),serverPos=source.indexOf('id="customerFilterServer"');
-        assert.ok(productPos<accessPos&&accessPos<planPos&&planPos<serverPos,'server markup must render Product / Access / Plan / Jellyfin Server in the requested order');
-        assert.ok(!filterClient.includes('originalGrid.replaceWith'),'client enhancement must never replace the server-rendered filter layout');
-        assert.ok(!filterClient.includes('advancedGrid.appendChild'),'client enhancement must never move primary controls into advanced filters');
-        assert.ok(filterClient.includes('[product, access, plan, server, actions]'),'client must preserve Product / Access / Plan / Jellyfin Server order');
-        assert.ok(source.includes("sortHeader(filters,sortState,'Access','access')"),'Access must be a first-class sortable column');
-        assert.ok(source.includes('<th>Jellyfin</th>'),'Jellyfin readiness must have its own column');
-        assert.ok(source.includes("sortHeader(filters,sortState,'Server','server')"),'server placement must have its own column');
-        assert.ok(source.includes("sortHeader(filters,sortState,'Renews / expires','expiring')"),'commercial timing must be visible');
-        assert.ok(source.includes("sortHeader(filters,sortState,'Last active','recent')"),'last activity must be visible');
-        assert.ok(source.includes('function planMeta(x)'),'Plan cell must expose Free/Paid/Trial, subscription state and product context');
-        assert.ok(!source.includes("sortHeader(filters,sortState,'Attention','attention')"),'redundant Attention column must stay removed');
+        assert.ok(productPos<accessPos&&accessPos<planPos&&planPos<serverPos,'toolbar order must stay Product / Access / Plan / Server');
+        assert.ok(!filterClient.includes('appendChild'),'client filter code must never relocate server-rendered controls');
+        assert.ok(filterClient.includes('[data-primary-filter]'),'primary selects should auto-apply without another nested Apply row');
+
+        assert.ok(source.includes("sortHeader(filters,sortState,'Plan / product','plan'"),'table must expose Plan / product');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Access status','access'"),'table must expose Access status');
+        assert.ok(source.includes('<th>Jellyfin / service</th>'),'table must expose Jellyfin / service state');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Server','server'"),'server placement must stay visible');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Renewal / expiry','expiring'"),'renewal/expiry must stay visible');
+        assert.ok(source.includes("sortHeader(filters,sortState,'Last active','recent'"),'last activity must stay visible');
+        assert.ok(source.includes('customerAvatar'),'rows must keep the high-scanability identity treatment');
+        assert.ok(source.includes('customerRowActions'),'row actions must stay explicit');
         assert.ok(source.includes('customerAccessReason'),'attention/reason context must sit beneath the Access state');
-        assert.ok(!source.includes("sortHeader(filters,sortState,'Registered','registered')"),'registration date must not occupy the default table');
-        assert.ok(!source.includes('Jellyfin disabled'),'the retired Jellyfin disabled state must not be exposed by filters or overview copy');
+        assert.ok(source.includes('customerPageSize'),'table must expose a rows-per-page control');
+        assert.ok(source.includes("{sort:'recent',dir:'desc'}"),'Customers should default to last-active sorting like the approved mockup');
+        assert.ok(!source.includes("sortHeader(filters,sortState,'Registered','registered'"),'registration date must not occupy the default table');
+        assert.ok(!source.includes('Jellyfin disabled'),'the retired Jellyfin disabled state must not be exposed');
+
         for(const preset of ['Needs attention','Ready','Trials','Free','Paid','No plan'])assert.ok(source.includes(preset),`quick preset missing: ${preset}`);
-        for(const advanced of ['Payment provider','Subscription status','Customer settings','Library','Registered from','Registered to'])assert.ok(source.includes(advanced),`advanced filter capability missing: ${advanced}`);
-        assert.ok(source.includes('jellyfin_required'),'readiness denominator must only count current customers whose plan requires Jellyfin');
+        for(const advanced of ['Payment provider','Subscription status','Customer settings','Library','Registered from','Registered to'])assert.ok(source.includes(advanced),`secondary filter capability missing: ${advanced}`);
         assert.ok(source.includes('data-bulk-bar hidden'),'bulk actions must stay contextual until a selection exists');
         assert.ok(source.includes('Select all ${total} matching'),'bulk select-all matching semantics must be preserved');
         assert.ok(bulk.includes('bar.hidden=selected===0&&!matching'),'client must reveal bulk controls only for an active selection');
-        assert.ok(source.includes("{...state,page:page+1}")&&source.includes("{...state,page:page-1}"),'pagination must preserve sort state');
         assert.ok(source.includes('aria-sort='),'sortable headings must remain accessible');
 
-        // The shared responsiveTable stylesheet normally turns each row into a
-        // card. Customers intentionally overrides that behaviour so operators
-        // can scan rows on phones instead of navigating tall stacked cards.
+        // The shared responsiveTable stylesheet normally turns rows into cards.
+        // Customers must remain a horizontally pannable table with pinned identity/action.
         assert.ok(mobileCss.includes('.customerResults .tableWrap>.customerTable{display:table!important'),'mobile Customers must stay a real table instead of becoming cards');
         assert.ok(mobileCss.includes('overflow-x:auto!important'),'mobile Customers must allow horizontal panning when all columns do not fit');
         assert.ok(mobileCss.includes('.customerTable td::before{display:none!important;content:none!important}'),'mobile Customers must suppress card-style data-label pseudo headings');
