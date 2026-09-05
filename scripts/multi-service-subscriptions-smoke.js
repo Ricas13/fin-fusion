@@ -21,8 +21,8 @@ function staticContracts(){
   assert(dashboard.includes('Your active access')&&dashboard.includes('accessRows.forEach'),'customer home must render all live subscriptions instead of one plan');
   assert(dashboard.includes("if(s&&s.is_free_tier)return'Free Server'")&&dashboard.includes("return String(s&&s.billing_interval_snapshot||s&&s.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin'"),'customer Home active-access summary must identify Free and Premium Jellyfin lanes');
   assert(dashboard.includes('stremioInstallUrl')&&dashboard.includes('Install in Stremio'),'customer home must expose the recovered Stremio installation link');
-  assert.strictEqual((dashboard.match(/data-shared-promo/g)||[]).length,1,'customer home must have one shared promo field');
-  assert(dashboard.includes('data-promo-target')&&checkoutJs.includes('data-shared-promo'),'shared promo must be copied into whichever provider form is submitted');
+  assert((dashboard.match(/data-promo-input/g)||[]).length>=1,'customer home must expose a promo field on each paid plan card');
+  assert(dashboard.includes('data-promo-target')&&checkoutJs.includes('data-promo-input'),'promo code must be copied into whichever provider form is submitted');
   assert(!dashboard.includes('discountField'),'provider-specific promo inputs must not return');
   assert(activity.includes('FROM stream_policy_events')&&!activity.includes('FROM playback_policy_events'),'Activity must query the current stream-policy event table');
   assert(!nav.includes('>Setup<')&&!nav.includes('Plan &amp; billing'),'redundant Setup and Plan & Billing navigation must stay retired');
