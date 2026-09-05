@@ -112,7 +112,8 @@ assert(navModel.hiddenPages['stremio-playback']?.parentKey==='stremio-sources','
 assert(/\/admin\/servers\/operations\/server\/\$\{esc\(server\.id\)\}\/placement-mode/.test(serverControl)&&/\/admin\/libraries\/\$\{esc\(server\.id\)\}\/refresh/.test(serverControl),'Servers must expose placement and library scan controls inline.');
 assert(/Public URL & regional format/.test(settings)&&/Public base URL/.test(settings)&&/Timezone/.test(settings),'General settings must own canonical public URL and regional formatting.');
 assert(/Session & registration limits/.test(settings)&&/Trusted outbound hostnames/.test(settings)&&/Abandoned activation cleanup/.test(settings),'Security settings must own session, outbound-trust and pending-activation safety controls.');
-assert(/Placement health policy/.test(serverControl)&&/Future capacity preview/.test(serverControl)&&/placement-mode/.test(fleet),'Servers must own placement-health, drain/maintenance and simulation controls while legacy fleet mutations remain compatible.');
+assert(!/Placement health policy/.test(serverControl)&&!/Future capacity preview/.test(serverControl),'The main Servers page must not expose the retired advanced placement policy or capacity preview panels.');
+assert(/placement-mode/.test(serverControl)&&/placement-policy/.test(fleet)&&/placement-preview/.test(fleet),'Servers must keep inline drain/maintenance controls while legacy advanced fleet mutations remain compatible.');
 assert(/pendingRegistrations\.stats/.test(settings)&&/Registration & verification/.test(settings),'Security settings must expose staged-registration state.');
 
 const oldRuntime=process.env.STREMIO_RUNTIME_ENABLED;delete process.env.STREMIO_RUNTIME_ENABLED;
