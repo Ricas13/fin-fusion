@@ -21,6 +21,12 @@
   // activity columns with the old Paid / Current plan / Registered layout.
   const customerTable = document.querySelector('#customersTable');
   if (customerTable) {
+    if (!document.querySelector('link[href="/css/admin-customers-fidelity.css"]')) {
+      const fidelityStyles = document.createElement('link');
+      fidelityStyles.rel = 'stylesheet';
+      fidelityStyles.href = '/css/admin-customers-fidelity.css';
+      document.head.appendChild(fidelityStyles);
+    }
     const headings = [...(customerTable.tHead?.rows?.[0]?.cells || [])]
       .map(cell => String(cell.textContent || '').replace(/[↑↓]/g, '').trim());
     if (headings.includes('Plan / product') && headings.includes('Jellyfin / service')) {
