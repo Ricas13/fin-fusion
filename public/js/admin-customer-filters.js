@@ -1,48 +1,83 @@
 'use strict';
 
 (() => {
-  const form = document.querySelector('form.compactFilterForm[action="/admin/users"]');
-  if (!form) return;
+  if (window.__captainfinCustomerFiltersBound) return;
+  window.__captainfinCustomerFiltersBound = true;
 
-  // The Customers page owns its layout server-side. Never move primary fields
-  // into the collapsed advanced <details> panel. The old enhancer grabbed the
-  // first .formGrid (which is inside that panel) and caused the visible filters
-  // to disappear behind "More filters".
-  const primary = form.querySelector('.customerPrimaryFilters');
-  const groupFor = name => form.querySelector(`[name="${name}"]`)?.closest('.formGroup');
-  if (primary) {
-    const product = groupFor('service');
-    const access = groupFor('access');
-    const plan = groupFor('plan');
-    const server = groupFor('server');
-    const actions = primary.querySelector('.customerFilterActions');
-    [product, access, plan, server, actions].forEach(node => {
-      if (node) primary.appendChild(node);
-    });
-  }
+  // The redesigned Customers directory is server-rendered. Mark its table as
+  // authoritative before the legacy admin-customer-operator compatibility
+  // enhancer runs, so changing operator-facing column labels cannot cause the
+  // old Paid / Current plan / Registered table to be reconstructed at runtime.
+  const customerTable = document.querySelector('#customersTable');
+  if (customerTable) customerTable.dataset.operatorFriendly = '1';
 
-  const searchLabel = form.querySelector('label[for="customerFilterSearch"]');
-  if (searchLabel) searchLabel.textContent = 'Name';
+  // Navigation coherence moves page-scoped actions out of the global top bar.
+  // On Customers, finish that move with the approved mockup geometry: title on
+  // the left, actions on the right. The rAF pass runs after the shared
+  // navigation enhancer has created .pageHeaderActions.
+  const polishCustomersHeader = () => {
+    if (!customerTable) return;
+    const header = document.querySelector('.content > .pageHeader');
+    const actions = header?.querySelector(':scope > .pageHeaderActions');
+    if (!header || !actions) return;
+    if (window.matchMedia('(min-width:821px)').matches) {
+      header.style.setProperty('display', 'grid', 'important');
+      header.style.setProperty('grid-template-columns', 'minmax(0,1fr) auto', 'important');
+      header.style.setProperty('align-items', 'start', 'important');
+      header.style.setProperty('gap', '18px', 'important');
+      actions.style.setProperty('display', 'flex', 'important');
+      actions.style.setProperty('align-items', 'center', 'important');
+      actions.style.setProperty('justify-content', 'flex-end', 'important');
+      actions.style.setProperty('gap', '8px', 'important');
+      actions.style.setProperty('margin', '0', 'important');
+    }
+    const primary = actions.querySelector('.button');
+    if (primary) {
+      primary.style.setProperty('border-color', '#20cbbd', 'important');
+      primary.style.setProperty('background', '#22d5c3', 'important');
+      primary.style.setProperty('color', '#062522', 'important');
+      primary.style.setProperty('font-weight', '750', 'important');
+    }
+  };
+  polishCustomersHeader();
+  requestAnimationFrame(polishCustomersHeader);
 
-  const accessAny = form.querySelector('#customerFilterAccess option[value=""]');
-  if (accessAny) accessAny.textContent = 'Any';
-  const planAny = form.querySelector('#customerFilterPlan option[value=""]');
-  if (planAny) planAny.textContent = 'Any Plan';
-  const serverAny = form.querySelector('#customerFilterServer option[value=""]');
-  if (serverAny) serverAny.textContent = 'Any Jellyfin Server';
+  const filterForm = document.querySelector('form.compactFilterForm[action="/admin/users"]');
 
-  const advanced = form.querySelector('details.customerAdvancedFilters > summary');
-  if (advanced) {
-    const active = advanced.textContent.includes('· active');
-    advanced.textContent = `More Advanced Filters${active ? ' · active' : ''}`;
-  }
-
-  const submitNow = () => {
+  const submit = form => {
+    if (!form) return;
     if (typeof form.requestSubmit === 'function') form.requestSubmit();
     else form.submit();
   };
 
-  form.querySelectorAll('.customerPrimaryFilters select').forEach(control => {
-    control.addEventListener('change', submitNow);
+  if (filterForm) {
+    // The Customers page owns its layout server-side. Never move fields between
+    // primary and advanced regions; that was the source of the old nested filter
+    // panels. Primary selects apply immediately, while More filters stays the
+    // single secondary disclosure.
+    filterForm.querySelectorAll('[data-primary-filter]').forEach(control => {
+      control.addEventListener('change', () => submit(filterForm));
+    });
+
+    const search = filterForm.querySelector('#customerFilterSearch');
+    if (search) {
+      search.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        submit(filterForm);
+      });
+    }
+  }
+
+  document.querySelectorAll('form[data-auto-submit]').forEach(form => {
+    form.querySelectorAll('select').forEach(control => {
+      control.addEventListener('change', () => {
+        if (control.id === 'customerSortSelect') {
+          const direction = form.querySelector('input[name="dir"]');
+          if (direction) direction.disabled = true;
+        }
+        submit(form);
+      });
+    });
   });
 })();
