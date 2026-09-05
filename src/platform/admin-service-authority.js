@@ -18,9 +18,7 @@ function noStore(_req, res, next) {
     res.setHeader('Pragma', 'no-cache');
     next();
 }
-function safeLog(value, max = 500) {
-    return JSON.stringify(String(value == null ? '' : value).slice(0, max));
-}
+function safeLog(value, max = 500) { return JSON.stringify(String(value == null ? '' : value).slice(0, max)); }
 function customerPath(customerId, key = '', message = '') {
     const notice = key ? `&${encodeURIComponent(key)}=${encodeURIComponent(message)}` : '';
     return `/admin/users/${encodeURIComponent(customerId)}?tab=access${notice}`;
@@ -35,10 +33,21 @@ async function resyncService(customerId, service) {
         catch (error) { console.warn('Overseerr resync after admin-authority change deferred:', safeLog(error.message)); }
     }
 }
+async function reconcileAll(customerId) {
+    const warnings = [];
+    try { await provisioning.reconcileCustomer(customerId); }
+    catch (error) { warnings.push(`media: ${String(error.message || error).slice(0, 180)}`); }
+    try { await requestUserSync.syncOneCustomer(customerId); }
+    catch (error) { warnings.push(`request service: ${String(error.message || error).slice(0, 180)}`); }
+    return warnings;
+}
 
 async function returnToNormalAutomation(customerId, { actorUserId = null } = {}) {
     const reason = 'Returned customer to normal automation';
     const permanent = await permanentAccess.revoke(customerId, { actorUserId, reason });
+    await query(`UPDATE customers
+                 SET automation_protected=FALSE,automation_protected_reason=NULL,automation_protected_at=NULL,automation_protected_by=NULL,updated_at=NOW()
+                 WHERE id=$1`, [customerId]);
     const services = {};
     for (const service of ['jellyfin', 'stremio', 'overseerr']) {
         services[service] = await serviceAdminControl.clear(customerId, service, { actorUserId, reason });
@@ -49,32 +58,53 @@ async function returnToNormalAutomation(customerId, { actorUserId = null } = {})
         customerId,
         JSON.stringify({
             permanentAccessRevoked: Boolean(permanent.changed),
+            automationProtectionCleared: true,
             serviceOverridesCleared: Object.fromEntries(Object.entries(services).map(([service, result]) => [service, Boolean(result.changed)])),
             providerBillingChanged: false
         })
     ]);
+    return { permanent, services, warnings: await reconcileAll(customerId) };
+}
 
-    const warnings = [];
-    try { await provisioning.reconcileCustomer(customerId); }
-    catch (error) { warnings.push(`media: ${String(error.message || error).slice(0, 180)}`); }
-    try { await requestUserSync.syncOneCustomer(customerId); }
-    catch (error) { warnings.push(`request service: ${String(error.message || error).slice(0, 180)}`); }
-    return { permanent, services, warnings };
+async function removeAllServiceAccess(customerId, { actorUserId = null } = {}) {
+    const reason = 'All service access removed by administrator';
+    const services = {};
+    for (const service of ['jellyfin', 'stremio', 'overseerr']) {
+        services[service] = await serviceAdminControl.setRemoved(customerId, service, { actorUserId, reason });
+    }
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                 VALUES($1,'admin.customer.remove_all_service_access','customer',$2,$3::jsonb)`, [
+        actorUserId, customerId, JSON.stringify({ services: Object.keys(services), providerBillingChanged: false, subscriptionChanged: false })
+    ]);
+    return { services, warnings: await reconcileAll(customerId) };
 }
 
 function createAdminServiceAuthorityRouter() {
     const router = express.Router();
     router.use('/admin/users/:customerId/service-authority', gate, noStore, routeRateLimit.middleware({ scope: 'admin-service-authority', max: 60, windowSeconds: 60, reason: 'admin service authority change' }));
     router.use('/admin/users/:customerId/manage/normal-automation', gate, noStore, routeRateLimit.middleware({ scope: 'admin-normal-automation', max: 20, windowSeconds: 60, reason: 'admin return to normal automation' }));
+    router.use('/admin/users/:customerId/manage/remove-all-service-access', gate, noStore, routeRateLimit.middleware({ scope: 'admin-remove-all-service-access', max: 10, windowSeconds: 60, reason: 'admin remove all service access' }));
 
     router.post('/admin/users/:customerId/manage/normal-automation', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         try {
             const result = await returnToNormalAutomation(req.params.customerId, { actorUserId: req.session.authUserId });
             if (result.warnings.length) return res.redirect(customerPath(req.params.customerId, 'error', `Returned to normal automation, but reconciliation needs attention: ${result.warnings.join(' · ')}`));
-            return res.redirect(customerPath(req.params.customerId, 'message', 'Returned to normal automation. Valid plans were kept; permanent access, admin service overrides and server pinning were removed.'));
+            return res.redirect(customerPath(req.params.customerId, 'message', 'Returned to normal automation. Valid plans were kept; Permanent User status, cleanup protection, admin service overrides and server pinning were removed.'));
         } catch (error) {
             return res.redirect(customerPath(req.params.customerId, 'error', String(error.message || 'Could not return to normal automation.').slice(0, 300)));
+        }
+    });
+
+    router.post('/admin/users/:customerId/manage/remove-all-service-access', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        if (String(req.body?.confirmation || '').trim().toUpperCase() !== 'REMOVE ACCESS') return res.redirect(customerPath(req.params.customerId, 'error', 'Type REMOVE ACCESS to confirm removing all service access.'));
+        try {
+            const result = await removeAllServiceAccess(req.params.customerId, { actorUserId: req.session.authUserId });
+            if (result.warnings.length) return res.redirect(customerPath(req.params.customerId, 'error', `Service removal was recorded, but reconciliation needs attention: ${result.warnings.join(' · ')}`));
+            return res.redirect(customerPath(req.params.customerId, 'message', 'All service access removed by administrator. Billing and subscription history were left untouched.'));
+        } catch (error) {
+            return res.redirect(customerPath(req.params.customerId, 'error', String(error.message || 'Could not remove all service access.').slice(0, 300)));
         }
     });
 
@@ -114,4 +144,4 @@ function createAdminServiceAuthorityRouter() {
     return router;
 }
 
-module.exports = { createAdminServiceAuthorityRouter, returnToNormalAutomation };
+module.exports = { createAdminServiceAuthorityRouter, returnToNormalAutomation, removeAllServiceAccess };
