@@ -66,6 +66,10 @@ async function auditImpersonatedMutation(req,res) {
         query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.customer_action','customer',$2,$3::jsonb)`, [snapshot.actorUserId,snapshot.customerId,JSON.stringify({ targetUserId:snapshot.customerUserId,method:req.method,path:String(req.originalUrl||req.path).slice(0,500),statusCode:res.statusCode,blocked:res.statusCode===403,impersonationId:snapshot.id })]).catch(error => console.error('Impersonation audit failed:', error.message));
     });
 }
+async function auditImpersonationEnd(imp, metadata = {}) {
+    if (!imp) return;
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.end','customer',$2,$3::jsonb)`, [imp.actorUserId,imp.customerId,JSON.stringify({ targetUserId:imp.customerUserId,impersonationId:imp.id,startedAt:imp.startedAt,...metadata })]);
+}
 
 // Mounted very early in application.js, before every /account router: an
 // earlier-mounted account router that sends its own response would otherwise
@@ -94,11 +98,20 @@ function createAdminImpersonationRouter() {
 
     router.post('/admin/users/:customerId/impersonate', gate, async (req,res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
-        if (req.session.impersonation) return res.status(409).send('Nested impersonation is not allowed. Exit the current impersonation first.');
         try {
             const target = await targetCustomer(req.params.customerId);
             if (!target) throw new Error('Customer not found.');
             if (!eligibleTarget(target)) throw new Error('Only active customer portal accounts can be impersonated. Privileged/admin identities are never eligible.');
+
+            const previous = req.session.impersonation ? { ...req.session.impersonation } : null;
+            if (previous) {
+                await auditImpersonationEnd(previous, {
+                    endedReason: 'switched_customer',
+                    switchedToCustomerId: target.customer_id,
+                    switchedToUserId: target.user_id
+                });
+            }
+
             req.session.impersonation = {
                 id: crypto.randomUUID(),
                 actorUserId: req.session.authUserId,
@@ -113,7 +126,7 @@ function createAdminImpersonationRouter() {
             req.session.customerUserId = target.user_id;
             req.session.customerUsername = target.username;
             req.session.customerSessionVersion = Number(target.session_version || 1);
-            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.start','customer',$2,$3::jsonb)`, [req.session.authUserId,target.customer_id,JSON.stringify({ targetUserId:target.user_id,impersonationId:req.session.impersonation.id,mode:'read_only' })]);
+            await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.start','customer',$2,$3::jsonb)`, [req.session.authUserId,target.customer_id,JSON.stringify({ targetUserId:target.user_id,impersonationId:req.session.impersonation.id,mode:'read_only',replacedImpersonationId:previous?.id||null })]);
             await save(req);
             return res.redirect('/account');
         } catch (error) {
@@ -125,7 +138,7 @@ function createAdminImpersonationRouter() {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
         const imp = req.session.impersonation;
         if (!imp) return res.redirect('/admin/users');
-        await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.impersonation.end','customer',$2,$3::jsonb)`, [imp.actorUserId,imp.customerId,JSON.stringify({ targetUserId:imp.customerUserId,impersonationId:imp.id,startedAt:imp.startedAt })]);
+        await auditImpersonationEnd(imp, { endedReason: 'explicit_exit' });
         const customerId = imp.customerId;
         delete req.session.impersonation;
         delete req.session.customerId;
