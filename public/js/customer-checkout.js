@@ -20,38 +20,81 @@
   }
   syncPaymentReadiness();
 
-  const field=document.querySelector('[data-shared-promo]');
-  const status=field?ensureStatus(field):null;
   const csrfToken=document.querySelector('input[name="_csrf"]')?.value||'';
-  let timer=null,requestId=0,lastPreview=null;
+  const previewCache=new Map();
+  const previewTimers=new WeakMap();
+  const requestIds=new WeakMap();
 
-  function ensureStatus(input){let node=document.querySelector('[data-promo-status]');if(!node){const panel=input.closest('.sharedPromoPanel'),line=panel&&panel.querySelector('.sharedPromoLine');node=document.createElement('div');node.className='promoStatus';node.dataset.promoStatus='';(line||input).insertAdjacentElement('afterend',node);}node.setAttribute('aria-live','polite');return node;}
   function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-  function normalized(){return field?String(field.value||'').trim().toUpperCase().slice(0,40):'';}
-  function targets(){return Array.from(document.querySelectorAll('[data-promo-target]'));}
+  function promoInputs(){return Array.from(document.querySelectorAll('[data-promo-input]'));}
   function cards(){return Array.from(document.querySelectorAll('[data-plan-code]'));}
+  function normalized(input){return input?String(input.value||'').trim().toUpperCase().slice(0,40):'';}
+  function inputCard(input){return input?.closest('[data-plan-code]')||null;}
+  function sharedInput(){return promoInputs().find(input=>!inputCard(input))||null;}
+  function promoInputForCard(card){return card?.querySelector('[data-promo-input]')||sharedInput();}
+  function promoCodeForCard(card){return normalized(promoInputForCard(card));}
+  function cardForPlanCode(planCode){return cards().find(card=>String(card.dataset.planCode||'')===String(planCode||''))||null;}
   function money(minor,currency){try{return new Intl.NumberFormat('en-GB',{style:'currency',currency:currency||'USD',currencyDisplay:'narrowSymbol'}).format(Number(minor||0)/100);}catch(_){return `${({'GBP':'£','USD':'$','EUR':'€'})[String(currency||'USD').toUpperCase()]||'¤'}${(Number(minor||0)/100).toFixed(2)}`;}}
-  function sync(){const value=normalized();if(field)field.value=value;for(const input of targets())input.value=value;}
-  function setStatus(message,state){if(!status)return;status.textContent=message||'';status.dataset.state=state||'';}
+  function statusNodeFor(input){const group=input?.closest('.planPromo, .sharedPromoPanel');if(!group)return null;let node=group.querySelector('[data-promo-status]');if(!node){const line=group.querySelector('.planPromoLine, .sharedPromoLine')||group;node=document.createElement('div');node.className='planPromoStatus';node.dataset.promoStatus='';node.setAttribute('aria-live','polite');line.insertAdjacentElement('afterend',node);}return node;}
+  function setInputStatus(input,message,state){const node=statusNodeFor(input);if(!node)return;node.textContent=message||'';node.dataset.state=state||'';}
   function prepareCard(card){const price=card.querySelector('[data-plan-price]');if(price&&!price.dataset.originalPrice)price.dataset.originalPrice=price.textContent.trim();}
   function prepareCards(){for(const card of cards())prepareCard(card);}
-  function resetCard(card){const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');if(price&&price.dataset.originalPrice)price.textContent=price.dataset.originalPrice;if(note){note.hidden=true;note.textContent='';}card.classList.remove('promoApplied');}
+  function resetCard(card){if(!card)return;const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');if(price&&price.dataset.originalPrice)price.textContent=price.dataset.originalPrice;if(note){note.hidden=true;note.textContent='';}card.classList.remove('promoApplied');}
   function resetCards(){for(const card of cards())resetCard(card);}
   function discountedMinor(base,row){if(!row)return base;if(row.discountType==='percent')return Math.max(0,Math.round(base*(100-Number(row.percentOff||0))/100));if(row.discountType==='fixed')return Math.max(0,base-Number(row.fixedOffMinor||0));return Number.isFinite(Number(row.finalMinor))?Number(row.finalMinor):base;}
-  function applyPreview(payload){
-    lastPreview=payload||null;resetCards();
-    if(!payload||!payload.valid){setStatus(payload?.message||'That promo code is not valid for the available plans.','error');return;}
-    const planCards=cards();if(!planCards.length){setStatus('Promo code is valid for eligible plans. The exact discounted amount will be confirmed before payment.','success');return;}
-    for(const card of planCards){const code=card.dataset.planCode,row=payload.plans&&payload.plans[code];if(!row||!row.valid)continue;const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');if(!price)continue;const base=Number(card.dataset.planBaseMinor||row.baseMinor||0),currency=card.dataset.planCurrency||row.currency,final=discountedMinor(base,row),original=money(base,currency),discounted=money(final,currency);price.textContent=discounted;card.classList.add('promoApplied');if(note){const saving=Math.max(0,base-final);note.textContent=saving>0?`${original} normally · save ${money(saving,currency)} on this payment`:'Promo applies to this plan';note.hidden=false;}}
-    setStatus(payload.message,'success');
+  function syncTargetsForInput(input){
+    if(!input)return;
+    const code=normalized(input);if(input.value!==code)input.value=code;
+    const card=inputCard(input),targets=card?card.querySelectorAll('[data-promo-target]'):document.querySelectorAll('[data-promo-target]');
+    for(const target of targets)target.value=code;
   }
-  async function preview(){if(!field)return;sync();const code=normalized(),id=++requestId;if(!code){lastPreview=null;resetCards();setStatus('Stripe subscription promos reduce the first payment. PayPal recurring plans cannot be repriced, so promo checkout uses PayPal one-time payment.','');return;}setStatus('Checking promo code…','pending');try{const response=await fetch('/account/discount-preview?code='+encodeURIComponent(code),{headers:{Accept:'application/json'},credentials:'same-origin'}),payload=await response.json();if(id!==requestId)return;applyPreview(payload);}catch(_){if(id!==requestId)return;lastPreview=null;resetCards();setStatus('Promo preview is unavailable right now. You can still enter the code at checkout.','error');}}
-  function schedule(){sync();clearTimeout(timer);timer=setTimeout(preview,350);}
+  function syncTargetsForCard(card){
+    const input=promoInputForCard(card),code=normalized(input);
+    for(const target of card?.querySelectorAll('[data-promo-target]')||[])target.value=code;
+  }
+  function applyPreview(input,payload){
+    const card=inputCard(input);
+    if(!card){
+      if(!payload||!payload.valid)setInputStatus(input,payload?.message||'That promo code is not valid for the available plans.','error');
+      else setInputStatus(input,payload.message||'Promo code is valid for eligible plans. The exact discounted amount will be confirmed before payment.','success');
+      return;
+    }
+    resetCard(card);
+    if(!payload||!payload.valid){setInputStatus(input,payload?.message||'That promo code is not valid for this plan.','error');return;}
+    const code=card.dataset.planCode,row=payload.plans&&payload.plans[code];
+    if(!row||!row.valid){setInputStatus(input,'Not valid for this plan.','error');return;}
+    const price=card.querySelector('[data-plan-price]'),note=card.querySelector('[data-promo-price-note]');
+    if(!price){setInputStatus(input,payload.message||'Promo code applied.','success');return;}
+    const base=Number(card.dataset.planBaseMinor||row.baseMinor||0),currency=card.dataset.planCurrency||row.currency,final=discountedMinor(base,row),original=money(base,currency),discounted=money(final,currency);
+    price.textContent=discounted;card.classList.add('promoApplied');
+    if(note){const saving=Math.max(0,base-final);note.textContent=saving>0?`${original} normally · save ${money(saving,currency)} on this payment`:'Promo applies to this plan';note.hidden=false;}
+    setInputStatus(input,payload.message||'Promo code applied.','success');
+  }
+  async function preview(input){
+    if(!input)return;
+    syncTargetsForInput(input);
+    const code=normalized(input),card=inputCard(input);
+    if(!code){if(card)resetCard(card);else resetCards();setInputStatus(input,'','');return;}
+    const id=(requestIds.get(input)||0)+1;requestIds.set(input,id);setInputStatus(input,'Checking…','pending');
+    try{
+      const response=await fetch('/account/discount-preview?code='+encodeURIComponent(code),{headers:{Accept:'application/json'},credentials:'same-origin'}),payload=await response.json();
+      if(requestIds.get(input)!==id)return;
+      previewCache.set(code,payload);applyPreview(input,payload);
+    }catch(_){
+      if(requestIds.get(input)!==id)return;
+      if(card)resetCard(card);setInputStatus(input,'Promo preview is unavailable right now. You can still enter the code at checkout.','error');
+    }
+  }
+  function schedule(input){
+    syncTargetsForInput(input);
+    const existing=previewTimers.get(input);if(existing)clearTimeout(existing);
+    previewTimers.set(input,setTimeout(()=>preview(input),350));
+  }
 
   function providerLabel(provider){return provider==='stripe'?'Stripe':provider==='paypal'?'PayPal':'Plisio';}
   function buttonClass(provider){return provider==='stripe'?'stripe':provider==='paypal'?'paypal':'primary';}
   function accessLabel(kind,quantity){return kind==='households'?`${quantity} household connection${quantity===1?'':'s'} · unlimited streams & devices`:`${quantity} concurrent stream${quantity===1?'':'s'}`;}
-  function checkoutForm(plan,variant,provider,mode,label){return `<form class="plainForm checkoutForm" method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(normalized())}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
+  function checkoutForm(plan,variant,provider,mode,label){const card=cardForPlanCode(plan.code),promo=promoCodeForCard(card);return `<form class="plainForm checkoutForm" method="post" action="/account/checkout/${esc(provider)}"><input type="hidden" name="_csrf" value="${esc(csrfToken)}"><input type="hidden" name="planCode" value="${esc(plan.code)}"><input type="hidden" name="accessQuantity" value="${esc(variant.quantity)}">${mode?`<input type="hidden" name="checkoutMode" value="${esc(mode)}">`:''}<input type="hidden" name="discountCode" data-promo-target value="${esc(promo)}"><button class="button ${buttonClass(provider)} full" type="submit">${esc(label)}</button></form>`;}
   function availableModes(variant,provider){return(variant.paymentOptions||[]).filter(option=>option.provider===provider).map(option=>option.checkoutMode);}
   function selectedOption(plan,select){return plan.variants.find(variant=>Number(variant.quantity)===Number(select.value))||plan.variants[0];}
   function actionMarkup(plan,variant){
@@ -77,8 +120,8 @@
     let scarcity=card.querySelector('[data-dashboard-variant-scarcity]');if(!scarcity){scarcity=document.createElement('div');scarcity.className='accessMeta';scarcity.dataset.dashboardVariantScarcity='';select.closest('.field')?.insertAdjacentElement('afterend',scarcity);}if(scarcity)scarcity.textContent=variant.scarcity||'Available';
     const actions=card.querySelector('.planActions');if(actions)actions.innerHTML=actionMarkup(plan,variant);
     card.classList.toggle('soldOut',Boolean(variant.soldOut));
-    sync();
-    if(lastPreview&&normalized())applyPreview(lastPreview);else resetCard(card);
+    syncTargetsForCard(card);
+    const input=promoInputForCard(card),code=normalized(input),cached=code&&previewCache.get(code);if(cached)applyPreview(input,cached);else resetCard(card);
   }
   function installVariantPicker(plan){
     const card=document.querySelector(`[data-plan-code="${CSS.escape(plan.code)}"]`);if(!card||card.dataset.variantPickerReady==='1')return;card.dataset.variantPickerReady='1';
@@ -92,7 +135,14 @@
   }
 
   prepareCards();
-  if(field){field.addEventListener('input',schedule);field.addEventListener('change',preview);const clear=document.querySelector('[data-clear-promo]');if(clear)clear.addEventListener('click',()=>{field.value='';sync();preview();field.focus();});sync();}
-  document.addEventListener('submit',event=>{if(event.target&&event.target.matches('.checkoutForm'))sync();},true);
+  for(const input of promoInputs()){
+    input.addEventListener('input',()=>schedule(input));
+    input.addEventListener('change',()=>preview(input));
+    syncTargetsForInput(input);
+  }
+  for(const clearButton of document.querySelectorAll('[data-promo-clear]')){
+    clearButton.addEventListener('click',()=>{const group=clearButton.closest('.planPromo, .sharedPromoPanel'),input=group?.querySelector('[data-promo-input]');if(!input)return;input.value='';preview(input);input.focus();});
+  }
+  document.addEventListener('submit',event=>{const form=event.target;if(!form||!form.matches('.checkoutForm'))return;const card=form.closest('[data-plan-code]'),input=promoInputForCard(card);if(input)syncTargetsForInput(input);},true);
   loadVariants();
 })();
