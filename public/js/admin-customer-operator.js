@@ -164,6 +164,12 @@
     const customerId=customerMatch[1];try{enhanceCustomerDetail(customerId);}catch(_){}
     // Other admin scripts add support actions shortly after first paint. Keep
     // the customer header/navigation compact if those nodes arrive late.
-    const observer=new MutationObserver(()=>relocatePortalAndTopActions(customerId));observer.observe(document.body,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),5000);
+    // A continuous MutationObserver on document.body here previously
+    // re-triggered on every DOM mutation on the page - including its own -
+    // which could pin the main thread for its whole run (the same freeze
+    // fixed for admin-customer-primary-actions.js). A couple of bounded,
+    // one-shot re-checks is enough to catch late-arriving nodes.
+    try{requestAnimationFrame(()=>relocatePortalAndTopActions(customerId));}catch(_){}
+    setTimeout(()=>{try{relocatePortalAndTopActions(customerId);}catch(_){}},250);
   }
 })();
