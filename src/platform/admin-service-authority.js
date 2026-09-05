@@ -2,8 +2,10 @@
 
 const express = require('express');
 const csrf = require('../auth/csrf');
+const { query } = require('../db');
 const routeRateLimit = require('../security/route-rate-limit');
 const serviceAdminControl = require('../entitlements/service-admin-control');
+const permanentAccess = require('../entitlements/permanent-access');
 const provisioning = require('../jellyfin/resilient-provisioning');
 const requestUserSync = require('../integrations/request-user-sync');
 
@@ -17,9 +19,6 @@ function noStore(_req, res, next) {
     next();
 }
 function safeLog(value, max = 500) {
-    // JSON.stringify escapes newlines/control characters into a single-line
-    // \n-style representation - CodeQL's log-injection query recognizes this
-    // as a genuine sanitizer, unlike an ad hoc regex replace.
     return JSON.stringify(String(value == null ? '' : value).slice(0, max));
 }
 function customerPath(customerId, key = '', message = '') {
@@ -37,14 +36,47 @@ async function resyncService(customerId, service) {
     }
 }
 
-// Generalized service-scoped admin-authority actions ("give access", "remove
-// a customer", "return to automatic management") for Jellyfin, Stremio and
-// Overseerr from one place, backed by customer_service_admin_control.
-// Server pinning stays on the existing Jellyfin-specific move/assign routes
-// (admin-customer-operator.js), which now write through the same table.
+async function returnToNormalAutomation(customerId, { actorUserId = null } = {}) {
+    const reason = 'Returned customer to normal automation';
+    const permanent = await permanentAccess.revoke(customerId, { actorUserId, reason });
+    const services = {};
+    for (const service of ['jellyfin', 'stremio', 'overseerr']) {
+        services[service] = await serviceAdminControl.clear(customerId, service, { actorUserId, reason });
+    }
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                 VALUES($1,'admin.customer.return_to_normal_automation','customer',$2,$3::jsonb)`, [
+        actorUserId,
+        customerId,
+        JSON.stringify({
+            permanentAccessRevoked: Boolean(permanent.changed),
+            serviceOverridesCleared: Object.fromEntries(Object.entries(services).map(([service, result]) => [service, Boolean(result.changed)])),
+            providerBillingChanged: false
+        })
+    ]);
+
+    const warnings = [];
+    try { await provisioning.reconcileCustomer(customerId); }
+    catch (error) { warnings.push(`media: ${String(error.message || error).slice(0, 180)}`); }
+    try { await requestUserSync.syncOneCustomer(customerId); }
+    catch (error) { warnings.push(`request service: ${String(error.message || error).slice(0, 180)}`); }
+    return { permanent, services, warnings };
+}
+
 function createAdminServiceAuthorityRouter() {
     const router = express.Router();
     router.use('/admin/users/:customerId/service-authority', gate, noStore, routeRateLimit.middleware({ scope: 'admin-service-authority', max: 60, windowSeconds: 60, reason: 'admin service authority change' }));
+    router.use('/admin/users/:customerId/manage/normal-automation', gate, noStore, routeRateLimit.middleware({ scope: 'admin-normal-automation', max: 20, windowSeconds: 60, reason: 'admin return to normal automation' }));
+
+    router.post('/admin/users/:customerId/manage/normal-automation', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            const result = await returnToNormalAutomation(req.params.customerId, { actorUserId: req.session.authUserId });
+            if (result.warnings.length) return res.redirect(customerPath(req.params.customerId, 'error', `Returned to normal automation, but reconciliation needs attention: ${result.warnings.join(' · ')}`));
+            return res.redirect(customerPath(req.params.customerId, 'message', 'Returned to normal automation. Valid plans were kept; permanent access, admin service overrides and server pinning were removed.'));
+        } catch (error) {
+            return res.redirect(customerPath(req.params.customerId, 'error', String(error.message || 'Could not return to normal automation.').slice(0, 300)));
+        }
+    });
 
     router.post('/admin/users/:customerId/service-authority/:service/present', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
@@ -82,4 +114,4 @@ function createAdminServiceAuthorityRouter() {
     return router;
 }
 
-module.exports = { createAdminServiceAuthorityRouter };
+module.exports = { createAdminServiceAuthorityRouter, returnToNormalAutomation };
