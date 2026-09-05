@@ -2,6 +2,7 @@
 
 const express = require('express');
 const browser = require('../payments/transaction-browser');
+const liveStripeHistory = require('../payments/live-stripe-payment-history');
 const reportingCurrency = require('./reporting-currency');
 const runtimeSettings = require('./runtime-settings');
 const ui = require('./admin-ui');
@@ -70,10 +71,17 @@ function pagination(result) {
 }
 async function page(req) {
     await runtimeSettings.ensureLoaded();
+    let liveSyncWarning = '';
+    try {
+        await liveStripeHistory.syncRecent();
+    } catch (error) {
+        console.error('Live Stripe payment-history catch-up failed:', error.message || error);
+        liveSyncWarning = `<div class="operatorCallout warn"><strong>Stripe live catch-up could not complete.</strong> Stored transactions are still shown below, but very recent Stripe charges may be missing until the provider API is reachable again.</div>`;
+    }
     const [result, coverage, currencyState] = await Promise.all([browser.listTransactions(req.query || {}), browser.coverage(), reportingCurrency.get()]);
     const warning = result.truncated ? `<div class="operatorCallout warn"><strong>Very large filtered result.</strong> Classification scanning stopped after ${esc(browser.MAX_CLASSIFIED_SCAN)} provider rows. Narrow the date/provider filters for an exact count.</div>` : '';
     const table = result.rows.length ? `<div class="tableWrap"><table class="dataTable responsiveTable transactionTable"><thead><tr><th>When</th><th>Provider / type</th><th>Classification / status</th><th>Customer</th><th>Amount (${esc(currencyState.currency)})</th><th>Original fee</th><th>Provider IDs</th></tr></thead><tbody>${result.rows.map(row=>transactionRow(row,currencyState)).join('')}</tbody></table></div>${pagination(result)}` : `<div class="empty">No transactions match these filters.</div>`;
-    const body = `${ui.noticesFromRequest(req)}${coverageHtml(coverage)}${filterForm(result.filters)}${warning}<section class="section">${ui.sectionHeader({title:'Stripe + PayPal transactions',description:`Full imported provider ledger. Business-facing amounts are normalized to ${currencyState.currency}; original provider currency and IDs remain visible for reconciliation.`})}${table}</section><style>.transactionTable{min-width:1220px}.transactionFilters .formGrid{grid-template-columns:repeat(3,minmax(180px,1fr))}.transactionSearch{grid-column:span 2}.transactionId{font-size:10px;word-break:break-all}.transactionPager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;flex-wrap:wrap}.buttonRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:850px){.transactionFilters .formGrid{grid-template-columns:1fr}.transactionSearch{grid-column:auto}}@media(max-width:600px){.transactionFilters{padding:12px}.transactionFilters .buttonRow{display:grid;grid-template-columns:1fr}.transactionFilters .buttonRow .button{width:100%;justify-content:center}.transactionPager{display:grid;grid-template-columns:1fr;text-align:center}.transactionPager .button{width:100%;justify-content:center}.transactionId{overflow-wrap:anywhere;word-break:break-word}.operatorCallout{overflow-wrap:anywhere}}</style>`;
+    const body = `${ui.noticesFromRequest(req)}${liveSyncWarning}${coverageHtml(coverage)}${filterForm(result.filters)}${warning}<section class="section">${ui.sectionHeader({title:'Stripe + PayPal transactions',description:`Full imported provider ledger. Business-facing amounts are normalized to ${currencyState.currency}; original provider currency and IDs remain visible for reconciliation.`})}${table}</section><style>.transactionTable{min-width:1220px}.transactionFilters .formGrid{grid-template-columns:repeat(3,minmax(180px,1fr))}.transactionSearch{grid-column:span 2}.transactionId{font-size:10px;word-break:break-all}.transactionPager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;flex-wrap:wrap}.buttonRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:850px){.transactionFilters .formGrid{grid-template-columns:1fr}.transactionSearch{grid-column:auto}}@media(max-width:600px){.transactionFilters{padding:12px}.transactionFilters .buttonRow{display:grid;grid-template-columns:1fr}.transactionFilters .buttonRow .button{width:100%;justify-content:center}.transactionPager{display:grid;grid-template-columns:1fr;text-align:center}.transactionPager .button{width:100%;justify-content:center}.transactionId{overflow-wrap:anywhere;word-break:break-word}.operatorCallout{overflow-wrap:anywhere}}</style>`;
     return layout({siteName:runtimeSettings.siteName(),active:'transactions',title:'Transactions',subtitle:'Every imported Stripe and PayPal provider transaction in one searchable ledger',body});
 }
 function createAdminTransactionsRouter() {
