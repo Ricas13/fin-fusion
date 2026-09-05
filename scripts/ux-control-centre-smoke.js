@@ -62,7 +62,8 @@ assert(/targetServiceType:target\.service_type/.test(bulkOperations),'bulk plan-
 assert(/registerHandler\('migrate_server'/.test(operatorBulkOperations)&&/serverMigration\.createMigration/.test(operatorBulkOperations)&&/serverMigration\.executeMigration/.test(operatorBulkOperations),'bulk server migration must execute through the single operator migration handler and controlled migration service');
 assert(!/bulk-server-migration/.test(jobs)&&/operator-bulk-operations/.test(jobs),'automation worker must load only the canonical operator bulk migration handler');
 assert(/accessKind/.test(serverMigration)&&/kind === 'paid'/.test(serverMigration),'server migration must distinguish free access from paid access');
-assert((serverMigration.match(/account_purpose='jellyfin'/g)||[]).length>=4&&!/account_purpose='stremio_internal'/.test(serverMigration),'server migration must only select, restore and roll back normal Jellyfin identities');
+assert(/account_purpose='jellyfin'/.test(serverMigration)&&!/account_purpose='stremio_internal'/.test(serverMigration),'server migration must operate only on normal Jellyfin identities');
+assert((serverMigration.match(/provisioning\.deleteJellyfinAccount/g)||[]).length>=3&&(serverMigration.match(/provisioning\.createJellyfinAccount/g)||[]).length>=2&&!/provisioning\.disableJellyfinAccount/.test(serverMigration),'server migration and rollback must delete/recreate identities, never disable them');
 assert(/serviceKind/.test(plans)&&/Stremio-only plan/.test(plans),'service-aware plan workflow missing');
 assert(/Individual customer overrides/.test(registry)&&/ownerForSetting/.test(registry),'settings registry missing customer ownership');
 assert(/customer\.permanentAccess/.test(registry)&&/Permanent customer access/.test(registry),'permanent access must have a canonical settings owner');
