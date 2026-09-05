@@ -244,7 +244,13 @@ function createAdminManualEntitlementRouter() {
                 let html = body;
                 if (!existing) {
                     html = hideEmptyManualEdit(html);
-                    if (surface === 'access' || surface === 'billing') html = insertBeforeMainEnd(html, grantForm(req, req.params.customerId, plans));
+                    // customer-360-compact.js already renders its own compact "Add plan
+                    // manually…" form (class manualGrantCompact, same element IDs) whenever
+                    // the customer has no current subscription, independently of this
+                    // middleware. Only add this fuller version where that one is absent, so
+                    // the page never carries two forms - and two sets of duplicate IDs - for
+                    // the same action.
+                    if ((surface === 'access' || surface === 'billing') && !html.includes('manualGrantCompact')) html = insertBeforeMainEnd(html, grantForm(req, req.params.customerId, plans));
                 }
                 return send(html);
             };

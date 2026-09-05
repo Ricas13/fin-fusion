@@ -41,7 +41,7 @@ async function page(){
       ['Affiliates','/admin/referrals','Referral attribution and service-credit rewards']
     ])}
   </div>`;
-  return layout({siteName:runtimeSettings.siteName(),active:'settings-commerce',title:'Settings · Commerce',subtitle:'Commercial configuration and canonical entry points without leaving Settings',body});
+  return layout({siteName:runtimeSettings.siteName(),active:'settings-commerce',title:'Settings · Commerce',subtitle:'Commercial configuration and canonical entry points without leaving Settings',body,pageClass:'page-settings-commerce'});
 }
 function createAdminSettingsCommerceRouter(){
   const router=express.Router();

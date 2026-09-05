@@ -183,7 +183,7 @@ async function renderPage(req) {
     const ctx = await buildContext(req);
     const widgetGrid = await renderWidgetGrid('users', req, ctx);
     const body_html = `${customerHero(ctx)}${rangeControls(ctx.range,'/admin/users/dashboard')}${widgetGrid}`;
-    return layout({ siteName: runtimeSettings.siteName(), active: 'users-dashboard', title: 'Users dashboard', subtitle: `Customer health first, then lifecycle and usage analytics · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/users">Customer list</a>' });
+    return layout({ siteName: runtimeSettings.siteName(), active: 'users-dashboard', title: 'Users dashboard', subtitle: `Customer health first, then lifecycle and usage analytics · ${ctx.range.label}`, body: body_html, action: '<a class="button secondary" href="/admin/users">Customer list</a>', pageClass: 'page-users-dashboard' });
 }
 
 function createAdminUsersDashboardRouter() {
