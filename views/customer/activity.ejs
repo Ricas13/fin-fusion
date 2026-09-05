@@ -4,29 +4,108 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Playback activity · <%= siteName %></title>
+  <title>Your activity · <%= siteName %></title>
   <link rel="icon" href="/branding/favicon">
   <link rel="stylesheet" href="/css/customer-portal.css">
   <link rel="stylesheet" href="/css/customer-navigation.css">
-  <style>.activityTable{min-width:780px}.activityDecision{margin:9px 0;padding:13px;border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;background:var(--panel-2)}.activityDecision.stop{border-left-color:var(--danger)}.usageGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}.usageStat{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}.usageStat span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.usageStatus{margin-top:12px}@media(max-width:760px){.usageGrid{grid-template-columns:1fr 1fr}}</style>
+  <link rel="stylesheet" href="/css/customer-activity.css">
 </head>
 <%
   function when(v){if(!v)return'Not recorded yet';const d=new Date(v);return Number.isNaN(d.getTime())?'Not recorded yet':d.toLocaleString();}
+  function shortDate(v){if(!v)return'';const d=new Date(v);return Number.isNaN(d.getTime())?'':d.toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+  function compactNumber(v){const n=Number(v||0);return n>=1000?`${(n/1000).toFixed(n>=10000?0:1)}k`:String(n);}
+  function hoursLabel(v){const n=Number(v||0);return n<1&&n>0?`${Math.max(1,Math.round(n*60))}m`:`${Number.isInteger(n)?n:n.toFixed(1)}h`;}
   function ruleText(policy){const parts=[];if(policy&&policy.noPlaybackDays!=null)parts.push(`play something at least once every ${policy.noPlaybackDays} day(s)`);if(policy&&policy.minimumPlaybackMinutes!=null)parts.push(`watch at least ${policy.minimumPlaybackMinutes} minutes in each ${policy.playbackWindowDays||7}-day window`);return parts.join(' and ')||'No automatic usage threshold';}
   function playbackLabel(v){switch(String(v||'').toLowerCase()){case'directplay':return'Direct play';case'directstream':return'Direct stream';case'transcode':return'Server transcoding';default:return'Unknown';}}
+  const insight=insights||{};
+  const summary=insight.summary||{};
+  const timeline=Array.isArray(insight.timeline)?insight.timeline:[];
+  const maxTimeline=Math.max(0,...timeline.map(row=>Number(row.hours||0)));
+  const range=insight.range||{key:'30d',label:'30 days'};
+  const rangeOptions=Array.isArray(insight.rangeOptions)?insight.rangeOptions:[];
+  const topTitles=Array.isArray(insight.topTitles)?insight.topTitles:[];
+  const devices=Array.isArray(insight.devices)?insight.devices:[];
+  const methods=Array.isArray(insight.playbackMethods)?insight.playbackMethods:[];
+  const periods=Array.isArray(insight.timeOfDay)?insight.timeOfDay:[];
+  const display=displayName||'there';
 %>
 <body><div class="portalShell">
 <header class="portalTopbar"><div class="portalTopbarInner"><a class="brandLockup" href="/account"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= siteName %></div><div class="brandMeta">My account</div></div></a><div class="portalActions"><a class="button ghost small" href="/account">Home</a></div></div></header>
 <main class="customerPortalPage">
   <%- include('_nav',{active:'activity'}) %>
-  <div class="customerPortalPageHeader"><div><h1>Playback activity</h1><p>This is the playback CAPTAiNFiN has actually recorded for your account. Network addresses are never shown.</p></div></div>
+
+  <section class="activityHero">
+    <div class="activityHeroCopy">
+      <div class="activityEyebrow">Your activity</div>
+      <h1><%= display %>'s watch story</h1>
+      <p>A personalised look at how you use your streaming access — what you watch, when you watch and the devices you come back to most.</p>
+      <nav class="activityRange" aria-label="Activity period">
+        <% rangeOptions.forEach(function(option){ %><a class="<%= option.key===range.key?'active':'' %>" href="/account/activity?range=<%= encodeURIComponent(option.key) %>" <%= option.key===range.key?'aria-current="page"':'' %>><%= option.label %></a><% }) %>
+      </nav>
+    </div>
+  </section>
+
+  <section class="activitySummaryGrid" aria-label="Watching summary">
+    <article class="activityStat"><span class="activityStatLabel">Watch time</span><strong class="activityStatValue"><%= hoursLabel(summary.watchHours) %></strong><span class="activityStatMeta">during <%= range.label.toLowerCase() %></span></article>
+    <article class="activityStat"><span class="activityStatLabel">Playback sessions</span><strong class="activityStatValue"><%= compactNumber(summary.sessions) %></strong><span class="activityStatMeta"><%= summary.activeDays||0 %> active day<%= Number(summary.activeDays)===1?'':'s' %></span></article>
+    <article class="activityStat"><span class="activityStatLabel">Average session</span><strong class="activityStatValue"><%= summary.averageMinutes||0 %>m</strong><span class="activityStatMeta">from recorded playback</span></article>
+    <article class="activityStat"><span class="activityStatLabel">Favourite server</span><strong class="activityStatValue" style="font-size:16px;line-height:1.2"><%= insight.favoriteServer||'—' %></strong><span class="activityStatMeta"><%= insight.favoriteServer?'most watch time':'No playback yet' %></span></article>
+  </section>
+
+  <section class="activityDashboard">
+    <article class="activityCard">
+      <div class="activityCardHead"><div><h2>Watch time</h2><p>Your recorded viewing across <%= range.label.toLowerCase() %>.</p></div><span class="activityBadge"><%= hoursLabel(summary.watchHours) %> total</span></div>
+      <% if(timeline.length&&maxTimeline>0){ %>
+      <div class="activityTimeline" role="img" aria-label="Watch time over the selected period">
+        <% timeline.forEach(function(point){const height=Math.max(3,Math.round((Number(point.hours||0)/maxTimeline)*100)); %><div class="activityTimelineBar" style="--bar-height:<%= height %>%"><span><%= shortDate(point.bucket) %> · <%= hoursLabel(point.hours) %></span></div><% }) %>
+      </div>
+      <div class="activityTimelineLabels"><span><%= shortDate(timeline[0].bucket) %></span><span><%= shortDate(timeline[timeline.length-1].bucket) %></span></div>
+      <% } else { %><div class="activityEmptyChart">Your watch-time graph will appear after playback is recorded.</div><% } %>
+    </article>
+
+    <article class="activityCard activityPersonality">
+      <div>
+        <div class="activityPersonalityIcon" aria-hidden="true"><%= insight.personality&&insight.personality.title==='Night owl'?'☾':insight.personality&&insight.personality.title==='Morning viewer'?'☀':'◐' %></div>
+        <div class="activityEyebrow">Your pattern</div>
+        <h2><%= insight.personality&&insight.personality.title||'Your watch story is waiting' %></h2>
+        <p><%= insight.personality&&insight.personality.copy||'Once you start watching, your viewing pattern will appear here.' %></p>
+      </div>
+      <div class="activityPersonalityFoot"><% if(summary.lastPlayback){ %>Last recorded playback: <%= when(summary.lastPlayback) %><% } else { %>Nothing has been recorded for this period yet.<% } %></div>
+    </article>
+  </section>
+
+  <section class="activityDetailsGrid">
+    <article class="activityCard">
+      <div class="activityCardHead"><div><h3>Most watched</h3><p>Titles ranked by recorded watch time.</p></div></div>
+      <% if(!topTitles.length){ %><div class="empty">No titles yet.</div><% } else { %><div class="activityList">
+        <% topTitles.slice(0,5).forEach(function(item,index){ %><div class="activityListRow"><div class="activityListMain"><span class="activityListTitle"><span class="activityRank"><%= index+1 %></span><%= item.item_name %></span><span class="activityListMeta"><%= item.item_type %> · <%= item.plays %> session<%= item.plays===1?'':'s' %></span></div><span class="activityListValue"><%= hoursLabel(item.hours) %></span></div><% }) %>
+      </div><% } %>
+    </article>
+
+    <article class="activityCard">
+      <div class="activityCardHead"><div><h3>When you watch</h3><p>Your busiest parts of the day.</p></div></div>
+      <% if(!periods.some(function(period){return Number(period.hours)>0;})){ %><div class="empty">No viewing pattern yet.</div><% } else { %><div class="activityList">
+        <% periods.forEach(function(period){ %><div><div class="activityListRow"><div class="activityListMain"><span class="activityListTitle"><%= period.label %></span><span class="activityListMeta"><%= period.detail %></span></div><span class="activityListValue"><%= hoursLabel(period.hours) %></span></div><div class="activityMeter"><span style="--meter:<%= period.percent %>%"></span></div></div><% }) %>
+      </div><% } %>
+    </article>
+
+    <article class="activityCard">
+      <div class="activityCardHead"><div><h3>How you watch</h3><p>Playback method and favourite device.</p></div></div>
+      <% if(!methods.length&&!devices.length){ %><div class="empty">No playback details yet.</div><% } else { %><div class="activityList">
+        <% methods.forEach(function(method){ %><div><div class="activityListRow"><span class="activityListTitle activityMethodName"><span class="activityMethodDot"></span><%= playbackLabel(method.playback_method) %></span><span class="activityListValue"><%= method.percent %>%</span></div><div class="activityMeter"><span style="--meter:<%= method.percent %>%"></span></div></div><% }) %>
+        <% if(devices[0]){ %><div style="padding-top:5px;border-top:1px solid #26313f"><span class="activityListMeta">Most-used device</span><span class="activityListTitle" style="margin-top:5px"><%= devices[0].device %></span><span class="activityListMeta"><%= devices[0].plays %> session<%= devices[0].plays===1?'':'s' %> · <%= hoursLabel(devices[0].hours) %></span></div><% } %>
+      </div><% } %>
+    </article>
+  </section>
+
+  <div class="activitySectionDivider"><div><h2>Playback details</h2><p>The underlying activity and account rules are still available below.</p></div></div>
 
   <% if(freeUsage&&freeUsage.applies){ %>
-  <section class="panel"><div class="sectionHead"><div><h2>Free Server usage</h2><p>Your Free Server plan can use playback activity to decide whether an inactive place should be released.</p></div><span class="pill <%= freeUsage.telemetry&&freeUsage.telemetry.ready?'good':'warn' %>"><%= freeUsage.telemetry&&freeUsage.telemetry.ready?'Playback tracking healthy':'Removal paused' %></span></div>
+  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Free Server usage</h2><p>Your Free Server plan can use playback activity to decide whether an inactive place should be released.</p></div><span class="pill <%= freeUsage.telemetry&&freeUsage.telemetry.ready?'good':'warn' %>"><%= freeUsage.telemetry&&freeUsage.telemetry.ready?'Playback tracking healthy':'Removal paused' %></span></div>
     <div class="notice"><strong>Based on what the server reported.</strong> Short clips under ~30s may not appear.</div>
     <div class="usageGrid"><div class="usageStat"><span>Last recognised playback</span><strong><%= when(freeUsage.lastPlaybackAt) %></strong></div><div class="usageStat"><span>Playback in current window</span><strong><%= freeUsage.playbackMinutes %> min</strong></div><div class="usageStat"><span>Usage rule</span><strong><%= ruleText(freeUsage.policy) %></strong></div><div class="usageStat"><span>Right now</span><strong><%= freeUsage.currentlyPlaying?'Playing now':freeUsage.alreadyHeld?'Access currently held':freeUsage.eligible?'Below current usage rule':'Usage requirement satisfied' %></strong></div></div>
     <div class="usageStatus">
-      <% if(!freeUsage.telemetry||!freeUsage.telemetry.ready){ %><div class="notice warn"><strong>Automatic inactivity removal is paused.</strong> CAPTAiNFiN will not act on inactivity unless the activity worker is current and this Free Server has a trustworthy recent playback sample.</div>
+      <% if(!freeUsage.telemetry||!freeUsage.telemetry.ready){ %><div class="notice warn"><strong>Automatic inactivity removal is paused.</strong> <%= siteName %> will not act on inactivity unless the activity worker is current and this Free Server has a trustworthy recent playback sample.</div>
       <% } else if(freeUsage.currentlyPlaying){ %><div class="notice success"><strong>Playback is active now.</strong> An active stream cannot trigger the inactivity action.</div>
       <% } else if(freeUsage.automationProtected){ %><div class="notice success"><strong>Your account is protected from automatic inactivity action.</strong></div>
       <% } else if(freeUsage.eligible&&freeUsage.policy&&freeUsage.policy.dryRun){ %><div class="notice warn"><strong>Your current usage is below the configured rule, but enforcement is in dry-run.</strong> No automatic access action will be taken while dry-run remains enabled.</div>
@@ -36,12 +115,13 @@
   </section>
   <% } %>
 
-  <section class="panel"><div class="sectionHead"><div><h2>Recent playback</h2><p>Up to your latest 100 recorded Jellyfin playbacks.</p></div></div>
+  <section class="panel activityDetailsPanel"><div class="sectionHead"><div><h2>Recent playback</h2><p>Your latest 100 recorded Jellyfin playbacks, regardless of the summary period selected above.</p></div></div>
     <% if (!activity.length) { %><div class="empty">No playback activity has been recorded yet.</div><% } else { %>
     <div class="tableWrap"><table class="activityTable"><thead><tr><th>Started</th><th>Media</th><th>Playback</th><th>Device</th><th>Server</th><th>Ended</th></tr></thead><tbody>
-      <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong></td><td><%= playbackLabel(a.playback_method) %></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
+      <% activity.forEach(function(a){ %><tr><td><%= when(a.started_at) %></td><td><strong><%= a.item_name || 'Unknown item' %></strong><% if(a.item_type){ %><span class="activityRecentType"><%= a.item_type %></span><% } %></td><td><%= playbackLabel(a.playback_method) %></td><td><%= a.device_name || a.client_name || 'Unknown device' %><% if(a.device_name&&a.client_name){ %><div class="accessMeta"><%= a.client_name %></div><% } %></td><td><%= a.server_name %></td><td><%= a.ended_at ? when(a.ended_at) : 'Active / recently active' %></td></tr><% }) %>
     </tbody></table></div><% } %>
   </section>
+
   <section class="sectionBlock"><div class="sectionHead"><div><h2>Stream-limit actions</h2><p>Warnings, safety decisions and stopped excess streams appear here. Normal playback does not create an action.</p></div></div><div class="panel">
     <% if (!events.length) { %><div class="empty">No stream-limit actions.</div><% } else { %><% events.forEach(function(e){const stopped=['stopped','stop_failed'].includes(String(e.decision||'')); %><div class="activityDecision <%= stopped?'stop':'' %>"><strong><%= e.decision==='stopped'?'Playback stopped':e.decision==='stop_failed'?'Stop attempt failed':'Stream policy decision' %></strong> · <%= when(e.created_at) %><p><%= e.observed_streams == null ? '?' : e.observed_streams %> active stream(s) / limit <%= e.stream_limit == null ? '?' : e.stream_limit %></p><div class="accessMeta"><%= e.reason || 'No additional detail' %></div></div><% }) %><% } %>
   </div></section>
