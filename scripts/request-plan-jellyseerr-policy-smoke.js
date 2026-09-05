@@ -56,7 +56,8 @@ for (const laneView of ['effective_customer_entitlements','effective_stremio_ent
   assert(requestEntitlement.includes(laneView), `request entitlement resolution must include ${laneView}`);
 }
 assert(requestEntitlement.includes('COALESCE(p.request_access_enabled,TRUE)=TRUE'), 'cross-service request entitlement must still respect each plan request-access switch');
-assert(requestEntitlement.includes('ORDER BY e.blocked ASC,e.service_rank ASC'), 'cross-service request entitlement must prefer usable access while preserving the existing Jellyfin-first policy when multiple lanes qualify');
+assert(requestEntitlement.includes("CASE WHEN public.subscription_admin_present(e.customer_id,'overseerr',e.subscription_id) THEN 0 ELSE 1 END"), 'Overseerr admin-present must outrank automatic lane selection');
+assert(requestEntitlement.includes('e.blocked ASC,e.service_rank ASC,e.access_expires_at DESC'), 'without an admin override, request entitlement must still prefer usable access and preserve Jellyfin-first lane ordering');
 
 assert(requestUsers.includes('data-request-user-select-all'), 'request user table must have Select All');
 assert(requestUsers.includes('/admin/request-users/sync-selected'), 'request user table must support Sync selected');

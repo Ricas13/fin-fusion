@@ -63,17 +63,21 @@ async function record({provider,eventId,caseId=null,kind,status='open',identity=
   // from (and no longer coupled to) any access-hold mechanism above, and it
   // never touches admin authority - an active admin_present directive keeps
   // the service eligible regardless of the subscription row's status.
-  // Guarded on !incident.duplicate so a retried/out-of-order webhook
-  // delivery cannot re-run this side effect twice.
-  if(kind==='refund'&&metadata?.fullRefund===true&&!incident.duplicate&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
+  //
+  // The termination itself is idempotent, so duplicate webhook deliveries
+  // intentionally retry it. This matters when the incident row was recorded
+  // successfully but the first termination attempt hit a transient failure.
+  // We also fail the incident-processing call when termination fails so the
+  // payment provider has a reason to redeliver instead of silently accepting
+  // a confirmed refund while leaving the paid plan active.
+  const confirmedFullRefund=kind==='refund'&&(metadata?.fullRefund===true||incident.metadata?.fullRefund===true);
+  if(confirmedFullRefund&&effectIdentity.scope!=='unresolved'&&effectIdentity.customerId){
     const subscriptionRef=incident.provider_subscription_id||providerSubscriptionId||null;
     if(subscriptionRef){
       const matched=await query(`SELECT id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 AND customer_id=$3 AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1`,[provider,subscriptionRef,effectIdentity.customerId]);
       if(matched.rowCount){
-        try{
-          const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`Confirmed full refund (${provider} ${kind} ${incident.id})`,reference:incident.id});
-          if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
-        }catch(error){console.warn(`Refund-triggered plan termination failed for customer ${effectIdentity.customerId}:`,error.message)}
+        const terminated=await subscriptionTermination.terminateForRefund(matched.rows[0].id,effectIdentity.customerId,{reason:`Confirmed full refund (${provider} ${kind} ${incident.id})`,reference:incident.id});
+        if(terminated.changed)await reconcileMany([effectIdentity.customerId]);
       }
     }
   }
