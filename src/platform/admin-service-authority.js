@@ -42,6 +42,15 @@ async function reconcileAll(customerId) {
     return warnings;
 }
 
+async function removePermanentUser(customerId, { actorUserId = null } = {}) {
+    const result = await permanentAccess.revoke(customerId, { actorUserId, reason: 'Permanent User status removed by administrator' });
+    await query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata)
+                 VALUES($1,'admin.customer.permanent_access.remove','customer',$2,$3::jsonb)`, [
+        actorUserId, customerId, JSON.stringify({ changed: Boolean(result.changed), providerBillingChanged: false, subscriptionChanged: false })
+    ]);
+    return { result, warnings: await reconcileAll(customerId) };
+}
+
 async function returnToNormalAutomation(customerId, { actorUserId = null } = {}) {
     const reason = 'Returned customer to normal automation';
     const permanent = await permanentAccess.revoke(customerId, { actorUserId, reason });
@@ -84,6 +93,18 @@ function createAdminServiceAuthorityRouter() {
     router.use('/admin/users/:customerId/service-authority', gate, noStore, routeRateLimit.middleware({ scope: 'admin-service-authority', max: 60, windowSeconds: 60, reason: 'admin service authority change' }));
     router.use('/admin/users/:customerId/manage/normal-automation', gate, noStore, routeRateLimit.middleware({ scope: 'admin-normal-automation', max: 20, windowSeconds: 60, reason: 'admin return to normal automation' }));
     router.use('/admin/users/:customerId/manage/remove-all-service-access', gate, noStore, routeRateLimit.middleware({ scope: 'admin-remove-all-service-access', max: 10, windowSeconds: 60, reason: 'admin remove all service access' }));
+    router.use('/admin/users/:customerId/manage/remove-permanent-user', gate, noStore, routeRateLimit.middleware({ scope: 'admin-remove-permanent-user', max: 20, windowSeconds: 60, reason: 'admin remove permanent user' }));
+
+    router.post('/admin/users/:customerId/manage/remove-permanent-user', async (req, res) => {
+        if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
+        try {
+            const result = await removePermanentUser(req.params.customerId, { actorUserId: req.session.authUserId });
+            if (result.warnings.length) return res.redirect(customerPath(req.params.customerId, 'error', `Permanent User status was removed, but reconciliation needs attention: ${result.warnings.join(' · ')}`));
+            return res.redirect(customerPath(req.params.customerId, 'message', 'Permanent User status removed. Valid paid plans were kept and normal plan automation can manage access.'));
+        } catch (error) {
+            return res.redirect(customerPath(req.params.customerId, 'error', String(error.message || 'Could not remove Permanent User status.').slice(0, 300)));
+        }
+    });
 
     router.post('/admin/users/:customerId/manage/normal-automation', async (req, res) => {
         if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
@@ -144,4 +165,4 @@ function createAdminServiceAuthorityRouter() {
     return router;
 }
 
-module.exports = { createAdminServiceAuthorityRouter, returnToNormalAutomation, removeAllServiceAccess };
+module.exports = { createAdminServiceAuthorityRouter, returnToNormalAutomation, removeAllServiceAccess, removePermanentUser };
