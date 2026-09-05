@@ -74,7 +74,7 @@ assert(deletion.includes("SELECT public.finalize_customer_deletion($1) AS result
 const confirmationGuard=deletionMigration.indexOf('COALESCE(confirmed_accounts,0) <> expected_accounts');
 const localDelete=deletionMigration.indexOf('DELETE FROM public.jellyfin_accounts WHERE customer_id=j.customer_id;');
 assert(confirmationGuard>=0&&localDelete>confirmationGuard,'local Jellyfin rows must not be removed until the finalizer verifies all remote identities');
-assert(deletionMigration.includes("UPDATE public.customer_deletion_jobs\n    SET status='succeeded'")&&deletionMigration.includes("'admin.customer.hard_delete'"),'portal cleanup, deletion completion and audit must share the final database transaction');
+assert(/UPDATE public\.customer_deletion_jobs\r?\n    SET status='succeeded'/.test(deletionMigration)&&deletionMigration.includes("'admin.customer.hard_delete'"),'portal cleanup, deletion completion and audit must share the final database transaction');
 assert(automationJobs.includes("async customer_deletions(){return customerDeletion.processDue({limit:10})}"),'automation worker must retry due/stale customer deletion jobs');
 
 assert(composition.indexOf('createAdminCustomerManagementRouter()')<composition.indexOf('createAdminCustomer360Router()'),'customer management routes must mount before the wildcard Customer 360 route');

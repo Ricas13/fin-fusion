@@ -13,7 +13,7 @@ const SAFE_MESSAGES = [
     /^Enter a valid email address\.$/,
     /^Username must be 3(?:-|–)40 characters using letters, numbers, dot, underscore or dash\.?$/,
     /^Display name is required\.?$/,
-    /^Password must be between 12 and 200 characters$/,
+    /^Password must be between 8 and 200 characters\.?$/,
     /^Public registration is currently disabled$/,
     /^An account already exists with that email or username$/,
     /^That username belongs to an existing Jellyfin account\./,

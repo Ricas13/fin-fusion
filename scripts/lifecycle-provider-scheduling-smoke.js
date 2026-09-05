@@ -36,7 +36,7 @@ for(const [name,source] of [['Stripe',stripe],['PayPal',paypal],['Plisio',plisio
 assert(/claimRetryablePaymentEvents/.test(lifecycle)&&/FOR UPDATE SKIP LOCKED/.test(lifecycle),'payment-event retries must claim durable failed rows without duplicate workers');
 assert(/async payment_events\(\)/.test(jobs)&&/paymentEventRetry\.run/.test(jobs),'automation must retry accepted payment events internally');
 assert(/const PROVIDERS = \{ stripe, paypal, plisio \}/.test(paymentRetry),'internal payment-event retry must cover every supported payment gateway');
-assert(/return null;\n\}/.test(lifecycle.match(/function mapProviderStatus[\s\S]*?\n\}/)?.[0]||''),'unknown provider statuses must not default to past_due');
+assert(/return null;\r?\n\}/.test(lifecycle.match(/function mapProviderStatus[\s\S]*?\r?\n\}/)?.[0]||''),'unknown provider statuses must not default to past_due');
 assert(/status=COALESCE\(\$1,status\)/.test(lifecycle),'unknown provider updates must preserve the last known local subscription status');
 const plisioWebhook=plisio.match(/async function processWebhook[\s\S]*?\n\}/)?.[0]||'';
 assert(plisioWebhook&&plisioWebhook.indexOf('beginPaymentEvent')>=0&&plisioWebhook.indexOf('processClaimedCallback')>plisioWebhook.indexOf('beginPaymentEvent'),'Plisio must durably accept an authenticated callback before remote provider processing');

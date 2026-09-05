@@ -50,7 +50,7 @@ assert.match(pendingBeginCall,/freeReservationSessionId:wantsFree\?req\.sessionI
 assert.doesNotMatch(publicAuth,/customers\.registerCustomer\(/,'public registration must not create a customer before email verification completes');
 assert.doesNotMatch(publicAuth,/function saveCommunication|await saveCommunication\(/,'the public registration route must not perform a second communication-preferences write after identity creation');
 
-const pendingConsume=pending.match(/async function consume\(rawToken\)[\s\S]*?return created;\n\}/)?.[0]||'';
+const pendingConsume=pending.match(/async function consume\(rawToken\)[\s\S]*?return created;\r?\n\}/)?.[0]||'';
 assert(pendingConsume,'verified registration consume transition missing');
 assert.match(pendingConsume,/referrals\.attributionEnabled\(client\)[\s\S]*?referrals\.attributeReferral\(customer\.id,pending\.referral_code,client\)/,'verified registration referral attribution must use the same transaction client as account creation and token consumption');
 assert.doesNotMatch(pendingConsume,/Verified registration referral attribution failed|referrals\.attributeReferral\(created\.customer\.id/,'verified registration must not defer referral attribution until after commit');

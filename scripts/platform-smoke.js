@@ -13,9 +13,48 @@ function assertPasswordPolicySurfaces() {
     const register = fs.readFileSync('views/customer/register.ejs', 'utf8');
     const reset = fs.readFileSync('views/customer/reset-password.ejs', 'utf8');
     const security = fs.readFileSync('src/platform/customer-security.js', 'utf8');
+    const firstRunView = fs.readFileSync('views/auth/first-run-setup.ejs', 'utf8');
+    const firstRunCore = fs.readFileSync('src/auth/first-run-setup.js', 'utf8');
+    const activationView = fs.readFileSync('src/platform/account-activation-router.js', 'utf8');
+    const activationCore = fs.readFileSync('src/auth/account-activation.js', 'utf8');
+    const adminSecurity = fs.readFileSync('views/admin/security-password.ejs', 'utf8');
+    const staffAuth = fs.readFileSync('src/auth/service-engine.js', 'utf8');
+    const customerClaim = fs.readFileSync('src/platform/customer-claim.js', 'utf8');
+    const accessHub = fs.readFileSync('views/customer/jellyfin.ejs', 'utf8');
+    const legacyPasswordSync = fs.readFileSync('src/platform/customer-password-sync.js', 'utf8');
+    const customerJellyfin = fs.readFileSync('src/platform/customer-jellyfin.js', 'utf8');
+    const adminJellyfin = fs.readFileSync('src/platform/admin-customer-jellyfin-password.js', 'utf8');
+    const requestSync = fs.readFileSync('src/integrations/request-user-sync.js', 'utf8');
+    const application = fs.readFileSync('src/application.js', 'utf8');
+    const bootstrap = fs.readFileSync('scripts/bootstrap-admin.js', 'utf8');
     if (!register.includes('name="password" minlength="8"')) throw new Error('Registration form does not expose the 8-character portal password minimum');
     if ((reset.match(/minlength="8"/g) || []).length < 2) throw new Error('Password-reset form does not expose the 8-character portal password minimum');
     if ((security.match(/minlength="8"/g) || []).length < 2) throw new Error('Account-security form does not expose the 8-character portal password minimum');
+    for (const [name, source] of [
+        ['first-run setup view', firstRunView],
+        ['activation view', activationView],
+        ['admin security view', adminSecurity],
+        ['customer claim view', customerClaim],
+        ['customer access hub view', accessHub],
+        ['legacy service password form', legacyPasswordSync],
+        ['admin Jellyfin support view', adminJellyfin]
+    ]) {
+        if ((source.match(/minlength="8"/g) || []).length < 2) throw new Error(`${name} does not expose the 8-character password minimum`);
+    }
+    for (const [name, source] of [
+        ['customer password core', fs.readFileSync('src/customers.js', 'utf8')],
+        ['first-run setup core', firstRunCore],
+        ['activation core', activationCore],
+        ['staff password core', staffAuth],
+        ['customer access media password route', customerJellyfin],
+        ['legacy service password route', legacyPasswordSync],
+        ['admin Jellyfin password route', adminJellyfin],
+        ['Overseerr request password sync', requestSync],
+        ['ADMIN_PASSWORD environment guard', application],
+        ['bootstrap admin command', bootstrap]
+    ]) {
+        if (!source.includes('between 8 and 200 characters') && !source.includes('at least 8 characters')) throw new Error(`${name} does not enforce/report the 8-character password minimum`);
+    }
 }
 
 async function verifyPaymentEventClaims(suffix) {

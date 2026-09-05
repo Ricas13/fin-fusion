@@ -83,7 +83,7 @@ async function pending(customerId){
 }
 
 function passwordForm(req,{action,label,button}){
-    return `<form method="post" action="${esc(action)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="field"><label>New ${esc(label)} password</label><input class="input" type="password" name="password" minlength="12" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="12" maxlength="200" autocomplete="new-password" required></div><button class="button primary" type="submit">${esc(button)}</button></form>`;
+    return `<form method="post" action="${esc(action)}"><input type="hidden" name="_csrf" value="${esc(csrf.token(req))}"><div class="field"><label>New ${esc(label)} password</label><input class="input" type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required></div><div class="field"><label>Confirm password</label><input class="input" type="password" name="confirmPassword" minlength="8" maxlength="200" autocomplete="new-password" required></div><button class="button primary" type="submit">${esc(button)}</button></form>`;
 }
 
 // Kept as a compatibility response for old clients that still request the
@@ -141,7 +141,7 @@ function createCustomerPasswordSyncRouter(){
     router.post('/account/jellyfin/:accountId/password',requireCustomer,mediaPasswordLimit,async(req,res)=>{
         if(!csrf.verify(req))return redirectWith(res,'/account/access','error','Invalid or expired security token');
         const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-        if(password.length<12||password.length>200)return redirectWith(res,'/account/access','error','Streaming-service passwords must be between 12 and 200 characters.');
+        if(password.length<8||password.length>200)return redirectWith(res,'/account/access','error','Streaming-service passwords must be between 8 and 200 characters.');
         if(password!==confirm)return redirectWith(res,'/account/access','error','Passwords do not match.');
         try{
             const access=await assertMediaPasswordAccess(req.session.customerId,req.params.accountId);
@@ -164,7 +164,7 @@ function createCustomerPasswordSyncRouter(){
     router.post('/account/requests/password',requireCustomer,requestPasswordLimit,async(req,res)=>{
         if(!csrf.verify(req))return redirectWith(res,'/account/access','error','Invalid or expired security token','overseerr');
         const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-        if(password.length<12||password.length>200)return redirectWith(res,'/account/access','error','Overseerr password must be between 12 and 200 characters.','overseerr');
+        if(password.length<8||password.length>200)return redirectWith(res,'/account/access','error','Overseerr password must be between 8 and 200 characters.','overseerr');
         if(password!==confirm)return redirectWith(res,'/account/access','error','Overseerr passwords do not match.','overseerr');
         try{
             const access=await requestUsers.requestAccessForCustomer(req.session.customerId);
