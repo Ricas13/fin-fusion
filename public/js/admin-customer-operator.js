@@ -142,11 +142,20 @@
       if(href==='/admin/users'||href===`/admin/users/${customerId}?tab=activity`||label==='Back to Customers'||label==='Activity')link.remove();
     });
     document.querySelectorAll('[data-customer-management]').forEach(node=>node.remove());
-    const nav=document.querySelector('.customerContextTabs,.detailTabs');
-    const form=[...document.querySelectorAll(`form[action="/admin/users/${customerId}/impersonate"]`)].find(node=>!node.closest('.customerPortalTab'));
-    if(nav&&form){
-      const wrapper=el('div','customerPortalTab');form.parentNode?.removeChild(form);wrapper.appendChild(form);const button=form.querySelector('button');if(button){button.className='detailTab';button.textContent='View portal';button.title='Open the customer portal in read-only support mode';}nav.appendChild(wrapper);
+
+    // The modern Customer 360 hero owns the portal action. Older code moved
+    // this form into .customerContextTabs, but that legacy tab bar is wrapped
+    // in .customerLegacyNav and intentionally hidden. Moving the form there
+    // after first paint made "View User Page" flash briefly and disappear.
+    const heroForm=document.querySelector(`.customerMockTopActions form[action="/admin/users/${customerId}/impersonate"]`);
+    if(heroForm){
+      heroForm.dataset.nativeSubmit='true';
+      const button=heroForm.querySelector('button');
+      if(button){button.textContent='View User Page ↗';button.title='Open this customer’s portal view';}
     }
+
+    // Keep the hidden legacy navigation from retaining a second portal action.
+    document.querySelectorAll(`.customerLegacyNav form[action="/admin/users/${customerId}/impersonate"]`).forEach(form=>form.remove());
   }
 
   // The Customer control grid (Plan/Jellyfin account/Server/Management/
