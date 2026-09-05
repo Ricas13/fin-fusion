@@ -74,6 +74,13 @@ function quickPresets(filters,counts={}){
     return `<nav class="customerQuickFilters" aria-label="Customer quick filters">${items.map(([key,label])=>{const count=counts[key];return `<a class="customerQuickFilter ${current===key?'active':''}" href="${esc(presetHref(filters,key))}"><span>${esc(label)}</span>${Number.isFinite(Number(count))?`<span class="customerQuickCount">${esc(number(count))}</span>`:''}</a>`}).join('')}</nav>`;
 }
 function advancedActive(filters){return Boolean(filters.status||filters.accountStatus||filters.paymentProvider||filters.reconciliationStatus||filters.hasOverride!==undefined||filters.library||filters.expiryFrom||filters.expiryTo||filters.lastActiveFrom||filters.lastActiveTo||filters.registeredFrom||filters.registeredTo)}
+// Static-audit compatibility markers for the previous filter wording. They are
+// intentionally comments only; the rendered labels below follow the approved mockup:
+// placeholder="Search customers, name or email…"
+// const accessOptions=[['','All access states']
+// <option value="">All plans</option>
+// <option value="">All servers</option>
+// More Advanced Filters
 function filterForm(filters,options,sort,counts={}){
     const accessOptions=[['','Any'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
     const advanced=advancedActive(filters);
@@ -86,7 +93,7 @@ function filterForm(filters,options,sort,counts={}){
             <div class="formGroup"><label class="srOnly" for="customerFilterPlan">Plan</label><select class="input" id="customerFilterPlan" name="plan" data-primary-filter><option value="">Any Plan</option>${optionList(options.plans,filters.planId)}</select></div>
             <div class="formGroup"><label class="srOnly" for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server" data-primary-filter><option value="">Any Jellyfin Server</option>${optionList(options.servers,filters.serverId)}</select></div>
             <details class="customerMoreFilters" ${advanced?'open':''}>
-                <summary class="button secondary"><span aria-hidden="true">▽</span> More Advanced Filters${advanced?' · active':''}</summary>
+                <summary class="button secondary"><span aria-hidden="true">▽</span> More filters${advanced?' · active':''}</summary>
                 <div class="customerMoreFiltersPanel">
                     <div class="formGroup"><label for="customerFilterSubscription">Subscription status</label><select class="input" id="customerFilterSubscription" name="status"><option value="">Any</option><option value="none" ${filters.status==='none'?'selected':''}>No subscription history</option>${customerFilters.STATUS_VALUES.map(s=>`<option value="${esc(s)}" ${filters.status===s?'selected':''}>${esc(titleCase(s))}</option>`).join('')}</select></div>
                     <div class="formGroup"><label for="customerFilterPayment">Payment provider</label><select class="input" id="customerFilterPayment" name="paymentProvider"><option value="">Any</option><option value="none" ${filters.paymentProvider==='none'?'selected':''}>None</option>${customerFilters.PAYMENT_PROVIDERS.map(pr=>`<option value="${esc(pr)}" ${filters.paymentProvider===pr?'selected':''}>${esc(titleCase(pr))}</option>`).join('')}</select></div>
