@@ -165,7 +165,7 @@ function createCustomerJellyfinRouter(){
   router.post('/account/access/media/:accountId/password',requireCustomer,mediaMutationLimit,async(req,res)=>{
     if(!csrf.verify(req))return redirectAccess(res,'error','Invalid or expired security token',`account-${req.params.accountId}`);
     const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-    if(password.length<12||password.length>200)return redirectAccess(res,'error','Streaming-service passwords must be between 12 and 200 characters.',`account-${req.params.accountId}`);
+    if(password.length<8||password.length>200)return redirectAccess(res,'error','Streaming-service passwords must be between 8 and 200 characters.',`account-${req.params.accountId}`);
     if(password!==confirm)return redirectAccess(res,'error','Passwords do not match.',`account-${req.params.accountId}`);
     try{
       const {account}=await assertMediaAccess(req.session.customerId,req.params.accountId);
@@ -190,7 +190,7 @@ function createCustomerJellyfinRouter(){
   router.post('/account/access/requests/password',requireCustomer,requestPasswordLimit,async(req,res)=>{
     if(!csrf.verify(req))return redirectAccess(res,'error','Invalid or expired security token','overseerr');
     const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');
-    if(password.length<12||password.length>200)return redirectAccess(res,'error','Overseerr password must be between 12 and 200 characters.','overseerr');
+    if(password.length<8||password.length>200)return redirectAccess(res,'error','Overseerr password must be between 8 and 200 characters.','overseerr');
     if(password!==confirm)return redirectAccess(res,'error','Overseerr passwords do not match.','overseerr');
     try{
       const state=await requestStateForCustomer(req.session.customerId);

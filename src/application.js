@@ -38,8 +38,8 @@ function validateEnvironment() {
   if (!SESSION_SECRET || SESSION_SECRET.length < 32 || /change[-_ ]?(me|this)|example|placeholder/i.test(SESSION_SECRET)) {
     fail('SESSION_SECRET must be a unique random value of at least 32 characters.');
   }
-  if (process.env.ADMIN_PASSWORD && String(process.env.ADMIN_PASSWORD).length < 12) {
-    fail('ADMIN_PASSWORD must be at least 12 characters when supplied.');
+  if (process.env.ADMIN_PASSWORD && String(process.env.ADMIN_PASSWORD).length < 8) {
+    fail('ADMIN_PASSWORD must be at least 8 characters when supplied.');
   }
   if (String(process.env.ADMIN_PASSWORD || '') === 'admin123') {
     fail('The legacy admin123 password is not permitted.');

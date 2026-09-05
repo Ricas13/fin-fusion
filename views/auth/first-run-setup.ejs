@@ -59,13 +59,13 @@
       <div class="setupGrid">
         <div class="formGroup">
           <label for="password">Password</label>
-          <input class="input" id="password" name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" required <%= field === 'password' ? 'aria-invalid="true"' : '' %>>
-          <div class="helper">Use at least 12 characters. This password is only for the CAPTAiNFiN admin account.</div>
+          <input class="input" id="password" name="password" type="password" minlength="8" maxlength="200" autocomplete="new-password" required <%= field === 'password' ? 'aria-invalid="true"' : '' %>>
+          <div class="helper">Use at least 8 characters. This password is only for the CAPTAiNFiN admin account.</div>
           <% if (field === 'password') { %><div class="fieldError"><%= error %></div><% } %>
         </div>
         <div class="formGroup">
           <label for="passwordConfirm">Confirm password</label>
-          <input class="input" id="passwordConfirm" name="passwordConfirm" type="password" minlength="12" maxlength="200" autocomplete="new-password" required <%= field === 'passwordConfirm' ? 'aria-invalid="true"' : '' %>>
+          <input class="input" id="passwordConfirm" name="passwordConfirm" type="password" minlength="8" maxlength="200" autocomplete="new-password" required <%= field === 'passwordConfirm' ? 'aria-invalid="true"' : '' %>>
           <% if (field === 'passwordConfirm') { %><div class="fieldError"><%= error %></div><% } %>
         </div>
       </div>

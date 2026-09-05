@@ -14,8 +14,8 @@ function cleanUsername(value) {
 
 function validatePassword(value) {
     const password = String(value || '');
-    if (password.length < 12 || password.length > 200) {
-        throw new Error('ADMIN_PASSWORD must be between 12 and 200 characters for first bootstrap');
+    if (password.length < 8 || password.length > 200) {
+        throw new Error('ADMIN_PASSWORD must be between 8 and 200 characters for first bootstrap');
     }
     if (password === 'admin123') throw new Error('ADMIN_PASSWORD may not use the legacy admin123 password');
     return password;

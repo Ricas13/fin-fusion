@@ -63,8 +63,8 @@ function cleanSiteName(value) {
 
 function validatePassword(password, confirmation) {
     const value = String(password || '');
-    if (value.length < 12 || value.length > 200) {
-        throw new FirstRunValidationError('password', 'Password must be between 12 and 200 characters.');
+    if (value.length < 8 || value.length > 200) {
+        throw new FirstRunValidationError('password', 'Password must be between 8 and 200 characters.');
     }
     if (['admin123', 'password123', 'changeme1234'].includes(value.toLowerCase())) {
         throw new FirstRunValidationError('password', 'Choose a stronger password.');

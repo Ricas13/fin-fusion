@@ -53,8 +53,8 @@ async function recordEvent({ userId = null, identityHint = null, eventType, succ
 }
 
 function validateNewPassword(password) {
-    if (typeof password !== 'string' || password.length < 12 || password.length > 200) {
-        throw new Error('Password must be between 12 and 200 characters');
+    if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
+        throw new Error('Password must be between 8 and 200 characters');
     }
     const lowered = password.toLowerCase();
     if (['admin123', 'password123', 'changeme1234'].includes(lowered)) {

@@ -16,7 +16,7 @@ assert(registry.includes('if(reusable&&ttl>0)') && registry.includes('responseCa
 assert(registry.includes('else clearServerCache(serverId)'), 'media-server mutations must invalidate reusable GET snapshots');
 
 assert(metrics.includes('cacheTtlMs: 45000'), 'fleet metrics must reuse the recent canonical /Sessions sample instead of forcing another Jellyfin request');
-assert(metrics.includes('{ refreshUsers = true }') && metrics.includes("refreshUsers\n        ? registry.request(serverId, '/Users'"), 'fleet metrics must be able to refresh live streams without polling /Users every time');
+assert(metrics.includes('{ refreshUsers = true }') && /const usersPromise = refreshUsers\s*\?\s*registry\.request\(serverId, '\/Users'/.test(metrics), 'fleet metrics must be able to refresh live streams without polling /Users every time');
 assert(metrics.includes('cachedTotalUsers(serverId)'), 'stream-only metric refreshes must preserve the last known user count');
 
 assert(worker.includes('FLEET_USER_ACTIVITY_POLL_SECONDS || 300'), 'user activity polling must default to five minutes');
