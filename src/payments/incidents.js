@@ -16,7 +16,6 @@ const POLICY_KEY = 'payment_risk_policy';
 // which is a real, auditable, admin-authoritative action rather than a
 // second automatic hold-based lifecycle running alongside plan removal.
 const DEFAULTS = Object.freeze({ refundAction:'preserve',disputeAction:'preserve',chargebackAction:'preserve',failedRenewalAction:'provider_state' });
-function cleanAction(){return 'preserve'}
 async function policy(){return{...DEFAULTS}}
 async function savePolicy(input,actorUserId=null){const value={...DEFAULTS};await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_at=NOW()`,[POLICY_KEY,JSON.stringify(value)]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.payment_risk_policy.update','platform_setting',$2,$3::jsonb)`,[actorUserId,POLICY_KEY,JSON.stringify(value)])});return value}
 async function identityFromProviderSubscription(provider,providerSubscriptionId){if(!providerSubscriptionId)return{scope:'unresolved',customerId:null};const direct=await query(`SELECT customer_id FROM subscriptions WHERE source=$1 AND provider_subscription_id=$2 ORDER BY created_at DESC LIMIT 1`,[provider,providerSubscriptionId]);if(direct.rowCount)return{scope:'direct',customerId:direct.rows[0].customer_id};return{scope:'unresolved',customerId:null}}
