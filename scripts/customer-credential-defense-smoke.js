@@ -70,10 +70,17 @@ async function main() {
   const customerRateLimit = fs.readFileSync(path.join(root, 'src/security/customer-rate-limit.js'), 'utf8');
   const customers = fs.readFileSync(path.join(root, 'src/customers.js'), 'utf8');
   const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8');
+  const abuseProtection = fs.readFileSync(path.join(root, 'src/security/public-abuse-protection.js'), 'utf8');
 
   const turnstileOrder = router.indexOf('router.use(publicAbuseProtection.middleware)');
   const loginRouterOrder = router.indexOf('router.use(createCustomerLoginRouter())');
   assert(turnstileOrder >= 0 && loginRouterOrder > turnstileOrder, 'customer login router must remain downstream of Turnstile');
+  assert(abuseProtection.includes('function exposeTurnstile(res, cfg, path)'), 'Turnstile rendering context must have one shared helper');
+  const postGate = abuseProtection.slice(abuseProtection.indexOf("if (req.method === 'POST'"), abuseProtection.indexOf('return next();', abuseProtection.indexOf("if (req.method === 'POST'")));
+  assert(postGate.includes('exposeTurnstile(res, cfg, req.path);'), 'protected POST responses must expose a fresh Turnstile widget before downstream login rendering');
+  assert(postGate.indexOf('exposeTurnstile(res, cfg, req.path);') < postGate.indexOf('await verifyToken('), 'Turnstile response locals/CSP must be restored before token verification and downstream credential failure rendering');
+  assert(abuseProtection.includes('res.locals.turnstileEnabled = protectedForm'), 'Turnstile helper must populate template locals');
+  assert(abuseProtection.includes('if (protectedForm) allowTurnstileCsp(res);'), 'Turnstile helper must restore Cloudflare CSP permissions on re-rendered POST responses');
 
   assert(customerLogin.includes("const routeRateLimit=require('../security/route-rate-limit');"), 'customer auth must use the canonical shared route limiter');
   assert(customerLogin.includes("scope:'customer-login-password'"), 'password authentication must have a coarse canonical route bucket');
