@@ -84,7 +84,12 @@ async function editDiscordMessage({channelId,messageId,text,message=null}){
   if(!channel||!messageIdSafe)throw new Error('Discord channel/message ID is invalid.');
   return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(messageIdSafe)}`,{method:'PATCH',body:discordMessage.body(message,{fallbackText:text,allowEveryone:false})});
 }
-async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,transactionFn=transaction}={}){
+async function deleteDiscordMessage({channelId,messageId}){
+  const channel=notificationSettings.snowflake(channelId),messageIdSafe=notificationSettings.snowflake(messageId);
+  if(!channel||!messageIdSafe)throw new Error('Discord channel/message ID is invalid.');
+  return notificationSettings.discordApi(`/channels/${encodeURIComponent(channel)}/messages/${encodeURIComponent(messageIdSafe)}`,{method:'DELETE'});
+}
+async function syncPersistent({settings=null,usage=capacity.usage,operationsConfig=null,send=sendDiscordMessage,edit=editDiscordMessage,remove=deleteDiscordMessage,transactionFn=transaction}={}){
   const cfg=settings||await notificationSettings.status();
   if(!cfg.discordFreePlacesDigestEnabled)return{processed:0,updated:0,skipped:'disabled'};
   if(!cfg.discordConfigured)return{processed:0,updated:0,skipped:'discord_not_configured'};
@@ -112,9 +117,17 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
     let sentMessage=null,created=false;
     // Routine changes are PATCHed in place, which avoids creating a new channel
     // message. The one intentional exception is a known 0 -> positive change:
-    // POST a fresh message so Discord treats availability reopening as new
-    // activity. The fresh message id then becomes the canonical one we edit.
-    if(stored.messageId&&!availabilityRestored){
+    // delete the stale canonical "full" message, then POST a fresh message so
+    // Discord treats availability reopening as new activity. The fresh message
+    // id then becomes the canonical one we edit on subsequent routine changes.
+    if(stored.messageId&&availabilityRestored){
+      try{await remove({channelId,messageId:stored.messageId});}
+      catch(error){
+        // A manually removed/stale Discord message must never stop the important
+        // availability reopening notification from being posted.
+        if(!discordMissing(error))console.warn('[free-places-digest] Failed to delete stale full Discord message:',error?.message||error);
+      }
+    }else if(stored.messageId){
       try{sentMessage=await edit({channelId,messageId:stored.messageId,text,message});}
       catch(error){if(!discordMissing(error))throw error;}
     }
@@ -130,4 +143,4 @@ async function syncPersistent({settings=null,usage=capacity.usage,operationsConf
 }
 async function run(options={}){return syncPersistent(options);}
 
-module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
+module.exports={STATE_KEY,run,syncPersistent,localStamp,dueSlot,freePlan,freeRegistrationUrl,digestText,persistentText,persistentMessage,loadState,saveState,editDiscordMessage,deleteDiscordMessage,sendDiscordMessage,discordMissing,becameAvailable};
