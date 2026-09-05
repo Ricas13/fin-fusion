@@ -72,21 +72,21 @@ function quickPresets(filters){
 }
 function advancedActive(filters){return Boolean(filters.status||filters.accountStatus||filters.paymentProvider||filters.reconciliationStatus||filters.hasOverride!==undefined||filters.library||filters.expiryFrom||filters.expiryTo||filters.lastActiveFrom||filters.lastActiveTo||filters.registeredFrom||filters.registeredTo)}
 function filterForm(filters,options,sort){
-    const accessOptions=[['','Any access'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
+    const accessOptions=[['','Any'],['active','Ready'],['needs_access','Needs access'],['provisioning','Provisioning'],['expired','Expired'],['no_entitlement','No entitlement']];
     return `${quickPresets(filters)}<form class="formPanel filterForm compactFilterForm customerFilterPanel" method="get" action="/admin/users" data-native-submit="true">
         <input type="hidden" name="sort" value="${esc(sort.key)}"><input type="hidden" name="dir" value="${esc(sort.direction)}">
         <div class="customerSearchRow" role="search" aria-label="Search customers">
-            <div class="formGroup customerSearch"><label for="customerFilterSearch">Search customers</label><input class="input" id="customerFilterSearch" type="search" name="q" value="${esc(filters.q||'')}" placeholder="Name, email or Jellyfin username"></div>
+            <div class="formGroup customerSearch"><label for="customerFilterSearch">Name</label><input class="input" id="customerFilterSearch" type="search" name="q" value="${esc(filters.q||'')}" placeholder="Name, email or Jellyfin username"></div>
             <button class="button" type="submit">Search</button><a class="button secondary" href="${esc(clearHref(filters))}">Reset</a>
         </div>
         <div class="customerPrimaryFilters" aria-label="Customer filters">
             <div class="formGroup"><label for="customerFilterProduct">Product</label><select class="input" id="customerFilterProduct" name="service"><option value="">All products</option><option value="jellyfin" ${filters.service==='jellyfin'?'selected':''}>Jellyfin</option><option value="stremio" ${filters.service==='stremio'?'selected':''}>Stremio</option></select></div>
-            <div class="formGroup"><label for="customerFilterPlan">Plan</label><select class="input" id="customerFilterPlan" name="plan"><option value="">Any plan</option>${optionList(options.plans,filters.planId)}</select></div>
-            <div class="formGroup"><label for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server"><option value="">Any Jellyfin server</option>${optionList(options.servers,filters.serverId)}</select></div>
             <div class="formGroup"><label for="customerFilterAccess">Access</label><select class="input" id="customerFilterAccess" name="access">${accessOptions.map(([value,label])=>`<option value="${esc(value)}" ${filters.access===value?'selected':''}>${esc(label)}</option>`).join('')}</select></div>
+            <div class="formGroup"><label for="customerFilterPlan">Plan</label><select class="input" id="customerFilterPlan" name="plan"><option value="">Any Plan</option>${optionList(options.plans,filters.planId)}</select></div>
+            <div class="formGroup"><label for="customerFilterServer">Server</label><select class="input" id="customerFilterServer" name="server"><option value="">Any Jellyfin Server</option>${optionList(options.servers,filters.serverId)}</select></div>
             <div class="customerFilterActions"><button class="button" type="submit">Apply</button></div>
         </div>
-        <details class="customerAdvancedFilters" ${advancedActive(filters)?'open':''}><summary>Advanced filters${advancedActive(filters)?' · active':''}</summary><div class="formGrid">
+        <details class="customerAdvancedFilters" ${advancedActive(filters)?'open':''}><summary>More Advanced Filters${advancedActive(filters)?' · active':''}</summary><div class="formGrid">
             <div class="formGroup"><label for="customerFilterSubscription">Subscription status</label><select class="input" id="customerFilterSubscription" name="status"><option value="">Any</option><option value="none" ${filters.status==='none'?'selected':''}>No subscription history</option>${customerFilters.STATUS_VALUES.map(s=>`<option value="${esc(s)}" ${filters.status===s?'selected':''}>${esc(titleCase(s))}</option>`).join('')}</select></div>
             <div class="formGroup"><label for="customerFilterPayment">Payment provider</label><select class="input" id="customerFilterPayment" name="paymentProvider"><option value="">Any</option><option value="none" ${filters.paymentProvider==='none'?'selected':''}>None</option>${customerFilters.PAYMENT_PROVIDERS.map(pr=>`<option value="${esc(pr)}" ${filters.paymentProvider===pr?'selected':''}>${esc(titleCase(pr))}</option>`).join('')}</select></div>
             <div class="formGroup"><label for="customerFilterPortal">Portal sign-in</label><select class="input" id="customerFilterPortal" name="accountStatus"><option value="">Any</option><option value="portal_disabled" ${filters.accountStatus==='portal_disabled'?'selected':''}>Disabled</option></select></div>
@@ -124,6 +124,11 @@ function expiryText(x){
     if(x.billing_interval==='trial'||x.subscription_status==='trialing')return `Ends ${relativeTime(end)}`;
     if(['past_due','paused','cancelled','expired'].includes(x.subscription_status))return `Access until ${relativeTime(end)}`;
     return `Renews ${relativeTime(end)}`;
+}
+function planMeta(x){
+    if(!x.plan_id)return 'No current entitlement';
+    const commercial=x.billing_interval==='trial'||x.subscription_status==='trialing'?'Trial':x.is_free_tier?'Free':'Paid';
+    return [commercial,x.subscription_status?titleCase(x.subscription_status):'',serviceLabel(x.service_type)||'Jellyfin'].filter(Boolean).join(' · ');
 }
 function rowState(x){
     const current=x.has_current_entitlement===true;
@@ -165,7 +170,7 @@ function row(x){
     return `<tr data-customer-row>
         <td data-label=""><input type="checkbox" class="rowCheck" form="bulkForm" name="customerId" value="${esc(x.id)}" aria-label="Select ${esc(customerName)}"></td>
         <td data-label="Customer"><a class="mediaTitle" href="/admin/users/${esc(x.id)}">${esc(customerName)}</a>${identity.secondary?`<div class="subText">${esc(identity.secondary)}</div>`:''}${portalNote}</td>
-        <td data-label="Plan"><strong>${esc(x.plan_name||'No plan')}</strong>${x.plan_id?`<div class="subText">${esc(serviceLabel(x.service_type)||'Jellyfin')}</div>`:''}</td>
+        <td data-label="Plan"><strong>${esc(x.plan_name||'No plan')}</strong><div class="subText">${esc(planMeta(x))}</div></td>
         <td data-label="Access">${pill(state.access,state.tone)}<div class="subText customerAccessReason">${esc(state.reason)}</div></td>
         <td data-label="Jellyfin">${jellyfinCell(x,state)}</td>
         <td data-label="Server">${serverCell(x)}</td>
