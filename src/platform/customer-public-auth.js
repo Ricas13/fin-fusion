@@ -16,7 +16,7 @@ const csrf=require('../auth/csrf');
 
 const establish=customerSession.establish;
 const destroy=customerSession.destroy;
-function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));}
+function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function emailFrame(site,title,copy,label,url){return `<!doctype html><html><body style="margin:0;background:#0d1117;color:#e8edf3;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:32px 20px"><div style="font-size:20px;font-weight:700;margin-bottom:24px">${esc(site)}</div><div style="background:#151b22;border:1px solid #2b3440;border-radius:12px;padding:24px"><h1 style="font-size:24px;margin:0 0 12px">${esc(title)}</h1><p style="color:#aab5c1;line-height:1.6">${esc(copy)}</p><p style="margin:24px 0"><a href="${esc(url)}" style="display:inline-block;background:#163844;border:1px solid #2d6474;color:#ecfbff;text-decoration:none;padding:11px 18px;border-radius:7px;font-weight:700">${esc(label)}</a></p><p style="color:#748295;font-size:12px;line-height:1.5">If the button does not work, copy this address into your browser:<br>${esc(url)}</p></div></div></body></html>`;}
 function freeIntent(value){return ['1','true','free'].includes(String(value||'').trim().toLowerCase());}
 async function currentFreeReservation(req){const id=String(req.session?.freeAccessReservationId||'').trim();if(!id)return null;const reservation=await pendingRegistrations.reservationForSession(id,req.sessionID).catch(()=>null);if(!reservation&&req.session)delete req.session.freeAccessReservationId;return reservation;}
