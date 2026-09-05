@@ -46,24 +46,32 @@ async function replyCustomer({ticketId,customerId,customerUserId,message}){
   });
 }
 
-async function listForAdmin(filter='active'){
-  const where=filter==='closed'?`WHERE t.status='closed'`:filter==='resolved'?`WHERE t.status='resolved'`:filter==='all'?'':`WHERE t.status IN ('open','awaiting_staff','awaiting_customer')`;
+async function listForAdmin(filter='active',q=''){
+  const where=filter==='closed'?`t.status='closed'`:filter==='resolved'?`t.status='resolved'`:filter==='all'?'':`t.status IN ('open','awaiting_staff','awaiting_customer')`;
+  const search=cleanText(q,{min:0,max:200,label:'Search'});
+  const conditions=[where].filter(Boolean),params=[];
+  if(search){params.push(`%${search}%`);conditions.push(`(t.ticket_number::text ILIKE $${params.length} OR t.subject ILIKE $${params.length} OR c.display_name ILIKE $${params.length} OR c.email ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.email ILIKE $${params.length})`);}
+  const clause=conditions.length?`WHERE ${conditions.join(' AND ')}`:'';
   return (await query(`SELECT t.*,c.display_name,
     COALESCE(NULLIF(TRIM(c.email),''),NULLIF(TRIM(u.email),'')) customer_email,
-    u.username customer_username
+    u.username customer_username,
+    au.username assigned_admin_username
     FROM support_tickets t
     JOIN customers c ON c.id=t.customer_id
     LEFT JOIN app_users u ON u.id=c.user_id
-    ${where}
-    ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'awaiting_staff' THEN 0 WHEN 'awaiting_customer' THEN 1 ELSE 2 END,t.updated_at DESC LIMIT 500`)).rows;
+    LEFT JOIN app_users au ON au.id=t.assigned_admin_user_id
+    ${clause}
+    ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'awaiting_staff' THEN 0 WHEN 'awaiting_customer' THEN 1 ELSE 2 END,t.updated_at DESC LIMIT 500`,params)).rows;
 }
 async function getForAdmin(ticketId){
   const ticket=(await query(`SELECT t.*,c.display_name,
     COALESCE(NULLIF(TRIM(c.email),''),NULLIF(TRIM(u.email),'')) customer_email,
-    u.username customer_username
+    u.username customer_username,
+    au.username assigned_admin_username
     FROM support_tickets t
     JOIN customers c ON c.id=t.customer_id
     LEFT JOIN app_users u ON u.id=c.user_id
+    LEFT JOIN app_users au ON au.id=t.assigned_admin_user_id
     WHERE t.id=$1`,[ticketId])).rows[0];
   if(!ticket)return null;
   const messages=(await query(`SELECT * FROM support_ticket_messages WHERE ticket_id=$1 ORDER BY created_at,id`,[ticketId])).rows;
