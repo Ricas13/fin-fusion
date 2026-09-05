@@ -33,8 +33,8 @@ async function discoverCandidates({limit=200}={}){
              SELECT 1 FROM payment_incidents pi
               WHERE pi.customer_id=s.customer_id
                 AND pi.incident_type='failed_renewal'
-                AND (pi.provider_subscription_id=s.provider_subscription_id
-                     OR (pi.provider_subscription_id IS NULL AND pi.provider=s.source))
+                AND ((s.provider_subscription_id IS NOT NULL AND pi.provider_subscription_id=s.provider_subscription_id)
+                     OR (s.provider_subscription_id IS NULL AND pi.provider_subscription_id IS NULL AND pi.provider=s.source))
            ) had_failed_renewal
       FROM subscriptions s
       JOIN plans p ON p.id=s.plan_id
@@ -46,11 +46,17 @@ async function discoverCandidates({limit=200}={}){
        AND s.updated_at>=wr.activated_at
        AND COALESCE(s.billing_interval_snapshot,p.billing_interval)<>'trial'
        AND COALESCE(
-             NULLIF(s.commercial_snapshot->>'grossDiscountedMinor','')::integer,
-             NULLIF(s.commercial_snapshot->>'discountedMinor','')::integer,
+             CASE WHEN COALESCE(s.commercial_snapshot->>'grossDiscountedMinor','') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'grossDiscountedMinor')::integer END,
+             CASE WHEN COALESCE(s.commercial_snapshot->>'discountedMinor','') ~ '^[0-9]+$' THEN (s.commercial_snapshot->>'discountedMinor')::integer END,
              s.price_minor_snapshot,p.price_minor,0
            )>0
        AND NOT EXISTS(SELECT 1 FROM winback_offers w WHERE w.trigger_subscription_id=s.id)
+       AND NOT EXISTS(
+         SELECT 1 FROM audit_log terminal_audit
+          WHERE terminal_audit.entity_type='subscription'
+            AND terminal_audit.entity_id=s.id::text
+            AND terminal_audit.action IN ('billing.subscription.terminate_local','billing.subscription.terminate_for_refund')
+       )
      ORDER BY s.updated_at,s.id
      LIMIT $1
   `,[safeLimit])).rows;
@@ -111,13 +117,20 @@ async function recentSendExists(offer,cooldownDays){
   const row=(await query(`SELECT 1 FROM winback_offers WHERE customer_id=$1 AND id<>$2 AND sent_at>NOW()-make_interval(days=>$3) LIMIT 1`,[offer.customer_id,offer.id,cooldownDays])).rows[0];
   return Boolean(row);
 }
+async function recoveryDiscounts(){
+  const rows=(await query(`SELECT code,winback_kind,percent_off FROM discount_codes WHERE winback_kind IN ('monthly_25','longterm_10') AND active=TRUE AND (starts_at IS NULL OR starts_at<=NOW()) AND (expires_at IS NULL OR expires_at>NOW())`)).rows;
+  const byKind=new Map(rows.map(row=>[row.winback_kind,row]));
+  const monthly=byKind.get('monthly_25'),longterm=byKind.get('longterm_10');
+  if(!monthly||Number(monthly.percent_off)!==25||!longterm||Number(longterm.percent_off)!==10)throw new Error('System win-back discount codes are missing, inactive, or misconfigured.');
+  return{monthly,longterm};
+}
 async function brand(){await runtimeSettings.ensureLoaded().catch(()=>{});const settings=await operations.get().catch(()=>operations.DEFAULTS);return{siteName:runtimeSettings.siteName()||'CAPTAiNFiN',publicBaseUrl:String(settings?.publicBaseUrl||'').replace(/\/+$/,'')};}
-function recoveryMessage(offer,customer,branding){
+function recoveryMessage(offer,customer,branding,discounts){
   const accountUrl=branding.publicBaseUrl?`${branding.publicBaseUrl}/account`:'';
   const subject='Come back and save on your next membership';
   const reasonText=offer.trigger_reason==='payment_failed'?'Your previous paid membership ended after its payment could not be renewed.':'Your previous paid membership has now ended.';
-  const text=`Hi ${customer.display_name},\n\n${reasonText}\n\nIf you would like to come back, we have saved two one-time offers for you:\n\n• 25% off your first monthly payment — code WELCOME_BACK_25\n• 10% off your first 6-month or yearly term — code WELCOME_BACK_10\n\nThe offer is tied to your account, can be used once, and expires in ${offer.offerDays} days. Future renewals return to the normal price.${accountUrl?`\n\nOpen your account: ${accountUrl}`:''}`;
-  const html=renderProfessionalEmail({subject,title:'We would love to have you back',text:`${reasonText}\n\n25% off your first monthly payment — WELCOME_BACK_25\n\n10% off your first 6-month or yearly term — WELCOME_BACK_10\n\nThese one-time offers are tied to your account and expire in ${offer.offerDays} days. Future renewals return to the normal price.`,eventLabel:'Win-back offer',actionLabel:accountUrl?'Choose your plan':'',actionUrl:accountUrl,siteName:branding.siteName,publicBaseUrl:branding.publicBaseUrl,transactional:false});
+  const text=`Hi ${customer.display_name},\n\n${reasonText}\n\nIf you would like to come back, we have saved two one-time offers for you:\n\n• 25% off your first monthly payment — code ${discounts.monthly.code}\n• 10% off your first 6-month or yearly term — code ${discounts.longterm.code}\n\nThe offer is tied to your account, can be used once, and expires in ${offer.offerDays} days. Future renewals return to the normal price.${accountUrl?`\n\nOpen your account: ${accountUrl}`:''}`;
+  const html=renderProfessionalEmail({subject,title:'We would love to have you back',text:`${reasonText}\n\n25% off your first monthly payment — ${discounts.monthly.code}\n\n10% off your first 6-month or yearly term — ${discounts.longterm.code}\n\nThese one-time offers are tied to your account and expire in ${offer.offerDays} days. Future renewals return to the normal price.`,eventLabel:'Win-back offer',actionLabel:accountUrl?'Choose your plan':'',actionUrl:accountUrl,siteName:branding.siteName,publicBaseUrl:branding.publicBaseUrl,transactional:false});
   return{subject,text,html};
 }
 
@@ -129,7 +142,7 @@ async function processOne(offer){
     if(!customer.email)return suppress(offer.id,'no_email');
     if(await hasActivePaidOverlap({query},offer.customer_id,offer.service_type))return suppress(offer.id,'paid_access_restored_before_send');
     if(await recentSendExists(offer,offer.cooldownDays))return suppress(offer.id,'90_day_cooldown');
-    const branding=await brand(),message=recoveryMessage(offer,customer,branding);
+    const [branding,discounts]=await Promise.all([brand(),recoveryDiscounts()]),message=recoveryMessage(offer,customer,branding,discounts);
     await emailOutbox.enqueue({type:'winback_offer',to:customer.email,subject:message.subject,text:message.text,html:message.html,dedupeKey:`winback:${offer.id}:email`});
     await query(`UPDATE winback_offers SET status='sent',sent_at=NOW(),expires_at=NOW()+make_interval(days=>$2),processing_started_at=NULL,last_error=NULL,updated_at=NOW() WHERE id=$1`,[offer.id,offer.offerDays]);
     await query(`INSERT INTO audit_log(action,entity_type,entity_id,metadata) VALUES('marketing.winback.send','winback_offer',$1,$2::jsonb)`,[offer.id,JSON.stringify({customerId:offer.customer_id,triggerSubscriptionId:offer.trigger_subscription_id,triggerReason:offer.trigger_reason,serviceType:offer.service_type,offerDays:offer.offerDays,cooldownDays:offer.cooldownDays})]);
