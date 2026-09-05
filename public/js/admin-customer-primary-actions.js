@@ -5,22 +5,21 @@
   const match=path.match(/^\/admin\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
   if(!match)return;
   const customerId=match[1];
+  const text=node=>String(node?.textContent||'').trim();
+  const advancedLabels=new Set(['Reconcile','Fix access','Reconcile access','Sync roles / reconcile','Provision / re-provision','Re-provision / resync','Create / provision']);
 
   const style=document.createElement('style');
-  style.textContent='.opMoreActions{align-self:center}.opMoreActions>summary{cursor:pointer;list-style:none;font-size:.64rem;font-weight:750;color:var(--muted,#9aa7b5);padding:5px 7px;border:1px solid var(--border,#29333d);border-radius:7px}.opMoreActions>summary::-webkit-details-marker{display:none}.opMoreActionsBody{display:flex;gap:5px;flex-wrap:wrap;width:100%;padding-top:6px}.opMoreActionsBody .plainForm{display:inline-flex}';
+  style.textContent='.opMoreActions{grid-column:1/-1}.opMoreActions>summary{cursor:pointer;list-style:none;font-size:.61rem;font-weight:750;color:var(--muted,#9aa7b5);padding:5px 7px;border:1px solid var(--border,#29333d);border-radius:6px;text-align:center}.opMoreActions>summary::-webkit-details-marker{display:none}.opMoreActionsBody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;width:100%;padding-top:6px}.opMoreActionsBody .plainForm,.opMoreActionsBody .button{width:100%}';
   document.head.appendChild(style);
 
-  const text=node=>String(node?.textContent||'').trim();
-  const advancedLabels=new Set([
-    'Reconcile','Fix access','Reconcile access','Sync roles / reconcile',
-    'Provision / re-provision','Re-provision / resync','Create / provision'
-  ]);
-
-  function dedupePortal(){
-    const forms=[...document.querySelectorAll(`form[action="/admin/users/${customerId}/impersonate"]`)];
-    if(forms.length<2)return;
-    const preferred=forms.find(form=>form.closest('.customerPortalTab'))||forms.find(form=>form.closest('.detailTabs'))||forms[0];
-    for(const form of forms)if(form!==preferred)form.remove();
+  function cleanLegacyHeader(){
+    document.querySelectorAll('a,button').forEach(node=>{
+      const label=text(node);
+      if(label==='Change Jellyfin password'&& !node.closest('.approvedCustomerHero') && !node.closest('.customer360Core'))node.remove();
+    });
+    document.querySelectorAll(`form[action="/admin/users/${customerId}/impersonate"]`).forEach(form=>{
+      if(!form.closest('.customerPrimaryActions')&&!form.closest('.approvedCustomerHero'))form.remove();
+    });
   }
 
   function identifyCards(){
@@ -31,6 +30,9 @@
       if(title==='Stremio')card.id='customer-stremio';
       if(title==='Overseerr')card.id='customer-overseerr';
       if(title==='Customer / Portal')card.id='customer-portal';
+      if(title==='Discord')card.id='customer-discord';
+      if(title==='Access / Holds')card.id='customer-holds';
+      if(title==='Danger Zone')card.id='customer-danger';
     });
   }
 
@@ -47,6 +49,16 @@
     });
   }
 
+  function moveAdvancedIntoBottomStack(){
+    const advanced=document.querySelector(':scope body .approvedAdvanced');
+    const core=document.querySelector('.customer360Core');
+    if(!advanced||!core||advanced.dataset.relocated==='1')return;
+    const disclosures=[...core.querySelectorAll(':scope > .opDisclosure')];
+    const activity=disclosures.find(node=>text(node.querySelector('summary > span'))==='Activity');
+    advanced.dataset.relocated='1';
+    if(activity)core.insertBefore(advanced,activity);else core.appendChild(advanced);
+  }
+
   function plusDays(dateText,days){const date=new Date(`${dateText}T00:00:00Z`);if(Number.isNaN(date.getTime()))return'';date.setUTCDate(date.getUTCDate()+Number(days||30));return date.toISOString().slice(0,10);}
   function wireManualGrantForms(){
     document.querySelectorAll('form.manualGrantCompact:not([data-generic-wired])').forEach(form=>{
@@ -58,7 +70,7 @@
     });
   }
 
-  function enhance(){dedupePortal();identifyCards();compactTechnicalActions();wireManualGrantForms();}
+  function enhance(){cleanLegacyHeader();identifyCards();compactTechnicalActions();moveAdvancedIntoBottomStack();wireManualGrantForms();}
   enhance();
   const observer=new MutationObserver(enhance);observer.observe(document.body,{childList:true,subtree:true});setTimeout(()=>observer.disconnect(),5000);
 })();
