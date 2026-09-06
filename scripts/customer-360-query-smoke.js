@@ -91,4 +91,5 @@ assert.strictEqual(stremioOnlyRows[0].plan, '—');
 assert.strictEqual(stremioOnlyRows[3].desired, 'Enabled');
 assert.strictEqual(stremioOnlyRows[3].plan, 'stremio-only');
 
+require('./customer-portal-linkage-smoke');
 console.log('customer 360 UUID audit + per-service truth + activity/payment semantics smoke: ok');
