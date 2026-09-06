@@ -75,7 +75,7 @@ assert(installScope.includes('await client.query(`UPDATE stremio_entitlements SE
 assert(installScope.includes('await installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client})'),'recoverable install secret must be saved through the same transaction client');
 assert(installScope.indexOf('client.query(`UPDATE stremio_entitlements')<installScope.indexOf('installRecovery.save'),'recovery persistence must happen before the token transaction can commit');
 assert(installRecovery.includes('const db=client||{query}'),'credential recovery save must accept the canonical caller transaction');
-assert(customerStremio.includes('stremio.issueInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer install route must delegate actor-aware persistence to the canonical issuance owner');
+assert(customerStremio.includes('async function issueCustomerInstallation(customerId')&&customerStremio.includes('stremio.issueInstallation(customerId,{actorUserId})')&&customerStremio.includes('issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer install route must delegate actor-aware persistence through the shared canonical installation helper');
 assert(!customerStremio.includes("require('../stremio/install-credential-recovery')"),'customer route must not perform a second non-atomic credential recovery write');
 
 assert(admin.includes("router.use('/admin/servers/stremio/managed',gate,noStore)"),'managed source compatibility route must stay authenticated and no-store');

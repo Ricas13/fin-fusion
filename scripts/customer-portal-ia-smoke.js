@@ -105,16 +105,16 @@ assert(nowPlayingRoute.includes("router.get('/account/now-playing.json'")&&nowPl
 assert(!nowPlayingRoute.includes('remote_endpoint_encrypted')&&!nowPlayingRoute.includes('jellyfin_session_id'),'customer now-playing output must not select private endpoint or internal session identifiers');
 assert(nowPlayingClient.includes("fetch('/account/now-playing.json'")&&nowPlayingClient.includes('window.setInterval(refresh,15000)')&&nowPlayingClient.includes('if(!list.length){root.hidden=true'),'the live-session strip must refresh in place and disappear when the customer is not streaming');
 
-assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('Free Access always remains visible'),'customers without access must receive a focused choose-access onboarding page');
+assert(onboarding.includes('Choose how you want to watch')&&onboarding.includes('You only need to choose access once')&&onboarding.includes('Free Server, paid Jellyfin or standalone Stremio access'),'customers without access must receive a focused choose-access onboarding page');
 assert(onboarding.includes('<div class="brandMeta">My account</div>')&&onboarding.includes('href="/account/security">Account</a>')&&!onboarding.includes('>Account security</a>')&&!onboarding.includes('<div class="brandMeta">Getting started</div>'),'onboarding must use the same My account / Account terminology as the signed-in portal');
-for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans'])assert(onboarding.includes(group),`customer access catalogue must preserve the admin plan family ${group}`);
-assert(onboarding.includes('.choiceGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))'),'four-card onboarding groups must use four equal desktop columns');
-assert(onboarding.includes('.choiceGrid.choiceGrid--1{grid-template-columns:minmax(260px,320px)}'),'single-card onboarding groups must remain compact on desktop');
-assert(onboarding.includes('@media(max-width:980px){.choiceGrid,.choiceGrid.choiceGrid--2,.choiceGrid.choiceGrid--3{grid-template-columns:repeat(2,minmax(0,1fr))}'),'onboarding plan groups must collapse to two columns on tablet widths');
-assert(onboarding.includes('@media(max-width:700px){.choiceGrid,.choiceGrid.choiceGrid--1,.choiceGrid.choiceGrid--2,.choiceGrid.choiceGrid--3{grid-template-columns:1fr}'),'onboarding plan groups must collapse to one column on mobile');
-assert(onboarding.includes('choiceGrid--<%= Math.min(group.plans.length,4) %>'),'onboarding must choose compact grid sizing from the actual group card count');
-assert(onboarding.includes("'One-off payment'")&&onboarding.includes("'Subscription'"),'payment buttons must explicitly distinguish one-off payment from subscription checkout');
-assert(onboarding.includes("paymentButton('paypal',opt)")&&onboarding.includes("paymentButton('stripe',opt)"),'provider buttons must include both provider and payment mode');
+for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Emby Shares','Reseller Plans','Other Plans'])assert(onboarding.includes(group),`customer access catalogue must preserve the admin plan family ${group}`);
+assert(onboarding.includes('class="accessPlanGroup" data-plan-family="<%= group.key %>"')&&onboarding.includes('<div class="plansGrid">'),'onboarding must use the same grouped plan-card grid language as the normal customer dashboard');
+assert(onboarding.includes('@media(max-width:700px){.stepStrip{grid-template-columns:1fr}'),'onboarding setup steps must collapse to one column on mobile');
+assert(onboarding.includes('All paid prices use <strong><%=')&&onboarding.includes('The payment provider confirms the final amount before access starts.'),'onboarding must disclose the single portal currency and provider-confirmed final amount');
+assert(onboarding.includes('>Continue with Stripe</button>')&&onboarding.includes('>Continue with PayPal</button>'),'Stripe and PayPal onboarding must stay provider-first');
+assert(!onboarding.includes('Stripe · One-off payment')&&!onboarding.includes('Stripe · Subscription')&&!onboarding.includes('PayPal · One-off payment')&&!onboarding.includes('PayPal · Subscription'),'provider-first onboarding must not restore separate Stripe/PayPal payment-mode buttons');
+assert(onboarding.includes('name="checkoutMode" value="payment"')&&onboarding.includes('Plisio · One-off payment'),'Plisio onboarding must remain explicitly one-off');
+assert(onboarding.includes('data-plan-promo')&&onboarding.includes('data-promo-target'),'promo entry must remain scoped to individual paid plan cards and flow into checkout');
 
 for(const group of ['Free Server Plans','Paid Plans','Stremio Plans','Reseller Plans','Other Plans'])assert(dashboard.includes(group),`dashboard Plans & payments grouping missing ${group}`);
 assert(dashboard.includes("accessGroups.forEach(function(group)")&&dashboard.includes('group.plans.forEach(function(p)'),'dashboard Plans & payments must render each family as its own group without changing per-plan card actions');

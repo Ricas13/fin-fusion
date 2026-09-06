@@ -43,7 +43,7 @@
     <div class="stepStrip"><div class="stepCard"><strong>1. Choose access</strong><span class="accessMeta">Free Server, paid Jellyfin or standalone Stremio access, depending on what is currently available.</span></div><div class="stepCard"><strong>2. Finish setup</strong><span class="accessMeta">CAPTAiNFiN prepares the service and shows the exact next step.</span></div><div class="stepCard"><strong>3. Start watching</strong><span class="accessMeta">Open Jellyfin or install Stremio directly from your account.</span></div></div>
 
     <section class="sectionBlock manageHub" id="plans">
-      <div class="sectionHead"><div><h2>Available access</h2><p>Choose a plan below. Promo codes are entered on the individual plan card, just like they are in your normal account dashboard. Stripe and PayPal first ask you to choose the provider, then show one-off or subscription options when both are available.</p></div></div>
+      <div class="sectionHead"><div><h2>Available access</h2><p>Choose a plan below. Promo codes are entered on the individual plan card, just like they are in your normal account dashboard. Stripe and PayPal first ask you to choose the provider, then show one-off or subscription options when both are available.</p><p>All paid prices use <strong><%= String(currency||'USD').toUpperCase() %></strong>. The payment provider confirms the final amount before access starts.</p></div></div>
       <% if(!plans.length){ %><div class="empty">No access products are currently available. Your account remains active; check again later or contact support.</div><% } %>
 
       <% accessGroups.forEach(function(group){ %>
