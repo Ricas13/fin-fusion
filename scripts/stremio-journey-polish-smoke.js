@@ -9,6 +9,9 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const customer=read('src/platform/customer-stremio.js');
 const router=read('src/platform/router.js');
 const dashboard=read('views/customer/dashboard.ejs');
+const checkout=read('public/js/customer-checkout.js');
+const access=read('views/customer/jellyfin.ejs');
+const accessJs=read('public/js/customer-jellyfin.js');
 const components=read('src/access/plan-components.js');
 const household=read('src/stremio/household-access.js');
 const adminJourney=read('public/js/admin-stremio-journey.js');
@@ -18,23 +21,43 @@ const adminShell=read('src/platform/admin-html-core.js');
 
 // Customer language describes the commercial model without exposing IP-family,
 // token/credential, lease, or addon implementation terms. Stremio management is
-// consolidated on Account Home; the historical standalone view stays retired.
+// consolidated on My Access; Account Home is summary/navigation only.
 assert(customer.includes('household connection')&&!customer.includes('household IP'),'customer Stremio status must use household-connection language');
 assert(customer.includes('new Stremio installation link is ready')&&!customer.includes('installation credential has been rotated'),'customer link rotation must be explained as a normal replacement');
-assert(customer.includes("r.get('/account/stremio',(req,res)=>res.redirect(302,'/account#stremio-access'))"),'legacy Stremio URL must redirect to the Account Home Stremio section');
+assert(customer.includes("r.get('/account/stremio',(req,res)=>res.redirect(302,'/account/access#stremio-access'))"),'legacy Stremio URL must redirect to the My Access Stremio section');
 for(const retired of ['operations-settings','runtime-settings','customer-nav-html','stremio/foundation','async function model(','function stremioDeepLink(','function householdLabel('])assert(!customer.includes(retired),`retired standalone Stremio model code returned: ${retired}`);
 assert(customer.includes('async function issueCustomerInstallation('),'Stremio installation issuing must be reusable by both the trial and manual recovery flows');
 assert(customer.includes('module.exports={createCustomerStremioRouter,issueCustomerInstallation};'),'customer Stremio module must export the mounted router and shared installation issuer');
-for(const copy of ['Install your private Stremio access','Household access','Use a different household connection','Installation manifest'])assert(dashboard.includes(copy),`Account Home Stremio section missing task-focused copy: ${copy}`);
-for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.','Keep this link private.'])assert(dashboard.includes(instructions),`Account Home Stremio setup instructions missing: ${instructions}`);
-for(const jargon of ['Replace household IP','installation credential','addon URL','/64'])assert(!dashboard.includes(jargon),`Account Home Stremio section exposes implementation wording: ${jargon}`);
-assert(dashboard.includes('action="/account/stremio/install"')&&dashboard.includes('action="/account/stremio/reset-household"')&&dashboard.includes('action="/account/stremio/revoke"'),'Account Home Stremio actions must keep their existing server routes');
+assert(customer.includes('installationLinks.current(req,customerId)'),'My Access must recover the authoritative current installation credential');
+assert(customer.includes("res.setHeader('Cache-Control','no-store, private, max-age=0')"),'installation state endpoint must remain no-store');
+
+// Home must be a summary/navigation surface. This is server-rendered behavior,
+// not a client-side hide, so cached JavaScript cannot bring the setup panel back.
+assert(dashboard.includes('class="multiAccessSummary"'),'Home must keep the active access summary');
+assert(dashboard.includes('class="accessSummaryCard"'),'Home must keep active plan cards');
+assert(dashboard.includes('href="/account/access"'),'Home must link active access to My Access');
+assert(!dashboard.includes('id="stremio-access"'),'Home must not server-render the Stremio setup panel');
+assert(!dashboard.includes('action="/account/stremio/install"'),'Home must not own Stremio installation actions');
+assert(!dashboard.includes('action="/account/stremio/reset-household"'),'Home must not own Stremio household actions');
+assert(!dashboard.includes('action="/account/stremio/revoke"'),'Home must not own Stremio revoke actions');
+assert(!dashboard.includes('Installation manifest'),'Home must not expose Stremio setup details');
+assert(!checkout.includes("querySelector('#stremio-access')"),'Home must not rely on JavaScript to remove server-rendered Stremio setup');
+
+// My Access owns the setup experience and loads the same recovered installation
+// state used by the server. The rich setup is rendered there after a no-store read.
+assert(access.includes('id="stremio-access"')&&access.includes('data-stremio-access'),'My Access must contain the Stremio setup mount');
+for(const copy of ['Household access','Use a different household connection','Installation manifest'])assert(accessJs.includes(copy),`My Access Stremio section missing task-focused copy: ${copy}`);
+for(const instructions of ['Open Stremio.','Profile → Addons → Add addon.','Paste this private manifest/install URL and install it.','Keep this link private.'])assert(accessJs.includes(instructions),`My Access Stremio setup instructions missing: ${instructions}`);
+for(const route of ['/account/stremio/installation.json','/account/stremio/install','/account/stremio/reset-household','/account/stremio/revoke'])assert(accessJs.includes(route),`My Access Stremio UI missing ${route}`);
+assert(accessJs.includes("cache:'no-store'"),'My Access must fetch fresh installation-link state');
+assert(accessJs.includes("name=\"returnTo\" value=\"access\""),'My Access Stremio mutations must return to My Access');
+for(const jargon of ['Replace household IP','installation credential','addon URL','/64'])assert(!accessJs.includes(jargon),`My Access Stremio section exposes implementation wording: ${jargon}`);
 assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired standalone Stremio setup view must stay removed');
 
 // Starting a Stremio or bundle trial is one customer action: the trial route
 // immediately issues the private installation link instead of requiring a
 // second Create Stremio link click. Failure is isolated so the already-created
-// trial remains active and the dashboard can offer the existing recovery route.
+// trial remains active and My Access can offer the existing recovery route.
 assert(router.includes('autoCreateStremioTrialInstallation'),'trial flow must own automatic Stremio installation-link creation');
 assert(router.includes("['stremio', 'bundle'].includes(serviceType)"),'automatic installation must be limited to Stremio-capable trials');
 assert(router.includes('return issueCustomerInstallation(customerId, { actorUserId: customerUserId });')&&router.includes('await autoCreateStremioTrialInstallation(req.session.customerId, req.session.customerUserId, subscription)'),'trial flow must issue the link immediately after trial activation through the shared customer installation helper');

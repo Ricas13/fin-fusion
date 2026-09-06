@@ -137,7 +137,6 @@
   function simplifyHomeAccess(){
     const home=document.querySelector('.customerSimpleHome');
     if(!home)return;
-    home.querySelector('#stremio-access')?.remove();
     for(const card of home.querySelectorAll('.accessSummaryCard')){
       if(card.dataset.accessCardLinkReady==='1')continue;
       card.dataset.accessCardLinkReady='1';
