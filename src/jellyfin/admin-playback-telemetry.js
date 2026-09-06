@@ -66,80 +66,17 @@ function telemetrySession(serverId, session, user) {
     sessionId: String(session.Id),
     playbackKey: playbackKey(serverId, session),
     jellyfinUserId: user.id,
-    playSessionId: state.PlaySessionId || null,
     itemId: item.Id || null,
     itemName: item.Name || null,
     itemType: item.Type || null,
     clientName: session.Client || null,
     deviceName: session.DeviceName || null,
-    applicationVersion: session.ApplicationVersion || null,
     method: playbackMethod(session),
-    transcodeReasons,
-    isPaused: Boolean(state.IsPaused),
-    positionTicks: Number.isFinite(Number(state.PositionTicks)) ? Number(state.PositionTicks) : null,
-    lastActivityAt: session.LastActivityDate || null
+    transcodeReasons
   };
 }
 
-async function upsertSession(s) {
-  const prior = await query(`
-    SELECT playback_key
-    FROM active_playback_sessions
-    WHERE server_id=$1 AND jellyfin_session_id=$2
-  `, [s.serverId, s.sessionId]);
-
-  if (prior.rowCount && prior.rows[0].playback_key !== s.playbackKey) {
-    await query(`
-      UPDATE playback_history
-      SET ended_at=COALESCE(ended_at,NOW()),
-          ended_reason=COALESCE(ended_reason,'item_changed'),
-          last_seen_at=NOW()
-      WHERE server_id=$1 AND playback_key=$2
-    `, [s.serverId, prior.rows[0].playback_key]);
-  }
-
-  await query(`
-    INSERT INTO active_playback_sessions(
-      server_id,jellyfin_session_id,playback_key,customer_id,jellyfin_account_id,jellyfin_user_id,
-      play_session_id,item_id,item_name,item_type,client_name,device_name,application_version,
-      playback_method,transcode_reasons,is_paused,position_ticks,last_activity_at,
-      first_seen_at,last_seen_at,stream_limit,over_limit_confirmations
-    ) VALUES(
-      $1,$2,$3,NULL,NULL,$4,
-      $5,$6,$7,$8,$9,$10,$11,
-      $12,$13::jsonb,$14,$15,$16,
-      NOW(),NOW(),NULL,0
-    )
-    ON CONFLICT(server_id,jellyfin_session_id) DO UPDATE SET
-      playback_key=EXCLUDED.playback_key,
-      customer_id=NULL,
-      jellyfin_account_id=NULL,
-      jellyfin_user_id=EXCLUDED.jellyfin_user_id,
-      play_session_id=EXCLUDED.play_session_id,
-      item_id=EXCLUDED.item_id,
-      item_name=EXCLUDED.item_name,
-      item_type=EXCLUDED.item_type,
-      client_name=EXCLUDED.client_name,
-      device_name=EXCLUDED.device_name,
-      application_version=EXCLUDED.application_version,
-      playback_method=EXCLUDED.playback_method,
-      transcode_reasons=EXCLUDED.transcode_reasons,
-      is_paused=EXCLUDED.is_paused,
-      position_ticks=EXCLUDED.position_ticks,
-      last_activity_at=EXCLUDED.last_activity_at,
-      first_seen_at=CASE
-        WHEN active_playback_sessions.playback_key<>EXCLUDED.playback_key THEN NOW()
-        ELSE active_playback_sessions.first_seen_at
-      END,
-      last_seen_at=NOW(),
-      stream_limit=NULL,
-      over_limit_confirmations=0
-  `, [
-    s.serverId,s.sessionId,s.playbackKey,s.jellyfinUserId,
-    s.playSessionId,s.itemId,s.itemName,s.itemType,s.clientName,s.deviceName,s.applicationVersion,
-    s.method,JSON.stringify(s.transcodeReasons),s.isPaused,s.positionTicks,s.lastActivityAt
-  ]);
-
+async function upsertHistory(s) {
   await query(`
     INSERT INTO playback_history(
       server_id,customer_id,jellyfin_account_id,jellyfin_user_id,playback_key,jellyfin_session_id,
@@ -164,35 +101,27 @@ async function upsertSession(s) {
   ]);
 }
 
-async function closeMissing(serverId, administratorIds, seenSessionIds) {
-  if (!administratorIds.length) return 0;
+async function closeMissing(serverId, seenPlaybackKeys) {
+  const params = [serverId];
+  let seenClause = '';
+  if (seenPlaybackKeys.length) {
+    params.push(seenPlaybackKeys);
+    seenClause = 'AND NOT (playback_key=ANY($2::text[]))';
+  }
   const result = await query(`
-    SELECT jellyfin_session_id,playback_key
-    FROM active_playback_sessions
+    UPDATE playback_history
+    SET ended_at=COALESCE(ended_at,NOW()),
+        ended_reason=COALESCE(ended_reason,'session_ended'),
+        last_seen_at=GREATEST(last_seen_at,started_at)
     WHERE server_id=$1
       AND customer_id IS NULL
       AND jellyfin_account_id IS NULL
-      AND LOWER(jellyfin_user_id)=ANY($2::text[])
-  `, [serverId, administratorIds.map(id => String(id).toLowerCase())]);
-
-  let closed = 0;
-  for (const row of result.rows) {
-    if (seenSessionIds.has(String(row.jellyfin_session_id))) continue;
-    await query(`
-      UPDATE playback_history
-      SET ended_at=COALESCE(ended_at,NOW()),
-          ended_reason=COALESCE(ended_reason,'session_ended'),
-          last_seen_at=NOW()
-      WHERE server_id=$1 AND playback_key=$2
-    `, [serverId, row.playback_key]);
-    await query(`
-      DELETE FROM active_playback_sessions
-      WHERE server_id=$1 AND jellyfin_session_id=$2
-        AND customer_id IS NULL AND jellyfin_account_id IS NULL
-    `, [serverId, row.jellyfin_session_id]);
-    closed += 1;
-  }
-  return closed;
+      AND jellyfin_user_id IS NOT NULL
+      AND ended_at IS NULL
+      ${seenClause}
+    RETURNING playback_key
+  `, params);
+  return Number(result.rowCount || 0);
 }
 
 async function pollServer(server) {
@@ -207,7 +136,7 @@ async function pollServer(server) {
 
   const admins = administratorUsers(users);
   const telemetryAdmins = new Map([...admins].filter(([id]) => !managed.has(id)));
-  const seenSessionIds = new Set();
+  const seenPlaybackKeys = [];
   let observed = 0;
 
   for (const session of sessions) {
@@ -215,12 +144,12 @@ async function pollServer(server) {
     const user = telemetryAdmins.get(String(session.UserId).toLowerCase());
     if (!user) continue;
     const normalized = telemetrySession(serverId, session, user);
-    await upsertSession(normalized);
-    seenSessionIds.add(normalized.sessionId);
+    await upsertHistory(normalized);
+    seenPlaybackKeys.push(normalized.playbackKey);
     observed += 1;
   }
 
-  const closed = await closeMissing(serverId, [...telemetryAdmins.keys()], seenSessionIds);
+  const closed = await closeMissing(serverId, seenPlaybackKeys);
   return {
     serverId,
     serverName: server.name,
