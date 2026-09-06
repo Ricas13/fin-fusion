@@ -37,7 +37,7 @@ assert(/async function reserveFreeAccess/.test(pendingRegistration)&&/holder_ses
 assert(/FREE_ACCESS_CAPACITY_EXHAUSTED/.test(pendingRegistration)&&/No free places currently available/.test(pendingRegistration),'last-place loser must receive the canonical no-capacity result');
 assert(/wantsFree&&String\(req\.body\.reserveFree\|\|''\)==='1'/.test(publicAuth)&&/reserveFreeAccess\(\{sessionId:req\.sessionID\}\)/.test(publicAuth),'Free Server hold must be created only by the explicit registration POST');
 assert(/method=\"post\" action=\"\/account\/register\"/.test(storefront)&&/name=\"reserveFree\" value=\"1\"/.test(storefront),'storefront Free Server CTA must be an explicit POST reservation action');
-assert(/Reserve \/ Create Free Account/.test(register)&&/freeIntent && !hasFreeReservation/.test(register),'Free registration page must require reservation before showing signup details');
+assert(/Reserve my Free Access place/.test(register)&&/freeIntent && !hasFreeReservation/.test(register)&&/registrationOpen && \(!freeIntent \|\| hasFreeReservation\)/.test(register),'Free registration page must require reservation before showing signup details');
 assert(/cf-turnstile/.test(register)&&/reserveFree/.test(register),'reserve-only registration must carry the same Turnstile protection as account creation');
 assert(/publicAbuseProtection\.actionForPath\('\/account\/register'\)/.test(storefront)&&/cf-turnstile/.test(storefront),'storefront reservation POST must remain Turnstile fail-closed when CAPTCHA is enabled');
 assert(/no-store, private, max-age=0, must-revalidate/.test(storefront)&&/Surrogate-Control','no-store/.test(storefront),'storefront capacity must be no-store at browser and surrogate caches');
