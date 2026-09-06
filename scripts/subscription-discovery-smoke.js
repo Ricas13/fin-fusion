@@ -13,6 +13,9 @@ assert(!discovery.recurringId('stripe', 'pi_123'));
 assert(!discovery.recurringId('paypal', 'PAY-123'));
 assert(discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'sub_123' }), 'a real Stripe subscription ID must remain linked');
 assert(!discovery.localRecurring({ source: 'stripe', billing_mode: 'subscription', provider_subscription_id: 'pi_123' }), 'a PaymentIntent must never count as a linked recurring Stripe subscription');
+assert(discovery.endingWithoutRenewal({ source: 'migration', billing_mode: 'manual', provider_subscription_id: null, cancel_at_period_end: true }), 'an unlinked paid term intentionally ending after the current period must be reference-only');
+assert(!discovery.needsProviderLink({ source: 'migration', billing_mode: 'manual', provider_subscription_id: null, cancel_at_period_end: true }), 'an intentionally ending paid term must not be queued for provider repair');
+assert(discovery.needsProviderLink({ source: 'migration', billing_mode: 'manual', provider_subscription_id: null, cancel_at_period_end: false }), 'an unlinked paid term still expected to renew must remain provider-link work');
 
 const stripe = discovery.normalizeStripeSubscription({
     id: 'sub_live', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
@@ -100,6 +103,10 @@ matches = discovery.matchPremiumRows([{ ...local, source: 'stripe', billing_mode
 assert.strictEqual(matches[0].state, 'safe', 'a legacy PaymentIntent stored as the recurring ID must be offered for verified provider-link repair');
 assert.strictEqual(matches[0].match.id, 'sub_live');
 
+matches = discovery.matchPremiumRows([{ ...local, cancel_at_period_end: true }], [stripe], baseContext());
+assert.strictEqual(matches[0].state, 'ending', 'a paid term intentionally ending after the current period must be removed from provider-link work');
+assert.strictEqual(matches[0].match, null, 'an intentionally ending paid term must never be auto-linked even when a provider candidate exists');
+
 matches = discovery.matchPremiumRows([local], [{ ...stripe, status: 'canceled' }], baseContext());
 assert.strictEqual(matches[0].state, 'unresolved', 'cancelled Stripe subscriptions must not be used to justify premium access');
 
@@ -115,6 +122,7 @@ assert.ok(discoverySource.includes("IN ('jellyfin','bundle')"), 'discovery must 
 assert.ok(discoverySource.includes("status: 'all'"), 'Stripe discovery must inspect all subscriptions before selecting current states');
 assert.ok(discoverySource.includes("PAYPAL_TRANSACTION_TYPES = Object.freeze(['T0002', 'T0003'])"), 'PayPal discovery must cover subscription and preapproved recurring payments');
 assert.ok(discoverySource.includes("paypal_reference_id_type || '').toUpperCase() === 'SUB'"), 'PayPal discovery must only treat SUB references as subscription IDs');
+assert.ok(discoverySource.includes("state: 'ending'"), 'subscription discovery must classify intentionally ending paid terms as reference-only');
 assert.ok(!/activatePurchase\s*\(/.test(discoverySource), 'subscription discovery must attach provider billing to existing premium entitlements, never create a new entitlement');
 assert.ok(!/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+subscriptions\b/i.test(discoverySource), 'discovery must not mutate provider-backed subscriptions outside the lifecycle owner');
 assert.ok(discoverySource.includes("require('./lifecycle')"), 'discovery must delegate provider-backed linking to the canonical lifecycle owner');
@@ -144,7 +152,10 @@ assert.ok(adminSource.includes('/admin/billing/discover/preview'), 'Billing must
 assert.ok(adminSource.includes('/admin/billing/discover/apply'), 'Billing must expose an explicit safe-link action');
 assert.ok(adminSource.includes("req.body?.confirm !== '1'"), 'provider linking must require explicit confirmation');
 assert.ok(adminSource.includes('Missing provider links'), 'Billing must permanently name the missing-provider operator queue');
-assert.ok(adminSource.includes("premiumRows.filter(row=>!discovery.localRecurring(row))"), 'Billing must list unlinked premium customers using canonical provider-link validation');
+assert.ok(adminSource.includes('premiumRows.filter(discovery.needsProviderLink)'), 'Billing must only queue unlinked premium customers that are still expected to renew');
+assert.ok(adminSource.includes('premiumRows.filter(discovery.endingWithoutRenewal)'), 'Billing must keep intentionally ending paid terms in a separate reference section');
+assert.ok(adminSource.includes('Paid terms ending without renewal'), 'Billing must visibly label the reference-only non-renewing paid-term section');
+assert.ok(adminSource.includes('No action required.'), 'non-renewing paid terms must be explicitly labelled as requiring no operator action');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-preview'), 'each missing link must support read-only provider verification');
 assert.ok(adminSource.includes('/admin/billing/:id/manual-link'), 'each missing link must support explicit verified attachment');
 assert.ok(adminSource.includes('Verify provider subscription'), 'manual resolution must show provider truth before attachment');
@@ -155,7 +166,7 @@ assert.ok(adminSource.includes('Provider verification succeeded.'), 'successful 
 assert.ok(adminSource.includes('manualAttempt'), 'manual verification errors must preserve enough attempted-provider context to explain what failed');
 assert.ok(adminSource.includes('${verification}${table}'), 'manual verification feedback must render before the missing-subscription table, not after the full page');
 assert.ok(adminSource.includes("row.status==='past_due'&&!row.cancel_at_period_end"), 'intentional end-of-period cancellations must not remain in the urgent past-due queue');
-assert.ok(adminSource.includes("filter(item=>item.state!=='linked')"), 'automatic discovery results must focus on unresolved work instead of healthy rows');
+assert.ok(adminSource.includes("filter(item=>item.state!=='linked'&&item.state!=='ending')"), 'automatic discovery results must omit both healthy linked rows and intentional non-renewing reference rows');
 assert.ok(adminSource.includes('Linked recurring subscriptions'), 'linked recurring subscriptions must remain available as secondary/reference information');
 assert.ok(adminSource.includes('csrf.verify(req)'), 'discovery and manual recovery mutations must be CSRF protected');
 
