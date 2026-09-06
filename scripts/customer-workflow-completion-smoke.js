@@ -60,7 +60,7 @@ const login=ejs.render(fs.readFileSync(loginPath,'utf8'),{siteName:'CAPTAiNFiN',
 assert(login.includes('claim link')&&login.includes('instead of registering again'),'login must direct imported Jellyfin customers back to their emailed claim link');
 const registerPath=path.join(root,'views/customer/register.ejs');
 const register=ejs.render(fs.readFileSync(registerPath,'utf8'),{siteName:'CAPTAiNFiN',turnstileEnabled:false,freeIntent:false,registrationOpen:true,verificationRequired:false,freeHoldMinutes:20,error:null,csrfToken:'csrf',referralsEnabled:false,referralCode:''},{filename:registerPath});
-assert(register.includes('claim link')&&register.includes('do not register again'),'registration must warn imported Jellyfin customers not to create a duplicate portal account');
+assert(register.includes('claim link')&&register.includes('instead of creating a second account'),'registration must warn imported Jellyfin customers not to create a duplicate portal account');
 
 assert(!adminNav.groups.some(group=>group.key==='resellers'),'reserved reseller routes must not appear as a shipped module in the default admin sidebar');
 const bulkCustomersSource=fs.readFileSync(path.join(root,'src/platform/admin-bulk-customers.js'),'utf8');

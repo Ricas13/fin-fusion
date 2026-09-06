@@ -25,7 +25,7 @@
         '.customerTable td[data-label="Renewal / expiry"] .customerDateTone.warn{color:#e6bd62!important}',
         '.customerTable td[data-label="Renewal / expiry"] .customerDateTone.bad{color:#ff6f78!important}'
       ].join('');
-      document.head.appendChild(style);
+      document.head.append(style);
     }
 
     const monthIndex = new Map([
