@@ -19,6 +19,7 @@ const hiddenPages=Object.freeze({
   'fleet-operations':Object.freeze({kind:'view',groupKey:'servers',parentKey:'servers',page:Object.freeze(['fleet-operations','Placement & capacity','/admin/servers/operations'])}),
   libraries:Object.freeze({kind:'page',groupKey:'servers',parentKey:'servers',page:Object.freeze(['libraries','Libraries','/admin/libraries'])}),
   'inactivity-policy':Object.freeze({kind:'setting',groupKey:'servers',parentKey:'activity',page:Object.freeze(['inactivity-policy','Free-user inactivity rules','/admin/activity/inactivity-policy'])}),
+  'my-activity':Object.freeze({kind:'view',groupKey:'servers',parentKey:'activity',page:Object.freeze(['my-activity','My activity','/admin/activity/me'])}),
 
   'stremio-playback':Object.freeze({kind:'setting',groupKey:'servers',parentKey:'stremio-sources',page:Object.freeze(['stremio-playback','IP access','/admin/stremio/playback'])}),
 
