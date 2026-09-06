@@ -55,7 +55,7 @@ assert(!customerDashboard.includes('storefrontCurrency'),'Customer account must 
 assert(!customerDashboard.includes('userPreferredCurrency'),'Customer account must not resolve a per-user currency preference');
 assert(!customerDashboard.includes('enabledCurrencies()'),'Customer account must not request a list of customer-selectable currencies');
 assert(!onboarding.includes('name="currency"'),'Customer checkout forms must not post a customer-selected currency');
-assert(onboarding.includes('All paid prices use <strong><%='),'Customer onboarding must present the single portal currency explicitly');
+assert(onboarding.includes('data-plan-currency="<%= p.currency||currency||\'USD\' %>"')&&onboarding.includes("currencyDisplay:'narrowSymbol'"),'Customer onboarding must render each paid plan from its server-resolved portal currency without exposing a selector');
 
 assert(storefront.includes("const affiliateCredits=require('../affiliate-credits');"),'Storefront affiliate showcase must use the canonical affiliate-credit service');
 assert(storefront.includes('async function storefrontAffiliate(customerId,currency)')&&storefront.includes('affiliateCredits.loadSettings()')&&storefront.includes('affiliateCredits.balances(customerId)'),'Storefront must derive affiliate enablement and signed-in balances from the canonical ledger');
