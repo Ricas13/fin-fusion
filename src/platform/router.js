@@ -131,7 +131,7 @@ function createRouter() {
                 }
             } catch (stremioError) {
                 console.warn('Automatic Stremio trial installation setup failed:', { customerId: req.session.customerId, error: stremioError.message });
-                return res.redirect('/account?welcome=1&error=' + encodeURIComponent('Your Stremio trial is active, but the installation link could not be created automatically. Use Retry Stremio setup below.') + '#stremio-access');
+                return res.redirect('/account?welcome=1&error=' + encodeURIComponent('Your Stremio trial is active, but the installation link could not be created automatically. Use the Stremio setup action below to retry.') + '#stremio-access');
             }
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Access is being prepared; each service will show as ready as soon as setup finishes.'));
         } catch (error) {
