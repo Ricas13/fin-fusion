@@ -167,6 +167,30 @@ function summaryFrom(row){
   const seconds=number(row?.seconds),sessions=number(row?.sessions);
   return{watchHours:Math.round((seconds/3600)*10)/10,watchSeconds:seconds,titlesWatched:number(row?.titles_watched),episodesWatched:number(row?.episodes_watched),sessions,activeDays:number(row?.active_days),averageMinutes:sessions?Math.round((seconds/60)/sessions):0,lastPlayback:row?.last_playback||null};
 }
+function fallbackInsights(rawRange,{reason='analytics_unavailable'}={}){
+  const now=new Date(),range=rangeOption(rawRange),startAt=rangeStart(range,now),previous=previousRange(startAt,now);
+  let timeline=[];
+  if(range.bucket==='day'&&startAt)timeline=fillDailyTimeline([],startAt,now);
+  return{
+    range,
+    rangeOptions:RANGE_OPTIONS,
+    summary:{...summaryFrom({}),averageRating:null},
+    comparison:{watchTime:0,titles:0,episodes:0,label:range.key==='30d'?'vs previous 30 days':'vs previous period',available:Boolean(previous.start)},
+    genres:[],platforms:[],timeline,heatmap:heatmap([]),recent:[],peakTime:'No peak yet',
+    insightCards:{watchTrend:0,favoriteGenre:null,peakTime:'No peak yet',deviceCount:0},
+    degraded:true,
+    degradedReason:reason
+  };
+}
+async function optionalInsightQuery(label,run,fallbackRows=[]){
+  try{
+    const result=await run();
+    return{rows:Array.isArray(result?.rows)?result.rows:[],failed:false};
+  }catch(error){
+    console.warn('Customer activity analytics query unavailable:',{query:label,error:error.message});
+    return{rows:fallbackRows,failed:true};
+  }
+}
 async function insightData(customerId,rawRange){
   const now=new Date(),range=rangeOption(rawRange),startAt=rangeStart(range,now),previous=previousRange(startAt,now),duration=safeDurationSql('ph');
   const params=[customerId,startAt?startAt.toISOString():null];
@@ -175,13 +199,13 @@ async function insightData(customerId,rawRange){
   const previousParams=[customerId,previous.start?previous.start.toISOString():null,previous.end?previous.end.toISOString():null];
   const bucket=range.bucket;
   const [summaryResult,previousResult,topResult,deviceResult,timelineResult,heatResult,recentResult]=await Promise.all([
-    query(summarySql,[customerId,startAt?startAt.toISOString():null,null]),
-    previous.start?query(summarySql,previousParams):Promise.resolve({rows:[{}]}),
-    query(`SELECT ph.server_id,ph.item_id,ph.item_name,ph.item_type,ja.jellyfin_user_id,js.public_url,COUNT(*)::int plays,COALESCE(SUM(${duration}),0) seconds FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id LEFT JOIN jellyfin_accounts ja ON ja.id=ph.jellyfin_account_id WHERE ${predicate} GROUP BY ph.server_id,ph.item_id,ph.item_name,ph.item_type,ja.jellyfin_user_id,js.public_url ORDER BY seconds DESC,plays DESC LIMIT 24`,params),
-    query(`SELECT ph.device_name,ph.client_name,COUNT(*)::int plays,COALESCE(SUM(${duration}),0) seconds FROM playback_history ph WHERE ${predicate} GROUP BY ph.device_name,ph.client_name ORDER BY seconds DESC LIMIT 50`,params),
-    query(`SELECT date_trunc('${bucket}',ph.started_at) bucket,COALESCE(SUM(${duration}),0) seconds,COUNT(*)::int plays FROM playback_history ph WHERE ${predicate} GROUP BY 1 ORDER BY 1 ASC`,params),
-    query(`SELECT EXTRACT(ISODOW FROM ph.started_at)::int day,EXTRACT(HOUR FROM ph.started_at)::int hour,COALESCE(SUM(${duration}),0) seconds FROM playback_history ph WHERE ${predicate} GROUP BY 1,2 ORDER BY 1,2`,params),
-    query(`SELECT * FROM (SELECT DISTINCT ON (ph.server_id,COALESCE(NULLIF(ph.item_id,''),ph.playback_key)) ph.server_id,ph.item_id,ph.item_name,ph.item_type,ph.started_at,ph.last_seen_at,ph.ended_at,${duration} duration_seconds,ja.jellyfin_user_id,js.public_url FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id LEFT JOIN jellyfin_accounts ja ON ja.id=ph.jellyfin_account_id WHERE ${predicate} ORDER BY ph.server_id,COALESCE(NULLIF(ph.item_id,''),ph.playback_key),COALESCE(ph.last_seen_at,ph.started_at) DESC) recent ORDER BY COALESCE(last_seen_at,started_at) DESC LIMIT 20`,params)
+    optionalInsightQuery('summary',()=>query(summarySql,[customerId,startAt?startAt.toISOString():null,null]),[{}]),
+    previous.start?optionalInsightQuery('previous-summary',()=>query(summarySql,previousParams),[{}]):Promise.resolve({rows:[{}],failed:false}),
+    optionalInsightQuery('top-items',()=>query(`SELECT ph.server_id,ph.item_id,ph.item_name,ph.item_type,ja.jellyfin_user_id,js.public_url,COUNT(*)::int plays,COALESCE(SUM(${duration}),0) seconds FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id LEFT JOIN jellyfin_accounts ja ON ja.id=ph.jellyfin_account_id WHERE ${predicate} GROUP BY ph.server_id,ph.item_id,ph.item_name,ph.item_type,ja.jellyfin_user_id,js.public_url ORDER BY seconds DESC,plays DESC LIMIT 24`,params)),
+    optionalInsightQuery('devices',()=>query(`SELECT ph.device_name,ph.client_name,COUNT(*)::int plays,COALESCE(SUM(${duration}),0) seconds FROM playback_history ph WHERE ${predicate} GROUP BY ph.device_name,ph.client_name ORDER BY seconds DESC LIMIT 50`,params)),
+    optionalInsightQuery('timeline',()=>query(`SELECT date_trunc('${bucket}',ph.started_at) bucket,COALESCE(SUM(${duration}),0) seconds,COUNT(*)::int plays FROM playback_history ph WHERE ${predicate} GROUP BY 1 ORDER BY 1 ASC`,params)),
+    optionalInsightQuery('heatmap',()=>query(`SELECT EXTRACT(ISODOW FROM ph.started_at)::int day,EXTRACT(HOUR FROM ph.started_at)::int hour,COALESCE(SUM(${duration}),0) seconds FROM playback_history ph WHERE ${predicate} GROUP BY 1,2 ORDER BY 1,2`,params)),
+    optionalInsightQuery('recent-items',()=>query(`SELECT * FROM (SELECT DISTINCT ON (ph.server_id,COALESCE(NULLIF(ph.item_id,''),ph.playback_key)) ph.server_id,ph.item_id,ph.item_name,ph.item_type,ph.started_at,ph.last_seen_at,ph.ended_at,${duration} duration_seconds,ja.jellyfin_user_id,js.public_url FROM playback_history ph JOIN jellyfin_servers js ON js.id=ph.server_id LEFT JOIN jellyfin_accounts ja ON ja.id=ph.jellyfin_account_id WHERE ${predicate} ORDER BY ph.server_id,COALESCE(NULLIF(ph.item_id,''),ph.playback_key),COALESCE(ph.last_seen_at,ph.started_at) DESC) recent ORDER BY COALESCE(last_seen_at,started_at) DESC LIMIT 20`,params))
   ]);
   recentResult.rows.sort((a,b)=>new Date(b.last_seen_at||b.started_at)-new Date(a.last_seen_at||a.started_at));
   const metadataRows=[...topResult.rows,...recentResult.rows],metadata=await metadataForRows(metadataRows),genres=genreSummary(topResult.rows,metadata),rating=averageRating(topResult.rows,metadata);
@@ -189,6 +213,7 @@ async function insightData(customerId,rawRange){
   for(const row of heatResult.rows){const hour=number(row.hour),entry=hourRows.find(item=>item.hour===hour);if(entry)entry.seconds+=number(row.seconds);else hourRows.push({hour,seconds:number(row.seconds)});}
   let timeline=timelineResult.rows.map(row=>({bucket:row.bucket,plays:number(row.plays),hours:Math.round((number(row.seconds)/3600)*10)/10}));
   if(range.bucket==='day'&&startAt)timeline=fillDailyTimeline(timelineResult.rows,startAt,now);
+  const degraded=[summaryResult,previousResult,topResult,deviceResult,timelineResult,heatResult,recentResult].some(result=>result.failed);
   return{
     range,
     rangeOptions:RANGE_OPTIONS,
@@ -205,7 +230,9 @@ async function insightData(customerId,rawRange){
       favoriteGenre:genres[0]?.name||null,
       peakTime:peakWindow(hourRows),
       deviceCount:new Set(deviceResult.rows.map(row=>platformLabel(row.device_name,row.client_name))).size
-    }
+    },
+    degraded,
+    degradedReason:degraded?'partial_query_failure':null
   };
 }
 async function data(customerId,rawRange){
@@ -214,7 +241,10 @@ async function data(customerId,rawRange){
     query(`SELECT created_at,decision,reason,stream_limit,stream_count AS observed_streams FROM stream_policy_events WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100`,[customerId]),
     inactivityStatus.customerStatus(customerId).catch(()=>({applies:false,telemetry:{ready:false}})),
     customers.getCustomerPortal(customerId),
-    insightData(customerId,rawRange)
+    insightData(customerId,rawRange).catch(error=>{
+      console.warn('Customer activity personalised analytics unavailable; rendering core activity page:',{error:error.message});
+      return fallbackInsights(rawRange,{reason:'unexpected_analytics_failure'});
+    })
   ]);
   const customer=portal?.customer||{};
   return{activity:activityRows.rows,events:eventRows.rows,freeUsage,insights,displayName:customer.display_name||customer.login_username||customer.username||null,navOptions:customerNav.optionsFromPortal(portal)};
@@ -224,4 +254,4 @@ function createCustomerActivityRouter(){
   r.get('/account/activity',requireCustomer,async(req,res,next)=>{try{await runtimeSettings.ensureLoaded();const d=await data(req.session.customerId,req.query.range);res.setHeader('Cache-Control','no-store, private, max-age=0');return res.render('customer/activity',{siteName:runtimeSettings.siteName(),...d});}catch(error){return next(error)}});
   return r;
 }
-module.exports={createCustomerActivityRouter,data,insightData,rangeOption,rangeStart,previousRange,heatmap,aggregatePlatforms,RANGE_OPTIONS};
+module.exports={createCustomerActivityRouter,data,insightData,fallbackInsights,optionalInsightQuery,rangeOption,rangeStart,previousRange,heatmap,aggregatePlatforms,RANGE_OPTIONS};
