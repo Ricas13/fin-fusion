@@ -35,15 +35,21 @@ function deliveryType(entitlement){return productReadiness.serviceType({service_
 function liveSubscription(row){if(!row||row.superseded_by||!['active','trialing','past_due','paused'].includes(String(row.status||'')))return false;if(!row.current_period_end)return true;const end=new Date(row.current_period_end);return !Number.isNaN(end.getTime())&&end.getTime()>Date.now();}
 function recurringProvider(row){return billingMode.recurringProvider(row);}
 function subscriptionId(row){return row&&(row.subscription_id||row.id)?String(row.subscription_id||row.id):null;}
-function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=null,embyPlan=null}={}){
-  const byId=new Map((Array.isArray(portal?.subscriptions)?portal.subscriptions:[]).map(row=>[subscriptionId(row),row]).filter(([id])=>id));
-  const seen=new Set(),rows=[];
-  for(const entitlement of [freePlan,currentPlan,stremioPlan,embyPlan]){
-    const id=subscriptionId(entitlement);if(!id||seen.has(id))continue;seen.add(id);
-    const portalRow=byId.get(id)||{};
-    rows.push({...portalRow,...entitlement,id,subscription_id:id});
+function canonicalAccessRows(portal,{currentPlan=null,freePlan=null,stremioPlan=null,embyPlan=null,entitlements=[]}={}){
+  const rowsById=new Map(),forcedIds=new Set();
+  function add(row,{force=false}={}){
+    const id=subscriptionId(row);if(!id)return;
+    rowsById.set(id,{...(rowsById.get(id)||{}),...row,id,subscription_id:id});
+    if(force)forcedIds.add(id);
   }
-  return rows;
+  for(const row of Array.isArray(portal?.subscriptions)?portal.subscriptions:[]){
+    if(row?.is_addon||!liveSubscription(row))continue;
+    add(row);
+  }
+  for(const entitlement of [freePlan,currentPlan,stremioPlan,embyPlan,...(Array.isArray(entitlements)?entitlements:[])]){
+    add(entitlement,{force:true});
+  }
+  return Array.from(rowsById.values()).filter(row=>forcedIds.has(subscriptionId(row))||(!row.is_addon&&liveSubscription(row)));
 }
 function canonicalizePortalSubscriptions(portal,accessRows){
   if(!portal)return portal;
@@ -100,7 +106,7 @@ function createCustomerDashboardRouter(){
       await tagMediaServerAccounts(customerId,await hideInternalAccounts(customerId,portal));
       canonicalizePortalSubscriptions(portal,accessRows);
       const paymentFlags={stripeEnabled:stripe.enabled(),paypalEnabled:paypal.enabled(),plisioEnabled:plisio.enabled()},openCheckout=await checkoutIntents.getOpenForOwner('customer',customerId).catch(()=>null);
-      if(!currentPlan&&!freePlan&&!stremioPlan&&!embyPlan&&!openPlanChange)return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
+      if(!accessRows.length&&!openPlanChange)return res.render('customer/onboarding',{portal,plans,...paymentFlags,currency,openCheckout,navOptions,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message:req.query.message||null,error:req.query.error||returnStatus.error||null,discordInviteUrl:deliverySettings.discordInviteUrl||''});
       const jellyfinPlan=currentPlan||freePlan||null,delivery=deliveryType(jellyfinPlan),hasJellyfin=Boolean(jellyfinPlan&&['jellyfin','bundle'].includes(delivery)),hasStremio=Boolean(stremioPlan),hasEmby=Boolean(embyPlan&&!embyPlan.blocked),jellyfinAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='jellyfin'),embyAccounts=portal.accounts.filter(account=>String(account.media_server_type||'jellyfin')==='emby'),[links,stremioHousehold]=await Promise.all([stremioLinks(req,customerId,hasStremio),stremioHouseholdForCustomer(customerId,hasStremio)]),provisioningState=rawProvisioningState?{...rawProvisioningState,last_error:customerProvisioningMessage(rawProvisioningState)}:null,libraryProfiles=await libraryProfilesForPortal(customerId,portal),welcome=onboardingMessage({...portal,accounts:jellyfinAccounts},jellyfinPlan),message=req.query.message||welcome||null;
       return res.render('customer/dashboard',{portal,plans,currentPlan:jellyfinPlan,freePlan,stremioPlan,embyPlan,renewalSubscription,openPlanChange,openCheckout,...paymentFlags,currency,navOptions,overseerrUrl:runtimeSettings.overseerrUrl(),requestAccess,requestSyncConfigured:requestConfig.configured,libraryProfiles,provisioningState,csrfToken:csrf.token(req),siteName:runtimeSettings.siteName(),message,error:req.query.error||returnStatus.error||null,welcome:req.query.welcome==='1',hasJellyfin,hasStremio,hasEmby,jellyfinAccounts,embyAccounts,stremioHousehold,stremioInstallUrl:links.installUrl,stremioManifestUrl:links.manifestUrl,discordInviteUrl:deliverySettings.discordInviteUrl||'',stremioMetadataAddonUrl:deliverySettings.stremioMetadataAddonUrl||''});
     }catch(error){return next(error);}

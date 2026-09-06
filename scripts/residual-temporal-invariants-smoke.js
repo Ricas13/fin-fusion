@@ -51,7 +51,7 @@ function main() {
     }
     assert(lifecycle.includes('SELECT id,customer_id,plan_id,provider,state FROM billing_checkout_intents'), 'Settlement verification must load checkout state so terminal historical replays can be distinguished from open crash recovery.');
     assert(activation.indexOf('const settlementIntent = await assertSettlementCheckout') < activation.indexOf('historicalCheckoutReplay = Boolean'), 'Existing provider-subscription replay must lock and classify its settlement intent before deciding whether commercial state may be rewritten.');
-    assert(activation.includes('if (historicalCheckoutReplay) {\n                    row = existingSubscription;'), 'A terminal historical checkout replay can still rewrite a later subscription contract.');
+    assert.match(activation, /if \(historicalCheckoutReplay\)\s*\{\s*row = existingSubscription;/, 'A terminal historical checkout replay can still rewrite a later subscription contract.');
     assert(activation.includes('if (providerCustomerId && !historicalCheckoutReplay)'), 'Historical checkout replay can still regress provider-customer identity.');
     const checkout = source('src/payments/checkout-intents.js');
     assert(checkout.includes('checkoutIntentId:row.id'), 'Verified checkout contract does not carry exact settlement identity.');
