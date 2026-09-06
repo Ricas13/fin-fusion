@@ -408,27 +408,21 @@ async function deleteJellyfinAccount(account, { reason = '', actorUserId = null 
         const message = String(error?.message || error);
         if (!/\b404\b|not found/i.test(message)) throw error;
     }
-    try {
-        await transaction(async client => {
-            await client.query('DELETE FROM jellyfin_accounts WHERE id=$1', [account.id]);
-            await client.query(
-                `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'jellyfin.account.delete','jellyfin_account',$2,$3::jsonb)`,
-                [actorUserId, account.id, JSON.stringify({ customerId: account.customer_id, serverId: account.server_id, accessLane: account.access_lane || null, reason: String(reason || '').slice(0, 500) || 'Entitlement ended' })]
-            );
-        });
-    } catch (error) {
-        // customer_server_migrations.source_account_id is RESTRICT (it is
-        // permanent migration history, unlike the other FKs on this table
-        // which CASCADE/SET NULL) - an account that was ever a migration
-        // source cannot be deleted. Fall back to disabling rather than
-        // letting reconciliation crash; the remote account is already gone
-        // at this point either way, so the local row is inert.
-        if (error?.code === '23503') {
-            await disableJellyfinAccount(account).catch(() => {});
-            return { deleted: false, disabledInstead: true, reason: 'referenced_by_server_migration_history' };
-        }
-        throw error;
-    }
+    // Every FK referencing jellyfin_accounts(id) is CASCADE or SET NULL (see
+    // 20260905110000_jellyfin_present_or_deleted.sql, which moved
+    // customer_server_migrations.source_account_id off RESTRICT), so this
+    // delete cannot be blocked by a foreign key any more. There is
+    // deliberately no disable-instead fallback here: the never-disabled
+    // invariant (jellyfin_accounts_never_disabled) means a fallback that
+    // "disables" the row would itself just raise a second, swallowed error
+    // and leave a ghost local row behind. Let any unexpected error propagate.
+    await transaction(async client => {
+        await client.query('DELETE FROM jellyfin_accounts WHERE id=$1', [account.id]);
+        await client.query(
+            `INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'jellyfin.account.delete','jellyfin_account',$2,$3::jsonb)`,
+            [actorUserId, account.id, JSON.stringify({ customerId: account.customer_id, serverId: account.server_id, accessLane: account.access_lane || null, reason: String(reason || '').slice(0, 500) || 'Entitlement ended' })]
+        );
+    });
     return { deleted: true };
 }
 

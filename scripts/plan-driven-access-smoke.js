@@ -104,9 +104,19 @@ assert.strictEqual(strandedEligible,true,'An existing inactivity hold on an enab
 assert(inactivity.includes('repairExistingHold:Boolean(row.already_held&&eligible)'),'Inactivity candidates must flag held-but-enabled Free accounts for repair visibility');
 
 // Portal identity is never an inactivity target; automation touches Jellyfin access/user only.
-assert(inactivity.includes("HOLD_TYPE='inactivity_policy'")&&inactivity.includes("CLEANUP_HOLD_TYPE='jellyfin_cleanup'"),'Lifecycle actions must use explicit Jellyfin holds');
-assert(inactivity.includes('/Users/${encodeURIComponent(row.jellyfin_user_id)}')&&inactivity.includes("method:'DELETE'"),'Dormant cleanup must delete the Jellyfin user remotely');
-assert(inactivity.includes('DELETE FROM jellyfin_accounts WHERE id=$1'),'Dormant cleanup must remove only the local Jellyfin account mapping');
+// The dormant-account cleanup pipeline that used to live in this module (getCleanup/
+// saveCleanup/cleanupCandidates/deleteDormantAccount/runCleanup) was dead code - never
+// wired to any cron job or route - and was unsafe by construction (no access_lane='free'
+// or plan-tier filter, so it could have deleted a paying customer's Jellyfin account, and
+// it bypassed the reconciliation lock entirely). It has been removed rather than fixed in
+// place, since nothing depended on it. The one live delete path (present-or-deleted,
+// lock-guarded, idempotent) lives in provisioning-engine.js/resilient-provisioning.js.
+assert(inactivity.includes("HOLD_TYPE='inactivity_policy'"),'Lifecycle actions must use an explicit Jellyfin hold');
+assert(!inactivity.includes('CLEANUP_HOLD_TYPE')&&!inactivity.includes('cleanupCandidates')&&!inactivity.includes('deleteDormantAccount')&&!inactivity.includes('runCleanup'),'The unsafe, unguarded dormant-account cleanup pipeline must not return to this module');
+const engineCore=read('src/jellyfin/provisioning-engine.js');
+assert(engineCore.includes('/Users/${encodeURIComponent(account.jellyfin_user_id)}')&&engineCore.includes("method: 'DELETE'"),'The canonical delete path must delete the Jellyfin user remotely');
+assert(engineCore.includes('DELETE FROM jellyfin_accounts WHERE id=$1'),'The canonical delete path must remove only the local Jellyfin account mapping');
+assert(!engineCore.includes('disabledInstead'),'The canonical delete path must never fall back to a disabled state');
 assert(!/DELETE\s+FROM\s+customers/i.test(inactivity),'Inactivity automation must never delete CAPTAiNFiN customers');
 assert(!/UPDATE\s+app_users\s+SET\s+active\s*=\s*FALSE/i.test(inactivity),'Inactivity automation must never deactivate portal logins');
 assert(cleanupReturn.includes('includeBlocked:true'),'Portal return must be able to see through the cleanup hold');
