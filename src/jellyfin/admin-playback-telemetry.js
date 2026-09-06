@@ -110,7 +110,7 @@ async function closeMissing(serverId, seenPlaybackKeys) {
   }
   const result = await query(`
     UPDATE playback_history
-    SET ended_at=COALESCE(ended_at,NOW()),
+    SET ended_at=COALESCE(ended_at,last_seen_at,started_at),
         ended_reason=COALESCE(ended_reason,'session_ended'),
         last_seen_at=GREATEST(last_seen_at,started_at)
     WHERE server_id=$1
