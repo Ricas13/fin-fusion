@@ -24,13 +24,18 @@ function removeLegacyPlanRevoke(html){
   );
 }
 
-function addPlanRevokeAction(actions,detail){
-  if(!liveSubscriptions(detail).length)return String(actions||'');
+function addPlanRevokeAction(actions){
+  return String(actions||'');
+}
+
+function movePlanRevokeIntoSubscriptions(main,detail){
+  const cleaned=removeLegacyPlanRevoke(main);
+  if(!liveSubscriptions(detail).length)return cleaned;
   const id=detail.customer.id;
-  const tile=`<a class="actionTile" href="/admin/users/${encodeURIComponent(id)}/subscriptions/revoke" aria-label="Choose a specific plan or add-on to revoke"><span class="actionIcon" aria-hidden="true">×</span><strong>Revoke a plan…</strong><small>Choose a specific plan or add-on</small></a>`;
-  return String(actions||'').replace(
-    /(<div class="customerActionGrid">)([\s\S]*?)(<\/div><\/section>)/,
-    (_match,open,content,close)=>`${open}${content}${tile}${close}`
+  const button=`<a class="button secondary sm" href="/admin/users/${encodeURIComponent(id)}/subscriptions/revoke" aria-label="Choose a specific plan or add-on to revoke">Revoke a plan…</a>`;
+  return cleaned.replace(
+    /(<section class="opCard "><div class="opCardHead"><h2>Plans &amp; Subscriptions<\/h2>[\s\S]*?<div class="opActions">)([\s\S]*?)(<\/div><\/section>)/,
+    (_match,open,actions,close)=>`${open}${actions}${button}${close}`
   );
 }
 
@@ -101,11 +106,10 @@ async function body(detail,token,options={}){
   const safe=customerFacingDetail(detail);
   const heroSummary=mockHero(safe,token,options.permanent);
   const navBar=v2.nav(safe.customer.id,token,safe.customer.app_user_id);
-  const rawActions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
-  const actions=addPlanRevokeAction(rawActions,safe);
+  const actions=await primaryActions.panel(safe,token,options.req,options.permanent).catch(()=> '');
   const main=await compact.render(safe,token,options);
-  const filteredMain=removeLegacyPlanRevoke(main);
-  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${filteredMain}`;
+  const plansWithRevoke=movePlanRevokeIntoSubscriptions(main,safe);
+  return `${heroSummary}<div class="customerLegacyNav">${navBar}</div>${actions}${plansWithRevoke}`;
 }
 
-module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,removeLegacyPlanRevoke,addPlanRevokeAction,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,mockHero};
+module.exports={...v2,body,serviceType,customerFacingDetail,liveSubscriptions,activeSubscription,removeLegacyPlanRevoke,addPlanRevokeAction,movePlanRevokeIntoSubscriptions,desiredAccessForDetail,accessTruthPanel,serviceTruthPanel,accessWorkspaceSection,mockHero};
