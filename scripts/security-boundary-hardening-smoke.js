@@ -252,10 +252,10 @@ async function main() {
     // so explicitly, and customer communications must not acquire a code path
     // that reads installation credentials for outbound delivery.
     const customerStremio = read('src/platform/customer-stremio.js');
-    const customerDashboard = read('views/customer/dashboard.ejs');
+    const customerStremioUi = read('public/js/customer-jellyfin.js');
     const customerCommunications = read('src/platform/customer-communications.js');
     assert(/secret bearer link/.test(customerStremio)&&/treat it like a password/.test(customerStremio), 'new Stremio links must be described as bearer secrets');
-    assert(/Keep this link private/.test(customerDashboard), 'the persistent Stremio UI must warn customers to keep the manifest private');
+    assert(/Keep this link private/.test(customerStremioUi), 'the persistent My Access Stremio UI must warn customers to keep the manifest private');
     assert(!customerCommunications.includes('install-credential-recovery')&&!customerCommunications.includes('stremioManifestUrl'), 'outbound customer communications must not read or send Stremio bearer credentials');
 
     // Stored community settings should degrade safely if an older/bad value is
