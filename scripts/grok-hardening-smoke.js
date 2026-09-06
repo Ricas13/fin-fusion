@@ -11,13 +11,31 @@ assert.strictEqual(ownerGuard.isAdminSession({ session: { authUserId: 'user-1', 
 assert.strictEqual(ownerGuard.isAdminSession({ session: { authUserId: 'user-1', authRole: 'customer', adminId: 7 } }), false, 'legacy adminId must never make a customer session administrative');
 assert.strictEqual(ownerGuard.isAdminSession({ session: { authRole: 'admin', adminId: 7 } }), false, 'admin role without canonical authUserId must fail closed');
 
-// Impersonation is already method-level read-only. Prove an arbitrary future
-// account mutation is denied without having to enumerate its route name.
-const impersonated = method => ({ session: { impersonation: { id: 'imp-1' }, authRole: 'customer' }, method, path: '/account/future-feature/unsafe-mutation' });
+// Impersonation is an owner acting on behalf of the customer, not a read-only
+// preview. Future ordinary account mutations stay usable, while financial
+// namespaces fail closed unless explicitly classified as a safe cancellation.
+const impersonated = (method,path='/account/future-feature/ordinary-mutation',body={}) => ({ session: { impersonation: { id: 'imp-1' }, authRole: 'customer' }, method, path, body });
 for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-  assert.strictEqual(restrictedImpersonationAction(impersonated(method)), 'customer changes', `${method} must be denied while impersonating even for a route unknown to this test`);
+  assert.strictEqual(restrictedImpersonationAction(impersonated(method)), null, `${method} ordinary account mutations must remain available while impersonating`);
 }
-assert.strictEqual(restrictedImpersonationAction(impersonated('GET')), null, 'read-only customer browsing must remain available while impersonating');
-assert.strictEqual(restrictedImpersonationAction({ session: { impersonation: { id: 'imp-1' }, authRole: 'customer' }, method: 'POST', path: '/account/impersonation/exit' }), null, 'explicit impersonation exit must remain available');
+for (const path of [
+  '/account/billing/future-provider-action',
+  '/account/payment/future-method',
+  '/account/payments/future-method',
+  '/account/payment-method/future-method',
+  '/account/payment-methods/future-method',
+  '/account/purchase/future-product',
+  '/account/upgrade/future-plan',
+  '/account/add-on/future-addon',
+  '/account/add-ons/future-addon'
+]) {
+  assert.strictEqual(restrictedImpersonationAction(impersonated('POST',path)), 'spending', `future financial mutation must fail closed while impersonating: ${path}`);
+}
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/checkout/stripe')), 'spending', 'checkout creation must remain blocked while impersonating');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/checkout/cancel-open')), null, 'checkout cancellation must remain available while impersonating');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/subscription/renewal',{action:'stop'})), null, 'stopping renewal must remain available while impersonating');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/subscription/renewal',{action:'resume'})), 'spending', 'resuming renewal must remain blocked while impersonating');
+assert.strictEqual(restrictedImpersonationAction(impersonated('GET')), null, 'customer browsing must remain available while impersonating');
+assert.strictEqual(restrictedImpersonationAction(impersonated('POST','/account/impersonation/exit')), null, 'explicit impersonation exit must remain available');
 
 console.log('Grok auth hardening behavior smoke: OK');

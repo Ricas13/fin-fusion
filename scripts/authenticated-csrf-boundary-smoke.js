@@ -26,14 +26,15 @@ function response() {
 for (const method of ['POST','PUT','PATCH','DELETE']) {
   assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method,path:'/admin/users/1'}),'admin'),true,`${method} /admin must require CSRF for an authenticated administrator`);
   assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method,path:'/account/profile'}),'customer'),true,`${method} /account must require CSRF for an authenticated customer`);
+  assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method,path:'/account/future-route',session:{impersonation:{id:'x'}}}),'admin'),true,`${method} impersonated /account mutations must retain the authenticated CSRF boundary`);
 }
 for (const method of ['GET','HEAD','OPTIONS']) {
   assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method,path:'/admin/users'}),'admin'),false,`${method} admin reads must not require CSRF`);
   assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method,path:'/account'}),'customer'),false,`${method} customer reads must not require CSRF`);
+  assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method,path:'/account',session:{impersonation:{id:'x'}}}),'admin'),false,`${method} impersonated reads must remain non-mutating`);
 }
 assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method:'POST',path:'/webhooks/stripe'}),'admin'),false,'external webhooks are outside the authenticated admin/account CSRF boundary');
 assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method:'POST',path:'/account/login'}),'guest'),false,'unauthenticated login remains outside the authenticated-session boundary');
-assert.strictEqual(sessionGuard.csrfRequiredForAuthenticatedMutation(request({method:'POST',path:'/account/future-route',session:{impersonation:{id:'x'}}}),'admin'),false,'impersonated account mutations must reach the dedicated read-only audit/deny boundary');
 
 const reqMissing=request({method:'POST',path:'/account/future-route',session:{}});
 const resMissing=response();
@@ -49,4 +50,16 @@ const resValid=response();
 sessionGuard.continueAuthenticated(reqValid,resValid,()=>{nextCalls+=1;},'customer');
 assert.strictEqual(nextCalls,1,'valid CSRF token must allow the authenticated mutation to continue');
 
-console.log('authenticated admin/customer CSRF boundary smoke: ok');
+const impMissing=request({method:'POST',path:'/account/access/media/account-1/username',session:{impersonation:{id:'x'}}});
+const impMissingRes=response();
+sessionGuard.continueAuthenticated(impMissing,impMissingRes,()=>{nextCalls+=1;},'admin');
+assert.strictEqual(impMissingRes.statusCode,403,'editable impersonation must reject account writes without CSRF before the no-spend policy runs');
+
+const impValid=request({method:'POST',path:'/account/access/media/account-1/username',session:{impersonation:{id:'x'}}});
+const impToken=csrf.token(impValid);
+impValid.body._csrf=impToken;
+const impValidRes=response();
+sessionGuard.continueAuthenticated(impValid,impValidRes,()=>{nextCalls+=1;},'admin');
+assert.strictEqual(nextCalls,2,'valid CSRF must allow an impersonated non-spending mutation to reach the later policy/router');
+
+console.log('authenticated admin/customer/impersonation CSRF boundary smoke: ok');

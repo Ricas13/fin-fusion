@@ -94,12 +94,16 @@ assert(customer360Source.includes('if(recurringProviderSubscription(sub))throw n
 const recurringAccessHtml=customer360View.accessWorkspaceSection({customer:{id:'00000000-0000-4000-8000-000000000001'},subscriptions:[subscription(false)],accounts:[]},'csrf',{currentPlan:{...plan('plan-current','current-paypal','Current PayPal',600),server_class:'premium',current_period_end:'2099-09-30T12:00:00.000Z'}});
 assert(recurringAccessHtml.includes('Manage renewal')&&!recurringAccessHtml.includes('Change expiry')&&!recurringAccessHtml.includes('Reset expiry to plan term'),'provider-controlled recurring expiry must stay a Billing fact/action rather than pretending a local expiry mutation is provider-safe');
 
-const impersonatedPost=route=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route});
-for(const route of ['/account/subscription/renewal','/account/checkout/paypal','/account/plan-change/cancel']){
-  assert.strictEqual(restrictedImpersonationAction(impersonatedPost(route)),'customer changes',`read-only support view must block ${route}`);
-}
+const impersonatedPost=(route,body={})=>({session:{impersonation:{id:'workflow-smoke'}},method:'POST',path:route,body});
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal',{action:'stop'})),null,'impersonated owner must be able to stop automatic renewal');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/subscription/renewal',{action:'resume'})),'spending','impersonated owner must not re-enable future billing');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/checkout/paypal')),'spending','impersonated owner must not start a PayPal charge');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/plan-change/cancel')),null,'impersonated owner must be able to cancel a scheduled plan change');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/access/media/00000000-0000-4000-8000-000000000001/username',{username:'new-name'})),null,'impersonated owner must be able to change the customer media username');
+assert.strictEqual(restrictedImpersonationAction(impersonatedPost('/account/stremio/install')),null,'impersonated owner must be able to rotate the customer Stremio install URL');
 const bannerHtml=injectBanner('<html><body><main>customer</main></body></html>',{session:{impersonation:{id:'workflow-smoke',displayName:'Smoke Customer'},csrfToken:'csrf-smoke'}});
-assert(bannerHtml.includes('Read-only support view: Smoke Customer'),'impersonation banner must identify the read-only support boundary');
-assert(bannerHtml.includes('all customer account changes are blocked while impersonating'),'impersonation banner must explain that support cannot mutate the customer account');
+assert(bannerHtml.includes('Admin editing as customer: Smoke Customer'),'impersonation banner must identify the on-behalf-of editing mode');
+assert(bannerHtml.includes("You can manage this customer's account and services"),'impersonation banner must explain that ordinary account changes are allowed');
+assert(bannerHtml.includes('could create or increase a charge'),'impersonation banner must explain the spending boundary');
 
 console.log('customer/admin workflow completion smoke: ok');
