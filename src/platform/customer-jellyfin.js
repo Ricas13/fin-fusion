@@ -5,6 +5,7 @@ const {rateLimit}=require('express-rate-limit');
 const customers=require('../customers');
 const provisioning=require('../jellyfin/resilient-provisioning');
 const subscriptionState=require('../entitlements/subscription-state');
+const cleanupReturn=require('../entitlements/jellyfin-cleanup-return');
 const runtimeSettings=require('./runtime-settings');
 const customerNav=require('./customer-nav-html');
 const requestUsers=require('../integrations/request-user-sync');
@@ -38,6 +39,16 @@ function legacyAccessRedirect(req,res){
   }
   const queryString=params.toString();
   return res.redirect(302,'/account/access'+(queryString?'?'+queryString:''));
+}
+function markRemovedFreeAccess(subscriptions,returnStatus){
+  const rows=Array.isArray(subscriptions)?subscriptions:[];
+  if(!returnStatus?.canRestoreDeletedFree)return rows;
+  const freePlanId=String(returnStatus.freePlanId||'');
+  return rows.map(subscription=>{
+    if(!subscription?.is_free_tier)return subscription;
+    if(freePlanId&&String(subscription.plan_id||'')!==freePlanId)return subscription;
+    return{...subscription,access_removed:true,access_removed_reason:'inactivity'};
+  });
 }
 
 async function mediaRows(customerId){
@@ -142,22 +153,24 @@ function createCustomerJellyfinRouter(){
       await runtimeSettings.ensureLoaded();
       const customerId=req.session.customerId;
       const portal=await customers.getCustomerPortal(customerId);
-      const subscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
+      const rawSubscriptions=(Array.isArray(portal?.subscriptions)?portal.subscriptions:[])
         .filter(customerNav.liveServiceSubscription)
         .sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
-      const [accounts,requestState]=await Promise.all([
+      const [accounts,requestState,returnStatus]=await Promise.all([
         accessAccountsForCustomer(customerId,portal),
-        requestStateForCustomer(customerId)
+        requestStateForCustomer(customerId),
+        cleanupReturn.returningCustomerStatus(customerId).catch(error=>({eligible:false,canRestoreDeletedFree:false,freePlanId:null,error:error.message}))
       ]);
+      const subscriptions=markRemovedFreeAccess(rawSubscriptions,returnStatus);
       if(!subscriptions.length&&!requestState.eligible){
         return res.redirect('/account?error='+encodeURIComponent('You do not currently have active streaming access.'));
       }
       res.setHeader('Cache-Control','no-store, private, max-age=0');
       res.setHeader('Pragma','no-cache');
       return res.render('customer/jellyfin',{
-        siteName:runtimeSettings.siteName(),portal,accounts,subscriptions,requestState,
+        siteName:runtimeSettings.siteName(),portal,accounts,subscriptions,requestState,returnStatus,
         navOptions:customerNav.optionsFromPortal(portal),csrfToken:csrf.token(req),
-        message:req.query.message||null,error:req.query.error||null
+        message:req.query.message||null,error:req.query.error||returnStatus.error||null
       });
     }catch(error){return next(error);}
   });
@@ -206,4 +219,4 @@ function createCustomerJellyfinRouter(){
   return router;
 }
 
-module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess};
+module.exports={createCustomerJellyfinRouter,accessAccountsForCustomer,mediaRows,mergeAccount,entitlementForAccount,requestStateForCustomer,assertMediaAccess,markRemovedFreeAccess};
