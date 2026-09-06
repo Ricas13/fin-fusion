@@ -10,10 +10,5 @@ async function get(){const r=await query('SELECT setting_value FROM platform_set
 async function save(input,actorUserId=null){const value=normalize(input);await transaction(async client=>{await client.query(`INSERT INTO platform_settings(setting_key,setting_value,updated_by) VALUES($1,$2::jsonb,$3) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW()`,[KEY,JSON.stringify(value),actorUserId]);await client.query(`INSERT INTO audit_log(actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,'admin.jellyfin.lifecycle_policy.update','platform_setting',NULL,$2::jsonb)`,[actorUserId,JSON.stringify({...value,settingKey:KEY,portalAccountPreserved:true,lifecycle:'present_or_deleted'})]);});return value;}
 function noPlaybackOverride(plan){const raw=plan?.inactivity_policy||{};const n=Number.parseInt(raw.noPlaybackDays,10);return Number.isInteger(n)&&n>=1&&n<=3650?n:null;}
 function categoryFor({serverClass=null,billingInterval=null,priceMinor=0}={}){if(String(serverClass||'').toLowerCase()==='free')return'free';if(String(billingInterval||'').toLowerCase()==='trial')return'trial';return Number(priceMinor||0)>0?'paid':'free';}
-// Compatibility surface for old callers. There is no post-disable retention
-// period anymore: once entitlement/activity no longer grants Jellyfin access,
-// the account is removed immediately.
-function deleteDays(){return{days:0,source:'present_or_deleted'};}
-function planOverride(){return null;}
 function freeNoPlaybackDays(cfg,plan=null){const override=noPlaybackOverride(plan);return{days:override??cfg.freeNoPlaybackDays,source:override==null?'global':'plan'};}
-module.exports={KEY,DEFAULTS,normalize,get,save,categoryFor,deleteDays,freeNoPlaybackDays,planOverride,noPlaybackOverride};
+module.exports={KEY,DEFAULTS,normalize,get,save,categoryFor,freeNoPlaybackDays,noPlaybackOverride};
