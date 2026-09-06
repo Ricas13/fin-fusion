@@ -31,7 +31,7 @@ assert(!migration.includes('credential text NOT NULL'),'raw Stremio credentials 
 assert(recovery.includes("encryptWithEnv(String(credential),KEY_ENV,PREFIX)"),'Stremio recovery must encrypt credentials before persistence');
 assert(recovery.includes('current_token_version')&&recovery.includes("row.status!=='active'"),'recovered credentials must be rejected when the live entitlement/token version no longer matches');
 assert(entitlements.includes('installRecovery.save({customerId,entitlement:r.rows[0],credential:issued.token,actorUserId},{client})')&&customerDashboard.includes('installRecovery.current('),'customer-issued Stremio URLs must be persisted atomically by the canonical issuance owner and remain recoverable after page reload through Account Home');
-assert(customerStremio.includes('stremio.issueInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer Stremio install route must delegate recovery persistence to the canonical issuance owner');
+assert(customerStremio.includes('async function issueCustomerInstallation')&&customerStremio.includes('stremio.issueInstallation(customerId,{actorUserId})')&&customerStremio.includes('issueCustomerInstallation(req.session.customerId,{actorUserId:req.session.customerUserId})'),'customer Stremio install route must delegate recovery persistence to the canonical issuance owner through the shared installation helper');
 assert(entitlements.includes('installRecovery.clear(customerId)'),'canonical Stremio revoke must delete the recoverable credential');
 
 for(const route of [
