@@ -67,6 +67,20 @@ async function main(){
     assert(/Customer \/ Portal/.test(customer360Text)&&/Plans & Subscriptions/.test(customer360Text),'Action-first Customer 360 cards did not render');
     assert(!/Not found|Request failed/i.test(customer360Text),'Customer 360 rendered an error after clicking a real customer');
 
+    // Regression for the disappearing "View portal" action. Prove the real
+    // server-rendered primary tile exists, then simulate a late legacy admin
+    // enhancement removing it and require the focused portal guard to restore
+    // the same canonical action without a page reload.
+    const portalActionSelector='[data-customer-primary-actions] [data-customer-portal-primary="1"]';
+    const portalAction=admin.locator(portalActionSelector);
+    await portalAction.waitFor({state:'visible',timeout:15000});
+    assert.equal(await portalAction.count(),1,'Customer 360 did not render exactly one primary portal action');
+    assert.equal(await portalAction.getAttribute('action'),`/admin/users/${dbCustomer.id}/impersonate`,'Customer 360 primary portal action does not target canonical impersonation');
+    await admin.evaluate(selector=>document.querySelector(selector)?.remove(),portalActionSelector);
+    await portalAction.waitFor({state:'visible',timeout:5000});
+    assert.equal(await portalAction.count(),1,'Customer 360 portal guard did not restore a late-removed primary portal action');
+    assert.equal(await portalAction.getAttribute('action'),`/admin/users/${dbCustomer.id}/impersonate`,'restored portal action lost its canonical impersonation target');
+
     // The action-first Customer / Portal card must expose the canonical account
     // lifecycle route directly. This account is intentionally still inactive,
     // so trying to enable it before password setup must be rejected safely and
