@@ -1,4 +1,5 @@
 <% const configuredNav=typeof navOptions==='object'&&navOptions?navOptions:{}; const navBenefits=typeof showBenefits!=='undefined'?Boolean(showBenefits):Boolean(configuredNav.showBenefits); const navAccess=typeof showAccess!=='undefined'?Boolean(showAccess):Boolean(configuredNav.showAccess||configuredNav.showJellyfin); const navOverseerrUrl=typeof overseerrUrl!=='undefined'?String(overseerrUrl||''):String(configuredNav.overseerrUrl||''); const navStandalone=typeof standaloneHeader!=='undefined'&&Boolean(standaloneHeader); const navSiteName=typeof siteName!=='undefined'?String(siteName||''):''; const navHomeUrl='/account?skipRestore=1'; %>
+<% if(active==='activity'){ %><link rel="stylesheet" href="/css/customer-readability.css"><% } %>
 <% if(navStandalone){ %>
 <header class="customerStandaloneHeader"><a class="brandLockup" href="<%= navHomeUrl %>"><img class="brandLogo" src="/branding/logo" alt=""><div><div class="brandName"><%= navSiteName %></div><div class="brandMeta">My account</div></div></a><a class="button ghost small" href="<%= navHomeUrl %>">Home</a></header>
 <% } %>
