@@ -93,7 +93,7 @@ function main() {
         assert.ok(source.includes('COALESCE(blocked,FALSE)=FALSE) active_access'),'Active access KPI must exclude blocked entitlements');
         assert.ok(source.includes('COALESCE(e.blocked,FALSE)=FALSE'),'overview readiness and attention queries must ignore expected blocked access');
         assert.ok(source.includes("if(blocked){"),'blocked customers must be classified separately from expired subscriptions');
-        assert.ok(!source.includes('secondary:`Expired ${relativeTime(end)}`'),'past expiry must not display a growing days-ago counter');
+        assert.ok(source.includes('secondary:`Expired ${relativeTime(end)}`')&&source.includes("tone:'bad'"),'past expiry must retain its red colour-coded date and relative expiry context');
 
         assert.ok(source.includes('customerPrimaryFilters'),'primary customer controls must share one visible toolbar');
         assert.ok(source.includes('placeholder="Name, email or Jellyfin username"'),'customer search must match the approved Name-first filter while retaining useful identity search');
