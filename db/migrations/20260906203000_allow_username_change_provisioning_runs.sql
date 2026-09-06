@@ -1,6 +1,11 @@
 -- Username changes are recorded as distinct provisioning runs by
 -- src/jellyfin/provisioning-engine.js. Keep the database action contract in
 -- sync so the audit row can be created before the remote Jellyfin rename.
+--
+-- Existing installations may contain legacy provisioning action values that
+-- predate the current constraint contract. Do not rewrite or delete that audit
+-- history during deployment. PostgreSQL NOT VALID skips the historical table
+-- scan while still enforcing this constraint for all new/updated rows.
 
 ALTER TABLE public.provisioning_runs
     DROP CONSTRAINT IF EXISTS provisioning_runs_action_check;
@@ -13,7 +18,7 @@ ALTER TABLE public.provisioning_runs
         'disable',
         'password_reset',
         'username_change'
-    ));
+    )) NOT VALID;
 
 -- Fail the migration itself if a future edit accidentally omits the action
 -- required by renameJellyfinAccount().
