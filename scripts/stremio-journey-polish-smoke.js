@@ -37,7 +37,7 @@ assert(!fs.existsSync(path.join(root,'views/customer/stremio.ejs')),'retired sta
 // trial remains active and the dashboard can offer the existing recovery route.
 assert(router.includes('autoCreateStremioTrialInstallation'),'trial flow must own automatic Stremio installation-link creation');
 assert(router.includes("['stremio', 'bundle'].includes(serviceType)"),'automatic installation must be limited to Stremio-capable trials');
-assert(router.includes('await issueCustomerInstallation(req.session.customerId'),'trial flow must issue the link immediately after trial activation');
+assert(router.includes('return issueCustomerInstallation(customerId, { actorUserId: customerUserId });')&&router.includes('await autoCreateStremioTrialInstallation(req.session.customerId, req.session.customerUserId, subscription)'),'trial flow must issue the link immediately after trial activation through the shared customer installation helper');
 assert(router.includes('Your Stremio trial is active, but the installation link could not be created automatically.'),'automatic-link failure must not claim the trial itself failed');
 
 // The install link route must not claim success when managed-account
