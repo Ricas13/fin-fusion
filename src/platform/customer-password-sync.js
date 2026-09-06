@@ -93,9 +93,9 @@ function servicePasswordFragment(req,state){
     const mediaCards=state.mediaAccounts.map((account,index)=>{
         const label=mediaLabel(account),anchor=index===0||!state.mediaAccounts.slice(0,index).some(a=>mediaType(a)===mediaType(account))?` id="${mediaType(account)}"`:'';
         const setup=Boolean(account.password_setup_required);
-        return `<section class="panel"${anchor}><div class="eyebrow">${esc(label)} password</div><h2>${esc(account.jellyfin_username||label)}</h2><p class="accessMeta">${esc(account.server_name||`${label} server`)}</p><p>${setup?`Choose the password for this ${label} account before you sign in.`:`Reset this ${label} password whenever you need to.`} This password is separate from your CAPTAiNFiN portal password.</p>${account.public_url?`<p><a class="button secondary small" href="${esc(account.public_url)}" target="_blank" rel="noreferrer">Open ${esc(label)} ↗</a></p>`:''}${passwordForm(req,{action:`/account/jellyfin/${encodeURIComponent(account.id)}/password`,label,button:setup?`Set ${label} password`:`Reset ${label} password`})}</section>`;
+        return `<section class="panel"${anchor}><div class="eyebrow">${esc(label)} password</div><h2>${esc(account.jellyfin_username||label)}</h2><p class="accessMeta">${esc(account.server_name||`${label} server`)}</p><p>${setup?`Choose the password for this ${label} account before you sign in.`:`Reset this ${label} password whenever you need to.`} This password is separate from your CAPTaINFiN portal password.</p>${account.public_url?`<p><a class="button secondary small" href="${esc(account.public_url)}" target="_blank" rel="noreferrer">Open ${esc(label)} ↗</a></p>`:''}${passwordForm(req,{action:`/account/jellyfin/${encodeURIComponent(account.id)}/password`,label,button:setup?`Set ${label} password`:`Reset ${label} password`})}</section>`;
     }).join('');
-    const requestCard=state.requestEligible?`<section class="panel" id="overseerr"><div class="eyebrow">Overseerr password</div><h2>Request content</h2><p>${state.requestAccess?.external_user_id?'Reset your Overseerr password whenever you need to.':'Your plan includes request access. Choose an Overseerr password to create your request account.'} This password is separate from your CAPTAiNFiN portal password.</p>${state.requestConfig?.baseUrl&&state.requestAccess?.external_user_id&&!state.requestAccess?.access_suspended?`<p><a class="button secondary small" href="${esc(state.requestConfig.baseUrl)}" target="_blank" rel="noreferrer">Open Overseerr ↗</a></p>`:''}${passwordForm(req,{action:'/account/requests/password',label:'Overseerr',button:state.requestAccess?.external_user_id?'Reset Overseerr password':'Create Overseerr account'})}</section>`:'';
+    const requestCard=state.requestEligible?`<section class="panel" id="overseerr"><div class="eyebrow">Overseerr password</div><h2>Request content</h2><p>${state.requestAccess?.external_user_id?'Reset your Overseerr password whenever you need to.':'Your plan includes request access. Choose an Overseerr password to create your request account.'} This password is separate from your CAPTaINFiN portal password.</p>${state.requestConfig?.baseUrl&&state.requestAccess?.external_user_id&&!state.requestAccess?.access_suspended?`<p><a class="button secondary small" href="${esc(state.requestConfig.baseUrl)}" target="_blank" rel="noreferrer">Open Overseerr ↗</a></p>`:''}${passwordForm(req,{action:'/account/requests/password',label:'Overseerr',button:state.requestAccess?.external_user_id?'Reset Overseerr password':'Create Overseerr account'})}</section>`:'';
     if(!mediaCards&&!requestCard)return'';
     return `<section class="servicePasswordBlock" id="service-passwords"><div class="servicePasswordHeading"><div class="eyebrow">Credentials</div><h2>Service passwords</h2><p>Jellyfin, Emby and Overseerr passwords are independent from your portal password and from each other.</p></div><div class="servicePasswordGrid">${mediaCards}${requestCard}</div></section>`;
 }
@@ -111,18 +111,9 @@ function createCustomerPasswordSyncRouter(){
     const router=express.Router();
     router.use(createCustomerNowPlayingRouter());
 
-    // Freshly provisioned MediaBrowser identities use random bootstrap secrets.
-    // Password setup for every customer-facing media service belongs in My Access.
-    router.use('/account',(req,res,next)=>{
-        if(req.method!=='GET'||req.path!=='/')return next();
-        return requireCustomer(req,res,async()=>{
-            try{
-                const accounts=await pending(req.session.customerId);
-                if(!accounts.length)return next();
-                return res.redirect('/account/access');
-            }catch(error){return next(error);}
-        });
-    });
+    // Password setup belongs in My Access, but it must never hijack Home.
+    // The dashboard itself already surfaces a "Choose Jellyfin password"
+    // action while setup is still required, so GET /account must fall through.
 
     router.get('/account/service-passwords/fragment',requireCustomer,async(req,res,next)=>{
         try{
