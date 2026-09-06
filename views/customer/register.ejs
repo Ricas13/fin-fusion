@@ -6,41 +6,50 @@
   <title>Create account · <%= siteName %></title>
   <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><% } %>
   <style>
-    body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e5e7eb;min-height:100vh;display:grid;place-items:center;padding:30px 0}.card{width:min(560px,calc(100% - 32px));background:#111827;border:1px solid #263244;border-radius:18px;padding:28px;box-sizing:border-box;box-shadow:0 20px 60px #0006}.muted{color:#94a3b8}.error{background:#451a1a;border:1px solid #7f1d1d;padding:10px 12px;border-radius:10px;margin:16px 0}.notice{background:#172554;border:1px solid #1d4ed8;padding:12px;border-radius:10px;margin:14px 0}.freeHold{background:#123126;border-color:#286847}label{display:block;margin:16px 0 6px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:white}button{width:100%;margin-top:20px;padding:12px;border:0;border-radius:10px;font-weight:700;cursor:pointer}a{color:#7dd3fc}.captcha{margin-top:18px;display:flex;justify-content:center}.mandatory{font-size:12px;color:#86efac;margin-top:8px}
+    :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:radial-gradient(circle at top,#102235 0,#0b1220 42%,#09101b 100%);color:#e5e7eb;min-height:100vh;display:grid;place-items:center;padding:28px 0}.card{width:min(520px,calc(100% - 28px));background:#111827;border:1px solid #263244;border-radius:18px;padding:26px;box-shadow:0 20px 60px #0007}.eyebrow{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#67e8f9;margin-bottom:8px}h1{margin:0 0 8px;font-size:29px;line-height:1.1}.lead{margin:0 0 18px;color:#a8b4c5;line-height:1.5}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:0 0 20px}.step{border:1px solid #263244;background:#0d1521;border-radius:10px;padding:9px 10px;color:#7f8da0;font-size:11px}.step strong{display:block;color:#cbd5e1;font-size:12px;margin-bottom:2px}.step.active{border-color:#256c78;background:#10252d}.step.active strong{color:#67e8f9}.muted{color:#94a3b8;font-size:13px;line-height:1.45}.error{background:#451a1a;border:1px solid #7f1d1d;padding:11px 12px;border-radius:10px;margin:14px 0}.notice{background:#13233c;border:1px solid #245680;padding:12px;border-radius:10px;margin:14px 0;color:#cbd5e1;font-size:13px;line-height:1.45}.freeHold{background:#123126;border-color:#286847}.field{margin-top:13px}.field label{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;font-size:13px;font-weight:700}.field label span{font-size:11px;color:#8492a6;font-weight:500}input{width:100%;padding:12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:white;outline:none}input:focus{border-color:#2d8799;box-shadow:0 0 0 3px rgba(45,135,153,.13)}button{width:100%;margin-top:18px;padding:12px;border:1px solid #238b9d;border-radius:10px;background:#1aa7b8;color:#03151a;font-weight:800;cursor:pointer}button:hover{filter:brightness(1.06)}a{color:#7dd3fc}.captcha{margin-top:16px;display:flex;justify-content:center}.helper{font-size:11px;color:#7f8da0;margin-top:5px;line-height:1.4}.footer{border-top:1px solid #253041;margin-top:20px;padding-top:15px;text-align:center}.claimHint{font-size:12px;color:#7f8da0;margin-top:10px}@media(max-width:520px){.card{padding:21px}.steps{grid-template-columns:1fr}.step:not(.active){display:none}h1{font-size:25px}}
   </style>
 </head>
 <body><main class="card">
   <% const hasFreeReservation = Boolean(freeIntent && freeReservation && freeReservation.id); %>
-  <h1><%= freeIntent ? 'Claim Free Access' : 'Create '+siteName+' account' %></h1>
-  <p class="muted"><%= freeIntent ? 'Reserve a Free Access place first, then create your portal account and verify your email before the hold expires.' : 'Your portal account stays yours even when a trial or service access ends. You can return later to renew or choose another plan.' %></p>
-  <p class="muted">If you were emailed a claim link for an existing Jellyfin account, use that link instead — do not register again.</p>
-  <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. Sign in if you already have an account, or contact support.</div><% } %>
-  <% if (registrationOpen && verificationRequired && (!freeIntent || hasFreeReservation)) { %><div class="notice"><strong>Email verification first.</strong> Your details are held temporarily; the customer account is created only after you confirm the verification link. After verification you are signed in automatically.</div><% } %>
-  <% if (registrationOpen && freeIntent && !hasFreeReservation) { %><div class="notice"><strong>Reserve before entering your details.</strong> Opening this page does not consume a place. Press the button below to atomically reserve one available Free Access place for <%= freeHoldMinutes %> minutes. If somebody else gets the last place first, registration will not start.</div><% } %>
-  <% if (registrationOpen && freeIntent && hasFreeReservation) { %><div class="notice freeHold"><strong>Your Free Access place is reserved.</strong> This exclusive hold lasts <%= freeHoldMinutes %> minutes and expires at <%= new Date(freeReservation.expires_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %>. Complete registration and email verification before then.</div><% } %>
+  <div class="eyebrow"><%= freeIntent ? 'Free Access signup' : 'Create your account' %></div>
+  <h1><%= freeIntent ? 'Claim Free Access' : 'Get started with '+siteName %></h1>
+  <p class="lead"><%= freeIntent ? 'Reserve your place, create your account, then confirm your email.' : 'Three details now, one email confirmation, then you are signed in automatically.' %></p>
+
+  <div class="steps" aria-label="Signup progress">
+    <div class="step active"><strong>1 · Account</strong>Your details</div>
+    <div class="step"><strong>2 · Verify</strong>Check your email</div>
+    <div class="step"><strong>3 · Access</strong>Choose or start watching</div>
+  </div>
+
+  <% if (!registrationOpen) { %><div class="notice">Public registration is currently closed. If you already have an account, sign in below.</div><% } %>
+  <% if (registrationOpen && freeIntent && !hasFreeReservation) { %><div class="notice"><strong>Reserve your place first.</strong> We hold an available Free Access place for <%= freeHoldMinutes %> minutes while you create and verify your account.</div><% } %>
+  <% if (registrationOpen && freeIntent && hasFreeReservation) { %><div class="notice freeHold"><strong>Your place is reserved until <%= new Date(freeReservation.expires_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %>.</strong> Finish the details below and verify the email before the hold expires.</div><% } %>
   <% if (error) { %><div class="error"><%= error %></div><% } %>
+
   <% if (registrationOpen && freeIntent && !hasFreeReservation) { %>
   <form method="post" action="/account/register">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="freeIntent" value="1">
     <input type="hidden" name="reserveFree" value="1">
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
-    <button type="submit">Reserve / Create Free Account</button>
+    <button type="submit">Reserve my Free Access place</button>
   </form>
   <% } %>
+
   <% if (registrationOpen && (!freeIntent || hasFreeReservation)) { %>
   <form method="post" action="/account/register">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="freeIntent" value="<%= freeIntent ? '1' : '0' %>">
-    <label>Email</label><input type="email" name="email" autocomplete="email" required>
-    <div class="mandatory">Email is always used for account, invoice, registration and important payment messages.</div>
-    <label>Username</label><input name="username" minlength="3" maxlength="40" autocomplete="username" required>
-    <label>Portal password</label><input type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required>
-    <p class="muted">This signs you into CAPTAiNFiN. If your plan uses Jellyfin, you set the separate Jellyfin playback password after access is ready.</p>
-    <% if (referralsEnabled) { %><label>Referral code <span class="muted">(optional)</span></label><input name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"><% } %>
+
+    <div class="field"><label for="signup-email">Email</label><input id="signup-email" type="email" name="email" autocomplete="email" autofocus required><div class="helper">Used for verification, billing and important account messages.</div></div>
+    <div class="field"><label for="signup-username">Username <span>3–40 characters</span></label><input id="signup-username" name="username" minlength="3" maxlength="40" autocomplete="username" required><div class="helper">Your CAPTAiNFiN sign-in name. If you use Jellyfin, playback setup is handled separately after access is ready.</div></div>
+    <div class="field"><label for="signup-password">Password <span>Minimum 8 characters</span></label><input id="signup-password" type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password" required></div>
+    <% if (referralsEnabled) { %><div class="field"><label for="signup-referral">Referral code <span>Optional</span></label><input id="signup-referral" name="referralCode" maxlength="20" value="<%= referralCode %>" placeholder="e.g. AB3D9F2K"></div><% } %>
     <% if (typeof turnstileEnabled !== 'undefined' && turnstileEnabled) { %><div class="captcha"><div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-action="<%= turnstileAction %>" data-theme="dark"></div></div><% } %>
-    <button type="submit"><%= freeIntent ? 'Continue & verify email' : (verificationRequired ? 'Verify email & continue' : 'Create account & continue') %></button>
+    <button type="submit"><%= freeIntent ? 'Create account & verify email' : 'Continue to email verification' %></button>
+    <p class="muted" style="text-align:center;margin:10px 0 0">After you verify the email, you are signed in automatically. No second login.</p>
   </form>
   <% } %>
-  <p class="muted">Already registered? <a href="/account/login">Sign in</a></p>
+
+  <div class="footer"><p class="muted" style="margin:0">Already registered? <a href="/account/login">Sign in</a></p><p class="claimHint">Already have a Jellyfin account and received a claim link? Use that link instead of creating a second account.</p></div>
 </main></body></html>
