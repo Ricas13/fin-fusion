@@ -2,6 +2,7 @@
 
 const express = require('express');
 const core = require('./router-core');
+const { query } = require('../db');
 const placement = require('../jellyfin/placement');
 const lifecycle = require('../payments/lifecycle');
 const publicAbuseProtection = require('../security/public-abuse-protection');
@@ -40,7 +41,7 @@ const { createCustomerLoginRouter } = require('./customer-login');
 const { createCustomerHistoryRouter } = require('./customer-history');
 const { createCustomerActivityRouter } = require('./customer-activity');
 const { createCustomerSecurityRouter } = require('./customer-security');
-const { createCustomerStremioRouter } = require('./customer-stremio');
+const { createCustomerStremioRouter, issueCustomerInstallation } = require('./customer-stremio');
 const { createCustomerAffiliateRouter } = require('./customer-affiliate');
 const { createCustomerLibrarySelectionRouter } = require('./customer-library-selection');
 const { createCustomerJellyfinRouter } = require('./customer-jellyfin');
@@ -64,6 +65,13 @@ function requireCustomer(req, res, next) {
     return req.session?.customerId && req.session?.customerUserId
         ? next()
         : res.redirect('/account/login?next=' + encodeURIComponent(req.originalUrl || '/account'));
+}
+
+async function autoCreateStremioTrialInstallation(customerId, customerUserId, subscription) {
+    const plan = await query('SELECT service_type FROM plans WHERE id=$1 LIMIT 1', [subscription?.plan_id]);
+    const serviceType = String(plan.rows[0]?.service_type || 'jellyfin').toLowerCase();
+    if (!['stremio', 'bundle'].includes(serviceType)) return null;
+    return issueCustomerInstallation(customerId, { actorUserId: customerUserId });
 }
 
 function createRouter() {
@@ -112,7 +120,19 @@ function createRouter() {
 
     router.post('/account/trial/start', trialFreeLimit, requireCustomer, mutationGuard, async (req, res) => {
         try {
-            await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null);
+            const subscription = await lifecycle.startFreeTrial(req.session.customerId, req.body.planCode || null);
+            try {
+                const stremioSetup = await autoCreateStremioTrialInstallation(req.session.customerId, req.session.customerUserId, subscription);
+                if (stremioSetup) {
+                    const message = stremioSetup.provisioned
+                        ? 'Your Stremio trial is active and your private installation link is ready below. Follow the Stremio setup steps to install it.'
+                        : 'Your Stremio trial is active and your private installation link is ready below. Automatic playback setup is still finishing, so follow the setup steps now and retry later if playback is not ready yet.';
+                    return res.redirect('/account?welcome=1&message=' + encodeURIComponent(message) + '#stremio-access');
+                }
+            } catch (stremioError) {
+                console.warn('Automatic Stremio trial installation setup failed:', { customerId: req.session.customerId, error: stremioError.message });
+                return res.redirect('/account?welcome=1&error=' + encodeURIComponent('Your Stremio trial is active, but the installation link could not be created automatically. Use Retry Stremio setup below.') + '#stremio-access');
+            }
             return res.redirect('/account?welcome=1&message=' + encodeURIComponent('Your trial is active. Access is being prepared; each service will show as ready as soon as setup finishes.'));
         } catch (error) {
             const { message } = publicError.present(error, { context: 'Free trial start failed', fallback: 'Your trial could not be started.', safe: TRIAL_CLAIM_SAFE });
