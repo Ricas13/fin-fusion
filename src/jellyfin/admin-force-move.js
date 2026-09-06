@@ -4,6 +4,7 @@ const {query}=require('../db');
 const provisioning=require('./provisioning');
 const adminControl=require('./admin-control');
 const userCapacity=require('./user-capacity');
+const reconciliationLock=require('./reconciliation-lock');
 
 function same(a,b){return String(a||'')===String(b||'');}
 
@@ -28,6 +29,15 @@ async function customerAccounts(customerId){
 }
 
 async function move(customerId,targetServerId,{actorUserId=null}={}){
+  // See manual-assignment.js for why this must be lock-guarded: the automatic
+  // reconciler and this admin action both read-then-mutate the same customer's
+  // jellyfin_accounts rows, and an unguarded interleaving can leave two live
+  // remote accounts (one delivered to the customer, one created independently
+  // by the reconciler on a different server).
+  return reconciliationLock.withCustomerReconciliationLock(customerId,()=>moveLocked(customerId,targetServerId,{actorUserId}));
+}
+
+async function moveLocked(customerId,targetServerId,{actorUserId=null}={}){
   const entitlement=await require('../entitlements/subscription-state').effectiveSubscription(customerId,{includeBlocked:true});
   if(!entitlement)throw new Error('Give the customer a Jellyfin plan before moving them.');
   const service=String(entitlement.service_type_snapshot||entitlement.service_type||'jellyfin');
