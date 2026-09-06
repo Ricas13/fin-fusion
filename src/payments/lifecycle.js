@@ -285,7 +285,7 @@ async function attachDiscoveredProviderSubscription({
         if (local.effective_server_class !== 'premium' || !['jellyfin','bundle'].includes(local.effective_service_type) || Number(local.effective_price_minor) <= 0 || local.is_free_tier) {
             throw new Error('Local subscription is no longer a paid Premium Server entitlement.');
         }
-        if (state.recurringProvider(local)) {
+        if (state.recurringProvider(local) && validRemoteRecurringId(local.source, local.provider_subscription_id)) {
             if (local.source === provider && local.provider_subscription_id === providerSubscriptionId) return { row: local, already: true };
             throw new Error('Local subscription became linked to another provider subscription.');
         }
