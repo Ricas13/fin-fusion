@@ -2,10 +2,20 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const {rateLimit,ipKeyGenerator}=require('express-rate-limit');
 const csrf = require('../auth/csrf');
 const { requireOwner, ownerStatus } = require('../auth/owner-guard');
 const impersonationCredentials = require('../security/admin-impersonation-credentials');
 const { query } = require('../db');
+
+const impersonationCredentialLimit=rateLimit({
+    windowMs:300_000,
+    limit:10,
+    skip:req=>req.method!=='POST'||!req.session?.impersonation,
+    keyGenerator:req=>req.session?.authUserId?`admin:${req.session.authUserId}`:ipKeyGenerator(req.ip),
+    standardHeaders:false,
+    legacyHeaders:false
+});
 
 function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -200,7 +210,7 @@ function createAdminImpersonationRouter() {
     // Intercept the ordinary customer password endpoint only while impersonating.
     // Using middleware rather than a duplicate POST route keeps canonical route
     // ownership with customer-security for normal customer sessions.
-    router.use('/account/security/password', async (req,res,next) => {
+    router.use('/account/security/password', impersonationCredentialLimit, async (req,res,next) => {
         if (req.method!=='POST' || !req.session?.impersonation) return next();
         try {
             if (!coherentOwnerImpersonation(req) || !await ownerStatus(req.session.authUserId)) return res.status(403).send('Owner impersonation is required for this action.');
