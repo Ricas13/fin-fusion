@@ -41,6 +41,10 @@ const suites = [
     commands: [['node', ['scripts/semantic-commerce-boundaries-db-smoke.js']]],
   },
   {
+    name: 'Win-back offer eligibility and cooldown',
+    commands: [['node', ['scripts/winback-offers-db-smoke.js']]],
+  },
+  {
     name: 'Admin analytics dashboard',
     commands: [['node', ['scripts/admin-analytics-dashboard-smoke.js']]],
   },
