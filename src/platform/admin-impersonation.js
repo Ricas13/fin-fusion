@@ -197,13 +197,11 @@ function createAdminImpersonationRouter() {
         return res.redirect(`/admin/users/${encodeURIComponent(customerId)}`);
     });
 
-    // The ordinary customer password route requires the customer's existing
-    // portal password. In owner impersonation mode, replace that re-auth step
-    // with the already-authenticated owner authority: set a new password, revoke
-    // customer sessions, and record the real administrator as actor. Normal
-    // customer sessions fall through to the regular customer-security router.
-    router.post('/account/security/password', async (req,res,next) => {
-        if (!req.session?.impersonation) return next();
+    // Intercept the ordinary customer password endpoint only while impersonating.
+    // Using middleware rather than a duplicate POST route keeps canonical route
+    // ownership with customer-security for normal customer sessions.
+    router.use('/account/security/password', async (req,res,next) => {
+        if (req.method!=='POST' || !req.session?.impersonation) return next();
         try {
             if (!coherentOwnerImpersonation(req) || !await ownerStatus(req.session.authUserId)) return res.status(403).send('Owner impersonation is required for this action.');
             if (!csrf.verify(req)) return res.status(403).send('Invalid or expired security token');
