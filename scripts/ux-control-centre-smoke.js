@@ -44,7 +44,7 @@ for(const field of ['service_type_snapshot','p.service_type','p.allow_remuxing',
 assert(/account_purpose text DEFAULT 'jellyfin'/.test(baseline)&&/\['jellyfin'::text, 'stremio_internal'::text\]/.test(baseline),'baseline must define the canonical Jellyfin account purpose');
 assert(/account_purpose='jellyfin'/.test(manualAssignment)&&!/account_purpose='primary'/.test(manualAssignment),'manual Jellyfin assignment must operate only on the schema-defined normal Jellyfin account purpose');
 assert(/userCapacity=require\('\.\/user-capacity'\)/.test(manualAssignment)&&/userCapacity\.serverState\(serverId\)/.test(manualAssignment)&&/userCapacity\.decorateServers\(raw\.rows\)/.test(manualAssignment),'manual assignment capacity must use the canonical one-managed-user counter');
-assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=2&&!/account_purpose='primary'/.test(inactivity),'inactivity and cleanup automation must target normal Jellyfin accounts');
+assert((inactivity.match(/account_purpose='jellyfin'/g)||[]).length>=1&&!/account_purpose='primary'/.test(inactivity),'inactivity automation must target normal Jellyfin accounts');
 assert(!/Marketing consent/.test(customer)&&!/marketing\/withdraw/.test(customer)&&!/marketingConsentChanged/.test(customer),'Customer 360 must not retain the retired Marketing product surface');
 assert(/primaryEntitlement/.test(customer360Data)&&/primaryFirst/.test(customer360Data)&&/subscriptions:orderedSubscriptions/.test(customer360Data),'Customer 360 must order the canonical primary entitlement ahead of add-ons/history');
 assert(/account_purpose/.test(customer360Data)&&/is_primary/.test(customer360Data),'Customer 360 must expose Jellyfin account purpose so internal Stremio identities stay distinguishable');

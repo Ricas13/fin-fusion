@@ -23,7 +23,7 @@ function registerHandler(jobType, fn) { bulkWorker.registerHandler(jobType, fn);
 async function currentSubscription(customerId) {
     const effective=await subscriptionState.effectiveSubscription(customerId,{includeBlocked:true});
     if(effective)return effective;
-    const result=await query(`SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1`,[customerId]);
+    const result=await query(`SELECT s.*,p.is_free_tier,p.duration_days,p.billing_interval FROM subscriptions s JOIN plans p ON p.id=s.plan_id WHERE s.customer_id=$1 AND COALESCE(p.is_addon,FALSE)=FALSE AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle') ORDER BY s.current_period_end DESC,s.created_at DESC LIMIT 1`,[customerId]);
     return result.rows[0]||null;
 }
 async function completedEndReference(customerId,reference){const result=await query(`SELECT entity_id FROM audit_log WHERE action='billing.subscription.terminate_local' AND metadata->>'customerId'=$1 AND metadata->>'reference'=$2 ORDER BY created_at DESC LIMIT 1`,[String(customerId),String(reference)]);return result.rows[0]||null;}

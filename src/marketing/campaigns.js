@@ -85,7 +85,7 @@ async function currentConsent(customerIds){
   if(!customerIds.length)return new Map();
   const rows=(await query(`
     SELECT c.id customer_id,c.marketing_opt_in,
-           cp.telegram_opt_in,cp.telegram_chat_id,cp.discord_opt_in,cp.discord_user_id,cp.whatsapp_opt_in,cp.phone_e164
+           cp.telegram_opt_in,cp.telegram_chat_id,cp.discord_opt_in,cp.discord_user_id
     FROM customers c LEFT JOIN customer_communication_preferences cp ON cp.customer_id=c.id
     WHERE c.id=ANY($1::uuid[])
   `,[customerIds])).rows;
@@ -114,7 +114,6 @@ async function queue({campaignId,adminUserId=null}){
     if(recipient.email_snapshot)channels.push('email');
     if(now.discord_opt_in&&now.discord_user_id)channels.push('discord');
     if(now.telegram_opt_in&&now.telegram_chat_id)channels.push('telegram');
-    if(now.whatsapp_opt_in&&now.phone_e164)channels.push('whatsapp');
     if(!channels.length){
       suppressedCount+=1;
       await query(`UPDATE marketing_campaign_recipients SET status='suppressed',suppression_reason='no_channel_available',updated_at=NOW() WHERE campaign_id=$1 AND customer_id=$2`,[campaignId,recipient.customer_id]);
@@ -128,7 +127,6 @@ async function queue({campaignId,adminUserId=null}){
         if(channel==='email'){const item=await emailOutbox.enqueue({type:'marketing_campaign',to:recipient.email_snapshot,subject:data.campaign.subject,text:message.text,html:message.html||'',dedupeKey});outboxId=item.id;}
         else if(channel==='discord'){const item=await notificationOutbox.enqueueDiscord({eventType:'marketing_campaign',text:message.text,destination:now.discord_user_id,dedupeKey});outboxId=item.id;status=item.queued?'queued':'suppressed';}
         else if(channel==='telegram'){const item=await notificationOutbox.enqueueTelegram({eventType:'marketing_campaign',text:message.text,destination:now.telegram_chat_id,dedupeKey});outboxId=item.id;status=item.queued?'queued':'suppressed';}
-        else if(channel==='whatsapp'){const item=await notificationOutbox.enqueueWhatsapp({eventType:'marketing_campaign',text:message.text,destination:now.phone_e164,dedupeKey});outboxId=item.id;status=item.queued?'queued':'suppressed';}
       }catch(error){status='failed';}
       await query(`INSERT INTO marketing_campaign_deliveries(campaign_id,customer_id,channel,status,outbox_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(campaign_id,customer_id,channel) DO UPDATE SET status=EXCLUDED.status,outbox_id=EXCLUDED.outbox_id,updated_at=NOW()`,
         [campaignId,recipient.customer_id,channel,status,outboxId]);

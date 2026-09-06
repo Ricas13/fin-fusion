@@ -6,6 +6,7 @@ const placement=require('./placement');
 const adminControl=require('./admin-control');
 const subscriptionState=require('../entitlements/subscription-state');
 const userCapacity=require('./user-capacity');
+const reconciliationLock=require('./reconciliation-lock');
 
 function accessKind(plan){if(plan?.billing_interval==='trial')return'trial';return Number(plan?.price_minor||0)===0?'free':'paid';}
 function serviceType(plan){return String(plan?.service_type_snapshot||plan?.service_type||'jellyfin');}
@@ -53,6 +54,15 @@ async function candidates(customerId){
 }
 
 async function assign(customerId,targetServerId,{actorUserId=null}={}){
+  // The read (candidates()/activeAccounts) and the account create/reuse below
+  // must be atomic with respect to the automatic reconciler (reconcileCustomer),
+  // which independently decides whether this customer needs a primary account
+  // and may pick a different server. Without this lock both could observe
+  // "no active account" and each create one, leaving two live remote accounts.
+  return reconciliationLock.withCustomerReconciliationLock(customerId,()=>assignLocked(customerId,targetServerId,{actorUserId}));
+}
+
+async function assignLocked(customerId,targetServerId,{actorUserId=null}={}){
   const state=await candidates(customerId);
   if(!state.entitlement)throw new Error('Give the customer an active Jellyfin plan before assigning a server.');
   if(!['jellyfin','bundle'].includes(serviceType(state.entitlement)))throw new Error('This plan does not include Jellyfin access.');

@@ -141,6 +141,40 @@ function jellyUser(id, name, { admin = false, disabled = false, hidden = false }
     const customerCount = await query(`SELECT COUNT(*)::int AS n FROM customers WHERE display_name='Charlie Existing'`);
     assert.strictEqual(customerCount.rows[0].n, 1, 'linking must attach to the existing customer rather than create another customer');
 
+    // Regression: a customer can hold concurrent, independent service lanes
+    // (e.g. an active standalone Stremio subscription alongside an active
+    // Jellyfin one). Import/link must resolve the Jellyfin plan for a Jellyfin
+    // link, never whichever subscription happens to expire later regardless
+    // of service.
+    remoteByServer.set(String(premiumServer), [
+        ...remoteByServer.get(String(premiumServer)),
+        jellyUser('dana-id', 'Dana')
+    ]);
+    const stremioPlan = await query(`
+        INSERT INTO plans(code,name,description,audience,billing_interval,duration_days,price_minor,currency,streams,
+            allow_downloads,allow_video_transcoding,allow_audio_transcoding,allow_live_tv,allow_live_tv_management,
+            server_class,active,visible,sort_order,service_type)
+        VALUES('stremio-test','Stremio Test','','direct','month',30,0,'USD',1,FALSE,FALSE,TRUE,TRUE,FALSE,'premium',TRUE,TRUE,10,'stremio')
+        RETURNING id
+    `);
+    const multiServiceCustomer = await addBareCustomer('Dana MultiService');
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot,billing_mode)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '5 days',NOW()+INTERVAL '90 days','stremio','manual')
+    `, [multiServiceCustomer, stremioPlan.rows[0].id]);
+    await query(`
+        INSERT INTO subscriptions(customer_id,plan_id,status,source,starts_at,current_period_end,service_type_snapshot,billing_mode)
+        VALUES($1,$2,'active','manual',NOW()-INTERVAL '5 days',NOW()+INTERVAL '10 days','jellyfin','manual')
+    `, [multiServiceCustomer, premiumPlan.id]);
+    const multiServiceLinked = await importer.linkExistingCustomer({
+        customerId: multiServiceCustomer,
+        serverId: premiumServer,
+        jellyfinUserId: 'dana-id',
+        makePrimary: true,
+        applyPolicy: false
+    });
+    assert.strictEqual(multiServiceLinked.plan.code, 'premium-test', 'linking a Jellyfin identity must resolve the customer\'s Jellyfin subscription, not a concurrent Stremio-only one that merely expires later');
+
     const rebound = await importer.rebindIdentity({ serverId: premiumServer, jellyfinUserId: 'new-bob-id' });
     assert.strictEqual(rebound.jellyfin_user_id, 'new-bob-id');
     assert.strictEqual(rebound.disabled, false);

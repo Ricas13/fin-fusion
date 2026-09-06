@@ -16,6 +16,7 @@ assert.equal(policy.usageTriggered({noPlaybackEligible:true,usageEligible:true},
 
 const base=read('src/automation/customer-inactivity.js');
 const status=read('src/automation/customer-inactivity-status.js');
+const bulkOperations=read('src/platform/bulk-operations.js');
 assert.match(base,/async function candidates\(globalCfg=null,\{customerId=null\}=\{\}\)/,'candidate discovery must support customer-scoped evaluation');
 assert.match(base,/\(\$2::uuid IS NULL OR s\.customer_id=\$2::uuid\)/,'customer-scoped evaluation must be enforced in SQL instead of filtering a fleet-wide result');
 assert.match(base,/planPolicy\.usageTriggered\(assessment,policy\)/,'candidate eligibility must use the shared all-configured-rules policy');
@@ -23,5 +24,6 @@ assert.doesNotMatch(base,/assessment\.noPlaybackEligible\|\|assessment\.usageEli
 assert.match(status,/scoped\.base\.candidates\(globalCfg,\{customerId\}\)/,'customer status must query only that customer through the worker base engine');
 assert.match(status,/scoped\.refreshCandidateServers\(rows\)/,'customer status must refresh the same target server evidence used by enforcement');
 assert.match(status,/rows=await scoped\.base\.candidates\(globalCfg,\{customerId\}\)/,'customer status must re-read activity after server refresh');
+assert.match(bulkOperations,/COALESCE\(NULLIF\(s\.service_type_snapshot,''\),p\.service_type,'jellyfin'\) IN \('jellyfin','bundle'\)/,'admin bulk primary-plan fallback must never select standalone Stremio or Emby subscriptions');
 
 console.log('Free Access inactivity consistency smoke: ok');

@@ -85,6 +85,7 @@ async function expiringSubscriptions({ days = DEFAULT_WARNING_DAYS } = {}) {
             WHERE o.customer_id=s.customer_id AND o.subscription_id=s.id
               AND o.permanent_access=TRUE AND o.revoked_at IS NULL
           )
+          AND NOT public.subscription_admin_present(s.customer_id,COALESCE(s.service_type_snapshot,p.service_type,'jellyfin'),s.id)
           AND NOT EXISTS (
             SELECT 1
             FROM subscriptions next_s

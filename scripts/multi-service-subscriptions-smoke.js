@@ -11,7 +11,7 @@ const state=require('../src/entitlements/subscription-state');
 
 function source(file){return fs.readFileSync(path.join(__dirname,'..',file),'utf8');}
 function staticContracts(){
-  const dashboard=source('views/customer/dashboard.ejs'),checkoutJs=source('public/js/customer-checkout.js'),activity=source('src/platform/customer-activity.js'),nav=source('views/customer/_nav.ejs'),affiliate=source('views/customer/affiliate.ejs'),adminCore=source('src/platform/admin-html-core.js'),inactivity=source('src/automation/customer-inactivity.js'),subscriptionState=source('src/entitlements/subscription-state.js'),provisioning=source('src/jellyfin/resilient-provisioning.js'),migration=source('db/migrations/045_parallel_free_jellyfin_access.sql');
+  const dashboard=source('views/customer/dashboard.ejs'),checkoutJs=source('public/js/customer-checkout.js'),activity=source('src/platform/customer-activity.js'),nav=source('views/customer/_nav.ejs'),affiliate=source('views/customer/affiliate.ejs'),adminCore=source('src/platform/admin-html-core.js'),inactivity=source('src/automation/customer-inactivity.js'),subscriptionState=source('src/entitlements/subscription-state.js'),provisioning=source('src/jellyfin/resilient-provisioning.js'),migration=source('db/migrations/045_parallel_free_jellyfin_access.sql'),cleanupReturn=source('src/entitlements/jellyfin-cleanup-return.js');
   // Pre-existing drift from an unrelated commit (56f604f1 "Simplify customer
   // nav and move Notifications into Account"), unrelated to this refactor:
   // Help is intentionally no longer a top-level customer nav tab (see the
@@ -32,7 +32,14 @@ function staticContracts(){
   assert(inactivity.includes("ja.access_lane='free'")&&inactivity.includes('ph.server_id=ja.server_id'),'Free inactivity must use only Free-lane server playback');
   assert(!inactivity.includes("s.source='free_claim'"),'Free inactivity candidates must not depend on how Free access was acquired');
   assert(subscriptionState.includes("h.hold_type='inactivity_policy'")&&subscriptionState.includes("ja.access_lane='free'"),'Free entitlement blocking must recognize source-agnostic Free-lane inactivity and cleanup holds');
-  assert(inactivity.includes("reason:'premium_jellyfin_active'"),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
+  // The dormant-free-account restore path now lives in jellyfin-cleanup-return.js
+  // (customer-inactivity.js's own copy of restoreReturningCustomer was dead code -
+  // never wired to any route - and has been removed). It must independently
+  // re-verify a live Free-tier subscription still exists before restoring: a
+  // customer who upgraded to paid Jellyfin after their Free account was cleaned
+  // up must not have that abandoned Free account resurrected just because a
+  // stale cleanup hold remains.
+  assert(cleanupReturn.includes('liveFreeJellyfinSubscription')&&cleanupReturn.includes('canRestoreDeletedFree=Boolean(deletedLifecycle.rowCount&&freeEntitlement&&inactivityHold.rowCount)'),'paid Jellyfin portal visits must not resurrect an abandoned Free account');
   assert(provisioning.includes("'reconcile','started'")&&!provisioning.includes("'reconcile_multi_access','started'"),'multi-access provisioning runs must use a schema-valid action');
   assert(migration.includes("CHECK (access_lane IN ('primary','free'))")&&migration.includes("p_source='free_claim'"),'applied migration must remain unchanged while runtime supplements legacy-source Free blocking');
 }

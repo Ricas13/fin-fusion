@@ -94,7 +94,7 @@ assert(adminDiscounts.includes('Discounts & campaigns'),'the merged page must pr
 assert(campaigns.includes("channel==='email'"),'campaigns module must support email delivery');
 assert(campaigns.includes("channel==='discord'"),'campaigns module must support discord delivery');
 assert(campaigns.includes("channel==='telegram'"),'campaigns module must support telegram delivery');
-assert(campaigns.includes("channel==='whatsapp'"),'campaigns module must support whatsapp delivery');
+assert(!campaigns.includes('whatsapp')&&!campaigns.includes('phone_e164'),'WhatsApp delivery and the dropped phone_e164/whatsapp_opt_in columns must not return to the campaigns module');
 assert(campaigns.includes('marketing_opt_in'),'campaigns module must gate sends on customer marketing consent');
 assert(campaigns.includes('currentConsent'),'campaign queueing must re-check consent at send time');
 

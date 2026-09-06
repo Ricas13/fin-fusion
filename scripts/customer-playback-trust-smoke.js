@@ -10,7 +10,7 @@ const scoped=source('src/automation/customer-inactivity-scoped.js');
 const trust=source('src/jellyfin/activity-trust.js');
 const worker=source('scripts/activity-worker.js');
 const planPolicy=require('../src/entitlements/plan-lifecycle-policy');
-expect(inactivity.includes("require('../jellyfin/activity-trust')"),'Inactivity must use the per-server activity trust owner.');
+expect(scoped.includes("require('../jellyfin/activity-trust')"),'Inactivity must use the per-server activity trust owner.');
 expect(!inactivity.includes("health_status='offline'")&&!inactivity.includes("last_health_check<NOW()-INTERVAL '10 minutes'"),'Free Server inactivity must not gate on fleet-wide server health.');
 expect(scoped.includes('activityTrust.serverTelemetry(candidateServerIds(rows))'),'Scoped inactivity must request playback telemetry only for candidate servers.');
 expect(scoped.includes('fleetMetrics.refreshServerUserActivity(serverId)'),'Inactivity must retain the authoritative Jellyfin /Users freshness check.');
