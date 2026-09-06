@@ -11,6 +11,55 @@
   const customerTable = document.querySelector('#customersTable');
   if (customerTable) customerTable.dataset.operatorFriendly = '1';
 
+  // Keep renewal/expiry dates as a simple traffic-light signal:
+  // green while comfortably inside the access period, amber inside the final
+  // 48 hours, and red once expired. The server still owns the displayed date
+  // and relative-time copy; this only normalises the visual urgency.
+  const colourCustomerExpiryDates = () => {
+    if (!customerTable) return;
+
+    if (!document.querySelector('#customerExpiryTrafficLightStyles')) {
+      const style = document.createElement('style');
+      style.id = 'customerExpiryTrafficLightStyles';
+      style.textContent = '.customerDateTone.good{color:#5ae0a0!important}';
+      document.head.appendChild(style);
+    }
+
+    const monthIndex = new Map([
+      ['jan', 0], ['feb', 1], ['mar', 2], ['apr', 3], ['may', 4], ['jun', 5],
+      ['jul', 6], ['aug', 7], ['sep', 8], ['sept', 8], ['oct', 9], ['nov', 10], ['dec', 11]
+    ]);
+    const parseDisplayDate = value => {
+      const match = String(value || '').trim().match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+      if (!match) return NaN;
+      const month = monthIndex.get(match[2].toLowerCase());
+      if (month === undefined) return NaN;
+      return new Date(Number(match[3]), month, Number(match[1]), 23, 59, 59, 999).getTime();
+    };
+
+    const now = Date.now();
+    const fortyEightHours = 48 * 60 * 60 * 1000;
+    customerTable.querySelectorAll('td[data-label="Renewal / expiry"]').forEach(cell => {
+      const primary = cell.querySelector('strong');
+      if (!primary) return;
+      const label = primary.textContent.trim();
+      if (!label || label === '—' || label === 'Permanent') return;
+
+      const secondary = cell.querySelector('.subText');
+      const expiryMs = parseDisplayDate(label);
+      const explicitlyExpired = /^Expired\b/i.test(secondary?.textContent || '');
+      let tone = 'good';
+      if (explicitlyExpired || (Number.isFinite(expiryMs) && expiryMs < now)) tone = 'bad';
+      else if (Number.isFinite(expiryMs) && expiryMs - now <= fortyEightHours) tone = 'warn';
+
+      [primary, secondary].filter(Boolean).forEach(node => {
+        node.classList.remove('good', 'warn', 'bad');
+        node.classList.add('customerDateTone', tone);
+      });
+    });
+  };
+  colourCustomerExpiryDates();
+
   // Navigation coherence moves page-scoped actions out of the global top bar.
   // On Customers, finish that move with the approved mockup geometry: title on
   // the left, actions on the right. The rAF pass runs after the shared
