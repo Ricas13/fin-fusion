@@ -35,7 +35,7 @@ async function panel(detail,token,req,permanent){
   const id=detail.customer.id,c=detail.customer;
   const [plans,advanced]=await Promise.all([grantablePlans(),forceAccess.panel(detail,token,req,permanent).catch(()=> '')]);
   const jellyfin=(detail.accounts||[]).filter(row=>String(row.account_purpose||'jellyfin')!=='stremio_internal'&&String(row.media_server_type||'jellyfin')!=='emby');
-  const portal=c.app_user_id?`<form class="actionTileForm" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate">${csrfHidden(token)}<button class="actionTile" type="submit">${tileContent('portal','View portal','Open customer portal')}</button></form>`:`<div class="actionTile disabled">${tileContent('portal','View portal','Portal not enrolled')}</div>`;
+  const portal=c.app_user_id?`<form class="actionTileForm" method="post" action="/admin/users/${encodeURIComponent(id)}/impersonate" data-native-submit="true" data-customer-portal-action="1" data-customer-portal-primary="1">${csrfHidden(token)}<button class="actionTile" type="submit">${tileContent('portal','View portal','Open customer portal')}</button></form>`:`<div class="actionTile disabled" data-customer-portal-action="1" data-customer-portal-primary="1" aria-disabled="true">${tileContent('portal','View portal','Portal not enrolled')}</div>`;
   const isPermanent=Boolean(permanent?.active||permanent?.stale);
   const automationToggle=isPermanent
     ?directTile(token,`/admin/users/${encodeURIComponent(id)}/manage/normal-automation`,'Return to automation','Remove overrides & use plan rules','normal','normal')
@@ -45,7 +45,7 @@ async function panel(detail,token,req,permanent){
   const reconcile=directTile(token,`/admin/users/${encodeURIComponent(id)}/manage/reconcile`,'Fix / Reconcile access','Sync all services now','fix');
   const actionBar=`${styles()}<section class="customerPrimaryActions" data-customer-primary-actions><div class="customerPrimaryHead"><h2>Customer actions</h2><p>Common actions for managing this customer. These handle all related systems automatically.</p></div><div class="customerActionGrid">${portal}${automationToggle}${move}${password}${reconcile}${manualGrant(detail,token,plans)}${removeAll(detail,token)}</div></section>`;
   const advancedPanel=`<details class="approvedAdvanced" data-customer-advanced><summary><strong>Advanced / Recovery tools</strong><span>Break glass controls, force placement, clear blockers, provider repair, etc.</span><b>⌄</b></summary><div>${advanced||'<div class="muted">No advanced recovery controls are available for this customer.</div>'}</div></details>`;
-  return `${actionBar}${advancedPanel}<script src="/js/admin-customer-primary-actions.js" defer></script>`;
+  return `${actionBar}${advancedPanel}<script src="/js/admin-customer-primary-actions.js" defer></script><script src="/js/admin-customer-portal-guard.js" defer></script>`;
 }
 
 function styles(){return `<style>
