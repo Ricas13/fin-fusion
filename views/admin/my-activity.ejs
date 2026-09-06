@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>My Jellyfin Activity · <%= siteName %></title>
+  <%- include('_head') %>
+  <style>
+    .myActivityHero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;padding:22px;border:1px solid var(--line,#2a3441);border-radius:16px;background:linear-gradient(135deg,rgba(44,129,255,.12),rgba(138,92,246,.08));margin-bottom:18px}.myActivityHero h1{margin:4px 0 6px}.myActivityHero p{max-width:720px;margin:0}.myActivityIdentity{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.identityChip{border:1px solid var(--line,#2a3441);background:rgba(255,255,255,.04);padding:6px 10px;border-radius:999px;font-size:12px}.telemetryOnly{display:inline-flex;align-items:center;gap:6px;color:#8fd8b4;font-size:12px;font-weight:700}.periodForm select{min-width:140px}.myActivityKpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:18px 0}.myActivityKpi{padding:16px;border:1px solid var(--line,#2a3441);border-radius:14px;background:var(--panel,#141a21)}.myActivityKpi span{display:block;font-size:12px;color:var(--muted,#91a0b2);margin-bottom:8px}.myActivityKpi strong{font-size:24px}.myActivityGrid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(300px,.75fr);gap:16px;margin-top:16px}.myActivityCard{border:1px solid var(--line,#2a3441);border-radius:14px;background:var(--panel,#141a21);padding:18px}.myActivityCard h2{margin:0 0 4px}.watchBars{height:220px;display:flex;align-items:flex-end;gap:5px;padding:18px 4px 0;border-bottom:1px solid var(--line,#2a3441);margin-top:12px}.watchBar{flex:1;min-width:4px;max-width:24px;border-radius:5px 5px 0 0;background:linear-gradient(180deg,#4ba3ff,#6f63f4);opacity:.9}.watchBar:hover{opacity:1}.metricList{display:grid;gap:10px;margin-top:14px}.metricRow{display:grid;grid-template-columns:minmax(0,1fr) 92px 64px;gap:10px;align-items:center}.metricTrack{height:7px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden}.metricTrack i{display:block;height:100%;background:#4ba3ff;border-radius:99px}.metricValue{text-align:right;font-size:12px;color:var(--muted,#91a0b2)}.activeNow{display:grid;gap:10px;margin-top:12px}.activeStream{display:flex;justify-content:space-between;gap:16px;padding:12px;border:1px solid rgba(83,205,150,.25);border-radius:12px;background:rgba(83,205,150,.06)}.activeStream strong{display:block}.activeStream small{color:var(--muted,#91a0b2)}.liveDot{color:#69dfaa;font-weight:800;white-space:nowrap}.telemetryNotice{padding:12px 14px;border-radius:12px;border:1px solid rgba(83,205,150,.25);background:rgba(83,205,150,.06);margin:14px 0}.emptyActivity{padding:34px;text-align:center;border:1px dashed var(--line,#2a3441);border-radius:14px;color:var(--muted,#91a0b2)}.tableWrap{margin-top:12px}.activitySubtle{font-size:12px;color:var(--muted,#91a0b2)}@media(max-width:1100px){.myActivityKpis{grid-template-columns:repeat(3,1fr)}.myActivityGrid{grid-template-columns:1fr}}@media(max-width:700px){.myActivityHero{display:block}.periodForm{margin-top:14px}.myActivityKpis{grid-template-columns:repeat(2,1fr)}.metricRow{grid-template-columns:minmax(0,1fr) 70px}.metricTrack{display:none}}
+  </style>
+</head>
+<%
+  function duration(seconds){const total=Math.max(0,Math.round(Number(seconds||0)));const hours=Math.floor(total/3600);const mins=Math.floor((total%3600)/60);if(hours)return `${hours}h ${String(mins).padStart(2,'0')}m`;return `${mins}m`;}
+  function when(value){if(!value)return'Not recorded yet';const d=new Date(value);return Number.isNaN(d.getTime())?'Not recorded yet':d.toLocaleString();}
+  function shortDate(value){const d=new Date(value);return Number.isNaN(d.getTime())?'':d.toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+  const totalSeconds=Math.max(1,Number(summary.seconds||0));
+  const maxTimeline=Math.max(1,...timeline.map(row=>Number(row.seconds||0)));
+%>
+<body>
+<div class="appShell">
+  <%- include('_nav',{siteName,activeNav:'my-activity'}) %>
+  <main class="mainPane">
+    <header class="topBar"><div>Jellyfin</div><div class="muted">Personal playback telemetry</div></header>
+    <div class="content">
+      <section class="myActivityHero">
+        <div>
+          <div class="telemetryOnly">● TELEMETRY ONLY</div>
+          <h1>My Jellyfin activity</h1>
+          <p class="muted">Your own watching metrics across every enabled Jellyfin server where the administrator username matches your CAPTAiNFiN staff username. These observations never create a customer entitlement and are never used for inactivity, billing, provisioning or stream-limit enforcement.</p>
+          <div class="myActivityIdentity">
+            <% identities.forEach(function(identity){ %><span class="identityChip"><%= identity.serverName %> · <strong><%= identity.username %></strong></span><% }) %>
+            <% if(!identities.length){ %><span class="identityChip">Looking for Jellyfin administrator “<strong><%= staffUsername %></strong>”</span><% } %>
+          </div>
+        </div>
+        <form class="periodForm" method="get" action="/admin/activity/me">
+          <label class="muted" for="range">Period</label><br>
+          <select id="range" name="range" onchange="this.form.submit()">
+            <% ranges.forEach(function(option){ %><option value="<%= option.key %>" <%= option.key===range.key?'selected':'' %>><%= option.label %></option><% }) %>
+          </select>
+        </form>
+      </section>
+
+      <% if(identityFailures.length){ %><div class="notice warn">One or more Jellyfin servers could not be checked for your administrator identity, so this view may be incomplete.</div><% } %>
+
+      <% if(!identities.length){ %>
+        <div class="emptyActivity"><strong>No matching Jellyfin administrator found.</strong><br><br>This page matches your signed-in staff username (<%= staffUsername %>) to a Jellyfin user whose <code>Policy.IsAdministrator</code> flag is enabled. Nothing is linked to a customer account.</div>
+      <% } else { %>
+        <div class="telemetryNotice"><strong>Collection starts after this feature is deployed.</strong> Previous Ricas13 playback was discarded as unmanaged, so Fin‑Fusion cannot reconstruct it from its existing playback database.</div>
+
+        <section class="myActivityKpis" aria-label="Personal viewing summary">
+          <article class="myActivityKpi"><span>Total watch time</span><strong><%= duration(summary.seconds) %></strong></article>
+          <article class="myActivityKpi"><span>Titles watched</span><strong><%= summary.titles %></strong></article>
+          <article class="myActivityKpi"><span>Episodes watched</span><strong><%= summary.episodes %></strong></article>
+          <article class="myActivityKpi"><span>Playback sessions</span><strong><%= summary.sessions %></strong></article>
+          <article class="myActivityKpi"><span>Active now</span><strong><%= active.length %></strong></article>
+        </section>
+
+        <% if(active.length){ %>
+        <section class="myActivityCard">
+          <h2>Watching now</h2><div class="activitySubtle">Your administrator playback is visible here but excluded from every access-policy decision.</div>
+          <div class="activeNow"><% active.forEach(function(stream){ %><div class="activeStream"><div><strong><%= stream.item_name||'Unknown item' %></strong><small><%= stream.server_name %> · <%= stream.device_name||stream.client_name||'Unknown device' %> · <%= stream.playback_method %></small></div><span class="liveDot"><%= stream.is_paused?'● PAUSED':'● LIVE' %></span></div><% }) %></div>
+        </section>
+        <% } %>
+
+        <div class="myActivityGrid">
+          <section class="myActivityCard">
+            <h2>Watch time</h2><div class="activitySubtle"><%= range.label %> · <%= summary.activeDays %> active day<%= summary.activeDays===1?'':'s' %> · last playback <%= when(summary.lastPlayback) %></div>
+            <% if(timeline.length){ %><div class="watchBars"><% timeline.forEach(function(point){const height=Math.max(2,Math.round((Number(point.seconds||0)/maxTimeline)*100)); %><i class="watchBar" style="height:<%= height %>%" title="<%= shortDate(point.bucket) %> · <%= duration(point.seconds) %>"></i><% }) %></div><% } else { %><div class="emptyActivity" style="margin-top:14px">No playback recorded in this period yet.</div><% } %>
+          </section>
+
+          <section class="myActivityCard">
+            <h2>Playback method</h2><div class="activitySubtle">How your sessions were delivered.</div>
+            <div class="metricList"><% methods.forEach(function(row){const pct=Math.round((Number(row.seconds||0)/totalSeconds)*100); %><div class="metricRow"><strong><%= row.method %></strong><div class="metricTrack"><i style="width:<%= pct %>%"></i></div><div class="metricValue"><%= pct %>%</div></div><% }) %><% if(!methods.length){ %><div class="activitySubtle">No method data yet.</div><% } %></div>
+          </section>
+        </div>
+
+        <div class="myActivityGrid">
+          <section class="myActivityCard">
+            <h2>Most watched</h2><div class="activitySubtle">Top titles for the selected period.</div>
+            <div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>Title</th><th>Type</th><th>Watch time</th><th>Sessions</th></tr></thead><tbody><% topTitles.forEach(function(row){ %><tr><td data-label="Title"><strong><%= row.item_name %></strong></td><td data-label="Type"><%= row.item_type %></td><td data-label="Watch time"><%= duration(row.seconds) %></td><td data-label="Sessions"><%= row.plays %></td></tr><% }) %></tbody></table><% if(!topTitles.length){ %><div class="emptyActivity">No titles recorded yet.</div><% } %></div>
+          </section>
+
+          <section class="myActivityCard">
+            <h2>Devices</h2><div class="activitySubtle">Where you watch.</div>
+            <div class="metricList"><% devices.forEach(function(row){const pct=Math.round((Number(row.seconds||0)/totalSeconds)*100); %><div class="metricRow"><strong><%= row.device %></strong><div class="metricTrack"><i style="width:<%= pct %>%"></i></div><div class="metricValue"><%= duration(row.seconds) %></div></div><% }) %><% if(!devices.length){ %><div class="activitySubtle">No device data yet.</div><% } %></div>
+          </section>
+        </div>
+
+        <div class="myActivityGrid">
+          <section class="myActivityCard">
+            <h2>Recent playback</h2><div class="activitySubtle">Latest telemetry-only sessions.</div>
+            <div class="tableWrap"><table class="dataTable responsiveTable"><thead><tr><th>When</th><th>Media</th><th>Server</th><th>Device</th><th>Method</th><th>Time</th></tr></thead><tbody><% recent.forEach(function(row){ %><tr><td data-label="When"><%= when(row.last_seen_at||row.started_at) %></td><td data-label="Media"><strong><%= row.item_name||'Unknown item' %></strong><div class="subText"><%= row.item_type||'' %></div></td><td data-label="Server"><%= row.server_name %></td><td data-label="Device"><%= row.device_name||row.client_name||'Unknown' %></td><td data-label="Method"><%= row.playback_method %></td><td data-label="Time"><%= duration(row.seconds) %></td></tr><% }) %></tbody></table><% if(!recent.length){ %><div class="emptyActivity">No recent playback yet.</div><% } %></div>
+          </section>
+
+          <section class="myActivityCard">
+            <h2>By server</h2><div class="activitySubtle">Combined across both Jellyfin servers.</div>
+            <div class="metricList"><% servers.forEach(function(row){const pct=Math.round((Number(row.seconds||0)/totalSeconds)*100); %><div class="metricRow"><strong><%= row.server_name %></strong><div class="metricTrack"><i style="width:<%= pct %>%"></i></div><div class="metricValue"><%= duration(row.seconds) %></div></div><% }) %><% if(!servers.length){ %><div class="activitySubtle">No server breakdown yet.</div><% } %></div>
+          </section>
+        </div>
+      <% } %>
+
+      <div style="margin-top:18px"><a class="button secondary" href="/admin/activity">← Back to Playback operations</a></div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
