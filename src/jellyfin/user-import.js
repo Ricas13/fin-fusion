@@ -224,6 +224,8 @@ async function customerSummary(customerId) {
             SELECT p.id AS plan_id,p.name AS plan_name,p.code AS plan_code,p.server_class
             FROM subscriptions s JOIN plans p ON p.id=s.plan_id
             WHERE s.customer_id=c.id AND s.status IN ('active','trialing','past_due') AND s.current_period_end>NOW() AND p.active=TRUE
+              AND s.superseded_by IS NULL AND COALESCE(p.is_addon,FALSE)=FALSE
+              AND COALESCE(NULLIF(s.service_type_snapshot,''),p.service_type,'jellyfin') IN ('jellyfin','bundle')
             ORDER BY s.current_period_end DESC LIMIT 1
         ) active ON TRUE
         WHERE c.id=$1
