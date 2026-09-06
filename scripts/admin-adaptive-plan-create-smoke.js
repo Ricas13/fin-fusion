@@ -21,8 +21,6 @@ function base(overrides = {}) {
     jellyfinAccessModel: 'concurrent_streams',
     streams: '3',
     libraryAccessMode: 'all',
-    playbackWindowDays: '7',
-    minimumObservationHours: '24',
     ...overrides
   };
 }
@@ -34,6 +32,7 @@ assert.equal(free.priceMinor, 0, 'free Jellyfin must force a zero price');
 assert.equal(free.billing, 'month', 'free Jellyfin keeps a canonical internal billing value');
 assert.equal(free.duration, 30, 'free Jellyfin keeps a canonical internal duration');
 assert.equal(free.serverClass, 'free', 'free Jellyfin must force free placement class');
+assert.deepStrictEqual(free.inactivityPolicy, {}, 'new Free plans must inherit the global activity policy rather than store lifecycle controls');
 
 const paid = parse(base({ planKind: 'paid_jellyfin', price: '6.00', billingInterval: 'month', serverClass: 'premium' }), 'GBP');
 assert.equal(paid.planKind, 'paid_jellyfin');
@@ -64,7 +63,7 @@ assert.match(freeHtml, /Free Jellyfin/);
 assert.match(freeHtml, /Paid Jellyfin/);
 assert.match(freeHtml, /Household connections/);
 assert.match(freeHtml, /data-commercial-card hidden/, 'free plan should render commercial card hidden');
-assert.match(freeHtml, /data-free-lifecycle/, 'free lifecycle controls remain available');
+assert.doesNotMatch(freeHtml, /data-free-lifecycle|inactivityEnabled|inactivityDryRun|noPlaybackDays|minimumPlaybackMinutes/, 'plan creation must not expose configurable Jellyfin lifecycle controls');
 
 const stremioHtml = form({ session: {}, query: { type: 'stremio' } }, {}, '', 'GBP');
 assert.match(stremioHtml, /name="stremioHouseholdNetworkLimit"/);
@@ -74,6 +73,7 @@ assert.match(stremioHtml, /data-stremio-access/);
 assert.match(source, /stremio_household_network_limit/);
 assert.match(source, /stremio_ip_replacement_policy/);
 assert.match(source, /stremio_ip_replacement_cooldown_minutes/);
+assert.doesNotMatch(source, /data-free-lifecycle|inactivityEnabled|inactivityDryRun|deleteAfterDisableDays/, 'new-plan source must not reintroduce a disabled-user lifecycle configuration');
 assert.doesNotMatch(source, /child_process|execSync|spawnSync/);
 assert.match(browser, /free_jellyfin/);
 assert.match(browser, /paid_jellyfin/);
