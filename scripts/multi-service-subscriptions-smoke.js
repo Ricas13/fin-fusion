@@ -11,7 +11,7 @@ const state=require('../src/entitlements/subscription-state');
 
 function source(file){return fs.readFileSync(path.join(__dirname,'..',file),'utf8');}
 function staticContracts(){
-  const dashboard=source('views/customer/dashboard.ejs'),checkoutJs=source('public/js/customer-checkout.js'),activity=source('src/platform/customer-activity.js'),nav=source('views/customer/_nav.ejs'),affiliate=source('views/customer/affiliate.ejs'),adminCore=source('src/platform/admin-html-core.js'),inactivity=source('src/automation/customer-inactivity.js'),subscriptionState=source('src/entitlements/subscription-state.js'),provisioning=source('src/jellyfin/resilient-provisioning.js'),migration=source('db/migrations/045_parallel_free_jellyfin_access.sql'),cleanupReturn=source('src/entitlements/jellyfin-cleanup-return.js');
+  const dashboard=source('views/customer/dashboard.ejs'),accessJs=source('public/js/customer-jellyfin.js'),customerStremio=source('src/platform/customer-stremio.js'),checkoutJs=source('public/js/customer-checkout.js'),activity=source('src/platform/customer-activity.js'),nav=source('views/customer/_nav.ejs'),affiliate=source('views/customer/affiliate.ejs'),adminCore=source('src/platform/admin-html-core.js'),inactivity=source('src/automation/customer-inactivity.js'),subscriptionState=source('src/entitlements/subscription-state.js'),provisioning=source('src/jellyfin/resilient-provisioning.js'),migration=source('db/migrations/045_parallel_free_jellyfin_access.sql'),cleanupReturn=source('src/entitlements/jellyfin-cleanup-return.js');
   // Pre-existing drift from an unrelated commit (56f604f1 "Simplify customer
   // nav and move Notifications into Account"), unrelated to this refactor:
   // Help is intentionally no longer a top-level customer nav tab (see the
@@ -20,7 +20,8 @@ function staticContracts(){
   // verifying this change's own test suite.
   assert(dashboard.includes('Your active access')&&dashboard.includes('accessRows.forEach'),'customer home must render all live subscriptions instead of one plan');
   assert(dashboard.includes("if(s&&s.is_free_tier)return'Free Server'")&&dashboard.includes("return String(s&&s.billing_interval_snapshot||s&&s.billing_interval)==='trial'?'Jellyfin trial':'Premium Jellyfin'"),'customer Home active-access summary must identify Free and Premium Jellyfin lanes');
-  assert(dashboard.includes('stremioInstallUrl')&&dashboard.includes('Install in Stremio'),'customer home must expose the recovered Stremio installation link');
+  assert(!dashboard.includes('id="stremio-access"')&&!dashboard.includes('Installation manifest'),'customer Home must not expose Stremio setup or the recovered bearer link');
+  assert(accessJs.includes('/account/stremio/installation.json')&&accessJs.includes('Installation manifest')&&customerStremio.includes('installationLinks.current(req,customerId)'),'My Access must expose the recovered Stremio installation link from the authoritative setup-state endpoint');
   assert((dashboard.match(/data-promo-input/g)||[]).length>=1,'customer home must expose a promo field on each paid plan card');
   assert(dashboard.includes('data-promo-target')&&checkoutJs.includes('data-promo-input'),'promo code must be copied into whichever provider form is submitted');
   assert(!dashboard.includes('discountField'),'provider-specific promo inputs must not return');
