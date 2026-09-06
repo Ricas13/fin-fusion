@@ -1,10 +1,16 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const express = require('express');
 const restore = require('../src/entitlements/jellyfin-inactivity-restore');
 const provisioning = require('../src/jellyfin/resilient-provisioning');
 const { createAdminJellyfinReenableRouter } = require('../src/platform/admin-jellyfin-reenable');
+
+const permanentAccessSource = fs.readFileSync('src/entitlements/permanent-access.js', 'utf8');
+assert(permanentAccessSource.includes("type:'inactivity_policy'"), 'returning Free Server permanent access to automation must release the stale inactivity hold');
+assert(permanentAccessSource.includes('Free Server returned to automation; start a fresh inactivity observation window'), 'Free Server hold release must record why the old inactivity episode was closed');
+assert(permanentAccessSource.indexOf("type:'inactivity_policy'") < permanentAccessSource.indexOf('permanent_access=FALSE'), 'the stale inactivity hold must be released before permanent access is revoked and reconciliation can remove the account');
 
 const originalRestore = restore.restoreDisabledFreeAccess;
 const originalReconcile = provisioning.reconcileCustomer;
