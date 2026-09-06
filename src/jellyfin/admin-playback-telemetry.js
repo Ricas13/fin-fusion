@@ -39,7 +39,6 @@ async function managedUserIds(serverId) {
     FROM jellyfin_accounts
     WHERE server_id=$1
       AND jellyfin_user_id IS NOT NULL
-      AND disabled=FALSE
       AND COALESCE(account_purpose,'jellyfin')<>'stremio_internal'
   `, [serverId]);
   return new Set(result.rows.map(row => String(row.jellyfin_user_id).toLowerCase()));
